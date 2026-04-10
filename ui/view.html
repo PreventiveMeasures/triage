@@ -29,16 +29,39 @@ a { color: var(--accent); text-decoration: none; }
 #report.active { display: block; }
 #drop-zone.hidden { display: none; }
 
-header { margin-bottom: 1.5rem; }
+header { margin-bottom: 1rem; }
 header h1 { font-size: 1.3rem; }
 header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
-.stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: .6rem 1rem; font-size: .85rem; }
+/* toolbar */
+.toolbar {
+  display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
+  margin-bottom: 1rem; padding: .6rem .75rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  font-size: .825rem;
+}
+.toolbar label { color: var(--muted); margin-right: .15rem; }
+.toolbar select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; cursor: pointer;
+}
+.toolbar select:focus { border-color: var(--accent); outline: none; }
+.toolbar .sep { border-left: 1px solid var(--border); height: 1.2rem; }
+.toolbar .result-count { color: var(--muted); margin-left: auto; }
+
+.stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.stat {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: .6rem 1rem; font-size: .85rem; cursor: pointer; user-select: none;
+  transition: border-color .15s;
+}
+.stat:hover, .stat.active { border-color: var(--accent); }
+.stat.active { background: #1a2233; }
 .stat strong { display: block; font-size: 1.2rem; }
 
 /* file groups */
 .file-group { margin-bottom: 1.25rem; }
+.file-group.hidden { display: none; }
 .file-header {
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); border: 1px solid var(--border);
@@ -55,6 +78,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .finding:last-child { border-bottom: none; }
 .finding.is-critical { background: var(--critical-bg); }
+.finding.hidden { display: none; }
 
 .badge {
   display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
@@ -94,8 +118,16 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 <script>
 'use strict'
 
+const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
 const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
+
+let currentData = null
+let currentFileName = ''
+let filterSeverity = 'all'
+let filterConfMin = ''
+let filterConfMax = ''
+let sortBy = 'file'
 
 // Prevent default drag behavior everywhere
 document.addEventListener('dragover', (e) => e.preventDefault())
@@ -114,8 +146,13 @@ function readFile(file) {
   const reader = new FileReader()
   reader.onload = () => {
     try {
-      const data = JSON.parse(reader.result)
-      render(data, file.name)
+      currentData = JSON.parse(reader.result)
+      currentFileName = file.name
+      filterSeverity = 'all'
+      filterConfMin = ''
+      filterConfMax = ''
+      sortBy = 'file'
+      render()
     } catch (err) {
       alert('Failed to parse JSON: ' + err.message)
     }
@@ -129,43 +166,103 @@ function esc(str) {
   return el.innerHTML
 }
 
-function render(data, fileName) {
-  const findings = data.findings || []
+function applyFilters(findings) {
+  return findings.filter((f) => {
+    if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
+    if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
+    if (filterConfMax !== '' && (f.confidence === undefined || f.confidence > filterConfMax)) return false
+    return true
+  })
+}
+
+function applySorting(findings) {
+  const sorted = [...findings]
+  if (sortBy === 'severity') {
+    sorted.sort((a, b) => (SEVERITY_ORDER[b.severity] || 0) - (SEVERITY_ORDER[a.severity] || 0) || a.file.localeCompare(b.file) || parseInt(a.line) - parseInt(b.line))
+  } else if (sortBy === 'confidence-desc') {
+    sorted.sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1) || a.file.localeCompare(b.file))
+  } else if (sortBy === 'confidence-asc') {
+    sorted.sort((a, b) => (a.confidence ?? 11) - (b.confidence ?? 11) || a.file.localeCompare(b.file))
+  }
+  // 'file' sorting is handled by the grouping below
+  return sorted
+}
+
+function render() {
+  const data = currentData
+  if (!data) return
+  const allFindings = data.findings || []
   const type = data.type || 'analysis'
 
-  // Count by severity
+  // Counts always reflect all findings
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
-  for (const f of findings) counts[f.severity] = (counts[f.severity] || 0) + 1
+  for (const f of allFindings) counts[f.severity] = (counts[f.severity] || 0) + 1
 
-  // Group by file
-  const byFile = new Map()
-  for (const f of findings) {
-    const key = f.file
-    if (!byFile.has(key)) byFile.set(key, [])
-    byFile.get(key).push(f)
-  }
-
-  // Sort groups by file name, findings within by line
-  const sortedFiles = [...byFile.keys()].sort()
+  const filtered = applySorting(applyFilters(allFindings))
 
   let html = '<header>'
   html += `<h1>${esc(type)} results</h1>`
-  html += `<div class="meta">${esc(fileName)} &mdash; ${findings.length} finding${findings.length !== 1 ? 's' : ''} across ${byFile.size} file${byFile.size !== 1 ? 's' : ''}</div>`
+  html += `<div class="meta">${esc(currentFileName)} &mdash; ${allFindings.length} finding${allFindings.length !== 1 ? 's' : ''}</div>`
   html += '</header>'
 
+  // Stats — clickable severity filter
   html += '<div class="stats">'
-  if (counts.critical) html += `<div class="stat"><strong style="color:var(--critical)">${counts.critical}</strong>critical</div>`
-  if (counts.high) html += `<div class="stat"><strong style="color:var(--high)">${counts.high}</strong>high</div>`
-  if (counts.medium) html += `<div class="stat"><strong style="color:var(--medium)">${counts.medium}</strong>medium</div>`
-  if (counts.low) html += `<div class="stat"><strong style="color:var(--low)">${counts.low}</strong>low</div>`
+  const statItems = [
+    ['critical', counts.critical, '--critical'],
+    ['high', counts.high, '--high'],
+    ['medium', counts.medium, '--medium'],
+    ['low', counts.low, '--low'],
+  ]
+  for (const [sev, count, color] of statItems) {
+    if (!count) continue
+    const active = filterSeverity === sev ? ' active' : ''
+    html += `<div class="stat${active}" onclick="toggleSeverity('${sev}')"><strong style="color:var(${color})">${count}</strong>${sev}</div>`
+  }
   html += '</div>'
 
-  if (findings.length === 0) {
+  // Toolbar
+  html += '<div class="toolbar">'
+  html += `<label for="sort-select">Sort:</label>`
+  html += `<select id="sort-select" onchange="setSort(this.value)">`
+  html += `<option value="file"${sortBy === 'file' ? ' selected' : ''}>By file</option>`
+  html += `<option value="severity"${sortBy === 'severity' ? ' selected' : ''}>By severity</option>`
+  html += `<option value="confidence-desc"${sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
+  html += `<option value="confidence-asc"${sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+  html += `</select>`
+  html += `<div class="sep"></div>`
+  html += `<label for="conf-min">Confidence:</label>`
+  html += `<select id="conf-min" onchange="setConfMin(this.value)">`
+  html += `<option value="">min</option>`
+  for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMin === i ? ' selected' : ''}>${i}</option>`
+  html += `</select>`
+  html += ` &ndash; `
+  html += `<select id="conf-max" onchange="setConfMax(this.value)">`
+  html += `<option value="">max</option>`
+  for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
+  html += `</select>`
+  html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
+  html += '</div>'
+
+  if (filtered.length === 0 && allFindings.length > 0) {
+    html += `<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
+  } else if (allFindings.length === 0) {
     html += `<p style="color:var(--green)">No ${esc(type)} issues found.</p>`
   }
 
-  for (const file of sortedFiles) {
-    const items = byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
+  // Group by file, preserving sort order within groups
+  const byFile = new Map()
+  for (const f of filtered) {
+    if (!byFile.has(f.file)) byFile.set(f.file, [])
+    byFile.get(f.file).push(f)
+  }
+
+  // For file sort, sort groups alphabetically; otherwise preserve first-appearance order
+  const fileKeys = sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
+
+  for (const file of fileKeys) {
+    const items = sortBy === 'file'
+      ? byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
+      : byFile.get(file)
     html += '<div class="file-group">'
     html += `<div class="file-header" onclick="this.parentElement.classList.toggle('collapsed')"><span>${esc(file)}</span><span class="count">${items.length}</span></div>`
     html += '<div class="file-body">'
@@ -202,7 +299,28 @@ function render(data, fileName) {
   document.title = `${type} results - deepview`
 }
 
+function toggleSeverity(sev) {
+  filterSeverity = filterSeverity === sev ? 'all' : sev
+  render()
+}
+
+function setSort(value) {
+  sortBy = value
+  render()
+}
+
+function setConfMin(value) {
+  filterConfMin = value === '' ? '' : parseInt(value, 10)
+  render()
+}
+
+function setConfMax(value) {
+  filterConfMax = value === '' ? '' : parseInt(value, 10)
+  render()
+}
+
 function resetView() {
+  currentData = null
   report.classList.remove('active')
   report.innerHTML = ''
   dropZone.classList.remove('hidden')
