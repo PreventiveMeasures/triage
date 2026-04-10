@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>deepview results</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3;
+  --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
+  --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+a { color: var(--accent); text-decoration: none; }
+
+/* drop zone */
+#drop-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 2rem;
+}
+#drop-zone.hover { background: #1a2233; }
+.drop-prompt { text-align: center; color: var(--muted); }
+.drop-prompt h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
+.drop-prompt p { font-size: .95rem; }
+
+/* report */
+#report { display: none; max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+#report.active { display: block; }
+#drop-zone.hidden { display: none; }
+
+header { margin-bottom: 1.5rem; }
+header h1 { font-size: 1.3rem; }
+header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
+
+.stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: .6rem 1rem; font-size: .85rem; }
+.stat strong { display: block; font-size: 1.2rem; }
+
+/* file groups */
+.file-group { margin-bottom: 1.25rem; }
+.file-header {
+  font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; cursor: pointer; user-select: none;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.file-header:hover { border-color: var(--accent); }
+.file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
+.file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+
+.finding {
+  padding: .75rem; border-bottom: 1px solid var(--border);
+  font-size: .875rem; display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem;
+}
+.finding:last-child { border-bottom: none; }
+.finding.is-critical { background: var(--critical-bg); }
+
+.badge {
+  display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
+  padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
+  align-self: start; margin-top: .2rem;
+}
+.badge.critical { background: var(--critical); color: #fff; }
+.badge.high { background: var(--high); color: #fff; }
+.badge.medium { background: var(--medium); color: #000; }
+.badge.low { background: var(--low); color: #000; }
+
+.finding .desc { grid-column: 2; }
+.finding .line-num { color: var(--muted); font-size: .8rem; }
+.finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
+.finding .confidence { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
+.finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; }
+
+.reset-btn {
+  display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-size: .85rem; cursor: pointer;
+}
+.reset-btn:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <div class="drop-prompt">
+    <h1>deepview results viewer</h1>
+    <p>Drop a JSON results file here to visualize it</p>
+  </div>
+</div>
+
+<div id="report"></div>
+
+<script>
+'use strict'
+
+const dropZone = document.getElementById('drop-zone')
+const report = document.getElementById('report')
+
+// Prevent default drag behavior everywhere
+document.addEventListener('dragover', (e) => e.preventDefault())
+document.addEventListener('drop', (e) => e.preventDefault())
+
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover') })
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'))
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault()
+  dropZone.classList.remove('hover')
+  const file = e.dataTransfer.files[0]
+  if (file) readFile(file)
+})
+
+function readFile(file) {
+  const reader = new FileReader()
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result)
+      render(data, file.name)
+    } catch (err) {
+      alert('Failed to parse JSON: ' + err.message)
+    }
+  }
+  reader.readAsText(file)
+}
+
+function esc(str) {
+  const el = document.createElement('span')
+  el.textContent = str
+  return el.innerHTML
+}
+
+function render(data, fileName) {
+  const findings = data.findings || []
+  const type = data.type || 'analysis'
+
+  // Count by severity
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 }
+  for (const f of findings) counts[f.severity] = (counts[f.severity] || 0) + 1
+
+  // Group by file
+  const byFile = new Map()
+  for (const f of findings) {
+    const key = f.file
+    if (!byFile.has(key)) byFile.set(key, [])
+    byFile.get(key).push(f)
+  }
+
+  // Sort groups by file name, findings within by line
+  const sortedFiles = [...byFile.keys()].sort()
+
+  let html = '<header>'
+  html += `<h1>${esc(type)} results</h1>`
+  html += `<div class="meta">${esc(fileName)} &mdash; ${findings.length} finding${findings.length !== 1 ? 's' : ''} across ${byFile.size} file${byFile.size !== 1 ? 's' : ''}</div>`
+  html += '</header>'
+
+  html += '<div class="stats">'
+  if (counts.critical) html += `<div class="stat"><strong style="color:var(--critical)">${counts.critical}</strong>critical</div>`
+  if (counts.high) html += `<div class="stat"><strong style="color:var(--high)">${counts.high}</strong>high</div>`
+  if (counts.medium) html += `<div class="stat"><strong style="color:var(--medium)">${counts.medium}</strong>medium</div>`
+  if (counts.low) html += `<div class="stat"><strong style="color:var(--low)">${counts.low}</strong>low</div>`
+  html += '</div>'
+
+  if (findings.length === 0) {
+    html += `<p style="color:var(--green)">No ${esc(type)} issues found.</p>`
+  }
+
+  for (const file of sortedFiles) {
+    const items = byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
+    html += '<div class="file-group">'
+    html += `<div class="file-header" onclick="this.parentElement.classList.toggle('collapsed')"><span>${esc(file)}</span><span class="count">${items.length}</span></div>`
+    html += '<div class="file-body">'
+    for (const f of items) {
+      const isCritical = f.critical || f.severity === 'critical'
+      html += `<div class="finding${isCritical ? ' is-critical' : ''}">`
+      html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+      html += '<div>'
+      html += `<span class="line-num">line ${esc(String(f.line))}</span>`
+      if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
+      html += `<div class="desc">${esc(f.description)}</div>`
+      if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
+      if (f.confidence !== undefined) {
+        let conf = `Confidence: ${f.confidence}/10`
+        if (f.confidenceReason) conf += ` &mdash; ${esc(f.confidenceReason)}`
+        html += `<div class="confidence">${conf}</div>`
+      }
+      if (f.fileHash || f.treeHash) {
+        const parts = []
+        if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
+        if (f.treeHash) parts.push(`tree: ${esc(f.treeHash)}`)
+        html += `<div class="hashes">${parts.join(' | ')}</div>`
+      }
+      html += '</div></div>'
+    }
+    html += '</div></div>'
+  }
+
+  html += '<button class="reset-btn" onclick="resetView()">Load another file</button>'
+
+  report.innerHTML = html
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+  document.title = `${type} results - deepview`
+}
+
+function resetView() {
+  report.classList.remove('active')
+  report.innerHTML = ''
+  dropZone.classList.remove('hidden')
+  document.title = 'deepview results'
+}
+</script>
+</body>
+</html>
