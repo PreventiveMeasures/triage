@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-1'; style-src 'unsafe-inline'; form-action 'none'">
 <title>deepview results</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -128,7 +128,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 <div id="report"></div>
 
-<script>
+<script nonce="1">
 'use strict'
 
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
