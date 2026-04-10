@@ -45,7 +45,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; cursor: pointer;
 }
-.toolbar select:focus { border-color: var(--accent); outline: none; }
+.toolbar select:focus, .toolbar input:focus { border-color: var(--accent); outline: none; }
+.toolbar input[type="text"] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; width: 10rem;
+}
 .toolbar .sep { border-left: 1px solid var(--border); height: 1.2rem; }
 .toolbar .result-count { color: var(--muted); margin-left: auto; }
 
@@ -129,6 +133,8 @@ let filterSeverity = 'all'
 let filterSource = 'all'
 let filterConfMin = 8
 let filterConfMax = ''
+let filterInclude = ''
+let filterExclude = ''
 let sortBy = 'file'
 
 // Prevent default drag behavior everywhere
@@ -154,6 +160,8 @@ function readFile(file) {
       filterSource = 'all'
       filterConfMin = 8
       filterConfMax = ''
+      filterInclude = ''
+      filterExclude = ''
       sortBy = 'file'
       render()
     } catch (err) {
@@ -171,13 +179,21 @@ function esc(str) {
 
 function isModule(file) { return NODE_MODULES_RE.test(file) }
 
+function findingText(f) {
+  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
+}
+
 function applyFilters(findings) {
+  const inc = filterInclude.toLowerCase()
+  const exc = filterExclude.toLowerCase()
   return findings.filter((f) => {
     if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
     if (filterSource === 'own' && isModule(f.file)) return false
     if (filterSource === 'modules' && !isModule(f.file)) return false
     if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
     if (filterConfMax !== '' && (f.confidence === undefined || f.confidence > filterConfMax)) return false
+    if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
+    if (exc) { const text = findingText(f); if (text.includes(exc)) return false }
     return true
   })
 }
@@ -254,6 +270,11 @@ function render() {
   html += `<option value="">max</option>`
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
+  html += `<div class="sep"></div>`
+  html += `<label for="filter-include">Include:</label>`
+  html += `<input type="text" id="filter-include" value="${esc(filterInclude)}" oninput="setInclude(this.value)" placeholder="match text">`
+  html += `<label for="filter-exclude">Exclude:</label>`
+  html += `<input type="text" id="filter-exclude" value="${esc(filterExclude)}" oninput="setExclude(this.value)" placeholder="hide text">`
   html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
   html += '</div>'
 
@@ -336,6 +357,24 @@ function setConfMin(value) {
 function setConfMax(value) {
   filterConfMax = value === '' ? '' : parseInt(value, 10)
   render()
+}
+
+function setInclude(value) {
+  filterInclude = value
+  renderKeepFocus('filter-include')
+}
+
+function setExclude(value) {
+  filterExclude = value
+  renderKeepFocus('filter-exclude')
+}
+
+function renderKeepFocus(inputId) {
+  const prev = document.getElementById(inputId)
+  const pos = prev ? prev.selectionStart : 0
+  render()
+  const el = document.getElementById(inputId)
+  if (el) { el.focus(); el.setSelectionRange(pos, pos) }
 }
 
 function resetView() {
