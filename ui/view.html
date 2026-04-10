@@ -77,6 +77,8 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .file-header .count { user-select: none; }
 .file-header:hover { border-color: var(--accent); }
+.file-header a { color: var(--text); }
+.file-header a:hover { color: var(--accent); }
 .file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
 .file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
 
@@ -141,6 +143,7 @@ let filterConfMin = 8
 let filterConfMax = ''
 let filterInclude = ''
 let filterExclude = ''
+let repoUrl = ''
 let sortBy = 'file'
 
 // Prevent default drag behavior everywhere
@@ -184,6 +187,28 @@ function esc(str) {
 }
 
 function isModule(file) { return NODE_MODULES_RE.test(file) }
+
+function fileUrl(file) {
+  if (!repoUrl || isModule(file)) return null
+  const base = repoUrl.replace(/\/$/u, '')
+  return `${base}/blob/HEAD/${file}`
+}
+
+function fileLink(file) {
+  const url = fileUrl(file)
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}</a>` : esc(file)
+}
+
+function lineLink(file, line) {
+  const url = fileUrl(file)
+  const text = `line ${esc(String(line))}`
+  if (!url) return text
+  const lineNum = parseInt(line, 10)
+  const lineRange = line.includes('-') || line.includes('\u2013')
+    ? `L${lineNum}`
+    : `L${lineNum}`
+  return `<a href="${esc(url)}#${lineRange}" target="_blank" rel="noopener">${text}</a>`
+}
 
 function findingText(f) {
   return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
@@ -285,6 +310,10 @@ function render() {
   html += `<label for="filter-exclude">Exclude:</label>`
   html += `<input type="text" id="filter-exclude" value="${esc(filterExclude)}" oninput="setExclude(this.value)" placeholder="hide text">`
   html += '</div>'
+  html += '<div class="toolbar-row">'
+  html += `<label for="repo-url">Repo:</label>`
+  html += `<input type="text" id="repo-url" value="${esc(repoUrl)}" oninput="setRepoUrl(this.value)" placeholder="https://github.com/user/repo">`
+  html += '</div>'
   html += '</div>'
 
   if (filtered.length === 0 && allFindings.length > 0) {
@@ -308,7 +337,7 @@ function render() {
       ? byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
       : byFile.get(file)
     html += '<div class="file-group">'
-    html += `<div class="file-header" onclick="this.parentElement.classList.toggle('collapsed')"><span>${esc(file)}</span><span class="count">${items.length}</span></div>`
+    html += `<div class="file-header" onclick="if(event.target.tagName!=='A')this.parentElement.classList.toggle('collapsed')"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
     html += '<div class="file-body">'
     for (const f of items) {
       const isCritical = f.critical || f.severity === 'critical'
@@ -318,7 +347,7 @@ function render() {
       if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
       html += '</div>'
       html += '<div>'
-      html += `<span class="line-num">line ${esc(String(f.line))}</span>`
+      html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
       if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
       html += `<div class="desc">${esc(f.description)}</div>`
       if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
@@ -375,6 +404,11 @@ function setInclude(value) {
 function setExclude(value) {
   filterExclude = value
   renderKeepFocus('filter-exclude')
+}
+
+function setRepoUrl(value) {
+  repoUrl = value
+  renderKeepFocus('repo-url')
 }
 
 function renderKeepFocus(inputId) {
