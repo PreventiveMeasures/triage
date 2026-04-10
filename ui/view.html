@@ -119,13 +119,15 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 'use strict'
 
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
+const NODE_MODULES_RE = /(^|\/)node_modules\//
 const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
 
 let currentData = null
 let currentFileName = ''
 let filterSeverity = 'all'
-let filterConfMin = ''
+let filterSource = 'all'
+let filterConfMin = 8
 let filterConfMax = ''
 let sortBy = 'file'
 
@@ -149,7 +151,8 @@ function readFile(file) {
       currentData = JSON.parse(reader.result)
       currentFileName = file.name
       filterSeverity = 'all'
-      filterConfMin = ''
+      filterSource = 'all'
+      filterConfMin = 8
       filterConfMax = ''
       sortBy = 'file'
       render()
@@ -166,9 +169,13 @@ function esc(str) {
   return el.innerHTML
 }
 
+function isModule(file) { return NODE_MODULES_RE.test(file) }
+
 function applyFilters(findings) {
   return findings.filter((f) => {
     if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
+    if (filterSource === 'own' && isModule(f.file)) return false
+    if (filterSource === 'modules' && !isModule(f.file)) return false
     if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
     if (filterConfMax !== '' && (f.confidence === undefined || f.confidence > filterConfMax)) return false
     return true
@@ -228,6 +235,13 @@ function render() {
   html += `<option value="severity"${sortBy === 'severity' ? ' selected' : ''}>By severity</option>`
   html += `<option value="confidence-desc"${sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
   html += `<option value="confidence-asc"${sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+  html += `</select>`
+  html += `<div class="sep"></div>`
+  html += `<label for="source-select">Source:</label>`
+  html += `<select id="source-select" onchange="setSource(this.value)">`
+  html += `<option value="all"${filterSource === 'all' ? ' selected' : ''}>All files</option>`
+  html += `<option value="own"${filterSource === 'own' ? ' selected' : ''}>Own source</option>`
+  html += `<option value="modules"${filterSource === 'modules' ? ' selected' : ''}>node_modules</option>`
   html += `</select>`
   html += `<div class="sep"></div>`
   html += `<label for="conf-min">Confidence:</label>`
@@ -306,6 +320,11 @@ function toggleSeverity(sev) {
 
 function setSort(value) {
   sortBy = value
+  render()
+}
+
+function setSource(value) {
+  filterSource = value
   render()
 }
 
