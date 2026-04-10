@@ -35,10 +35,13 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 /* toolbar */
 .toolbar {
-  display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
+  display: flex; flex-direction: column; gap: .5rem;
   margin-bottom: 1rem; padding: .6rem .75rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   font-size: .825rem;
+}
+.toolbar-row {
+  display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
 }
 .toolbar label { color: var(--muted); margin-right: .15rem; }
 .toolbar select {
@@ -48,7 +51,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .toolbar select:focus, .toolbar input:focus { border-color: var(--accent); outline: none; }
 .toolbar input[type="text"] {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; width: 10rem;
+  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;
 }
 .toolbar .sep { border-left: 1px solid var(--border); height: 1.2rem; }
 .toolbar .result-count { color: var(--muted); margin-left: auto; }
@@ -69,9 +72,10 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .file-header {
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px 6px 0 0; cursor: pointer; user-select: none;
+  border-radius: 6px 6px 0 0; cursor: pointer;
   display: flex; justify-content: space-between; align-items: center;
 }
+.file-header .count { user-select: none; }
 .file-header:hover { border-color: var(--accent); }
 .file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
 .file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
@@ -84,20 +88,22 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .finding.is-critical { background: var(--critical-bg); }
 .finding.hidden { display: none; }
 
+.finding-left { align-self: start; text-align: center; min-width: 4rem; }
 .badge {
   display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
   padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
-  align-self: start; margin-top: .2rem;
 }
 .badge.critical { background: var(--critical); color: #fff; }
 .badge.high { background: var(--high); color: #fff; }
 .badge.medium { background: var(--medium); color: #000; }
 .badge.low { background: var(--low); color: #000; }
+.conf-score { font-size: .75rem; color: var(--muted); margin-top: .3rem; }
+.conf-score strong { color: var(--text); font-size: .85rem; }
 
 .finding .desc { grid-column: 2; }
 .finding .line-num { color: var(--muted); font-size: .8rem; }
 .finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
-.finding .confidence { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
+.finding .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
 .finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; }
 
 .reset-btn {
@@ -245,6 +251,7 @@ function render() {
 
   // Toolbar
   html += '<div class="toolbar">'
+  html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
   html += `<select id="sort-select" onchange="setSort(this.value)">`
   html += `<option value="file"${sortBy === 'file' ? ' selected' : ''}>By file</option>`
@@ -270,12 +277,14 @@ function render() {
   html += `<option value="">max</option>`
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
-  html += `<div class="sep"></div>`
+  html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
+  html += '</div>'
+  html += '<div class="toolbar-row">'
   html += `<label for="filter-include">Include:</label>`
   html += `<input type="text" id="filter-include" value="${esc(filterInclude)}" oninput="setInclude(this.value)" placeholder="match text">`
   html += `<label for="filter-exclude">Exclude:</label>`
   html += `<input type="text" id="filter-exclude" value="${esc(filterExclude)}" oninput="setExclude(this.value)" placeholder="hide text">`
-  html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
+  html += '</div>'
   html += '</div>'
 
   if (filtered.length === 0 && allFindings.length > 0) {
@@ -304,17 +313,16 @@ function render() {
     for (const f of items) {
       const isCritical = f.critical || f.severity === 'critical'
       html += `<div class="finding${isCritical ? ' is-critical' : ''}">`
+      html += '<div class="finding-left">'
       html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+      if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
+      html += '</div>'
       html += '<div>'
       html += `<span class="line-num">line ${esc(String(f.line))}</span>`
       if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
       html += `<div class="desc">${esc(f.description)}</div>`
       if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
-      if (f.confidence !== undefined) {
-        let conf = `Confidence: ${f.confidence}/10`
-        if (f.confidenceReason) conf += ` &mdash; ${esc(f.confidenceReason)}`
-        html += `<div class="confidence">${conf}</div>`
-      }
+      if (f.confidenceReason) html += `<div class="conf-reason">${esc(f.confidenceReason)}</div>`
       if (f.fileHash || f.treeHash) {
         const parts = []
         if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
