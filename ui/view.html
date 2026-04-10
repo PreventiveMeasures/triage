@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'">
 <title>deepview results</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -204,10 +205,7 @@ function lineLink(file, line) {
   const text = `line ${esc(String(line))}`
   if (!url) return text
   const lineNum = parseInt(line, 10)
-  const lineRange = line.includes('-') || line.includes('\u2013')
-    ? `L${lineNum}`
-    : `L${lineNum}`
-  return `<a href="${esc(url)}#${lineRange}" target="_blank" rel="noopener">${text}</a>`
+  return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
 }
 
 function findingText(f) {
@@ -270,7 +268,7 @@ function render() {
   for (const [sev, count, color] of statItems) {
     if (!count) continue
     const active = filterSeverity === sev ? ' active' : ''
-    html += `<div class="stat${active}" onclick="toggleSeverity('${sev}')"><strong style="color:var(${color})">${count}</strong>${sev}</div>`
+    html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${sev}</div>`
   }
   html += '</div>'
 
@@ -278,7 +276,7 @@ function render() {
   html += '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
-  html += `<select id="sort-select" onchange="setSort(this.value)">`
+  html += `<select id="sort-select">`
   html += `<option value="file"${sortBy === 'file' ? ' selected' : ''}>By file</option>`
   html += `<option value="severity"${sortBy === 'severity' ? ' selected' : ''}>By severity</option>`
   html += `<option value="confidence-desc"${sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
@@ -286,19 +284,19 @@ function render() {
   html += `</select>`
   html += `<div class="sep"></div>`
   html += `<label for="source-select">Source:</label>`
-  html += `<select id="source-select" onchange="setSource(this.value)">`
+  html += `<select id="source-select">`
   html += `<option value="all"${filterSource === 'all' ? ' selected' : ''}>All files</option>`
   html += `<option value="own"${filterSource === 'own' ? ' selected' : ''}>Own source</option>`
   html += `<option value="modules"${filterSource === 'modules' ? ' selected' : ''}>node_modules</option>`
   html += `</select>`
   html += `<div class="sep"></div>`
   html += `<label for="conf-min">Confidence:</label>`
-  html += `<select id="conf-min" onchange="setConfMin(this.value)">`
+  html += `<select id="conf-min">`
   html += `<option value="">min</option>`
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMin === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
   html += ` &ndash; `
-  html += `<select id="conf-max" onchange="setConfMax(this.value)">`
+  html += `<select id="conf-max">`
   html += `<option value="">max</option>`
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
@@ -306,13 +304,13 @@ function render() {
   html += '</div>'
   html += '<div class="toolbar-row">'
   html += `<label for="filter-include">Include:</label>`
-  html += `<input type="text" id="filter-include" value="${esc(filterInclude)}" oninput="setInclude(this.value)" placeholder="match text">`
+  html += `<input type="text" id="filter-include" value="${esc(filterInclude)}" placeholder="match text">`
   html += `<label for="filter-exclude">Exclude:</label>`
-  html += `<input type="text" id="filter-exclude" value="${esc(filterExclude)}" oninput="setExclude(this.value)" placeholder="hide text">`
+  html += `<input type="text" id="filter-exclude" value="${esc(filterExclude)}" placeholder="hide text">`
   html += '</div>'
   html += '<div class="toolbar-row">'
   html += `<label for="repo-url">Repo:</label>`
-  html += `<input type="text" id="repo-url" value="${esc(repoUrl)}" oninput="setRepoUrl(this.value)" placeholder="https://github.com/user/repo">`
+  html += `<input type="text" id="repo-url" value="${esc(repoUrl)}" placeholder="https://github.com/user/repo">`
   html += '</div>'
   html += '</div>'
 
@@ -337,7 +335,7 @@ function render() {
       ? byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
       : byFile.get(file)
     html += '<div class="file-group">'
-    html += `<div class="file-header" onclick="if(event.target.tagName!=='A')this.parentElement.classList.toggle('collapsed')"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
+    html += `<div class="file-header"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
     html += '<div class="file-body">'
     for (const f of items) {
       const isCritical = f.critical || f.severity === 'critical'
@@ -363,52 +361,12 @@ function render() {
     html += '</div></div>'
   }
 
-  html += '<button class="reset-btn" onclick="resetView()">Load another file</button>'
+  html += '<button class="reset-btn" id="reset-btn">Load another file</button>'
 
   report.innerHTML = html
   report.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `${type} results - deepview`
-}
-
-function toggleSeverity(sev) {
-  filterSeverity = filterSeverity === sev ? 'all' : sev
-  render()
-}
-
-function setSort(value) {
-  sortBy = value
-  render()
-}
-
-function setSource(value) {
-  filterSource = value
-  render()
-}
-
-function setConfMin(value) {
-  filterConfMin = value === '' ? '' : parseInt(value, 10)
-  render()
-}
-
-function setConfMax(value) {
-  filterConfMax = value === '' ? '' : parseInt(value, 10)
-  render()
-}
-
-function setInclude(value) {
-  filterInclude = value
-  renderKeepFocus('filter-include')
-}
-
-function setExclude(value) {
-  filterExclude = value
-  renderKeepFocus('filter-exclude')
-}
-
-function setRepoUrl(value) {
-  repoUrl = value
-  renderKeepFocus('repo-url')
 }
 
 function renderKeepFocus(inputId) {
@@ -426,6 +384,45 @@ function resetView() {
   dropZone.classList.remove('hidden')
   document.title = 'deepview results'
 }
+
+// Event delegation — all interactive elements handled here, no inline handlers
+report.addEventListener('click', (e) => {
+  // Severity stat toggle
+  const stat = e.target.closest('[data-sev]')
+  if (stat) {
+    const sev = stat.dataset.sev
+    filterSeverity = filterSeverity === sev ? 'all' : sev
+    render()
+    return
+  }
+  // File header collapse (skip if clicking a link)
+  const header = e.target.closest('.file-header')
+  if (header && e.target.tagName !== 'A') {
+    header.parentElement.classList.toggle('collapsed')
+    return
+  }
+  // Reset button
+  if (e.target.closest('#reset-btn')) {
+    resetView()
+  }
+})
+
+report.addEventListener('change', (e) => {
+  const id = e.target.id
+  const val = e.target.value
+  if (id === 'sort-select') { sortBy = val; render() }
+  else if (id === 'source-select') { filterSource = val; render() }
+  else if (id === 'conf-min') { filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
+  else if (id === 'conf-max') { filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
+})
+
+report.addEventListener('input', (e) => {
+  const id = e.target.id
+  const val = e.target.value
+  if (id === 'filter-include') { filterInclude = val; renderKeepFocus(id) }
+  else if (id === 'filter-exclude') { filterExclude = val; renderKeepFocus(id) }
+  else if (id === 'repo-url') { repoUrl = val; renderKeepFocus(id) }
+})
 </script>
 </body>
 </html>
