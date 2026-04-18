@@ -122,7 +122,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 <div id="drop-zone">
   <div class="drop-prompt">
     <h1>deepview results viewer</h1>
-    <p>Drop a JSON results file here to visualize it</p>
+    <p>Drop one or more JSON results files here to visualize them (multiple files merge by source filename)</p>
   </div>
 </div>
 
@@ -136,8 +136,11 @@ const NODE_MODULES_RE = /(^|\/)node_modules\//
 const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
 
-let currentData = null
-let currentFileName = ''
+// Multiple reports can be loaded and are merged on render. The grouping is
+// by finding file, so findings for the same source file from different
+// reports (e.g. security + correctness) collapse into the same file-group.
+// Filters stay shared across all loaded reports.
+let reports = []
 let filterSeverity = 'all'
 let filterSource = 'all'
 let filterConfMin = 8
@@ -147,35 +150,58 @@ let filterExclude = ''
 let repoUrl = ''
 let sortBy = 'file'
 
-// Prevent default drag behavior everywhere
+function resetFilters() {
+  filterSeverity = 'all'
+  filterSource = 'all'
+  filterConfMin = 8
+  filterConfMax = ''
+  filterInclude = ''
+  filterExclude = ''
+  sortBy = 'file'
+}
+
+// Prevent default drag behavior everywhere. We also accept drops anywhere on
+// the page (not just the drop zone) once a report is visible, so the user
+// can keep dropping more files on top of the already-rendered view to merge
+// them in. The drop zone itself stays as the primary target before any
+// report is loaded.
 document.addEventListener('dragover', (e) => e.preventDefault())
-document.addEventListener('drop', (e) => e.preventDefault())
+document.addEventListener('drop', (e) => {
+  e.preventDefault()
+  if (reports.length === 0) return // let dropZone handler own the first drop
+  addFiles(e.dataTransfer.files)
+})
 
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover') })
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'))
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault()
   dropZone.classList.remove('hover')
-  const file = e.dataTransfer.files[0]
-  if (file) readFile(file)
+  addFiles(e.dataTransfer.files)
 })
 
-function readFile(file) {
+function addFiles(fileList) {
+  for (const file of fileList) addReport(file)
+}
+
+function addReport(file) {
   const reader = new FileReader()
   reader.onload = () => {
     try {
-      currentData = JSON.parse(reader.result)
-      currentFileName = file.name
-      filterSeverity = 'all'
-      filterSource = 'all'
-      filterConfMin = 8
-      filterConfMax = ''
-      filterInclude = ''
-      filterExclude = ''
-      sortBy = 'file'
+      const data = JSON.parse(reader.result)
+      // Reset filters only for the very first report. Subsequent drops keep
+      // the user's current filter state so merging a second report doesn't
+      // wipe their tuning.
+      const isFirst = reports.length === 0
+      reports.push({
+        type: data.type || 'analysis',
+        fileName: file.name,
+        findings: data.findings || [],
+      })
+      if (isFirst) resetFilters()
       render()
     } catch (err) {
-      alert('Failed to parse JSON: ' + err.message)
+      alert(`Failed to parse ${file.name}: ${err.message}`)
     }
   }
   reader.readAsText(file)
@@ -241,10 +267,16 @@ function applySorting(findings) {
 }
 
 function render() {
-  const data = currentData
-  if (!data) return
-  const allFindings = data.findings || []
-  const type = data.type || 'analysis'
+  if (reports.length === 0) return
+  // Merge across all loaded reports. Findings keep their original fields
+  // (no reportType tagging — the UI groups by source file, not by which
+  // report a finding came from).
+  const allFindings = reports.flatMap((r) => r.findings)
+  // Preserve first-seen order for the type label so "security, correctness"
+  // reads in load order rather than alphabetical.
+  const types = [...new Set(reports.map((r) => r.type))]
+  const typeLabel = types.join(', ')
+  const fileNames = reports.map((r) => r.fileName)
 
   // Counts always reflect all findings
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
@@ -253,8 +285,11 @@ function render() {
   const filtered = applySorting(applyFilters(allFindings))
 
   let html = '<header>'
-  html += `<h1>${esc(type)} results</h1>`
-  html += `<div class="meta">${esc(currentFileName)} &mdash; ${allFindings.length} finding${allFindings.length !== 1 ? 's' : ''}</div>`
+  html += `<h1>${esc(typeLabel)} results</h1>`
+  const reportLabel = reports.length === 1
+    ? esc(fileNames[0])
+    : `${reports.length} reports: ${esc(fileNames.join(', '))}`
+  html += `<div class="meta">${reportLabel} &mdash; ${allFindings.length} finding${allFindings.length !== 1 ? 's' : ''}</div>`
   html += '</header>'
 
   // Stats — clickable severity filter
@@ -317,7 +352,7 @@ function render() {
   if (filtered.length === 0 && allFindings.length > 0) {
     html += `<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
   } else if (allFindings.length === 0) {
-    html += `<p style="color:var(--green)">No ${esc(type)} issues found.</p>`
+    html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
   }
 
   // Group by file, preserving sort order within groups
@@ -361,12 +396,12 @@ function render() {
     html += '</div></div>'
   }
 
-  html += '<button class="reset-btn" id="reset-btn">Load another file</button>'
+  html += '<button class="reset-btn" id="reset-btn">Clear all (drop more files to merge)</button>'
 
   report.innerHTML = html
   report.classList.add('active')
   dropZone.classList.add('hidden')
-  document.title = `${type} results - deepview`
+  document.title = `${typeLabel} results - deepview`
 }
 
 function renderKeepFocus(inputId) {
@@ -378,7 +413,7 @@ function renderKeepFocus(inputId) {
 }
 
 function resetView() {
-  currentData = null
+  reports = []
   report.classList.remove('active')
   report.innerHTML = ''
   dropZone.classList.remove('hidden')
