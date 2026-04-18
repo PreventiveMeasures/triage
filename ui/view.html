@@ -90,6 +90,14 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .finding:last-child { border-bottom: none; }
 .finding.is-critical { background: var(--critical-bg); }
 .finding.hidden { display: none; }
+/* Manual marker colors — click a dot under a finding to tag it. Ordered
+   after .is-critical so manual marks override the critical auto-bg.
+   Red is deliberately hotter than --critical-bg so a user-marked
+   finding stays visually distinct from auto-highlighted criticals. */
+.finding.mark-red { background: #6b1820; }
+.finding.mark-blue { background: #1a2f5a; }
+.finding.mark-green { background: #1a4a2a; }
+.finding.mark-gray { background: #2a2f37; }
 
 .finding-left { align-self: start; text-align: center; min-width: 4rem; }
 .badge {
@@ -119,12 +127,53 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
 #report.show-metadata .finding .hashes { display: block; }
 
+/* Per-finding action row: color dots + delete. Sits under the finding
+   content, right-aligned. In-memory only — marks and deletions are
+   lost on reload, which matches the rest of the UI (reports come from
+   dropped JSON; there's no persistence layer). Hidden on print. */
+.finding .marks {
+  grid-column: 2; display: flex; gap: .35rem; justify-content: flex-end;
+  margin-top: .4rem; align-items: center;
+}
+.finding .marks .mark-dot {
+  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
+  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
+}
+.finding .marks .mark-dot:hover { opacity: 1; transform: scale(1.15); }
+.finding .marks .mark-dot.active { opacity: 1; border-color: var(--text); }
+.finding .marks .mark-dot-red   { background: #6b1820; }
+.finding .marks .mark-dot-blue  { background: #1a2f5a; }
+.finding .marks .mark-dot-green { background: #1a4a2a; }
+.finding .marks .mark-dot-gray  { background: #2a2f37; }
+.finding .marks .mark-x {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
+  cursor: pointer; margin-left: .25rem;
+}
+.finding .marks .mark-x:hover { color: var(--critical); border-color: var(--critical); }
+
 .reset-btn {
   display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   color: var(--text); font-size: .85rem; cursor: pointer;
 }
 .reset-btn:hover { border-color: var(--accent); }
+
+/* Print: strip interactive widgets and keep each finding on one page.
+   The toolbar + stats + reset button are hidden because they're
+   noise on paper; mark-dots and x-button likewise. Individual
+   findings get `break-inside: avoid` so a finding won't be split
+   across a page boundary (file-groups can span pages — a single
+   file with many findings is more common than a finding long
+   enough to need its own page). */
+@media print {
+  body { background: #fff; color: #000; }
+  .toolbar, .stats, .reset-btn, .finding .marks { display: none !important; }
+  #drop-zone { display: none !important; }
+  #report { max-width: none; padding: 0; }
+  .finding { break-inside: avoid; page-break-inside: avoid; }
+  .file-header { break-after: avoid; page-break-after: avoid; }
+}
 </style>
 </head>
 <body>
@@ -168,6 +217,16 @@ let sortBy = 'file'
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
 let showLines = false
 let showMetadata = false
+// Per-finding manual annotations. Both are in-memory only (cleared on
+// resetView) — by design, since the "reports" themselves come from
+// dropped JSON and aren't persisted either. Keyed by a synthetic
+// numeric id assigned at ingest time (see `nextFindingId`), which
+// survives re-renders where plain-object identity would not.
+//   markers:    Map<id, 'red' | 'blue' | 'green' | 'gray'>
+//   deletedIds: Set<id> — hidden from the list, filtered out in applyFilters
+let markers = new Map()
+let deletedIds = new Set()
+let nextFindingId = 0
 
 function resetFilters() {
   filterSeverity = 'all'
@@ -212,10 +271,15 @@ function addReport(file) {
       // the user's current filter state so merging a second report doesn't
       // wipe their tuning.
       const isFirst = reports.length === 0
+      // Stamp a stable id on each finding at ingest so markers/deletions
+      // can reference it across re-renders. A bare incrementing counter
+      // is enough — findings are per-session, there's no persistence
+      // that would require a content-derived key.
+      const findings = (data.findings || []).map((f) => ({ ...f, _id: nextFindingId++ }))
       reports.push({
         type: data.type || 'analysis',
         fileName: file.name,
-        findings: data.findings || [],
+        findings,
       })
       if (isFirst) resetFilters()
       render()
@@ -289,8 +353,10 @@ function render() {
   if (reports.length === 0) return
   // Merge across all loaded reports. Findings keep their original fields
   // (no reportType tagging — the UI groups by source file, not by which
-  // report a finding came from).
-  const allFindings = reports.flatMap((r) => r.findings)
+  // report a finding came from). Deleted-by-user findings are filtered
+  // here, not in applyFilters, so the "X of Y" counter and severity
+  // stats reflect only the kept set.
+  const allFindings = reports.flatMap((r) => r.findings).filter((f) => !deletedIds.has(f._id))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(reports.map((r) => r.type))]
@@ -396,7 +462,9 @@ function render() {
     html += '<div class="file-body">'
     for (const f of items) {
       const isCritical = f.critical || f.severity === 'critical'
-      html += `<div class="finding${isCritical ? ' is-critical' : ''}">`
+      const mark = markers.get(f._id)
+      const markClass = mark ? ` mark-${mark}` : ''
+      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}" data-fid="${f._id}">`
       html += '<div class="finding-left">'
       html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
       if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
@@ -413,6 +481,13 @@ function render() {
         if (f.treeHash) parts.push(`tree: ${esc(f.treeHash)}`)
         html += `<div class="hashes">${parts.join(' | ')}</div>`
       }
+      html += '<div class="marks">'
+      for (const color of ['red', 'blue', 'green', 'gray']) {
+        const active = mark === color ? ' active' : ''
+        html += `<button class="mark-dot mark-dot-${color}${active}" data-color="${color}" title="mark ${color} (click again to clear)"></button>`
+      }
+      html += `<button class="mark-x" title="delete (in-memory only)">×</button>`
+      html += '</div>'
       html += '</div></div>'
     }
     html += '</div></div>'
@@ -438,6 +513,9 @@ function renderKeepFocus(inputId) {
 
 function resetView() {
   reports = []
+  markers = new Map()
+  deletedIds = new Set()
+  nextFindingId = 0
   report.classList.remove('active')
   report.innerHTML = ''
   dropZone.classList.remove('hidden')
@@ -446,6 +524,41 @@ function resetView() {
 
 // Event delegation — all interactive elements handled here, no inline handlers
 report.addEventListener('click', (e) => {
+  // Mark-dot: toggle the per-finding marker color in-place (no re-render —
+  // a class flip on the `.finding` element is enough, and avoids scroll
+  // jump + losing whichever dot the user just clicked).
+  const dot = e.target.closest('.mark-dot')
+  if (dot) {
+    const findingEl = dot.closest('.finding')
+    const id = Number(findingEl.dataset.fid)
+    const color = dot.dataset.color
+    const current = markers.get(id)
+    // Clear any previous mark class (at most one) and its dot's `active` flag
+    if (current) {
+      findingEl.classList.remove(`mark-${current}`)
+      const prevDot = findingEl.querySelector(`.mark-dot-${current}`)
+      if (prevDot) prevDot.classList.remove('active')
+    }
+    if (current === color) {
+      markers.delete(id)
+    } else {
+      markers.set(id, color)
+      findingEl.classList.add(`mark-${color}`)
+      dot.classList.add('active')
+    }
+    return
+  }
+  // Delete-x: hide the finding from the merged list. Re-render because
+  // it changes the "X of Y" counter and potentially empties a file-group.
+  const xBtn = e.target.closest('.mark-x')
+  if (xBtn) {
+    const findingEl = xBtn.closest('.finding')
+    const id = Number(findingEl.dataset.fid)
+    deletedIds.add(id)
+    markers.delete(id)
+    render()
+    return
+  }
   // Severity stat toggle
   const stat = e.target.closest('[data-sev]')
   if (stat) {
