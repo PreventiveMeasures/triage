@@ -104,10 +104,20 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .conf-score strong { color: var(--text); font-size: .85rem; }
 
 .finding .desc { grid-column: 2; }
-.finding .line-num { color: var(--muted); font-size: .8rem; }
+/* `line-num` (the `line N` / `(found analyzing X)` spans) and `hashes`
+   (the `file: sha512… | tree: …` block) are hidden by default and opt-in
+   via the "line numbers" / "metadata" toolbar checkboxes. Default-off
+   keeps the view dense for scanning; turn on when you need the anchor
+   info to open the source at a specific line or to reason about which
+   cached entry a finding came from. */
+.finding .line-num { color: var(--muted); font-size: .8rem; display: none; }
+#report.show-lines .finding .line-num { display: inline; }
+.toolbar .checkbox-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); cursor: pointer; }
+.toolbar .checkbox-label input { margin: 0; cursor: pointer; }
 .finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
 .finding .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
-.finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; }
+.finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
+#report.show-metadata .finding .hashes { display: block; }
 
 .reset-btn {
   display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
@@ -149,6 +159,15 @@ let filterInclude = ''
 let filterExclude = ''
 let repoUrl = ''
 let sortBy = 'file'
+// Display toggles — orthogonal to filters (don't affect which findings
+// show), so they live outside resetFilters so a filter reset or a new
+// report drop doesn't wipe them. Both default off for a denser view;
+// flip on when you need to jump to a specific line or inspect the
+// source-hash provenance.
+//   showLines:    `line N` / `(found analyzing X)` spans
+//   showMetadata: `file: <sha> | tree: <sha>` hashes block
+let showLines = false
+let showMetadata = false
 
 function resetFilters() {
   filterSeverity = 'all'
@@ -335,6 +354,9 @@ function render() {
   html += `<option value="">max</option>`
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
+  html += `<div class="sep"></div>`
+  html += `<label class="checkbox-label"><input type="checkbox" id="show-lines"${showLines ? ' checked' : ''}> line numbers</label>`
+  html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${showMetadata ? ' checked' : ''}> metadata</label>`
   html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
@@ -400,6 +422,8 @@ function render() {
 
   report.innerHTML = html
   report.classList.add('active')
+  report.classList.toggle('show-lines', showLines)
+  report.classList.toggle('show-metadata', showMetadata)
   dropZone.classList.add('hidden')
   document.title = `${typeLabel} results - deepview`
 }
@@ -449,6 +473,11 @@ report.addEventListener('change', (e) => {
   else if (id === 'source-select') { filterSource = val; render() }
   else if (id === 'conf-min') { filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
+  // Toggle `show-lines` / `show-metadata` on #report without a full
+  // re-render — avoids reallocating the checkbox mid-click (which
+  // would blur it) and is cheap since these are pure CSS effects.
+  else if (id === 'show-lines') { showLines = e.target.checked; report.classList.toggle('show-lines', showLines) }
+  else if (id === 'show-metadata') { showMetadata = e.target.checked; report.classList.toggle('show-metadata', showMetadata) }
 })
 
 report.addEventListener('input', (e) => {
