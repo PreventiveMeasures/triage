@@ -368,10 +368,25 @@ function addReport(file) {
       // the user's current filter state so merging a second report doesn't
       // wipe their tuning.
       const isFirst = reports.length === 0
-      // Stamp a session-local `_id` on each finding as a fallback key for
-      // findings that lack the exporter-provided uuid `id`. `keyOf(f)`
-      // prefers `f.id` (persistent) and falls back to `String(f._id)`.
-      const findings = (data.findings || []).map((f) => ({ ...f, _id: nextFindingId++ }))
+      // Dedup by exporter-provided uuid id. When the same finding appears
+      // in two dropped reports (e.g. reruns, overlapping scopes) only the
+      // first copy is kept — subsequent copies are dropped at ingest so
+      // they never hit `reports[].findings`. Findings without an `id`
+      // (legacy JSON or pre-uuid exports) can't be deduped and always
+      // pass through.
+      const seenIds = new Set(reports.flatMap((r) => r.findings).map((f) => f.id).filter(Boolean))
+      let dupeCount = 0
+      const findings = []
+      for (const f of (data.findings || [])) {
+        if (f.id && seenIds.has(f.id)) { dupeCount++; continue }
+        if (f.id) seenIds.add(f.id)
+        // Stamp a session-local `_id` on each finding as a fallback key
+        // for findings that lack the exporter-provided uuid `id`.
+        // `keyOf(f)` prefers `f.id` (persistent) and falls back to
+        // `String(f._id)`.
+        findings.push({ ...f, _id: nextFindingId++ })
+      }
+      if (dupeCount > 0) console.log(`${file.name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
       reports.push({
         type: data.type || 'analysis',
         fileName: file.name,
