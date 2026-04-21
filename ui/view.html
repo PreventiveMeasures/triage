@@ -242,20 +242,84 @@ let sortBy = 'file'
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
 let showLines = false
 let showMetadata = false
-// Per-finding manual annotations. All in-memory only (cleared on
-// resetView) — by design, since the "reports" themselves come from
-// dropped JSON and aren't persisted either. Keyed by a synthetic
-// numeric id assigned at ingest time (see `nextFindingId`), which
-// survives re-renders where plain-object identity would not.
-//   markers:     Map<id, 'red' | 'blue' | 'green' | 'gray'>
-//   deletedIds:  Set<id> — soft-deleted findings. Hidden from the
-//                main view; the Trash button toggles a view that
-//                shows only these, with a Restore button to undo.
+// Per-finding manual annotations. Keyed by `keyOf(f)` = `f.id ?? String(f._id)`:
+// the export's derived uuid when available (persists across reloads via
+// localStorage), else a session-local numeric id (session-only). See
+// saveTriage / loadTriage below — uuid-shaped keys round-trip through a
+// single `deepview.triage` localStorage entry; numeric-_id keys do not.
+//   markers:     Map<key, 'red' | 'blue' | 'green' | 'gray'>
+//   deletedIds:  Set<key> — soft-deleted findings. Hidden from the main
+//                view; the Trash button toggles a view that shows only
+//                these, with a Restore button to undo.
 //   showDeleted: when true, render only findings in `deletedIds`.
 let markers = new Map()
 let deletedIds = new Set()
 let showDeleted = false
 let nextFindingId = 0
+
+function keyOf(f) { return f.id ?? String(f._id) }
+
+// --- Triage persistence --------------------------------------------------
+// Markers + deletions survive page reload via `localStorage['deepview.triage']`.
+// Payload shape: `{ <uuid>: { color?, deleted? } }` — one entry per
+// triaged finding, color/deleted both optional (omitted when absent so
+// a clean finding leaves no trace). JSON-encoded, brotli-compressed,
+// base64-encoded. Only keys matching UUID_RE are stored — session-only
+// numeric keys are filtered out so a fresh drop of the same report
+// re-applies triage under stable ids.
+const TRIAGE_KEY = 'deepview.triage'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+
+async function compressBrotli(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('br'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+async function decompressBrotli(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('br'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+async function saveTriage() {
+  try {
+    const entries = {}
+    for (const [k, color] of markers) {
+      if (!UUID_RE.test(k)) continue
+      entries[k] = { ...(entries[k] || {}), color }
+    }
+    for (const k of deletedIds) {
+      if (!UUID_RE.test(k)) continue
+      entries[k] = { ...(entries[k] || {}), deleted: true }
+    }
+    if (Object.keys(entries).length === 0) {
+      localStorage.removeItem(TRIAGE_KEY)
+      return
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(entries))
+    const compressed = await compressBrotli(bytes)
+    localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
+  } catch (err) {
+    console.warn('Failed to save triage:', err)
+  }
+}
+
+async function loadTriage() {
+  try {
+    const raw = localStorage.getItem(TRIAGE_KEY)
+    if (!raw) return
+    const compressed = Uint8Array.fromBase64(raw)
+    const decompressed = await decompressBrotli(compressed)
+    const entries = JSON.parse(new TextDecoder().decode(decompressed))
+    for (const [k, v] of Object.entries(entries)) {
+      if (v && v.color) markers.set(k, v.color)
+      if (v && v.deleted) deletedIds.add(k)
+    }
+  } catch (err) {
+    console.warn('Failed to load triage:', err)
+  }
+}
+
+let loadPromise = loadTriage()
 
 function resetFilters() {
   filterSeverity = 'all'
@@ -293,17 +357,20 @@ function addFiles(fileList) {
 
 function addReport(file) {
   const reader = new FileReader()
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
+      // Persistent triage (markers/deletedIds keyed by uuid) is loaded
+      // once at module init; await it before rendering so the first
+      // drop already shows stored marks/deletions for matching findings.
+      await loadPromise
       const data = JSON.parse(reader.result)
       // Reset filters only for the very first report. Subsequent drops keep
       // the user's current filter state so merging a second report doesn't
       // wipe their tuning.
       const isFirst = reports.length === 0
-      // Stamp a stable id on each finding at ingest so markers/deletions
-      // can reference it across re-renders. A bare incrementing counter
-      // is enough — findings are per-session, there's no persistence
-      // that would require a content-derived key.
+      // Stamp a session-local `_id` on each finding as a fallback key for
+      // findings that lack the exporter-provided uuid `id`. `keyOf(f)`
+      // prefers `f.id` (persistent) and falls back to `String(f._id)`.
       const findings = (data.findings || []).map((f) => ({ ...f, _id: nextFindingId++ }))
       reports.push({
         type: data.type || 'analysis',
@@ -386,9 +453,9 @@ function render() {
   // in applyFilters, so the "X of Y" counter and severity stats reflect
   // the set currently being viewed (live findings, or the trash).
   const mergedFindings = reports.flatMap((r) => r.findings)
-  const deletedCount = mergedFindings.reduce((n, f) => n + (deletedIds.has(f._id) ? 1 : 0), 0)
+  const deletedCount = mergedFindings.reduce((n, f) => n + (deletedIds.has(keyOf(f)) ? 1 : 0), 0)
   const allFindings = mergedFindings.filter((f) =>
-    showDeleted ? deletedIds.has(f._id) : !deletedIds.has(f._id))
+    showDeleted ? deletedIds.has(keyOf(f)) : !deletedIds.has(keyOf(f)))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(reports.map((r) => r.type))]
@@ -503,10 +570,11 @@ function render() {
     html += '<div class="file-body">'
     for (const f of items) {
       const isCritical = f.critical || f.severity === 'critical'
-      const mark = markers.get(f._id)
+      const key = keyOf(f)
+      const mark = markers.get(key)
       const markClass = mark ? ` mark-${mark}` : ''
       const deletedClass = showDeleted ? ' deleted' : ''
-      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}${deletedClass}" data-fid="${f._id}">`
+      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}${deletedClass}" data-fid="${esc(key)}">`
       html += '<div class="finding-left">'
       html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
       if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
@@ -567,6 +635,10 @@ function resetView() {
   report.innerHTML = ''
   dropZone.classList.remove('hidden')
   document.title = 'deepview results'
+  // "Clear all" wipes the session but not the persisted triage — so
+  // re-dropping the same report re-applies marks/deletions. Refresh
+  // the load promise so `addReport` awaits the new load cycle.
+  loadPromise = loadTriage()
 }
 
 // Event delegation — all interactive elements handled here, no inline handlers
@@ -577,7 +649,7 @@ report.addEventListener('click', (e) => {
   const dot = e.target.closest('.mark-dot')
   if (dot) {
     const findingEl = dot.closest('.finding')
-    const id = Number(findingEl.dataset.fid)
+    const id = findingEl.dataset.fid
     const color = dot.dataset.color
     const current = markers.get(id)
     // Clear any previous mark class (at most one) and its dot's `active` flag
@@ -593,6 +665,7 @@ report.addEventListener('click', (e) => {
       findingEl.classList.add(`mark-${color}`)
       dot.classList.add('active')
     }
+    saveTriage()
     return
   }
   // Delete-x: soft-delete — the finding is moved to the trash (visible
@@ -602,8 +675,9 @@ report.addEventListener('click', (e) => {
   const xBtn = e.target.closest('.mark-x')
   if (xBtn) {
     const findingEl = xBtn.closest('.finding')
-    const id = Number(findingEl.dataset.fid)
+    const id = findingEl.dataset.fid
     deletedIds.add(id)
+    saveTriage()
     render()
     return
   }
@@ -613,8 +687,9 @@ report.addEventListener('click', (e) => {
   const restoreBtn = e.target.closest('.mark-restore')
   if (restoreBtn) {
     const findingEl = restoreBtn.closest('.finding')
-    const id = Number(findingEl.dataset.fid)
+    const id = findingEl.dataset.fid
     deletedIds.delete(id)
+    saveTriage()
     render()
     return
   }
