@@ -151,6 +151,30 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   cursor: pointer; margin-left: .25rem;
 }
 .finding .marks .mark-x:hover { color: var(--critical); border-color: var(--critical); }
+/* Restore button — rendered in place of `mark-x` while in trash view.
+   Green hover mirrors the semantic of "undo delete". */
+.finding .marks .mark-restore {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .45rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; margin-left: .25rem;
+}
+.finding .marks .mark-restore:hover { color: var(--green); border-color: var(--green); }
+
+/* Trash toggle — flips the render path from "non-deleted" to "deleted
+   only". Active state uses the critical color to signal "not your
+   normal view". */
+.toolbar .trash-btn {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+}
+.toolbar .trash-btn:hover { border-color: var(--accent); }
+.toolbar .trash-btn.active { border-color: var(--critical); color: var(--critical); }
+
+/* Findings shown in trash view carry `.deleted` as a semantic label
+   (matches the user-facing notion of "marked as deleted"). The opacity
+   nudge keeps the list readable while making clear these aren't
+   active findings. */
+.finding.deleted { opacity: 0.75; }
 
 .reset-btn {
   display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
@@ -172,6 +196,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   #drop-zone { display: none !important; }
   #report { max-width: none; padding: 0; }
   .finding { break-inside: avoid; page-break-inside: avoid; }
+  .finding.deleted { opacity: 1; }
   .file-header { break-after: avoid; page-break-after: avoid; }
 }
 </style>
@@ -217,15 +242,19 @@ let sortBy = 'file'
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
 let showLines = false
 let showMetadata = false
-// Per-finding manual annotations. Both are in-memory only (cleared on
+// Per-finding manual annotations. All in-memory only (cleared on
 // resetView) — by design, since the "reports" themselves come from
 // dropped JSON and aren't persisted either. Keyed by a synthetic
 // numeric id assigned at ingest time (see `nextFindingId`), which
 // survives re-renders where plain-object identity would not.
-//   markers:    Map<id, 'red' | 'blue' | 'green' | 'gray'>
-//   deletedIds: Set<id> — hidden from the list, filtered out in applyFilters
+//   markers:     Map<id, 'red' | 'blue' | 'green' | 'gray'>
+//   deletedIds:  Set<id> — soft-deleted findings. Hidden from the
+//                main view; the Trash button toggles a view that
+//                shows only these, with a Restore button to undo.
+//   showDeleted: when true, render only findings in `deletedIds`.
 let markers = new Map()
 let deletedIds = new Set()
+let showDeleted = false
 let nextFindingId = 0
 
 function resetFilters() {
@@ -353,10 +382,13 @@ function render() {
   if (reports.length === 0) return
   // Merge across all loaded reports. Findings keep their original fields
   // (no reportType tagging — the UI groups by source file, not by which
-  // report a finding came from). Deleted-by-user findings are filtered
-  // here, not in applyFilters, so the "X of Y" counter and severity
-  // stats reflect only the kept set.
-  const allFindings = reports.flatMap((r) => r.findings).filter((f) => !deletedIds.has(f._id))
+  // report a finding came from). The trash-view split happens here, not
+  // in applyFilters, so the "X of Y" counter and severity stats reflect
+  // the set currently being viewed (live findings, or the trash).
+  const mergedFindings = reports.flatMap((r) => r.findings)
+  const deletedCount = mergedFindings.reduce((n, f) => n + (deletedIds.has(f._id) ? 1 : 0), 0)
+  const allFindings = mergedFindings.filter((f) =>
+    showDeleted ? deletedIds.has(f._id) : !deletedIds.has(f._id))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(reports.map((r) => r.type))]
@@ -374,7 +406,11 @@ function render() {
   const reportLabel = reports.length === 1
     ? esc(fileNames[0])
     : `${reports.length} reports: ${esc(fileNames.join(', '))}`
-  html += `<div class="meta">${reportLabel} &mdash; ${allFindings.length} finding${allFindings.length !== 1 ? 's' : ''}</div>`
+  const findingNoun = `finding${allFindings.length !== 1 ? 's' : ''}`
+  const countLabel = showDeleted
+    ? `Trash: ${allFindings.length} deleted ${findingNoun}`
+    : `${allFindings.length} ${findingNoun}`
+  html += `<div class="meta">${reportLabel} &mdash; ${countLabel}</div>`
   html += '</header>'
 
   // Stats — clickable severity filter
@@ -423,6 +459,9 @@ function render() {
   html += `<div class="sep"></div>`
   html += `<label class="checkbox-label"><input type="checkbox" id="show-lines"${showLines ? ' checked' : ''}> line numbers</label>`
   html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${showMetadata ? ' checked' : ''}> metadata</label>`
+  const trashTitle = showDeleted ? 'exit trash view' : 'show deleted findings'
+  const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
+  html += `<button type="button" id="toggle-trash" class="trash-btn${showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
   html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
@@ -437,7 +476,9 @@ function render() {
   html += '</div>'
   html += '</div>'
 
-  if (filtered.length === 0 && allFindings.length > 0) {
+  if (showDeleted && allFindings.length === 0) {
+    html += `<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
+  } else if (filtered.length === 0 && allFindings.length > 0) {
     html += `<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
   } else if (allFindings.length === 0) {
     html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
@@ -464,7 +505,8 @@ function render() {
       const isCritical = f.critical || f.severity === 'critical'
       const mark = markers.get(f._id)
       const markClass = mark ? ` mark-${mark}` : ''
-      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}" data-fid="${f._id}">`
+      const deletedClass = showDeleted ? ' deleted' : ''
+      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}${deletedClass}" data-fid="${f._id}">`
       html += '<div class="finding-left">'
       html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
       if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
@@ -486,7 +528,11 @@ function render() {
         const active = mark === color ? ' active' : ''
         html += `<button class="mark-dot mark-dot-${color}${active}" data-color="${color}" title="mark ${color} (click again to clear)"></button>`
       }
-      html += `<button class="mark-x" title="delete (in-memory only)">×</button>`
+      if (showDeleted) {
+        html += `<button class="mark-restore" title="restore (remove from trash)">restore</button>`
+      } else {
+        html += `<button class="mark-x" title="delete (in-memory only)">×</button>`
+      }
       html += '</div>'
       html += '</div></div>'
     }
@@ -515,6 +561,7 @@ function resetView() {
   reports = []
   markers = new Map()
   deletedIds = new Set()
+  showDeleted = false
   nextFindingId = 0
   report.classList.remove('active')
   report.innerHTML = ''
@@ -548,14 +595,34 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  // Delete-x: hide the finding from the merged list. Re-render because
-  // it changes the "X of Y" counter and potentially empties a file-group.
+  // Delete-x: soft-delete — the finding is moved to the trash (visible
+  // via the Trash toggle) rather than discarded. Re-render because it
+  // changes the "X of Y" counter and potentially empties a file-group.
+  // Markers are preserved so restore recovers the full prior state.
   const xBtn = e.target.closest('.mark-x')
   if (xBtn) {
     const findingEl = xBtn.closest('.finding')
     const id = Number(findingEl.dataset.fid)
     deletedIds.add(id)
-    markers.delete(id)
+    render()
+    return
+  }
+  // Restore: shown in place of mark-x while in trash view. Flips the
+  // finding back out of `deletedIds`; it reappears in the main view on
+  // next exit from trash mode.
+  const restoreBtn = e.target.closest('.mark-restore')
+  if (restoreBtn) {
+    const findingEl = restoreBtn.closest('.finding')
+    const id = Number(findingEl.dataset.fid)
+    deletedIds.delete(id)
+    render()
+    return
+  }
+  // Trash toggle — switches the render path from "non-deleted" to
+  // "deleted only". Filters (severity, confidence, text match) still
+  // apply, just against the trash rather than the live set.
+  if (e.target.closest('#toggle-trash')) {
+    showDeleted = !showDeleted
     render()
     return
   }
