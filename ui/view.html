@@ -271,12 +271,12 @@ const TRIAGE_KEY = 'deepview.triage'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 async function compressBrotli(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('br'))
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('brotli'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
 async function decompressBrotli(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('br'))
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('brotli'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
