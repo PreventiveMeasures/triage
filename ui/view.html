@@ -585,6 +585,20 @@ function lineLink(file, line) {
   return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
 }
 
+// Strip `[export: <name>]` markers from prose when they match the
+// finding's own `exportName`. Isolate-mode injects these markers into
+// every finding/CRITICAL line of a merged per-file response so the
+// merge stays traceable to individual exports (see src/isolate.js),
+// but once post-process has lifted the name out into `f.exportName`
+// the inline marker just duplicates metadata already on the finding.
+// Markers whose name does NOT match `f.exportName` are left alone —
+// they're still useful context (e.g. "this export affects <other>").
+function stripExportMarker(text, exportName) {
+  if (!exportName || !text) return text
+  const escaped = exportName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
+}
+
 function findingText(f) {
   return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
 }
@@ -664,9 +678,9 @@ function renderTabBody(f, isActive) {
   html += '<div>'
   html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
-  html += `<div class="desc">${esc(f.description)}</div>`
-  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
-  if (f.confidenceReason) html += `<div class="conf-reason">${esc(f.confidenceReason)}</div>`
+  html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
+  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
+  if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
   if (f.fileHash || f.treeHash) {
     const parts = []
     if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
