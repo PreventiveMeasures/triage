@@ -85,7 +85,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 .finding {
   padding: .75rem; border-bottom: 1px solid var(--border);
-  font-size: .875rem; display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem;
+  font-size: .875rem;
 }
 .finding:last-child { border-bottom: none; }
 .finding.is-critical { background: var(--critical-bg); }
@@ -93,11 +93,68 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 /* Manual marker colors — click a dot under a finding to tag it. Ordered
    after .is-critical so manual marks override the critical auto-bg.
    Red is deliberately hotter than --critical-bg so a user-marked
-   finding stays visually distinct from auto-highlighted criticals. */
+   finding stays visually distinct from auto-highlighted criticals.
+   For dedup groups these apply ONLY when every tab shares the same
+   color (see groupState() in JS — mismatches use .has-conflict instead). */
 .finding.mark-red { background: #6b1820; }
 .finding.mark-blue { background: #1a2f5a; }
 .finding.mark-green { background: #1a4a2a; }
 .finding.mark-gray { background: #2a2f37; }
+
+/* Dedup groups with per-tab color mismatches — highlight the whole
+   entry and (per spec) ignore each tab's `deleted` flag for rollup.
+   Accent outline draws attention without claiming one specific color. */
+.finding.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+/* Tab strip — shown only for multi-tab groups. Each tab is a severity
+   badge + confidence label; colored tabs carry their own background so
+   per-tab triage is visible without switching to that tab. See sortTabs()
+   in JS for the order: colored first, then severity desc, then confidence
+   desc. The first tab post-sort is the group's "primary" (default active,
+   used for group-level sorting). */
+.finding .tabs {
+  display: flex; gap: .25rem; flex-wrap: wrap;
+  margin-bottom: .5rem; padding-bottom: .35rem;
+  border-bottom: 1px solid var(--border);
+}
+.finding .tab {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: .2rem .5rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; display: inline-flex; align-items: center; gap: .35rem;
+  font-family: inherit;
+}
+.finding .tab:hover { border-color: var(--accent); }
+.finding .tab.active { border-color: var(--accent); background: #1a2233; }
+.finding .tab.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
+.finding .tab.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }
+.finding .tab.tab-mark-green { background: #1a4a2a; border-color: #1a4a2a; }
+.finding .tab.tab-mark-gray  { background: #2a2f37; border-color: #2a2f37; }
+.finding .tab.tab-mark-red.active,
+.finding .tab.tab-mark-blue.active,
+.finding .tab.tab-mark-green.active,
+.finding .tab.tab-mark-gray.active { border-color: var(--text); }
+.finding .tab.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+.finding .tab .tab-conf { color: var(--muted); font-size: .7rem; }
+.finding .tab.tab-mark-red .tab-conf,
+.finding .tab.tab-mark-blue .tab-conf,
+.finding .tab.tab-mark-green .tab-conf,
+.finding .tab.tab-mark-gray .tab-conf { color: var(--text); }
+
+/* Per-tab body. Only the active tab is shown on screen — print CSS
+   below overrides to show ALL tab bodies so paper output preserves
+   the "multiple cases of one finding" framing. The 2-col grid here
+   is what was previously on `.finding` itself. */
+.finding .tab-body {
+  display: none;
+  grid-template-columns: auto 1fr;
+  gap: .25rem .75rem;
+}
+.finding .tab-body.active { display: grid; }
+.finding .tab-body + .tab-body {
+  margin-top: .5rem; padding-top: .5rem;
+  border-top: 1px dashed var(--border);
+}
 
 .finding-left { align-self: start; text-align: center; min-width: 4rem; }
 .badge {
@@ -132,7 +189,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    lost on reload, which matches the rest of the UI (reports come from
    dropped JSON; there's no persistence layer). Hidden on print. */
 .finding .marks {
-  grid-column: 2; display: flex; gap: .35rem; justify-content: flex-end;
+  display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;
 }
 .finding .marks .mark-dot {
@@ -198,6 +255,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   .finding { break-inside: avoid; page-break-inside: avoid; }
   .finding.deleted { opacity: 1; }
   .file-header { break-after: avoid; page-break-after: avoid; }
+  /* Show every tab body stacked — keeps the "multiple cases of one
+     finding" framing on paper. Tab buttons themselves are redundant
+     here since every body is visible. */
+  .finding .tabs { display: none !important; }
+  .finding .tab-body { display: grid !important; }
 }
 </style>
 </head>
@@ -242,7 +304,7 @@ let sortBy = 'file'
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
 let showLines = false
 let showMetadata = false
-// Per-finding manual annotations. Keyed by `keyOf(f)` = `f.id ?? String(f._id)`:
+// Per-finding manual annotations. Keyed by `tabKey(f)` = `f.id ?? String(f._id)`:
 // the export's derived uuid when available (persists across reloads via
 // localStorage), else a session-local numeric id (session-only). See
 // saveTriage / loadTriage below — uuid-shaped keys round-trip through a
@@ -252,12 +314,94 @@ let showMetadata = false
 //                view; the Trash button toggles a view that shows only
 //                these, with a Restore button to undo.
 //   showDeleted: when true, render only findings in `deletedIds`.
+// Both are PER-TAB (i.e. per individual finding even within a dedup
+// group). Group-level rollup is computed on demand in groupState() —
+// mismatched colors across a group's tabs highlight the whole entry;
+// matching colors apply to the whole card; deletion of any one tab in
+// a conflict-free group flags the whole group.
 let markers = new Map()
 let deletedIds = new Set()
 let showDeleted = false
 let nextFindingId = 0
+// Ephemeral per-render state — which tab is active within each dedup
+// group. Keyed by `groupKey(g)` (the first member's tabKey), value is a
+// tabKey within the group. Falls back to the sorted-primary tab when
+// absent or when the stored tab no longer exists. Session-only; NOT
+// persisted (it's a pure UI focus state, not triage).
+let activeTabByGroup = new Map()
 
-function keyOf(f) { return f.id ?? String(f._id) }
+// ID helpers. Internally every `reports[].groups[i]` is a Finding[]
+// (single-finding entries are wrapped at ingest, so code downstream
+// never branches on "is it a group?"). `tabKey` identifies an
+// individual tab (= finding); `groupKey` identifies the group as a
+// whole — uses the first member so it survives tab-sort reordering.
+function tabKey(f) { return f.id ?? String(f._id) }
+function groupKey(group) { return tabKey(group[0]) }
+function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
+
+// Tab sort order within a group: colored tabs first (drawing attention
+// to already-triaged cases), then higher severity, then higher
+// confidence. The first tab after sort is the group's "primary" — used
+// as the default active tab AND as the representative for group-level
+// sorting (file/severity/confidence dropdowns).
+function sortTabs(group) {
+  return [...group].sort((a, b) => {
+    const aColored = markers.has(tabKey(a)) ? 1 : 0
+    const bColored = markers.has(tabKey(b)) ? 1 : 0
+    if (aColored !== bColored) return bColored - aColored
+    const aSev = SEVERITY_ORDER[a.severity] || 0
+    const bSev = SEVERITY_ORDER[b.severity] || 0
+    if (aSev !== bSev) return bSev - aSev
+    const aConf = a.confidence ?? -1
+    const bConf = b.confidence ?? -1
+    return bConf - aConf
+  })
+}
+
+function primaryTab(group) { return sortTabs(group)[0] }
+
+function activeTabFor(group) {
+  const stored = activeTabByGroup.get(groupKey(group))
+  if (stored) {
+    const match = group.find((f) => tabKey(f) === stored)
+    if (match) return match
+  }
+  return primaryTab(group)
+}
+
+// Group-level triage rollup. User spec:
+//   1. Tabs individually colored (colors visible on tab buttons).
+//   2. Mismatching colors across tabs → highlight whole entry (conflict),
+//      ignore `deleted` flags entirely.
+//   3. Otherwise (all tabs share one color or all uncolored), if ANY
+//      tab is deleted, the whole group is deleted.
+//   4. Click handlers enforce the inverse — see the click handler below.
+// "Mismatching" counts uncolored as its own bucket: `[red, undef]` is a
+// conflict, `[red, red]` is not, `[undef, undef]` is not.
+function groupState(group) {
+  const colors = group.map((f) => markers.get(tabKey(f)))
+  const uniqueColors = new Set(colors)
+  const hasConflict = uniqueColors.size > 1
+  const commonColor = uniqueColors.size === 1 ? [...uniqueColors][0] : null
+  const anyDeleted = group.some((f) => deletedIds.has(tabKey(f)))
+  const allDeleted = group.every((f) => deletedIds.has(tabKey(f)))
+  return {
+    hasConflict, commonColor, anyDeleted, allDeleted,
+    // Effective deleted flag for view-split purposes: conflict groups
+    // are NEVER counted as deleted (per spec — ignore the flag), so
+    // they always appear in the main view and never in trash.
+    isDeleted: !hasConflict && anyDeleted,
+  }
+}
+
+function isGroupDeleted(group) { return groupState(group).isDeleted }
+
+function findGroupById(gid) {
+  for (const r of reports) {
+    for (const g of r.groups) if (groupKey(g) === gid) return g
+  }
+  return null
+}
 
 // --- Triage persistence --------------------------------------------------
 // Markers + deletions survive page reload via `localStorage['deepview.triage']`.
@@ -368,29 +512,42 @@ function addReport(file) {
       // the user's current filter state so merging a second report doesn't
       // wipe their tuning.
       const isFirst = reports.length === 0
-      // Dedup by exporter-provided uuid id. When the same finding appears
-      // in two dropped reports (e.g. reruns, overlapping scopes) only the
-      // first copy is kept — subsequent copies are dropped at ingest so
-      // they never hit `reports[].findings`. Findings without an `id`
-      // (legacy JSON or pre-uuid exports) can't be deduped and always
-      // pass through.
-      const seenIds = new Set(reports.flatMap((r) => r.findings).map((f) => f.id).filter(Boolean))
+      // Dedup by exporter-provided uuid id across ALL loaded reports.
+      // Input entries are either a single Finding or a Finding[] (a
+      // dedup group from an upstream pass). A new group is dropped if
+      // ANY of its members' ids match a previously-seen id — one
+      // overlap is enough to conclude "already loaded" (groups don't
+      // split / reshape across reloads). Findings without an id (legacy
+      // JSON or pre-uuid exports) can't be deduped and always pass through.
+      const seenIds = new Set()
+      for (const r of reports) {
+        for (const g of r.groups) {
+          for (const f of g) if (f.id) seenIds.add(f.id)
+        }
+      }
+      const groups = []
       let dupeCount = 0
-      const findings = []
-      for (const f of (data.findings || [])) {
-        if (f.id && seenIds.has(f.id)) { dupeCount++; continue }
-        if (f.id) seenIds.add(f.id)
-        // Stamp a session-local `_id` on each finding as a fallback key
+      for (const entry of (data.findings || [])) {
+        const members = toGroup(entry)
+        if (members.length === 0) continue
+        const anyDupe = members.some((f) => f.id && seenIds.has(f.id))
+        if (anyDupe) { dupeCount++; continue }
+        // Stamp a session-local `_id` on each member as a fallback key
         // for findings that lack the exporter-provided uuid `id`.
-        // `keyOf(f)` prefers `f.id` (persistent) and falls back to
-        // `String(f._id)`.
-        findings.push({ ...f, _id: nextFindingId++ })
+        // `tabKey(f)` prefers `f.id` (persistent) and falls back to
+        // `String(f._id)`. Register ids as we stamp so duplicate entries
+        // WITHIN this drop are caught too.
+        const stamped = members.map((f) => {
+          if (f.id) seenIds.add(f.id)
+          return { ...f, _id: nextFindingId++ }
+        })
+        groups.push(stamped)
       }
       if (dupeCount > 0) console.log(`${file.name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
       reports.push({
         type: data.type || 'analysis',
         fileName: file.name,
-        findings,
+        groups,
       })
       if (isFirst) resetFilters()
       render()
@@ -432,66 +589,189 @@ function findingText(f) {
   return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
 }
 
-function applyFilters(findings) {
+// Per-tab filter predicate. Factored out so `applyFilters` (group-level)
+// can ask "does ANY tab in this group match?" — per the user spec,
+// one matching tab keeps the whole group visible.
+function matchesFilters(f) {
   const inc = filterInclude.toLowerCase()
   const exc = filterExclude.toLowerCase()
-  return findings.filter((f) => {
-    if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
-    if (filterSource === 'own' && isModule(f.file)) return false
-    if (filterSource === 'modules' && !isModule(f.file)) return false
-    if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
-    if (filterConfMax !== '' && (f.confidence === undefined || f.confidence > filterConfMax)) return false
-    if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
-    if (exc) { const text = findingText(f); if (text.includes(exc)) return false }
-    return true
-  })
+  if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
+  if (filterSource === 'own' && isModule(f.file)) return false
+  if (filterSource === 'modules' && !isModule(f.file)) return false
+  if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
+  if (filterConfMax !== '' && (f.confidence === undefined || f.confidence > filterConfMax)) return false
+  if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
+  if (exc) { const text = findingText(f); if (text.includes(exc)) return false }
+  return true
 }
 
-function applySorting(findings) {
-  const sorted = [...findings]
+function applyFilters(groups) {
+  return groups.filter((g) => g.some(matchesFilters))
+}
+
+// Group-level sort. For severity/confidence modes we compare on each
+// group's primary tab (see sortTabs / primaryTab). 'file' sort is
+// handled by the grouping below.
+function applySorting(groups) {
+  const sorted = [...groups]
   if (sortBy === 'severity') {
-    sorted.sort((a, b) => (SEVERITY_ORDER[b.severity] || 0) - (SEVERITY_ORDER[a.severity] || 0) || a.file.localeCompare(b.file) || parseInt(a.line) - parseInt(b.line))
+    sorted.sort((a, b) => {
+      const pa = primaryTab(a), pb = primaryTab(b)
+      return (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
+        || pa.file.localeCompare(pb.file)
+        || parseInt(pa.line) - parseInt(pb.line)
+    })
   } else if (sortBy === 'confidence-desc') {
-    sorted.sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1) || a.file.localeCompare(b.file))
+    sorted.sort((a, b) => {
+      const pa = primaryTab(a), pb = primaryTab(b)
+      return (pb.confidence ?? -1) - (pa.confidence ?? -1) || pa.file.localeCompare(pb.file)
+    })
   } else if (sortBy === 'confidence-asc') {
-    sorted.sort((a, b) => (a.confidence ?? 11) - (b.confidence ?? 11) || a.file.localeCompare(b.file))
+    sorted.sort((a, b) => {
+      const pa = primaryTab(a), pb = primaryTab(b)
+      return (pa.confidence ?? 11) - (pb.confidence ?? 11) || pa.file.localeCompare(pb.file)
+    })
   }
-  // 'file' sorting is handled by the grouping below
   return sorted
+}
+
+// Render a single tab button. Shows the tab's severity badge + conf, and
+// carries its own color / deleted classes so per-tab triage is visible
+// from the group header.
+function renderTab(f, isActive) {
+  const key = tabKey(f)
+  const color = markers.get(key)
+  const deleted = deletedIds.has(key)
+  const classes = ['tab']
+  if (isActive) classes.push('active')
+  if (color) classes.push(`tab-mark-${color}`)
+  if (deleted) classes.push('tab-deleted')
+  const confPart = f.confidence !== undefined ? `<span class="tab-conf">${f.confidence}/10</span>` : ''
+  return `<button type="button" class="${classes.join(' ')}" data-tid="${esc(key)}"><span class="tab-label"><span class="badge ${esc(f.severity)}">${esc(f.severity)}</span> ${confPart}</span></button>`
+}
+
+// Render one tab's body (finding-left + content). Only the active tab
+// body is shown on screen (CSS `.tab-body.active { display: grid }`);
+// on print the CSS overrides to show every body stacked so paper output
+// keeps all cases visible.
+function renderTabBody(f, isActive) {
+  const key = tabKey(f)
+  let html = `<div class="tab-body${isActive ? ' active' : ''}" data-tid="${esc(key)}">`
+  html += '<div class="finding-left">'
+  html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+  if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
+  html += '</div>'
+  html += '<div>'
+  html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
+  if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
+  html += `<div class="desc">${esc(f.description)}</div>`
+  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
+  if (f.confidenceReason) html += `<div class="conf-reason">${esc(f.confidenceReason)}</div>`
+  if (f.fileHash || f.treeHash) {
+    const parts = []
+    if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
+    if (f.treeHash) parts.push(`tree: ${esc(f.treeHash)}`)
+    html += `<div class="hashes">${parts.join(' | ')}</div>`
+  }
+  html += '</div></div>'
+  return html
+}
+
+// Render one group as a `.finding` card. Group-level wrapper carries:
+//   - `is-critical` if ANY tab is critical (matches filter semantics)
+//   - `has-conflict` if tab colors disagree (accent outline, ignore deleted)
+//   - `mark-<color>` if tabs share a common color (no conflict)
+//   - `deleted` when in trash view (opacity nudge)
+// Marks row at the bottom is group-level: color dots act on the active
+// tab; delete acts on the whole group when conflict-free, on the active
+// tab when conflicted. See click handler below for the inverse.
+function renderGroup(g) {
+  const state = groupState(g)
+  const sortedTabs = sortTabs(g)
+  const active = activeTabFor(g)
+  const activeKey = tabKey(active)
+  const isCritical = g.some((f) => f.critical || f.severity === 'critical')
+  const classes = ['finding']
+  if (isCritical) classes.push('is-critical')
+  if (state.hasConflict) classes.push('has-conflict')
+  else if (state.commonColor) classes.push(`mark-${state.commonColor}`)
+  if (showDeleted) classes.push('deleted')
+  const gid = groupKey(g)
+
+  let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
+  // Tab strip — only for multi-tab groups; single findings render
+  // identically to before (no tabs, one body).
+  if (sortedTabs.length > 1) {
+    html += '<div class="tabs">'
+    for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
+    html += '</div>'
+  }
+  // Render every tab body so print mode can show them all stacked. Only
+  // the active one is display:grid on screen; others are display:none.
+  for (const f of sortedTabs) html += renderTabBody(f, tabKey(f) === activeKey)
+  // Marks row. Colors reflect the ACTIVE tab (since clicks apply there).
+  // Delete button's title changes to signal the per-tab vs. per-group
+  // behavior depending on conflict state.
+  html += '<div class="marks">'
+  const activeColor = markers.get(activeKey)
+  for (const color of ['red', 'blue', 'green', 'gray']) {
+    const activeCls = activeColor === color ? ' active' : ''
+    const dotTitle = sortedTabs.length > 1
+      ? `mark ${color} (applies to active tab)`
+      : `mark ${color} (click again to clear)`
+    html += `<button class="mark-dot mark-dot-${color}${activeCls}" data-color="${color}" title="${dotTitle}"></button>`
+  }
+  if (showDeleted) {
+    html += `<button class="mark-restore" title="restore whole group">restore</button>`
+  } else {
+    const xTitle = state.hasConflict
+      ? 'delete active tab (colors mismatch — acts per-tab)'
+      : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
+    html += `<button class="mark-x" title="${xTitle}">×</button>`
+  }
+  html += '</div>'
+  html += '</div>'
+  return html
 }
 
 function render() {
   if (reports.length === 0) return
-  // Merge across all loaded reports. Findings keep their original fields
-  // (no reportType tagging — the UI groups by source file, not by which
-  // report a finding came from). The trash-view split happens here, not
-  // in applyFilters, so the "X of Y" counter and severity stats reflect
-  // the set currently being viewed (live findings, or the trash).
-  const mergedFindings = reports.flatMap((r) => r.findings)
-  const deletedCount = mergedFindings.reduce((n, f) => n + (deletedIds.has(keyOf(f)) ? 1 : 0), 0)
-  const allFindings = mergedFindings.filter((f) =>
-    showDeleted ? deletedIds.has(keyOf(f)) : !deletedIds.has(keyOf(f)))
+  // Merge across all loaded reports. Every entry is a Finding[] (a dedup
+  // group); single findings were wrapped at ingest, so downstream code
+  // doesn't branch on shape. The trash-view split happens here, not in
+  // applyFilters, so the "X of Y" counter and severity stats reflect
+  // the set currently being viewed (live groups, or the trash).
+  const mergedGroups = reports.flatMap((r) => r.groups)
+  const deletedCount = mergedGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
+  const allGroups = mergedGroups.filter((g) => showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(reports.map((r) => r.type))]
   const typeLabel = types.join(', ')
   const fileNames = reports.map((r) => r.fileName)
 
-  // Counts always reflect all findings
+  // Severity stats count GROUPS (not individual tabs). A group is counted
+  // under every severity that appears in any of its tabs — so sums can
+  // exceed the total group count when groups have mixed severities.
+  // This matches the filter semantics (click "high" → all groups where
+  // any tab is high), and gives a useful preview of filter-click results.
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
-  for (const f of allFindings) counts[f.severity] = (counts[f.severity] || 0) + 1
+  for (const g of allGroups) {
+    const sevs = new Set(g.map((f) => f.severity))
+    for (const s of sevs) counts[s] = (counts[s] || 0) + 1
+  }
 
-  const filtered = applySorting(applyFilters(allFindings))
+  const filtered = applySorting(applyFilters(allGroups))
 
   let html = '<header>'
   html += `<h1>${esc(typeLabel)} results</h1>`
   const reportLabel = reports.length === 1
     ? esc(fileNames[0])
     : `${reports.length} reports: ${esc(fileNames.join(', '))}`
-  const findingNoun = `finding${allFindings.length !== 1 ? 's' : ''}`
+  const findingNoun = `finding${allGroups.length !== 1 ? 's' : ''}`
   const countLabel = showDeleted
-    ? `Trash: ${allFindings.length} deleted ${findingNoun}`
-    : `${allFindings.length} ${findingNoun}`
+    ? `Trash: ${allGroups.length} deleted ${findingNoun}`
+    : `${allGroups.length} ${findingNoun}`
   html += `<div class="meta">${reportLabel} &mdash; ${countLabel}</div>`
   html += '</header>'
 
@@ -544,7 +824,7 @@ function render() {
   const trashTitle = showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
   html += `<button type="button" id="toggle-trash" class="trash-btn${showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
-  html += `<span class="result-count">${filtered.length} of ${allFindings.length}</span>`
+  html += `<span class="result-count">${filtered.length} of ${allGroups.length}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
   html += `<label for="filter-include">Include:</label>`
@@ -558,67 +838,35 @@ function render() {
   html += '</div>'
   html += '</div>'
 
-  if (showDeleted && allFindings.length === 0) {
+  if (showDeleted && allGroups.length === 0) {
     html += `<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
-  } else if (filtered.length === 0 && allFindings.length > 0) {
+  } else if (filtered.length === 0 && allGroups.length > 0) {
     html += `<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
-  } else if (allFindings.length === 0) {
+  } else if (allGroups.length === 0) {
     html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
   }
 
-  // Group by file, preserving sort order within groups
+  // Group groups by file. All tabs in a dedup group share the same file
+  // (dedup runs per-file by fileHash upstream), so the primary tab's
+  // file is a safe representative.
   const byFile = new Map()
-  for (const f of filtered) {
-    if (!byFile.has(f.file)) byFile.set(f.file, [])
-    byFile.get(f.file).push(f)
+  for (const g of filtered) {
+    const file = primaryTab(g).file
+    if (!byFile.has(file)) byFile.set(file, [])
+    byFile.get(file).push(g)
   }
 
-  // For file sort, sort groups alphabetically; otherwise preserve first-appearance order
+  // For file sort, sort files alphabetically; otherwise preserve first-appearance order
   const fileKeys = sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
 
   for (const file of fileKeys) {
     const items = sortBy === 'file'
-      ? byFile.get(file).sort((a, b) => parseInt(a.line) - parseInt(b.line))
+      ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
       : byFile.get(file)
     html += '<div class="file-group">'
     html += `<div class="file-header"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
     html += '<div class="file-body">'
-    for (const f of items) {
-      const isCritical = f.critical || f.severity === 'critical'
-      const key = keyOf(f)
-      const mark = markers.get(key)
-      const markClass = mark ? ` mark-${mark}` : ''
-      const deletedClass = showDeleted ? ' deleted' : ''
-      html += `<div class="finding${isCritical ? ' is-critical' : ''}${markClass}${deletedClass}" data-fid="${esc(key)}">`
-      html += '<div class="finding-left">'
-      html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
-      if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
-      html += '</div>'
-      html += '<div>'
-      html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
-      if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
-      html += `<div class="desc">${esc(f.description)}</div>`
-      if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(f.recommendation)}</div>`
-      if (f.confidenceReason) html += `<div class="conf-reason">${esc(f.confidenceReason)}</div>`
-      if (f.fileHash || f.treeHash) {
-        const parts = []
-        if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
-        if (f.treeHash) parts.push(`tree: ${esc(f.treeHash)}`)
-        html += `<div class="hashes">${parts.join(' | ')}</div>`
-      }
-      html += '<div class="marks">'
-      for (const color of ['red', 'blue', 'green', 'gray']) {
-        const active = mark === color ? ' active' : ''
-        html += `<button class="mark-dot mark-dot-${color}${active}" data-color="${color}" title="mark ${color} (click again to clear)"></button>`
-      }
-      if (showDeleted) {
-        html += `<button class="mark-restore" title="restore (remove from trash)">restore</button>`
-      } else {
-        html += `<button class="mark-x" title="delete (in-memory only)">×</button>`
-      }
-      html += '</div>'
-      html += '</div></div>'
-    }
+    for (const g of items) html += renderGroup(g)
     html += '</div></div>'
   }
 
@@ -644,6 +892,7 @@ function resetView() {
   reports = []
   markers = new Map()
   deletedIds = new Set()
+  activeTabByGroup = new Map()
   showDeleted = false
   nextFindingId = 0
   report.classList.remove('active')
@@ -658,52 +907,65 @@ function resetView() {
 
 // Event delegation — all interactive elements handled here, no inline handlers
 report.addEventListener('click', (e) => {
-  // Mark-dot: toggle the per-finding marker color in-place (no re-render —
-  // a class flip on the `.finding` element is enough, and avoids scroll
-  // jump + losing whichever dot the user just clicked).
+  // Tab click — switch the active tab within a group. Re-render because
+  // tab highlight + tab body visibility + marks row color all update.
+  const tabEl = e.target.closest('.tab')
+  if (tabEl && tabEl.closest('.tabs')) {
+    const findingEl = tabEl.closest('.finding')
+    const gid = findingEl.dataset.gid
+    const tid = tabEl.dataset.tid
+    activeTabByGroup.set(gid, tid)
+    render()
+    return
+  }
+  // Mark-dot: color applies to the ACTIVE tab only (per spec rule 4).
+  // This may change tab sort order (colored tabs come first), so a full
+  // re-render is necessary — we can't just flip classes in place.
   const dot = e.target.closest('.mark-dot')
   if (dot) {
     const findingEl = dot.closest('.finding')
-    const id = findingEl.dataset.fid
+    const gid = findingEl.dataset.gid
+    const group = findGroupById(gid)
+    if (!group) return
+    const activeKey = tabKey(activeTabFor(group))
     const color = dot.dataset.color
-    const current = markers.get(id)
-    // Clear any previous mark class (at most one) and its dot's `active` flag
-    if (current) {
-      findingEl.classList.remove(`mark-${current}`)
-      const prevDot = findingEl.querySelector(`.mark-dot-${current}`)
-      if (prevDot) prevDot.classList.remove('active')
-    }
-    if (current === color) {
-      markers.delete(id)
-    } else {
-      markers.set(id, color)
-      findingEl.classList.add(`mark-${color}`)
-      dot.classList.add('active')
-    }
-    saveTriage()
-    return
-  }
-  // Delete-x: soft-delete — the finding is moved to the trash (visible
-  // via the Trash toggle) rather than discarded. Re-render because it
-  // changes the "X of Y" counter and potentially empties a file-group.
-  // Markers are preserved so restore recovers the full prior state.
-  const xBtn = e.target.closest('.mark-x')
-  if (xBtn) {
-    const findingEl = xBtn.closest('.finding')
-    const id = findingEl.dataset.fid
-    deletedIds.add(id)
+    const current = markers.get(activeKey)
+    if (current === color) markers.delete(activeKey)
+    else markers.set(activeKey, color)
     saveTriage()
     render()
     return
   }
-  // Restore: shown in place of mark-x while in trash view. Flips the
-  // finding back out of `deletedIds`; it reappears in the main view on
-  // next exit from trash mode.
+  // Delete-x: soft-delete (moved to trash, not discarded).
+  //   - No color conflict → delete the whole group (spec rule 4 exception).
+  //   - Color conflict     → per-tab delete (spec rule 4 general case).
+  // Markers are preserved so restore recovers the full prior state.
+  const xBtn = e.target.closest('.mark-x')
+  if (xBtn) {
+    const findingEl = xBtn.closest('.finding')
+    const gid = findingEl.dataset.gid
+    const group = findGroupById(gid)
+    if (!group) return
+    const state = groupState(group)
+    if (state.hasConflict) {
+      deletedIds.add(tabKey(activeTabFor(group)))
+    } else {
+      for (const f of group) deletedIds.add(tabKey(f))
+    }
+    saveTriage()
+    render()
+    return
+  }
+  // Restore: per spec rule 5, applies to EVERY tab in the group — a
+  // user in trash view clicking restore expects the whole entry back,
+  // not just one member left behind.
   const restoreBtn = e.target.closest('.mark-restore')
   if (restoreBtn) {
     const findingEl = restoreBtn.closest('.finding')
-    const id = findingEl.dataset.fid
-    deletedIds.delete(id)
+    const gid = findingEl.dataset.gid
+    const group = findGroupById(gid)
+    if (!group) return
+    for (const f of group) deletedIds.delete(tabKey(f))
     saveTriage()
     render()
     return
