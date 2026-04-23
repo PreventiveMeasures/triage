@@ -155,10 +155,12 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   gap: .25rem .75rem;
 }
 .finding .tab-body.active { display: grid; }
-.finding .tab-body + .tab-body {
-  margin-top: .5rem; padding-top: .5rem;
-  border-top: 1px dashed var(--border);
-}
+/* Separator between stacked tab bodies — print-only. On screen only
+   the active tab body is `display: grid`; others are `display: none`,
+   so a `tab-body + tab-body` rule here would still paint a stray top
+   border on the visible body whenever the user selects anything past
+   the first tab. Keep the separator scoped to print, where every
+   body is shown stacked and the divider actually separates them. */
 
 .finding-left { align-self: start; text-align: center; min-width: 4rem; }
 .badge {
@@ -266,6 +268,15 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
      here since every body is visible. */
   .finding .tabs { display: none !important; }
   .finding .tab-body { display: grid !important; }
+  /* Visual separator between stacked tab bodies on paper. Kept inside
+     the print block because on screen only the active body is visible
+     (see the note above the screen-side rule) — outside of print, a
+     `tab-body + tab-body` selector still paints on a later-selected
+     body and shows up as a stray top border. */
+  .finding .tab-body + .tab-body {
+    margin-top: .5rem; padding-top: .5rem;
+    border-top: 1px dashed var(--border);
+  }
 }
 </style>
 </head>
