@@ -94,16 +94,19 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    after .is-critical so manual marks override the critical auto-bg.
    Red is deliberately hotter than --critical-bg so a user-marked
    finding stays visually distinct from auto-highlighted criticals.
-   For dedup groups these apply ONLY when every tab shares the same
-   color (see groupState() in JS — mismatches use .has-conflict instead). */
+   For dedup groups these apply ONLY when the group has a well-defined
+   common color — i.e. non-conflict AND at least one annotated tab is
+   colored, with every color-bearing annotated tab agreeing. See
+   groupState() in JS; conflicts use .has-conflict instead. */
 .finding.mark-red { background: #6b1820; }
 .finding.mark-blue { background: #1a2f5a; }
 .finding.mark-green { background: #1a4a2a; }
 .finding.mark-gray { background: #2a2f37; }
 
-/* Dedup groups with per-tab color mismatches — highlight the whole
-   entry and (per spec) ignore each tab's `deleted` flag for rollup.
-   Accent outline draws attention without claiming one specific color. */
+/* Dedup groups whose annotated tabs disagree on color OR on deletion
+   state — highlight the whole entry and (per spec) ignore each tab's
+   `deleted` flag for rollup. Accent outline draws attention without
+   claiming one specific color. See groupState() in JS. */
 .finding.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
 
 /* Tab strip — shown only for multi-tab groups. Each tab is a severity
@@ -373,26 +376,44 @@ function activeTabFor(group) {
 }
 
 // Group-level triage rollup. User spec:
-//   1. Tabs individually colored (colors visible on tab buttons).
-//   2. Mismatching colors across tabs → highlight whole entry (conflict),
-//      ignore `deleted` flags entirely.
-//   3. Otherwise (all tabs share one color or all uncolored), if ANY
-//      tab is deleted, the whole group is deleted.
+//   1. A tab is "annotated" if it has a color AND/OR is deleted.
+//      Unannotated tabs are neutral — they don't contribute to the
+//      rollup and can never cause a conflict on their own.
+//   2. Among annotated tabs, a conflict exists iff they disagree on
+//      color OR on deletion state. "Disagree on color" means two or
+//      more distinct non-null colors are present (a tab annotated
+//      only via deletion, with no color, never conflicts with a
+//      colored tab purely on the basis of its missing color). "Disagree
+//      on deletion" means some annotated tabs are deleted and others
+//      are not. Conflict → dashed outline on the card; per-tab colors
+//      still render on each tab button; the group is kept in the main
+//      view (never in trash).
+//   3. Otherwise (consistent annotated tabs), the card takes the
+//      common color (if any annotated tab is colored); any annotated
+//      tab being deleted puts the whole group in trash.
 //   4. Click handlers enforce the inverse — see the click handler below.
-// "Mismatching" counts uncolored as its own bucket: `[red, undef]` is a
-// conflict, `[red, red]` is not, `[undef, undef]` is not.
+// Examples (where A/B/C are tabs in one dedup group):
+//   A(green, deleted), B(), C()            → no conflict, in trash, A is green
+//   A(green, deleted), B(deleted), C()     → no conflict, in trash, A is green
+//   A(green, deleted), B(red), C()         → conflict (colors disagree)
+//   A(green), B(blue), C()                 → conflict (colors disagree)
+//   A(green, deleted), B(green), C()       → conflict (deleted disagrees)
 function groupState(group) {
-  const colors = group.map((f) => markers.get(tabKey(f)))
-  const uniqueColors = new Set(colors)
-  const hasConflict = uniqueColors.size > 1
-  const commonColor = uniqueColors.size === 1 ? [...uniqueColors][0] : null
-  const anyDeleted = group.some((f) => deletedIds.has(tabKey(f)))
-  const allDeleted = group.every((f) => deletedIds.has(tabKey(f)))
+  const annotated = group
+    .map((f) => ({ color: markers.get(tabKey(f)), deleted: deletedIds.has(tabKey(f)) }))
+    .filter((t) => t.color !== undefined || t.deleted)
+  const colors = new Set(annotated.map((t) => t.color).filter((c) => c !== undefined))
+  const deletedStates = new Set(annotated.map((t) => t.deleted))
+  const hasConflict = colors.size > 1 || deletedStates.size > 1
+  const commonColor = !hasConflict && colors.size === 1 ? [...colors][0] : null
+  const anyDeleted = annotated.some((t) => t.deleted)
+  const allDeleted = annotated.length > 0 && annotated.every((t) => t.deleted)
   return {
     hasConflict, commonColor, anyDeleted, allDeleted,
-    // Effective deleted flag for view-split purposes: conflict groups
-    // are NEVER counted as deleted (per spec — ignore the flag), so
-    // they always appear in the main view and never in trash.
+    // Conflict groups are NEVER counted as deleted (per spec — the
+    // group stays in the main view until the user resolves the
+    // disagreement per-tab). When non-conflicting, anyDeleted ==
+    // allDeleted on annotated tabs, so either form is equivalent.
     isDeleted: !hasConflict && anyDeleted,
   }
 }
