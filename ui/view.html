@@ -111,12 +111,13 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    per-tab triage is visible without switching to that tab. See sortTabs()
    in JS for the order: colored first, then severity desc, then confidence
    desc. The first tab post-sort is the group's "primary" (default active,
-   used for group-level sorting). */
+   used for group-level sorting). Lives inside `.marks` (the action row
+   at the bottom of a finding) on the left; `margin-right: auto` pushes
+   it away from the mark-dots on the right. */
 .finding .tabs {
   display: flex; gap: .25rem; flex-wrap: wrap;
-  margin-bottom: .5rem; padding-bottom: .35rem;
-  border-bottom: 1px solid var(--border);
 }
+.finding .marks .tabs { margin-right: auto; }
 .finding .tab {
   background: transparent; color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
@@ -184,10 +185,12 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
 #report.show-metadata .finding .hashes { display: block; }
 
-/* Per-finding action row: color dots + delete. Sits under the finding
-   content, right-aligned. In-memory only — marks and deletions are
-   lost on reload, which matches the rest of the UI (reports come from
-   dropped JSON; there's no persistence layer). Hidden on print. */
+/* Per-finding action row: tab strip (multi-tab groups only, on the
+   left) + color dots + delete. Sits under the finding content.
+   `justify-content: flex-end` right-aligns the dots when no tabs
+   are present; when tabs are present, `.tabs { margin-right: auto }`
+   (above) pushes them apart. Marks and deletions are persisted via
+   localStorage (see saveTriage). Hidden on print. */
 .finding .marks {
   display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;
@@ -713,20 +716,23 @@ function renderGroup(g) {
   const gid = groupKey(g)
 
   let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
-  // Tab strip — only for multi-tab groups; single findings render
-  // identically to before (no tabs, one body).
-  if (sortedTabs.length > 1) {
-    html += '<div class="tabs">'
-    for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
-    html += '</div>'
-  }
   // Render every tab body so print mode can show them all stacked. Only
   // the active one is display:grid on screen; others are display:none.
   for (const f of sortedTabs) html += renderTabBody(f, tabKey(f) === activeKey)
   // Marks row. Colors reflect the ACTIVE tab (since clicks apply there).
   // Delete button's title changes to signal the per-tab vs. per-group
-  // behavior depending on conflict state.
+  // behavior depending on conflict state. The tab strip lives here too
+  // (on the left, pushed apart from the dots by `margin-right: auto`
+  // in CSS) so multi-tab groups get their tab picker adjacent to the
+  // other per-group controls — one action row per finding.
   html += '<div class="marks">'
+  // Tab strip — only for multi-tab groups; single findings render
+  // without tabs and the dots sit alone on the right.
+  if (sortedTabs.length > 1) {
+    html += '<div class="tabs">'
+    for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
+    html += '</div>'
+  }
   const activeColor = markers.get(activeKey)
   for (const color of ['red', 'blue', 'green', 'gray']) {
     const activeCls = activeColor === color ? ' active' : ''
