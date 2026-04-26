@@ -66,6 +66,20 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .stat:hover, .stat.active { border-color: var(--accent); }
 .stat.active { background: #1a2233; }
 .stat strong { display: block; font-size: 1.2rem; }
+/* Color-filter chips reuse `.stat` but carry a small swatch beside the
+   label so the row looks distinct from the severity chips at a glance.
+   Swatch colors mirror the mark-dot palette; `none` is an outlined
+   circle to read as "no fill = unmarked". */
+.stat-dot {
+  display: inline-block; width: .7rem; height: .7rem;
+  border-radius: 50%; margin-right: .3rem;
+  vertical-align: middle; border: 1px solid var(--border);
+}
+.stat-dot-red   { background: #6b1820; }
+.stat-dot-blue  { background: #1a2f5a; }
+.stat-dot-green { background: #1a4a2a; }
+.stat-dot-gray  { background: #2a2f37; }
+.stat-dot-none  { background: transparent; border-style: dashed; }
 
 /* file groups */
 .file-group { margin-bottom: 1.25rem; }
@@ -304,7 +318,14 @@ const report = document.getElementById('report')
 // reports (e.g. security + correctness) collapse into the same file-group.
 // Filters stay shared across all loaded reports.
 let reports = []
-let filterSeverity = 'all'
+// Severity + color filters are multi-select: empty Set = "no filter, show
+// everything" (selecting every option individually is equivalent — the
+// predicate passes when every finding's value is in the Set). UI-wise
+// each .stat card toggles membership independently; no single "all"
+// sentinel. `filterColors` stores mark colors (`red|blue|green|gray`)
+// plus the literal `'none'` for unmarked findings.
+let filterSeverities = new Set()
+let filterColors = new Set()
 let filterSource = 'all'
 let filterConfMin = 8
 let filterConfMax = ''
@@ -501,7 +522,8 @@ async function loadTriage() {
 let loadPromise = loadTriage()
 
 function resetFilters() {
-  filterSeverity = 'all'
+  filterSeverities = new Set()
+  filterColors = new Set()
   filterSource = 'all'
   filterConfMin = 8
   filterConfMax = ''
@@ -644,7 +666,15 @@ function findingText(f) {
 function matchesFilters(f) {
   const inc = filterInclude.toLowerCase()
   const exc = filterExclude.toLowerCase()
-  if (filterSeverity !== 'all' && f.severity !== filterSeverity) return false
+  // Severity + color filters are multi-select Sets: empty = no filter,
+  // non-empty = membership required. Unmarked tabs are bucketed under
+  // the literal `'none'` so the user can isolate unreviewed findings by
+  // ticking only that chip.
+  if (filterSeverities.size > 0 && !filterSeverities.has(f.severity)) return false
+  if (filterColors.size > 0) {
+    const col = markers.get(tabKey(f)) ?? 'none'
+    if (!filterColors.has(col)) return false
+  }
   if (filterSource === 'own' && isModule(f.file)) return false
   if (filterSource === 'modules' && !isModule(f.file)) return false
   if (filterConfMin !== '' && (f.confidence === undefined || f.confidence < filterConfMin)) return false
@@ -802,15 +832,20 @@ function render() {
   const typeLabel = types.join(', ')
   const fileNames = reports.map((r) => r.fileName)
 
-  // Severity stats count GROUPS (not individual tabs). A group is counted
-  // under every severity that appears in any of its tabs — so sums can
-  // exceed the total group count when groups have mixed severities.
+  // Severity + color stats count GROUPS (not individual tabs). A group is
+  // counted under every severity/color that appears in any of its tabs —
+  // so sums can exceed the total group count when groups have mixed tabs.
   // This matches the filter semantics (click "high" → all groups where
-  // any tab is high), and gives a useful preview of filter-click results.
+  // any tab is high; click "red" → all groups with any red-marked tab),
+  // and gives a useful preview of filter-click results. Unmarked tabs
+  // bucket under `'none'` so the user can isolate unreviewed findings.
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
+  const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
   for (const g of allGroups) {
     const sevs = new Set(g.map((f) => f.severity))
     for (const s of sevs) counts[s] = (counts[s] || 0) + 1
+    const cols = new Set(g.map((f) => markers.get(tabKey(f)) ?? 'none'))
+    for (const c of cols) colorCounts[c] = (colorCounts[c] || 0) + 1
   }
 
   const filtered = applySorting(applyFilters(allGroups))
@@ -827,7 +862,11 @@ function render() {
   html += `<div class="meta">${reportLabel} &mdash; ${countLabel}</div>`
   html += '</header>'
 
-  // Stats — clickable severity filter
+  // Stats — clickable filter chips. Severity chips on the left, mark-color
+  // chips on the right. Both are multi-select: empty selection = no
+  // filter; multiple selections = union across the ticked chips (so
+  // ticking every chip is equivalent to ticking none). A zero-count
+  // chip is hidden so the row stays compact.
   html += '<div class="stats">'
   const statItems = [
     ['critical', counts.critical, '--critical'],
@@ -837,8 +876,20 @@ function render() {
   ]
   for (const [sev, count, color] of statItems) {
     if (!count) continue
-    const active = filterSeverity === sev ? ' active' : ''
+    const active = filterSeverities.has(sev) ? ' active' : ''
     html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${sev}</div>`
+  }
+  const colorStatItems = [
+    ['red', colorCounts.red, 'red'],
+    ['blue', colorCounts.blue, 'blue'],
+    ['green', colorCounts.green, 'green'],
+    ['gray', colorCounts.gray, 'gray'],
+    ['none', colorCounts.none, 'unmarked'],
+  ]
+  for (const [col, count, label] of colorStatItems) {
+    if (!count) continue
+    const active = filterColors.has(col) ? ' active' : ''
+    html += `<div class="stat${active}" data-color="${col}"><strong>${count}</strong><span class="stat-dot stat-dot-${col}"></span>${label}</div>`
   }
   html += '</div>'
 
@@ -1030,11 +1081,24 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Severity stat toggle
-  const stat = e.target.closest('[data-sev]')
-  if (stat) {
-    const sev = stat.dataset.sev
-    filterSeverity = filterSeverity === sev ? 'all' : sev
+  // Severity / color stat toggle. Both are multi-select — click toggles
+  // membership in the matching Set, empty Set = no filter.
+  const sevStat = e.target.closest('.stat[data-sev]')
+  if (sevStat) {
+    const sev = sevStat.dataset.sev
+    if (filterSeverities.has(sev)) filterSeverities.delete(sev)
+    else filterSeverities.add(sev)
+    render()
+    return
+  }
+  // Scoped to `.stat[data-color]` so mark-dot buttons (which also carry
+  // `data-color` but are `<button>`s, not `.stat` cards) don't match —
+  // they were already handled above.
+  const colorStat = e.target.closest('.stat[data-color]')
+  if (colorStat) {
+    const col = colorStat.dataset.color
+    if (filterColors.has(col)) filterColors.delete(col)
+    else filterColors.add(col)
     render()
     return
   }
