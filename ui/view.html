@@ -872,7 +872,11 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
   // show-lines is on. Empty `.run-meta` collapses to zero width via the
   // hide rule below, so the line-num still sits flush left.
   html += '<div class="line-row">'
-  html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
+  // Line number anchor + (when present) the export name the finding lives
+  // in, comma-separated. The exportName is plain text — only the line
+  // number gets linkified by `lineLink`.
+  const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
+  html += `<span class="line-num">${lineLink(f.file, f.line)}${exportPart}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
   const meta = [f.type, f.effort, f.exportsMode].filter(Boolean).join(' · ')
   if (meta) html += `<span class="run-meta">${esc(meta)}</span>`
