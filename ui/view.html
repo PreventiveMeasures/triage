@@ -197,6 +197,17 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    cached entry a finding came from. */
 .finding .line-num { color: var(--muted); font-size: .8rem; display: none; }
 #report.show-lines .finding .line-num { display: inline; }
+/* line-num + run-meta share one row when shown: line-num on the left,
+   run-meta on the right (`analyzer · effort · exportsMode`). Hidden by
+   default — same toolbar checkbox controls both, so the run-meta only
+   appears when the user has asked for line numbers. flex-wrap keeps
+   long meta strings from overflowing on narrow viewports. */
+.finding .line-row { display: none; }
+#report.show-lines .finding .line-row {
+  display: flex; justify-content: space-between;
+  align-items: baseline; gap: .5rem; flex-wrap: wrap;
+}
+.finding .run-meta { color: var(--muted); font-size: .75rem; }
 .toolbar .checkbox-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); cursor: pointer; }
 .toolbar .checkbox-label input { margin: 0; cursor: pointer; }
 .finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
@@ -396,6 +407,12 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
 const NODE_MODULES_RE = /(^|\/)node_modules\//
+// Run-level meta fields that the analyzer emits at the top of each report
+// (and that the deduplicate command stamps on each finding individually).
+// `addReport` lifts any of these from the report header onto each finding
+// at ingest, so the renderer can show per-finding mode info uniformly
+// without branching on whether the file came from a deduplicated dump.
+const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
 
@@ -679,10 +696,19 @@ function addReport(file) {
         // for findings that lack the exporter-provided uuid `id`.
         // `tabKey(f)` prefers `f.id` (persistent) and falls back to
         // `String(f._id)`. Register ids as we stamp so duplicate entries
-        // WITHIN this drop are caught too.
+        // WITHIN this drop are caught too. Also fill in run-level meta
+        // (type / effort / exportsMode) from the report header when the
+        // finding doesn't already carry it — non-deduplicated dumps keep
+        // those fields only at the top level, so this lifts them per-
+        // finding for downstream rendering. Pre-stamped findings (e.g.
+        // from a deduplicate pass) keep their own values.
         const stamped = members.map((f) => {
           if (f.id) seenIds.add(f.id)
-          return { ...f, _id: nextFindingId++ }
+          const filled = { ...f, _id: nextFindingId++ }
+          for (const key of META_FIELDS) {
+            if (filled[key] === undefined && data[key] !== undefined) filled[key] = data[key]
+          }
+          return filled
         })
         groups.push(stamped)
       }
@@ -842,8 +868,15 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
   }
   html += '</div>'
   html += '<div>'
+  // `.line-row` flexes line numbers (left) against run-meta (right) when
+  // show-lines is on. Empty `.run-meta` collapses to zero width via the
+  // hide rule below, so the line-num still sits flush left.
+  html += '<div class="line-row">'
   html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
+  const meta = [f.type, f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  if (meta) html += `<span class="run-meta">${esc(meta)}</span>`
+  html += '</div>'
   html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
   if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
   if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
