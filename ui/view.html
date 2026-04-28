@@ -979,6 +979,26 @@ function render() {
   const typeLabel = types.join(', ')
   const fileNames = reports.map((r) => r.fileName)
 
+  // Header analyzer breakdown — one entry per unique
+  // `<analyzer> (<effort>, <exportsMode>)` combo seen across all
+  // findings. The parenthetical lists whichever modifiers are set on
+  // that combo, in order; both omitted means just the analyzer name.
+  // Source data comes from the run-meta lifted onto each finding at
+  // ingest, so a single load can contain several combos when the user
+  // merges multiple analyzer outputs.
+  const combos = [...new Set(reports.flatMap((r) =>
+    r.groups.flatMap((g) => g.map((f) => {
+      const type = f.type ?? 'unknown'
+      const parts = []
+      if (f.effort) parts.push(f.effort)
+      if (f.exportsMode) parts.push(f.exportsMode)
+      return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
+    }))
+  ))]
+  const headerText = combos.length > 0
+    ? `DeepView results, analyzer(s): ${combos.map(esc).join(', ')}`
+    : 'DeepView results'
+
   // Severity + color stats count GROUPS (not individual tabs). A group is
   // counted under every severity/color that appears in any of its tabs —
   // so sums can exceed the total group count when groups have mixed tabs.
@@ -998,7 +1018,9 @@ function render() {
   const filtered = applySorting(applyFilters(allGroups))
 
   let html = '<header>'
-  html += `<h1>${esc(typeLabel)} results</h1>`
+  // headerText is pre-escaped (combo strings esc'd above) so it can include
+  // mixed safe + interpolated content without re-escaping the whole thing.
+  html += `<h1>${headerText}</h1>`
   const reportLabel = reports.length === 1
     ? esc(fileNames[0])
     : `${reports.length} reports: ${esc(fileNames.join(', '))}`
@@ -1127,7 +1149,7 @@ function render() {
   report.classList.toggle('show-lines', showLines)
   report.classList.toggle('show-metadata', showMetadata)
   dropZone.classList.add('hidden')
-  document.title = `${typeLabel} results - deepview`
+  document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
 }
 
 function renderKeepFocus(inputId) {
