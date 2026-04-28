@@ -995,8 +995,13 @@ function render() {
       return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
     }))
   ))]
+  // Singular/plural keyed off the number of distinct combos shown — one
+  // combo says "analyzer", any more says "analyzers". Two runs of the
+  // same analyzer with different effort/exportsMode count as two combos
+  // and pluralize accordingly.
+  const analyzerLabel = combos.length === 1 ? 'analyzer' : 'analyzers'
   const headerText = combos.length > 0
-    ? `DeepView results, analyzer(s): ${combos.map(esc).join(', ')}`
+    ? `DeepView results, ${analyzerLabel}: ${combos.map(esc).join(', ')}`
     : 'DeepView results'
 
   // Severity + color stats count GROUPS (not individual tabs). A group is
