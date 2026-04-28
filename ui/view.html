@@ -340,31 +340,43 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   /* "Severity" / "Confidence" sub-captions sit BELOW their values (the
      HTML emits the badge / score first, then the label) — caption-style
      framing rather than a heading, so the value remains the visual
-     anchor. Smaller than the values themselves. Centered to match
+     anchor. Tiny so they read as supporting metadata. Centered to match
      `.finding-left { text-align: center }`. */
   .print-label {
     display: block;
-    font-size: .55rem;
-    color: #666;
+    font-size: .45rem;
+    color: #777;
     text-transform: uppercase;
     letter-spacing: .04em;
-    margin-top: .15rem;
-    margin-bottom: .35rem;
+    margin-top: .1rem;
+    margin-bottom: .3rem;
     font-weight: 500;
   }
   .finding-left .print-label:last-child { margin-bottom: 0; }
 
+  /* Force the printer to render background colors. Browsers strip them
+     by default ("color adjustment: economy") which is what was leaving
+     the badges and labels black-and-white on paper. The both-name form
+     covers WebKit/Blink (-webkit-) and the standard property, since
+     some browsers still only ship the prefixed version. Scoped to the
+     elements that actually carry print-relevant fills so we don't
+     force every CSS background through the printer. */
+  .badge, .print-case-label, .finding.multi-case::before {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   /* Severity badges on white paper: the screen palette (saturated red /
      orange / amber / light grey) is tuned for the dark UI background and
-     bleaches out on white. Override to darker, AA-contrast variants —
-     a darker red/orange/amber/grey, all with white text — so the labels
-     read as colored chips even in greyscale. The `!important` is here
-     because the default `.badge.<sev>` rules carry the same specificity
-     and we want the print palette to win regardless of source order. */
-  .badge.critical { background: #b3151a !important; color: #fff !important; }
-  .badge.high     { background: #c2410c !important; color: #fff !important; }
-  .badge.medium   { background: #92400e !important; color: #fff !important; }
-  .badge.low      { background: #4b5563 !important; color: #fff !important; }
+     bleaches out on white. Override to vivid, ink-saturated variants —
+     deep red, orange, amber, slate, all with white text — so the labels
+     read as colored chips on print. The `!important` is here because
+     the default `.badge.<sev>` rules carry the same specificity and we
+     want the print palette to win regardless of source order. */
+  .badge.critical { background: #a30b0f !important; color: #fff !important; }
+  .badge.high     { background: #b8400a !important; color: #fff !important; }
+  .badge.medium   { background: #855107 !important; color: #fff !important; }
+  .badge.low      { background: #374151 !important; color: #fff !important; }
 }
 </style>
 </head>
@@ -414,7 +426,7 @@ let sortBy = 'file'
 // source-hash provenance.
 //   showLines:    `line N` / `(found analyzing X)` spans
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
-let showLines = false
+let showLines = true
 let showMetadata = false
 // Per-finding manual annotations. Keyed by `tabKey(f)` = `f.id ?? String(f._id)`:
 // the export's derived uuid when available (persists across reloads via
