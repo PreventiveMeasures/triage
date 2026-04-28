@@ -262,6 +262,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .reset-btn:hover { border-color: var(--accent); }
 
+/* Print-only annotations injected by the renderer. Hidden by default —
+   the screen UI uses tabs, color hints and tooltips for what these
+   spell out for paper readers (Severity / Confidence / "Case N of M"). */
+.print-label, .print-case-label { display: none; }
+
 /* Print: strip interactive widgets and keep each finding on one page.
    The toolbar + stats + reset button are hidden because they're
    noise on paper; mark-dots and x-button likewise. Individual
@@ -270,13 +275,22 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    file with many findings is more common than a finding long
    enough to need its own page). */
 @media print {
-  body { background: #fff; color: #000; }
+  /* ~11pt root maps the rem-based screen sizes onto normal A4/Letter
+     body density (`.875rem` body becomes ~9.6pt, headings ~14pt,
+     badges ~7.7pt). Tightening line-height squeezes another row or
+     two onto each page without making text feel cramped. */
+  html { font-size: 11pt; }
+  body { background: #fff; color: #000; line-height: 1.4; }
   .toolbar, .stats, .reset-btn, .finding .marks { display: none !important; }
   #drop-zone { display: none !important; }
   #report { max-width: none; padding: 0; }
-  .finding { break-inside: avoid; page-break-inside: avoid; }
+  header h1 { font-size: 1.2rem; }
+  .finding {
+    break-inside: avoid; page-break-inside: avoid;
+    padding: .45rem .25rem;
+  }
   .finding.deleted { opacity: 1; }
-  .file-header { break-after: avoid; page-break-after: avoid; }
+  .file-header { break-after: avoid; page-break-after: avoid; font-size: .85rem; }
   /* Show every tab body stacked — keeps the "multiple cases of one
      finding" framing on paper. Tab buttons themselves are redundant
      here since every body is visible. */
@@ -289,8 +303,59 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
      body and shows up as a stray top border. */
   .finding .tab-body + .tab-body {
     margin-top: .5rem; padding-top: .5rem;
-    border-top: 1px dashed var(--border);
+    border-top: 1px dashed #999;
   }
+
+  /* Make duplicates obvious. A multi-case .finding gets a banner above
+     the stacked cases ("Multiple reports of one finding") plus a left
+     bar that visually wraps every case as belonging to one group.
+     Each case-body inside also gets its own "Case N of M" subhead via
+     `.print-case-label` — readers can locate any specific case from
+     a glance and the count keeps the framing explicit. */
+  .finding.multi-case {
+    border-left: 3px solid #888;
+    padding-left: .65rem;
+  }
+  .finding.multi-case::before {
+    content: "Multiple reports of one finding";
+    display: block;
+    font-size: .7rem;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 1px solid #bbb;
+    padding-bottom: .2rem;
+    margin-bottom: .35rem;
+  }
+  .print-case-label {
+    display: block;
+    grid-column: 1 / -1;
+    font-size: .7rem;
+    font-weight: 600;
+    color: #555;
+    background: #eee;
+    padding: .12rem .35rem;
+    border-radius: 3px;
+    margin-bottom: .25rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+
+  /* "SEVERITY" / "CONFIDENCE" sub-labels above each value in the left
+     column. Centered to match `.finding-left { text-align: center }`
+     so badge / number sit visually under their captions. */
+  .print-label {
+    display: block;
+    font-size: .65rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-top: .35rem;
+    margin-bottom: .1rem;
+    font-weight: 600;
+  }
+  .finding-left .print-label:first-child { margin-top: 0; }
 }
 </style>
 </head>
@@ -733,12 +798,24 @@ function renderTab(f, isActive) {
 // body is shown on screen (CSS `.tab-body.active { display: grid }`);
 // on print the CSS overrides to show every body stacked so paper output
 // keeps all cases visible.
-function renderTabBody(f, isActive) {
+// `idx` / `total` only feed the print-only "Case N of M" banner; on screen
+// they're hidden by `.print-case-label { display: none }`. Default 0/1
+// suppresses the banner for callers that don't carry duplicate context.
+// `.print-label` rows likewise emit "SEVERITY" / "CONFIDENCE" headings
+// above the badge / score in print and stay hidden on screen — paper
+// readers don't have the UI conventions to know what a colored chip means
+// without a label.
+function renderTabBody(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
   let html = `<div class="tab-body${isActive ? ' active' : ''}" data-tid="${esc(key)}">`
+  if (total > 1) html += `<div class="print-case-label">Case ${idx + 1} of ${total}</div>`
   html += '<div class="finding-left">'
+  html += '<div class="print-label">Severity</div>'
   html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
-  if (f.confidence !== undefined) html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
+  if (f.confidence !== undefined) {
+    html += '<div class="print-label">Confidence</div>'
+    html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
+  }
   html += '</div>'
   html += '<div>'
   html += `<span class="line-num">${lineLink(f.file, f.line)}</span>`
@@ -775,12 +852,21 @@ function renderGroup(g) {
   if (state.hasConflict) classes.push('has-conflict')
   else if (state.commonColor) classes.push(`mark-${state.commonColor}`)
   if (showDeleted) classes.push('deleted')
+  // `multi-case` is a print-only hook: when there's more than one tab in
+  // the group, the print stylesheet uses this class to draw a banner above
+  // the stacked cases so a paper reader can tell at a glance that the
+  // entries below are reports of one finding, not unrelated findings.
+  if (sortedTabs.length > 1) classes.push('multi-case')
   const gid = groupKey(g)
 
   let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
   // Render every tab body so print mode can show them all stacked. Only
   // the active one is display:grid on screen; others are display:none.
-  for (const f of sortedTabs) html += renderTabBody(f, tabKey(f) === activeKey)
+  // Pass idx/total so each tab body can emit its own "Case N of M" banner
+  // in print (suppressed on single-tab groups via the default args).
+  sortedTabs.forEach((f, i) => {
+    html += renderTabBody(f, tabKey(f) === activeKey, i, sortedTabs.length)
+  })
   // Marks row. Colors reflect the ACTIVE tab (since clicks apply there).
   // Delete button's title changes to signal the per-tab vs. per-group
   // behavior depending on conflict state. The tab strip lives here too
