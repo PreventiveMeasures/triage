@@ -290,10 +290,25 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .reset-btn:hover { border-color: var(--accent); }
 
-/* Print-only annotations injected by the renderer. Hidden by default —
-   the screen UI uses tabs, color hints and tooltips for what these
-   spell out for paper readers (Severity / Confidence / "Case N of M"). */
-.print-label, .print-case-label { display: none; }
+/* "Severity" / "Confidence" sub-captions below the values in the
+   left column. Visible on both screen and paper — tiny so they read
+   as supporting metadata under the values. Centered to match
+   `.finding-left { text-align: center }`. The print stylesheet
+   shrinks these further (.45rem) for paper density. */
+.value-label {
+  display: block;
+  font-size: .65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-top: .2rem;
+  margin-bottom: .35rem;
+  font-weight: 500;
+}
+.finding-left .value-label:last-child { margin-bottom: 0; }
+/* "N of M" duplicate-case subhead is print-only — on screen the tab
+   strip already conveys "this group has N tabs". */
+.print-case-label { display: none; }
 
 /* Print: strip interactive widgets and keep each finding on one page.
    The toolbar + stats + reset button are hidden because they're
@@ -365,22 +380,16 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
     letter-spacing: .04em;
   }
 
-  /* "Severity" / "Confidence" sub-captions sit BELOW their values (the
-     HTML emits the badge / score first, then the label) — caption-style
-     framing rather than a heading, so the value remains the visual
-     anchor. Tiny so they read as supporting metadata. Centered to match
-     `.finding-left { text-align: center }`. */
-  .print-label {
-    display: block;
+  /* Print-tightened version of the screen `.value-label` rule —
+     smaller text, paler ink, less vertical breathing room so the
+     captions read as supporting metadata on paper without crowding
+     the rest of the row. */
+  .value-label {
     font-size: .45rem;
     color: #777;
-    text-transform: uppercase;
-    letter-spacing: .04em;
     margin-top: .1rem;
     margin-bottom: .3rem;
-    font-weight: 500;
   }
-  .finding-left .print-label:last-child { margin-bottom: 0; }
 
   /* Force the printer to render background colors. Browsers strip them
      by default ("color adjustment: economy") which is what was leaving
@@ -887,26 +896,23 @@ function renderTab(f, isActive) {
 // body is shown on screen (CSS `.tab-body.active { display: grid }`);
 // on print the CSS overrides to show every body stacked so paper output
 // keeps all cases visible.
-// `idx` / `total` only feed the print-only "Case N of M" banner; on screen
-// they're hidden by `.print-case-label { display: none }`. Default 0/1
-// suppresses the banner for callers that don't carry duplicate context.
-// `.print-label` rows likewise emit "SEVERITY" / "CONFIDENCE" headings
-// above the badge / score in print and stay hidden on screen — paper
-// readers don't have the UI conventions to know what a colored chip means
-// without a label.
+// `idx` / `total` feed the print-only "N of M" banner; on screen the tab
+// strip already conveys group size, so `.print-case-label { display: none }`
+// hides it. `.value-label` rows emit "Severity" / "Confidence" sub-captions
+// below the badge / score on BOTH screen and paper — small enough to read
+// as supporting metadata, big enough that someone unfamiliar with the UI
+// conventions doesn't have to guess what a colored chip and a "5/10" mean.
 function renderTabBody(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
   let html = `<div class="tab-body${isActive ? ' active' : ''}" data-tid="${esc(key)}">`
   if (total > 1) html += `<div class="print-case-label">${idx + 1} of ${total}</div>`
   html += '<div class="finding-left">'
-  // Print-only "Severity" / "Confidence" sub-captions sit AFTER their values
-  // (below them visually) — `.print-label { display: none }` hides them on
-  // screen, so the order here only affects paper.
+  // Sub-captions sit AFTER their values (below them visually).
   html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
-  html += '<div class="print-label">Severity</div>'
+  html += '<div class="value-label">Severity</div>'
   if (f.confidence !== undefined) {
     html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
-    html += '<div class="print-label">Confidence</div>'
+    html += '<div class="value-label">Confidence</div>'
   }
   html += '</div>'
   html += '<div>'
