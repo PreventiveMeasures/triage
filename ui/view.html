@@ -748,7 +748,19 @@ function addReport(file) {
         fileName: file.name,
         groups,
       })
-      if (isFirst) resetFilters()
+      if (isFirst) {
+        resetFilters()
+        // Auto-tune the confidence floor so the initial view fits roughly
+        // 25 groups. Step up from 6 → 7 → 8 until the visible count is
+        // within budget; cap at 8 (the previous static default) — going
+        // higher hides too much of the report unconditionally. Counts
+        // groups, not tabs, matching the filter semantics (`g.some(...)`).
+        const countAtMin = (min) => groups.reduce((n, g) =>
+          n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
+        if (countAtMin(6) <= 25) filterConfMin = 6
+        else if (countAtMin(7) <= 25) filterConfMin = 7
+        else filterConfMin = 8
+      }
       render()
     } catch (err) {
       alert(`Failed to parse ${file.name}: ${err.message}`)
