@@ -96,6 +96,18 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .file-header a:hover { color: var(--accent); }
 .file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
 .file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+/* Per-group location label used when "group by file" is OFF. Each dedup
+   group renders standalone with this label above it; the file-header
+   chrome (background, count, collapse-on-click) is intentionally absent
+   here since these labels are inline cues, not section headers — the
+   reader can still see the file path next to every result without the
+   structural overhead of grouping. */
+.group-loc {
+  font-size: .85rem; color: var(--muted); margin: .85rem 0 .15rem;
+  padding: 0 .25rem;
+}
+.group-loc a { color: inherit; }
+.group-loc a:hover { color: var(--accent); }
 
 .finding {
   padding: .75rem; border-bottom: 1px solid var(--border);
@@ -445,6 +457,12 @@ let sortBy = 'file'
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
 let showLines = true
 let showMetadata = false
+// `groupByFile` true (default) renders findings under per-file headers —
+// the original behavior, kept by default. When false, every dedup group
+// renders flat in sort order with its own location label above it (file
+// path + line), so the reader can scan results across files in pure
+// severity/confidence/file order without the file-header chrome.
+let groupByFile = true
 // Per-finding manual annotations. Keyed by `tabKey(f)` = `f.id ?? String(f._id)`:
 // the export's derived uuid when available (persists across reloads via
 // localStorage), else a session-local numeric id (session-only). See
@@ -1098,6 +1116,7 @@ function render() {
   html += `<div class="sep"></div>`
   html += `<label class="checkbox-label"><input type="checkbox" id="show-lines"${showLines ? ' checked' : ''}> line numbers</label>`
   html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${showMetadata ? ' checked' : ''}> metadata</label>`
+  html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${groupByFile ? ' checked' : ''}> group by file</label>`
   const trashTitle = showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
   html += `<button type="button" id="toggle-trash" class="trash-btn${showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
@@ -1123,28 +1142,47 @@ function render() {
     html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
   }
 
-  // Group groups by file. All tabs in a dedup group share the same file
-  // (dedup runs per-file by fileHash upstream), so the primary tab's
-  // file is a safe representative.
-  const byFile = new Map()
-  for (const g of filtered) {
-    const file = primaryTab(g).file
-    if (!byFile.has(file)) byFile.set(file, [])
-    byFile.get(file).push(g)
-  }
+  if (groupByFile) {
+    // Group groups by file. All tabs in a dedup group share the same file
+    // (dedup runs per-file by fileHash upstream), so the primary tab's
+    // file is a safe representative.
+    const byFile = new Map()
+    for (const g of filtered) {
+      const file = primaryTab(g).file
+      if (!byFile.has(file)) byFile.set(file, [])
+      byFile.get(file).push(g)
+    }
 
-  // For file sort, sort files alphabetically; otherwise preserve first-appearance order
-  const fileKeys = sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
+    // For file sort, sort files alphabetically; otherwise preserve first-appearance order
+    const fileKeys = sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
 
-  for (const file of fileKeys) {
+    for (const file of fileKeys) {
+      const items = sortBy === 'file'
+        ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
+        : byFile.get(file)
+      html += '<div class="file-group">'
+      html += `<div class="file-header"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
+      html += '<div class="file-body">'
+      for (const g of items) html += renderGroup(g)
+      html += '</div></div>'
+    }
+  } else {
+    // Flat mode: every dedup group renders standalone with its own
+    // location label above it. `applySorting` already ordered by the
+    // chosen sortBy on `filtered`; for the 'file' sort we extend that
+    // ordering with line-within-file, which the file-grouped path
+    // achieves by sorting per-file.
     const items = sortBy === 'file'
-      ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
-      : byFile.get(file)
-    html += '<div class="file-group">'
-    html += `<div class="file-header"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
-    html += '<div class="file-body">'
-    for (const g of items) html += renderGroup(g)
-    html += '</div></div>'
+      ? [...filtered].sort((a, b) => {
+        const pa = primaryTab(a), pb = primaryTab(b)
+        return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
+      })
+      : filtered
+    for (const g of items) {
+      const p = primaryTab(g)
+      html += `<div class="group-loc">${fileLink(p.file)}</div>`
+      html += renderGroup(g)
+    }
   }
 
   html += '<button class="reset-btn" id="reset-btn">Clear all (drop more files to merge)</button>'
@@ -1300,6 +1338,10 @@ report.addEventListener('change', (e) => {
   // would blur it) and is cheap since these are pure CSS effects.
   else if (id === 'show-lines') { showLines = e.target.checked; report.classList.toggle('show-lines', showLines) }
   else if (id === 'show-metadata') { showMetadata = e.target.checked; report.classList.toggle('show-metadata', showMetadata) }
+  // `group-by-file` reshapes the rendered DOM (per-file headers vs flat
+  // location labels), so it goes through a full render — checkbox blur
+  // is acceptable here since the change is structural.
+  else if (id === 'group-by-file') { groupByFile = e.target.checked; render() }
 })
 
 report.addEventListener('input', (e) => {
