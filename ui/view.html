@@ -291,18 +291,18 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .reset-btn:hover { border-color: var(--accent); }
 
 /* "Severity" / "Confidence" sub-captions below the values in the
-   left column. Visible on both screen and paper — tiny so they read
-   as supporting metadata under the values. Centered to match
-   `.finding-left { text-align: center }`. The print stylesheet
-   shrinks these further (.45rem) for paper density. */
+   left column. Tiny by design — they're supporting metadata, not
+   headings, so the badge / score stay the visual anchor. Centered
+   to match `.finding-left { text-align: center }`. Print uses the
+   same size; only the ink color differs (paler grey on white). */
 .value-label {
   display: block;
-  font-size: .65rem;
+  font-size: .45rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .04em;
-  margin-top: .2rem;
-  margin-bottom: .35rem;
+  margin-top: .1rem;
+  margin-bottom: .3rem;
   font-weight: 500;
 }
 .finding-left .value-label:last-child { margin-bottom: 0; }
@@ -380,16 +380,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
     letter-spacing: .04em;
   }
 
-  /* Print-tightened version of the screen `.value-label` rule —
-     smaller text, paler ink, less vertical breathing room so the
-     captions read as supporting metadata on paper without crowding
-     the rest of the row. */
-  .value-label {
-    font-size: .45rem;
-    color: #777;
-    margin-top: .1rem;
-    margin-bottom: .3rem;
-  }
+  /* Paper-friendly ink for the value-labels (`var(--muted)` from the
+     screen palette is tuned for the dark UI background and looks
+     washed out on white). Size and spacing inherit from the screen
+     rule. */
+  .value-label { color: #777; }
 
   /* Force the printer to render background colors. Browsers strip them
      by default ("color adjustment: economy") which is what was leaving
