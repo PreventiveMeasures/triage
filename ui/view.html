@@ -715,16 +715,23 @@ function addReport(file) {
         // `tabKey(f)` prefers `f.id` (persistent) and falls back to
         // `String(f._id)`. Register ids as we stamp so duplicate entries
         // WITHIN this drop are caught too. Also fill in run-level meta
-        // (type / effort / exportsMode) from the report header when the
-        // finding doesn't already carry it — non-deduplicated dumps keep
-        // those fields only at the top level, so this lifts them per-
-        // finding for downstream rendering. Pre-stamped findings (e.g.
-        // from a deduplicate pass) keep their own values.
+        // (type / effort / exportsMode) from the report header — but
+        // only when the finding has NO per-finding meta at all. A finding
+        // that came out of the deduplicate command already has its own
+        // per-source meta stamped (each source report's header projected
+        // onto its findings); a missing field there means "that source
+        // run didn't have it" and is intentional. Mixing in the dedup
+        // dump's top-level meta would mask those gaps with the dedup
+        // model's settings (e.g. printing effort=max on a finding whose
+        // source run had no effort flag).
         const stamped = members.map((f) => {
           if (f.id) seenIds.add(f.id)
           const filled = { ...f, _id: nextFindingId++ }
-          for (const key of META_FIELDS) {
-            if (filled[key] === undefined && data[key] !== undefined) filled[key] = data[key]
+          const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
+          if (!hasOwnMeta) {
+            for (const key of META_FIELDS) {
+              if (data[key] !== undefined) filled[key] = data[key]
+            }
           }
           return filled
         })
