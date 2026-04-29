@@ -96,18 +96,23 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .file-header a:hover { color: var(--accent); }
 .file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
 .file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
-/* Per-group location label used when "group by file" is OFF. Each dedup
-   group renders standalone with this label above it; the file-header
-   chrome (background, count, collapse-on-click) is intentionally absent
-   here since these labels are inline cues, not section headers — the
-   reader can still see the file path next to every result without the
-   structural overhead of grouping. */
-.group-loc {
-  font-size: .85rem; color: var(--muted); margin: .85rem 0 .15rem;
-  padding: 0 .25rem;
+/* Flat mode (group by file = OFF): each dedup group renders inside a
+   self-contained card. The card border replaces the per-finding
+   border-bottom, and a small header strip carries the file path + line
+   + exportName so every result reads as a complete unit independent of
+   the toolbar's "line numbers" toggle. Visual weight tuned so the
+   header is unmistakably part of the card below it (shared border,
+   rounded top, surface fill) instead of a floating caption. */
+.flat-group { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.flat-group-loc {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  padding: .4rem .7rem; font-size: .85rem;
+  background: var(--surface); border-bottom: 1px solid var(--border);
 }
-.group-loc a { color: inherit; }
-.group-loc a:hover { color: var(--accent); }
+.flat-group-loc .file { color: var(--text); font-weight: 500; }
+.flat-group-loc .file:hover { color: var(--accent); }
+.flat-group-loc .meta { color: var(--muted); font-size: .8rem; }
+.flat-group .finding { border-bottom: none; }
 
 .finding {
   padding: .75rem; border-bottom: 1px solid var(--border);
@@ -1174,11 +1179,11 @@ function render() {
       html += '</div></div>'
     }
   } else {
-    // Flat mode: every dedup group renders standalone with its own
-    // location label above it. `applySorting` already ordered by the
-    // chosen sortBy on `filtered`; for the 'file' sort we extend that
-    // ordering with line-within-file, which the file-grouped path
-    // achieves by sorting per-file.
+    // Flat mode: each dedup group renders inside its own card (.flat-group)
+    // with a small location header on top (file · line · exportName).
+    // `applySorting` already ordered `filtered` by the chosen sortBy; for
+    // the 'file' sort we extend that ordering with line-within-file, which
+    // the file-grouped path achieves by sorting per-file.
     const items = sortBy === 'file'
       ? [...filtered].sort((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
@@ -1187,8 +1192,12 @@ function render() {
       : filtered
     for (const g of items) {
       const p = primaryTab(g)
-      html += `<div class="group-loc">${fileLink(p.file)}</div>`
+      const lineHtml = `<span class="meta">line ${esc(String(p.line))}</span>`
+      const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
+      html += '<div class="flat-group">'
+      html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file)}</span>${lineHtml}${exportHtml}</div>`
       html += renderGroup(g)
+      html += '</div>'
     }
   }
 
