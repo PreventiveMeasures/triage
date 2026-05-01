@@ -12,13 +12,80 @@
   --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
   --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
 }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  display: flex; height: 100vh; margin: 0; overflow: hidden;
+}
 a { color: var(--accent); text-decoration: none; }
+
+/* sidebar — collapsible file list rooted in OPFS, persists across reloads.
+   Pinned to the viewport (height: 100%; body is height: 100vh + overflow
+   hidden, main scrolls instead). When OPFS has no entries AND nothing's
+   currently loaded, the whole sidebar is hidden so the empty-state drop
+   zone reads as a clean welcome screen. Collapsed state shrinks to a
+   thin strip with just the toggle button so the user can always re-open
+   it. Hidden in print. */
+#sidebar {
+  width: 240px; flex-shrink: 0; height: 100%;
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: width .15s ease-out;
+  overflow: hidden;
+}
+#sidebar.collapsed { width: 32px; }
+#sidebar.empty { display: none; }
+.sidebar-header {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .75rem; border-bottom: 1px solid var(--border);
+}
+.sidebar-header h2 {
+  font-size: .85rem; font-weight: 600; flex: 1;
+  white-space: nowrap; overflow: hidden;
+}
+#sidebar.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
+#sidebar.collapsed .sidebar-header h2,
+#sidebar.collapsed #file-list,
+#sidebar.collapsed .sidebar-actions { display: none; }
+#sidebar-toggle {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: .15rem .4rem; cursor: pointer; font-size: .85rem; font-family: inherit;
+}
+#sidebar-toggle:hover { border-color: var(--accent); }
+#file-list { list-style: none; flex: 1; overflow-y: auto; padding: 0; margin: 0; }
+.file-item button.file-name {
+  display: block; width: 100%; text-align: left;
+  padding: .4rem .75rem;
+  background: transparent; color: var(--text);
+  border: none; border-bottom: 1px solid var(--border);
+  cursor: pointer; font-size: .8rem; font-family: inherit;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-item button.file-name:hover { background: #1a2233; }
+.file-item.current button.file-name { background: #1a2233; color: var(--accent); }
+.sidebar-actions {
+  padding: .5rem .75rem; border-top: 1px solid var(--border);
+  display: flex; gap: .35rem; flex-wrap: wrap;
+}
+.sidebar-actions button {
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  border-radius: 4px; padding: .25rem .55rem; cursor: pointer;
+  font-size: .8rem; font-family: inherit;
+}
+.sidebar-actions button:hover { border-color: var(--accent); }
+.sidebar-actions button.danger:hover { border-color: var(--critical); color: var(--critical); }
+.sidebar-actions button[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
+
+/* Main column scrolls independently of the sidebar — body is height-
+   constrained + overflow hidden, so the report's tall finding lists
+   only push this column, not the sidebar's file list. */
+#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
 
 /* drop zone */
 #drop-zone {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-height: 100vh; padding: 2rem;
+  flex: 1; padding: 2rem;
 }
 #drop-zone.hover { background: #1a2233; }
 .drop-prompt { text-align: center; color: var(--muted); }
@@ -26,7 +93,7 @@ a { color: var(--accent); text-decoration: none; }
 .drop-prompt p { font-size: .95rem; }
 
 /* report */
-#report { display: none; max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+#report { display: none; max-width: 1200px; margin: 0 auto; padding: 1.5rem; width: 100%; box-sizing: border-box; }
 #report.active { display: block; }
 #drop-zone.hidden { display: none; }
 
@@ -283,13 +350,6 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    active findings. */
 .finding.deleted { opacity: 0.75; }
 
-.reset-btn {
-  display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text); font-size: .85rem; cursor: pointer;
-}
-.reset-btn:hover { border-color: var(--accent); }
-
 /* "Severity" / "Confidence" sub-captions below the values in the
    left column. Tiny by design — they're supporting metadata, not
    headings, so the badge / score stay the visual anchor. Centered
@@ -324,8 +384,9 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
      per page on dense reports. */
   html { font-size: 9pt; }
   body { background: #fff; color: #000; line-height: 1.35; }
-  .toolbar, .stats, .reset-btn, .finding .marks { display: none !important; }
-  #drop-zone { display: none !important; }
+  .toolbar, .stats, .finding .marks { display: none !important; }
+  #drop-zone, #sidebar { display: none !important; }
+  body { display: block; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
   .finding {
@@ -414,14 +475,26 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 </head>
 <body>
 
-<div id="drop-zone">
-  <div class="drop-prompt">
-    <h1>deepview results viewer</h1>
-    <p>Drop one or more JSON results files here to visualize them (multiple files merge by source filename)</p>
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <button id="sidebar-toggle" type="button" title="toggle sidebar">≡</button>
+    <h2>Reports</h2>
   </div>
-</div>
+  <ul id="file-list"></ul>
+  <div class="sidebar-actions">
+    <button id="delete-current" type="button" class="danger" title="delete the current report from storage">Delete</button>
+  </div>
+</aside>
 
-<div id="report"></div>
+<main id="main-content">
+  <div id="drop-zone">
+    <div class="drop-prompt">
+      <h1>deepview results viewer</h1>
+      <p>Drop a JSON results file here, or pick one from the sidebar</p>
+    </div>
+  </div>
+  <div id="report"></div>
+</main>
 
 <script nonce="1">
 'use strict'
@@ -430,18 +503,134 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
 const NODE_MODULES_RE = /(^|\/)node_modules\//
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
-// `addReport` lifts any of these from the report header onto each finding
-// at ingest, so the renderer can show per-finding mode info uniformly
-// without branching on whether the file came from a deduplicated dump.
+// `ingestReport` lifts any of these from the report header onto each
+// finding at ingest, so the renderer can show per-finding mode info
+// uniformly without branching on whether the file came from a
+// deduplicated dump.
 const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
+// Persistent file storage backs the sidebar. OPFS — Origin Private
+// File System — is the preferred layer (real files, larger quota); on
+// origins where OPFS is unavailable (file://, older browsers) we
+// transparently fall back to localStorage with each report stored
+// gzipped + base64 under a fixed prefix. Both layers key by basename;
+// filename collisions overwrite.
+const OPFS_DIR = 'deepview-reports'
+const LS_REPORT_PREFIX = 'deepview.report:'
+// localStorage key for the last-viewed file — restored on page load so
+// the user picks back up where they left off.
+const LAST_FILE_KEY = 'deepview.lastFile'
 const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
+const sidebar = document.getElementById('sidebar')
+const fileList = document.getElementById('file-list')
 
-// Multiple reports can be loaded and are merged on render. The grouping is
-// by finding file, so findings for the same source file from different
-// reports (e.g. security + correctness) collapse into the same file-group.
-// Filters stay shared across all loaded reports.
+let opfsWarned = false
+async function getOpfsDir() {
+  try {
+    const root = await navigator.storage.getDirectory()
+    return await root.getDirectoryHandle(OPFS_DIR, { create: true })
+  } catch (err) {
+    if (!opfsWarned) {
+      opfsWarned = true
+      // file:// and older browsers reject OPFS. We fall back to gzipped
+      // localStorage automatically; surface this once so a user wondering
+      // about quota / size limits sees what's happening.
+      console.warn('OPFS unavailable, falling back to gzipped localStorage (limited quota).', err)
+    }
+    return null
+  }
+}
+
+// Compress / decompress JSON text via gzip + base64 for the localStorage
+// fallback. CompressionStream / DecompressionStream are well supported
+// (same primitive used by loadTriage / saveTriage). Base64 is the
+// transport because localStorage values are strings.
+async function gzipString(text) {
+  const bytes = new TextEncoder().encode(text)
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
+  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
+  return arr.toBase64()
+}
+async function gunzipString(b64) {
+  const bytes = Uint8Array.fromBase64(b64)
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
+  return new TextDecoder().decode(arr)
+}
+
+// Storage layer: try OPFS first (real files, large quota), fall back to
+// gzipped localStorage when OPFS is unavailable. Each function probes
+// OPFS once per call — caching is unnecessary because getDirectoryHandle
+// is cheap. localStorage paths read/write a key prefixed with
+// LS_REPORT_PREFIX; the file list is enumerated by scanning that prefix.
+async function listFiles() {
+  const dir = await getOpfsDir()
+  if (dir) {
+    const names = []
+    for await (const [name] of dir.entries()) names.push(name)
+    return names.sort()
+  }
+  const names = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith(LS_REPORT_PREFIX)) names.push(key.slice(LS_REPORT_PREFIX.length))
+  }
+  return names.sort()
+}
+
+async function saveFile(name, content) {
+  const dir = await getOpfsDir()
+  if (dir) {
+    // Remove first so a shorter overwrite shrinks the underlying file.
+    try { await dir.removeEntry(name) } catch {}
+    const fh = await dir.getFileHandle(name, { create: true })
+    const writable = await fh.createWritable()
+    await writable.write(content)
+    await writable.close()
+    return
+  }
+  const compressed = await gzipString(content)
+  try {
+    localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
+  } catch (err) {
+    // Most likely QuotaExceededError. Re-throw so the drop handler can
+    // surface a useful message to the user instead of silently dropping.
+    throw new Error(`localStorage write failed for ${name}: ${err.message}`)
+  }
+}
+
+async function readFile(name) {
+  const dir = await getOpfsDir()
+  if (dir) {
+    const fh = await dir.getFileHandle(name)
+    const file = await fh.getFile()
+    return await file.text()
+  }
+  const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
+  if (compressed === null) throw new Error(`File not found: ${name}`)
+  return await gunzipString(compressed)
+}
+
+async function deleteFile(name) {
+  const dir = await getOpfsDir()
+  if (dir) {
+    try { await dir.removeEntry(name) } catch {}
+    return
+  }
+  localStorage.removeItem(LS_REPORT_PREFIX + name)
+}
+
+// Exactly one OPFS-backed report is active at a time — the sidebar
+// switches between them; merging is gone. Headless callers
+// (`window.__loadFile` from src/print.js) bypass OPFS and may call
+// `ingestReport` repeatedly, in which case `reports` does accumulate
+// (the print pipeline still merges that way). The renderer is shape-
+// agnostic.
 let reports = []
+// Currently-displayed OPFS basename, or null when nothing is loaded
+// (drop zone visible). Tracked separately from `reports` so the
+// sidebar can highlight the active file even before render finishes.
+let currentFile = null
 // Severity + color filters are multi-select: empty Set = "no filter, show
 // everything" (selecting every option individually is equivalent — the
 // predicate passes when every finding's value is in the Set). UI-wise
@@ -651,6 +840,56 @@ async function loadTriage() {
 
 let loadPromise = loadTriage()
 
+// Render the OPFS file list into the sidebar. Highlights the active
+// file. Disables Delete when nothing's open. Hides the whole sidebar
+// when there are no files AND nothing's currently loaded — keeps the
+// empty-state drop zone uncluttered. Called after every state
+// transition that could change the file list or current selection.
+async function renderSidebar() {
+  const names = await listFiles()
+  sidebar.classList.toggle('empty', names.length === 0 && !currentFile)
+  fileList.innerHTML = names.map((n) =>
+    `<li class="file-item${n === currentFile ? ' current' : ''}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(n)}">${esc(n)}</button></li>`,
+  ).join('')
+  const deleteBtn = document.getElementById('delete-current')
+  if (deleteBtn) deleteBtn.disabled = !currentFile
+}
+
+// Sidebar event delegation: file-list click switches; Delete removes
+// the current file; toggle collapses / expands.
+sidebar.addEventListener('click', (e) => {
+  const fileEl = e.target.closest('.file-item[data-file]')
+  if (fileEl) {
+    const name = fileEl.dataset.file
+    if (name && name !== currentFile) switchToFile(name)
+    return
+  }
+  if (e.target.closest('#delete-current')) {
+    deleteCurrent()
+    return
+  }
+  if (e.target.closest('#sidebar-toggle')) {
+    sidebar.classList.toggle('collapsed')
+    try { localStorage.setItem('deepview.sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0') } catch {}
+  }
+})
+
+// On boot: restore the sidebar collapse state, render the file list,
+// and switch to the last-viewed file if it's still around. No file
+// loaded → drop zone stays visible.
+;(async () => {
+  try {
+    if (localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+  } catch {}
+  await renderSidebar()
+  let last = null
+  try { last = localStorage.getItem(LAST_FILE_KEY) } catch {}
+  if (last) {
+    const names = await listFiles()
+    if (names.includes(last)) await switchToFile(last)
+  }
+})()
+
 function resetFilters() {
   filterSeverities = new Set()
   filterColors = new Set()
@@ -662,15 +901,13 @@ function resetFilters() {
   sortBy = 'file'
 }
 
-// Prevent default drag behavior everywhere. We also accept drops anywhere on
-// the page (not just the drop zone) once a report is visible, so the user
-// can keep dropping more files on top of the already-rendered view to merge
-// them in. The drop zone itself stays as the primary target before any
-// report is loaded.
+// Prevent default drag behavior everywhere. Drops anywhere on the page
+// route through addFiles → OPFS save → switch view to the last dropped.
+// The drop zone keeps its hover affordance for the empty-state case.
 document.addEventListener('dragover', (e) => e.preventDefault())
 document.addEventListener('drop', (e) => {
   e.preventDefault()
-  if (reports.length === 0) return // let dropZone handler own the first drop
+  if (e.target.closest('#drop-zone')) return // dropZone handler owns this
   addFiles(e.dataTransfer.files)
 })
 
@@ -682,27 +919,79 @@ dropZone.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-function addFiles(fileList) {
-  for (const file of fileList) addReport(file)
+// Drag/drop entry point. Each file is read, persisted to OPFS (replacing
+// any existing entry of the same name), and the LAST one becomes the
+// active view. Multiple drops at once still all save, but only the
+// final one renders — merging across files is no longer a thing in the
+// UI; the user switches via the sidebar.
+async function addFiles(files) {
+  let last = null
+  for (const file of files) {
+    try {
+      const content = await file.text()
+      await saveFile(file.name, content)
+      last = { name: file.name, content }
+    } catch (err) {
+      alert(`Failed to load ${file.name}: ${err.message}`)
+    }
+  }
+  if (last) await switchToFile(last.name, last.content)
+  await renderSidebar()
 }
 
-// Returns a Promise that resolves once this file has been parsed,
-// stamped onto `reports`, and the renderer has run. Drag/drop callers
-// fire-and-forget; the headless print flow (see `__loadFile` below)
-// awaits the promise so it knows when the page is ready to print.
-function addReport(file) {
+// Replace the active view with the named OPFS file. Pre-fetched
+// `content` skips a redundant OPFS read (drop path passes it through).
+async function switchToFile(name, content) {
+  reports = []
+  currentFile = name
+  try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
+  if (content === undefined) {
+    try {
+      content = await readFile(name)
+    } catch (err) {
+      alert(`Failed to read ${name}: ${err.message}`)
+      currentFile = null
+      await renderSidebar()
+      return
+    }
+  }
+  await ingestReport(name, content)
+  await renderSidebar()
+}
+
+// Remove the current file from OPFS and close the view. Doesn't
+// auto-switch to another — the user picks from the sidebar.
+async function deleteCurrent() {
+  if (!currentFile) return
+  const name = currentFile
+  await deleteFile(name)
+  currentFile = null
+  reports = []
+  try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
+  report.classList.remove('active')
+  report.innerHTML = ''
+  dropZone.classList.remove('hidden')
+  document.title = 'deepview results'
+  await renderSidebar()
+}
+
+// Pure parse + render path — no FileReader, no OPFS. Used both by
+// switchToFile (after content is materialized) and by the headless
+// print flow (`window.__loadFile`), so that flow can still merge
+// multiple inputs by calling repeatedly.
+function ingestReport(name, content) {
   return new Promise((resolve) => {
-  const reader = new FileReader()
-  reader.onload = async () => {
+  ;(async () => {
     try {
       // Persistent triage (markers/deletedIds keyed by uuid) is loaded
       // once at module init; await it before rendering so the first
       // drop already shows stored marks/deletions for matching findings.
       await loadPromise
-      const data = JSON.parse(reader.result)
-      // Reset filters only for the very first report. Subsequent drops keep
-      // the user's current filter state so merging a second report doesn't
-      // wipe their tuning.
+      const data = JSON.parse(content)
+      // Reset filters whenever this is the first report in the current
+      // view (cleared on switchToFile / deleteCurrent, accumulating in
+      // the headless print flow). The auto-tune that follows uses the
+      // same gate.
       const isFirst = reports.length === 0
       // Dedup by exporter-provided uuid id across ALL loaded reports.
       // Input entries are either a single Finding or a Finding[] (a
@@ -751,10 +1040,10 @@ function addReport(file) {
         })
         groups.push(stamped)
       }
-      if (dupeCount > 0) console.log(`${file.name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
+      if (dupeCount > 0) console.log(`${name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
       reports.push({
         type: data.type || 'analysis',
-        fileName: file.name,
+        fileName: name,
         groups,
       })
       if (isFirst) {
@@ -772,21 +1061,20 @@ function addReport(file) {
       }
       render()
     } catch (err) {
-      alert(`Failed to parse ${file.name}: ${err.message}`)
+      alert(`Failed to parse ${name}: ${err.message}`)
     }
     resolve()
-  }
-  reader.readAsText(file)
+  })()
   })
 }
 
-// Headless / automated entry point — receives a name + JSON content,
-// constructs a File and routes it through the same addReport path the
-// drag/drop flow uses. Returned promise resolves when this file's
-// render has run, so callers (the `print` command in src/print.js)
-// can await loading of every input before triggering print.
-window.__loadFile = (name, content) =>
-  addReport(new File([content], name, { type: 'application/json' }))
+// Headless / automated entry point — parses + renders a JSON report
+// in-process, no OPFS, no sidebar swap. Returned promise resolves when
+// this file's render has run, so callers (the `print` command in
+// src/print.js) can await loading of every input before triggering
+// print. Repeated calls accumulate (the print pipeline still merges
+// multiple inputs that way).
+window.__loadFile = (name, content) => ingestReport(name, content)
 
 // Headless filter override — used by the `print` command to apply
 // CLI-supplied --severity / --confidence values AFTER all reports are
@@ -1274,8 +1562,6 @@ function render() {
     }
   }
 
-  html += '<button class="reset-btn" id="reset-btn">Clear all (drop more files to merge)</button>'
-
   report.innerHTML = html
   report.classList.add('active')
   report.classList.toggle('show-lines', showLines)
@@ -1290,23 +1576,6 @@ function renderKeepFocus(inputId) {
   render()
   const el = document.getElementById(inputId)
   if (el) { el.focus(); el.setSelectionRange(pos, pos) }
-}
-
-function resetView() {
-  reports = []
-  markers = new Map()
-  deletedIds = new Set()
-  activeTabByGroup = new Map()
-  showDeleted = false
-  nextFindingId = 0
-  report.classList.remove('active')
-  report.innerHTML = ''
-  dropZone.classList.remove('hidden')
-  document.title = 'deepview results'
-  // "Clear all" wipes the session but not the persisted triage — so
-  // re-dropping the same report re-applies marks/deletions. Refresh
-  // the load promise so `addReport` awaits the new load cycle.
-  loadPromise = loadTriage()
 }
 
 // Event delegation — all interactive elements handled here, no inline handlers
@@ -1408,10 +1677,6 @@ report.addEventListener('click', (e) => {
   if (header && e.target.tagName !== 'A') {
     header.parentElement.classList.toggle('collapsed')
     return
-  }
-  // Reset button
-  if (e.target.closest('#reset-btn')) {
-    resetView()
   }
   // Print button — set document.title to the filename (or longest common
   // prefix when multiple files are loaded) so the OS print dialog and any
