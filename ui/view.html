@@ -1046,16 +1046,20 @@ function render() {
   const fileNames = reports.map((r) => r.fileName)
 
   // Header analyzer breakdown — one entry per unique
-  // `<analyzer> (<effort>, <exportsMode>)` combo seen across all
+  // `<analyzer> (<model>, <effort>, <exportsMode>)` combo seen across all
   // findings. The parenthetical lists whichever modifiers are set on
-  // that combo, in order; both omitted means just the analyzer name.
-  // Source data comes from the run-meta lifted onto each finding at
-  // ingest, so a single load can contain several combos when the user
-  // merges multiple analyzer outputs.
+  // that combo, in the same order as the per-finding run-meta line so
+  // the title and the per-finding annotations read consistently. Source
+  // data comes from the run-meta lifted onto each finding at ingest, so
+  // a single load can contain several combos when the user merges
+  // multiple analyzer outputs. Model name is prettified the same way
+  // (provider prefix + `claude-` stripped, dashes → spaces).
   const combos = [...new Set(reports.flatMap((r) =>
     r.groups.flatMap((g) => g.map((f) => {
       const type = f.type ?? 'unknown'
       const parts = []
+      const model = prettyModel(f.model)
+      if (model) parts.push(model)
       if (f.effort) parts.push(f.effort)
       if (f.exportsMode) parts.push(f.exportsMode)
       return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
