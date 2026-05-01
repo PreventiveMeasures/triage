@@ -834,6 +834,11 @@ function findingText(f) {
   return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
 }
 
+function prettyModel(model) {
+  if (!model) return model
+  return model.replace(/^[^/]+\//u, '').replace(/^claude-/, '').replaceAll('-', ' ')
+}
+
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
 // can ask "does ANY tab in this group match?" — per the user spec,
 // one matching tab keeps the whole group visible.
@@ -939,7 +944,7 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
   const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
   html += `<span class="line-num">${lineLink(f.file, f.line, f.repo?.github)}${exportPart}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
-  const meta = [f.type, f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
   if (meta) html += `<span class="run-meta">${esc(meta)}</span>`
   html += '</div>'
   html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
