@@ -686,7 +686,12 @@ function addFiles(fileList) {
   for (const file of fileList) addReport(file)
 }
 
+// Returns a Promise that resolves once this file has been parsed,
+// stamped onto `reports`, and the renderer has run. Drag/drop callers
+// fire-and-forget; the headless print flow (see `__loadFile` below)
+// awaits the promise so it knows when the page is ready to print.
 function addReport(file) {
+  return new Promise((resolve) => {
   const reader = new FileReader()
   reader.onload = async () => {
     try {
@@ -769,9 +774,19 @@ function addReport(file) {
     } catch (err) {
       alert(`Failed to parse ${file.name}: ${err.message}`)
     }
+    resolve()
   }
   reader.readAsText(file)
+  })
 }
+
+// Headless / automated entry point — receives a name + JSON content,
+// constructs a File and routes it through the same addReport path the
+// drag/drop flow uses. Returned promise resolves when this file's
+// render has run, so callers (the `print` command in src/print.js)
+// can await loading of every input before triggering print.
+window.__loadFile = (name, content) =>
+  addReport(new File([content], name, { type: 'application/json' }))
 
 function esc(str) {
   const el = document.createElement('span')
