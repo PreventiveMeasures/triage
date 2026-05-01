@@ -318,12 +318,12 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    file with many findings is more common than a finding long
    enough to need its own page). */
 @media print {
-  /* ~11pt root maps the rem-based screen sizes onto normal A4/Letter
-     body density (`.875rem` body becomes ~9.6pt, headings ~14pt,
-     badges ~7.7pt). Tightening line-height squeezes another row or
-     two onto each page without making text feel cramped. */
-  html { font-size: 11pt; }
-  body { background: #fff; color: #000; line-height: 1.4; }
+  /* ~9pt root maps the rem-based screen sizes onto a tighter A4/Letter
+     density than 11pt (body lands around 8pt, headings ~11.7pt, badges
+     ~6.3pt). Trades a bit of readability for noticeably more findings
+     per page on dense reports. */
+  html { font-size: 9pt; }
+  body { background: #fff; color: #000; line-height: 1.35; }
   .toolbar, .stats, .reset-btn, .finding .marks { display: none !important; }
   #drop-zone { display: none !important; }
   #report { max-width: none; padding: 0; }
@@ -1172,6 +1172,7 @@ function render() {
   const trashTitle = showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
   html += `<button type="button" id="toggle-trash" class="trash-btn${showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
+  html += `<button type="button" id="print-btn" class="trash-btn" title="print report (sets the document title to the filename / common prefix while printing)">Print</button>`
   html += `<span class="result-count">${filtered.length} of ${allGroups.length}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
@@ -1385,7 +1386,38 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('#reset-btn')) {
     resetView()
   }
+  // Print button — set document.title to the filename (or longest common
+  // prefix when multiple files are loaded) so the OS print dialog and any
+  // saved PDF default to a meaningful name, then call window.print() and
+  // restore the original title. window.print() is synchronous in current
+  // browsers (blocks until the dialog is dismissed), so the restore lands
+  // before anything else can read the title.
+  if (e.target.closest('#print-btn')) {
+    const fileNames = reports.map((r) => r.fileName)
+    let target = ''
+    if (fileNames.length === 1) target = fileNames[0]
+    else if (fileNames.length > 1) target = commonPrefix(fileNames)
+    const oldTitle = document.title
+    if (target) document.title = target
+    window.print()
+    document.title = oldTitle
+  }
 })
+
+// Walk a list of strings and shrink the candidate prefix until every
+// string starts with it. Returns '' when no shared prefix exists. Used
+// for the print button's title heuristic when multiple reports are
+// loaded — gives the saved PDF a name that still reads as "this batch"
+// (`security-` / `2026-04-` / etc.) without having to manually pick.
+function commonPrefix(strings) {
+  if (strings.length === 0) return ''
+  let prefix = strings[0]
+  for (let i = 1; i < strings.length; i++) {
+    while (prefix && !strings[i].startsWith(prefix)) prefix = prefix.slice(0, -1)
+    if (!prefix) return ''
+  }
+  return prefix
+}
 
 report.addEventListener('change', (e) => {
   const id = e.target.id
