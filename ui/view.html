@@ -781,19 +781,35 @@ function esc(str) {
 
 function isModule(file) { return NODE_MODULES_RE.test(file) }
 
-function fileUrl(file) {
+// Strip the `node_modules/<pkg>/` prefix so the path is rooted at the
+// package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
+// `node_modules/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
+// the LAST `/node_modules/` so nested layouts strip the innermost
+// package, matching the package-name extraction at export time.
+function stripPackagePrefix(file) {
+  return file.match(/^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
+}
+
+// `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
+// wins over the user-typed repo URL when available — it points at the
+// actual upstream of a node_modules dependency rather than at the project
+// repo, which doesn't carry node_modules sources. Falls back to the
+// user-typed repoUrl for own-source files (and when no per-finding repo
+// is known).
+function fileUrl(file, githubRepo) {
+  if (githubRepo) return `https://github.com/${githubRepo}/blob/HEAD/${stripPackagePrefix(file)}`
   if (!repoUrl || isModule(file)) return null
   const base = repoUrl.replace(/\/$/u, '')
   return `${base}/blob/HEAD/${file}`
 }
 
-function fileLink(file) {
-  const url = fileUrl(file)
+function fileLink(file, githubRepo) {
+  const url = fileUrl(file, githubRepo)
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}</a>` : esc(file)
 }
 
-function lineLink(file, line) {
-  const url = fileUrl(file)
+function lineLink(file, line, githubRepo) {
+  const url = fileUrl(file, githubRepo)
   const text = `line ${esc(String(line))}`
   if (!url) return text
   const lineNum = parseInt(line, 10)
@@ -917,9 +933,11 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
   html += '<div class="line-row">'
   // Line number anchor + (when present) the export name the finding lives
   // in, comma-separated. The exportName is plain text — only the line
-  // number gets linkified by `lineLink`.
+  // number gets linkified by `lineLink`. Pass `f.repo?.github` so a
+  // node_modules finding links to the package's upstream repo rather
+  // than the user-typed project URL.
   const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
-  html += `<span class="line-num">${lineLink(f.file, f.line)}${exportPart}</span>`
+  html += `<span class="line-num">${lineLink(f.file, f.line, f.repo?.github)}${exportPart}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
   const meta = [f.type, f.effort, f.exportsMode].filter(Boolean).join(' · ')
   if (meta) html += `<span class="run-meta">${esc(meta)}</span>`
@@ -1186,7 +1204,12 @@ function render() {
         ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
         : byFile.get(file)
       html += '<div class="file-group">'
-      html += `<div class="file-header"><span>${fileLink(file)}</span><span class="count">${items.length}</span></div>`
+      // All findings under one file share the same `repo.github` (it's
+      // a property of the source file's package), so probe the first
+      // group's primary tab — every other tab in this file would carry
+      // the same value or none at all.
+      const githubRepo = primaryTab(items[0])?.repo?.github
+      html += `<div class="file-header"><span>${fileLink(file, githubRepo)}</span><span class="count">${items.length}</span></div>`
       html += '<div class="file-body">'
       for (const g of items) html += renderGroup(g)
       html += '</div></div>'
@@ -1208,7 +1231,7 @@ function render() {
       const lineHtml = `<span class="meta">line ${esc(String(p.line))}</span>`
       const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
       html += '<div class="flat-group">'
-      html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file)}</span>${lineHtml}${exportHtml}</div>`
+      html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github)}</span>${lineHtml}${exportHtml}</div>`
       html += renderGroup(g)
       html += '</div>'
     }
