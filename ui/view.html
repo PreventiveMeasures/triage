@@ -1397,6 +1397,11 @@ report.addEventListener('click', (e) => {
     let target = ''
     if (fileNames.length === 1) target = fileNames[0]
     else if (fileNames.length > 1) target = commonPrefix(fileNames)
+    // Strip the `.json` suffix so a "Save as PDF" doesn't end up named
+    // `<report>.json.pdf`. Also handles a stripped trailing `.` from
+    // a partial common prefix like `security-foo.j` — only `.json`
+    // exactly at the end gets removed.
+    target = target.replace(/\.json$/u, '')
     const oldTitle = document.title
     if (target) document.title = target
     window.print()
