@@ -788,6 +788,18 @@ function addReport(file) {
 window.__loadFile = (name, content) =>
   addReport(new File([content], name, { type: 'application/json' }))
 
+// Headless filter override — used by the `print` command to apply
+// CLI-supplied --severity / --confidence values AFTER all reports are
+// loaded (the auto-tuned confidence floor from addReport's first-load
+// heuristic gets overridden here when present). `severities` may be an
+// array (or null/undefined to leave unchanged); empty array clears the
+// filter so all severities show.
+window.__setFilters = ({ severities, confMin } = {}) => {
+  if (severities !== undefined && severities !== null) filterSeverities = new Set(severities)
+  if (confMin !== undefined) filterConfMin = confMin
+  render()
+}
+
 function esc(str) {
   const el = document.createElement('span')
   el.textContent = str
