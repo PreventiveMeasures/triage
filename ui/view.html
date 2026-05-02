@@ -119,14 +119,54 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
 /* Tree view — one card per file with imports / imported-by / exports
    / hashes. In-page anchors link import names to their file's card so
-   the user can navigate the graph by clicking. */
+   the user can navigate the graph by clicking. The SVG above the
+   cards is a layered-DAG visualization (roots at top, leaves at the
+   bottom, bezier edges). Both layers point at the same anchor scheme
+   so clicking a node in the SVG scrolls to that file's card. */
+.tree-graph-wrap {
+  margin-bottom: 1rem; padding: .5rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  overflow: auto;
+  max-height: 60vh;
+}
+.tree-graph-svg { display: block; }
+.tree-graph-svg .edges path {
+  fill: none; stroke: var(--muted); stroke-width: 1; opacity: .45;
+}
+.tree-graph-svg .nodes rect {
+  fill: var(--bg); stroke: var(--border); stroke-width: 1;
+  transition: stroke .1s, fill .1s;
+}
+.tree-graph-svg .nodes text {
+  fill: var(--text); font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  pointer-events: none;
+}
+.tree-graph-svg .nodes a:hover rect { stroke: var(--accent); fill: #1a2233; }
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 .tree-file {
   padding: .6rem .8rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   scroll-margin-top: 1rem;
 }
-.tree-file-header { font-size: .95rem; font-weight: 600; margin-bottom: .25rem; word-break: break-all; }
+.tree-file-header {
+  font-size: .95rem; font-weight: 600; margin-bottom: .25rem; word-break: break-all;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+}
+.tree-file-header .name { flex: 1; min-width: 0; }
+/* Per-file finding-count chips, one per non-zero severity. Same color
+   palette as the per-finding badges. Pure label — clicks pass through
+   to nothing; the user navigates via the imports / imported-by links. */
+.tree-count-chips { display: inline-flex; gap: .25rem; flex-wrap: wrap; }
+.tree-count-chip {
+  display: inline-block; font-size: .65rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em;
+  padding: .1rem .4rem; border-radius: 3px; line-height: 1.3;
+}
+.tree-count-chip.critical { background: var(--critical); color: #fff; }
+.tree-count-chip.high     { background: var(--high); color: #fff; }
+.tree-count-chip.medium   { background: var(--medium); color: #000; }
+.tree-count-chip.low      { background: var(--low); color: #000; }
 .tree-hashes { font-size: .7rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 .tree-section { margin-top: .35rem; }
 .tree-section-label {
@@ -1342,12 +1382,149 @@ function treeAnchor(file) {
   return 'tree-' + file.replace(/[^\w-]+/gu, '_')
 }
 
+// file → { critical, high, medium, low } finding-count map. Used by both
+// the tree cards and the SVG visualization to surface findings density
+// per file at a glance. Counts INDIVIDUAL findings (not groups) so the
+// numbers match the per-file stats a user would otherwise scan in the
+// findings view.
+function computeFindingCountsByFile(allGroups) {
+  const counts = new Map()
+  for (const g of allGroups) {
+    for (const f of g) {
+      if (!counts.has(f.file)) counts.set(f.file, { critical: 0, high: 0, medium: 0, low: 0 })
+      const c = counts.get(f.file)
+      if (c[f.severity] !== undefined) c[f.severity]++
+    }
+  }
+  return counts
+}
+
+// Truncate a long file path for SVG node labels. Keeps the tail (more
+// distinguishing) and prepends an ellipsis. Full path is always
+// available via the node's `<title>` tooltip.
+function svgNodeLabel(file, maxLen = 26) {
+  return file.length <= maxLen ? file : '…' + file.slice(-(maxLen - 1))
+}
+
+// Layered-DAG SVG of the import tree. Roots (files no one imports) sit
+// at the top; depth grows downward via "1 + max depth of importers"
+// (cycles are broken by the visiting-set guard). Within a layer, files
+// are sorted alphabetically. Edges are bezier curves from importer
+// (bottom) to import (top). Each node is wrapped in an `<a>` pointing
+// at the matching tree-card anchor, so clicking jumps the page down.
+function renderTreeGraph(tree, findingCounts) {
+  const files = Object.keys(tree)
+  if (files.length === 0) return ''
+
+  // Reverse adjacency (file → importers) for layer assignment.
+  const importedBy = new Map()
+  for (const f of files) {
+    for (const imp of (tree[f].imports ?? [])) {
+      if (tree[imp]) (importedBy.get(imp) ?? importedBy.set(imp, []).get(imp)).push(f)
+    }
+  }
+
+  // depth(f) = length of longest importer chain ending at f. Top of the
+  // graph (depth 0) = roots; bottom = deepest leaf.
+  const depth = new Map()
+  const visiting = new Set()
+  const computeDepth = (file) => {
+    if (depth.has(file)) return depth.get(file)
+    if (visiting.has(file)) return 0
+    visiting.add(file)
+    const importers = importedBy.get(file) ?? []
+    let d = 0
+    for (const imp of importers) d = Math.max(d, computeDepth(imp) + 1)
+    visiting.delete(file)
+    depth.set(file, d)
+    return d
+  }
+  for (const f of files) computeDepth(f)
+
+  // Group by depth, sort within layer for stability.
+  const layers = new Map()
+  for (const f of files) {
+    const d = depth.get(f)
+    if (!layers.has(d)) layers.set(d, [])
+    layers.get(d).push(f)
+  }
+  const sortedDepths = [...layers.keys()].sort((a, b) => a - b)
+
+  // Layout constants. Wider nodes leave room for finding-count chips.
+  const NODE_W = 220, NODE_H = 46
+  const COL_GAP = 24, ROW_GAP = 50
+  const colW = NODE_W + COL_GAP
+  const rowH = NODE_H + ROW_GAP
+
+  const positions = new Map()
+  let maxLayerSize = 0
+  for (const d of sortedDepths) {
+    const nodes = layers.get(d).slice().sort()
+    maxLayerSize = Math.max(maxLayerSize, nodes.length)
+    nodes.forEach((file, i) => positions.set(file, { x: 20 + i * colW, y: 20 + d * rowH }))
+  }
+  const width = 40 + Math.max(maxLayerSize, 1) * colW - COL_GAP
+  const height = 40 + sortedDepths.length * rowH - ROW_GAP
+
+  const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
+
+  let svg = `<svg class="tree-graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`
+
+  // Edges first so they sit under the nodes.
+  svg += '<g class="edges">'
+  for (const f of files) {
+    const a = positions.get(f)
+    if (!a) continue
+    const ax = a.x + NODE_W / 2
+    const ay = a.y + NODE_H
+    for (const imp of (tree[f].imports ?? [])) {
+      const b = positions.get(imp)
+      if (!b) continue
+      const bx = b.x + NODE_W / 2
+      const by = b.y
+      const midY = (ay + by) / 2
+      svg += `<path d="M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}" />`
+    }
+  }
+  svg += '</g>'
+
+  // Nodes with optional severity-count chips along the bottom edge.
+  svg += '<g class="nodes">'
+  for (const file of files) {
+    const p = positions.get(file)
+    if (!p) continue
+    const label = svgNodeLabel(file)
+    const counts = findingCounts.get(file)
+    svg += `<g class="tree-node" transform="translate(${p.x}, ${p.y})">`
+    svg += `<a href="#${esc(treeAnchor(file))}">`
+    svg += `<title>${esc(file)}</title>`
+    svg += `<rect width="${NODE_W}" height="${NODE_H}" rx="4" ry="4" />`
+    svg += `<text x="${NODE_W / 2}" y="16" text-anchor="middle">${esc(label)}</text>`
+    if (counts) {
+      const present = Object.entries(counts).filter(([, n]) => n > 0)
+      if (present.length > 0) {
+        const chipW = 32, chipH = 16, gap = 4
+        const totalW = present.length * chipW + (present.length - 1) * gap
+        let cx = (NODE_W - totalW) / 2
+        for (const [sev, n] of present) {
+          svg += `<rect x="${cx}" y="${NODE_H - chipH - 4}" width="${chipW}" height="${chipH}" rx="3" ry="3" fill="${SEV_COLORS[sev]}" stroke="none" />`
+          svg += `<text x="${cx + chipW / 2}" y="${NODE_H - chipH / 2 - 4 + 4}" text-anchor="middle" fill="#fff" style="font-weight:600">${n}</text>`
+          cx += chipW + gap
+        }
+      }
+    }
+    svg += '</a></g>'
+  }
+  svg += '</g>'
+  svg += '</svg>'
+  return svg
+}
+
 // Render the per-file import tree as a flat list of cards. Each card
 // shows imports (linked to their target's anchor when the target is in
-// the tree), the inverse "imported by", exports, and optionally the
-// hashes (gated on the same `show-metadata` toolbar toggle the
-// findings view uses, so the user has one knob for verbose info).
-function renderTreeView(tree) {
+// the tree), the inverse "imported by", exports, the hashes, and a
+// finding-count badge row when the file has any findings.
+function renderTreeView(tree, findingCounts) {
   const files = Object.keys(tree).sort()
   // Inverse adjacency: file → list of files that import it.
   const importedBy = new Map()
@@ -1365,7 +1542,20 @@ function renderTreeView(tree) {
   for (const file of files) {
     const entry = tree[file]
     html += `<section class="tree-file" id="${esc(treeAnchor(file))}">`
-    html += `<div class="tree-file-header"><span class="name">${esc(file)}</span></div>`
+    html += '<div class="tree-file-header">'
+    html += `<span class="name">${esc(file)}</span>`
+    const counts = findingCounts.get(file)
+    if (counts) {
+      const present = Object.entries(counts).filter(([, n]) => n > 0)
+      if (present.length > 0) {
+        html += '<span class="tree-count-chips">'
+        for (const [sev, n] of present) {
+          html += `<span class="tree-count-chip ${esc(sev)}">${n} ${esc(sev)}</span>`
+        }
+        html += '</span>'
+      }
+    }
+    html += '</div>'
     if (entry.fileHash || entry.treeHash) {
       const parts = []
       if (entry.fileHash) parts.push(`file: ${esc(entry.fileHash)}`)
@@ -1548,7 +1738,13 @@ function render() {
   }
 
   if (currentView === 'tree') {
-    html += renderTreeView(tree)
+    // Per-file finding counts feed both the SVG node chips and the
+    // card-header chips. Computed off `mergedGroups` (pre-filter) so
+    // the tree view shows totals regardless of the findings-view
+    // severity / confidence filters.
+    const findingCounts = computeFindingCountsByFile(mergedGroups)
+    html += `<div class="tree-graph-wrap">${renderTreeGraph(tree, findingCounts)}</div>`
+    html += renderTreeView(tree, findingCounts)
     report.innerHTML = html
     report.classList.add('active')
     report.classList.toggle('show-lines', showLines)
