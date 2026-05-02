@@ -248,11 +248,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
 /* Flat mode (group by file = OFF): each dedup group renders inside a
    self-contained card. The card border replaces the per-finding
-   border-bottom, and a small header strip carries the file path + line
-   + exportName so every result reads as a complete unit independent of
-   the toolbar's "line numbers" toggle. Visual weight tuned so the
-   header is unmistakably part of the card below it (shared border,
-   rounded top, surface fill) instead of a floating caption. */
+   border-bottom, and a header strip carries the FULL line row — file
+   + line + exportName + run-meta — so every result reads as a complete
+   unit. The in-body line-row is suppressed inside `.flat-group` so
+   the same line/exportName/run-meta doesn't appear twice. Run-meta
+   floats right via `margin-left: auto`. */
 .flat-group { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .flat-group-loc {
   display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
@@ -261,8 +261,11 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .flat-group-loc .file { color: var(--text); font-weight: 500; }
 .flat-group-loc .file:hover { color: var(--accent); }
+.flat-group-loc .line-num { color: var(--muted); font-size: .8rem; }
 .flat-group-loc .meta { color: var(--muted); font-size: .8rem; }
+.flat-group-loc .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
 .flat-group .finding { border-bottom: none; }
+.flat-group .finding .line-row { display: none; }
 
 .finding {
   padding: .75rem; border-bottom: 1px solid var(--border);
@@ -372,21 +375,6 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
 }
 .finding .run-meta { color: var(--muted); font-size: .65rem; }
-/* Per-finding header shown above each card in file-grouped mode —
-   carries the same line + exportName + run-meta the in-body line-row
-   would have. The in-body line-row is suppressed when this header is
-   present so the same info doesn't appear twice. Style mirrors the
-   flat-mode .flat-group-loc for visual consistency. */
-.file-group .finding-loc {
-  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
-  padding: .35rem .75rem; font-size: .8rem;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-}
-.file-group .file-body > .finding-loc:first-child { border-top: none; }
-.file-group .finding-loc .meta { color: var(--muted); font-size: .8rem; }
-.file-group .finding-loc .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
-.file-group .finding-loc + .finding .line-row { display: none; }
 .toolbar .checkbox-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); cursor: pointer; }
 .toolbar .checkbox-label input { margin: 0; cursor: pointer; }
 .finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
@@ -1880,19 +1868,7 @@ function render() {
       const githubRepo = primaryTab(items[0])?.repo?.github
       html += `<div class="file-header"><span>${fileLink(file, githubRepo)}</span><span class="count">${items.length}</span></div>`
       html += '<div class="file-body">'
-      // Per-finding `.finding-loc` header above each card, carrying the
-      // active tab's line + exportName + run-meta. The CSS rule under
-      // `.file-group .finding-loc + .finding .line-row` suppresses the
-      // in-body line-row so the same info doesn't appear twice.
-      for (const g of items) {
-        const p = activeTabFor(g)
-        const lineHtml = `<a class="line-num" href="${esc(fileUrl(p.file, p.repo?.github) ?? '')}#L${parseInt(p.line, 10)}">line ${esc(String(p.line))}</a>`
-        const exportPart = p.exportName ? `<span class="meta">, ${esc(p.exportName)}</span>` : ''
-        const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
-        const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
-        html += `<div class="finding-loc">${lineHtml}${exportPart}${metaHtml}</div>`
-        html += renderGroup(g)
-      }
+      for (const g of items) html += renderGroup(g)
       html += '</div></div>'
     }
   } else {
@@ -1907,12 +1883,20 @@ function render() {
         return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
       })
       : filtered
+    // Each group's location header carries the FULL line row (file +
+    // line + exportName + run-meta) for the active tab. The in-body
+    // line-row inside the .finding card is hidden (CSS rule under
+    // `.flat-group .finding .line-row`) so the same info doesn't
+    // appear twice. Tab switches re-render, so the header tracks the
+    // active tab automatically.
     for (const g of items) {
-      const p = primaryTab(g)
-      const lineHtml = `<span class="meta">line ${esc(String(p.line))}</span>`
+      const p = activeTabFor(g)
+      const lineHtml = `<span class="line-num">${lineLink(p.file, p.line, p.repo?.github)}</span>`
       const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
+      const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
+      const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
       html += '<div class="flat-group">'
-      html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github)}</span>${lineHtml}${exportHtml}</div>`
+      html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github)}</span>${lineHtml}${exportHtml}${metaHtml}</div>`
       html += renderGroup(g)
       html += '</div>'
     }
