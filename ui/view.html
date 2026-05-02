@@ -167,7 +167,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .tree-count-chip.high     { background: var(--high); color: #fff; }
 .tree-count-chip.medium   { background: var(--medium); color: #000; }
 .tree-count-chip.low      { background: var(--low); color: #000; }
-.tree-hashes { font-size: .7rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
+.tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 .tree-section { margin-top: .35rem; }
 .tree-section-label {
   display: inline-block; min-width: 6rem;
@@ -356,25 +356,37 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .conf-score strong { color: var(--text); font-size: .85rem; }
 
 .finding .desc { grid-column: 2; }
-/* `line-num` (the `line N` / `(found analyzing X)` spans) and `hashes`
-   (the `file: sha512… | tree: …` block) are hidden by default and opt-in
-   via the "line numbers" / "metadata" toolbar checkboxes. Default-off
-   keeps the view dense for scanning; turn on when you need the anchor
-   info to open the source at a specific line or to reason about which
-   cached entry a finding came from. */
-.finding .line-num { color: var(--muted); font-size: .8rem; display: none; }
-#report.show-lines .finding .line-num { display: inline; }
-/* line-num + run-meta share one row when shown: line-num on the left,
-   run-meta on the right (`analyzer · effort · exportsMode`). Hidden by
-   default — same toolbar checkbox controls both, so the run-meta only
-   appears when the user has asked for line numbers. flex-wrap keeps
-   long meta strings from overflowing on narrow viewports. */
-.finding .line-row { display: none; }
-#report.show-lines .finding .line-row {
+/* `line-num` is the `line N` / `(found analyzing X)` spans; the `hashes`
+   block (`file: sha512… | tree: …`) is opt-in via the "metadata"
+   toolbar checkbox. Line numbers are always shown — they're the
+   minimum context needed to act on a finding. */
+.finding .line-num { color: var(--muted); font-size: .8rem; }
+/* line-num + run-meta share one row: line-num on the left, run-meta on
+   the right (`analyzer · effort · exportsMode`). flex-wrap keeps long
+   meta strings from overflowing on narrow viewports. In the file-
+   grouped layout this row is suppressed inside the .finding card and
+   re-rendered above it as a `.finding-loc` header (see the rule
+   under .file-group below). */
+.finding .line-row {
   display: flex; justify-content: space-between;
   align-items: baseline; gap: .5rem; flex-wrap: wrap;
 }
-.finding .run-meta { color: var(--muted); font-size: .75rem; }
+.finding .run-meta { color: var(--muted); font-size: .65rem; }
+/* Per-finding header shown above each card in file-grouped mode —
+   carries the same line + exportName + run-meta the in-body line-row
+   would have. The in-body line-row is suppressed when this header is
+   present so the same info doesn't appear twice. Style mirrors the
+   flat-mode .flat-group-loc for visual consistency. */
+.file-group .finding-loc {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  padding: .35rem .75rem; font-size: .8rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.file-group .file-body > .finding-loc:first-child { border-top: none; }
+.file-group .finding-loc .meta { color: var(--muted); font-size: .8rem; }
+.file-group .finding-loc .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
+.file-group .finding-loc + .finding .line-row { display: none; }
 .toolbar .checkbox-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); cursor: pointer; }
 .toolbar .checkbox-label input { margin: 0; cursor: pointer; }
 .finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
@@ -734,14 +746,14 @@ let filterInclude = ''
 let filterExclude = ''
 let repoUrl = ''
 let sortBy = 'file'
-// Display toggles — orthogonal to filters (don't affect which findings
-// show), so they live outside resetFilters so a filter reset or a new
-// report drop doesn't wipe them. Both default off for a denser view;
-// flip on when you need to jump to a specific line or inspect the
-// source-hash provenance.
-//   showLines:    `line N` / `(found analyzing X)` spans
+// Display toggle — orthogonal to filters (doesn't affect which findings
+// show), so it lives outside resetFilters so a filter reset or a new
+// report drop doesn't wipe it. Default off for a denser view; flip on
+// to inspect the source-hash provenance.
 //   showMetadata: `file: <sha> | tree: <sha>` hashes block
-let showLines = true
+// (Line numbers + run-meta used to be gated by an analogous showLines
+// toggle, dropped — they're the minimum context needed to act on a
+// finding, so always shown.)
 let showMetadata = false
 // `groupByFile` true (default) renders findings under per-file headers —
 // the original behavior, kept by default. When false, every dedup group
@@ -1339,9 +1351,10 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
   }
   html += '</div>'
   html += '<div>'
-  // `.line-row` flexes line numbers (left) against run-meta (right) when
-  // show-lines is on. Empty `.run-meta` collapses to zero width via the
-  // hide rule below, so the line-num still sits flush left.
+  // `.line-row` flexes line numbers (left) against run-meta (right).
+  // Empty `.run-meta` collapses so the line-num still sits flush left.
+  // In file-grouped mode this row is hidden in favor of the per-finding
+  // `.finding-loc` header above the card (CSS rule under .file-group).
   html += '<div class="line-row">'
   // Line number anchor + (when present) the export name the finding lives
   // in, comma-separated. The exportName is plain text — only the line
@@ -1747,7 +1760,6 @@ function render() {
     html += renderTreeView(tree, findingCounts)
     report.innerHTML = html
     report.classList.add('active')
-    report.classList.toggle('show-lines', showLines)
     report.classList.toggle('show-metadata', showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
@@ -1814,7 +1826,6 @@ function render() {
   for (let i = 0; i <= 10; i++) html += `<option value="${i}"${filterConfMax === i ? ' selected' : ''}>${i}</option>`
   html += `</select>`
   html += `<div class="sep"></div>`
-  html += `<label class="checkbox-label"><input type="checkbox" id="show-lines"${showLines ? ' checked' : ''}> line numbers</label>`
   html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${showMetadata ? ' checked' : ''}> metadata</label>`
   html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${groupByFile ? ' checked' : ''}> group by file</label>`
   const trashTitle = showDeleted ? 'exit trash view' : 'show deleted findings'
@@ -1869,7 +1880,19 @@ function render() {
       const githubRepo = primaryTab(items[0])?.repo?.github
       html += `<div class="file-header"><span>${fileLink(file, githubRepo)}</span><span class="count">${items.length}</span></div>`
       html += '<div class="file-body">'
-      for (const g of items) html += renderGroup(g)
+      // Per-finding `.finding-loc` header above each card, carrying the
+      // active tab's line + exportName + run-meta. The CSS rule under
+      // `.file-group .finding-loc + .finding .line-row` suppresses the
+      // in-body line-row so the same info doesn't appear twice.
+      for (const g of items) {
+        const p = activeTabFor(g)
+        const lineHtml = `<a class="line-num" href="${esc(fileUrl(p.file, p.repo?.github) ?? '')}#L${parseInt(p.line, 10)}">line ${esc(String(p.line))}</a>`
+        const exportPart = p.exportName ? `<span class="meta">, ${esc(p.exportName)}</span>` : ''
+        const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
+        const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
+        html += `<div class="finding-loc">${lineHtml}${exportPart}${metaHtml}</div>`
+        html += renderGroup(g)
+      }
       html += '</div></div>'
     }
   } else {
@@ -1897,7 +1920,6 @@ function render() {
 
   report.innerHTML = html
   report.classList.add('active')
-  report.classList.toggle('show-lines', showLines)
   report.classList.toggle('show-metadata', showMetadata)
   dropZone.classList.add('hidden')
   document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
@@ -2063,10 +2085,9 @@ report.addEventListener('change', (e) => {
   else if (id === 'source-select') { filterSource = val; render() }
   else if (id === 'conf-min') { filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
-  // Toggle `show-lines` / `show-metadata` on #report without a full
-  // re-render — avoids reallocating the checkbox mid-click (which
-  // would blur it) and is cheap since these are pure CSS effects.
-  else if (id === 'show-lines') { showLines = e.target.checked; report.classList.toggle('show-lines', showLines) }
+  // Toggle `show-metadata` on #report without a full re-render —
+  // avoids reallocating the checkbox mid-click (which would blur it)
+  // and is cheap since this is a pure CSS effect.
   else if (id === 'show-metadata') { showMetadata = e.target.checked; report.classList.toggle('show-metadata', showMetadata) }
   // `group-by-file` reshapes the rendered DOM (per-file headers vs flat
   // location labels), so it goes through a full render — checkbox blur
