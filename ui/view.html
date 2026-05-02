@@ -101,6 +101,49 @@ header { margin-bottom: 1rem; }
 header h1 { font-size: 1.3rem; }
 header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 
+/* Top-level view switcher — Findings / Tree. Only rendered when the
+   report has a tree block with more than one file (single-file
+   reports don't gain anything from a tree view). */
+.report-tabs {
+  display: flex; gap: .25rem; margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.report-tabs button {
+  background: transparent; border: none; color: var(--muted);
+  padding: .5rem 1rem; cursor: pointer;
+  font-size: .9rem; font-family: inherit;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.report-tabs button:hover { color: var(--text); }
+.report-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Tree view — one card per file with imports / imported-by / exports
+   / hashes. In-page anchors link import names to their file's card so
+   the user can navigate the graph by clicking. */
+.tree-view { display: flex; flex-direction: column; gap: .75rem; }
+.tree-file {
+  padding: .6rem .8rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  scroll-margin-top: 1rem;
+}
+.tree-file-header { font-size: .95rem; font-weight: 600; margin-bottom: .25rem; word-break: break-all; }
+.tree-hashes { font-size: .7rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
+.tree-section { margin-top: .35rem; }
+.tree-section-label {
+  display: inline-block; min-width: 6rem;
+  font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em;
+  vertical-align: top;
+}
+.tree-section ul {
+  display: inline-block; list-style: none;
+  margin: 0; padding: 0; vertical-align: top;
+}
+.tree-section li { font-size: .85rem; padding: 0; line-height: 1.4; }
+.tree-section a { color: var(--accent); }
+.tree-section a:hover { text-decoration: underline; }
+.tree-section .name { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: .8rem; }
+
 /* toolbar */
 .toolbar {
   display: flex; flex-direction: column; gap: .5rem;
@@ -631,6 +674,11 @@ let reports = []
 // (drop zone visible). Tracked separately from `reports` so the
 // sidebar can highlight the active file even before render finishes.
 let currentFile = null
+// Top-level tab — 'findings' (default) or 'tree'. The tree tab is
+// only visible when the loaded report carries a `tree` block with
+// more than one file; switching files / loading a tree-less report
+// auto-falls back to 'findings' inside render().
+let currentView = 'findings'
 // Severity + color filters are multi-select: empty Set = "no filter, show
 // everything" (selecting every option individually is equivalent — the
 // predicate passes when every finding's value is in the Set). UI-wise
@@ -1045,6 +1093,10 @@ function ingestReport(name, content) {
         type: data.type || 'analysis',
         fileName: name,
         groups,
+        // Per-file imports / exports / hashes from the analyzer dump
+        // (stamped at JSON-export time). The renderer surfaces this as
+        // a separate "Tree" tab when more than one file is present.
+        tree: data.tree ?? null,
       })
       if (isFirst) {
         resetFilters()
@@ -1283,6 +1335,65 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
 // Marks row at the bottom is group-level: color dots act on the active
 // tab; delete acts on the whole group when conflict-free, on the active
 // tab when conflicted. See click handler below for the inverse.
+// File path → in-page anchor id. Replaces every non-word char with an
+// underscore so paths with `/` `.` `@` (node_modules / scoped packages)
+// produce valid id attributes.
+function treeAnchor(file) {
+  return 'tree-' + file.replace(/[^\w-]+/gu, '_')
+}
+
+// Render the per-file import tree as a flat list of cards. Each card
+// shows imports (linked to their target's anchor when the target is in
+// the tree), the inverse "imported by", exports, and optionally the
+// hashes (gated on the same `show-metadata` toolbar toggle the
+// findings view uses, so the user has one knob for verbose info).
+function renderTreeView(tree) {
+  const files = Object.keys(tree).sort()
+  // Inverse adjacency: file → list of files that import it.
+  const importedBy = new Map()
+  for (const f of files) {
+    for (const imp of (tree[f].imports ?? [])) {
+      const arr = importedBy.get(imp) ?? []
+      arr.push(f)
+      importedBy.set(imp, arr)
+    }
+  }
+  const linkOrText = (target) => tree[target]
+    ? `<a href="#${esc(treeAnchor(target))}"><span class="name">${esc(target)}</span></a>`
+    : `<span class="name">${esc(target)}</span>`
+  let html = '<div class="tree-view">'
+  for (const file of files) {
+    const entry = tree[file]
+    html += `<section class="tree-file" id="${esc(treeAnchor(file))}">`
+    html += `<div class="tree-file-header"><span class="name">${esc(file)}</span></div>`
+    if (entry.fileHash || entry.treeHash) {
+      const parts = []
+      if (entry.fileHash) parts.push(`file: ${esc(entry.fileHash)}`)
+      if (entry.treeHash) parts.push(`tree: ${esc(entry.treeHash)}`)
+      html += `<div class="tree-hashes hashes">${parts.join(' | ')}</div>`
+    }
+    if (entry.imports?.length > 0) {
+      html += '<div class="tree-section"><span class="tree-section-label">imports</span><ul>'
+      for (const imp of entry.imports) html += `<li>${linkOrText(imp)}</li>`
+      html += '</ul></div>'
+    }
+    const incoming = importedBy.get(file) ?? []
+    if (incoming.length > 0) {
+      html += '<div class="tree-section"><span class="tree-section-label">imported by</span><ul>'
+      for (const f of incoming) html += `<li>${linkOrText(f)}</li>`
+      html += '</ul></div>'
+    }
+    if (entry.exports?.length > 0) {
+      html += '<div class="tree-section"><span class="tree-section-label">exports</span><ul>'
+      for (const ex of entry.exports) html += `<li><span class="name">${esc(ex)}</span></li>`
+      html += '</ul></div>'
+    }
+    html += '</section>'
+  }
+  html += '</div>'
+  return html
+}
+
 function renderGroup(g) {
   const state = groupState(g)
   const sortedTabs = sortTabs(g)
@@ -1420,6 +1531,32 @@ function render() {
     : `${allGroups.length} ${findingNoun}`
   html += `<div class="meta">${reportLabel} &mdash; ${countLabel}</div>`
   html += '</header>'
+
+  // Top-level view switcher. Tree tab only appears for tree-bearing
+  // reports with >1 file — a single-file tree adds no navigation value.
+  // If currentView is 'tree' but the (re)loaded report doesn't have one,
+  // fall back to 'findings' before deciding what to render.
+  const tree = reports[0]?.tree
+  const treeFileCount = tree ? Object.keys(tree).length : 0
+  const showTreeTab = treeFileCount > 1
+  if (!showTreeTab && currentView === 'tree') currentView = 'findings'
+  if (showTreeTab) {
+    html += '<div class="report-tabs">'
+    html += `<button type="button" class="report-tab${currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
+    html += `<button type="button" class="report-tab${currentView === 'tree' ? ' active' : ''}" data-view="tree">Tree (${treeFileCount} files)</button>`
+    html += '</div>'
+  }
+
+  if (currentView === 'tree') {
+    html += renderTreeView(tree)
+    report.innerHTML = html
+    report.classList.add('active')
+    report.classList.toggle('show-lines', showLines)
+    report.classList.toggle('show-metadata', showMetadata)
+    dropZone.classList.add('hidden')
+    document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+    return
+  }
 
   // Stats — clickable filter chips. Severity chips on the left, mark-color
   // chips on the right. Both are multi-select: empty selection = no
@@ -1580,6 +1717,13 @@ function renderKeepFocus(inputId) {
 
 // Event delegation — all interactive elements handled here, no inline handlers
 report.addEventListener('click', (e) => {
+  // Top-level view switcher (Findings / Tree).
+  const viewTab = e.target.closest('.report-tab')
+  if (viewTab && viewTab.dataset.view) {
+    currentView = viewTab.dataset.view
+    render()
+    return
+  }
   // Tab click — switch the active tab within a group. Re-render because
   // tab highlight + tab body visibility + marks row color all update.
   const tabEl = e.target.closest('.tab')
