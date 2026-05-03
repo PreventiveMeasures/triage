@@ -1316,6 +1316,8 @@ async function switchToFile(name, content) {
   // cache invalidates (a new tree → re-layout).
   selectedTreeFile = null
   _treeLayoutCache = null
+  if (_graphState?._cleanupListeners) { _graphState._cleanupListeners(); }
+  _graphState = null
   try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
   if (content === undefined) {
     try {
@@ -1341,6 +1343,8 @@ async function deleteCurrent() {
   reports = []
   selectedTreeFile = null
   _treeLayoutCache = null
+  if (_graphState?._cleanupListeners) { _graphState._cleanupListeners(); }
+  _graphState = null
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')
   report.innerHTML = ''
@@ -2018,34 +2022,14 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     return html
   }
 
-  // Force layout (cached). Pass canvas size so springs match the real viewport.
-  let nodes
+  // Force layout (cached). We store files/importsOf so attachTreeGraphInteraction
+  // can run the actual layout once the canvas has real dimensions.
+  let nodes = null
   if (_treeLayoutCache && _treeLayoutCache.tree === tree && _treeLayoutCache.showAll === treeShowAll) {
     nodes = _treeLayoutCache.nodes
-  } else {
-    // Get actual canvas size if available; fall back to a reasonable default.
-    const canvasEl = document.getElementById('tree-canvas')
-    const layoutW = canvasEl ? canvasEl.offsetWidth || 900 : 900
-    const layoutH = canvasEl ? canvasEl.offsetHeight || 600 : 600
-    nodes = forceLayout(files, importsOf, layoutW, layoutH)
-    _treeLayoutCache = { tree, showAll: treeShowAll, nodes }
-    if (_graphState) _graphState._needsRefit = true
   }
-
-  // Edge list (deduplicated, bidi-aware).
-  const edgeMap = new Map()
-  for (const f of files) {
-    for (const imp of importsOf.get(f) ?? []) {
-      if (f === imp) continue
-      const [lo, hi] = f < imp ? [f, imp] : [imp, f]
-      const key = `${lo}\0${hi}`
-      let e = edgeMap.get(key)
-      if (!e) { e = { lo, hi, fromLo: false, fromHi: false }; edgeMap.set(key, e) }
-      if (f === lo) e.fromLo = true; else e.fromHi = true
-    }
-  }
-  const edges = [...edgeMap.values()]
-  const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
+  // nodes may still be null here — attachTreeGraphInteraction will compute it
+  // after measuring the canvas. Store files+importsOf so it can do so.
 
   // Package legend data — sorted by node count desc, top 14.
   const pkgCounts = new Map()
@@ -2055,17 +2039,12 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
   }
   const topPkgs = [...pkgCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14)
 
-  // Top hubs by connection count.
-  const hubsSorted = [...nodes].sort((a, b) => {
-    const ca = (importsOf.get(a.file)?.length ?? 0) + (importedBy.get(a.file)?.length ?? 0)
-    const cb = (importsOf.get(b.file)?.length ?? 0) + (importedBy.get(b.file)?.length ?? 0)
-    return cb - ca
-  }).slice(0, 7)
-
   _graphState = {
-    nodes, edges, nodeByFile, importsOf, importedBy,
-    ownCounts, transitiveCounts, files, fileSet, topPkgs, hubsSorted,
+    nodes, edges: null, nodeByFile: new Map(), importsOf, importedBy,
+    ownCounts, transitiveCounts, files, fileSet, topPkgs,
     _needsRefit: true, _hubsTab: _graphState?._hubsTab ?? 'issues',
+    // Store for deferred layout (computed in attachTreeGraphInteraction with real canvas size)
+    _layoutFiles: files, _layoutImportsOf: importsOf, _layoutTree: tree, _layoutShowAll: treeShowAll,
   }
 
   html += '<div class="tree-canvas-scroll"><canvas class="tree-canvas-el" id="tree-canvas"></canvas></div>'
@@ -2238,11 +2217,50 @@ function attachTreeGraphInteraction(container) {
   const tooltip = container.querySelector('#tree-tooltip')
   if (!canvas) return
 
-  const { nodes, edges, nodeByFile, importsOf, importedBy, ownCounts, transitiveCounts } = _graphState
+  const { importsOf, importedBy, ownCounts, transitiveCounts,
+          _layoutFiles, _layoutImportsOf, _layoutTree, _layoutShowAll } = _graphState
+
+  // nodes/edges/nodeByFile start from cache (may be null on first load).
+  // ensureLayout() computes them with real canvas dimensions.
+  let nodes = _graphState.nodes ?? null
+  let edges = _graphState.edges ?? null
+  let nodeByFile = _graphState.nodeByFile ?? new Map()
 
   let panX = 0, panY = 0, zoom = 1
-  let hoveredFile = null
+  // Persist hoveredFile across re-renders so clicking a node doesn't
+  // flash the hover away until the pointer actually leaves.
+  let hoveredFile = _graphState._hoveredFile ?? null
   let dpr = window.devicePixelRatio || 1
+
+  function ensureLayout(w, h) {
+    const needsLayout = !nodes || nodes.length === 0
+    const needsEdges = !edges || edges.length === 0
+
+    if (needsLayout) {
+      nodes = forceLayout(_layoutFiles, _layoutImportsOf, w, h)
+      _treeLayoutCache = { tree: _layoutTree, showAll: _layoutShowAll, nodes }
+      _graphState.nodes = nodes
+    }
+
+    if (needsLayout || needsEdges) {
+      // Build edges and nodeByFile from whatever nodes we now have.
+      const edgeMap = new Map()
+      for (const f of _layoutFiles) {
+        for (const imp of _layoutImportsOf.get(f) ?? []) {
+          if (f === imp) continue
+          const [lo, hi] = f < imp ? [f, imp] : [imp, f]
+          const key = `${lo}\0${hi}`
+          let e = edgeMap.get(key)
+          if (!e) { e = { lo, hi, fromLo: false, fromHi: false }; edgeMap.set(key, e) }
+          if (f === lo) e.fromLo = true; else e.fromHi = true
+        }
+      }
+      edges = [...edgeMap.values()]
+      nodeByFile = new Map(nodes.map((n) => [n.file, n]))
+      _graphState.edges = edges
+      _graphState.nodeByFile = nodeByFile
+    }
+  }
 
   const R = (file) => radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts)
 
@@ -2266,7 +2284,8 @@ function attachTreeGraphInteraction(container) {
     dpr = window.devicePixelRatio || 1
     canvas.width = w * dpr; canvas.height = h * dpr
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px'
-    // If layout was seeded with wrong dimensions, redo it now that we know the real size.
+    // Compute layout with real dimensions now (first call only).
+    ensureLayout(w, h)
     if (refit || _graphState._needsRefit) {
       fitToView(w, h)
       _graphState._needsRefit = false
@@ -2281,6 +2300,7 @@ function attachTreeGraphInteraction(container) {
 
   // ── Main draw ─────────────────────────────────────────────────────────────
   function draw() {
+    if (!nodes || !nodes.length) return
     const w = canvas.width / dpr, h = canvas.height / dpr
     const ctx = canvas.getContext('2d')
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -2308,7 +2328,7 @@ function attachTreeGraphInteraction(container) {
     }
 
     // ── Edges ───────────────────────────────────────────────────────────────
-    for (const e of edges) {
+    for (const e of (edges || [])) {
       const loN = nodeByFile.get(e.lo), hiN = nodeByFile.get(e.hi)
       if (!loN || !hiN) continue
 
@@ -2387,7 +2407,7 @@ function attachTreeGraphInteraction(container) {
     }
 
     // ── Nodes ────────────────────────────────────────────────────────────────
-    for (const n of nodes) {
+    for (const n of (nodes || [])) {
       const r = R(n.file)
       const pkg = packageOf(n.file) ?? '__own__'
       const col = pkgColor(pkg)
@@ -2482,7 +2502,7 @@ function attachTreeGraphInteraction(container) {
   function hitTest(cx, cy) {
     const wx = (cx - panX) / zoom, wy = (cy - panY) / zoom
     let best = null, bestD = Infinity
-    for (const n of nodes) {
+    for (const n of (nodes || [])) {
       const d = Math.hypot(n.x - wx, n.y - wy)
       if (d <= R(n.file) + 4 / zoom && d < bestD) { bestD = d; best = n }
     }
@@ -2523,12 +2543,10 @@ function attachTreeGraphInteraction(container) {
   let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0
   const scroll = canvas.parentElement
 
-  scroll.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    dragging = true; dragStartX = e.clientX; dragStartY = e.clientY
-    panStartX = panX; panStartY = panY; hideTooltip()
-  })
-  window.addEventListener('mousemove', (e) => {
+  // Remove any stale window listeners from a previous render cycle.
+  if (_graphState._cleanupListeners) _graphState._cleanupListeners()
+
+  const onMouseMove = (e) => {
     if (dragging) {
       panX = panStartX + e.clientX - dragStartX
       panY = panStartY + e.clientY - dragStartY
@@ -2539,10 +2557,37 @@ function attachTreeGraphInteraction(container) {
     const prev = hoveredFile
     hoveredFile = hit?.file ?? null
     canvas.style.cursor = hit ? 'pointer' : 'grab'
-    if (hoveredFile !== prev) draw()
+    if (hoveredFile !== prev) {
+      _graphState._hoveredFile = hoveredFile
+      draw()
+    }
     if (hit) showTooltip(hit, cx, cy); else hideTooltip()
+  }
+  const onMouseUp = () => { dragging = false }
+
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+
+  // Store cleanup so the next attachTreeGraphInteraction call removes these.
+  _graphState._cleanupListeners = () => {
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+  }
+
+  scroll.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    dragging = true; dragStartX = e.clientX; dragStartY = e.clientY
+    panStartX = panX; panStartY = panY; hideTooltip()
   })
-  window.addEventListener('mouseup', () => { dragging = false })
+
+  scroll.addEventListener('mouseleave', () => {
+    if (hoveredFile !== null) {
+      hoveredFile = null
+      _graphState._hoveredFile = null
+      hideTooltip()
+      draw()
+    }
+  })
 
   scroll.addEventListener('wheel', (e) => {
     e.preventDefault()
@@ -2583,8 +2628,17 @@ function attachTreeGraphInteraction(container) {
     const { cx, cy } = canvasPos(e)
     const hit = hitTest(cx, cy)
     selectedTreeFile = hit?.file ?? null
-    canvas.dispatchEvent(new CustomEvent('tree-node-select', { bubbles: true }))
     draw()
+    // Update sidebar in-place without rebuilding the canvas DOM.
+    const infoEl = document.querySelector('.tree-info')
+    if (infoEl && _graphState) {
+      const tree = reports[0]?.tree
+      if (tree) {
+        const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
+        const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
+        infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
+      }
+    }
   })
 
   // Zoom buttons
@@ -2611,7 +2665,27 @@ function attachTreeGraphInteraction(container) {
     _resizeTimer = setTimeout(() => resize(true), 80)
   })
   fsObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
-  canvas.addEventListener('tree-node-select', () => render())
+  canvas.addEventListener('tree-node-select', () => {
+    // Update only the sidebar — don't rebuild the canvas DOM, which would
+    // destroy hover state and trigger the mousemove-flash glitch.
+    const infoEl = document.querySelector('.tree-info')
+    if (infoEl && _graphState) {
+      const tree = reports[0]?.tree
+      if (tree) {
+        const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
+        const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
+        infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
+      }
+    }
+  })
+
+  // Extend cleanup to also disconnect observers.
+  const prevCleanup = _graphState._cleanupListeners
+  _graphState._cleanupListeners = () => {
+    prevCleanup?.()
+    ro.disconnect()
+    fsObserver.disconnect()
+  }
 }
 
 // renderTreeSidebar replaced by renderTreeSidebarFull (inline in renderTreeCanvas block above).
@@ -3219,14 +3293,32 @@ report.addEventListener('click', (e) => {
   const selectFileBtn = e.target.closest('[data-select-file]')
   if (selectFileBtn) {
     selectedTreeFile = selectFileBtn.dataset.selectFile
-    render()
+    // Update canvas selection highlight + sidebar without rebuilding canvas DOM.
+    if (_graphState) {
+      const canvasEl = document.querySelector('#tree-canvas')
+      if (canvasEl) canvasEl.dispatchEvent(new CustomEvent('tree-node-select', { bubbles: true }))
+    } else {
+      render()
+    }
     return
   }
   // Tree-tab sidebar: hubs tab toggle (Issues / Imports).
   const hubsTabBtn = e.target.closest('[data-hubs-tab]')
   if (hubsTabBtn) {
-    if (_graphState) _graphState._hubsTab = hubsTabBtn.dataset.hubsTab
-    render()
+    if (_graphState) {
+      _graphState._hubsTab = hubsTabBtn.dataset.hubsTab
+      const infoEl = document.querySelector('.tree-info')
+      if (infoEl) {
+        const tree = reports[0]?.tree
+        if (tree) {
+          const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
+          const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
+          infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
+        }
+      }
+    } else {
+      render()
+    }
     return
   }
   // Tree-tab toolbar: fullscreen toggle. Adds / removes a class on
@@ -3417,6 +3509,8 @@ report.addEventListener('change', (e) => {
   else if (id === 'tree-show-all') {
     treeShowAll = e.target.checked
     _treeLayoutCache = null
+    if (_graphState?._cleanupListeners) { _graphState._cleanupListeners() }
+    _graphState = null
     render()
   }
 })
