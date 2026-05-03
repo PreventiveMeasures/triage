@@ -123,41 +123,112 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    cards is a layered-DAG visualization (roots at top, leaves at the
    bottom, bezier edges). Both layers point at the same anchor scheme
    so clicking a node in the SVG scrolls to that file's card. */
-.tree-graph-wrap {
-  margin-bottom: 1rem; padding: .5rem;
+/* Tree tab: force-directed canvas on the left, info sidebar on the
+   right. Both share fixed viewport height so they scroll independently
+   without pushing the page. By default, files with no own findings AND
+   no transitive findings (subtree clean) are hidden — keeps the
+   visualization focused on what matters; toggle restores all. */
+.tree-layout {
+  display: flex; gap: 1rem;
+  margin-bottom: 1rem;
+}
+.tree-canvas {
+  flex: 1; min-width: 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   overflow: auto;
-  max-height: 70vh;
+  max-height: 80vh;
+  position: relative;
 }
-.tree-graph-svg { display: block; }
-.tree-graph-svg .edges path {
-  fill: none; stroke: var(--muted); stroke-width: 1; opacity: .35;
+.tree-canvas-toolbar {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: .75rem;
+  padding: .4rem .6rem;
+  background: rgba(22, 27, 34, .92);
+  border-bottom: 1px solid var(--border);
+  font-size: .8rem; color: var(--muted);
+}
+.tree-canvas-toolbar label { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; }
+.tree-canvas-toolbar input { margin: 0; cursor: pointer; }
+.tree-canvas-svg { display: block; }
+.tree-canvas-svg .edges path {
+  stroke: var(--muted); stroke-width: 0.8; fill: none; opacity: .25;
   transition: stroke .12s, stroke-width .12s, opacity .12s;
 }
-.tree-graph-svg .nodes rect.node-bg {
-  fill: var(--bg); stroke: var(--border); stroke-width: 1;
-  transition: stroke .12s, fill .12s, opacity .12s;
+.tree-canvas-svg .nodes circle.node-fill {
+  cursor: pointer;
+  transition: stroke .12s, opacity .12s;
 }
-.tree-graph-svg .nodes text {
-  fill: var(--text); font-size: 11px;
+.tree-canvas-svg .nodes circle.node-ring {
+  fill: none; stroke-width: 1.5; pointer-events: none;
+}
+.tree-canvas-svg .nodes text {
+  fill: var(--text); font-size: 9px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   pointer-events: none;
 }
-.tree-graph-svg .nodes text.badge-text {
-  fill: #fff; font-size: 9px; font-weight: 700;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+.tree-canvas-svg .nodes .tree-node { transition: opacity .12s; }
+/* Hover spotlight: dim everything not connected to the hovered node. */
+.tree-canvas-svg.hover-active .tree-node:not(.hover-self):not(.hover-related):not(.selected) { opacity: .12; }
+.tree-canvas-svg.hover-active .edges path:not(.hover-edge) { opacity: .04; }
+.tree-canvas-svg .edges path.hover-edge { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
+.tree-canvas-svg .tree-node.hover-self circle.node-fill,
+.tree-canvas-svg .tree-node:hover circle.node-fill { stroke: var(--text); stroke-width: 2; }
+.tree-canvas-svg .tree-node.hover-related circle.node-fill { stroke: var(--accent); stroke-width: 1.5; }
+.tree-canvas-svg .tree-node.selected circle.node-fill {
+  stroke: var(--accent); stroke-width: 3;
 }
-.tree-graph-svg .nodes .tree-node { transition: opacity .12s; }
-/* Hover spotlight: when any node is hovered, dim everything that
-   isn't the hovered node, a connected node, or a connecting edge.
-   The hover-highlight wiring (attachTreeGraphInteraction) flips the
-   classes on / off; CSS handles the fade. */
-.tree-graph-svg.hover-active .tree-node:not(.hover-self):not(.hover-related) { opacity: .25; }
-.tree-graph-svg.hover-active .edges path:not(.hover-edge) { opacity: .08; }
-.tree-graph-svg .edges path.hover-edge { stroke: var(--accent); stroke-width: 1.6; opacity: 1; }
-.tree-graph-svg .tree-node.hover-self rect.node-bg,
-.tree-graph-svg .tree-node:hover rect.node-bg { stroke: var(--accent); stroke-width: 1.5; fill: #1a2233; }
-.tree-graph-svg .tree-node.hover-related rect.node-bg { stroke: var(--accent); }
+
+/* Right sidebar — file info on the currently selected node. */
+.tree-info {
+  width: 320px; flex-shrink: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  overflow-y: auto; max-height: 80vh;
+  font-size: .85rem;
+}
+.tree-info-empty {
+  padding: 2rem 1rem; color: var(--muted); text-align: center; line-height: 1.5;
+}
+.tree-info-content { padding: .75rem; }
+.tree-info-title {
+  font-size: .9rem; font-weight: 600;
+  word-break: break-all; margin-bottom: .5rem;
+}
+.tree-info-jump {
+  background: transparent; border: 1px solid var(--border); color: var(--accent);
+  border-radius: 4px; padding: .25rem .55rem; cursor: pointer;
+  font-size: .75rem; font-family: inherit;
+  margin-bottom: .75rem;
+}
+.tree-info-jump:hover { border-color: var(--accent); }
+.tree-info-section { margin-top: .85rem; }
+.tree-info-label {
+  font-size: .65rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin-bottom: .3rem;
+}
+.tree-info-empty-list { color: var(--muted); font-size: .8rem; font-style: italic; }
+.tree-info-list {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 220px; overflow-y: auto;
+}
+.tree-info-list li { padding: 0; }
+.tree-info-list button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: none; color: var(--accent);
+  padding: .2rem .35rem; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: .75rem;
+  border-radius: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tree-info-list button:hover { background: #1a2233; }
+.tree-info-list .external {
+  display: block;
+  padding: .2rem .35rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: .75rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 .tree-file {
   padding: .6rem .8rem;
@@ -729,11 +800,25 @@ let reports = []
 // (drop zone visible). Tracked separately from `reports` so the
 // sidebar can highlight the active file even before render finishes.
 let currentFile = null
-// Top-level tab — 'findings' (default) or 'tree'. The tree tab is
-// only visible when the loaded report carries a `tree` block with
-// more than one file; switching files / loading a tree-less report
-// auto-falls back to 'findings' inside render().
+// Top-level tab — 'findings' (default), 'tree' (force-directed graph
+// with file info sidebar), or 'files' (the per-file cards listing).
+// Tree / files tabs are only visible when the loaded report carries
+// a `tree` block with more than one file; switching files / loading
+// a tree-less report auto-falls back to 'findings' inside render().
 let currentView = 'findings'
+// Currently-selected file in the tree view's right sidebar; null = no
+// selection (sidebar shows an empty hint). Cleared when switching to a
+// different report.
+let selectedTreeFile = null
+// Toggle: include files with no own AND no transitive findings in the
+// graph. Off by default — clean leaf utilities clutter the canvas
+// without telling the reader anything they don't already know.
+let treeShowAll = false
+// Cache for the force-directed layout. Re-computing every render
+// (e.g. on tab switch / sidebar selection) would be wasteful; keyed
+// off the `tree` reference + the show-all toggle so a different
+// report or a toggle change invalidates and re-runs.
+let _treeLayoutCache = null
 // Severity + color filters are multi-select: empty Set = "no filter, show
 // everything" (selecting every option individually is equivalent — the
 // predicate passes when every finding's value is in the Set). UI-wise
@@ -1047,6 +1132,11 @@ async function addFiles(files) {
 async function switchToFile(name, content) {
   reports = []
   currentFile = name
+  // Reset tree-tab state so the new report opens clean: no leftover
+  // selection from the previous report's file list, and the layout
+  // cache invalidates (a new tree → re-layout).
+  selectedTreeFile = null
+  _treeLayoutCache = null
   try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
   if (content === undefined) {
     try {
@@ -1070,6 +1160,8 @@ async function deleteCurrent() {
   await deleteFile(name)
   currentFile = null
   reports = []
+  selectedTreeFile = null
+  _treeLayoutCache = null
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')
   report.innerHTML = ''
@@ -1436,6 +1528,337 @@ function byBary(bary) {
   return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
 }
 
+// Extract npm package name from a path. `node_modules/foo/...` → `foo`,
+// `node_modules/@org/pkg/...` → `@org/pkg`, anything else → null
+// (own source). Mirrors `extractPackageName` in index.js so the same
+// grouping rule travels from the analyzer side to the visualization.
+function packageOf(file) {
+  return file?.match(/^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u)?.[1] ?? null
+}
+
+// Stable hue per package name. Same package → same color across the
+// canvas, so eyes can pick out clusters of files belonging to the same
+// dependency. Hash → HSL hue; saturation/lightness fixed for legibility
+// on the dark background. Own source (no package) gets a neutral blue.
+function packageColor(pkg) {
+  if (!pkg) return 'hsl(208, 70%, 60%)'
+  let h = 0
+  for (const c of pkg) h = (h * 31 + c.charCodeAt(0)) | 0
+  return `hsl(${((h % 360) + 360) % 360}, 65%, 58%)`
+}
+
+// transitive subtree finding counts: for each file, sum of own counts
+// across every file reachable through its `imports` (recursively),
+// excluding the file itself. Cycles handled by a visited set.
+function computeTransitiveCounts(tree, ownCounts) {
+  const transitive = new Map()
+  for (const file of Object.keys(tree)) {
+    const visited = new Set()
+    const stack = [...((tree[file].imports ?? []).filter((i) => tree[i]))]
+    while (stack.length > 0) {
+      const dep = stack.pop()
+      if (visited.has(dep)) continue
+      visited.add(dep)
+      for (const next of (tree[dep]?.imports ?? [])) if (tree[next]) stack.push(next)
+    }
+    const sum = { critical: 0, high: 0, medium: 0, low: 0 }
+    for (const f of visited) {
+      const c = ownCounts.get(f)
+      if (c) for (const k of ['critical', 'high', 'medium', 'low']) sum[k] += c[k]
+    }
+    transitive.set(file, sum)
+  }
+  return transitive
+}
+
+// Has-issues predicate: own findings OR something in its subtree has
+// findings. Used to filter out clean files when `treeShowAll` is off.
+function fileHasFindings(file, ownCounts, transitiveCounts) {
+  const own = ownCounts.get(file)
+  const tr = transitiveCounts.get(file)
+  const total = (c) => c ? c.critical + c.high + c.medium + c.low : 0
+  return total(own) > 0 || total(tr) > 0
+}
+
+// Fruchterman-Reingold force-directed layout. Returns nodes with
+// {file, x, y}. O(N²) per iteration — fine for the typical analyzer
+// output (dozens to a few hundred files); for thousands a Barnes-Hut
+// quadtree would be needed. Initial positions seeded from a per-file
+// hash so re-renders produce the same layout (no jitter on tab switch).
+//
+// Three forces:
+//   - Repulsion between every pair (Coulomb-like, k²/d).
+//   - Attraction along edges (spring-like, d²/k).
+//   - Per-package centroid pull (slight) so files from the same npm
+//     package cluster visually instead of scattering.
+//
+// Cooling shrinks per-iter displacement geometrically so the layout
+// settles instead of oscillating.
+function forceLayout(files, importsOf) {
+  const N = files.length
+  const width = 1100, height = 760
+  const k = Math.sqrt((width * height) / Math.max(N, 1)) * 0.9
+
+  const seed = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h }
+  const nodes = files.map((file) => {
+    const h = seed(file)
+    return {
+      file,
+      x: width / 2 + Math.cos(h * 0.013) * (width / 3) + (((h % 100) - 50) * 0.6),
+      y: height / 2 + Math.sin(h * 0.013) * (height / 3) + (((h >> 7) % 100 - 50) * 0.6),
+      dx: 0, dy: 0,
+    }
+  })
+  const idx = new Map(nodes.map((n, i) => [n.file, i]))
+
+  const edges = []
+  for (const f of files) {
+    for (const imp of importsOf.get(f) ?? []) {
+      if (idx.has(imp)) edges.push([idx.get(f), idx.get(imp)])
+    }
+  }
+
+  // Group node indices by package for the centroid pull.
+  const byPkg = new Map()
+  for (let i = 0; i < N; i++) {
+    const p = packageOf(nodes[i].file) ?? '__own__'
+    if (!byPkg.has(p)) byPkg.set(p, [])
+    byPkg.get(p).push(i)
+  }
+
+  const iterations = Math.min(400, Math.max(150, 80 + N * 2))
+  const tempInit = width / 8
+  const tempFinal = 0.5
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const t = tempInit * Math.pow(tempFinal / tempInit, iter / iterations)
+    for (const n of nodes) { n.dx = 0; n.dy = 0 }
+
+    // Repulsion: every pair pushes away inversely proportional to dist.
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const a = nodes[i], b = nodes[j]
+        let dx = a.x - b.x, dy = a.y - b.y
+        let dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < 0.01) {
+          // Co-located — give them a deterministic nudge so they separate.
+          const h = seed(a.file + b.file)
+          dx = ((h % 100) - 50) * 0.01 || 0.5
+          dy = (((h >> 7) % 100) - 50) * 0.01 || 0.5
+          dist = Math.sqrt(dx * dx + dy * dy)
+        }
+        const force = (k * k) / dist
+        a.dx += (dx / dist) * force; a.dy += (dy / dist) * force
+        b.dx -= (dx / dist) * force; b.dy -= (dy / dist) * force
+      }
+    }
+
+    // Attraction: edges pull importer toward import (and vice versa).
+    for (const [i, j] of edges) {
+      const a = nodes[i], b = nodes[j]
+      const dx = a.x - b.x, dy = a.y - b.y
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01
+      const force = (dist * dist) / k
+      a.dx -= (dx / dist) * force; a.dy -= (dy / dist) * force
+      b.dx += (dx / dist) * force; b.dy += (dy / dist) * force
+    }
+
+    // Package centroid pull — gentle, so package mates stay loosely
+    // grouped without overpowering the structural forces above.
+    for (const [, indices] of byPkg) {
+      if (indices.length < 2) continue
+      let cx = 0, cy = 0
+      for (const i of indices) { cx += nodes[i].x; cy += nodes[i].y }
+      cx /= indices.length; cy /= indices.length
+      for (const i of indices) {
+        const n = nodes[i]
+        n.dx += (cx - n.x) * 0.04
+        n.dy += (cy - n.y) * 0.04
+      }
+    }
+
+    // Apply with cooling, constrain inside the canvas.
+    for (const n of nodes) {
+      const disp = Math.sqrt(n.dx * n.dx + n.dy * n.dy) || 0.01
+      n.x += (n.dx / disp) * Math.min(disp, t)
+      n.y += (n.dy / disp) * Math.min(disp, t)
+      n.x = Math.max(40, Math.min(width - 40, n.x))
+      n.y = Math.max(40, Math.min(height - 40, n.y))
+    }
+  }
+
+  return nodes
+}
+
+// Force-directed canvas + toolbar (show-all toggle). Filters out clean
+// files when `treeShowAll` is off. Layout is cached on (tree, showAll)
+// — invalidated when the user flips the toggle or loads a new report.
+function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
+  const allFiles = Object.keys(tree)
+  // Filter: skip files with no own AND no transitive findings unless
+  // `treeShowAll` is on. Edges to/from filtered nodes don't render
+  // (the importsOf map below restricts to surviving files).
+  const files = treeShowAll
+    ? allFiles
+    : allFiles.filter((f) => fileHasFindings(f, ownCounts, transitiveCounts))
+  const fileSet = new Set(files)
+
+  const importsOf = new Map()
+  const importedBy = new Map()
+  for (const f of files) {
+    const imps = (tree[f].imports ?? []).filter((i) => fileSet.has(i))
+    importsOf.set(f, imps)
+    for (const imp of imps) {
+      if (!importedBy.has(imp)) importedBy.set(imp, [])
+      importedBy.get(imp).push(f)
+    }
+  }
+
+  const totalFindings = (counts) => counts ? counts.critical + counts.high + counts.medium + counts.low : 0
+  const indicatorFor = (counts) => {
+    if (!counts) return null
+    const SEV = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
+    for (const sev of ['critical', 'high', 'medium', 'low']) {
+      if (counts[sev] > 0) return SEV[sev]
+    }
+    return null
+  }
+
+  // Toolbar (sticky inside the scrollable canvas wrap).
+  const hiddenCount = allFiles.length - files.length
+  let html = ''
+  html += '<div class="tree-canvas-toolbar">'
+  html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all files</label>`
+  html += `<span>${files.length} of ${allFiles.length} shown${hiddenCount > 0 ? ` · ${hiddenCount} clean hidden` : ''}</span>`
+  html += '</div>'
+
+  if (files.length === 0) {
+    html += '<div class="tree-info-empty" style="padding:3rem 1rem;">No files match the current filter. Toggle "show all files" above.</div>'
+    return html
+  }
+
+  // Force layout (cached).
+  let nodes
+  if (_treeLayoutCache && _treeLayoutCache.tree === tree && _treeLayoutCache.showAll === treeShowAll) {
+    nodes = _treeLayoutCache.nodes
+  } else {
+    nodes = forceLayout(files, importsOf)
+    _treeLayoutCache = { tree, showAll: treeShowAll, nodes }
+  }
+
+  // SVG bounds with a margin.
+  const minX = Math.min(...nodes.map((n) => n.x)) - 40
+  const minY = Math.min(...nodes.map((n) => n.y)) - 40
+  const maxX = Math.max(...nodes.map((n) => n.x)) + 40
+  const maxY = Math.max(...nodes.map((n) => n.y)) + 40
+  const w = maxX - minX, h = maxY - minY
+
+  const radiusOf = (file) => {
+    const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
+    const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.3
+    return 4 + Math.sqrt(conn) * 1.6 + Math.sqrt(findings) * 1.2
+  }
+
+  let svg = `<svg class="tree-canvas-svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`
+
+  svg += '<g class="edges">'
+  for (const n of nodes) {
+    for (const imp of importsOf.get(n.file) ?? []) {
+      const b = nodes.find((m) => m.file === imp)
+      if (!b) continue
+      svg += `<path data-from="${esc(svgNodeId(n.file))}" data-to="${esc(svgNodeId(b.file))}" d="M ${n.x.toFixed(1)} ${n.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}" />`
+    }
+  }
+  svg += '</g>'
+
+  svg += '<g class="nodes">'
+  for (const n of nodes) {
+    const pkg = packageOf(n.file)
+    const fill = packageColor(pkg)
+    const r = radiusOf(n.file)
+    const own = ownCounts.get(n.file)
+    const total = totalFindings(own)
+    const indicator = indicatorFor(own)
+    const isSelected = n.file === selectedTreeFile
+    const cls = `tree-node${isSelected ? ' selected' : ''}`
+    svg += `<g class="${cls}" id="${esc(svgNodeId(n.file))}" data-file="${esc(n.file)}" transform="translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})">`
+    svg += `<title>${esc(n.file)}${total > 0 ? ` · ${total} own finding${total === 1 ? '' : 's'}` : ''}${pkg ? `\n${pkg}` : ''}</title>`
+    svg += `<circle class="node-fill" r="${r.toFixed(1)}" fill="${fill}" stroke="${indicator ?? 'rgba(0,0,0,0.4)'}" stroke-width="${indicator ? 2 : 1}" />`
+    // Hub label: file basename for highly-connected nodes only — keeps
+    // the canvas legible when most nodes are leaves.
+    const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
+    if (conn >= 3 || total > 0) {
+      svg += `<text y="${(r + 10).toFixed(1)}" text-anchor="middle">${esc(svgNodeLabel(n.file, 18))}</text>`
+    }
+    svg += '</g>'
+  }
+  svg += '</g>'
+  svg += '</svg>'
+  return html + svg
+}
+
+// Right sidebar: details for the currently selected file, or an
+// empty-state hint when nothing's selected. Importers / imports lists
+// are clickable buttons that select the linked file (re-renders).
+// External imports (those NOT in the tree) render plain text since
+// there's nothing to navigate to.
+function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
+  if (!file || !tree[file]) {
+    return '<div class="tree-info-empty">Click a node in the graph to inspect its file — own findings, subtree findings, importers, imports.</div>'
+  }
+  const entry = tree[file]
+  const own = ownCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
+  const trans = transitiveCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
+
+  const renderChips = (counts) => {
+    const present = Object.entries(counts).filter(([, n]) => n > 0)
+    if (present.length === 0) return '<div class="tree-info-empty-list">none</div>'
+    return '<div class="tree-count-chips">' +
+      present.map(([sev, n]) => `<span class="tree-count-chip ${esc(sev)}">${n} ${esc(sev)}</span>`).join('') +
+      '</div>'
+  }
+
+  const importers = []
+  for (const [other, e] of Object.entries(tree)) {
+    if ((e.imports ?? []).includes(file)) importers.push(other)
+  }
+  importers.sort()
+  const imports = (entry.imports ?? []).slice().sort()
+
+  const renderList = (items) => {
+    if (items.length === 0) return '<div class="tree-info-empty-list">none</div>'
+    let h = '<ul class="tree-info-list">'
+    for (const i of items) {
+      if (tree[i]) h += `<li><button type="button" data-select-file="${esc(i)}">${esc(i)}</button></li>`
+      else h += `<li><span class="external" title="${esc(i)} (not in tree)">${esc(i)}</span></li>`
+    }
+    h += '</ul>'
+    return h
+  }
+
+  let html = '<div class="tree-info-content">'
+  html += `<div class="tree-info-title">${esc(file)}</div>`
+  html += `<button type="button" class="tree-info-jump" data-jump-file="${esc(file)}">Open in Files →</button>`
+  html += '<div class="tree-info-section">'
+  html += '<div class="tree-info-label">Own findings</div>'
+  html += renderChips(own)
+  html += '</div>'
+  html += '<div class="tree-info-section">'
+  html += '<div class="tree-info-label">Subtree findings (transitive)</div>'
+  html += renderChips(trans)
+  html += '</div>'
+  html += '<div class="tree-info-section">'
+  html += `<div class="tree-info-label">Imported by (${importers.length})</div>`
+  html += renderList(importers)
+  html += '</div>'
+  html += '<div class="tree-info-section">'
+  html += `<div class="tree-info-label">Imports (${imports.length})</div>`
+  html += renderList(imports)
+  html += '</div>'
+  html += '</div>'
+  return html
+}
+
 // Layered-DAG SVG of the import tree. Roots (no one imports them) sit
 // at the top; depth grows downward via "1 + max depth of importers"
 // (cycles are broken by the visiting-set guard).
@@ -1447,10 +1870,10 @@ function byBary(bary) {
 // graph readable with more than a dozen files (alphabetical ordering
 // produces a spaghetti tangle).
 //
-// Each node carries a colored severity indicator on its left edge
-// (highest non-zero severity for that file) and a small count badge
-// on its top-right corner showing total findings. Linked via `<a>`
-// to the matching tree-card anchor — click jumps the page down.
+// (Kept for reference — the active tree-tab visualization is the
+// force-directed `renderTreeCanvas` above; this layered renderer is
+// no longer reachable from render() but left in source as a fallback
+// option.)
 function renderTreeGraph(tree, findingCounts) {
   const files = Object.keys(tree)
   if (files.length === 0) return ''
@@ -1840,35 +2263,49 @@ function render() {
 
   // Top-level view switcher. Tree tab only appears for tree-bearing
   // reports with >1 file — a single-file tree adds no navigation value.
-  // If currentView is 'tree' but the (re)loaded report doesn't have one,
-  // fall back to 'findings' before deciding what to render.
+  // Both Tree (graph + sidebar) and Files (per-file cards) tabs share
+  // the same gate; switching files / loading a tree-less report falls
+  // back to 'findings' so the user doesn't end up on a hidden tab.
   const tree = reports[0]?.tree
   const treeFileCount = tree ? Object.keys(tree).length : 0
   const showTreeTab = treeFileCount > 1
-  if (!showTreeTab && currentView === 'tree') currentView = 'findings'
+  if (!showTreeTab && (currentView === 'tree' || currentView === 'files')) currentView = 'findings'
   if (showTreeTab) {
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
     html += `<button type="button" class="report-tab${currentView === 'tree' ? ' active' : ''}" data-view="tree">Tree (${treeFileCount} files)</button>`
+    html += `<button type="button" class="report-tab${currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     html += '</div>'
   }
 
   if (currentView === 'tree') {
-    // Per-file finding counts feed both the SVG node chips and the
-    // card-header chips. Computed off `mergedGroups` (pre-filter) so
-    // the tree view shows totals regardless of the findings-view
-    // severity / confidence filters.
+    // Pre-filter finding counts (total per file, by severity); plus the
+    // transitive subtree rollup that drives both the "subtree findings"
+    // chips in the sidebar AND the show-all filter (a file with no own
+    // findings is still kept when its subtree has some).
     const findingCounts = computeFindingCountsByFile(mergedGroups)
-    html += `<div class="tree-graph-wrap">${renderTreeGraph(tree, findingCounts)}</div>`
+    const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
+    html += '<div class="tree-layout">'
+    html += `<div class="tree-canvas">${renderTreeCanvas(tree, findingCounts, transitiveCounts)}</div>`
+    html += `<div class="tree-info">${renderTreeSidebar(selectedTreeFile, tree, findingCounts, transitiveCounts)}</div>`
+    html += '</div>'
+    report.innerHTML = html
+    report.classList.add('active')
+    report.classList.toggle('show-metadata', showMetadata)
+    dropZone.classList.add('hidden')
+    document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+    attachTreeGraphInteraction(report.querySelector('.tree-canvas-svg'))
+    return
+  }
+
+  if (currentView === 'files') {
+    const findingCounts = computeFindingCountsByFile(mergedGroups)
     html += renderTreeView(tree, findingCounts)
     report.innerHTML = html
     report.classList.add('active')
     report.classList.toggle('show-metadata', showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
-    // Wire hover highlighting on the freshly-rendered SVG. Done after
-    // innerHTML so the elements actually exist in the DOM.
-    attachTreeGraphInteraction(report.querySelector('.tree-graph-svg'))
     return
   }
 
@@ -2037,11 +2474,40 @@ function renderKeepFocus(inputId) {
 
 // Event delegation — all interactive elements handled here, no inline handlers
 report.addEventListener('click', (e) => {
-  // Top-level view switcher (Findings / Tree).
+  // Top-level view switcher (Findings / Tree / Files).
   const viewTab = e.target.closest('.report-tab')
   if (viewTab && viewTab.dataset.view) {
     currentView = viewTab.dataset.view
     render()
+    return
+  }
+  // Tree-tab: click a graph node to select it (drives the sidebar).
+  const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
+  if (treeNode) {
+    selectedTreeFile = treeNode.dataset.file
+    render()
+    return
+  }
+  // Tree-tab sidebar: importer / import buttons select the linked file.
+  const selectFileBtn = e.target.closest('[data-select-file]')
+  if (selectFileBtn) {
+    selectedTreeFile = selectFileBtn.dataset.selectFile
+    render()
+    return
+  }
+  // Tree-tab sidebar: "Open in Files" jumps to the Files tab and
+  // scrolls to the selected file's card.
+  const jumpBtn = e.target.closest('[data-jump-file]')
+  if (jumpBtn) {
+    const targetFile = jumpBtn.dataset.jumpFile
+    currentView = 'files'
+    render()
+    // Wait one frame so the Files tab DOM exists before we look up
+    // the anchor (render() rewrote innerHTML).
+    requestAnimationFrame(() => {
+      const target = document.getElementById(treeAnchor(targetFile))
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
     return
   }
   // Tab click — switch the active tab within a group. Re-render because
@@ -2195,6 +2661,13 @@ report.addEventListener('change', (e) => {
   // location labels), so it goes through a full render — checkbox blur
   // is acceptable here since the change is structural.
   else if (id === 'group-by-file') { groupByFile = e.target.checked; render() }
+  // Tree-tab: include clean files in the force graph. Invalidates the
+  // cached layout so the next render computes fresh positions.
+  else if (id === 'tree-show-all') {
+    treeShowAll = e.target.checked
+    _treeLayoutCache = null
+    render()
+  }
 })
 
 report.addEventListener('input', (e) => {
