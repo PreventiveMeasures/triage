@@ -123,150 +123,200 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    cards is a layered-DAG visualization (roots at top, leaves at the
    bottom, bezier edges). Both layers point at the same anchor scheme
    so clicking a node in the SVG scrolls to that file's card. */
-/* Tree tab: force-directed canvas on the left, info sidebar on the
-   right. Both share a fixed viewport height so they scroll
-   independently without pushing the page. By default, files with no
-   own findings AND no transitive findings (subtree clean) are hidden
-   — keeps the visualization focused on what matters; toggle restores
-   all. */
+/* ── Graph tab layout ────────────────────────────────────────────── */
 .tree-layout {
-  display: flex; gap: 1rem;
+  display: flex; gap: 0;
   margin-bottom: 1rem;
   height: 80vh;
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
 }
 .tree-canvas {
   flex: 1; min-width: 0;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  overflow: hidden;
+  background: #0a0e14;
   display: flex; flex-direction: column;
+  position: relative;
 }
-/* Toolbar sits OUTSIDE the scroll wrapper so horizontal panning
-   (when the SVG is wider than the canvas) doesn't drag the toolbar
-   along with it. flex-shrink: 0 keeps it visible if vertical content
-   overflows. */
+
+/* Toolbar */
 .tree-canvas-toolbar {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: .75rem;
-  padding: .4rem .6rem;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, .03), rgba(0, 0, 0, .15));
+  display: flex; align-items: center; gap: .65rem;
+  padding: .45rem .75rem;
+  background: rgba(22,27,34,0.92);
   border-bottom: 1px solid var(--border);
-  font-size: .8rem; color: var(--muted);
+  font-size: .78rem; color: var(--muted);
+  backdrop-filter: blur(4px);
+  z-index: 2;
 }
-.tree-canvas-toolbar label { display: inline-flex; align-items: center; gap: .3rem; cursor: pointer; user-select: none; }
-.tree-canvas-toolbar input { margin: 0; cursor: pointer; }
+.tree-canvas-toolbar label {
+  display: inline-flex; align-items: center; gap: .3rem;
+  cursor: pointer; user-select: none; color: var(--muted);
+}
+.tree-canvas-toolbar label:hover { color: var(--text); }
+.tree-canvas-toolbar input[type=checkbox] { margin: 0; cursor: pointer; accent-color: var(--accent); }
 .tree-canvas-toolbar .spacer { flex: 1; }
+.tree-canvas-toolbar .toolbar-stat {
+  display: inline-flex; align-items: center; gap: .3rem;
+  color: var(--muted); font-size: .75rem;
+}
+.tree-canvas-toolbar .toolbar-stat strong { color: var(--text); font-weight: 500; }
 .tree-canvas-toolbar .icon-btn {
-  background: transparent; border: 1px solid var(--border); color: var(--text);
-  border-radius: 4px; padding: .2rem .45rem;
-  cursor: pointer; font-size: .9rem; line-height: 1;
-  font-family: inherit;
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 5px; padding: .2rem .5rem;
+  cursor: pointer; font-size: .85rem; line-height: 1.2;
+  font-family: inherit; transition: border-color .12s, color .12s;
 }
 .tree-canvas-toolbar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
-.tree-canvas-scroll {
-  flex: 1; overflow: hidden;
-  background: radial-gradient(circle at 50% 40%, rgba(88, 166, 255, .04), transparent 60%);
+.tree-canvas-toolbar .toolbar-hint {
+  font-size: .7rem; color: rgba(139,148,158,.5);
+  display: flex; align-items: center; gap: .4rem;
 }
-/* SVG fills its container; viewBox + preserveAspectRatio handle the
-   scaling. In fullscreen, the same layout occupies more pixels →
-   nodes appear bigger / labels easier to read. */
-.tree-canvas-svg { display: block; width: 100%; height: 100%; }
 
-/* Fullscreen toggle: hides the report header / file-list sidebar /
-   chrome margins so the graph (or any of the report tabs) fills the
-   viewport. Tabs stay so the user can switch views without exiting.
-   The exit affordance is the same toolbar button (toggle), and Esc
-   also clears it (wired in JS). */
+/* Canvas container */
+.tree-canvas-scroll {
+  flex: 1; overflow: hidden; position: relative;
+  cursor: grab;
+}
+.tree-canvas-scroll:active { cursor: grabbing; }
+.tree-canvas-el {
+  display: block; width: 100%; height: 100%;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* Minimap */
+.tree-minimap {
+  position: absolute; bottom: 14px; right: 14px;
+  width: 140px; height: 96px;
+  background: rgba(13,17,23,.82);
+  border: 1px solid rgba(48,54,61,.7);
+  border-radius: 6px;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  backdrop-filter: blur(4px);
+}
+.tree-minimap canvas { display: block; width: 100%; height: 100%; }
+
+/* Zoom controls */
+.tree-zoom-controls {
+  position: absolute; bottom: 14px; left: 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  z-index: 3;
+}
+.tree-zoom-btn {
+  width: 28px; height: 28px;
+  background: rgba(22,27,34,.92);
+  border: 1px solid var(--border); color: var(--muted);
+  border-radius: 5px; cursor: pointer;
+  font-size: 1rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, color .12s;
+  backdrop-filter: blur(4px);
+}
+.tree-zoom-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Tooltip */
+.tree-node-tooltip {
+  position: absolute; pointer-events: none;
+  background: rgba(13,17,23,.95);
+  border: 1px solid rgba(88,166,255,.25);
+  border-radius: 6px; padding: .45rem .65rem;
+  font-size: .78rem; color: var(--text);
+  max-width: 260px; z-index: 10;
+  box-shadow: 0 4px 20px rgba(0,0,0,.6);
+  display: none;
+  line-height: 1.45;
+  backdrop-filter: blur(8px);
+}
+.tree-node-tooltip .tt-path { color: var(--muted); font-size: .72rem; margin-top: .1rem; word-break: break-all; }
+.tree-node-tooltip .tt-chips { display: flex; gap: .25rem; margin-top: .3rem; flex-wrap: wrap; }
+.tree-node-tooltip .tt-chip {
+  font-size: .65rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; padding: .1rem .35rem; border-radius: 3px; line-height: 1.3;
+}
+.tree-node-tooltip .tt-chip.critical { background: var(--critical); color: #fff; }
+.tree-node-tooltip .tt-chip.high     { background: var(--high); color: #fff; }
+.tree-node-tooltip .tt-chip.medium   { background: var(--medium); color: #000; }
+.tree-node-tooltip .tt-chip.low      { background: var(--low); color: #000; }
+.tree-node-tooltip .tt-meta { color: var(--muted); font-size: .7rem; margin-top: .2rem; }
+
+/* Fullscreen */
 body.report-fullscreen #sidebar { display: none; }
 body.report-fullscreen #report > header { display: none; }
 body.report-fullscreen #report { max-width: none; padding: .5rem; }
-body.report-fullscreen .tree-layout { height: calc(100vh - 80px); }
-.tree-canvas-svg .edges path {
-  stroke: var(--muted); stroke-width: 0.8; fill: none; opacity: .22;
-  transition: stroke .12s, stroke-width .12s, opacity .12s;
-}
-.tree-canvas-svg .nodes circle.node-fill {
-  cursor: pointer;
-  transition: stroke .12s, opacity .12s, filter .12s;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35));
-}
-/* Severity badge sits on the top-right of the main circle — small
-   accent dot with a dark hairline so it reads against any node fill.
-   Pure indicator, not interactive (the parent circle handles clicks). */
-.tree-canvas-svg .nodes circle.severity-badge {
-  pointer-events: none;
-}
-.tree-canvas-svg .nodes text {
-  fill: var(--text); font-size: 10px; font-weight: 500;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  pointer-events: none;
-  paint-order: stroke fill;
-  stroke: rgba(13, 17, 23, .85); stroke-width: 3px; stroke-linejoin: round;
-}
-.tree-canvas-svg .nodes .tree-node { transition: opacity .12s; }
-/* Hover spotlight: dim everything not connected to the hovered node. */
-.tree-canvas-svg.hover-active .tree-node:not(.hover-self):not(.hover-related):not(.selected) { opacity: .12; }
-.tree-canvas-svg.hover-active .edges path:not(.hover-edge) { opacity: .04; }
-.tree-canvas-svg .edges path.hover-edge { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
-.tree-canvas-svg .tree-node.hover-self circle.node-fill,
-.tree-canvas-svg .tree-node:hover circle.node-fill {
-  stroke: var(--text); stroke-width: 2;
-  filter: drop-shadow(0 0 6px rgba(88, 166, 255, .55));
-}
-.tree-canvas-svg .tree-node.hover-related circle.node-fill { stroke: var(--accent); stroke-width: 1.5; }
-.tree-canvas-svg .tree-node.selected circle.node-fill {
-  stroke: var(--accent); stroke-width: 3;
-  filter: drop-shadow(0 0 8px rgba(88, 166, 255, .65));
-}
+body.report-fullscreen .tree-layout { height: calc(100vh - 70px); }
+
+/* Right sidebar */
 
 /* Right sidebar — file info on the currently selected node. */
 .tree-info {
-  width: 320px; flex-shrink: 0;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  overflow-y: auto; max-height: 80vh;
-  font-size: .85rem;
+  width: 280px; flex-shrink: 0;
+  background: #0f1318;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  font-size: .83rem;
 }
 .tree-info-empty {
-  padding: 2rem 1rem; color: var(--muted); text-align: center; line-height: 1.5;
+  padding: 3rem 1.25rem; color: var(--muted); text-align: center; line-height: 1.7;
+  font-size: .82rem;
 }
-.tree-info-content { padding: .75rem; }
+.tree-info-empty::before {
+  content: '';
+  display: block; width: 32px; height: 32px; margin: 0 auto 1rem;
+  border: 1.5px solid rgba(139,148,158,.25); border-radius: 50%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='1.5'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M11 8v3M11 14h.01'/%3E%3C/svg%3E") center/18px no-repeat;
+}
+.tree-info-content { padding: 0; }
+.tree-info-header {
+  padding: .85rem .9rem .65rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.02);
+}
 .tree-info-title {
-  font-size: .9rem; font-weight: 600;
+  font-size: .82rem; font-weight: 600;
   word-break: break-all; margin-bottom: .5rem;
+  color: var(--text); line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 }
-.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .75rem; }
+.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .3rem; }
 .tree-info-jump {
   background: transparent; border: 1px solid var(--border); color: var(--accent);
-  border-radius: 4px; padding: .25rem .55rem; cursor: pointer;
-  font-size: .75rem; font-family: inherit;
+  border-radius: 4px; padding: .2rem .5rem; cursor: pointer;
+  font-size: .72rem; font-family: inherit;
+  transition: border-color .12s, background .12s;
 }
-.tree-info-jump:hover { border-color: var(--accent); }
-.tree-info-section { margin-top: .85rem; }
+.tree-info-jump:hover { border-color: var(--accent); background: rgba(88,166,255,.08); }
+.tree-info-section { padding: .7rem .9rem; border-bottom: 1px solid rgba(48,54,61,.5); }
+.tree-info-section:last-child { border-bottom: none; }
 .tree-info-label {
-  font-size: .65rem; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--muted); margin-bottom: .3rem;
+  font-size: .62rem; text-transform: uppercase; letter-spacing: .07em;
+  color: rgba(139,148,158,.6); margin-bottom: .4rem; font-weight: 600;
 }
-.tree-info-empty-list { color: var(--muted); font-size: .8rem; font-style: italic; }
+.tree-info-empty-list { color: rgba(139,148,158,.5); font-size: .78rem; font-style: italic; }
 .tree-info-list {
   list-style: none; padding: 0; margin: 0;
-  max-height: 220px; overflow-y: auto;
+  max-height: 180px; overflow-y: auto;
 }
+.tree-info-list::-webkit-scrollbar { width: 3px; }
+.tree-info-list::-webkit-scrollbar-track { background: transparent; }
+.tree-info-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .tree-info-list li { padding: 0; }
 .tree-info-list button {
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; color: var(--accent);
-  padding: .2rem .35rem; cursor: pointer;
+  padding: .2rem .3rem; cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: .75rem;
-  border-radius: 3px;
+  font-size: .73rem; border-radius: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .1s;
 }
-.tree-info-list button:hover { background: #1a2233; }
+.tree-info-list button:hover { background: rgba(88,166,255,.1); }
 .tree-info-list .external {
-  display: block;
-  padding: .2rem .35rem;
-  color: var(--muted);
+  display: block; padding: .2rem .3rem;
+  color: rgba(139,148,158,.55);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: .75rem;
+  font-size: .73rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
@@ -1776,14 +1826,37 @@ function forceLayout(files, importsOf) {
   return nodes
 }
 
+// ─── Canvas-based graph renderer ────────────────────────────────────────────
+// State shared between renderTreeCanvas (which builds the DOM) and the
+// canvas draw/interaction loop attached afterwards.
+let _graphState = null
+
+// Severity color palette — shared by draw and tooltip.
+const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
+
+function totalFindings(counts) {
+  return counts ? counts.critical + counts.high + counts.medium + counts.low : 0
+}
+function indicatorFor(counts) {
+  if (!counts) return null
+  for (const sev of ['critical', 'high', 'medium', 'low']) {
+    if (counts[sev] > 0) return SEV_COLORS[sev]
+  }
+  return null
+}
+
+// Radius formula: scales with connectivity + finding density.
+function radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts) {
+  const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
+  const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.25
+  return Math.max(5, 5 + Math.sqrt(conn) * 2.2 + Math.sqrt(findings) * 1.6)
+}
+
 // Force-directed canvas + toolbar (show-all toggle). Filters out clean
 // files when `treeShowAll` is off. Layout is cached on (tree, showAll)
 // — invalidated when the user flips the toggle or loads a new report.
 function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
   const allFiles = Object.keys(tree)
-  // Filter: skip files with no own AND no transitive findings unless
-  // `treeShowAll` is on. Edges to/from filtered nodes don't render
-  // (the importsOf map below restricts to surviving files).
   const files = treeShowAll
     ? allFiles
     : allFiles.filter((f) => fileHasFindings(f, ownCounts, transitiveCounts))
@@ -1800,30 +1873,20 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     }
   }
 
-  const totalFindings = (counts) => counts ? counts.critical + counts.high + counts.medium + counts.low : 0
-  const indicatorFor = (counts) => {
-    if (!counts) return null
-    const SEV = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
-    for (const sev of ['critical', 'high', 'medium', 'low']) {
-      if (counts[sev] > 0) return SEV[sev]
-    }
-    return null
-  }
-
-  // Toolbar (non-scrolling — outside the SVG scroll wrapper, so
-  // horizontal panning of a wide graph doesn't drag the toolbar with
-  // it). The fullscreen icon-button toggles `body.report-fullscreen`.
   const hiddenCount = allFiles.length - files.length
   let html = ''
   html += '<div class="tree-canvas-toolbar">'
   html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all files</label>`
-  html += `<span>${files.length} of ${allFiles.length} shown${hiddenCount > 0 ? ` · ${hiddenCount} clean hidden` : ''}</span>`
+  html += '<span class="toolbar-stat"><strong>' + files.length + '</strong> of <strong>' + allFiles.length + '</strong> shown'
+  if (hiddenCount > 0) html += ' · <strong>' + hiddenCount + '</strong> clean hidden'
+  html += '</span>'
   html += '<span class="spacer"></span>'
+  html += '<span class="toolbar-hint">drag to pan · scroll to zoom</span>'
   html += `<button type="button" id="tree-fullscreen" class="icon-btn" title="toggle fullscreen view" aria-label="toggle fullscreen">⛶</button>`
   html += '</div>'
 
   if (files.length === 0) {
-    html += '<div class="tree-canvas-scroll"><div class="tree-info-empty" style="padding:3rem 1rem;">No files match the current filter. Toggle "show all files" above.</div></div>'
+    html += '<div class="tree-canvas-scroll" style="display:flex;align-items:center;justify-content:center;"><div style="color:var(--muted);text-align:center;padding:3rem 1rem;font-size:.85rem;">No files match the current filter.<br>Toggle "show all files" above.</div></div>'
     return html
   }
 
@@ -1836,42 +1899,8 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     _treeLayoutCache = { tree, showAll: treeShowAll, nodes }
   }
 
-  // SVG bounds with a margin.
-  const minX = Math.min(...nodes.map((n) => n.x)) - 40
-  const minY = Math.min(...nodes.map((n) => n.y)) - 40
-  const maxX = Math.max(...nodes.map((n) => n.x)) + 40
-  const maxY = Math.max(...nodes.map((n) => n.y)) + 40
-  const w = maxX - minX, h = maxY - minY
-
-  const radiusOf = (file) => {
-    const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
-    const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.3
-    return 4 + Math.sqrt(conn) * 1.6 + Math.sqrt(findings) * 1.2
-  }
-
-  // Pre-index nodes by file so edge resolution is O(1) instead of
-  // a linear find inside the inner loop (matters for graphs in the
-  // many-hundreds range — same-rendered-edge cost was N×E before).
-  const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
-
-  let svg = `<svg class="tree-canvas-svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`
-
-  // Arrowhead marker for directed edges. `context-stroke` makes the
-  // fill inherit the path's stroke color, so hover-highlighted edges
-  // get accent-colored arrows automatically. `orient="auto-start-reverse"`
-  // lets the same marker serve both `marker-end` and `marker-start`
-  // (used for the bidirectional A↔B case below).
-  svg += '<defs>'
-  svg += '<marker id="tg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">'
-  svg += '<path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />'
-  svg += '</marker>'
-  svg += '</defs>'
-
-  // Dedupe parallel edges. A→B and B→A collapse into one path with
-  // arrowheads on BOTH ends (marker-start + marker-end). One-way
-  // edges keep just marker-end. Self-imports (rare; usually a loader
-  // glitch) are skipped — they'd render as a tiny stub.
-  const edgeMap = new Map() // canonical "lo|hi" key → { lo, hi, fromLo, fromHi }
+  // Build edge list (deduplicated, bidi-aware) once — reused every draw.
+  const edgeMap = new Map()
   for (const f of files) {
     for (const imp of importsOf.get(f) ?? []) {
       if (f === imp) continue
@@ -1879,94 +1908,515 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
       const key = `${lo}\0${hi}`
       let e = edgeMap.get(key)
       if (!e) { e = { lo, hi, fromLo: false, fromHi: false }; edgeMap.set(key, e) }
-      if (f === lo) e.fromLo = true
-      else e.fromHi = true
+      if (f === lo) e.fromLo = true; else e.fromHi = true
     }
+  }
+  const edges = [...edgeMap.values()]
+  const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
+
+  // Stash render state so attachTreeGraphInteraction can wire it up.
+  _graphState = {
+    nodes, edges, nodeByFile, importsOf, importedBy,
+    ownCounts, transitiveCounts, files, fileSet,
   }
 
-  // Quadratic-bezier edges with a gentle perpendicular arc so many
-  // edges sharing an area read individually instead of overlapping.
-  // Endpoints trim back to each node's circle edge (plus a small
-  // gap for the arrowhead) so the arrow tip lands JUST outside the
-  // target circle rather than hidden inside it.
-  const ARROW_GAP = 4
-  svg += '<g class="edges">'
-  for (const e of edgeMap.values()) {
-    const lo = nodeByFile.get(e.lo)
-    const hi = nodeByFile.get(e.hi)
-    if (!lo || !hi) continue
-    // For unidirectional edges, orient the path importer→import so
-    // the `marker-end` arrow lands at the import. For bidi we keep
-    // the canonical lo→hi ordering (the start arrow is reversed by
-    // the marker's `orient="auto-start-reverse"`).
-    const bidi = e.fromLo && e.fromHi
-    const rev = !bidi && e.fromHi // hi imports lo → render hi→lo
-    const a = rev ? hi : lo
-    const b = rev ? lo : hi
-    const ra = radiusOf(a.file)
-    const rb = radiusOf(b.file)
-    const dx = b.x - a.x, dy = b.y - a.y
-    const len = Math.sqrt(dx * dx + dy * dy) || 1
-    const ux = dx / len, uy = dy / len
-    // Both ends trim by `ARROW_GAP` when bidi (arrows on both sides);
-    // unidirectional just needs the gap on the target end.
-    const sx = a.x + ux * (ra + (bidi ? ARROW_GAP : 0.5))
-    const sy = a.y + uy * (ra + (bidi ? ARROW_GAP : 0.5))
-    const ex = b.x - ux * (rb + ARROW_GAP)
-    const ey = b.y - uy * (rb + ARROW_GAP)
-    const off = Math.min(len * 0.12, 24)
-    const px = -uy * off, py = ux * off
-    const cx = (sx + ex) / 2 + px
-    const cy = (sy + ey) / 2 + py
-    const markers = bidi
-      ? `marker-start="url(#tg-arrow)" marker-end="url(#tg-arrow)"`
-      : `marker-end="url(#tg-arrow)"`
-    svg += `<path data-from="${esc(svgNodeId(a.file))}" data-to="${esc(svgNodeId(b.file))}" ${markers} d="M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)}, ${ex.toFixed(1)} ${ey.toFixed(1)}" />`
-  }
-  svg += '</g>'
+  html += '<div class="tree-canvas-scroll"><canvas class="tree-canvas-el" id="tree-canvas"></canvas></div>'
+  html += '<div class="tree-zoom-controls">'
+  html += '<button type="button" class="tree-zoom-btn" id="zoom-in" title="zoom in">+</button>'
+  html += '<button type="button" class="tree-zoom-btn" id="zoom-out" title="zoom out">−</button>'
+  html += '<button type="button" class="tree-zoom-btn" id="zoom-fit" title="fit to view" style="font-size:.7rem;">⊡</button>'
+  html += '</div>'
+  html += '<div class="tree-minimap"><canvas id="tree-minimap-canvas"></canvas></div>'
+  html += '<div class="tree-node-tooltip" id="tree-tooltip"></div>'
+  return html
+}
 
-  svg += '<g class="nodes">'
-  for (const n of nodes) {
-    const pkg = packageOf(n.file)
-    const fill = packageColor(pkg)
-    const r = radiusOf(n.file)
-    const own = ownCounts.get(n.file)
-    const total = totalFindings(own)
-    const indicator = indicatorFor(own)
-    const isSelected = n.file === selectedTreeFile
-    const cls = `tree-node${isSelected ? ' selected' : ''}`
-    svg += `<g class="${cls}" id="${esc(svgNodeId(n.file))}" data-file="${esc(n.file)}" transform="translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})">`
-    svg += `<title>${esc(n.file)}${total > 0 ? ` · ${total} own finding${total === 1 ? '' : 's'}` : ''}${pkg ? `\n${pkg}` : ''}</title>`
-    // Main circle: package color fill + dark hairline. Severity is a
-    // separate small badge on the top-right (drawn after) so it
-    // doesn't overpower the package color the way a full ring did
-    // (made every finding-bearing node look uniformly red).
-    svg += `<circle class="node-fill" r="${r.toFixed(1)}" fill="${fill}" stroke="rgba(0,0,0,0.5)" stroke-width="1" />`
-    if (indicator) {
-      const br = Math.max(2.5, r * 0.4)
-      const bx = r * 0.7
-      const by = -r * 0.7
-      svg += `<circle class="severity-badge" r="${br.toFixed(1)}" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" fill="${indicator}" stroke="rgba(13,17,23,0.85)" stroke-width="1" />`
-    }
-    // Label rules:
-    //   - Always show for hub nodes (≥3 connections) and for finding-
-    //     bearing nodes (signal-rich).
-    //   - Wrap long basenames to two lines at hyphen / underscore so
-    //     the canvas isn't littered with leading-ellipsis truncations.
-    //   - Center over the node, anchored just below the circle.
-    const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
-    if (conn >= 3 || total > 0) {
-      const lines = multiLineLabel(n.file, 18)
-      const lineH = 11
-      lines.forEach((line, i) => {
-        svg += `<text y="${(r + 10 + i * lineH).toFixed(1)}" text-anchor="middle">${esc(line)}</text>`
-      })
-    }
-    svg += '</g>'
+// Attach all canvas interaction: draw loop, pan/zoom, hover, click, minimap.
+function attachTreeGraphInteraction(container) {
+  if (!_graphState) return
+  const canvas = container.querySelector('#tree-canvas')
+  const minimapCanvas = container.querySelector('#tree-minimap-canvas')
+  const tooltip = container.querySelector('#tree-tooltip')
+  if (!canvas) return
+
+  const { nodes, edges, nodeByFile, importsOf, importedBy, ownCounts, transitiveCounts } = _graphState
+
+  // ── Viewport state ──────────────────────────────────────────────────────
+  let panX = 0, panY = 0, zoom = 1
+  let hoveredFile = null
+  let dpr = window.devicePixelRatio || 1
+
+  // ── Radius helper (canvas version) ──────────────────────────────────────
+  const R = (file) => radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts)
+
+  // ── Package color (desaturated for canvas, more control) ────────────────
+  const pkgColorCache = new Map()
+  function nodeColor(file) {
+    const pkg = packageOf(file)
+    if (pkgColorCache.has(pkg)) return pkgColorCache.get(pkg)
+    let h = 0
+    const s = pkg ?? '__root__'
+    for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0
+    const hue = ((h % 360) + 360) % 360
+    const col = `hsl(${hue},38%,42%)`
+    pkgColorCache.set(pkg, col)
+    return col
   }
-  svg += '</g>'
-  svg += '</svg>'
-  return html + `<div class="tree-canvas-scroll">${svg}</div>`
+
+  // ── Fit to view ──────────────────────────────────────────────────────────
+  function fitToView(w, h) {
+    if (nodes.length === 0) return
+    const pad = 60
+    const minX = Math.min(...nodes.map((n) => n.x)) - pad
+    const minY = Math.min(...nodes.map((n) => n.y)) - pad
+    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
+    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
+    const gw = maxX - minX, gh = maxY - minY
+    zoom = Math.min(w / gw, h / gh, 2)
+    panX = (w - gw * zoom) / 2 - minX * zoom
+    panY = (h - gh * zoom) / 2 - minY * zoom
+  }
+
+  // ── Resize handling ───────────────────────────────────────────────────────
+  function resize() {
+    const rect = canvas.parentElement.getBoundingClientRect()
+    const w = rect.width, h = rect.height
+    dpr = window.devicePixelRatio || 1
+    canvas.width = w * dpr
+    canvas.height = h * dpr
+    canvas.style.width = w + 'px'
+    canvas.style.height = h + 'px'
+    if (minimapCanvas) {
+      const mr = minimapCanvas.parentElement.getBoundingClientRect()
+      minimapCanvas.width = mr.width * dpr
+      minimapCanvas.height = mr.height * dpr
+      minimapCanvas.style.width = mr.width + 'px'
+      minimapCanvas.style.height = mr.height + 'px'
+    }
+    fitToView(w, h)
+    draw()
+  }
+
+  // ── Main draw ────────────────────────────────────────────────────────────
+  function draw() {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    const ctx = canvas.getContext('2d')
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    // Background
+    ctx.fillStyle = '#0a0e14'
+    ctx.fillRect(0, 0, w, h)
+
+    // Subtle radial glow at center
+    const cx = w / 2, cy = h / 2
+    const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.55)
+    gr.addColorStop(0, 'rgba(88,166,255,0.032)')
+    gr.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = gr
+    ctx.fillRect(0, 0, w, h)
+
+    ctx.save()
+    ctx.translate(panX, panY)
+    ctx.scale(zoom, zoom)
+
+    // Determine connected set for hover dimming
+    const connectedFiles = new Set()
+    if (hoveredFile) {
+      connectedFiles.add(hoveredFile)
+      for (const imp of importsOf.get(hoveredFile) ?? []) connectedFiles.add(imp)
+      for (const imp of importedBy.get(hoveredFile) ?? []) connectedFiles.add(imp)
+    }
+
+    // ── Draw edges ───────────────────────────────────────────────────────
+    for (const e of edges) {
+      const lo = nodeByFile.get(e.lo)
+      const hi = nodeByFile.get(e.hi)
+      if (!lo || !hi) continue
+
+      const bidi = e.fromLo && e.fromHi
+      const rev = !bidi && e.fromHi
+      const a = rev ? hi : lo
+      const b = rev ? lo : hi
+
+      const isHovered = hoveredFile && (a.file === hoveredFile || b.file === hoveredFile)
+      const isDimmed = hoveredFile && !isHovered
+
+      const ra = R(a.file), rb = R(b.file)
+      const dx = b.x - a.x, dy = b.y - a.y
+      const len = Math.sqrt(dx * dx + dy * dy) || 1
+      const ux = dx / len, uy = dy / len
+      const sx = a.x + ux * (ra + 2), sy = a.y + uy * (ra + 2)
+      const ex = b.x - ux * (rb + 3), ey = b.y - uy * (rb + 3)
+      const off = Math.min(len * 0.14, 28)
+      const qcx = (sx + ex) / 2 - uy * off
+      const qcy = (sy + ey) / 2 + ux * off
+
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
+
+      if (isHovered) {
+        ctx.strokeStyle = 'rgba(88,166,255,0.85)'
+        ctx.lineWidth = 1.5 / zoom
+      } else if (isDimmed) {
+        ctx.strokeStyle = 'rgba(48,54,61,0.25)'
+        ctx.lineWidth = 0.6 / zoom
+      } else {
+        ctx.strokeStyle = 'rgba(88,100,120,0.3)'
+        ctx.lineWidth = 0.8 / zoom
+      }
+      ctx.stroke()
+
+      // Arrowhead at endpoint
+      const arrowSize = Math.max(4, 5.5 / zoom)
+      if (!isDimmed) {
+        const t = 0.92
+        const tangX = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
+        const tangY = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
+        const tLen = Math.sqrt(tangX * tangX + tangY * tangY) || 1
+        const tux = tangX / tLen, tuy = tangY / tLen
+        ctx.beginPath()
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(ex - tux * arrowSize + tuy * arrowSize * 0.45, ey - tuy * arrowSize - tux * arrowSize * 0.45)
+        ctx.lineTo(ex - tux * arrowSize - tuy * arrowSize * 0.45, ey - tuy * arrowSize + tux * arrowSize * 0.45)
+        ctx.closePath()
+        ctx.fillStyle = isHovered ? 'rgba(88,166,255,0.85)' : 'rgba(88,100,120,0.45)'
+        ctx.fill()
+
+        if (bidi) {
+          // Back-arrow at start
+          const t0 = 0.08
+          const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
+          const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
+          const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
+          const tu0 = tx0 / tl0, tv0 = ty0 / tl0
+          ctx.beginPath()
+          ctx.moveTo(sx, sy)
+          ctx.lineTo(sx + tu0 * arrowSize - tv0 * arrowSize * 0.45, sy + tv0 * arrowSize + tu0 * arrowSize * 0.45)
+          ctx.lineTo(sx + tu0 * arrowSize + tv0 * arrowSize * 0.45, sy + tv0 * arrowSize - tu0 * arrowSize * 0.45)
+          ctx.closePath()
+          ctx.fillStyle = isHovered ? 'rgba(88,166,255,0.85)' : 'rgba(88,100,120,0.45)'
+          ctx.fill()
+        }
+      }
+    }
+
+    // ── Draw nodes ───────────────────────────────────────────────────────
+    for (const n of nodes) {
+      const r = R(n.file)
+      const own = ownCounts.get(n.file)
+      const findingColor = indicatorFor(own)
+      const isSelected = n.file === selectedTreeFile
+      const isHov = n.file === hoveredFile
+      const isDimmed = hoveredFile && !connectedFiles.has(n.file)
+      const baseColor = nodeColor(n.file)
+
+      ctx.globalAlpha = isDimmed ? 0.1 : 1
+
+      // Outer glow for selected / hovered / finding-bearing nodes
+      if (isSelected || isHov || findingColor) {
+        const glowColor = isSelected ? '#58a6ff' : isHov ? '#7ec4ff' : findingColor
+        const glow = ctx.createRadialGradient(n.x, n.y, r * 0.5, n.x, n.y, r * 2.2)
+        glow.addColorStop(0, glowColor + '35')
+        glow.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.beginPath()
+        ctx.arc(n.x, n.y, r * 2.2, 0, Math.PI * 2)
+        ctx.fillStyle = glow
+        ctx.fill()
+      }
+
+      // Main circle — subtle radial fill for depth
+      const grad = ctx.createRadialGradient(n.x - r * 0.3, n.y - r * 0.35, r * 0.05, n.x, n.y, r)
+      const base = baseColor
+      grad.addColorStop(0, lightenHsl(base, 14))
+      grad.addColorStop(1, darkenHsl(base, 8))
+      ctx.beginPath()
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = grad
+      ctx.fill()
+
+      // Rim / selection ring
+      ctx.beginPath()
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
+      if (isSelected) {
+        ctx.strokeStyle = '#58a6ff'
+        ctx.lineWidth = 2.5 / zoom
+      } else if (isHov) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+        ctx.lineWidth = 1.5 / zoom
+      } else if (findingColor) {
+        ctx.strokeStyle = findingColor + 'aa'
+        ctx.lineWidth = 1.2 / zoom
+      } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+        ctx.lineWidth = 0.8 / zoom
+      }
+      ctx.stroke()
+
+      // Severity indicator dot (top-right)
+      if (findingColor) {
+        const br = Math.max(2.5, r * 0.38)
+        const bx = n.x + r * 0.68, by = n.y - r * 0.68
+        ctx.beginPath()
+        ctx.arc(bx, by, br + 1.5, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(10,14,20,0.9)'
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(bx, by, br, 0, Math.PI * 2)
+        ctx.fillStyle = findingColor
+        ctx.fill()
+      }
+
+      ctx.globalAlpha = 1
+
+      // Labels — only for hubs, finding-bearing, and selected/hovered
+      const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
+      const ownTotal = totalFindings(own)
+      if ((conn >= 2 || ownTotal > 0 || isSelected || isHov) && !isDimmed) {
+        const labelZoom = Math.max(zoom, 0.55)
+        const fontSize = Math.min(11, Math.max(9, 10 / labelZoom))
+        ctx.font = `500 ${fontSize}px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
+        ctx.textAlign = 'center'
+        const lines = multiLineLabel(n.file, 20)
+        const lineH = fontSize * 1.25
+        const ty = n.y + r + fontSize + 3
+
+        // Text shadow for legibility
+        ctx.shadowColor = 'rgba(10,14,20,0.95)'
+        ctx.shadowBlur = 5
+        ctx.fillStyle = isSelected ? '#a8d8ff' : isHov ? '#e6edf3' : 'rgba(139,148,158,0.9)'
+        lines.forEach((line, i) => {
+          ctx.fillText(line, n.x, ty + i * lineH)
+        })
+        ctx.shadowBlur = 0
+      }
+    }
+
+    ctx.restore()
+    drawMinimap(w, h)
+  }
+
+  // ── Minimap ──────────────────────────────────────────────────────────────
+  function drawMinimap(mainW, mainH) {
+    if (!minimapCanvas) return
+    const mw = minimapCanvas.width / dpr, mh = minimapCanvas.height / dpr
+    const mctx = minimapCanvas.getContext('2d')
+    mctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    mctx.clearRect(0, 0, mw, mh)
+
+    if (nodes.length === 0) return
+    const pad = 20
+    const minX = Math.min(...nodes.map((n) => n.x)) - pad
+    const minY = Math.min(...nodes.map((n) => n.y)) - pad
+    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
+    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
+    const gw = maxX - minX, gh = maxY - minY
+    const mScale = Math.min(mw / gw, mh / gh)
+    const mOffX = (mw - gw * mScale) / 2 - minX * mScale
+    const mOffY = (mh - gh * mScale) / 2 - minY * mScale
+
+    // Draw edges
+    for (const e of edges) {
+      const lo = nodeByFile.get(e.lo), hi = nodeByFile.get(e.hi)
+      if (!lo || !hi) continue
+      mctx.beginPath()
+      mctx.moveTo(lo.x * mScale + mOffX, lo.y * mScale + mOffY)
+      mctx.lineTo(hi.x * mScale + mOffX, hi.y * mScale + mOffY)
+      mctx.strokeStyle = 'rgba(88,100,120,0.3)'
+      mctx.lineWidth = 0.6
+      mctx.stroke()
+    }
+
+    // Draw nodes
+    for (const n of nodes) {
+      const mr = Math.max(1.5, R(n.file) * mScale * 0.7)
+      const own = ownCounts.get(n.file)
+      const fc = indicatorFor(own)
+      mctx.beginPath()
+      mctx.arc(n.x * mScale + mOffX, n.y * mScale + mOffY, mr, 0, Math.PI * 2)
+      mctx.fillStyle = fc ?? nodeColor(n.file)
+      mctx.globalAlpha = n.file === selectedTreeFile ? 1 : 0.7
+      mctx.fill()
+      mctx.globalAlpha = 1
+    }
+
+    // Viewport rect
+    const vx = (-panX / zoom) * mScale + mOffX
+    const vy = (-panY / zoom) * mScale + mOffY
+    const vw = (mainW / zoom) * mScale
+    const vh = (mainH / zoom) * mScale
+    mctx.strokeStyle = 'rgba(88,166,255,0.55)'
+    mctx.lineWidth = 1
+    mctx.strokeRect(vx, vy, vw, vh)
+    mctx.fillStyle = 'rgba(88,166,255,0.06)'
+    mctx.fillRect(vx, vy, vw, vh)
+  }
+
+  // ── Color helpers ────────────────────────────────────────────────────────
+  function lightenHsl(hslStr, amount) {
+    const m = hslStr.match(/hsl\((\d+),(\d+)%,(\d+)%\)/)
+    if (!m) return hslStr
+    return `hsl(${m[1]},${m[2]}%,${Math.min(100, +m[3] + amount)}%)`
+  }
+  function darkenHsl(hslStr, amount) {
+    const m = hslStr.match(/hsl\((\d+),(\d+)%,(\d+)%\)/)
+    if (!m) return hslStr
+    return `hsl(${m[1]},${m[2]}%,${Math.max(0, +m[3] - amount)}%)`
+  }
+
+  // ── Hit test (canvas → world) ────────────────────────────────────────────
+  function canvasToWorld(cx, cy) {
+    return { x: (cx - panX) / zoom, y: (cy - panY) / zoom }
+  }
+  function hitTest(cx, cy) {
+    const { x, y } = canvasToWorld(cx, cy)
+    let best = null, bestD = Infinity
+    for (const n of nodes) {
+      const dx = n.x - x, dy = n.y - y
+      const d = Math.sqrt(dx * dx + dy * dy)
+      const r = R(n.file)
+      if (d <= r + 4 && d < bestD) { bestD = d; best = n }
+    }
+    return best
+  }
+
+  // ── Tooltip ──────────────────────────────────────────────────────────────
+  function showTooltip(node, cx, cy) {
+    if (!tooltip) return
+    const own = ownCounts.get(node.file) ?? {}
+    const trans = transitiveCounts.get(node.file) ?? {}
+    const pkg = packageOf(node.file)
+    const conn = (importsOf.get(node.file)?.length ?? 0) + (importedBy.get(node.file)?.length ?? 0)
+    let html = `<strong>${node.file.split('/').pop()}</strong>`
+    html += `<div class="tt-path">${node.file}</div>`
+    const chips = []
+    for (const sev of ['critical', 'high', 'medium', 'low']) {
+      if (own[sev]) chips.push(`<span class="tt-chip ${sev}">${own[sev]} ${sev}</span>`)
+    }
+    if (chips.length) html += `<div class="tt-chips">${chips.join('')}</div>`
+    html += `<div class="tt-meta">${conn} connection${conn !== 1 ? 's' : ''}${pkg ? ` · ${pkg}` : ''}</div>`
+    tooltip.innerHTML = html
+    tooltip.style.display = 'block'
+    const rect = canvas.parentElement.getBoundingClientRect()
+    const pad = 12
+    let tx = cx + pad, ty = cy - 10
+    if (tx + 270 > rect.width) tx = cx - 270 - pad
+    if (ty + 120 > rect.height) ty = rect.height - 130
+    tooltip.style.left = tx + 'px'
+    tooltip.style.top = ty + 'px'
+  }
+  function hideTooltip() {
+    if (tooltip) tooltip.style.display = 'none'
+  }
+
+  // ── Pan & zoom ───────────────────────────────────────────────────────────
+  let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0
+  const scroll = canvas.parentElement
+
+  scroll.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    dragging = true
+    dragStartX = e.clientX; dragStartY = e.clientY
+    panStartX = panX; panStartY = panY
+    hideTooltip()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (dragging) {
+      panX = panStartX + (e.clientX - dragStartX)
+      panY = panStartY + (e.clientY - dragStartY)
+      draw()
+      return
+    }
+    const rect = canvas.getBoundingClientRect()
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top
+    const hit = hitTest(cx, cy)
+    const prev = hoveredFile
+    hoveredFile = hit ? hit.file : null
+    canvas.style.cursor = hit ? 'pointer' : 'grab'
+    if (hoveredFile !== prev) draw()
+    if (hit) showTooltip(hit, cx, cy)
+    else hideTooltip()
+  })
+  window.addEventListener('mouseup', () => { dragging = false })
+
+  scroll.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    const rect = canvas.getBoundingClientRect()
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top
+    const delta = e.deltaY < 0 ? 1.12 : 1 / 1.12
+    const newZoom = Math.max(0.08, Math.min(8, zoom * delta))
+    panX = cx - (cx - panX) * (newZoom / zoom)
+    panY = cy - (cy - panY) * (newZoom / zoom)
+    zoom = newZoom
+    draw()
+  }, { passive: false })
+
+  // Touch pan / pinch-zoom
+  let touches = []
+  scroll.addEventListener('touchstart', (e) => { e.preventDefault(); touches = [...e.touches] }, { passive: false })
+  scroll.addEventListener('touchmove', (e) => {
+    e.preventDefault()
+    if (e.touches.length === 1 && touches.length === 1) {
+      panX += e.touches[0].clientX - touches[0].clientX
+      panY += e.touches[0].clientY - touches[0].clientY
+    } else if (e.touches.length === 2 && touches.length === 2) {
+      const d0 = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+      const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
+      if (d0 > 0) {
+        const rect = canvas.getBoundingClientRect()
+        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
+        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+        const s = d1 / d0
+        const nz = Math.max(0.08, Math.min(8, zoom * s))
+        panX = mx - (mx - panX) * (nz / zoom)
+        panY = my - (my - panY) * (nz / zoom)
+        zoom = nz
+      }
+    }
+    touches = [...e.touches]
+    draw()
+  }, { passive: false })
+  scroll.addEventListener('touchend', (e) => { touches = [...e.touches] }, { passive: false })
+
+  // Click = select node
+  scroll.addEventListener('click', (e) => {
+    if (Math.abs(e.clientX - dragStartX) > 4 || Math.abs(e.clientY - dragStartY) > 4) return
+    const rect = canvas.getBoundingClientRect()
+    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
+    const prev = selectedTreeFile
+    selectedTreeFile = hit ? hit.file : null
+    if (selectedTreeFile !== prev) {
+      // Re-render the whole view (updates sidebar)
+      const renderEvent = new CustomEvent('tree-node-select', { detail: { file: selectedTreeFile }, bubbles: true })
+      canvas.dispatchEvent(renderEvent)
+    }
+    draw()
+  })
+
+  // Zoom buttons
+  const zoomIn = container.querySelector('#zoom-in')
+  const zoomOut = container.querySelector('#zoom-out')
+  const zoomFit = container.querySelector('#zoom-fit')
+  if (zoomIn) zoomIn.addEventListener('click', () => {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    zoom = Math.min(8, zoom * 1.3); panX = w/2 - (w/2 - panX) * 1.3; panY = h/2 - (h/2 - panY) * 1.3; draw()
+  })
+  if (zoomOut) zoomOut.addEventListener('click', () => {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    zoom = Math.max(0.08, zoom / 1.3); panX = w/2 - (w/2 - panX) / 1.3; panY = h/2 - (h/2 - panY) / 1.3; draw()
+  })
+  if (zoomFit) zoomFit.addEventListener('click', () => {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    fitToView(w, h); draw()
+  })
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  resize()
+  const ro = new ResizeObserver(() => resize())
+  ro.observe(canvas.parentElement)
+
+  // When a node is selected via click, trigger a full render (updates sidebar)
+  canvas.addEventListener('tree-node-select', () => { render() })
 }
 
 // Right sidebar: details for the currently selected file, or an
@@ -1976,7 +2426,7 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
 // there's nothing to navigate to.
 function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
   if (!file || !tree[file]) {
-    return '<div class="tree-info-empty">Click a node in the graph to inspect its file — own findings, subtree findings, importers, imports.</div>'
+    return '<div class="tree-info-empty">Click a node in the graph to inspect its file —<br>own findings, subtree findings, importers, imports.</div>'
   }
   const entry = tree[file]
   const own = ownCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
@@ -2009,17 +2459,19 @@ function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
   }
 
   let html = '<div class="tree-info-content">'
+  html += '<div class="tree-info-header">'
   html += `<div class="tree-info-title">${esc(file)}</div>`
   html += '<div class="tree-info-jumps">'
-  html += `<button type="button" class="tree-info-jump" data-jump-findings="${esc(file)}">Open in Findings →</button>`
-  html += `<button type="button" class="tree-info-jump" data-jump-file="${esc(file)}">Open in Files →</button>`
+  html += `<button type="button" class="tree-info-jump" data-jump-findings="${esc(file)}">Findings →</button>`
+  html += `<button type="button" class="tree-info-jump" data-jump-file="${esc(file)}">Files →</button>`
+  html += '</div>'
   html += '</div>'
   html += '<div class="tree-info-section">'
   html += '<div class="tree-info-label">Own findings</div>'
   html += renderChips(own)
   html += '</div>'
   html += '<div class="tree-info-section">'
-  html += '<div class="tree-info-label">Subtree findings (transitive)</div>'
+  html += '<div class="tree-info-label">Subtree findings</div>'
   html += renderChips(trans)
   html += '</div>'
   html += '<div class="tree-info-section">'
@@ -2196,43 +2648,9 @@ function renderTreeGraph(tree, findingCounts) {
   return svg
 }
 
-// Wires hover behavior on a tree-graph SVG. Hover a node → highlight
-// its incoming + outgoing edges plus the connected nodes, dim
-// everything else. Mouseleave restores. CSS handles the visuals via
-// classes on the SVG root + individual elements.
-function attachTreeGraphInteraction(svg) {
-  if (!svg) return
-  const incoming = new Map()
-  const outgoing = new Map()
-  for (const path of svg.querySelectorAll('path[data-from]')) {
-    const from = path.dataset.from
-    const to = path.dataset.to
-    if (!outgoing.has(from)) outgoing.set(from, [])
-    outgoing.get(from).push({ to, path })
-    if (!incoming.has(to)) incoming.set(to, [])
-    incoming.get(to).push({ from, path })
-  }
-  for (const node of svg.querySelectorAll('.tree-node')) {
-    node.addEventListener('mouseenter', () => {
-      svg.classList.add('hover-active')
-      node.classList.add('hover-self')
-      for (const { to, path } of (outgoing.get(node.id) ?? [])) {
-        path.classList.add('hover-edge')
-        svg.querySelector('#' + CSS.escape(to))?.classList.add('hover-related')
-      }
-      for (const { from, path } of (incoming.get(node.id) ?? [])) {
-        path.classList.add('hover-edge')
-        svg.querySelector('#' + CSS.escape(from))?.classList.add('hover-related')
-      }
-    })
-    node.addEventListener('mouseleave', () => {
-      svg.classList.remove('hover-active')
-      svg.querySelectorAll('.hover-self, .hover-related, .hover-edge').forEach((el) => {
-        el.classList.remove('hover-self', 'hover-related', 'hover-edge')
-      })
-    })
-  }
-}
+// attachTreeGraphInteraction is now a no-op: the canvas renderer
+// wires all interaction (pan/zoom/hover/click) internally inside
+// attachTreeGraphInteraction (defined above near renderTreeCanvas).
 
 // Render the per-file import tree as a flat list of cards. Each card
 // shows imports (linked to their target's anchor when the target is in
@@ -2469,7 +2887,7 @@ function render() {
     report.classList.toggle('show-metadata', showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
-    attachTreeGraphInteraction(report.querySelector('.tree-canvas-svg'))
+    attachTreeGraphInteraction(report.querySelector('.tree-canvas'))
     return
   }
 
