@@ -124,47 +124,74 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
    bottom, bezier edges). Both layers point at the same anchor scheme
    so clicking a node in the SVG scrolls to that file's card. */
 /* Tree tab: force-directed canvas on the left, info sidebar on the
-   right. Both share fixed viewport height so they scroll independently
-   without pushing the page. By default, files with no own findings AND
-   no transitive findings (subtree clean) are hidden — keeps the
-   visualization focused on what matters; toggle restores all. */
+   right. Both share a fixed viewport height so they scroll
+   independently without pushing the page. By default, files with no
+   own findings AND no transitive findings (subtree clean) are hidden
+   — keeps the visualization focused on what matters; toggle restores
+   all. */
 .tree-layout {
   display: flex; gap: 1rem;
   margin-bottom: 1rem;
+  height: 80vh;
 }
 .tree-canvas {
   flex: 1; min-width: 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  overflow: auto;
-  max-height: 80vh;
-  position: relative;
+  overflow: hidden;
+  display: flex; flex-direction: column;
 }
+/* Toolbar sits OUTSIDE the scroll wrapper so horizontal panning
+   (when the SVG is wider than the canvas) doesn't drag the toolbar
+   along with it. flex-shrink: 0 keeps it visible if vertical content
+   overflows. */
 .tree-canvas-toolbar {
-  position: sticky; top: 0; z-index: 1;
+  flex-shrink: 0;
   display: flex; align-items: center; gap: .75rem;
   padding: .4rem .6rem;
-  background: rgba(22, 27, 34, .92);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, .03), rgba(0, 0, 0, .15));
   border-bottom: 1px solid var(--border);
   font-size: .8rem; color: var(--muted);
 }
-.tree-canvas-toolbar label { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; }
+.tree-canvas-toolbar label { display: inline-flex; align-items: center; gap: .3rem; cursor: pointer; user-select: none; }
 .tree-canvas-toolbar input { margin: 0; cursor: pointer; }
+.tree-canvas-toolbar .spacer { flex: 1; }
+.tree-canvas-toolbar .icon-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  border-radius: 4px; padding: .2rem .45rem;
+  cursor: pointer; font-size: .9rem; line-height: 1;
+  font-family: inherit;
+}
+.tree-canvas-toolbar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tree-canvas-scroll {
+  flex: 1; overflow: auto;
+  background: radial-gradient(circle at 50% 40%, rgba(88, 166, 255, .04), transparent 60%);
+}
 .tree-canvas-svg { display: block; }
+
+/* Fullscreen toggle: hides the report header / file-list sidebar /
+   chrome margins so the graph (or any of the report tabs) fills the
+   viewport. Tabs stay so the user can switch views without exiting.
+   The exit affordance is the same toolbar button (toggle), and Esc
+   also clears it (wired in JS). */
+body.report-fullscreen #sidebar { display: none; }
+body.report-fullscreen #report > header { display: none; }
+body.report-fullscreen #report { max-width: none; padding: .5rem; }
+body.report-fullscreen .tree-layout { height: calc(100vh - 80px); }
 .tree-canvas-svg .edges path {
-  stroke: var(--muted); stroke-width: 0.8; fill: none; opacity: .25;
+  stroke: var(--muted); stroke-width: 0.8; fill: none; opacity: .22;
   transition: stroke .12s, stroke-width .12s, opacity .12s;
 }
 .tree-canvas-svg .nodes circle.node-fill {
   cursor: pointer;
-  transition: stroke .12s, opacity .12s;
-}
-.tree-canvas-svg .nodes circle.node-ring {
-  fill: none; stroke-width: 1.5; pointer-events: none;
+  transition: stroke .12s, opacity .12s, filter .12s;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35));
 }
 .tree-canvas-svg .nodes text {
-  fill: var(--text); font-size: 9px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  fill: var(--text); font-size: 10px; font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   pointer-events: none;
+  paint-order: stroke fill;
+  stroke: rgba(13, 17, 23, .85); stroke-width: 3px; stroke-linejoin: round;
 }
 .tree-canvas-svg .nodes .tree-node { transition: opacity .12s; }
 /* Hover spotlight: dim everything not connected to the hovered node. */
@@ -172,10 +199,14 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .tree-canvas-svg.hover-active .edges path:not(.hover-edge) { opacity: .04; }
 .tree-canvas-svg .edges path.hover-edge { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
 .tree-canvas-svg .tree-node.hover-self circle.node-fill,
-.tree-canvas-svg .tree-node:hover circle.node-fill { stroke: var(--text); stroke-width: 2; }
+.tree-canvas-svg .tree-node:hover circle.node-fill {
+  stroke: var(--text); stroke-width: 2;
+  filter: drop-shadow(0 0 6px rgba(88, 166, 255, .55));
+}
 .tree-canvas-svg .tree-node.hover-related circle.node-fill { stroke: var(--accent); stroke-width: 1.5; }
 .tree-canvas-svg .tree-node.selected circle.node-fill {
   stroke: var(--accent); stroke-width: 3;
+  filter: drop-shadow(0 0 8px rgba(88, 166, 255, .65));
 }
 
 /* Right sidebar — file info on the currently selected node. */
@@ -1092,6 +1123,15 @@ function resetFilters() {
 // Prevent default drag behavior everywhere. Drops anywhere on the page
 // route through addFiles → OPFS save → switch view to the last dropped.
 // The drop zone keeps its hover affordance for the empty-state case.
+// Global Esc → exit fullscreen mode (mirrors what the toolbar's
+// fullscreen-button toggle does, so the user has the canonical browser
+// gesture for "give me my chrome back").
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('report-fullscreen')) {
+    document.body.classList.remove('report-fullscreen')
+  }
+})
+
 document.addEventListener('dragover', (e) => e.preventDefault())
 document.addEventListener('drop', (e) => {
   e.preventDefault()
@@ -1528,23 +1568,60 @@ function byBary(bary) {
   return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
 }
 
-// Extract npm package name from a path. `node_modules/foo/...` → `foo`,
-// `node_modules/@org/pkg/...` → `@org/pkg`, anything else → null
-// (own source). Mirrors `extractPackageName` in index.js so the same
-// grouping rule travels from the analyzer side to the visualization.
+// Group key for clustering + coloring nodes in the graph. npm packages
+// stay grouped by package name. Own source (anything outside
+// node_modules) groups by top-level directory — so `src/...` files all
+// share a color, `playground/...` files share another. Files at the
+// repo root cluster under '/' (rare).
 function packageOf(file) {
-  return file?.match(/^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u)?.[1] ?? null
+  if (!file) return null
+  const npm = file.match(/^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u)
+  if (npm) return npm[1]
+  const slash = file.indexOf('/')
+  return slash > 0 ? file.slice(0, slash) : '/'
 }
 
-// Stable hue per package name. Same package → same color across the
-// canvas, so eyes can pick out clusters of files belonging to the same
-// dependency. Hash → HSL hue; saturation/lightness fixed for legibility
-// on the dark background. Own source (no package) gets a neutral blue.
+// Stable hue per package / dir name. Same group → same color across
+// the canvas, so eyes can pick out clusters at a glance. Hash → HSL
+// hue; saturation/lightness tuned for legibility on the dark theme.
+// Falls back to a neutral blue for nameless input.
 function packageColor(pkg) {
-  if (!pkg) return 'hsl(208, 70%, 60%)'
+  if (!pkg) return 'hsl(208, 65%, 58%)'
   let h = 0
   for (const c of pkg) h = (h * 31 + c.charCodeAt(0)) | 0
-  return `hsl(${((h % 360) + 360) % 360}, 65%, 58%)`
+  return `hsl(${((h % 360) + 360) % 360}, 60%, 56%)`
+}
+
+// Wrap a long basename across at most two lines. Splits at the last
+// hyphen / underscore that keeps both halves under `maxLine`. If no
+// suitable split exists, truncates with a trailing ellipsis. Returns
+// an array of 1-2 strings ready to render as <text>/<tspan>.
+function multiLineLabel(file, maxLine = 18) {
+  const base = file.split('/').pop() ?? file
+  if (base.length <= maxLine) return [base]
+  const seps = []
+  for (let i = 0; i < base.length; i++) if (base[i] === '-' || base[i] === '_') seps.push(i)
+  if (seps.length === 0) return [base.slice(0, maxLine - 1) + '…']
+  // Pick the split point closest to the middle that keeps both halves
+  // within maxLine. Falls back to the most-balanced of any choice if
+  // none fits cleanly (still better than mid-token truncation).
+  const mid = base.length / 2
+  let best = null
+  for (const s of seps) {
+    const a = s + 1, b = base.length - s - 1
+    if (a > maxLine || b > maxLine) continue
+    const score = Math.abs(s - mid)
+    if (!best || score < best.score) best = { s, score }
+  }
+  if (!best) {
+    // No clean split — pick the split with smallest max(a, b) and let
+    // the longer side wrap visually rather than truncate the basename.
+    for (const s of seps) {
+      const max = Math.max(s + 1, base.length - s - 1)
+      if (!best || max < best.max) best = { s, max }
+    }
+  }
+  return [base.slice(0, best.s + 1), base.slice(best.s + 1)]
 }
 
 // transitive subtree finding counts: for each file, sum of own counts
@@ -1724,16 +1801,20 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     return null
   }
 
-  // Toolbar (sticky inside the scrollable canvas wrap).
+  // Toolbar (non-scrolling — outside the SVG scroll wrapper, so
+  // horizontal panning of a wide graph doesn't drag the toolbar with
+  // it). The fullscreen icon-button toggles `body.report-fullscreen`.
   const hiddenCount = allFiles.length - files.length
   let html = ''
   html += '<div class="tree-canvas-toolbar">'
   html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all files</label>`
   html += `<span>${files.length} of ${allFiles.length} shown${hiddenCount > 0 ? ` · ${hiddenCount} clean hidden` : ''}</span>`
+  html += '<span class="spacer"></span>'
+  html += `<button type="button" id="tree-fullscreen" class="icon-btn" title="toggle fullscreen view" aria-label="toggle fullscreen">⛶</button>`
   html += '</div>'
 
   if (files.length === 0) {
-    html += '<div class="tree-info-empty" style="padding:3rem 1rem;">No files match the current filter. Toggle "show all files" above.</div>'
+    html += '<div class="tree-canvas-scroll"><div class="tree-info-empty" style="padding:3rem 1rem;">No files match the current filter. Toggle "show all files" above.</div></div>'
     return html
   }
 
@@ -1759,14 +1840,33 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     return 4 + Math.sqrt(conn) * 1.6 + Math.sqrt(findings) * 1.2
   }
 
+  // Pre-index nodes by file so edge resolution is O(1) instead of
+  // a linear find inside the inner loop (matters for graphs in the
+  // many-hundreds range — same-rendered-edge cost was N×E before).
+  const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
+
   let svg = `<svg class="tree-canvas-svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`
 
+  // Quadratic-bezier edges: a slight perpendicular offset on the
+  // control point gives the line a gentle arc, which reads better
+  // than straight lines when many edges share an area.
   svg += '<g class="edges">'
   for (const n of nodes) {
     for (const imp of importsOf.get(n.file) ?? []) {
-      const b = nodes.find((m) => m.file === imp)
+      const b = nodeByFile.get(imp)
       if (!b) continue
-      svg += `<path data-from="${esc(svgNodeId(n.file))}" data-to="${esc(svgNodeId(b.file))}" d="M ${n.x.toFixed(1)} ${n.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}" />`
+      const dx = b.x - n.x, dy = b.y - n.y
+      const len = Math.sqrt(dx * dx + dy * dy) || 1
+      // Perpendicular offset proportional to edge length, capped so
+      // short edges don't curve hard. The curve direction depends on
+      // the edge's hash so parallel edges between the same node pair
+      // arc the same way each render.
+      const off = Math.min(len * 0.12, 24)
+      const px = -dy / len * off
+      const py = dx / len * off
+      const cx = (n.x + b.x) / 2 + px
+      const cy = (n.y + b.y) / 2 + py
+      svg += `<path data-from="${esc(svgNodeId(n.file))}" data-to="${esc(svgNodeId(b.file))}" d="M ${n.x.toFixed(1)} ${n.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)}, ${b.x.toFixed(1)} ${b.y.toFixed(1)}" />`
     }
   }
   svg += '</g>'
@@ -1783,18 +1883,26 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     const cls = `tree-node${isSelected ? ' selected' : ''}`
     svg += `<g class="${cls}" id="${esc(svgNodeId(n.file))}" data-file="${esc(n.file)}" transform="translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})">`
     svg += `<title>${esc(n.file)}${total > 0 ? ` · ${total} own finding${total === 1 ? '' : 's'}` : ''}${pkg ? `\n${pkg}` : ''}</title>`
-    svg += `<circle class="node-fill" r="${r.toFixed(1)}" fill="${fill}" stroke="${indicator ?? 'rgba(0,0,0,0.4)'}" stroke-width="${indicator ? 2 : 1}" />`
-    // Hub label: file basename for highly-connected nodes only — keeps
-    // the canvas legible when most nodes are leaves.
+    svg += `<circle class="node-fill" r="${r.toFixed(1)}" fill="${fill}" stroke="${indicator ?? 'rgba(0,0,0,0.45)'}" stroke-width="${indicator ? 2 : 1}" />`
+    // Label rules:
+    //   - Always show for hub nodes (≥3 connections) and for finding-
+    //     bearing nodes (signal-rich).
+    //   - Wrap long basenames to two lines at hyphen / underscore so
+    //     the canvas isn't littered with leading-ellipsis truncations.
+    //   - Center over the node, anchored just below the circle.
     const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
     if (conn >= 3 || total > 0) {
-      svg += `<text y="${(r + 10).toFixed(1)}" text-anchor="middle">${esc(svgNodeLabel(n.file, 18))}</text>`
+      const lines = multiLineLabel(n.file, 18)
+      const lineH = 11
+      lines.forEach((line, i) => {
+        svg += `<text y="${(r + 10 + i * lineH).toFixed(1)}" text-anchor="middle">${esc(line)}</text>`
+      })
     }
     svg += '</g>'
   }
   svg += '</g>'
   svg += '</svg>'
-  return html + svg
+  return html + `<div class="tree-canvas-scroll">${svg}</div>`
 }
 
 // Right sidebar: details for the currently selected file, or an
@@ -2493,6 +2601,12 @@ report.addEventListener('click', (e) => {
   if (selectFileBtn) {
     selectedTreeFile = selectFileBtn.dataset.selectFile
     render()
+    return
+  }
+  // Tree-tab toolbar: fullscreen toggle. Adds / removes a class on
+  // <body>; the @media-style rules in CSS hide the chrome.
+  if (e.target.closest('#tree-fullscreen')) {
+    document.body.classList.toggle('report-fullscreen')
     return
   }
   // Tree-tab sidebar: "Open in Files" jumps to the Files tab and
