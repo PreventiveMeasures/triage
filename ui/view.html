@@ -127,22 +127,37 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   margin-bottom: 1rem; padding: .5rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   overflow: auto;
-  max-height: 60vh;
+  max-height: 70vh;
 }
 .tree-graph-svg { display: block; }
 .tree-graph-svg .edges path {
-  fill: none; stroke: var(--muted); stroke-width: 1; opacity: .45;
+  fill: none; stroke: var(--muted); stroke-width: 1; opacity: .35;
+  transition: stroke .12s, stroke-width .12s, opacity .12s;
 }
-.tree-graph-svg .nodes rect {
+.tree-graph-svg .nodes rect.node-bg {
   fill: var(--bg); stroke: var(--border); stroke-width: 1;
-  transition: stroke .1s, fill .1s;
+  transition: stroke .12s, fill .12s, opacity .12s;
 }
 .tree-graph-svg .nodes text {
   fill: var(--text); font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   pointer-events: none;
 }
-.tree-graph-svg .nodes a:hover rect { stroke: var(--accent); fill: #1a2233; }
+.tree-graph-svg .nodes text.badge-text {
+  fill: #fff; font-size: 9px; font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.tree-graph-svg .nodes .tree-node { transition: opacity .12s; }
+/* Hover spotlight: when any node is hovered, dim everything that
+   isn't the hovered node, a connected node, or a connecting edge.
+   The hover-highlight wiring (attachTreeGraphInteraction) flips the
+   classes on / off; CSS handles the fade. */
+.tree-graph-svg.hover-active .tree-node:not(.hover-self):not(.hover-related) { opacity: .25; }
+.tree-graph-svg.hover-active .edges path:not(.hover-edge) { opacity: .08; }
+.tree-graph-svg .edges path.hover-edge { stroke: var(--accent); stroke-width: 1.6; opacity: 1; }
+.tree-graph-svg .tree-node.hover-self rect.node-bg,
+.tree-graph-svg .tree-node:hover rect.node-bg { stroke: var(--accent); stroke-width: 1.5; fill: #1a2233; }
+.tree-graph-svg .tree-node.hover-related rect.node-bg { stroke: var(--accent); }
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 .tree-file {
   padding: .6rem .8rem;
@@ -1400,33 +1415,61 @@ function computeFindingCountsByFile(allGroups) {
   return counts
 }
 
-// Truncate a long file path for SVG node labels. Keeps the tail (more
-// distinguishing) and prepends an ellipsis. Full path is always
-// available via the node's `<title>` tooltip.
-function svgNodeLabel(file, maxLen = 26) {
-  return file.length <= maxLen ? file : '…' + file.slice(-(maxLen - 1))
+// Short, distinguishing label for a node. Last two path segments —
+// `lib/foo.js` from `src/lib/foo.js`, `queue/index.mjs` from
+// `node_modules/@chalker/queue/index.mjs`. Full path is always
+// available via the node's `<title>` tooltip and the linked card.
+function svgNodeLabel(file, maxLen = 22) {
+  const parts = file.split('/')
+  const tail = parts.slice(-2).join('/')
+  return tail.length <= maxLen ? tail : '…' + tail.slice(-(maxLen - 1))
 }
 
-// Layered-DAG SVG of the import tree. Roots (files no one imports) sit
+// Sanitize file path → SVG-safe id. Used to cross-reference nodes and
+// edges from the post-render hover-highlight wiring.
+function svgNodeId(file) { return 'tn-' + file.replace(/[^\w-]+/gu, '_') }
+
+// Numeric sort with a stable tiebreak — used by the barycenter passes
+// below, where ties on the computed mean would otherwise depend on
+// unstable browser sort behavior.
+function byBary(bary) {
+  return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
+}
+
+// Layered-DAG SVG of the import tree. Roots (no one imports them) sit
 // at the top; depth grows downward via "1 + max depth of importers"
-// (cycles are broken by the visiting-set guard). Within a layer, files
-// are sorted alphabetically. Edges are bezier curves from importer
-// (bottom) to import (top). Each node is wrapped in an `<a>` pointing
-// at the matching tree-card anchor, so clicking jumps the page down.
+// (cycles are broken by the visiting-set guard).
+//
+// Within each layer, nodes are ordered by the BARYCENTER heuristic —
+// average position of neighbors in the adjacent layer, alternating
+// down-then-up passes. A handful of iterations is usually enough to
+// reach a near-minimum-crossing arrangement; this is what makes the
+// graph readable with more than a dozen files (alphabetical ordering
+// produces a spaghetti tangle).
+//
+// Each node carries a colored severity indicator on its left edge
+// (highest non-zero severity for that file) and a small count badge
+// on its top-right corner showing total findings. Linked via `<a>`
+// to the matching tree-card anchor — click jumps the page down.
 function renderTreeGraph(tree, findingCounts) {
   const files = Object.keys(tree)
   if (files.length === 0) return ''
 
-  // Reverse adjacency (file → importers) for layer assignment.
+  // Build adjacency (filter out edges whose target isn't in the tree —
+  // they're dead ends for layout / hover purposes).
   const importedBy = new Map()
+  const importsOf = new Map()
   for (const f of files) {
-    for (const imp of (tree[f].imports ?? [])) {
-      if (tree[imp]) (importedBy.get(imp) ?? importedBy.set(imp, []).get(imp)).push(f)
+    const imps = (tree[f].imports ?? []).filter((i) => tree[i])
+    importsOf.set(f, imps)
+    for (const imp of imps) {
+      const arr = importedBy.get(imp) ?? []
+      arr.push(f)
+      importedBy.set(imp, arr)
     }
   }
 
-  // depth(f) = length of longest importer chain ending at f. Top of the
-  // graph (depth 0) = roots; bottom = deepest leaf.
+  // Layer assignment: depth(f) = longest importer chain ending at f.
   const depth = new Map()
   const visiting = new Set()
   const computeDepth = (file) => {
@@ -1442,83 +1485,155 @@ function renderTreeGraph(tree, findingCounts) {
   }
   for (const f of files) computeDepth(f)
 
-  // Group by depth, sort within layer for stability.
-  const layers = new Map()
-  for (const f of files) {
-    const d = depth.get(f)
-    if (!layers.has(d)) layers.set(d, [])
-    layers.get(d).push(f)
-  }
-  const sortedDepths = [...layers.keys()].sort((a, b) => a - b)
+  const maxDepth = Math.max(0, ...depth.values())
+  const layers = []
+  for (let d = 0; d <= maxDepth; d++) layers.push([])
+  for (const f of files) layers[depth.get(f)].push(f)
+  for (const layer of layers) layer.sort()
 
-  // Layout constants. Wider nodes leave room for finding-count chips.
-  const NODE_W = 220, NODE_H = 46
-  const COL_GAP = 24, ROW_GAP = 50
+  // Position map (column index within layer). Updated after every pass.
+  const pos = new Map()
+  const refresh = () => {
+    pos.clear()
+    for (const layer of layers) layer.forEach((f, i) => pos.set(f, i))
+  }
+  refresh()
+
+  // Barycenter: average position of a node's neighbors in `adj` (the
+  // adjacent layer's adjacency map). Falls back to current position
+  // for isolated nodes so they don't drift to 0.
+  const meanPos = (neighbors) => {
+    if (neighbors.length === 0) return null
+    let sum = 0, n = 0
+    for (const x of neighbors) { const p = pos.get(x); if (p !== undefined) { sum += p; n++ } }
+    return n === 0 ? null : sum / n
+  }
+  // Six passes (3 down + 3 up) — plenty for typical graphs without
+  // burning time on the rare degenerate case.
+  for (let pass = 0; pass < 6; pass++) {
+    const downward = pass % 2 === 0
+    const range = downward
+      ? Array.from({ length: maxDepth }, (_, i) => i + 1)            // 1..maxDepth
+      : Array.from({ length: maxDepth }, (_, i) => maxDepth - 1 - i) // maxDepth-1..0
+    for (const d of range) {
+      const layer = layers[d]
+      const bary = new Map()
+      for (const f of layer) {
+        const neighbors = downward ? (importedBy.get(f) ?? []) : (importsOf.get(f) ?? [])
+        const m = meanPos(neighbors)
+        bary.set(f, m === null ? pos.get(f) : m)
+      }
+      layer.sort(byBary(bary))
+    }
+    refresh()
+  }
+
+  // Layout coords.
+  const NODE_W = 170, NODE_H = 36
+  const COL_GAP = 28, ROW_GAP = 56
   const colW = NODE_W + COL_GAP
   const rowH = NODE_H + ROW_GAP
-
-  const positions = new Map()
-  let maxLayerSize = 0
-  for (const d of sortedDepths) {
-    const nodes = layers.get(d).slice().sort()
-    maxLayerSize = Math.max(maxLayerSize, nodes.length)
-    nodes.forEach((file, i) => positions.set(file, { x: 20 + i * colW, y: 20 + d * rowH }))
+  const xy = new Map()
+  for (let d = 0; d <= maxDepth; d++) {
+    layers[d].forEach((f, i) => xy.set(f, { x: 24 + i * colW, y: 24 + d * rowH }))
   }
-  const width = 40 + Math.max(maxLayerSize, 1) * colW - COL_GAP
-  const height = 40 + sortedDepths.length * rowH - ROW_GAP
+  const maxLayerSize = Math.max(1, ...layers.map((l) => l.length))
+  const width = 48 + maxLayerSize * colW - COL_GAP
+  const height = 48 + layers.length * rowH - ROW_GAP
 
   const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
+  const indicatorFor = (counts) => {
+    if (!counts) return null
+    for (const sev of ['critical', 'high', 'medium', 'low']) {
+      if (counts[sev] > 0) return SEV_COLORS[sev]
+    }
+    return null
+  }
 
   let svg = `<svg class="tree-graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`
 
-  // Edges first so they sit under the nodes.
+  // Edges first so they render under the nodes. data-from / data-to
+  // feed the post-render hover-highlight wiring.
   svg += '<g class="edges">'
   for (const f of files) {
-    const a = positions.get(f)
+    const a = xy.get(f)
     if (!a) continue
     const ax = a.x + NODE_W / 2
     const ay = a.y + NODE_H
-    for (const imp of (tree[f].imports ?? [])) {
-      const b = positions.get(imp)
+    for (const imp of importsOf.get(f)) {
+      const b = xy.get(imp)
       if (!b) continue
       const bx = b.x + NODE_W / 2
       const by = b.y
       const midY = (ay + by) / 2
-      svg += `<path d="M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}" />`
+      svg += `<path data-from="${esc(svgNodeId(f))}" data-to="${esc(svgNodeId(imp))}" d="M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}" />`
     }
   }
   svg += '</g>'
 
-  // Nodes with optional severity-count chips along the bottom edge.
+  // Nodes with severity indicator strip + total-findings corner badge.
   svg += '<g class="nodes">'
-  for (const file of files) {
-    const p = positions.get(file)
+  for (const f of files) {
+    const p = xy.get(f)
     if (!p) continue
-    const label = svgNodeLabel(file)
-    const counts = findingCounts.get(file)
-    svg += `<g class="tree-node" transform="translate(${p.x}, ${p.y})">`
-    svg += `<a href="#${esc(treeAnchor(file))}">`
-    svg += `<title>${esc(file)}</title>`
-    svg += `<rect width="${NODE_W}" height="${NODE_H}" rx="4" ry="4" />`
-    svg += `<text x="${NODE_W / 2}" y="16" text-anchor="middle">${esc(label)}</text>`
-    if (counts) {
-      const present = Object.entries(counts).filter(([, n]) => n > 0)
-      if (present.length > 0) {
-        const chipW = 32, chipH = 16, gap = 4
-        const totalW = present.length * chipW + (present.length - 1) * gap
-        let cx = (NODE_W - totalW) / 2
-        for (const [sev, n] of present) {
-          svg += `<rect x="${cx}" y="${NODE_H - chipH - 4}" width="${chipW}" height="${chipH}" rx="3" ry="3" fill="${SEV_COLORS[sev]}" stroke="none" />`
-          svg += `<text x="${cx + chipW / 2}" y="${NODE_H - chipH / 2 - 4 + 4}" text-anchor="middle" fill="#fff" style="font-weight:600">${n}</text>`
-          cx += chipW + gap
-        }
-      }
+    const counts = findingCounts.get(f)
+    const total = counts ? counts.critical + counts.high + counts.medium + counts.low : 0
+    const indicator = indicatorFor(counts)
+    const label = svgNodeLabel(f)
+    svg += `<g class="tree-node" id="${esc(svgNodeId(f))}" transform="translate(${p.x}, ${p.y})">`
+    svg += `<a href="#${esc(treeAnchor(f))}">`
+    svg += `<title>${esc(f)}${total > 0 ? ` (${total} finding${total === 1 ? '' : 's'})` : ''}</title>`
+    svg += `<rect class="node-bg" width="${NODE_W}" height="${NODE_H}" rx="6" ry="6" />`
+    if (indicator) svg += `<rect class="node-strip" x="0" y="0" width="4" height="${NODE_H}" fill="${indicator}" />`
+    svg += `<text x="${indicator ? 12 : NODE_W / 2}" y="${NODE_H / 2 + 4}" text-anchor="${indicator ? 'start' : 'middle'}">${esc(label)}</text>`
+    if (total > 0) {
+      const r = 9
+      svg += `<circle cx="${NODE_W - r - 6}" cy="${r + 4}" r="${r}" fill="${indicator}" />`
+      svg += `<text x="${NODE_W - r - 6}" y="${r + 4 + 3}" text-anchor="middle" class="badge-text">${total}</text>`
     }
     svg += '</a></g>'
   }
   svg += '</g>'
   svg += '</svg>'
   return svg
+}
+
+// Wires hover behavior on a tree-graph SVG. Hover a node → highlight
+// its incoming + outgoing edges plus the connected nodes, dim
+// everything else. Mouseleave restores. CSS handles the visuals via
+// classes on the SVG root + individual elements.
+function attachTreeGraphInteraction(svg) {
+  if (!svg) return
+  const incoming = new Map()
+  const outgoing = new Map()
+  for (const path of svg.querySelectorAll('path[data-from]')) {
+    const from = path.dataset.from
+    const to = path.dataset.to
+    if (!outgoing.has(from)) outgoing.set(from, [])
+    outgoing.get(from).push({ to, path })
+    if (!incoming.has(to)) incoming.set(to, [])
+    incoming.get(to).push({ from, path })
+  }
+  for (const node of svg.querySelectorAll('.tree-node')) {
+    node.addEventListener('mouseenter', () => {
+      svg.classList.add('hover-active')
+      node.classList.add('hover-self')
+      for (const { to, path } of (outgoing.get(node.id) ?? [])) {
+        path.classList.add('hover-edge')
+        svg.querySelector('#' + CSS.escape(to))?.classList.add('hover-related')
+      }
+      for (const { from, path } of (incoming.get(node.id) ?? [])) {
+        path.classList.add('hover-edge')
+        svg.querySelector('#' + CSS.escape(from))?.classList.add('hover-related')
+      }
+    })
+    node.addEventListener('mouseleave', () => {
+      svg.classList.remove('hover-active')
+      svg.querySelectorAll('.hover-self, .hover-related, .hover-edge').forEach((el) => {
+        el.classList.remove('hover-self', 'hover-related', 'hover-edge')
+      })
+    })
+  }
 }
 
 // Render the per-file import tree as a flat list of cards. Each card
@@ -1751,6 +1866,9 @@ function render() {
     report.classList.toggle('show-metadata', showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+    // Wire hover highlighting on the freshly-rendered SVG. Done after
+    // innerHTML so the elements actually exist in the DOM.
+    attachTreeGraphInteraction(report.querySelector('.tree-graph-svg'))
     return
   }
 
