@@ -1,0 +1,804 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3;
+  --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
+  --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  display: flex; height: 100vh; margin: 0; overflow: hidden;
+}
+a { color: var(--accent); text-decoration: none; }
+
+/* sidebar — collapsible file list rooted in OPFS, persists across reloads.
+   Pinned to the viewport (height: 100%; body is height: 100vh + overflow
+   hidden, main scrolls instead). When OPFS has no entries AND nothing's
+   currently loaded, the whole sidebar is hidden so the empty-state drop
+   zone reads as a clean welcome screen. Collapsed state shrinks to a
+   thin strip with just the toggle button so the user can always re-open
+   it. Hidden in print. */
+#sidebar {
+  width: 240px; flex-shrink: 0; height: 100%;
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: width .15s ease-out;
+  overflow: hidden;
+}
+#sidebar.collapsed { width: 32px; }
+#sidebar.empty { display: none; }
+.sidebar-header {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .75rem; border-bottom: 1px solid var(--border);
+}
+.sidebar-header h2 {
+  font-size: .85rem; font-weight: 600; flex: 1;
+  white-space: nowrap; overflow: hidden;
+}
+#sidebar.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
+#sidebar.collapsed .sidebar-header h2,
+#sidebar.collapsed #file-list,
+#sidebar.collapsed .sidebar-actions { display: none; }
+#sidebar-toggle {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: .15rem .4rem; cursor: pointer; font-size: .85rem; font-family: inherit;
+}
+#sidebar-toggle:hover { border-color: var(--accent); }
+#file-list { list-style: none; flex: 1; overflow-y: auto; padding: 0; margin: 0; }
+.file-item button.file-name {
+  display: block; width: 100%; text-align: left;
+  padding: .4rem .75rem;
+  background: transparent; color: var(--text);
+  border: none; border-bottom: 1px solid var(--border);
+  cursor: pointer; font-size: .8rem; font-family: inherit;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-item button.file-name:hover { background: #1a2233; }
+.file-item.current button.file-name { background: #1a2233; color: var(--accent); }
+.sidebar-actions {
+  padding: .5rem .75rem; border-top: 1px solid var(--border);
+  display: flex; gap: .35rem; flex-wrap: wrap;
+}
+.sidebar-actions button {
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  border-radius: 4px; padding: .25rem .55rem; cursor: pointer;
+  font-size: .8rem; font-family: inherit;
+}
+.sidebar-actions button:hover { border-color: var(--accent); }
+.sidebar-actions button.danger:hover { border-color: var(--critical); color: var(--critical); }
+.sidebar-actions button[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
+
+/* Main column scrolls independently of the sidebar — body is height-
+   constrained + overflow hidden, so the report's tall finding lists
+   only push this column, not the sidebar's file list. */
+#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
+
+/* drop zone */
+#drop-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1; padding: 2rem;
+}
+#drop-zone.hover { background: #1a2233; }
+.drop-prompt { text-align: center; color: var(--muted); }
+.drop-prompt h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
+.drop-prompt p { font-size: .95rem; }
+
+/* report */
+#report { display: none; max-width: 1200px; margin: 0 auto; padding: 1.5rem; width: 100%; box-sizing: border-box; }
+#report.active { display: block; }
+#drop-zone.hidden { display: none; }
+
+header { margin-bottom: 1rem; }
+header h1 { font-size: 1.3rem; }
+header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
+
+/* Top-level view switcher — Findings / Tree. Only rendered when the
+   report has a tree block with more than one file (single-file
+   reports don't gain anything from a tree view). */
+.report-tabs {
+  display: flex; gap: .25rem; margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.report-tabs button {
+  background: transparent; border: none; color: var(--muted);
+  padding: .5rem 1rem; cursor: pointer;
+  font-size: .9rem; font-family: inherit;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.report-tabs button:hover { color: var(--text); }
+.report-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Tree view — one card per file with imports / imported-by / exports
+   / hashes. In-page anchors link import names to their file's card so
+   the user can navigate the graph by clicking. The SVG above the
+   cards is a layered-DAG visualization (roots at top, leaves at the
+   bottom, bezier edges). Both layers point at the same anchor scheme
+   so clicking a node in the SVG scrolls to that file's card. */
+/* ── Graph tab layout ────────────────────────────────────────────── */
+.tree-layout {
+  display: flex; gap: 0;
+  margin-bottom: 1rem;
+  height: 82vh;
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
+  background: #060a0f;
+}
+.tree-canvas {
+  flex: 1; min-width: 0;
+  background: #060a0f;
+  display: flex; flex-direction: column;
+  position: relative;
+}
+
+/* Toolbar */
+.tree-canvas-toolbar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: .6rem;
+  padding: .4rem .7rem;
+  background: rgba(6,10,15,0.9);
+  border-bottom: 1px solid rgba(48,54,61,.5);
+  font-size: .76rem; color: var(--muted);
+  z-index: 2;
+}
+.tree-canvas-toolbar label {
+  display: inline-flex; align-items: center; gap: .28rem;
+  cursor: pointer; user-select: none; color: var(--muted);
+  transition: color .1s;
+}
+.tree-canvas-toolbar label:hover { color: var(--text); }
+.tree-canvas-toolbar input[type=checkbox] { margin: 0; cursor: pointer; accent-color: var(--accent); }
+.tree-canvas-toolbar .spacer { flex: 1; }
+.tree-canvas-toolbar .toolbar-stat {
+  color: rgba(139,148,158,.55); font-size: .73rem;
+  font-variant-numeric: tabular-nums;
+}
+.tree-canvas-toolbar .toolbar-stat strong { color: rgba(230,237,243,.7); font-weight: 500; }
+.tree-canvas-toolbar .icon-btn {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.7); color: var(--muted);
+  border-radius: 5px; padding: .18rem .45rem;
+  cursor: pointer; font-size: .82rem; line-height: 1.3;
+  font-family: inherit; transition: border-color .12s, color .12s, background .12s;
+}
+.tree-canvas-toolbar .icon-btn:hover { border-color: rgba(88,166,255,.5); color: var(--accent); background: rgba(88,166,255,.06); }
+.tree-canvas-toolbar .toolbar-sep { width: 1px; height: 14px; background: rgba(48,54,61,.6); flex-shrink: 0; }
+.tree-canvas-toolbar .toolbar-hint {
+  font-size: .68rem; color: rgba(139,148,158,.3);
+}
+
+/* Canvas container */
+.tree-canvas-scroll {
+  flex: 1; overflow: hidden; position: relative;
+  cursor: grab;
+}
+.tree-canvas-scroll:active { cursor: grabbing; }
+.tree-canvas-el {
+  display: block; width: 100%; height: 100%;
+}
+
+/* Zoom controls — pill stack bottom-right */
+.tree-zoom-controls {
+  position: absolute; bottom: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: 1px;
+  z-index: 3; border-radius: 7px; overflow: hidden;
+  border: 1px solid rgba(48,54,61,.6);
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+.tree-zoom-btn {
+  width: 30px; height: 28px;
+  background: rgba(10,14,20,.88);
+  border: none; color: rgba(139,148,158,.7);
+  cursor: pointer; font-size: 1rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .1s, color .1s;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+}
+.tree-zoom-btn:last-child { border-bottom: none; }
+.tree-zoom-btn:hover { background: rgba(88,166,255,.12); color: var(--accent); }
+
+/* Tooltip */
+.tree-node-tooltip {
+  position: absolute; pointer-events: none;
+  background: rgba(8,12,18,.97);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; padding: .55rem .7rem;
+  font-size: .78rem; color: var(--text);
+  max-width: 240px; z-index: 10;
+  box-shadow: 0 8px 32px rgba(0,0,0,.7), 0 0 0 1px rgba(0,0,0,.3);
+  display: none; line-height: 1.45;
+}
+.tree-node-tooltip .tt-name { font-weight: 600; font-size: .82rem; }
+.tree-node-tooltip .tt-pkg {
+  font-size: .7rem; margin-top: .12rem;
+  display: inline-flex; align-items: center; gap: .3rem;
+}
+.tree-node-tooltip .tt-pkg-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.tree-node-tooltip .tt-path { color: rgba(139,148,158,.6); font-size: .68rem; margin-top: .2rem; word-break: break-all; font-family: ui-monospace,monospace; }
+.tree-node-tooltip .tt-chips { display: flex; gap: .2rem; margin-top: .35rem; flex-wrap: wrap; }
+.tree-node-tooltip .tt-chip {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; padding: .1rem .32rem; border-radius: 3px; line-height: 1.4;
+}
+.tree-node-tooltip .tt-chip.critical { background: var(--critical); color: #fff; }
+.tree-node-tooltip .tt-chip.high     { background: var(--high); color: #fff; }
+.tree-node-tooltip .tt-chip.medium   { background: var(--medium); color: #000; }
+.tree-node-tooltip .tt-chip.low      { background: rgba(139,148,158,.3); color: rgba(230,237,243,.8); }
+.tree-node-tooltip .tt-stat { color: rgba(139,148,158,.55); font-size: .7rem; margin-top: .25rem; }
+
+/* Fullscreen */
+body.report-fullscreen #sidebar { display: none; }
+body.report-fullscreen #report > header { display: none; }
+body.report-fullscreen #report { max-width: none; padding: .5rem; }
+body.report-fullscreen .tree-layout { height: calc(100vh - 64px); }
+
+/* Right sidebar */
+
+/* Right sidebar */
+.tree-info {
+  width: 260px; flex-shrink: 0;
+  background: #080c11;
+  border-left: 1px solid rgba(48,54,61,.5);
+  overflow-y: auto; display: flex; flex-direction: column;
+  font-size: .82rem;
+}
+.tree-info::-webkit-scrollbar { width: 3px; }
+.tree-info::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+
+/* Legend panel — always shown, lists packages with color swatches */
+.tree-legend {
+  padding: .75rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+.tree-legend-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5); margin-bottom: .55rem;
+}
+.tree-legend-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .22rem; }
+.tree-legend-item {
+  display: flex; align-items: center; gap: .45rem;
+  cursor: pointer; padding: .2rem .3rem; border-radius: 4px;
+  transition: background .1s;
+}
+.tree-legend-item:hover { background: rgba(255,255,255,.04); }
+.tree-legend-item.dimmed { opacity: .35; }
+.tree-legend-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.tree-legend-name {
+  font-size: .75rem; color: rgba(230,237,243,.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+.tree-legend-count { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Top hubs */
+.tree-hubs {
+  padding: .65rem .85rem .5rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+.tree-hubs-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .45rem;
+}
+.tree-hubs-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5);
+}
+.tree-hubs-tabs {
+  display: flex; gap: 1px;
+  background: rgba(48,54,61,.5); border-radius: 4px; overflow: hidden;
+}
+.tree-hubs-tab {
+  background: transparent; border: none; color: rgba(139,148,158,.55);
+  font-size: .65rem; font-family: inherit; cursor: pointer;
+  padding: .15rem .4rem; transition: background .1s, color .1s;
+  line-height: 1.4;
+}
+.tree-hubs-tab:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.tree-hubs-tab.active { background: rgba(88,166,255,.18); color: var(--accent); }
+.tree-hub-item {
+  display: flex; align-items: center; gap: .4rem;
+  padding: .22rem .3rem; border-radius: 4px; cursor: pointer;
+  transition: background .1s;
+}
+.tree-hub-item:hover { background: rgba(255,255,255,.04); }
+.tree-hub-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.tree-hub-name {
+  font-size: .74rem; color: rgba(230,237,243,.75); flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: ui-monospace, monospace;
+}
+.tree-hub-conn { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Node detail panel */
+.tree-info-empty {
+  flex: 1; padding: 2rem 1.1rem; color: rgba(139,148,158,.4); text-align: center;
+  line-height: 1.7; font-size: .78rem; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .5rem;
+}
+.tree-info-empty-icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid rgba(139,148,158,.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem; opacity: .5;
+}
+.tree-info-content { padding: 0; }
+.tree-info-header {
+  padding: .8rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+}
+.tree-info-pkg-badge {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .65rem; margin-bottom: .35rem; color: rgba(139,148,158,.6);
+}
+.tree-info-pkg-dot { width: 6px; height: 6px; border-radius: 50%; }
+.tree-info-title {
+  font-size: .8rem; font-weight: 600;
+  word-break: break-all; margin-bottom: .5rem;
+  color: var(--text); line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .28rem; }
+.tree-info-jump {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.8); color: rgba(88,166,255,.8);
+  border-radius: 4px; padding: .18rem .45rem; cursor: pointer;
+  font-size: .7rem; font-family: inherit;
+  transition: border-color .12s, background .12s;
+}
+.tree-info-jump:hover { border-color: rgba(88,166,255,.5); background: rgba(88,166,255,.08); }
+.tree-info-section { padding: .6rem .85rem; border-bottom: 1px solid rgba(48,54,61,.3); }
+.tree-info-section:last-child { border-bottom: none; }
+.tree-info-label {
+  font-size: .6rem; text-transform: uppercase; letter-spacing: .08em;
+  color: rgba(139,148,158,.45); margin-bottom: .35rem; font-weight: 700;
+}
+.tree-count-chips { display: flex; gap: .2rem; flex-wrap: wrap; }
+.tree-count-chip {
+  display: inline-block; font-size: .62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .08rem .3rem; border-radius: 3px; line-height: 1.35;
+}
+.tree-count-chip.critical { background: var(--critical); color: #fff; }
+.tree-count-chip.high     { background: var(--high); color: #fff; }
+.tree-count-chip.medium   { background: var(--medium); color: #000; }
+.tree-count-chip.low      { background: rgba(139,148,158,.25); color: rgba(230,237,243,.7); }
+.tree-info-empty-list { color: rgba(139,148,158,.35); font-size: .75rem; font-style: italic; }
+.tree-info-list {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 160px; overflow-y: auto;
+}
+.tree-info-list::-webkit-scrollbar { width: 2px; }
+.tree-info-list::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+.tree-info-list li { padding: 0; }
+.tree-info-list button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: none; color: rgba(88,166,255,.75);
+  padding: .18rem .3rem; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: .71rem; border-radius: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .1s, color .1s;
+}
+.tree-info-list button:hover { background: rgba(88,166,255,.08); color: var(--accent); }
+.tree-info-list .external {
+  display: block; padding: .18rem .3rem;
+  color: rgba(139,148,158,.35);
+  font-family: ui-monospace, monospace;
+  font-size: .71rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tree-view { display: flex; flex-direction: column; gap: .75rem; }
+.tree-file {
+  padding: .6rem .8rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  scroll-margin-top: 1rem;
+}
+.tree-file-header {
+  font-size: .95rem; font-weight: 600; margin-bottom: .25rem; word-break: break-all;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+}
+.tree-file-header .name { flex: 1; min-width: 0; }
+/* Per-file finding-count chips, one per non-zero severity. Same color
+   palette as the per-finding badges. Pure label — clicks pass through
+   to nothing; the user navigates via the imports / imported-by links. */
+.tree-count-chips { display: inline-flex; gap: .25rem; flex-wrap: wrap; }
+.tree-count-chip {
+  display: inline-block; font-size: .65rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em;
+  padding: .1rem .4rem; border-radius: 3px; line-height: 1.3;
+}
+.tree-count-chip.critical { background: var(--critical); color: #fff; }
+.tree-count-chip.high     { background: var(--high); color: #fff; }
+.tree-count-chip.medium   { background: var(--medium); color: #000; }
+.tree-count-chip.low      { background: var(--low); color: #000; }
+.tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
+.tree-section { margin-top: .35rem; }
+.tree-section-label {
+  display: inline-block; min-width: 6rem;
+  font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em;
+  vertical-align: top;
+}
+.tree-section ul {
+  display: inline-block; list-style: none;
+  margin: 0; padding: 0; vertical-align: top;
+}
+.tree-section li { font-size: .85rem; padding: 0; line-height: 1.4; }
+.tree-section a { color: var(--accent); }
+.tree-section a:hover { text-decoration: underline; }
+.tree-section .name { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: .8rem; }
+
+/* toolbar */
+.toolbar {
+  display: flex; flex-direction: column; gap: .5rem;
+  margin-bottom: 1rem; padding: .6rem .75rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  font-size: .825rem;
+}
+.toolbar-row {
+  display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
+}
+.toolbar label { color: var(--muted); margin-right: .15rem; }
+.toolbar select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; cursor: pointer;
+}
+.toolbar select:focus, .toolbar input:focus { border-color: var(--accent); outline: none; }
+.toolbar input[type="text"] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;
+}
+.toolbar .sep { border-left: 1px solid var(--border); height: 1.2rem; }
+.toolbar .result-count { color: var(--muted); margin-left: auto; }
+
+.stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.stat {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: .6rem 1rem; font-size: .85rem; cursor: pointer; user-select: none;
+  transition: border-color .15s;
+}
+.stat:hover, .stat.active { border-color: var(--accent); }
+.stat.active { background: #1a2233; }
+.stat strong { display: block; font-size: 1.2rem; }
+/* Color-filter chips reuse `.stat` but carry a small swatch beside the
+   label so the row looks distinct from the severity chips at a glance.
+   Swatch colors mirror the mark-dot palette; `none` is an outlined
+   circle to read as "no fill = unmarked". */
+.stat-dot {
+  display: inline-block; width: .7rem; height: .7rem;
+  border-radius: 50%; margin-right: .3rem;
+  vertical-align: middle; border: 1px solid var(--border);
+}
+.stat-dot-red   { background: #6b1820; }
+.stat-dot-blue  { background: #1a2f5a; }
+.stat-dot-green { background: #1a4a2a; }
+.stat-dot-gray  { background: #2a2f37; }
+.stat-dot-none  { background: transparent; border-style: dashed; }
+
+/* file groups */
+.file-group { margin-bottom: 1.25rem; }
+.file-group.hidden { display: none; }
+.file-header {
+  font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.file-header .count { user-select: none; }
+.file-header:hover { border-color: var(--accent); }
+.file-header a { color: var(--text); }
+.file-header a:hover { color: var(--accent); }
+.file-header .count { color: var(--muted); font-weight: 400; font-size: .8rem; }
+.file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+/* Flat mode (group by file = OFF): each dedup group renders inside a
+   self-contained card. The card border replaces the per-finding
+   border-bottom, and a header strip carries the FULL line row — file
+   + line + exportName + run-meta — so every result reads as a complete
+   unit. The in-body line-row is suppressed inside `.flat-group` so
+   the same line/exportName/run-meta doesn't appear twice. Run-meta
+   floats right via `margin-left: auto`. */
+.flat-group { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.flat-group-loc {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  padding: .4rem .7rem; font-size: .85rem;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.flat-group-loc .file { color: var(--text); font-weight: 500; }
+.flat-group-loc .file:hover { color: var(--accent); }
+.flat-group-loc .line-num { color: var(--muted); font-size: .8rem; }
+.flat-group-loc .meta { color: var(--muted); font-size: .8rem; }
+.flat-group-loc .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
+.flat-group .finding { border-bottom: none; }
+.flat-group .finding .line-row { display: none; }
+
+.finding {
+  padding: .75rem; border-bottom: 1px solid var(--border);
+  font-size: .875rem;
+}
+.finding:last-child { border-bottom: none; }
+.finding.is-critical { background: var(--critical-bg); }
+.finding.hidden { display: none; }
+/* Manual marker colors — click a dot under a finding to tag it. Ordered
+   after .is-critical so manual marks override the critical auto-bg.
+   Red is deliberately hotter than --critical-bg so a user-marked
+   finding stays visually distinct from auto-highlighted criticals.
+   For dedup groups these apply ONLY when the group has a well-defined
+   common color — i.e. non-conflict AND at least one annotated tab is
+   colored, with every color-bearing annotated tab agreeing. See
+   groupState() in JS; conflicts use .has-conflict instead. */
+.finding.mark-red { background: #6b1820; }
+.finding.mark-blue { background: #1a2f5a; }
+.finding.mark-green { background: #1a4a2a; }
+.finding.mark-gray { background: #2a2f37; }
+
+/* Dedup groups whose annotated tabs disagree on color OR on deletion
+   state — highlight the whole entry and (per spec) ignore each tab's
+   `deleted` flag for rollup. Accent outline draws attention without
+   claiming one specific color. See groupState() in JS. */
+.finding.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+/* Tab strip — shown only for multi-tab groups. Each tab is a severity
+   badge + confidence label; colored tabs carry their own background so
+   per-tab triage is visible without switching to that tab. See sortTabs()
+   in JS for the order: colored first, then severity desc, then confidence
+   desc. The first tab post-sort is the group's "primary" (default active,
+   used for group-level sorting). Lives inside `.marks` (the action row
+   at the bottom of a finding) on the left; `margin-right: auto` pushes
+   it away from the mark-dots on the right. */
+.finding .tabs {
+  display: flex; gap: .25rem; flex-wrap: wrap;
+}
+.finding .marks .tabs { margin-right: auto; }
+.finding .tab {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: .2rem .5rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; display: inline-flex; align-items: center; gap: .35rem;
+  font-family: inherit;
+}
+.finding .tab:hover { border-color: var(--accent); }
+.finding .tab.active { border-color: var(--accent); background: #1a2233; }
+.finding .tab.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
+.finding .tab.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }
+.finding .tab.tab-mark-green { background: #1a4a2a; border-color: #1a4a2a; }
+.finding .tab.tab-mark-gray  { background: #2a2f37; border-color: #2a2f37; }
+.finding .tab.tab-mark-red.active,
+.finding .tab.tab-mark-blue.active,
+.finding .tab.tab-mark-green.active,
+.finding .tab.tab-mark-gray.active { border-color: var(--text); }
+.finding .tab.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+.finding .tab .tab-conf { color: var(--muted); font-size: .7rem; }
+.finding .tab.tab-mark-red .tab-conf,
+.finding .tab.tab-mark-blue .tab-conf,
+.finding .tab.tab-mark-green .tab-conf,
+.finding .tab.tab-mark-gray .tab-conf { color: var(--text); }
+
+/* Per-tab body. Only the active tab is shown on screen — print CSS
+   below overrides to show ALL tab bodies so paper output preserves
+   the "multiple cases of one finding" framing. The 2-col grid here
+   is what was previously on `.finding` itself. */
+.finding .tab-body {
+  display: none;
+  grid-template-columns: auto 1fr;
+  gap: .25rem .75rem;
+}
+.finding .tab-body.active { display: grid; }
+/* Separator between stacked tab bodies — print-only. On screen only
+   the active tab body is `display: grid`; others are `display: none`,
+   so a `tab-body + tab-body` rule here would still paint a stray top
+   border on the visible body whenever the user selects anything past
+   the first tab. Keep the separator scoped to print, where every
+   body is shown stacked and the divider actually separates them. */
+
+.finding-left { align-self: start; text-align: center; min-width: 4rem; }
+.badge {
+  display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
+  padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
+}
+.badge.critical { background: var(--critical); color: #fff; }
+.badge.high { background: var(--high); color: #fff; }
+.badge.medium { background: var(--medium); color: #000; }
+.badge.low { background: var(--low); color: #000; }
+.conf-score { font-size: .75rem; color: var(--muted); margin-top: .3rem; }
+.conf-score strong { color: var(--text); font-size: .85rem; }
+
+.finding .desc { grid-column: 2; }
+/* `line-num` is the `line N` / `(found analyzing X)` spans; the `hashes`
+   block (`file: sha512… | tree: …`) is opt-in via the "metadata"
+   toolbar checkbox. Line numbers are always shown — they're the
+   minimum context needed to act on a finding. */
+.finding .line-num { color: var(--muted); font-size: .8rem; }
+/* line-num + run-meta share one row: line-num on the left, run-meta on
+   the right (`analyzer · effort · exportsMode`). flex-wrap keeps long
+   meta strings from overflowing on narrow viewports. In the file-
+   grouped layout this row is suppressed inside the .finding card and
+   re-rendered above it as a `.finding-loc` header (see the rule
+   under .file-group below). */
+.finding .line-row {
+  display: flex; justify-content: space-between;
+  align-items: baseline; gap: .5rem; flex-wrap: wrap;
+}
+.finding .run-meta { color: var(--muted); font-size: .65rem; }
+.toolbar .checkbox-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); cursor: pointer; }
+.toolbar .checkbox-label input { margin: 0; cursor: pointer; }
+.finding .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
+.finding .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
+.finding .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
+#report.show-metadata .finding .hashes { display: block; }
+
+/* Per-finding action row: tab strip (multi-tab groups only, on the
+   left) + color dots + delete. Sits under the finding content.
+   `justify-content: flex-end` right-aligns the dots when no tabs
+   are present; when tabs are present, `.tabs { margin-right: auto }`
+   (above) pushes them apart. Marks and deletions are persisted via
+   localStorage (see saveTriage). Hidden on print. */
+.finding .marks {
+  display: flex; gap: .35rem; justify-content: flex-end;
+  margin-top: .4rem; align-items: center;
+}
+.finding .marks .mark-dot {
+  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
+  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
+}
+.finding .marks .mark-dot:hover { opacity: 1; transform: scale(1.15); }
+.finding .marks .mark-dot.active { opacity: 1; border-color: var(--text); }
+.finding .marks .mark-dot-red   { background: #6b1820; }
+.finding .marks .mark-dot-blue  { background: #1a2f5a; }
+.finding .marks .mark-dot-green { background: #1a4a2a; }
+.finding .marks .mark-dot-gray  { background: #2a2f37; }
+.finding .marks .mark-x {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
+  cursor: pointer; margin-left: .25rem;
+}
+.finding .marks .mark-x:hover { color: var(--critical); border-color: var(--critical); }
+/* Restore button — rendered in place of `mark-x` while in trash view.
+   Green hover mirrors the semantic of "undo delete". */
+.finding .marks .mark-restore {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .45rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; margin-left: .25rem;
+}
+.finding .marks .mark-restore:hover { color: var(--green); border-color: var(--green); }
+
+/* Trash toggle — flips the render path from "non-deleted" to "deleted
+   only". Active state uses the critical color to signal "not your
+   normal view". */
+.toolbar .trash-btn {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+}
+.toolbar .trash-btn:hover { border-color: var(--accent); }
+.toolbar .trash-btn.active { border-color: var(--critical); color: var(--critical); }
+
+/* Findings shown in trash view carry `.deleted` as a semantic label
+   (matches the user-facing notion of "marked as deleted"). The opacity
+   nudge keeps the list readable while making clear these aren't
+   active findings. */
+.finding.deleted { opacity: 0.75; }
+
+/* "Severity" / "Confidence" sub-captions below the values in the
+   left column. Tiny by design — they're supporting metadata, not
+   headings, so the badge / score stay the visual anchor. Centered
+   to match `.finding-left { text-align: center }`. Print uses the
+   same size; only the ink color differs (paler grey on white). */
+.value-label {
+  display: block;
+  font-size: .45rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-top: .1rem;
+  margin-bottom: .3rem;
+  font-weight: 500;
+}
+.finding-left .value-label:last-child { margin-bottom: 0; }
+/* "N of M" duplicate-case subhead is print-only — on screen the tab
+   strip already conveys "this group has N tabs". */
+.print-case-label { display: none; }
+
+/* Print: strip interactive widgets and keep each finding on one page.
+   The toolbar + stats + reset button are hidden because they're
+   noise on paper; mark-dots and x-button likewise. Individual
+   findings get `break-inside: avoid` so a finding won't be split
+   across a page boundary (file-groups can span pages — a single
+   file with many findings is more common than a finding long
+   enough to need its own page). */
+@media print {
+  /* ~9pt root maps the rem-based screen sizes onto a tighter A4/Letter
+     density than 11pt (body lands around 8pt, headings ~11.7pt, badges
+     ~6.3pt). Trades a bit of readability for noticeably more findings
+     per page on dense reports. */
+  html { font-size: 9pt; }
+  body { background: #fff; color: #000; line-height: 1.35; }
+  .toolbar, .stats, .finding .marks { display: none !important; }
+  #drop-zone, #sidebar { display: none !important; }
+  body { display: block; }
+  #report { max-width: none; padding: 0; }
+  header h1 { font-size: 1.2rem; }
+  .finding {
+    break-inside: avoid; page-break-inside: avoid;
+    padding: .45rem .25rem;
+  }
+  .finding.deleted { opacity: 1; }
+  .file-header { break-after: avoid; page-break-after: avoid; font-size: .85rem; }
+  /* Show every tab body stacked — keeps the "multiple cases of one
+     finding" framing on paper. Tab buttons themselves are redundant
+     here since every body is visible. */
+  .finding .tabs { display: none !important; }
+  .finding .tab-body { display: grid !important; }
+  /* Visual separator between stacked tab bodies on paper. Kept inside
+     the print block because on screen only the active body is visible
+     (see the note above the screen-side rule) — outside of print, a
+     `tab-body + tab-body` selector still paints on a later-selected
+     body and shows up as a stray top border. */
+  .finding .tab-body + .tab-body {
+    margin-top: .5rem; padding-top: .5rem;
+    border-top: 1px dashed #999;
+  }
+
+  /* Make duplicates obvious. A multi-case .finding gets a banner above
+     the stacked cases ("Multiple reports of one finding") and each case-
+     body carries an "N of M" subhead via `.print-case-label`, so a
+     reader can both see at a glance that a group is duplicates and
+     locate any specific case. No extra borders or background tints —
+     the banner + per-case label do the work. */
+  .finding.multi-case::before {
+    content: "Multiple reports of one finding";
+    display: block;
+    font-size: .7rem;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 1px solid #bbb;
+    padding-bottom: .2rem;
+    margin-bottom: .35rem;
+  }
+  .print-case-label {
+    display: block;
+    grid-column: 1 / -1;
+    font-size: .65rem;
+    font-weight: 600;
+    color: #555;
+    background: #eee;
+    padding: .1rem .35rem;
+    border-radius: 3px;
+    margin-bottom: .25rem;
+    letter-spacing: .04em;
+  }
+
+  /* Paper-friendly ink for the value-labels (`var(--muted)` from the
+     screen palette is tuned for the dark UI background and looks
+     washed out on white). Size and spacing inherit from the screen
+     rule. */
+  .value-label { color: #777; }
+
+  /* Force the printer to render background colors. Browsers strip them
+     by default ("color adjustment: economy") which is what was leaving
+     the badges and labels black-and-white on paper. The both-name form
+     covers WebKit/Blink (-webkit-) and the standard property, since
+     some browsers still only ship the prefixed version. Scoped to the
+     elements that actually carry print-relevant fills so we don't
+     force every CSS background through the printer. */
+  .badge, .print-case-label, .finding.multi-case::before {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Severity badges on white paper: the screen palette (saturated red /
+     orange / amber / light grey) is tuned for the dark UI background and
+     bleaches out on white. Override to vivid, ink-saturated variants —
+     deep red, orange, amber, slate, all with white text — so the labels
+     read as colored chips on print. The `!important` is here because
+     the default `.badge.<sev>` rules carry the same specificity and we
+     want the print palette to win regardless of source order. */
+  .badge.critical { background: #a30b0f !important; color: #fff !important; }
+  .badge.high     { background: #b8400a !important; color: #fff !important; }
+  .badge.medium   { background: #855107 !important; color: #fff !important; }
+  .badge.low      { background: #374151 !important; color: #fff !important; }
+}
