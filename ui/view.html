@@ -127,13 +127,14 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .tree-layout {
   display: flex; gap: 0;
   margin-bottom: 1rem;
-  height: 80vh;
+  height: 82vh;
   border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden;
+  background: #060a0f;
 }
 .tree-canvas {
   flex: 1; min-width: 0;
-  background: #0a0e14;
+  background: #060a0f;
   display: flex; flex-direction: column;
   position: relative;
 }
@@ -141,36 +142,36 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 /* Toolbar */
 .tree-canvas-toolbar {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: .65rem;
-  padding: .45rem .75rem;
-  background: rgba(22,27,34,0.92);
-  border-bottom: 1px solid var(--border);
-  font-size: .78rem; color: var(--muted);
-  backdrop-filter: blur(4px);
+  display: flex; align-items: center; gap: .6rem;
+  padding: .4rem .7rem;
+  background: rgba(6,10,15,0.9);
+  border-bottom: 1px solid rgba(48,54,61,.5);
+  font-size: .76rem; color: var(--muted);
   z-index: 2;
 }
 .tree-canvas-toolbar label {
-  display: inline-flex; align-items: center; gap: .3rem;
+  display: inline-flex; align-items: center; gap: .28rem;
   cursor: pointer; user-select: none; color: var(--muted);
+  transition: color .1s;
 }
 .tree-canvas-toolbar label:hover { color: var(--text); }
 .tree-canvas-toolbar input[type=checkbox] { margin: 0; cursor: pointer; accent-color: var(--accent); }
 .tree-canvas-toolbar .spacer { flex: 1; }
 .tree-canvas-toolbar .toolbar-stat {
-  display: inline-flex; align-items: center; gap: .3rem;
-  color: var(--muted); font-size: .75rem;
+  color: rgba(139,148,158,.55); font-size: .73rem;
+  font-variant-numeric: tabular-nums;
 }
-.tree-canvas-toolbar .toolbar-stat strong { color: var(--text); font-weight: 500; }
+.tree-canvas-toolbar .toolbar-stat strong { color: rgba(230,237,243,.7); font-weight: 500; }
 .tree-canvas-toolbar .icon-btn {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 5px; padding: .2rem .5rem;
-  cursor: pointer; font-size: .85rem; line-height: 1.2;
-  font-family: inherit; transition: border-color .12s, color .12s;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.7); color: var(--muted);
+  border-radius: 5px; padding: .18rem .45rem;
+  cursor: pointer; font-size: .82rem; line-height: 1.3;
+  font-family: inherit; transition: border-color .12s, color .12s, background .12s;
 }
-.tree-canvas-toolbar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tree-canvas-toolbar .icon-btn:hover { border-color: rgba(88,166,255,.5); color: var(--accent); background: rgba(88,166,255,.06); }
+.tree-canvas-toolbar .toolbar-sep { width: 1px; height: 14px; background: rgba(48,54,61,.6); flex-shrink: 0; }
 .tree-canvas-toolbar .toolbar-hint {
-  font-size: .7rem; color: rgba(139,148,158,.5);
-  display: flex; align-items: center; gap: .4rem;
+  font-size: .68rem; color: rgba(139,148,158,.3);
 }
 
 /* Canvas container */
@@ -181,142 +182,205 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .tree-canvas-scroll:active { cursor: grabbing; }
 .tree-canvas-el {
   display: block; width: 100%; height: 100%;
-  image-rendering: -webkit-optimize-contrast;
 }
 
-/* Minimap */
-.tree-minimap {
-  position: absolute; bottom: 14px; right: 14px;
-  width: 140px; height: 96px;
-  background: rgba(13,17,23,.82);
-  border: 1px solid rgba(48,54,61,.7);
-  border-radius: 6px;
-  overflow: hidden;
-  pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,.5);
-  backdrop-filter: blur(4px);
-}
-.tree-minimap canvas { display: block; width: 100%; height: 100%; }
-
-/* Zoom controls */
+/* Zoom controls — pill stack bottom-right */
 .tree-zoom-controls {
-  position: absolute; bottom: 14px; left: 14px;
-  display: flex; flex-direction: column; gap: 4px;
-  z-index: 3;
+  position: absolute; bottom: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: 1px;
+  z-index: 3; border-radius: 7px; overflow: hidden;
+  border: 1px solid rgba(48,54,61,.6);
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
 }
 .tree-zoom-btn {
-  width: 28px; height: 28px;
-  background: rgba(22,27,34,.92);
-  border: 1px solid var(--border); color: var(--muted);
-  border-radius: 5px; cursor: pointer;
-  font-size: 1rem; line-height: 1;
+  width: 30px; height: 28px;
+  background: rgba(10,14,20,.88);
+  border: none; color: rgba(139,148,158,.7);
+  cursor: pointer; font-size: 1rem; line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  transition: border-color .12s, color .12s;
-  backdrop-filter: blur(4px);
+  transition: background .1s, color .1s;
+  border-bottom: 1px solid rgba(48,54,61,.4);
 }
-.tree-zoom-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tree-zoom-btn:last-child { border-bottom: none; }
+.tree-zoom-btn:hover { background: rgba(88,166,255,.12); color: var(--accent); }
 
 /* Tooltip */
 .tree-node-tooltip {
   position: absolute; pointer-events: none;
-  background: rgba(13,17,23,.95);
-  border: 1px solid rgba(88,166,255,.25);
-  border-radius: 6px; padding: .45rem .65rem;
+  background: rgba(8,12,18,.97);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; padding: .55rem .7rem;
   font-size: .78rem; color: var(--text);
-  max-width: 260px; z-index: 10;
-  box-shadow: 0 4px 20px rgba(0,0,0,.6);
-  display: none;
-  line-height: 1.45;
-  backdrop-filter: blur(8px);
+  max-width: 240px; z-index: 10;
+  box-shadow: 0 8px 32px rgba(0,0,0,.7), 0 0 0 1px rgba(0,0,0,.3);
+  display: none; line-height: 1.45;
 }
-.tree-node-tooltip .tt-path { color: var(--muted); font-size: .72rem; margin-top: .1rem; word-break: break-all; }
-.tree-node-tooltip .tt-chips { display: flex; gap: .25rem; margin-top: .3rem; flex-wrap: wrap; }
+.tree-node-tooltip .tt-name { font-weight: 600; font-size: .82rem; }
+.tree-node-tooltip .tt-pkg {
+  font-size: .7rem; margin-top: .12rem;
+  display: inline-flex; align-items: center; gap: .3rem;
+}
+.tree-node-tooltip .tt-pkg-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.tree-node-tooltip .tt-path { color: rgba(139,148,158,.6); font-size: .68rem; margin-top: .2rem; word-break: break-all; font-family: ui-monospace,monospace; }
+.tree-node-tooltip .tt-chips { display: flex; gap: .2rem; margin-top: .35rem; flex-wrap: wrap; }
 .tree-node-tooltip .tt-chip {
-  font-size: .65rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .04em; padding: .1rem .35rem; border-radius: 3px; line-height: 1.3;
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; padding: .1rem .32rem; border-radius: 3px; line-height: 1.4;
 }
 .tree-node-tooltip .tt-chip.critical { background: var(--critical); color: #fff; }
 .tree-node-tooltip .tt-chip.high     { background: var(--high); color: #fff; }
 .tree-node-tooltip .tt-chip.medium   { background: var(--medium); color: #000; }
-.tree-node-tooltip .tt-chip.low      { background: var(--low); color: #000; }
-.tree-node-tooltip .tt-meta { color: var(--muted); font-size: .7rem; margin-top: .2rem; }
+.tree-node-tooltip .tt-chip.low      { background: rgba(139,148,158,.3); color: rgba(230,237,243,.8); }
+.tree-node-tooltip .tt-stat { color: rgba(139,148,158,.55); font-size: .7rem; margin-top: .25rem; }
 
 /* Fullscreen */
 body.report-fullscreen #sidebar { display: none; }
 body.report-fullscreen #report > header { display: none; }
 body.report-fullscreen #report { max-width: none; padding: .5rem; }
-body.report-fullscreen .tree-layout { height: calc(100vh - 70px); }
+body.report-fullscreen .tree-layout { height: calc(100vh - 64px); }
 
 /* Right sidebar */
 
-/* Right sidebar — file info on the currently selected node. */
+/* Right sidebar */
 .tree-info {
-  width: 280px; flex-shrink: 0;
-  background: #0f1318;
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  font-size: .83rem;
-}
-.tree-info-empty {
-  padding: 3rem 1.25rem; color: var(--muted); text-align: center; line-height: 1.7;
+  width: 260px; flex-shrink: 0;
+  background: #080c11;
+  border-left: 1px solid rgba(48,54,61,.5);
+  overflow-y: auto; display: flex; flex-direction: column;
   font-size: .82rem;
 }
-.tree-info-empty::before {
-  content: '';
-  display: block; width: 32px; height: 32px; margin: 0 auto 1rem;
-  border: 1.5px solid rgba(139,148,158,.25); border-radius: 50%;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='1.5'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M11 8v3M11 14h.01'/%3E%3C/svg%3E") center/18px no-repeat;
+.tree-info::-webkit-scrollbar { width: 3px; }
+.tree-info::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+
+/* Legend panel — always shown, lists packages with color swatches */
+.tree-legend {
+  padding: .75rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+.tree-legend-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5); margin-bottom: .55rem;
+}
+.tree-legend-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .22rem; }
+.tree-legend-item {
+  display: flex; align-items: center; gap: .45rem;
+  cursor: pointer; padding: .2rem .3rem; border-radius: 4px;
+  transition: background .1s;
+}
+.tree-legend-item:hover { background: rgba(255,255,255,.04); }
+.tree-legend-item.dimmed { opacity: .35; }
+.tree-legend-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.tree-legend-name {
+  font-size: .75rem; color: rgba(230,237,243,.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+.tree-legend-count { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Top hubs */
+.tree-hubs {
+  padding: .65rem .85rem .5rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+.tree-hubs-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5); margin-bottom: .5rem;
+}
+.tree-hub-item {
+  display: flex; align-items: center; gap: .4rem;
+  padding: .22rem .3rem; border-radius: 4px; cursor: pointer;
+  transition: background .1s;
+}
+.tree-hub-item:hover { background: rgba(255,255,255,.04); }
+.tree-hub-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.tree-hub-name {
+  font-size: .74rem; color: rgba(230,237,243,.75); flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: ui-monospace, monospace;
+}
+.tree-hub-conn { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Node detail panel */
+.tree-info-empty {
+  flex: 1; padding: 2rem 1.1rem; color: rgba(139,148,158,.4); text-align: center;
+  line-height: 1.7; font-size: .78rem; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .5rem;
+}
+.tree-info-empty-icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid rgba(139,148,158,.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem; opacity: .5;
 }
 .tree-info-content { padding: 0; }
 .tree-info-header {
-  padding: .85rem .9rem .65rem;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
+  padding: .8rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
 }
+.tree-info-pkg-badge {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .65rem; margin-bottom: .35rem; color: rgba(139,148,158,.6);
+}
+.tree-info-pkg-dot { width: 6px; height: 6px; border-radius: 50%; }
 .tree-info-title {
-  font-size: .82rem; font-weight: 600;
+  font-size: .8rem; font-weight: 600;
   word-break: break-all; margin-bottom: .5rem;
   color: var(--text); line-height: 1.4;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 }
-.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .3rem; }
+.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .28rem; }
 .tree-info-jump {
-  background: transparent; border: 1px solid var(--border); color: var(--accent);
-  border-radius: 4px; padding: .2rem .5rem; cursor: pointer;
-  font-size: .72rem; font-family: inherit;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.8); color: rgba(88,166,255,.8);
+  border-radius: 4px; padding: .18rem .45rem; cursor: pointer;
+  font-size: .7rem; font-family: inherit;
   transition: border-color .12s, background .12s;
 }
-.tree-info-jump:hover { border-color: var(--accent); background: rgba(88,166,255,.08); }
-.tree-info-section { padding: .7rem .9rem; border-bottom: 1px solid rgba(48,54,61,.5); }
+.tree-info-jump:hover { border-color: rgba(88,166,255,.5); background: rgba(88,166,255,.08); }
+.tree-info-section { padding: .6rem .85rem; border-bottom: 1px solid rgba(48,54,61,.3); }
 .tree-info-section:last-child { border-bottom: none; }
 .tree-info-label {
-  font-size: .62rem; text-transform: uppercase; letter-spacing: .07em;
-  color: rgba(139,148,158,.6); margin-bottom: .4rem; font-weight: 600;
+  font-size: .6rem; text-transform: uppercase; letter-spacing: .08em;
+  color: rgba(139,148,158,.45); margin-bottom: .35rem; font-weight: 700;
 }
-.tree-info-empty-list { color: rgba(139,148,158,.5); font-size: .78rem; font-style: italic; }
+.tree-count-chips { display: flex; gap: .2rem; flex-wrap: wrap; }
+.tree-count-chip {
+  display: inline-block; font-size: .62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .08rem .3rem; border-radius: 3px; line-height: 1.35;
+}
+.tree-count-chip.critical { background: var(--critical); color: #fff; }
+.tree-count-chip.high     { background: var(--high); color: #fff; }
+.tree-count-chip.medium   { background: var(--medium); color: #000; }
+.tree-count-chip.low      { background: rgba(139,148,158,.25); color: rgba(230,237,243,.7); }
+.tree-info-empty-list { color: rgba(139,148,158,.35); font-size: .75rem; font-style: italic; }
 .tree-info-list {
   list-style: none; padding: 0; margin: 0;
-  max-height: 180px; overflow-y: auto;
+  max-height: 160px; overflow-y: auto;
 }
-.tree-info-list::-webkit-scrollbar { width: 3px; }
-.tree-info-list::-webkit-scrollbar-track { background: transparent; }
-.tree-info-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.tree-info-list::-webkit-scrollbar { width: 2px; }
+.tree-info-list::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
 .tree-info-list li { padding: 0; }
 .tree-info-list button {
   display: block; width: 100%; text-align: left;
-  background: transparent; border: none; color: var(--accent);
-  padding: .2rem .3rem; cursor: pointer;
+  background: transparent; border: none; color: rgba(88,166,255,.75);
+  padding: .18rem .3rem; cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: .73rem; border-radius: 3px;
+  font-size: .71rem; border-radius: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: background .1s;
+  transition: background .1s, color .1s;
 }
-.tree-info-list button:hover { background: rgba(88,166,255,.1); }
+.tree-info-list button:hover { background: rgba(88,166,255,.08); color: var(--accent); }
 .tree-info-list .external {
-  display: block; padding: .2rem .3rem;
-  color: rgba(139,148,158,.55);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: .73rem;
+  display: block; padding: .18rem .3rem;
+  color: rgba(139,148,158,.35);
+  font-family: ui-monospace, monospace;
+  font-size: .71rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
@@ -1827,11 +1891,9 @@ function forceLayout(files, importsOf) {
 }
 
 // ─── Canvas-based graph renderer ────────────────────────────────────────────
-// State shared between renderTreeCanvas (which builds the DOM) and the
-// canvas draw/interaction loop attached afterwards.
 let _graphState = null
 
-// Severity color palette — shared by draw and tooltip.
+// Severity palette
 const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
 
 function totalFindings(counts) {
@@ -1845,16 +1907,52 @@ function indicatorFor(counts) {
   return null
 }
 
-// Radius formula: scales with connectivity + finding density.
-function radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts) {
-  const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
-  const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.25
-  return Math.max(5, 5 + Math.sqrt(conn) * 2.2 + Math.sqrt(findings) * 1.6)
+// ── Vivid per-package color palette ─────────────────────────────────────────
+// Each package gets a vivid, high-saturation hue so clusters read distinctly.
+// We use a set of hand-tuned anchor hues spread around the wheel to avoid
+// muddy near-neighbors, then hash the package name to the closest slot.
+const PKG_HUES = [
+  [355, 75, 60],  // red
+  [22,  90, 62],  // orange
+  [42,  88, 60],  // amber
+  [72,  72, 52],  // yellow-green
+  [140, 68, 48],  // green
+  [170, 72, 48],  // teal
+  [195, 80, 52],  // cyan
+  [215, 78, 58],  // sky-blue
+  [238, 76, 62],  // blue
+  [258, 72, 62],  // indigo
+  [278, 68, 60],  // violet
+  [300, 62, 56],  // purple
+  [322, 70, 58],  // pink
+  [338, 80, 60],  // rose
+]
+const _pkgColorCache = new Map()
+function pkgColor(pkg) {
+  if (_pkgColorCache.has(pkg)) return _pkgColorCache.get(pkg)
+  const key = pkg ?? '__own__'
+  let h = 0
+  for (const c of key) h = (h * 37 + c.charCodeAt(0)) | 0
+  const [hue, sat, lit] = PKG_HUES[((h % PKG_HUES.length) + PKG_HUES.length) % PKG_HUES.length]
+  const col = `hsl(${hue},${sat}%,${lit}%)`
+  _pkgColorCache.set(pkg, col)
+  return col
+}
+function pkgColorAlpha(pkg, a) {
+  const m = pkgColor(pkg).match(/hsl\((\d+),(\d+)%,(\d+)%\)/)
+  if (!m) return `rgba(120,120,120,${a})`
+  return `hsla(${m[1]},${m[2]}%,${m[3]}%,${a})`
 }
 
-// Force-directed canvas + toolbar (show-all toggle). Filters out clean
-// files when `treeShowAll` is off. Layout is cached on (tree, showAll)
-// — invalidated when the user flips the toggle or loads a new report.
+// Radius formula: much wider range so hubs really stand out.
+function radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts) {
+  const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
+  const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.2
+  return Math.max(4, 4 + Math.pow(conn, 0.62) * 3.2 + Math.sqrt(findings) * 1.4)
+}
+
+// Force-directed canvas + toolbar. Filters out clean files when
+// `treeShowAll` is off. Layout cached on (tree, showAll).
 function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
   const allFiles = Object.keys(tree)
   const files = treeShowAll
@@ -1876,17 +1974,18 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
   const hiddenCount = allFiles.length - files.length
   let html = ''
   html += '<div class="tree-canvas-toolbar">'
-  html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all files</label>`
-  html += '<span class="toolbar-stat"><strong>' + files.length + '</strong> of <strong>' + allFiles.length + '</strong> shown'
+  html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all</label>`
+  html += '<div class="toolbar-sep"></div>'
+  html += '<span class="toolbar-stat"><strong>' + files.length + '</strong>/<strong>' + allFiles.length + '</strong> files'
   if (hiddenCount > 0) html += ' · <strong>' + hiddenCount + '</strong> clean hidden'
   html += '</span>'
   html += '<span class="spacer"></span>'
-  html += '<span class="toolbar-hint">drag to pan · scroll to zoom</span>'
-  html += `<button type="button" id="tree-fullscreen" class="icon-btn" title="toggle fullscreen view" aria-label="toggle fullscreen">⛶</button>`
+  html += '<span class="toolbar-hint">drag · scroll to zoom</span>'
+  html += `<button type="button" id="tree-fullscreen" class="icon-btn" title="toggle fullscreen">⛶</button>`
   html += '</div>'
 
   if (files.length === 0) {
-    html += '<div class="tree-canvas-scroll" style="display:flex;align-items:center;justify-content:center;"><div style="color:var(--muted);text-align:center;padding:3rem 1rem;font-size:.85rem;">No files match the current filter.<br>Toggle "show all files" above.</div></div>'
+    html += '<div class="tree-canvas-scroll" style="display:flex;align-items:center;justify-content:center;color:rgba(139,148,158,.5);text-align:center;padding:3rem 1rem;font-size:.82rem;">No files match the current filter.<br>Toggle "show all" above.</div>'
     return html
   }
 
@@ -1899,7 +1998,7 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
     _treeLayoutCache = { tree, showAll: treeShowAll, nodes }
   }
 
-  // Build edge list (deduplicated, bidi-aware) once — reused every draw.
+  // Edge list (deduplicated, bidi-aware).
   const edgeMap = new Map()
   for (const f of files) {
     for (const imp of importsOf.get(f) ?? []) {
@@ -1914,523 +2013,117 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
   const edges = [...edgeMap.values()]
   const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
 
-  // Stash render state so attachTreeGraphInteraction can wire it up.
+  // Package legend data — sorted by node count desc, top 14.
+  const pkgCounts = new Map()
+  for (const f of files) {
+    const p = packageOf(f) ?? '__own__'
+    pkgCounts.set(p, (pkgCounts.get(p) ?? 0) + 1)
+  }
+  const topPkgs = [...pkgCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14)
+
+  // Top hubs by connection count.
+  const hubsSorted = [...nodes].sort((a, b) => {
+    const ca = (importsOf.get(a.file)?.length ?? 0) + (importedBy.get(a.file)?.length ?? 0)
+    const cb = (importsOf.get(b.file)?.length ?? 0) + (importedBy.get(b.file)?.length ?? 0)
+    return cb - ca
+  }).slice(0, 7)
+
   _graphState = {
     nodes, edges, nodeByFile, importsOf, importedBy,
-    ownCounts, transitiveCounts, files, fileSet,
+    ownCounts, transitiveCounts, files, fileSet, topPkgs, hubsSorted,
   }
 
   html += '<div class="tree-canvas-scroll"><canvas class="tree-canvas-el" id="tree-canvas"></canvas></div>'
   html += '<div class="tree-zoom-controls">'
   html += '<button type="button" class="tree-zoom-btn" id="zoom-in" title="zoom in">+</button>'
   html += '<button type="button" class="tree-zoom-btn" id="zoom-out" title="zoom out">−</button>'
-  html += '<button type="button" class="tree-zoom-btn" id="zoom-fit" title="fit to view" style="font-size:.7rem;">⊡</button>'
+  html += '<button type="button" class="tree-zoom-btn" id="zoom-fit" title="fit to view" style="font-size:.65rem;letter-spacing:-.5px;">fit</button>'
   html += '</div>'
-  html += '<div class="tree-minimap"><canvas id="tree-minimap-canvas"></canvas></div>'
   html += '<div class="tree-node-tooltip" id="tree-tooltip"></div>'
   return html
 }
 
-// Attach all canvas interaction: draw loop, pan/zoom, hover, click, minimap.
-function attachTreeGraphInteraction(container) {
-  if (!_graphState) return
-  const canvas = container.querySelector('#tree-canvas')
-  const minimapCanvas = container.querySelector('#tree-minimap-canvas')
-  const tooltip = container.querySelector('#tree-tooltip')
-  if (!canvas) return
+// Build the right-sidebar HTML (legend + hubs + node detail).
+function renderTreeSidebarFull(file, tree, ownCounts, transitiveCounts) {
+  const allFiles = Object.keys(tree)
+  const files = treeShowAll
+    ? allFiles
+    : allFiles.filter((f) => fileHasFindings(f, ownCounts, transitiveCounts))
 
-  const { nodes, edges, nodeByFile, importsOf, importedBy, ownCounts, transitiveCounts } = _graphState
-
-  // ── Viewport state ──────────────────────────────────────────────────────
-  let panX = 0, panY = 0, zoom = 1
-  let hoveredFile = null
-  let dpr = window.devicePixelRatio || 1
-
-  // ── Radius helper (canvas version) ──────────────────────────────────────
-  const R = (file) => radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts)
-
-  // ── Package color (desaturated for canvas, more control) ────────────────
-  const pkgColorCache = new Map()
-  function nodeColor(file) {
-    const pkg = packageOf(file)
-    if (pkgColorCache.has(pkg)) return pkgColorCache.get(pkg)
-    let h = 0
-    const s = pkg ?? '__root__'
-    for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0
-    const hue = ((h % 360) + 360) % 360
-    const col = `hsl(${hue},38%,42%)`
-    pkgColorCache.set(pkg, col)
-    return col
+  const importsOf = new Map()
+  const importedBy = new Map()
+  for (const f of files) {
+    const imps = (tree[f].imports ?? []).filter((i) => new Set(files).has(i))
+    importsOf.set(f, imps)
+    for (const imp of imps) {
+      if (!importedBy.has(imp)) importedBy.set(imp, [])
+      importedBy.get(imp).push(f)
+    }
   }
 
-  // ── Fit to view ──────────────────────────────────────────────────────────
-  function fitToView(w, h) {
-    if (nodes.length === 0) return
-    const pad = 60
-    const minX = Math.min(...nodes.map((n) => n.x)) - pad
-    const minY = Math.min(...nodes.map((n) => n.y)) - pad
-    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
-    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
-    const gw = maxX - minX, gh = maxY - minY
-    zoom = Math.min(w / gw, h / gh, 2)
-    panX = (w - gw * zoom) / 2 - minX * zoom
-    panY = (h - gh * zoom) / 2 - minY * zoom
+  // Package legend
+  const pkgCounts = new Map()
+  for (const f of files) {
+    const p = packageOf(f) ?? '__own__'
+    pkgCounts.set(p, (pkgCounts.get(p) ?? 0) + 1)
+  }
+  const topPkgs = [...pkgCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14)
+  const selectedPkg = file ? (packageOf(file) ?? '__own__') : null
+
+  let html = ''
+
+  // Package legend section
+  if (topPkgs.length > 0) {
+    html += '<div class="tree-legend">'
+    html += '<div class="tree-legend-title">Packages</div>'
+    html += '<ul class="tree-legend-list">'
+    for (const [pkg, count] of topPkgs) {
+      const col = pkgColor(pkg)
+      const dimmed = selectedPkg && pkg !== selectedPkg ? ' dimmed' : ''
+      const label = pkg === '__own__' ? 'own source' : pkg
+      html += `<li class="tree-legend-item${dimmed}" data-pkg-select="${esc(pkg)}">`
+      html += `<span class="tree-legend-dot" style="background:${esc(col)}"></span>`
+      html += `<span class="tree-legend-name">${esc(label)}</span>`
+      html += `<span class="tree-legend-count">${count}</span>`
+      html += `</li>`
+    }
+    html += '</ul></div>'
   }
 
-  // ── Resize handling ───────────────────────────────────────────────────────
-  function resize() {
-    const rect = canvas.parentElement.getBoundingClientRect()
-    const w = rect.width, h = rect.height
-    dpr = window.devicePixelRatio || 1
-    canvas.width = w * dpr
-    canvas.height = h * dpr
-    canvas.style.width = w + 'px'
-    canvas.style.height = h + 'px'
-    if (minimapCanvas) {
-      const mr = minimapCanvas.parentElement.getBoundingClientRect()
-      minimapCanvas.width = mr.width * dpr
-      minimapCanvas.height = mr.height * dpr
-      minimapCanvas.style.width = mr.width + 'px'
-      minimapCanvas.style.height = mr.height + 'px'
+  // Top hubs section
+  const hubsSorted = [...files].sort((a, b) => {
+    const ca = (importsOf.get(a)?.length ?? 0) + (importedBy.get(a)?.length ?? 0)
+    const cb = (importsOf.get(b)?.length ?? 0) + (importedBy.get(b)?.length ?? 0)
+    return cb - ca
+  }).slice(0, 6)
+
+  if (hubsSorted.length > 0) {
+    html += '<div class="tree-hubs">'
+    html += '<div class="tree-hubs-title">Top hubs</div>'
+    for (const f of hubsSorted) {
+      const conn = (importsOf.get(f)?.length ?? 0) + (importedBy.get(f)?.length ?? 0)
+      const col = pkgColor(packageOf(f) ?? '__own__')
+      const base = f.split('/').pop() ?? f
+      html += `<div class="tree-hub-item" data-select-file="${esc(f)}">`
+      html += `<span class="tree-hub-dot" style="background:${esc(col)}"></span>`
+      html += `<span class="tree-hub-name">${esc(base)}</span>`
+      html += `<span class="tree-hub-conn">${conn}</span>`
+      html += `</div>`
     }
-    fitToView(w, h)
-    draw()
+    html += '</div>'
   }
 
-  // ── Main draw ────────────────────────────────────────────────────────────
-  function draw() {
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    const ctx = canvas.getContext('2d')
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-    // Background
-    ctx.fillStyle = '#0a0e14'
-    ctx.fillRect(0, 0, w, h)
-
-    // Subtle radial glow at center
-    const cx = w / 2, cy = h / 2
-    const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.55)
-    gr.addColorStop(0, 'rgba(88,166,255,0.032)')
-    gr.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = gr
-    ctx.fillRect(0, 0, w, h)
-
-    ctx.save()
-    ctx.translate(panX, panY)
-    ctx.scale(zoom, zoom)
-
-    // Determine connected set for hover dimming
-    const connectedFiles = new Set()
-    if (hoveredFile) {
-      connectedFiles.add(hoveredFile)
-      for (const imp of importsOf.get(hoveredFile) ?? []) connectedFiles.add(imp)
-      for (const imp of importedBy.get(hoveredFile) ?? []) connectedFiles.add(imp)
-    }
-
-    // ── Draw edges ───────────────────────────────────────────────────────
-    for (const e of edges) {
-      const lo = nodeByFile.get(e.lo)
-      const hi = nodeByFile.get(e.hi)
-      if (!lo || !hi) continue
-
-      const bidi = e.fromLo && e.fromHi
-      const rev = !bidi && e.fromHi
-      const a = rev ? hi : lo
-      const b = rev ? lo : hi
-
-      const isHovered = hoveredFile && (a.file === hoveredFile || b.file === hoveredFile)
-      const isDimmed = hoveredFile && !isHovered
-
-      const ra = R(a.file), rb = R(b.file)
-      const dx = b.x - a.x, dy = b.y - a.y
-      const len = Math.sqrt(dx * dx + dy * dy) || 1
-      const ux = dx / len, uy = dy / len
-      const sx = a.x + ux * (ra + 2), sy = a.y + uy * (ra + 2)
-      const ex = b.x - ux * (rb + 3), ey = b.y - uy * (rb + 3)
-      const off = Math.min(len * 0.14, 28)
-      const qcx = (sx + ex) / 2 - uy * off
-      const qcy = (sy + ey) / 2 + ux * off
-
-      ctx.beginPath()
-      ctx.moveTo(sx, sy)
-      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
-
-      if (isHovered) {
-        ctx.strokeStyle = 'rgba(88,166,255,0.85)'
-        ctx.lineWidth = 1.5 / zoom
-      } else if (isDimmed) {
-        ctx.strokeStyle = 'rgba(48,54,61,0.25)'
-        ctx.lineWidth = 0.6 / zoom
-      } else {
-        ctx.strokeStyle = 'rgba(88,100,120,0.3)'
-        ctx.lineWidth = 0.8 / zoom
-      }
-      ctx.stroke()
-
-      // Arrowhead at endpoint
-      const arrowSize = Math.max(4, 5.5 / zoom)
-      if (!isDimmed) {
-        const t = 0.92
-        const tangX = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
-        const tangY = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
-        const tLen = Math.sqrt(tangX * tangX + tangY * tangY) || 1
-        const tux = tangX / tLen, tuy = tangY / tLen
-        ctx.beginPath()
-        ctx.moveTo(ex, ey)
-        ctx.lineTo(ex - tux * arrowSize + tuy * arrowSize * 0.45, ey - tuy * arrowSize - tux * arrowSize * 0.45)
-        ctx.lineTo(ex - tux * arrowSize - tuy * arrowSize * 0.45, ey - tuy * arrowSize + tux * arrowSize * 0.45)
-        ctx.closePath()
-        ctx.fillStyle = isHovered ? 'rgba(88,166,255,0.85)' : 'rgba(88,100,120,0.45)'
-        ctx.fill()
-
-        if (bidi) {
-          // Back-arrow at start
-          const t0 = 0.08
-          const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
-          const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
-          const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
-          const tu0 = tx0 / tl0, tv0 = ty0 / tl0
-          ctx.beginPath()
-          ctx.moveTo(sx, sy)
-          ctx.lineTo(sx + tu0 * arrowSize - tv0 * arrowSize * 0.45, sy + tv0 * arrowSize + tu0 * arrowSize * 0.45)
-          ctx.lineTo(sx + tu0 * arrowSize + tv0 * arrowSize * 0.45, sy + tv0 * arrowSize - tu0 * arrowSize * 0.45)
-          ctx.closePath()
-          ctx.fillStyle = isHovered ? 'rgba(88,166,255,0.85)' : 'rgba(88,100,120,0.45)'
-          ctx.fill()
-        }
-      }
-    }
-
-    // ── Draw nodes ───────────────────────────────────────────────────────
-    for (const n of nodes) {
-      const r = R(n.file)
-      const own = ownCounts.get(n.file)
-      const findingColor = indicatorFor(own)
-      const isSelected = n.file === selectedTreeFile
-      const isHov = n.file === hoveredFile
-      const isDimmed = hoveredFile && !connectedFiles.has(n.file)
-      const baseColor = nodeColor(n.file)
-
-      ctx.globalAlpha = isDimmed ? 0.1 : 1
-
-      // Outer glow for selected / hovered / finding-bearing nodes
-      if (isSelected || isHov || findingColor) {
-        const glowColor = isSelected ? '#58a6ff' : isHov ? '#7ec4ff' : findingColor
-        const glow = ctx.createRadialGradient(n.x, n.y, r * 0.5, n.x, n.y, r * 2.2)
-        glow.addColorStop(0, glowColor + '35')
-        glow.addColorStop(1, 'rgba(0,0,0,0)')
-        ctx.beginPath()
-        ctx.arc(n.x, n.y, r * 2.2, 0, Math.PI * 2)
-        ctx.fillStyle = glow
-        ctx.fill()
-      }
-
-      // Main circle — subtle radial fill for depth
-      const grad = ctx.createRadialGradient(n.x - r * 0.3, n.y - r * 0.35, r * 0.05, n.x, n.y, r)
-      const base = baseColor
-      grad.addColorStop(0, lightenHsl(base, 14))
-      grad.addColorStop(1, darkenHsl(base, 8))
-      ctx.beginPath()
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
-      ctx.fillStyle = grad
-      ctx.fill()
-
-      // Rim / selection ring
-      ctx.beginPath()
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
-      if (isSelected) {
-        ctx.strokeStyle = '#58a6ff'
-        ctx.lineWidth = 2.5 / zoom
-      } else if (isHov) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'
-        ctx.lineWidth = 1.5 / zoom
-      } else if (findingColor) {
-        ctx.strokeStyle = findingColor + 'aa'
-        ctx.lineWidth = 1.2 / zoom
-      } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.1)'
-        ctx.lineWidth = 0.8 / zoom
-      }
-      ctx.stroke()
-
-      // Severity indicator dot (top-right)
-      if (findingColor) {
-        const br = Math.max(2.5, r * 0.38)
-        const bx = n.x + r * 0.68, by = n.y - r * 0.68
-        ctx.beginPath()
-        ctx.arc(bx, by, br + 1.5, 0, Math.PI * 2)
-        ctx.fillStyle = 'rgba(10,14,20,0.9)'
-        ctx.fill()
-        ctx.beginPath()
-        ctx.arc(bx, by, br, 0, Math.PI * 2)
-        ctx.fillStyle = findingColor
-        ctx.fill()
-      }
-
-      ctx.globalAlpha = 1
-
-      // Labels — only for hubs, finding-bearing, and selected/hovered
-      const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
-      const ownTotal = totalFindings(own)
-      if ((conn >= 2 || ownTotal > 0 || isSelected || isHov) && !isDimmed) {
-        const labelZoom = Math.max(zoom, 0.55)
-        const fontSize = Math.min(11, Math.max(9, 10 / labelZoom))
-        ctx.font = `500 ${fontSize}px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
-        ctx.textAlign = 'center'
-        const lines = multiLineLabel(n.file, 20)
-        const lineH = fontSize * 1.25
-        const ty = n.y + r + fontSize + 3
-
-        // Text shadow for legibility
-        ctx.shadowColor = 'rgba(10,14,20,0.95)'
-        ctx.shadowBlur = 5
-        ctx.fillStyle = isSelected ? '#a8d8ff' : isHov ? '#e6edf3' : 'rgba(139,148,158,0.9)'
-        lines.forEach((line, i) => {
-          ctx.fillText(line, n.x, ty + i * lineH)
-        })
-        ctx.shadowBlur = 0
-      }
-    }
-
-    ctx.restore()
-    drawMinimap(w, h)
-  }
-
-  // ── Minimap ──────────────────────────────────────────────────────────────
-  function drawMinimap(mainW, mainH) {
-    if (!minimapCanvas) return
-    const mw = minimapCanvas.width / dpr, mh = minimapCanvas.height / dpr
-    const mctx = minimapCanvas.getContext('2d')
-    mctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    mctx.clearRect(0, 0, mw, mh)
-
-    if (nodes.length === 0) return
-    const pad = 20
-    const minX = Math.min(...nodes.map((n) => n.x)) - pad
-    const minY = Math.min(...nodes.map((n) => n.y)) - pad
-    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
-    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
-    const gw = maxX - minX, gh = maxY - minY
-    const mScale = Math.min(mw / gw, mh / gh)
-    const mOffX = (mw - gw * mScale) / 2 - minX * mScale
-    const mOffY = (mh - gh * mScale) / 2 - minY * mScale
-
-    // Draw edges
-    for (const e of edges) {
-      const lo = nodeByFile.get(e.lo), hi = nodeByFile.get(e.hi)
-      if (!lo || !hi) continue
-      mctx.beginPath()
-      mctx.moveTo(lo.x * mScale + mOffX, lo.y * mScale + mOffY)
-      mctx.lineTo(hi.x * mScale + mOffX, hi.y * mScale + mOffY)
-      mctx.strokeStyle = 'rgba(88,100,120,0.3)'
-      mctx.lineWidth = 0.6
-      mctx.stroke()
-    }
-
-    // Draw nodes
-    for (const n of nodes) {
-      const mr = Math.max(1.5, R(n.file) * mScale * 0.7)
-      const own = ownCounts.get(n.file)
-      const fc = indicatorFor(own)
-      mctx.beginPath()
-      mctx.arc(n.x * mScale + mOffX, n.y * mScale + mOffY, mr, 0, Math.PI * 2)
-      mctx.fillStyle = fc ?? nodeColor(n.file)
-      mctx.globalAlpha = n.file === selectedTreeFile ? 1 : 0.7
-      mctx.fill()
-      mctx.globalAlpha = 1
-    }
-
-    // Viewport rect
-    const vx = (-panX / zoom) * mScale + mOffX
-    const vy = (-panY / zoom) * mScale + mOffY
-    const vw = (mainW / zoom) * mScale
-    const vh = (mainH / zoom) * mScale
-    mctx.strokeStyle = 'rgba(88,166,255,0.55)'
-    mctx.lineWidth = 1
-    mctx.strokeRect(vx, vy, vw, vh)
-    mctx.fillStyle = 'rgba(88,166,255,0.06)'
-    mctx.fillRect(vx, vy, vw, vh)
-  }
-
-  // ── Color helpers ────────────────────────────────────────────────────────
-  function lightenHsl(hslStr, amount) {
-    const m = hslStr.match(/hsl\((\d+),(\d+)%,(\d+)%\)/)
-    if (!m) return hslStr
-    return `hsl(${m[1]},${m[2]}%,${Math.min(100, +m[3] + amount)}%)`
-  }
-  function darkenHsl(hslStr, amount) {
-    const m = hslStr.match(/hsl\((\d+),(\d+)%,(\d+)%\)/)
-    if (!m) return hslStr
-    return `hsl(${m[1]},${m[2]}%,${Math.max(0, +m[3] - amount)}%)`
-  }
-
-  // ── Hit test (canvas → world) ────────────────────────────────────────────
-  function canvasToWorld(cx, cy) {
-    return { x: (cx - panX) / zoom, y: (cy - panY) / zoom }
-  }
-  function hitTest(cx, cy) {
-    const { x, y } = canvasToWorld(cx, cy)
-    let best = null, bestD = Infinity
-    for (const n of nodes) {
-      const dx = n.x - x, dy = n.y - y
-      const d = Math.sqrt(dx * dx + dy * dy)
-      const r = R(n.file)
-      if (d <= r + 4 && d < bestD) { bestD = d; best = n }
-    }
-    return best
-  }
-
-  // ── Tooltip ──────────────────────────────────────────────────────────────
-  function showTooltip(node, cx, cy) {
-    if (!tooltip) return
-    const own = ownCounts.get(node.file) ?? {}
-    const trans = transitiveCounts.get(node.file) ?? {}
-    const pkg = packageOf(node.file)
-    const conn = (importsOf.get(node.file)?.length ?? 0) + (importedBy.get(node.file)?.length ?? 0)
-    let html = `<strong>${node.file.split('/').pop()}</strong>`
-    html += `<div class="tt-path">${node.file}</div>`
-    const chips = []
-    for (const sev of ['critical', 'high', 'medium', 'low']) {
-      if (own[sev]) chips.push(`<span class="tt-chip ${sev}">${own[sev]} ${sev}</span>`)
-    }
-    if (chips.length) html += `<div class="tt-chips">${chips.join('')}</div>`
-    html += `<div class="tt-meta">${conn} connection${conn !== 1 ? 's' : ''}${pkg ? ` · ${pkg}` : ''}</div>`
-    tooltip.innerHTML = html
-    tooltip.style.display = 'block'
-    const rect = canvas.parentElement.getBoundingClientRect()
-    const pad = 12
-    let tx = cx + pad, ty = cy - 10
-    if (tx + 270 > rect.width) tx = cx - 270 - pad
-    if (ty + 120 > rect.height) ty = rect.height - 130
-    tooltip.style.left = tx + 'px'
-    tooltip.style.top = ty + 'px'
-  }
-  function hideTooltip() {
-    if (tooltip) tooltip.style.display = 'none'
-  }
-
-  // ── Pan & zoom ───────────────────────────────────────────────────────────
-  let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0
-  const scroll = canvas.parentElement
-
-  scroll.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    dragging = true
-    dragStartX = e.clientX; dragStartY = e.clientY
-    panStartX = panX; panStartY = panY
-    hideTooltip()
-  })
-  window.addEventListener('mousemove', (e) => {
-    if (dragging) {
-      panX = panStartX + (e.clientX - dragStartX)
-      panY = panStartY + (e.clientY - dragStartY)
-      draw()
-      return
-    }
-    const rect = canvas.getBoundingClientRect()
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top
-    const hit = hitTest(cx, cy)
-    const prev = hoveredFile
-    hoveredFile = hit ? hit.file : null
-    canvas.style.cursor = hit ? 'pointer' : 'grab'
-    if (hoveredFile !== prev) draw()
-    if (hit) showTooltip(hit, cx, cy)
-    else hideTooltip()
-  })
-  window.addEventListener('mouseup', () => { dragging = false })
-
-  scroll.addEventListener('wheel', (e) => {
-    e.preventDefault()
-    const rect = canvas.getBoundingClientRect()
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top
-    const delta = e.deltaY < 0 ? 1.12 : 1 / 1.12
-    const newZoom = Math.max(0.08, Math.min(8, zoom * delta))
-    panX = cx - (cx - panX) * (newZoom / zoom)
-    panY = cy - (cy - panY) * (newZoom / zoom)
-    zoom = newZoom
-    draw()
-  }, { passive: false })
-
-  // Touch pan / pinch-zoom
-  let touches = []
-  scroll.addEventListener('touchstart', (e) => { e.preventDefault(); touches = [...e.touches] }, { passive: false })
-  scroll.addEventListener('touchmove', (e) => {
-    e.preventDefault()
-    if (e.touches.length === 1 && touches.length === 1) {
-      panX += e.touches[0].clientX - touches[0].clientX
-      panY += e.touches[0].clientY - touches[0].clientY
-    } else if (e.touches.length === 2 && touches.length === 2) {
-      const d0 = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
-      const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
-      if (d0 > 0) {
-        const rect = canvas.getBoundingClientRect()
-        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
-        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
-        const s = d1 / d0
-        const nz = Math.max(0.08, Math.min(8, zoom * s))
-        panX = mx - (mx - panX) * (nz / zoom)
-        panY = my - (my - panY) * (nz / zoom)
-        zoom = nz
-      }
-    }
-    touches = [...e.touches]
-    draw()
-  }, { passive: false })
-  scroll.addEventListener('touchend', (e) => { touches = [...e.touches] }, { passive: false })
-
-  // Click = select node
-  scroll.addEventListener('click', (e) => {
-    if (Math.abs(e.clientX - dragStartX) > 4 || Math.abs(e.clientY - dragStartY) > 4) return
-    const rect = canvas.getBoundingClientRect()
-    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
-    const prev = selectedTreeFile
-    selectedTreeFile = hit ? hit.file : null
-    if (selectedTreeFile !== prev) {
-      // Re-render the whole view (updates sidebar)
-      const renderEvent = new CustomEvent('tree-node-select', { detail: { file: selectedTreeFile }, bubbles: true })
-      canvas.dispatchEvent(renderEvent)
-    }
-    draw()
-  })
-
-  // Zoom buttons
-  const zoomIn = container.querySelector('#zoom-in')
-  const zoomOut = container.querySelector('#zoom-out')
-  const zoomFit = container.querySelector('#zoom-fit')
-  if (zoomIn) zoomIn.addEventListener('click', () => {
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    zoom = Math.min(8, zoom * 1.3); panX = w/2 - (w/2 - panX) * 1.3; panY = h/2 - (h/2 - panY) * 1.3; draw()
-  })
-  if (zoomOut) zoomOut.addEventListener('click', () => {
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    zoom = Math.max(0.08, zoom / 1.3); panX = w/2 - (w/2 - panX) / 1.3; panY = h/2 - (h/2 - panY) / 1.3; draw()
-  })
-  if (zoomFit) zoomFit.addEventListener('click', () => {
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    fitToView(w, h); draw()
-  })
-
-  // ── Init ──────────────────────────────────────────────────────────────────
-  resize()
-  const ro = new ResizeObserver(() => resize())
-  ro.observe(canvas.parentElement)
-
-  // When a node is selected via click, trigger a full render (updates sidebar)
-  canvas.addEventListener('tree-node-select', () => { render() })
-}
-
-// Right sidebar: details for the currently selected file, or an
-// empty-state hint when nothing's selected. Importers / imports lists
-// are clickable buttons that select the linked file (re-renders).
-// External imports (those NOT in the tree) render plain text since
-// there's nothing to navigate to.
-function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
+  // Node detail
   if (!file || !tree[file]) {
-    return '<div class="tree-info-empty">Click a node in the graph to inspect its file —<br>own findings, subtree findings, importers, imports.</div>'
+    html += '<div class="tree-info-empty"><div class="tree-info-empty-icon">↗</div>Click a node to inspect it</div>'
+    return html
   }
+
   const entry = tree[file]
   const own = ownCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
   const trans = transitiveCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
+  const pkg = packageOf(file) ?? '__own__'
+  const pkgCol = pkgColor(pkg)
 
   const renderChips = (counts) => {
     const present = Object.entries(counts).filter(([, n]) => n > 0)
@@ -2452,38 +2145,406 @@ function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
     let h = '<ul class="tree-info-list">'
     for (const i of items) {
       if (tree[i]) h += `<li><button type="button" data-select-file="${esc(i)}">${esc(i)}</button></li>`
-      else h += `<li><span class="external" title="${esc(i)} (not in tree)">${esc(i)}</span></li>`
+      else h += `<li><span class="external" title="${esc(i)}">${esc(i)}</span></li>`
     }
     h += '</ul>'
     return h
   }
 
-  let html = '<div class="tree-info-content">'
+  html += '<div class="tree-info-content">'
   html += '<div class="tree-info-header">'
+  html += `<div class="tree-info-pkg-badge"><span class="tree-info-pkg-dot" style="background:${esc(pkgCol)}"></span>${esc(pkg === '__own__' ? 'own source' : pkg)}</div>`
   html += `<div class="tree-info-title">${esc(file)}</div>`
   html += '<div class="tree-info-jumps">'
   html += `<button type="button" class="tree-info-jump" data-jump-findings="${esc(file)}">Findings →</button>`
   html += `<button type="button" class="tree-info-jump" data-jump-file="${esc(file)}">Files →</button>`
   html += '</div>'
   html += '</div>'
-  html += '<div class="tree-info-section">'
-  html += '<div class="tree-info-label">Own findings</div>'
-  html += renderChips(own)
-  html += '</div>'
-  html += '<div class="tree-info-section">'
-  html += '<div class="tree-info-label">Subtree findings</div>'
-  html += renderChips(trans)
-  html += '</div>'
-  html += '<div class="tree-info-section">'
-  html += `<div class="tree-info-label">Imported by (${importers.length})</div>`
-  html += renderList(importers)
-  html += '</div>'
-  html += '<div class="tree-info-section">'
-  html += `<div class="tree-info-label">Imports (${imports.length})</div>`
-  html += renderList(imports)
-  html += '</div>'
+  html += '<div class="tree-info-section"><div class="tree-info-label">Own findings</div>' + renderChips(own) + '</div>'
+  html += '<div class="tree-info-section"><div class="tree-info-label">Subtree findings</div>' + renderChips(trans) + '</div>'
+  html += `<div class="tree-info-section"><div class="tree-info-label">Imported by (${importers.length})</div>` + renderList(importers) + '</div>'
+  html += `<div class="tree-info-section"><div class="tree-info-label">Imports (${imports.length})</div>` + renderList(imports) + '</div>'
   html += '</div>'
   return html
+}
+
+// Attach all canvas interaction: draw loop, pan/zoom, hover, click.
+function attachTreeGraphInteraction(container) {
+  if (!_graphState) return
+  const canvas = container.querySelector('#tree-canvas')
+  const tooltip = container.querySelector('#tree-tooltip')
+  if (!canvas) return
+
+  const { nodes, edges, nodeByFile, importsOf, importedBy, ownCounts, transitiveCounts } = _graphState
+
+  let panX = 0, panY = 0, zoom = 1
+  let hoveredFile = null
+  let dpr = window.devicePixelRatio || 1
+
+  const R = (file) => radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts)
+
+  function fitToView(w, h) {
+    if (nodes.length === 0) return
+    const pad = 80
+    const minX = Math.min(...nodes.map((n) => n.x)) - pad
+    const minY = Math.min(...nodes.map((n) => n.y)) - pad
+    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
+    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
+    const gw = maxX - minX, gh = maxY - minY
+    zoom = Math.min(w / gw, h / gh, 2.5)
+    panX = (w - gw * zoom) / 2 - minX * zoom
+    panY = (h - gh * zoom) / 2 - minY * zoom
+  }
+
+  function resize() {
+    const rect = canvas.parentElement.getBoundingClientRect()
+    const w = rect.width, h = rect.height
+    dpr = window.devicePixelRatio || 1
+    canvas.width = w * dpr; canvas.height = h * dpr
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px'
+    fitToView(w, h); draw()
+  }
+
+  // ── Main draw ─────────────────────────────────────────────────────────────
+  function draw() {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    const ctx = canvas.getContext('2d')
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    // Background — very dark navy
+    ctx.fillStyle = '#060a0f'
+    ctx.fillRect(0, 0, w, h)
+
+    // Subtle center radial
+    const cg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.6)
+    cg.addColorStop(0, 'rgba(20,30,50,0.5)')
+    cg.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h)
+
+    ctx.save()
+    ctx.translate(panX, panY)
+    ctx.scale(zoom, zoom)
+
+    // Connected-files set for hover dimming
+    const connectedFiles = new Set()
+    if (hoveredFile) {
+      connectedFiles.add(hoveredFile)
+      for (const imp of importsOf.get(hoveredFile) ?? []) connectedFiles.add(imp)
+      for (const imp of importedBy.get(hoveredFile) ?? []) connectedFiles.add(imp)
+    }
+
+    // ── Edges ───────────────────────────────────────────────────────────────
+    for (const e of edges) {
+      const loN = nodeByFile.get(e.lo), hiN = nodeByFile.get(e.hi)
+      if (!loN || !hiN) continue
+
+      const bidi = e.fromLo && e.fromHi
+      const rev = !bidi && e.fromHi
+      const a = rev ? hiN : loN
+      const b = rev ? loN : hiN
+
+      const isHov = hoveredFile && (a.file === hoveredFile || b.file === hoveredFile)
+      const isDim = hoveredFile && !isHov
+
+      // Edge color = source node's package color
+      const srcPkg = packageOf(a.file) ?? '__own__'
+
+      const ra = R(a.file), rb = R(b.file)
+      const dx = b.x - a.x, dy = b.y - a.y
+      const len = Math.sqrt(dx * dx + dy * dy) || 1
+      const ux = dx / len, uy = dy / len
+      const sx = a.x + ux * (ra + 1.5), sy = a.y + uy * (ra + 1.5)
+      const ex = b.x - ux * (rb + 3.5), ey = b.y - uy * (rb + 3.5)
+      const off = Math.min(len * 0.15, 30)
+      const qcx = (sx + ex) / 2 - uy * off
+      const qcy = (sy + ey) / 2 + ux * off
+
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
+
+      if (isHov) {
+        ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.9)
+        ctx.lineWidth = 1.8 / zoom
+      } else if (isDim) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)'
+        ctx.lineWidth = 0.5 / zoom
+      } else {
+        ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.22)
+        ctx.lineWidth = 0.85 / zoom
+      }
+      ctx.stroke()
+
+      // Arrowhead at endpoint
+      if (!isDim) {
+        const arrowLen = Math.max(4.5, 6 / zoom)
+        const arrowW = arrowLen * 0.42
+        // Tangent at end of quadratic bezier
+        const t = 0.9
+        const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
+        const ty2 = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
+        const tl = Math.sqrt(tx * tx + ty2 * ty2) || 1
+        const tux = tx / tl, tuy = ty2 / tl
+        ctx.beginPath()
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
+        ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
+        ctx.closePath()
+        ctx.fillStyle = isHov ? pkgColorAlpha(srcPkg, 0.9) : pkgColorAlpha(srcPkg, 0.4)
+        ctx.fill()
+
+        // Bidi: back-arrow at start
+        if (bidi) {
+          const t0 = 0.1
+          const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
+          const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
+          const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
+          const tux0 = tx0 / tl0, tuy0 = ty0 / tl0
+          ctx.beginPath()
+          ctx.moveTo(sx, sy)
+          ctx.lineTo(sx + tux0 * arrowLen - tuy0 * arrowW, sy + tuy0 * arrowLen + tux0 * arrowW)
+          ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
+          ctx.closePath()
+          const dstPkg = packageOf(b.file) ?? '__own__'
+          ctx.fillStyle = isHov ? pkgColorAlpha(dstPkg, 0.9) : pkgColorAlpha(dstPkg, 0.4)
+          ctx.fill()
+        }
+      }
+    }
+
+    // ── Nodes ────────────────────────────────────────────────────────────────
+    for (const n of nodes) {
+      const r = R(n.file)
+      const pkg = packageOf(n.file) ?? '__own__'
+      const col = pkgColor(pkg)
+      const own = ownCounts.get(n.file)
+      const findingColor = indicatorFor(own)
+      const isSelected = n.file === selectedTreeFile
+      const isHov = n.file === hoveredFile
+      const isDim = hoveredFile && !connectedFiles.has(n.file) && !isSelected
+
+      ctx.globalAlpha = isDim ? 0.07 : 1
+
+      // Glow ring for selected/hovered
+      if (isSelected || isHov) {
+        const glowR = r * 2.6
+        const glow = ctx.createRadialGradient(n.x, n.y, r * 0.8, n.x, n.y, glowR)
+        glow.addColorStop(0, pkgColorAlpha(pkg, isSelected ? 0.35 : 0.2))
+        glow.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.beginPath(); ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2)
+        ctx.fillStyle = glow; ctx.fill()
+      }
+
+      // Finding-severity outer pulse ring
+      if (findingColor && !isDim) {
+        ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5 / zoom, 0, Math.PI * 2)
+        ctx.strokeStyle = findingColor + '66'
+        ctx.lineWidth = 2.5 / zoom
+        ctx.stroke()
+      }
+
+      // Main circle — vivid flat fill + slight inner glow
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = col
+      ctx.fill()
+
+      // Inner highlight (top-left sheen)
+      const hi = ctx.createRadialGradient(n.x - r * 0.35, n.y - r * 0.38, 0, n.x, n.y, r)
+      hi.addColorStop(0, 'rgba(255,255,255,0.22)')
+      hi.addColorStop(0.5, 'rgba(255,255,255,0.0)')
+      hi.addColorStop(1, 'rgba(0,0,0,0.25)')
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = hi; ctx.fill()
+
+      // Selection / hover stroke
+      if (isSelected) {
+        ctx.beginPath(); ctx.arc(n.x, n.y, r + 1.5 / zoom, 0, Math.PI * 2)
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2 / zoom; ctx.stroke()
+      } else if (isHov) {
+        ctx.beginPath(); ctx.arc(n.x, n.y, r + 1 / zoom, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+        ctx.lineWidth = 1.5 / zoom; ctx.stroke()
+      }
+
+      // Severity dot (top-right corner, scaled with node)
+      if (findingColor) {
+        const br = Math.max(2.5, r * 0.36)
+        const bx = n.x + r * 0.72, by = n.y - r * 0.72
+        // Dark halo
+        ctx.beginPath(); ctx.arc(bx, by, br + 1.2, 0, Math.PI * 2)
+        ctx.fillStyle = '#060a0f'; ctx.fill()
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2)
+        ctx.fillStyle = findingColor; ctx.fill()
+      }
+
+      ctx.globalAlpha = 1
+
+      // Labels
+      const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
+      const ownTotal = totalFindings(own)
+      const showLabel = (conn >= 3 || ownTotal > 0 || isSelected || isHov || r > 12) && !isDim
+      if (showLabel) {
+        const baseSize = Math.min(11.5, Math.max(8.5, 9.5 / Math.max(zoom, 0.5)))
+        ctx.font = `600 ${baseSize}px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif`
+        ctx.textAlign = 'center'
+        const lines = multiLineLabel(n.file, 22)
+        const lineH = baseSize * 1.3
+        const ty = n.y + r + baseSize + 2.5
+
+        // Shadow/outline for readability on any background
+        ctx.shadowColor = 'rgba(6,10,15,0.98)'; ctx.shadowBlur = 4
+        ctx.strokeStyle = 'rgba(6,10,15,0.9)'; ctx.lineWidth = 3 / zoom
+        ctx.lineJoin = 'round'
+        ctx.strokeText(lines[0], n.x, ty)
+        if (lines[1]) ctx.strokeText(lines[1], n.x, ty + lineH)
+
+        ctx.shadowBlur = 0
+        ctx.fillStyle = isSelected ? '#fff' : isHov ? 'rgba(230,237,243,0.95)' : 'rgba(200,210,225,0.78)'
+        lines.forEach((line, i) => ctx.fillText(line, n.x, ty + i * lineH))
+      }
+    }
+
+    ctx.restore()
+  }
+
+  // ── Hit test ───────────────────────────────────────────────────────────────
+  function canvasPos(e) {
+    const rect = canvas.getBoundingClientRect()
+    return { cx: e.clientX - rect.left, cy: e.clientY - rect.top }
+  }
+  function hitTest(cx, cy) {
+    const wx = (cx - panX) / zoom, wy = (cy - panY) / zoom
+    let best = null, bestD = Infinity
+    for (const n of nodes) {
+      const d = Math.hypot(n.x - wx, n.y - wy)
+      if (d <= R(n.file) + 4 / zoom && d < bestD) { bestD = d; best = n }
+    }
+    return best
+  }
+
+  // ── Tooltip ────────────────────────────────────────────────────────────────
+  function showTooltip(node, cx, cy) {
+    if (!tooltip) return
+    const own = ownCounts.get(node.file) ?? {}
+    const pkg = packageOf(node.file) ?? '__own__'
+    const col = pkgColor(pkg)
+    const conn = (importsOf.get(node.file)?.length ?? 0) + (importedBy.get(node.file)?.length ?? 0)
+    const base = node.file.split('/').pop()
+    const pkgLabel = pkg === '__own__' ? 'own source' : pkg
+    let html = `<div class="tt-name">${esc(base)}</div>`
+    html += `<div class="tt-pkg"><span class="tt-pkg-dot" style="background:${esc(col)}"></span>${esc(pkgLabel)}</div>`
+    const pathRest = node.file.length > base.length ? node.file.slice(0, -base.length - 1) : ''
+    if (pathRest) html += `<div class="tt-path">${esc(pathRest)}</div>`
+    const chips = []
+    for (const sev of ['critical', 'high', 'medium', 'low']) {
+      if (own[sev]) chips.push(`<span class="tt-chip ${sev}">${own[sev]} ${sev}</span>`)
+    }
+    if (chips.length) html += `<div class="tt-chips">${chips.join('')}</div>`
+    html += `<div class="tt-stat">${conn} connection${conn !== 1 ? 's' : ''}</div>`
+    tooltip.innerHTML = html
+    tooltip.style.display = 'block'
+    const rect = canvas.parentElement.getBoundingClientRect()
+    let tx = cx + 14, ty = cy - 16
+    if (tx + 250 > rect.width) tx = cx - 254
+    if (ty + 140 > rect.height) ty = rect.height - 144
+    if (ty < 4) ty = 4
+    tooltip.style.left = tx + 'px'; tooltip.style.top = ty + 'px'
+  }
+  function hideTooltip() { if (tooltip) tooltip.style.display = 'none' }
+
+  // ── Pan & zoom ──────────────────────────────────────────────────────────────
+  let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0
+  const scroll = canvas.parentElement
+
+  scroll.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    dragging = true; dragStartX = e.clientX; dragStartY = e.clientY
+    panStartX = panX; panStartY = panY; hideTooltip()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (dragging) {
+      panX = panStartX + e.clientX - dragStartX
+      panY = panStartY + e.clientY - dragStartY
+      draw(); return
+    }
+    const { cx, cy } = canvasPos(e)
+    const hit = hitTest(cx, cy)
+    const prev = hoveredFile
+    hoveredFile = hit?.file ?? null
+    canvas.style.cursor = hit ? 'pointer' : 'grab'
+    if (hoveredFile !== prev) draw()
+    if (hit) showTooltip(hit, cx, cy); else hideTooltip()
+  })
+  window.addEventListener('mouseup', () => { dragging = false })
+
+  scroll.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    const { cx, cy } = canvasPos(e)
+    const factor = e.deltaY < 0 ? 1.13 : 1 / 1.13
+    const nz = Math.max(0.06, Math.min(10, zoom * factor))
+    panX = cx - (cx - panX) * (nz / zoom)
+    panY = cy - (cy - panY) * (nz / zoom)
+    zoom = nz; draw()
+  }, { passive: false })
+
+  // Touch
+  let touches = []
+  scroll.addEventListener('touchstart', (e) => { e.preventDefault(); touches = [...e.touches] }, { passive: false })
+  scroll.addEventListener('touchmove', (e) => {
+    e.preventDefault()
+    if (e.touches.length === 1 && touches.length === 1) {
+      panX += e.touches[0].clientX - touches[0].clientX
+      panY += e.touches[0].clientY - touches[0].clientY
+    } else if (e.touches.length === 2 && touches.length === 2) {
+      const d0 = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+      const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
+      if (d0 > 0) {
+        const rect = canvas.getBoundingClientRect()
+        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
+        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+        const nz = Math.max(0.06, Math.min(10, zoom * d1 / d0))
+        panX = mx - (mx - panX) * (nz / zoom); panY = my - (my - panY) * (nz / zoom); zoom = nz
+      }
+    }
+    touches = [...e.touches]; draw()
+  }, { passive: false })
+  scroll.addEventListener('touchend', (e) => { touches = [...e.touches] }, { passive: false })
+
+  // Click = select node
+  scroll.addEventListener('click', (e) => {
+    if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 5) return
+    const { cx, cy } = canvasPos(e)
+    const hit = hitTest(cx, cy)
+    selectedTreeFile = hit?.file ?? null
+    canvas.dispatchEvent(new CustomEvent('tree-node-select', { bubbles: true }))
+    draw()
+  })
+
+  // Zoom buttons
+  const doZoom = (factor) => {
+    const w = canvas.width / dpr, h = canvas.height / dpr
+    const cx = w / 2, cy = h / 2
+    const nz = Math.max(0.06, Math.min(10, zoom * factor))
+    panX = cx - (cx - panX) * (nz / zoom); panY = cy - (cy - panY) * (nz / zoom)
+    zoom = nz; draw()
+  }
+  container.querySelector('#zoom-in')?.addEventListener('click', () => doZoom(1.35))
+  container.querySelector('#zoom-out')?.addEventListener('click', () => doZoom(1 / 1.35))
+  container.querySelector('#zoom-fit')?.addEventListener('click', () => {
+    fitToView(canvas.width / dpr, canvas.height / dpr); draw()
+  })
+
+  // Init
+  resize()
+  new ResizeObserver(() => resize()).observe(canvas.parentElement)
+  canvas.addEventListener('tree-node-select', () => render())
+}
+
+// renderTreeSidebar replaced by renderTreeSidebarFull (inline in renderTreeCanvas block above).
+// Keeping a stub so any old reference doesn't hard-crash; it should never be called.
+function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
+  return renderTreeSidebarFull(file, tree, ownCounts, transitiveCounts)
 }
 
 // Layered-DAG SVG of the import tree. Roots (no one imports them) sit
@@ -2880,7 +2941,7 @@ function render() {
     const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
     html += '<div class="tree-layout">'
     html += `<div class="tree-canvas">${renderTreeCanvas(tree, findingCounts, transitiveCounts)}</div>`
-    html += `<div class="tree-info">${renderTreeSidebar(selectedTreeFile, tree, findingCounts, transitiveCounts)}</div>`
+    html += `<div class="tree-info">${renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)}</div>`
     html += '</div>'
     report.innerHTML = html
     report.classList.add('active')
