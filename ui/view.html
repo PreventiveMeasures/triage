@@ -2273,7 +2273,7 @@ function render() {
   if (showTreeTab) {
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
-    html += `<button type="button" class="report-tab${currentView === 'tree' ? ' active' : ''}" data-view="tree">Tree (${treeFileCount} files)</button>`
+    html += `<button type="button" class="report-tab${currentView === 'tree' ? ' active' : ''}" data-view="tree">Graph</button>`
     html += `<button type="button" class="report-tab${currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     html += '</div>'
   }
