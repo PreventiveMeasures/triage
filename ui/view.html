@@ -1847,26 +1847,44 @@ function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
 
   let svg = `<svg class="tree-canvas-svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`
 
-  // Quadratic-bezier edges: a slight perpendicular offset on the
-  // control point gives the line a gentle arc, which reads better
-  // than straight lines when many edges share an area.
+  // Arrowhead marker for directed edges. `context-stroke` makes the
+  // fill inherit the path's stroke color, so hover-highlighted edges
+  // get accent-colored arrows automatically. `markerUnits=userSpaceOnUse`
+  // keeps the arrow a fixed size regardless of stroke-width changes.
+  svg += '<defs>'
+  svg += '<marker id="tg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse">'
+  svg += '<path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />'
+  svg += '</marker>'
+  svg += '</defs>'
+
+  // Quadratic-bezier edges with a gentle perpendicular arc so many
+  // edges sharing an area read individually instead of overlapping.
+  // Endpoints trim back to each node's circle edge (plus a small
+  // gap for the arrowhead) so the arrow tip lands JUST outside the
+  // target circle rather than hidden inside it.
+  const ARROW_GAP = 4
   svg += '<g class="edges">'
   for (const n of nodes) {
+    const ra = radiusOf(n.file)
     for (const imp of importsOf.get(n.file) ?? []) {
       const b = nodeByFile.get(imp)
       if (!b) continue
+      const rb = radiusOf(b.file)
       const dx = b.x - n.x, dy = b.y - n.y
       const len = Math.sqrt(dx * dx + dy * dy) || 1
-      // Perpendicular offset proportional to edge length, capped so
-      // short edges don't curve hard. The curve direction depends on
-      // the edge's hash so parallel edges between the same node pair
-      // arc the same way each render.
+      const ux = dx / len, uy = dy / len
+      // Trim endpoints to the node circles' edges. Source: just
+      // outside the importer; target: outside the import + small
+      // gap so the arrowhead doesn't overlap the circle.
+      const sx = n.x + ux * (ra + 0.5)
+      const sy = n.y + uy * (ra + 0.5)
+      const ex = b.x - ux * (rb + ARROW_GAP)
+      const ey = b.y - uy * (rb + ARROW_GAP)
       const off = Math.min(len * 0.12, 24)
-      const px = -dy / len * off
-      const py = dx / len * off
-      const cx = (n.x + b.x) / 2 + px
-      const cy = (n.y + b.y) / 2 + py
-      svg += `<path data-from="${esc(svgNodeId(n.file))}" data-to="${esc(svgNodeId(b.file))}" d="M ${n.x.toFixed(1)} ${n.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)}, ${b.x.toFixed(1)} ${b.y.toFixed(1)}" />`
+      const px = -uy * off, py = ux * off
+      const cx = (sx + ex) / 2 + px
+      const cy = (sy + ey) / 2 + py
+      svg += `<path data-from="${esc(svgNodeId(n.file))}" data-to="${esc(svgNodeId(b.file))}" marker-end="url(#tg-arrow)" d="M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)}, ${ex.toFixed(1)} ${ey.toFixed(1)}" />`
     }
   }
   svg += '</g>'
