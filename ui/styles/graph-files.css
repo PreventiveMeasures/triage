@@ -9,7 +9,9 @@
 
 .tree-file {
   padding: .6rem .8rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
   scroll-margin-top: 1rem;
 }
 

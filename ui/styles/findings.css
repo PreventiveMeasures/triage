@@ -4,9 +4,14 @@
   &.hidden { display: none; }
 }
 
+/* file-header + file-body form a single card visually — they share
+   borders and rounding. Both get glass so the card reads as one
+   continuous frosted surface (rather than a frosted top with an
+   empty body). The same logic applies to .flat-group below. */
 .file-header {
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
-  background: var(--surface); border: 1px solid var(--border);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: 6px 6px 0 0; cursor: pointer;
   display: flex; justify-content: space-between; align-items: center;
 
@@ -16,7 +21,12 @@
   & .count { user-select: none; color: var(--muted); font-weight: 400; font-size: .8rem; }
 }
 
-.file-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+.file-body {
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 6px 6px;
+  box-shadow: var(--shadow-glass);
+}
 
 /* Flat mode (group by file = OFF): each dedup group renders inside a
    self-contained card. The card border replaces the per-finding
@@ -27,6 +37,8 @@
    floats right via `margin-left: auto`. */
 .flat-group {
   margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-glass);
 
   & .finding { border-bottom: none; }
   & .finding .line-row { display: none; }
@@ -35,6 +47,10 @@
 .flat-group-loc {
   display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
   padding: .4rem .7rem; font-size: .85rem;
+  /* Parent .flat-group already has the glass surface — this header
+     sits inside it as a slightly darker tint to mark the location
+     row. No backdrop-filter (the parent owns the blur), just a
+     translucent overlay that reads as a subtle band. */
   background: var(--surface); border-bottom: 1px solid var(--border);
 
   & .file { color: var(--text); font-weight: 500; }

@@ -1,7 +1,9 @@
 .toolbar {
   display: flex; flex-direction: column; gap: .5rem;
   margin-bottom: 1rem; padding: .6rem .75rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
   font-size: .825rem;
 
   & label { color: var(--muted); margin-right: .15rem; }
@@ -45,11 +47,15 @@
 .stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
 
 .stat {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
   padding: .6rem 1rem; font-size: .85rem; cursor: pointer; user-select: none;
-  transition: border-color .15s;
+  transition: border-color .15s, background .12s;
 
   &:hover, &.active { border-color: var(--accent); }
+  /* Active state uses the opaque --surface-active tint, deliberately
+     overriding the glass — selected chips need to read solid. */
   &.active { background: var(--surface-active); }
   & strong { display: block; font-size: 1.2rem; }
 }
