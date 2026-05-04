@@ -1,3 +1,10 @@
+/* Graph chrome — toolbar, info sidebar, tooltip, zoom controls. The
+   canvas JS owns its own palette (see canvas.js GRAPH_THEMES); these
+   rules style everything around it. All colors come from the shared
+   theme vars (--surface, --border, --muted, --text, --accent) plus a
+   few graph-only ones from theme.css (--graph-canvas-bg,
+   --graph-hover-bg, --graph-divider). */
+
 /* ── Graph tab layout ────────────────────────────────────────────── */
 .tree-layout {
   display: flex; gap: 0;
@@ -5,23 +12,23 @@
   height: 82vh;
   border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden;
-  background: #060a0f;
+  background: var(--graph-canvas-bg);
 }
 
 .tree-canvas {
   flex: 1; min-width: 0;
-  background: #060a0f;
+  background: var(--graph-canvas-bg);
   display: flex; flex-direction: column;
   position: relative;
 }
 
-/* Toolbar */
+/* Toolbar — glass over the canvas's own bg. */
 .tree-canvas-toolbar {
   flex-shrink: 0;
   display: flex; align-items: center; gap: .6rem;
   padding: .4rem .7rem;
-  background: rgba(6,10,15,0.9);
-  border-bottom: 1px solid rgba(48,54,61,.5);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--graph-divider);
   font-size: .76rem; color: var(--muted);
   z-index: 2;
 
@@ -35,21 +42,21 @@
   & .spacer { flex: 1; }
 
   & .toolbar-stat {
-    color: rgba(139,148,158,.55); font-size: .73rem;
+    color: var(--muted); font-size: .73rem;
     font-variant-numeric: tabular-nums;
-    & strong { color: rgba(230,237,243,.7); font-weight: 500; }
+    & strong { color: var(--text); font-weight: 500; opacity: .8; }
   }
 
   & .icon-btn {
-    background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.7); color: var(--muted);
+    background: var(--graph-hover-bg); border: 1px solid var(--border); color: var(--muted);
     border-radius: 5px; padding: .18rem .45rem;
     cursor: pointer; font-size: .82rem; line-height: 1.3;
     font-family: inherit; transition: border-color .12s, color .12s, background .12s;
-    &:hover { border-color: rgba(88,166,255,.5); color: var(--accent); background: rgba(88,166,255,.06); }
+    &:hover { border-color: var(--accent); color: var(--accent); background: var(--graph-hover-bg); }
   }
 
-  & .toolbar-sep { width: 1px; height: 14px; background: rgba(48,54,61,.6); flex-shrink: 0; }
-  & .toolbar-hint { font-size: .68rem; color: rgba(139,148,158,.3); }
+  & .toolbar-sep { width: 1px; height: 14px; background: var(--graph-divider); flex-shrink: 0; }
+  & .toolbar-hint { font-size: .68rem; color: var(--muted); opacity: .55; }
 }
 
 /* Canvas container */
@@ -61,47 +68,49 @@
 
 .tree-canvas-el { display: block; width: 100%; height: 100%; }
 
-/* Zoom controls — pill stack bottom-right */
+/* Zoom controls — pill stack bottom-right, glass over canvas */
 .tree-zoom-controls {
   position: absolute; bottom: 16px; right: 16px;
   display: flex; flex-direction: column; gap: 1px;
   z-index: 3; border-radius: 7px; overflow: hidden;
-  border: 1px solid rgba(48,54,61,.6);
-  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-glass);
 }
 
 .tree-zoom-btn {
   width: 30px; height: 28px;
-  background: rgba(10,14,20,.88);
-  border: none; color: rgba(139,148,158,.7);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: none; color: var(--muted);
   cursor: pointer; font-size: 1rem; line-height: 1;
   display: flex; align-items: center; justify-content: center;
   transition: background .1s, color .1s;
-  border-bottom: 1px solid rgba(48,54,61,.4);
+  border-bottom: 1px solid var(--graph-divider);
 
   &:last-child { border-bottom: none; }
-  &:hover { background: rgba(88,166,255,.12); color: var(--accent); }
+  &:hover { background: var(--surface-active); color: var(--accent); }
 }
 
 /* Tooltip — appears on canvas-node hover, follows the cursor. */
 .tree-node-tooltip {
   position: absolute; pointer-events: none;
-  background: rgba(8,12,18,.97);
-  border: 1px solid rgba(255,255,255,.08);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: 8px; padding: .55rem .7rem;
   font-size: .78rem; color: var(--text);
   max-width: 240px; z-index: 10;
-  box-shadow: 0 8px 32px rgba(0,0,0,.7), 0 0 0 1px rgba(0,0,0,.3);
+  box-shadow: var(--shadow-glass);
   display: none; line-height: 1.45;
 
   & .tt-name { font-weight: 600; font-size: .82rem; }
   & .tt-pkg {
     font-size: .7rem; margin-top: .12rem;
     display: inline-flex; align-items: center; gap: .3rem;
+    color: var(--muted);
   }
   & .tt-pkg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   & .tt-path {
-    color: rgba(139,148,158,.6); font-size: .68rem; margin-top: .2rem;
+    color: var(--muted); opacity: .8;
+    font-size: .68rem; margin-top: .2rem;
     word-break: break-all; font-family: ui-monospace, monospace;
   }
   & .tt-chips { display: flex; gap: .2rem; margin-top: .35rem; flex-wrap: wrap; }
@@ -112,33 +121,33 @@
     &.critical { background: var(--critical); color: #fff; }
     &.high     { background: var(--high); color: #fff; }
     &.medium   { background: var(--medium); color: #000; }
-    &.low      { background: rgba(139,148,158,.3); color: rgba(230,237,243,.8); }
+    &.low      { background: var(--low); color: #fff; opacity: .85; }
   }
-  & .tt-stat { color: rgba(139,148,158,.55); font-size: .7rem; margin-top: .25rem; }
+  & .tt-stat { color: var(--muted); font-size: .7rem; margin-top: .25rem; opacity: .8; }
 }
 
 /* Right sidebar — legend + hubs + node detail */
 .tree-info {
   width: 260px; flex-shrink: 0;
-  background: #080c11;
-  border-left: 1px solid rgba(48,54,61,.5);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border-left: 1px solid var(--graph-divider);
   overflow-y: auto; display: flex; flex-direction: column;
   font-size: .82rem;
 
   &::-webkit-scrollbar { width: 3px; }
-  &::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 }
 
 /* Legend panel — always shown, lists packages with color swatches */
 .tree-legend {
   padding: .75rem .85rem .6rem;
-  border-bottom: 1px solid rgba(48,54,61,.4);
+  border-bottom: 1px solid var(--graph-divider);
   flex-shrink: 0;
 }
 
 .tree-legend-title {
   font-size: .62rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; color: rgba(139,148,158,.5); margin-bottom: .55rem;
+  letter-spacing: .08em; color: var(--muted); opacity: .8; margin-bottom: .55rem;
 }
 
 .tree-legend-list {
@@ -151,24 +160,24 @@
   cursor: pointer; padding: .2rem .3rem; border-radius: 4px;
   transition: background .1s;
 
-  &:hover { background: rgba(255,255,255,.04); }
+  &:hover { background: var(--graph-hover-bg); }
   &.dimmed { opacity: .35; }
 }
 
 .tree-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 .tree-legend-name {
-  font-size: .75rem; color: rgba(230,237,243,.75);
+  font-size: .75rem; color: var(--text); opacity: .85;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 }
 
-.tree-legend-count { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+.tree-legend-count { font-size: .68rem; color: var(--muted); opacity: .75; flex-shrink: 0; }
 
 /* Top hubs */
 .tree-hubs {
   padding: .65rem .85rem .5rem;
-  border-bottom: 1px solid rgba(48,54,61,.4);
+  border-bottom: 1px solid var(--graph-divider);
   flex-shrink: 0;
 }
 
@@ -179,44 +188,44 @@
 
 .tree-hubs-title {
   font-size: .62rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; color: rgba(139,148,158,.5);
+  letter-spacing: .08em; color: var(--muted); opacity: .8;
 }
 
 .tree-hubs-tabs {
   display: flex; gap: 1px;
-  background: rgba(48,54,61,.5); border-radius: 4px; overflow: hidden;
+  background: var(--graph-divider); border-radius: 4px; overflow: hidden;
 }
 
 .tree-hubs-tab {
-  background: transparent; border: none; color: rgba(139,148,158,.55);
+  background: transparent; border: none; color: var(--muted);
   font-size: .65rem; font-family: inherit; cursor: pointer;
   padding: .15rem .4rem; transition: background .1s, color .1s;
   line-height: 1.4;
 
-  &:hover { color: var(--text); background: rgba(255,255,255,.06); }
-  &.active { background: rgba(88,166,255,.18); color: var(--accent); }
+  &:hover { color: var(--text); background: var(--graph-hover-bg); }
+  &.active { background: var(--surface-active); color: var(--accent); }
 }
 
 .tree-hub-item {
   display: flex; align-items: center; gap: .4rem;
   padding: .22rem .3rem; border-radius: 4px; cursor: pointer;
   transition: background .1s;
-  &:hover { background: rgba(255,255,255,.04); }
+  &:hover { background: var(--graph-hover-bg); }
 }
 
 .tree-hub-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 .tree-hub-name {
-  font-size: .74rem; color: rgba(230,237,243,.75); flex: 1;
+  font-size: .74rem; color: var(--text); opacity: .85; flex: 1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-family: ui-monospace, monospace;
 }
 
-.tree-hub-conn { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+.tree-hub-conn { font-size: .68rem; color: var(--muted); opacity: .75; flex-shrink: 0; }
 
 /* Node detail panel */
 .tree-info-empty {
-  flex: 1; padding: 2rem 1.1rem; color: rgba(139,148,158,.4); text-align: center;
+  flex: 1; padding: 2rem 1.1rem; color: var(--muted); opacity: .7; text-align: center;
   line-height: 1.7; font-size: .78rem;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: .5rem;
@@ -224,7 +233,7 @@
 
 .tree-info-empty-icon {
   width: 28px; height: 28px; border-radius: 50%;
-  border: 1px solid rgba(139,148,158,.15);
+  border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   font-size: .9rem; opacity: .5;
 }
@@ -233,12 +242,12 @@
 
 .tree-info-header {
   padding: .8rem .85rem .6rem;
-  border-bottom: 1px solid rgba(48,54,61,.4);
+  border-bottom: 1px solid var(--graph-divider);
 }
 
 .tree-info-pkg-badge {
   display: inline-flex; align-items: center; gap: .3rem;
-  font-size: .65rem; margin-bottom: .35rem; color: rgba(139,148,158,.6);
+  font-size: .65rem; margin-bottom: .35rem; color: var(--muted);
 }
 
 .tree-info-pkg-dot { width: 6px; height: 6px; border-radius: 50%; }
@@ -253,48 +262,48 @@
 .tree-info-jumps { display: flex; flex-wrap: wrap; gap: .28rem; }
 
 .tree-info-jump {
-  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.8); color: rgba(88,166,255,.8);
+  background: var(--graph-hover-bg); border: 1px solid var(--border); color: var(--accent);
   border-radius: 4px; padding: .18rem .45rem; cursor: pointer;
   font-size: .7rem; font-family: inherit;
   transition: border-color .12s, background .12s;
-  &:hover { border-color: rgba(88,166,255,.5); background: rgba(88,166,255,.08); }
+  &:hover { border-color: var(--accent); background: var(--surface-active); }
 }
 
 .tree-info-section {
-  padding: .6rem .85rem; border-bottom: 1px solid rgba(48,54,61,.3);
+  padding: .6rem .85rem; border-bottom: 1px solid var(--graph-divider);
   &:last-child { border-bottom: none; }
 }
 
 .tree-info-label {
   font-size: .6rem; text-transform: uppercase; letter-spacing: .08em;
-  color: rgba(139,148,158,.45); margin-bottom: .35rem; font-weight: 700;
+  color: var(--muted); opacity: .85; margin-bottom: .35rem; font-weight: 700;
 }
 
-.tree-info-empty-list { color: rgba(139,148,158,.35); font-size: .75rem; font-style: italic; }
+.tree-info-empty-list { color: var(--muted); opacity: .55; font-size: .75rem; font-style: italic; }
 
 .tree-info-list {
   list-style: none; padding: 0; margin: 0;
   max-height: 160px; overflow-y: auto;
 
   &::-webkit-scrollbar { width: 2px; }
-  &::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
   & li { padding: 0; }
 
   & button {
     display: block; width: 100%; text-align: left;
-    background: transparent; border: none; color: rgba(88,166,255,.75);
+    background: transparent; border: none; color: var(--accent);
     padding: .18rem .3rem; cursor: pointer;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     font-size: .71rem; border-radius: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     transition: background .1s, color .1s;
-    &:hover { background: rgba(88,166,255,.08); color: var(--accent); }
+    &:hover { background: var(--surface-active); color: var(--accent); }
   }
 
   & .external {
     display: block; padding: .18rem .3rem;
-    color: rgba(139,148,158,.35);
+    color: var(--muted); opacity: .65;
     font-family: ui-monospace, monospace;
     font-size: .71rem;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -315,5 +324,9 @@
   &.critical { background: var(--critical); color: #fff; }
   &.high     { background: var(--high); color: #fff; }
   &.medium   { background: var(--medium); color: #000; }
-  &.low      { background: rgba(139,148,158,.25); color: rgba(230,237,243,.7); }
+  &.low      { background: var(--low); color: #fff; opacity: .85; }
 }
+
+/* Light-mode variant for the in-graph low chip — needs white text on
+   the now-darker --low slate color. */
+body.theme-light .tree-info .tree-count-chip.medium { color: #fff; }

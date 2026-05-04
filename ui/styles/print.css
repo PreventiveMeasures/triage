@@ -18,13 +18,29 @@
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
 
-  /* Strip on-screen link colors. The screen palette uses var(--accent)
-     on `<a>` and var(--text) on `.file-header a` — both look wrong on
-     paper (light blue / light gray on white when printing from dark
-     mode). Falling back to `color: inherit` makes every filename / line
-     link match the body color (#000), so a linked filename reads
-     identically to the bare-text version when no repo URL is set. */
-  a { color: inherit; }
+  /* Strip on-screen link colors so a linked filename reads identically
+     to the bare-text fallback. Naming all the explicit selectors here
+     because:
+       • `a { color: var(--accent) }` (theme.css, specificity 0,0,1) —
+         covered by the generic `a` listing below.
+       • `.file-header a { color: var(--text) }` (findings.css,
+         specificity 0,1,1) — needs the matching `.file-header a` here
+         to win on source order.
+       • `.flat-group-loc .file { color: var(--text) }` (findings.css)
+         puts the color on the span around the link, so the link
+         inherits a non-body color even with `color: inherit` on the
+         <a>. Overriding the span itself fixes that.
+     `inherit` resolves to the body color (#000), so links in print
+     match the bare-text version when no repo URL is set. */
+  a, .file-header a, .flat-group-loc .file, .flat-group-loc .file a { color: inherit; }
+
+  /* Print borders. The light-mode #d1d9e0 is barely visible on white
+     paper; the dark-mode #30363d would print near-black if backgrounds
+     are forced. Override --border to a mid-gray that's clearly there
+     without dominating. Both `body` and `body.theme-light` listed so
+     this wins under either theme (theme-light has higher specificity
+     than body alone). */
+  body, body.theme-light { --border: #888; }
 
   .finding {
     break-inside: avoid; page-break-inside: avoid;

@@ -27,6 +27,16 @@
   --gradient-stop-b: rgba(248, 81, 73, 0.05);
   --gradient-stop-c: rgba(63, 185, 80, 0.04);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .18);
+  /* Graph palette — chrome around the canvas (toolbar, info sidebar,
+     tooltip, zoom controls) and the canvas's own fill. Was hardcoded
+     dark across graph.css + canvas.js; lifting it into vars lets the
+     light theme override in one place. The canvas JS reads
+     --graph-canvas-* via the JS palette in canvas.js (it can't share
+     CSS vars without a getComputedStyle round-trip per draw); the
+     values mirror the ones below. */
+  --graph-canvas-bg: #060a0f;
+  --graph-hover-bg: rgba(255, 255, 255, 0.04);
+  --graph-divider: rgba(48, 54, 61, 0.5);
 }
 
 body.theme-light {
@@ -47,6 +57,9 @@ body.theme-light {
   --gradient-stop-b: rgba(207, 34, 46, 0.06);
   --gradient-stop-c: rgba(26, 127, 55, 0.05);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .04);
+  --graph-canvas-bg: #f6f8fa;
+  --graph-hover-bg: rgba(0, 0, 0, 0.04);
+  --graph-divider: rgba(208, 215, 222, 0.7);
 
   /* Re-tint user-applied marker backgrounds for light mode. The dark
      palette (#6b1820 etc) was sized for `var(--text)`-as-light to
@@ -71,6 +84,16 @@ body.theme-light {
   & .finding .tab.tab-mark-blue  { background: #a5d6ff; border-color: #54aeff; }
   & .finding .tab.tab-mark-green { background: #aceebb; border-color: #4ac26b; }
   & .finding .tab.tab-mark-gray  { background: #d0d7de; border-color: #8c959f; }
+
+  /* Color-dot indicators (.mark-dot under findings, .stat-dot in the
+     stats row). Originals (#6b1820 etc) are dark-on-dark — readable
+     against the dark UI but dim against a light surface. Use vivid,
+     mid-saturation swatches for light mode so the color names read
+     unambiguously at the small dot size. */
+  & .finding .marks .mark-dot-red,   & .stat-dot-red   { background: #d73a49; }
+  & .finding .marks .mark-dot-blue,  & .stat-dot-blue  { background: #0969da; }
+  & .finding .marks .mark-dot-green, & .stat-dot-green { background: #2da44e; }
+  & .finding .marks .mark-dot-gray,  & .stat-dot-gray  { background: #6e7781; }
 
   /* Badge text flips to white for medium / low in light mode. The
      dark-mode rule sets `color: #000` because --medium (amber) and

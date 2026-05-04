@@ -5,6 +5,49 @@ import {
   pkgColor, pkgColorAlpha, multiLineLabel, forceLayout, radiusOfNode,
 } from './utils.js'
 
+// Canvas-side theme palette. The ctx fills are baked into draw calls
+// rather than read from CSS (a getComputedStyle round-trip per draw
+// would be wasteful), so we duplicate the chrome's intent here. Pkg
+// colors and severity tints come from utils.js and don't flip — they're
+// vivid enough to read on either backdrop. The dark-mode values mirror
+// what was hardcoded across draw(); the light-mode values invert
+// foreground/background and swap the selection ring to the accent
+// color (white-on-white wouldn't read).
+const GRAPH_THEMES = {
+  dark: {
+    bg: '#060a0f',
+    centerTint: 'rgba(20, 30, 50, 0.5)',
+    centerEdge: 'rgba(0, 0, 0, 0)',
+    dimEdge: 'rgba(255, 255, 255, 0.03)',
+    selectRing: '#fff',
+    hoverRing: 'rgba(255, 255, 255, 0.6)',
+    sevDotHalo: '#060a0f',
+    labelShadow: 'rgba(6, 10, 15, 0.98)',
+    labelOutline: 'rgba(6, 10, 15, 0.9)',
+    labelDefault: 'rgba(200, 210, 225, 0.78)',
+    labelHover: 'rgba(230, 237, 243, 0.95)',
+    labelSelected: '#fff',
+  },
+  light: {
+    bg: '#f6f8fa',
+    centerTint: 'rgba(208, 222, 240, 0.4)',
+    centerEdge: 'rgba(255, 255, 255, 0)',
+    dimEdge: 'rgba(0, 0, 0, 0.04)',
+    selectRing: '#0969da',
+    hoverRing: 'rgba(0, 0, 0, 0.45)',
+    sevDotHalo: '#f6f8fa',
+    labelShadow: 'rgba(255, 255, 255, 0.95)',
+    labelOutline: 'rgba(255, 255, 255, 0.9)',
+    labelDefault: 'rgba(50, 60, 80, 0.85)',
+    labelHover: 'rgba(20, 25, 35, 0.95)',
+    labelSelected: '#000',
+  },
+}
+
+function currentGraphTheme() {
+  return document.body.classList.contains('theme-light') ? GRAPH_THEMES.light : GRAPH_THEMES.dark
+}
+
 // Force-directed canvas + toolbar. Filters out clean files when
 // `tree.showAll` is off. Layout cached on (tree, showAll).
 export function renderTreeCanvas(treeData, ownCounts, transitiveCounts) {
@@ -170,18 +213,19 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
   // ── Main draw ─────────────────────────────────────────────────────────────
   function draw() {
     if (!nodes || !nodes.length) return
+    const T = currentGraphTheme()
     const w = canvas.width / dpr, h = canvas.height / dpr
     const ctx = canvas.getContext('2d')
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    // Background — very dark navy
-    ctx.fillStyle = '#060a0f'
+    // Background — flat fill in the theme's canvas color
+    ctx.fillStyle = T.bg
     ctx.fillRect(0, 0, w, h)
 
-    // Subtle center radial
+    // Subtle center radial — adds depth without dominating
     const cg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.6)
-    cg.addColorStop(0, 'rgba(20,30,50,0.5)')
-    cg.addColorStop(1, 'rgba(0,0,0,0)')
+    cg.addColorStop(0, T.centerTint)
+    cg.addColorStop(1, T.centerEdge)
     ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h)
 
     ctx.save()
@@ -230,7 +274,7 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
         ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.9)
         ctx.lineWidth = 1.8 / zoom
       } else if (isDim) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.03)'
+        ctx.strokeStyle = T.dimEdge
         ctx.lineWidth = 0.5 / zoom
       } else {
         ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.22)
@@ -314,11 +358,11 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
       // Selection / hover stroke
       if (isSelected) {
         ctx.beginPath(); ctx.arc(n.x, n.y, r + 1.5 / zoom, 0, Math.PI * 2)
-        ctx.strokeStyle = '#fff'
+        ctx.strokeStyle = T.selectRing
         ctx.lineWidth = 2 / zoom; ctx.stroke()
       } else if (isHov) {
         ctx.beginPath(); ctx.arc(n.x, n.y, r + 1 / zoom, 0, Math.PI * 2)
-        ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+        ctx.strokeStyle = T.hoverRing
         ctx.lineWidth = 1.5 / zoom; ctx.stroke()
       }
 
@@ -326,9 +370,10 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
       if (findingColor) {
         const br = Math.max(2.5, r * 0.36)
         const bx = n.x + r * 0.72, by = n.y - r * 0.72
-        // Dark halo
+        // Halo matches the canvas bg so the dot reads as cleanly cut
+        // from the node circle, no matter what hue the node has.
         ctx.beginPath(); ctx.arc(bx, by, br + 1.2, 0, Math.PI * 2)
-        ctx.fillStyle = '#060a0f'; ctx.fill()
+        ctx.fillStyle = T.sevDotHalo; ctx.fill()
         ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2)
         ctx.fillStyle = findingColor; ctx.fill()
       }
@@ -347,15 +392,16 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
         const lineH = baseSize * 1.3
         const ty = n.y + r + baseSize + 2.5
 
-        // Shadow/outline for readability on any background
-        ctx.shadowColor = 'rgba(6,10,15,0.98)'; ctx.shadowBlur = 4
-        ctx.strokeStyle = 'rgba(6,10,15,0.9)'; ctx.lineWidth = 3 / zoom
+        // Shadow/outline for readability on any background — same hue
+        // as the canvas bg so labels read against both bg and a node.
+        ctx.shadowColor = T.labelShadow; ctx.shadowBlur = 4
+        ctx.strokeStyle = T.labelOutline; ctx.lineWidth = 3 / zoom
         ctx.lineJoin = 'round'
         ctx.strokeText(lines[0], n.x, ty)
         if (lines[1]) ctx.strokeText(lines[1], n.x, ty + lineH)
 
         ctx.shadowBlur = 0
-        ctx.fillStyle = isSelected ? '#fff' : isHov ? 'rgba(230,237,243,0.95)' : 'rgba(200,210,225,0.78)'
+        ctx.fillStyle = isSelected ? T.labelSelected : isHov ? T.labelHover : T.labelDefault
         lines.forEach((line, i) => ctx.fillText(line, n.x, ty + i * lineH))
       }
     }
