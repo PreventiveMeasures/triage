@@ -50,7 +50,7 @@
   transition: border-color .15s;
 
   &:hover, &.active { border-color: var(--accent); }
-  &.active { background: #1a2233; }
+  &.active { background: var(--surface-active); }
   & strong { display: block; font-size: 1.2rem; }
 }
 

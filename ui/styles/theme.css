@@ -1,9 +1,55 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Default = dark. The light theme is opt-in via `body.theme-light` —
+   set by view/theme.js from a localStorage flag. We deliberately do
+   NOT honor `prefers-color-scheme`: dark-by-default is part of the
+   product's identity (the report viewer is meant to feel like an IDE
+   panel, not a document). The graph-tab canvas stays dark in both
+   modes — colors there are baked into draw calls, not CSS, and the
+   canvas reads as a stand-alone visualization regardless. */
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
   --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Surface tints used as one-off backgrounds (sidebar item hover,
+     `.tab.active`, `.stat.active`, `.file-item.current`). Pulled into
+     vars so the light theme can re-tint them in one place rather than
+     hunting through every hex literal. */
+  --surface-active: #1a2233;
+}
+
+body.theme-light {
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --border: #d1d9e0;
+  --text: #1f2328;
+  --muted: #59636e;
+  --accent: #0969da;
+  --critical-bg: #ffebe9;
+  --critical: #cf222e;
+  --high: #bc4c00;
+  --medium: #9a6700;
+  --low: #6e7781;
+  --green: #1a7f37;
+  --surface-active: #ddf4ff;
+
+  /* Re-tint user-applied marker backgrounds for light mode. The dark
+     palette (#6b1820 etc) was sized for `var(--text)`-as-light to
+     remain readable; in light mode that text turns dark and would
+     vanish on those same backgrounds. The lighter swatches here keep
+     the same hue family but read as "soft tint" against a light page,
+     and dark text remains legible on top. The mark-dot / stat-dot
+     fills (small color swatches, no text inside) keep their dark
+     palette — they're indicators, not text containers, and the dark
+     dots stay visible on a light surface. */
+  & .finding.mark-red   { background: #ffebe9; }
+  & .finding.mark-blue  { background: #ddf4ff; }
+  & .finding.mark-green { background: #dafbe1; }
+  & .finding.mark-gray  { background: #eaeef2; }
+  & .finding .tab.tab-mark-red   { background: #ffebe9; border-color: #ffcecb; }
+  & .finding .tab.tab-mark-blue  { background: #ddf4ff; border-color: #80ccff; }
+  & .finding .tab.tab-mark-green { background: #dafbe1; border-color: #6fdd8b; }
+  & .finding .tab.tab-mark-gray  { background: #eaeef2; border-color: #afb8c1; }
 }
 
 body {
@@ -18,3 +64,23 @@ a { color: var(--accent); text-decoration: none; }
    constrained + overflow hidden, so the report's tall finding lists
    only push this column, not the sidebar's file list. */
 #main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
+
+/* Theme toggle — fixed top-right, always visible (across drop zone,
+   findings, graph, fullscreen). Hidden in print (toolbar widgets are
+   noise on paper). The icon glyph itself is set by view/theme.js so
+   the button can swap between sun/moon without a re-render. */
+#theme-toggle {
+  position: fixed; top: .5rem; right: .5rem;
+  z-index: 1000;
+  width: 30px; height: 30px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; font-size: 1rem; line-height: 1;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, color .12s, background .12s;
+
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}
+
+@media print { #theme-toggle { display: none; } }

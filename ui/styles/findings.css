@@ -100,7 +100,7 @@
     font-family: inherit;
 
     &:hover { border-color: var(--accent); }
-    &.active { border-color: var(--accent); background: #1a2233; }
+    &.active { border-color: var(--accent); background: var(--surface-active); }
 
     &.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
     &.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }

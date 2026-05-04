@@ -49,10 +49,10 @@
   cursor: pointer; font-size: .8rem; font-family: inherit;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 
-  &:hover { background: #1a2233; }
+  &:hover { background: var(--surface-active); }
 }
 
-.file-item.current button.file-name { background: #1a2233; color: var(--accent); }
+.file-item.current button.file-name { background: var(--surface-active); color: var(--accent); }
 
 .sidebar-actions {
   padding: .5rem .75rem; border-top: 1px solid var(--border);
