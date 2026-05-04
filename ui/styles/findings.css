@@ -180,6 +180,11 @@
   & .marks {
     display: flex; gap: .35rem; justify-content: flex-end;
     margin-top: .4rem; align-items: center;
+    /* Buttons in this row carry single-glyph labels (× / restore /
+       severity badge) — they're controls, not content, so prevent the
+       glyph from being caught by drag-selection. Also kills the
+       blue text-highlight flash on click. */
+    user-select: none;
 
     & .mark-dot {
       width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
