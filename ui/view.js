@@ -1,5 +1,14 @@
-const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
-const NODE_MODULES_RE = /(^|\/)node_modules\//
+import { listFiles, saveFile, readFile, deleteFile } from './storage.js'
+import {
+  SEVERITY_ORDER,
+  esc, isModule, stripPackagePrefix, stripExportMarker, findingText, prettyModel, commonPrefix,
+  treeAnchor, computeFindingCountsByFile, computeTransitiveCounts,
+} from './utils.js'
+import {
+  tree, cleanupGraphInteraction,
+  renderTreeCanvas, renderTreeSidebarFull, attachTreeGraphInteraction, renderTreeView,
+} from './graph.js'
+
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
 // `ingestReport` lifts any of these from the report header onto each
@@ -7,14 +16,6 @@ const NODE_MODULES_RE = /(^|\/)node_modules\//
 // uniformly without branching on whether the file came from a
 // deduplicated dump.
 const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
-// Persistent file storage backs the sidebar. OPFS — Origin Private
-// File System — is the preferred layer (real files, larger quota); on
-// origins where OPFS is unavailable (file://, older browsers) we
-// transparently fall back to localStorage with each report stored
-// gzipped + base64 under a fixed prefix. Both layers key by basename;
-// filename collisions overwrite.
-const OPFS_DIR = 'deepview-reports'
-const LS_REPORT_PREFIX = 'deepview.report:'
 // localStorage key for the last-viewed file — restored on page load so
 // the user picks back up where they left off.
 const LAST_FILE_KEY = 'deepview.lastFile'
@@ -22,102 +23,6 @@ const dropZone = document.getElementById('drop-zone')
 const report = document.getElementById('report')
 const sidebar = document.getElementById('sidebar')
 const fileList = document.getElementById('file-list')
-
-let opfsWarned = false
-async function getOpfsDir() {
-  try {
-    const root = await navigator.storage.getDirectory()
-    return await root.getDirectoryHandle(OPFS_DIR, { create: true })
-  } catch (err) {
-    if (!opfsWarned) {
-      opfsWarned = true
-      // file:// and older browsers reject OPFS. We fall back to gzipped
-      // localStorage automatically; surface this once so a user wondering
-      // about quota / size limits sees what's happening.
-      console.warn('OPFS unavailable, falling back to gzipped localStorage (limited quota).', err)
-    }
-    return null
-  }
-}
-
-// Compress / decompress JSON text via gzip + base64 for the localStorage
-// fallback. CompressionStream / DecompressionStream are well supported
-// (same primitive used by loadTriage / saveTriage). Base64 is the
-// transport because localStorage values are strings.
-async function gzipString(text) {
-  const bytes = new TextEncoder().encode(text)
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
-  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
-  return arr.toBase64()
-}
-async function gunzipString(b64) {
-  const bytes = Uint8Array.fromBase64(b64)
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
-  return new TextDecoder().decode(arr)
-}
-
-// Storage layer: try OPFS first (real files, large quota), fall back to
-// gzipped localStorage when OPFS is unavailable. Each function probes
-// OPFS once per call — caching is unnecessary because getDirectoryHandle
-// is cheap. localStorage paths read/write a key prefixed with
-// LS_REPORT_PREFIX; the file list is enumerated by scanning that prefix.
-async function listFiles() {
-  const dir = await getOpfsDir()
-  if (dir) {
-    const names = []
-    for await (const [name] of dir.entries()) names.push(name)
-    return names.sort()
-  }
-  const names = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key && key.startsWith(LS_REPORT_PREFIX)) names.push(key.slice(LS_REPORT_PREFIX.length))
-  }
-  return names.sort()
-}
-
-async function saveFile(name, content) {
-  const dir = await getOpfsDir()
-  if (dir) {
-    // Remove first so a shorter overwrite shrinks the underlying file.
-    try { await dir.removeEntry(name) } catch {}
-    const fh = await dir.getFileHandle(name, { create: true })
-    const writable = await fh.createWritable()
-    await writable.write(content)
-    await writable.close()
-    return
-  }
-  const compressed = await gzipString(content)
-  try {
-    localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
-  } catch (err) {
-    // Most likely QuotaExceededError. Re-throw so the drop handler can
-    // surface a useful message to the user instead of silently dropping.
-    throw new Error(`localStorage write failed for ${name}: ${err.message}`)
-  }
-}
-
-async function readFile(name) {
-  const dir = await getOpfsDir()
-  if (dir) {
-    const fh = await dir.getFileHandle(name)
-    const file = await fh.getFile()
-    return await file.text()
-  }
-  const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
-  if (compressed === null) throw new Error(`File not found: ${name}`)
-  return await gunzipString(compressed)
-}
-
-async function deleteFile(name) {
-  const dir = await getOpfsDir()
-  if (dir) {
-    try { await dir.removeEntry(name) } catch {}
-    return
-  }
-  localStorage.removeItem(LS_REPORT_PREFIX + name)
-}
 
 // Exactly one OPFS-backed report is active at a time — the sidebar
 // switches between them; merging is gone. Headless callers
@@ -136,19 +41,6 @@ let currentFile = null
 // a `tree` block with more than one file; switching files / loading
 // a tree-less report auto-falls back to 'findings' inside render().
 let currentView = 'findings'
-// Currently-selected file in the tree view's right sidebar; null = no
-// selection (sidebar shows an empty hint). Cleared when switching to a
-// different report.
-let selectedTreeFile = null
-// Toggle: include files with no own AND no transitive findings in the
-// graph. Off by default — clean leaf utilities clutter the canvas
-// without telling the reader anything they don't already know.
-let treeShowAll = false
-// Cache for the force-directed layout. Re-computing every render
-// (e.g. on tab switch / sidebar selection) would be wasteful; keyed
-// off the `tree` reference + the show-all toggle so a different
-// report or a toggle change invalidates and re-runs.
-let _treeLayoutCache = null
 // Severity + color filters are multi-select: empty Set = "no filter, show
 // everything" (selecting every option individually is equivalent — the
 // predicate passes when every finding's value is in the Set). UI-wise
@@ -474,10 +366,9 @@ async function switchToFile(name, content) {
   // Reset tree-tab state so the new report opens clean: no leftover
   // selection from the previous report's file list, and the layout
   // cache invalidates (a new tree → re-layout).
-  selectedTreeFile = null
-  _treeLayoutCache = null
-  if (_graphState?._cleanupListeners) { _graphState._cleanupListeners(); }
-  _graphState = null
+  tree.selected = null
+  tree.layoutCache = null
+  cleanupGraphInteraction()
   try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
   if (content === undefined) {
     try {
@@ -501,10 +392,9 @@ async function deleteCurrent() {
   await deleteFile(name)
   currentFile = null
   reports = []
-  selectedTreeFile = null
-  _treeLayoutCache = null
-  if (_graphState?._cleanupListeners) { _graphState._cleanupListeners(); }
-  _graphState = null
+  tree.selected = null
+  tree.layoutCache = null
+  cleanupGraphInteraction()
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')
   report.innerHTML = ''
@@ -630,23 +520,6 @@ window.__setFilters = ({ severities, confMin } = {}) => {
   render()
 }
 
-function esc(str) {
-  const el = document.createElement('span')
-  el.textContent = str
-  return el.innerHTML
-}
-
-function isModule(file) { return NODE_MODULES_RE.test(file) }
-
-// Strip the `node_modules/<pkg>/` prefix so the path is rooted at the
-// package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
-// `node_modules/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
-// the LAST `/node_modules/` so nested layouts strip the innermost
-// package, matching the package-name extraction at export time.
-function stripPackagePrefix(file) {
-  return file.match(/^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
-}
-
 // `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
 // wins over the user-typed repo URL when available — it points at the
 // actual upstream of a node_modules dependency rather than at the project
@@ -671,29 +544,6 @@ function lineLink(file, line, githubRepo) {
   if (!url) return text
   const lineNum = parseInt(line, 10)
   return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
-}
-
-// Strip `[export: <name>]` markers from prose when they match the
-// finding's own `exportName`. Isolate-mode injects these markers into
-// every finding/CRITICAL line of a merged per-file response so the
-// merge stays traceable to individual exports (see src/isolate.js),
-// but once post-process has lifted the name out into `f.exportName`
-// the inline marker just duplicates metadata already on the finding.
-// Markers whose name does NOT match `f.exportName` are left alone —
-// they're still useful context (e.g. "this export affects <other>").
-function stripExportMarker(text, exportName) {
-  if (!exportName || !text) return text
-  const escaped = exportName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
-}
-
-function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
-}
-
-function prettyModel(model) {
-  if (!model) return model
-  return model.replace(/^[^/]+\//u, '').replace(/^claude-/, '').replaceAll('-', ' ')
 }
 
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
@@ -826,1264 +676,6 @@ function renderTabBody(f, isActive, idx = 0, total = 1) {
 // Marks row at the bottom is group-level: color dots act on the active
 // tab; delete acts on the whole group when conflict-free, on the active
 // tab when conflicted. See click handler below for the inverse.
-// File path → in-page anchor id. Replaces every non-word char with an
-// underscore so paths with `/` `.` `@` (node_modules / scoped packages)
-// produce valid id attributes.
-function treeAnchor(file) {
-  return 'tree-' + file.replace(/[^\w-]+/gu, '_')
-}
-
-// file → { critical, high, medium, low } finding-count map. Used by both
-// the tree cards and the SVG visualization to surface findings density
-// per file at a glance. Counts INDIVIDUAL findings (not groups) so the
-// numbers match the per-file stats a user would otherwise scan in the
-// findings view.
-function computeFindingCountsByFile(allGroups) {
-  const counts = new Map()
-  for (const g of allGroups) {
-    for (const f of g) {
-      if (!counts.has(f.file)) counts.set(f.file, { critical: 0, high: 0, medium: 0, low: 0 })
-      const c = counts.get(f.file)
-      if (c[f.severity] !== undefined) c[f.severity]++
-    }
-  }
-  return counts
-}
-
-// Short, distinguishing label for a node. Last two path segments —
-// `lib/foo.js` from `src/lib/foo.js`, `queue/index.mjs` from
-// `node_modules/@chalker/queue/index.mjs`. Full path is always
-// available via the node's `<title>` tooltip and the linked card.
-function svgNodeLabel(file, maxLen = 22) {
-  const parts = file.split('/')
-  const tail = parts.slice(-2).join('/')
-  return tail.length <= maxLen ? tail : '…' + tail.slice(-(maxLen - 1))
-}
-
-// Sanitize file path → SVG-safe id. Used to cross-reference nodes and
-// edges from the post-render hover-highlight wiring.
-function svgNodeId(file) { return 'tn-' + file.replace(/[^\w-]+/gu, '_') }
-
-// Numeric sort with a stable tiebreak — used by the barycenter passes
-// below, where ties on the computed mean would otherwise depend on
-// unstable browser sort behavior.
-function byBary(bary) {
-  return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
-}
-
-// Group key for clustering + coloring nodes in the graph. npm packages
-// stay grouped by package name. Own source (anything outside
-// node_modules) groups by top-level directory — so `src/...` files all
-// share a color, `playground/...` files share another. Files at the
-// repo root cluster under '/' (rare).
-function packageOf(file) {
-  if (!file) return null
-  const npm = file.match(/^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u)
-  if (npm) return npm[1]
-  const slash = file.indexOf('/')
-  return slash > 0 ? file.slice(0, slash) : '/'
-}
-
-// Stable hue per package / dir name. Same group → same color across
-// the canvas, so eyes can pick out clusters at a glance. Hash → HSL
-// hue; saturation/lightness tuned for legibility on the dark theme.
-// Falls back to a neutral blue for nameless input.
-function packageColor(pkg) {
-  if (!pkg) return 'hsl(208, 65%, 58%)'
-  let h = 0
-  for (const c of pkg) h = (h * 31 + c.charCodeAt(0)) | 0
-  return `hsl(${((h % 360) + 360) % 360}, 60%, 56%)`
-}
-
-// Wrap a long basename across at most two lines. Splits at the last
-// hyphen / underscore that keeps both halves under `maxLine`. If no
-// suitable split exists, truncates with a trailing ellipsis. Returns
-// an array of 1-2 strings ready to render as <text>/<tspan>.
-function multiLineLabel(file, maxLine = 18) {
-  const base = file.split('/').pop() ?? file
-  if (base.length <= maxLine) return [base]
-  const seps = []
-  for (let i = 0; i < base.length; i++) if (base[i] === '-' || base[i] === '_') seps.push(i)
-  if (seps.length === 0) return [base.slice(0, maxLine - 1) + '…']
-  // Pick the split point closest to the middle that keeps both halves
-  // within maxLine. Falls back to the most-balanced of any choice if
-  // none fits cleanly (still better than mid-token truncation).
-  const mid = base.length / 2
-  let best = null
-  for (const s of seps) {
-    const a = s + 1, b = base.length - s - 1
-    if (a > maxLine || b > maxLine) continue
-    const score = Math.abs(s - mid)
-    if (!best || score < best.score) best = { s, score }
-  }
-  if (!best) {
-    // No clean split — pick the split with smallest max(a, b) and let
-    // the longer side wrap visually rather than truncate the basename.
-    for (const s of seps) {
-      const max = Math.max(s + 1, base.length - s - 1)
-      if (!best || max < best.max) best = { s, max }
-    }
-  }
-  return [base.slice(0, best.s + 1), base.slice(best.s + 1)]
-}
-
-// transitive subtree finding counts: for each file, sum of own counts
-// across every file reachable through its `imports` (recursively),
-// excluding the file itself. Cycles handled by a visited set.
-function computeTransitiveCounts(tree, ownCounts) {
-  const transitive = new Map()
-  for (const file of Object.keys(tree)) {
-    const visited = new Set()
-    const stack = [...((tree[file].imports ?? []).filter((i) => tree[i]))]
-    while (stack.length > 0) {
-      const dep = stack.pop()
-      if (visited.has(dep)) continue
-      visited.add(dep)
-      for (const next of (tree[dep]?.imports ?? [])) if (tree[next]) stack.push(next)
-    }
-    const sum = { critical: 0, high: 0, medium: 0, low: 0 }
-    for (const f of visited) {
-      const c = ownCounts.get(f)
-      if (c) for (const k of ['critical', 'high', 'medium', 'low']) sum[k] += c[k]
-    }
-    transitive.set(file, sum)
-  }
-  return transitive
-}
-
-// Has-issues predicate: own findings OR something in its subtree has
-// findings. Used to filter out clean files when `treeShowAll` is off.
-function fileHasFindings(file, ownCounts, transitiveCounts) {
-  const own = ownCounts.get(file)
-  const tr = transitiveCounts.get(file)
-  const total = (c) => c ? c.critical + c.high + c.medium + c.low : 0
-  return total(own) > 0 || total(tr) > 0
-}
-
-// Fruchterman-Reingold force-directed layout.
-// Width/height are passed in from the actual canvas size at layout time,
-// so the initial seeding and spring constants match the real viewport.
-function forceLayout(files, importsOf, layoutW, layoutH) {
-  const N = files.length
-  const width = layoutW || 1100, height = layoutH || 760
-  // k is the "ideal edge length" — larger canvas → more spread
-  const k = Math.sqrt((width * height) / Math.max(N, 1)) * 1.1
-
-  const seed = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h }
-
-  // Seed nodes on a grid + jitter rather than a circle — grid seeds
-  // produce fewer initial edge crossings than a ring and converge faster.
-  const cols = Math.ceil(Math.sqrt(N * width / height))
-  const rows = Math.ceil(N / cols)
-  const cellW = width / (cols + 1), cellH = height / (rows + 1)
-  const nodes = files.map((file, i) => {
-    const col = i % cols, row = Math.floor(i / cols)
-    const h = seed(file)
-    return {
-      file,
-      x: (col + 1) * cellW + ((h % 100) - 50) * cellW * 0.4,
-      y: (row + 1) * cellH + (((h >> 7) % 100) - 50) * cellH * 0.4,
-      dx: 0, dy: 0,
-    }
-  })
-  const idx = new Map(nodes.map((n, i) => [n.file, i]))
-
-  const edges = []
-  for (const f of files) {
-    for (const imp of importsOf.get(f) ?? []) {
-      if (idx.has(imp)) edges.push([idx.get(f), idx.get(imp)])
-    }
-  }
-
-  // Group by package for centroid pull.
-  const byPkg = new Map()
-  for (let i = 0; i < N; i++) {
-    const p = packageOf(nodes[i].file) ?? '__own__'
-    if (!byPkg.has(p)) byPkg.set(p, [])
-    byPkg.get(p).push(i)
-  }
-
-  // More iterations for larger graphs; fewer for tiny ones.
-  const iterations = Math.min(500, Math.max(180, 100 + N * 3))
-  const tempInit = Math.min(width, height) / 6
-  const tempFinal = 0.3
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const t = tempInit * Math.pow(tempFinal / tempInit, iter / iterations)
-    for (const n of nodes) { n.dx = 0; n.dy = 0 }
-
-    // Repulsion — every pair (Coulomb-like).
-    for (let i = 0; i < N; i++) {
-      for (let j = i + 1; j < N; j++) {
-        const a = nodes[i], b = nodes[j]
-        let dx = a.x - b.x, dy = a.y - b.y
-        let dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 0.01) {
-          const h = seed(a.file + b.file)
-          dx = ((h % 100) - 50) * 0.01 || 0.5
-          dy = (((h >> 7) % 100) - 50) * 0.01 || 0.5
-          dist = Math.sqrt(dx * dx + dy * dy)
-        }
-        const force = (k * k) / dist
-        a.dx += (dx / dist) * force; a.dy += (dy / dist) * force
-        b.dx -= (dx / dist) * force; b.dy -= (dy / dist) * force
-      }
-    }
-
-    // Attraction along edges.
-    for (const [i, j] of edges) {
-      const a = nodes[i], b = nodes[j]
-      const dx = a.x - b.x, dy = a.y - b.y
-      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01
-      const force = (dist * dist) / k
-      a.dx -= (dx / dist) * force; a.dy -= (dy / dist) * force
-      b.dx += (dx / dist) * force; b.dy += (dy / dist) * force
-    }
-
-    // Package centroid pull — stronger early (helps cluster formation),
-    // fades as temperature drops so structural forces dominate later.
-    const clusterStrength = 0.055 * Math.min(1, t / (tempInit * 0.3))
-    for (const [, indices] of byPkg) {
-      if (indices.length < 2) continue
-      let cx = 0, cy = 0
-      for (const i of indices) { cx += nodes[i].x; cy += nodes[i].y }
-      cx /= indices.length; cy /= indices.length
-      for (const i of indices) {
-        nodes[i].dx += (cx - nodes[i].x) * clusterStrength
-        nodes[i].dy += (cy - nodes[i].y) * clusterStrength
-      }
-    }
-
-    // Apply with cooling + margin clamp.
-    const margin = 50
-    for (const n of nodes) {
-      const disp = Math.sqrt(n.dx * n.dx + n.dy * n.dy) || 0.01
-      n.x += (n.dx / disp) * Math.min(disp, t)
-      n.y += (n.dy / disp) * Math.min(disp, t)
-      n.x = Math.max(margin, Math.min(width - margin, n.x))
-      n.y = Math.max(margin, Math.min(height - margin, n.y))
-    }
-  }
-
-  return nodes
-}
-
-// ─── Canvas-based graph renderer ────────────────────────────────────────────
-let _graphState = null
-
-// Severity palette
-const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
-
-function totalFindings(counts) {
-  return counts ? counts.critical + counts.high + counts.medium + counts.low : 0
-}
-function indicatorFor(counts) {
-  if (!counts) return null
-  for (const sev of ['critical', 'high', 'medium', 'low']) {
-    if (counts[sev] > 0) return SEV_COLORS[sev]
-  }
-  return null
-}
-
-// ── Vivid per-package color palette ─────────────────────────────────────────
-// Each package gets a vivid, high-saturation hue so clusters read distinctly.
-// We use a set of hand-tuned anchor hues spread around the wheel to avoid
-// muddy near-neighbors, then hash the package name to the closest slot.
-// Curated flat palette — 20 perceptually distinct colors optimized for
-// dark backgrounds. Drawn from Tableau 20 + adjusted for dark-UI legibility.
-// Ordered so adjacent indices have maximum hue distance (not sequential),
-// meaning even small graphs with 3-4 packages get very distinct colors.
-const PKG_PALETTE = [
-  '#4e9af1', // blue
-  '#f28e2b', // orange
-  '#59a14f', // green
-  '#e15759', // red
-  '#76b7b2', // teal
-  '#edc948', // yellow
-  '#b07aa1', // purple
-  '#ff9da7', // pink
-  '#9c755f', // brown
-  '#bab0ac', // gray
-  '#f1ce63', // gold
-  '#d37295', // rose
-  '#a0cbe8', // light blue
-  '#86bcb6', // sage
-  '#8cd17d', // light green
-  '#b6992d', // dark gold
-  '#499894', // dark teal
-  '#e15759', // crimson (intentional near-repeat — far enough in ordering)
-  '#79706e', // warm gray
-  '#d4a6c8', // lavender
-]
-const _pkgColorCache = new Map()
-function pkgColor(pkg) {
-  if (_pkgColorCache.has(pkg)) return _pkgColorCache.get(pkg)
-  const key = pkg ?? '__own__'
-  let h = 0
-  for (const c of key) h = (h * 37 + c.charCodeAt(0)) | 0
-  // Spread indices: interleave halves so sequential packages get distant hues
-  const raw = ((h % PKG_PALETTE.length) + PKG_PALETTE.length) % PKG_PALETTE.length
-  const idx = (raw * 7 + 3) % PKG_PALETTE.length
-  const col = PKG_PALETTE[idx]
-  _pkgColorCache.set(pkg, col)
-  return col
-}
-function pkgColorAlpha(pkg, a) {
-  const col = pkgColor(pkg)
-  // Parse hex → rgba
-  const r = parseInt(col.slice(1, 3), 16)
-  const g = parseInt(col.slice(3, 5), 16)
-  const b = parseInt(col.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${a})`
-}
-
-// Radius formula: much wider range so hubs really stand out.
-function radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts) {
-  const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
-  const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.2
-  return Math.max(4, 4 + Math.pow(conn, 0.62) * 3.2 + Math.sqrt(findings) * 1.4)
-}
-
-// Force-directed canvas + toolbar. Filters out clean files when
-// `treeShowAll` is off. Layout cached on (tree, showAll).
-function renderTreeCanvas(tree, ownCounts, transitiveCounts) {
-  const allFiles = Object.keys(tree)
-  const files = treeShowAll
-    ? allFiles
-    : allFiles.filter((f) => fileHasFindings(f, ownCounts, transitiveCounts))
-  const fileSet = new Set(files)
-
-  const importsOf = new Map()
-  const importedBy = new Map()
-  for (const f of files) {
-    const imps = (tree[f].imports ?? []).filter((i) => fileSet.has(i))
-    importsOf.set(f, imps)
-    for (const imp of imps) {
-      if (!importedBy.has(imp)) importedBy.set(imp, [])
-      importedBy.get(imp).push(f)
-    }
-  }
-
-  const hiddenCount = allFiles.length - files.length
-  let html = ''
-  html += '<div class="tree-canvas-toolbar">'
-  html += `<label><input type="checkbox" id="tree-show-all"${treeShowAll ? ' checked' : ''}> show all</label>`
-  html += '<div class="toolbar-sep"></div>'
-  html += '<span class="toolbar-stat"><strong>' + files.length + '</strong>/<strong>' + allFiles.length + '</strong> files'
-  if (hiddenCount > 0) html += ' · <strong>' + hiddenCount + '</strong> clean hidden'
-  html += '</span>'
-  html += '<span class="spacer"></span>'
-  html += '<span class="toolbar-hint">drag · scroll to zoom</span>'
-  html += `<button type="button" id="tree-fullscreen" class="icon-btn" title="toggle fullscreen">⛶</button>`
-  html += '</div>'
-
-  if (files.length === 0) {
-    html += '<div class="tree-canvas-scroll" style="display:flex;align-items:center;justify-content:center;color:rgba(139,148,158,.5);text-align:center;padding:3rem 1rem;font-size:.82rem;">No files match the current filter.<br>Toggle "show all" above.</div>'
-    return html
-  }
-
-  // Force layout (cached). We store files/importsOf so attachTreeGraphInteraction
-  // can run the actual layout once the canvas has real dimensions.
-  let nodes = null
-  if (_treeLayoutCache && _treeLayoutCache.tree === tree && _treeLayoutCache.showAll === treeShowAll) {
-    nodes = _treeLayoutCache.nodes
-  }
-  // nodes may still be null here — attachTreeGraphInteraction will compute it
-  // after measuring the canvas. Store files+importsOf so it can do so.
-
-  // Package legend data — sorted by node count desc, top 14.
-  const pkgCounts = new Map()
-  for (const f of files) {
-    const p = packageOf(f) ?? '__own__'
-    pkgCounts.set(p, (pkgCounts.get(p) ?? 0) + 1)
-  }
-  const topPkgs = [...pkgCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14)
-
-  _graphState = {
-    nodes, edges: null, nodeByFile: new Map(), importsOf, importedBy,
-    ownCounts, transitiveCounts, files, fileSet, topPkgs,
-    _needsRefit: true, _hubsTab: _graphState?._hubsTab ?? 'issues',
-    // Store for deferred layout (computed in attachTreeGraphInteraction with real canvas size)
-    _layoutFiles: files, _layoutImportsOf: importsOf, _layoutTree: tree, _layoutShowAll: treeShowAll,
-  }
-
-  html += '<div class="tree-canvas-scroll"><canvas class="tree-canvas-el" id="tree-canvas"></canvas></div>'
-  html += '<div class="tree-zoom-controls">'
-  html += '<button type="button" class="tree-zoom-btn" id="zoom-in" title="zoom in">+</button>'
-  html += '<button type="button" class="tree-zoom-btn" id="zoom-out" title="zoom out">−</button>'
-  html += '<button type="button" class="tree-zoom-btn" id="zoom-fit" title="fit to view" style="font-size:.65rem;letter-spacing:-.5px;">fit</button>'
-  html += '</div>'
-  html += '<div class="tree-node-tooltip" id="tree-tooltip"></div>'
-  return html
-}
-
-// Build the right-sidebar HTML (legend + hubs + node detail).
-function renderTreeSidebarFull(file, tree, ownCounts, transitiveCounts) {
-  const allFiles = Object.keys(tree)
-  const files = treeShowAll
-    ? allFiles
-    : allFiles.filter((f) => fileHasFindings(f, ownCounts, transitiveCounts))
-
-  const importsOf = new Map()
-  const importedBy = new Map()
-  for (const f of files) {
-    const imps = (tree[f].imports ?? []).filter((i) => new Set(files).has(i))
-    importsOf.set(f, imps)
-    for (const imp of imps) {
-      if (!importedBy.has(imp)) importedBy.set(imp, [])
-      importedBy.get(imp).push(f)
-    }
-  }
-
-  // Package legend
-  const pkgCounts = new Map()
-  for (const f of files) {
-    const p = packageOf(f) ?? '__own__'
-    pkgCounts.set(p, (pkgCounts.get(p) ?? 0) + 1)
-  }
-  const topPkgs = [...pkgCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14)
-  const selectedPkg = file ? (packageOf(file) ?? '__own__') : null
-
-  let html = ''
-
-  // Package legend section
-  if (topPkgs.length > 0) {
-    html += '<div class="tree-legend">'
-    html += '<div class="tree-legend-title">Packages</div>'
-    html += '<ul class="tree-legend-list">'
-    for (const [pkg, count] of topPkgs) {
-      const col = pkgColor(pkg)
-      const dimmed = selectedPkg && pkg !== selectedPkg ? ' dimmed' : ''
-      const label = pkg === '__own__' ? 'own source' : pkg
-      html += `<li class="tree-legend-item${dimmed}" data-pkg-select="${esc(pkg)}">`
-      html += `<span class="tree-legend-dot" style="background:${esc(col)}"></span>`
-      html += `<span class="tree-legend-name">${esc(label)}</span>`
-      html += `<span class="tree-legend-count">${count}</span>`
-      html += `</li>`
-    }
-    html += '</ul></div>'
-  }
-
-  // Top hubs section — sorted by issues (own findings) by default.
-  // The tab state is stored on the sidebar element via data-hubs-tab.
-  const hubsTab = _graphState._hubsTab ?? 'issues'
-
-  const hubsByIssues = [...files].sort((a, b) => {
-    const ca = totalFindings(ownCounts.get(a)), cb = totalFindings(ownCounts.get(b))
-    if (cb !== ca) return cb - ca
-    const ia = (importsOf.get(a)?.length ?? 0) + (importedBy.get(a)?.length ?? 0)
-    const ib = (importsOf.get(b)?.length ?? 0) + (importedBy.get(b)?.length ?? 0)
-    return ib - ia
-  }).filter((f) => totalFindings(ownCounts.get(f)) > 0).slice(0, 7)
-
-  const hubsByImports = [...files].sort((a, b) => {
-    const ca = (importsOf.get(a)?.length ?? 0) + (importedBy.get(a)?.length ?? 0)
-    const cb = (importsOf.get(b)?.length ?? 0) + (importedBy.get(b)?.length ?? 0)
-    return cb - ca
-  }).slice(0, 7)
-
-  const hubsSorted = hubsTab === 'issues' ? hubsByIssues : hubsByImports
-
-  if (hubsByIssues.length > 0 || hubsByImports.length > 0) {
-    html += '<div class="tree-hubs">'
-    html += '<div class="tree-hubs-header">'
-    html += '<div class="tree-hubs-title">Top hubs</div>'
-    html += '<div class="tree-hubs-tabs">'
-    html += `<button type="button" class="tree-hubs-tab${hubsTab === 'issues' ? ' active' : ''}" data-hubs-tab="issues">Issues</button>`
-    html += `<button type="button" class="tree-hubs-tab${hubsTab === 'imports' ? ' active' : ''}" data-hubs-tab="imports">Imports</button>`
-    html += '</div>'
-    html += '</div>'
-    if (hubsSorted.length === 0) {
-      html += '<div style="color:rgba(139,148,158,.35);font-size:.75rem;padding:.2rem .3rem;font-style:italic;">None in current view</div>'
-    }
-    for (const f of hubsSorted) {
-      const col = pkgColor(packageOf(f) ?? '__own__')
-      const base = f.split('/').pop() ?? f
-      const val = hubsTab === 'issues'
-        ? totalFindings(ownCounts.get(f))
-        : (importsOf.get(f)?.length ?? 0) + (importedBy.get(f)?.length ?? 0)
-      const valColor = hubsTab === 'issues' ? (indicatorFor(ownCounts.get(f)) ?? 'rgba(139,148,158,.45)') : 'rgba(139,148,158,.45)'
-      html += `<div class="tree-hub-item" data-select-file="${esc(f)}">`
-      html += `<span class="tree-hub-dot" style="background:${esc(col)}"></span>`
-      html += `<span class="tree-hub-name">${esc(base)}</span>`
-      html += `<span class="tree-hub-conn" style="color:${esc(valColor)}">${val}</span>`
-      html += `</div>`
-    }
-    html += '</div>'
-  }
-
-  // Node detail
-  if (!file || !tree[file]) {
-    html += '<div class="tree-info-empty"><div class="tree-info-empty-icon">↗</div>Click a node to inspect it</div>'
-    return html
-  }
-
-  const entry = tree[file]
-  const own = ownCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
-  const trans = transitiveCounts.get(file) ?? { critical: 0, high: 0, medium: 0, low: 0 }
-  const pkg = packageOf(file) ?? '__own__'
-  const pkgCol = pkgColor(pkg)
-
-  const renderChips = (counts) => {
-    const present = Object.entries(counts).filter(([, n]) => n > 0)
-    if (present.length === 0) return '<div class="tree-info-empty-list">none</div>'
-    return '<div class="tree-count-chips">' +
-      present.map(([sev, n]) => `<span class="tree-count-chip ${esc(sev)}">${n} ${esc(sev)}</span>`).join('') +
-      '</div>'
-  }
-
-  const importers = []
-  for (const [other, e] of Object.entries(tree)) {
-    if ((e.imports ?? []).includes(file)) importers.push(other)
-  }
-  importers.sort()
-  const imports = (entry.imports ?? []).slice().sort()
-
-  const renderList = (items) => {
-    if (items.length === 0) return '<div class="tree-info-empty-list">none</div>'
-    let h = '<ul class="tree-info-list">'
-    for (const i of items) {
-      if (tree[i]) h += `<li><button type="button" data-select-file="${esc(i)}">${esc(i)}</button></li>`
-      else h += `<li><span class="external" title="${esc(i)}">${esc(i)}</span></li>`
-    }
-    h += '</ul>'
-    return h
-  }
-
-  html += '<div class="tree-info-content">'
-  html += '<div class="tree-info-header">'
-  html += `<div class="tree-info-pkg-badge"><span class="tree-info-pkg-dot" style="background:${esc(pkgCol)}"></span>${esc(pkg === '__own__' ? 'own source' : pkg)}</div>`
-  html += `<div class="tree-info-title">${esc(file)}</div>`
-  html += '<div class="tree-info-jumps">'
-  const hasOwnFindings = totalFindings(own) > 0
-  if (hasOwnFindings) {
-    html += `<button type="button" class="tree-info-jump" data-jump-findings="${esc(file)}">Findings →</button>`
-  }
-  html += `<button type="button" class="tree-info-jump" data-jump-file="${esc(file)}">Files →</button>`
-  html += '</div>'
-  html += '</div>'
-  html += '<div class="tree-info-section"><div class="tree-info-label">Own findings</div>' + renderChips(own) + '</div>'
-  html += '<div class="tree-info-section"><div class="tree-info-label">Subtree findings</div>' + renderChips(trans) + '</div>'
-  html += `<div class="tree-info-section"><div class="tree-info-label">Imported by (${importers.length})</div>` + renderList(importers) + '</div>'
-  html += `<div class="tree-info-section"><div class="tree-info-label">Imports (${imports.length})</div>` + renderList(imports) + '</div>'
-  html += '</div>'
-  return html
-}
-
-// Attach all canvas interaction: draw loop, pan/zoom, hover, click.
-function attachTreeGraphInteraction(container) {
-  if (!_graphState) return
-  const canvas = container.querySelector('#tree-canvas')
-  const tooltip = container.querySelector('#tree-tooltip')
-  if (!canvas) return
-
-  const { importsOf, importedBy, ownCounts, transitiveCounts,
-          _layoutFiles, _layoutImportsOf, _layoutTree, _layoutShowAll } = _graphState
-
-  // nodes/edges/nodeByFile start from cache (may be null on first load).
-  // ensureLayout() computes them with real canvas dimensions.
-  let nodes = _graphState.nodes ?? null
-  let edges = _graphState.edges ?? null
-  let nodeByFile = _graphState.nodeByFile ?? new Map()
-
-  let panX = 0, panY = 0, zoom = 1
-  // Persist hoveredFile across re-renders so clicking a node doesn't
-  // flash the hover away until the pointer actually leaves.
-  let hoveredFile = _graphState._hoveredFile ?? null
-  let dpr = window.devicePixelRatio || 1
-
-  function ensureLayout(w, h) {
-    const needsLayout = !nodes || nodes.length === 0
-    const needsEdges = !edges || edges.length === 0
-
-    if (needsLayout) {
-      nodes = forceLayout(_layoutFiles, _layoutImportsOf, w, h)
-      _treeLayoutCache = { tree: _layoutTree, showAll: _layoutShowAll, nodes }
-      _graphState.nodes = nodes
-    }
-
-    if (needsLayout || needsEdges) {
-      // Build edges and nodeByFile from whatever nodes we now have.
-      const edgeMap = new Map()
-      for (const f of _layoutFiles) {
-        for (const imp of _layoutImportsOf.get(f) ?? []) {
-          if (f === imp) continue
-          const [lo, hi] = f < imp ? [f, imp] : [imp, f]
-          const key = `${lo}\0${hi}`
-          let e = edgeMap.get(key)
-          if (!e) { e = { lo, hi, fromLo: false, fromHi: false }; edgeMap.set(key, e) }
-          if (f === lo) e.fromLo = true; else e.fromHi = true
-        }
-      }
-      edges = [...edgeMap.values()]
-      nodeByFile = new Map(nodes.map((n) => [n.file, n]))
-      _graphState.edges = edges
-      _graphState.nodeByFile = nodeByFile
-    }
-  }
-
-  const R = (file) => radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts)
-
-  function fitToView(w, h) {
-    if (nodes.length === 0) return
-    const pad = 80
-    const minX = Math.min(...nodes.map((n) => n.x)) - pad
-    const minY = Math.min(...nodes.map((n) => n.y)) - pad
-    const maxX = Math.max(...nodes.map((n) => n.x)) + pad
-    const maxY = Math.max(...nodes.map((n) => n.y)) + pad
-    const gw = maxX - minX, gh = maxY - minY
-    zoom = Math.min(w / gw, h / gh, 2.5)
-    panX = (w - gw * zoom) / 2 - minX * zoom
-    panY = (h - gh * zoom) / 2 - minY * zoom
-  }
-
-  let _resizeTimer = null
-  function resize(refit) {
-    const rect = canvas.parentElement.getBoundingClientRect()
-    const w = Math.max(rect.width, 100), h = Math.max(rect.height, 100)
-    dpr = window.devicePixelRatio || 1
-    canvas.width = w * dpr; canvas.height = h * dpr
-    canvas.style.width = w + 'px'; canvas.style.height = h + 'px'
-    // Compute layout with real dimensions now (first call only).
-    ensureLayout(w, h)
-    if (refit || _graphState._needsRefit) {
-      fitToView(w, h)
-      _graphState._needsRefit = false
-    }
-    draw()
-  }
-
-  function debouncedResize() {
-    clearTimeout(_resizeTimer)
-    _resizeTimer = setTimeout(() => resize(false), 60)
-  }
-
-  // ── Main draw ─────────────────────────────────────────────────────────────
-  function draw() {
-    if (!nodes || !nodes.length) return
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    const ctx = canvas.getContext('2d')
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-    // Background — very dark navy
-    ctx.fillStyle = '#060a0f'
-    ctx.fillRect(0, 0, w, h)
-
-    // Subtle center radial
-    const cg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.6)
-    cg.addColorStop(0, 'rgba(20,30,50,0.5)')
-    cg.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h)
-
-    ctx.save()
-    ctx.translate(panX, panY)
-    ctx.scale(zoom, zoom)
-
-    // Connected-files set for hover dimming
-    const connectedFiles = new Set()
-    if (hoveredFile) {
-      connectedFiles.add(hoveredFile)
-      for (const imp of importsOf.get(hoveredFile) ?? []) connectedFiles.add(imp)
-      for (const imp of importedBy.get(hoveredFile) ?? []) connectedFiles.add(imp)
-    }
-
-    // ── Edges ───────────────────────────────────────────────────────────────
-    for (const e of (edges || [])) {
-      const loN = nodeByFile.get(e.lo), hiN = nodeByFile.get(e.hi)
-      if (!loN || !hiN) continue
-
-      const bidi = e.fromLo && e.fromHi
-      const rev = !bidi && e.fromHi
-      const a = rev ? hiN : loN
-      const b = rev ? loN : hiN
-
-      const isHov = hoveredFile && (a.file === hoveredFile || b.file === hoveredFile)
-      const isDim = hoveredFile && !isHov
-
-      // Edge color = source node's package color
-      const srcPkg = packageOf(a.file) ?? '__own__'
-
-      const ra = R(a.file), rb = R(b.file)
-      const dx = b.x - a.x, dy = b.y - a.y
-      const len = Math.sqrt(dx * dx + dy * dy) || 1
-      const ux = dx / len, uy = dy / len
-      const sx = a.x + ux * (ra + 1.5), sy = a.y + uy * (ra + 1.5)
-      const ex = b.x - ux * (rb + 3.5), ey = b.y - uy * (rb + 3.5)
-      const off = Math.min(len * 0.15, 30)
-      const qcx = (sx + ex) / 2 - uy * off
-      const qcy = (sy + ey) / 2 + ux * off
-
-      ctx.beginPath()
-      ctx.moveTo(sx, sy)
-      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
-
-      if (isHov) {
-        ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.9)
-        ctx.lineWidth = 1.8 / zoom
-      } else if (isDim) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.03)'
-        ctx.lineWidth = 0.5 / zoom
-      } else {
-        ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.22)
-        ctx.lineWidth = 0.85 / zoom
-      }
-      ctx.stroke()
-
-      // Arrowhead at endpoint
-      if (!isDim) {
-        const arrowLen = Math.max(4.5, 6 / zoom)
-        const arrowW = arrowLen * 0.42
-        // Tangent at end of quadratic bezier
-        const t = 0.9
-        const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
-        const ty2 = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
-        const tl = Math.sqrt(tx * tx + ty2 * ty2) || 1
-        const tux = tx / tl, tuy = ty2 / tl
-        ctx.beginPath()
-        ctx.moveTo(ex, ey)
-        ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
-        ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
-        ctx.closePath()
-        ctx.fillStyle = isHov ? pkgColorAlpha(srcPkg, 0.9) : pkgColorAlpha(srcPkg, 0.4)
-        ctx.fill()
-
-        // Bidi: back-arrow at start
-        if (bidi) {
-          const t0 = 0.1
-          const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
-          const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
-          const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
-          const tux0 = tx0 / tl0, tuy0 = ty0 / tl0
-          ctx.beginPath()
-          ctx.moveTo(sx, sy)
-          ctx.lineTo(sx + tux0 * arrowLen - tuy0 * arrowW, sy + tuy0 * arrowLen + tux0 * arrowW)
-          ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
-          ctx.closePath()
-          const dstPkg = packageOf(b.file) ?? '__own__'
-          ctx.fillStyle = isHov ? pkgColorAlpha(dstPkg, 0.9) : pkgColorAlpha(dstPkg, 0.4)
-          ctx.fill()
-        }
-      }
-    }
-
-    // ── Nodes ────────────────────────────────────────────────────────────────
-    for (const n of (nodes || [])) {
-      const r = R(n.file)
-      const pkg = packageOf(n.file) ?? '__own__'
-      const col = pkgColor(pkg)
-      const own = ownCounts.get(n.file)
-      const findingColor = indicatorFor(own)
-      const isSelected = n.file === selectedTreeFile
-      const isHov = n.file === hoveredFile
-      const isDim = hoveredFile && !connectedFiles.has(n.file) && !isSelected
-
-      ctx.globalAlpha = isDim ? 0.07 : 1
-
-      // Glow ring for selected/hovered
-      if (isSelected || isHov) {
-        const glowR = r * 2.6
-        const glow = ctx.createRadialGradient(n.x, n.y, r * 0.8, n.x, n.y, glowR)
-        glow.addColorStop(0, pkgColorAlpha(pkg, isSelected ? 0.35 : 0.2))
-        glow.addColorStop(1, 'rgba(0,0,0,0)')
-        ctx.beginPath(); ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2)
-        ctx.fillStyle = glow; ctx.fill()
-      }
-
-      // Finding-severity outer pulse ring
-      if (findingColor && !isDim) {
-        ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5 / zoom, 0, Math.PI * 2)
-        ctx.strokeStyle = findingColor + '66'
-        ctx.lineWidth = 2.5 / zoom
-        ctx.stroke()
-      }
-
-      // Main circle — flat fill
-      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
-      ctx.fillStyle = col
-      ctx.fill()
-
-      // Selection / hover stroke
-      if (isSelected) {
-        ctx.beginPath(); ctx.arc(n.x, n.y, r + 1.5 / zoom, 0, Math.PI * 2)
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 2 / zoom; ctx.stroke()
-      } else if (isHov) {
-        ctx.beginPath(); ctx.arc(n.x, n.y, r + 1 / zoom, 0, Math.PI * 2)
-        ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-        ctx.lineWidth = 1.5 / zoom; ctx.stroke()
-      }
-
-      // Severity dot (top-right corner, scaled with node)
-      if (findingColor) {
-        const br = Math.max(2.5, r * 0.36)
-        const bx = n.x + r * 0.72, by = n.y - r * 0.72
-        // Dark halo
-        ctx.beginPath(); ctx.arc(bx, by, br + 1.2, 0, Math.PI * 2)
-        ctx.fillStyle = '#060a0f'; ctx.fill()
-        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2)
-        ctx.fillStyle = findingColor; ctx.fill()
-      }
-
-      ctx.globalAlpha = 1
-
-      // Labels
-      const conn = (importsOf.get(n.file)?.length ?? 0) + (importedBy.get(n.file)?.length ?? 0)
-      const ownTotal = totalFindings(own)
-      const showLabel = (conn >= 3 || ownTotal > 0 || isSelected || isHov || r > 12) && !isDim
-      if (showLabel) {
-        const baseSize = Math.min(11.5, Math.max(8.5, 9.5 / Math.max(zoom, 0.5)))
-        ctx.font = `600 ${baseSize}px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif`
-        ctx.textAlign = 'center'
-        const lines = multiLineLabel(n.file, 22)
-        const lineH = baseSize * 1.3
-        const ty = n.y + r + baseSize + 2.5
-
-        // Shadow/outline for readability on any background
-        ctx.shadowColor = 'rgba(6,10,15,0.98)'; ctx.shadowBlur = 4
-        ctx.strokeStyle = 'rgba(6,10,15,0.9)'; ctx.lineWidth = 3 / zoom
-        ctx.lineJoin = 'round'
-        ctx.strokeText(lines[0], n.x, ty)
-        if (lines[1]) ctx.strokeText(lines[1], n.x, ty + lineH)
-
-        ctx.shadowBlur = 0
-        ctx.fillStyle = isSelected ? '#fff' : isHov ? 'rgba(230,237,243,0.95)' : 'rgba(200,210,225,0.78)'
-        lines.forEach((line, i) => ctx.fillText(line, n.x, ty + i * lineH))
-      }
-    }
-
-    ctx.restore()
-  }
-
-  // ── Hit test ───────────────────────────────────────────────────────────────
-  function canvasPos(e) {
-    const rect = canvas.getBoundingClientRect()
-    return { cx: e.clientX - rect.left, cy: e.clientY - rect.top }
-  }
-  function hitTest(cx, cy) {
-    const wx = (cx - panX) / zoom, wy = (cy - panY) / zoom
-    let best = null, bestD = Infinity
-    for (const n of (nodes || [])) {
-      const d = Math.hypot(n.x - wx, n.y - wy)
-      if (d <= R(n.file) + 4 / zoom && d < bestD) { bestD = d; best = n }
-    }
-    return best
-  }
-
-  // ── Tooltip ────────────────────────────────────────────────────────────────
-  function showTooltip(node, cx, cy) {
-    if (!tooltip) return
-    const own = ownCounts.get(node.file) ?? {}
-    const pkg = packageOf(node.file) ?? '__own__'
-    const col = pkgColor(pkg)
-    const conn = (importsOf.get(node.file)?.length ?? 0) + (importedBy.get(node.file)?.length ?? 0)
-    const base = node.file.split('/').pop()
-    const pkgLabel = pkg === '__own__' ? 'own source' : pkg
-    let html = `<div class="tt-name">${esc(base)}</div>`
-    html += `<div class="tt-pkg"><span class="tt-pkg-dot" style="background:${esc(col)}"></span>${esc(pkgLabel)}</div>`
-    const pathRest = node.file.length > base.length ? node.file.slice(0, -base.length - 1) : ''
-    if (pathRest) html += `<div class="tt-path">${esc(pathRest)}</div>`
-    const chips = []
-    for (const sev of ['critical', 'high', 'medium', 'low']) {
-      if (own[sev]) chips.push(`<span class="tt-chip ${sev}">${own[sev]} ${sev}</span>`)
-    }
-    if (chips.length) html += `<div class="tt-chips">${chips.join('')}</div>`
-    html += `<div class="tt-stat">${conn} connection${conn !== 1 ? 's' : ''}</div>`
-    tooltip.innerHTML = html
-    tooltip.style.display = 'block'
-    const rect = canvas.parentElement.getBoundingClientRect()
-    let tx = cx + 14, ty = cy - 16
-    if (tx + 250 > rect.width) tx = cx - 254
-    if (ty + 140 > rect.height) ty = rect.height - 144
-    if (ty < 4) ty = 4
-    tooltip.style.left = tx + 'px'; tooltip.style.top = ty + 'px'
-  }
-  function hideTooltip() { if (tooltip) tooltip.style.display = 'none' }
-
-  // ── Pan & zoom ──────────────────────────────────────────────────────────────
-  let dragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0
-  const scroll = canvas.parentElement
-
-  // Remove any stale window listeners from a previous render cycle.
-  if (_graphState._cleanupListeners) _graphState._cleanupListeners()
-
-  const onMouseMove = (e) => {
-    if (dragging) {
-      panX = panStartX + e.clientX - dragStartX
-      panY = panStartY + e.clientY - dragStartY
-      draw(); return
-    }
-    const { cx, cy } = canvasPos(e)
-    const hit = hitTest(cx, cy)
-    const prev = hoveredFile
-    hoveredFile = hit?.file ?? null
-    canvas.style.cursor = hit ? 'pointer' : 'grab'
-    if (hoveredFile !== prev) {
-      _graphState._hoveredFile = hoveredFile
-      draw()
-    }
-    if (hit) showTooltip(hit, cx, cy); else hideTooltip()
-  }
-  const onMouseUp = () => { dragging = false }
-
-  window.addEventListener('mousemove', onMouseMove)
-  window.addEventListener('mouseup', onMouseUp)
-
-  // Store cleanup so the next attachTreeGraphInteraction call removes these.
-  _graphState._cleanupListeners = () => {
-    window.removeEventListener('mousemove', onMouseMove)
-    window.removeEventListener('mouseup', onMouseUp)
-  }
-
-  scroll.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    dragging = true; dragStartX = e.clientX; dragStartY = e.clientY
-    panStartX = panX; panStartY = panY; hideTooltip()
-  })
-
-  scroll.addEventListener('mouseleave', () => {
-    if (hoveredFile !== null) {
-      hoveredFile = null
-      _graphState._hoveredFile = null
-      hideTooltip()
-      draw()
-    }
-  })
-
-  scroll.addEventListener('wheel', (e) => {
-    e.preventDefault()
-    const { cx, cy } = canvasPos(e)
-    const factor = e.deltaY < 0 ? 1.13 : 1 / 1.13
-    const nz = Math.max(0.06, Math.min(10, zoom * factor))
-    panX = cx - (cx - panX) * (nz / zoom)
-    panY = cy - (cy - panY) * (nz / zoom)
-    zoom = nz; draw()
-  }, { passive: false })
-
-  // Touch
-  let touches = []
-  scroll.addEventListener('touchstart', (e) => { e.preventDefault(); touches = [...e.touches] }, { passive: false })
-  scroll.addEventListener('touchmove', (e) => {
-    e.preventDefault()
-    if (e.touches.length === 1 && touches.length === 1) {
-      panX += e.touches[0].clientX - touches[0].clientX
-      panY += e.touches[0].clientY - touches[0].clientY
-    } else if (e.touches.length === 2 && touches.length === 2) {
-      const d0 = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
-      const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
-      if (d0 > 0) {
-        const rect = canvas.getBoundingClientRect()
-        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
-        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
-        const nz = Math.max(0.06, Math.min(10, zoom * d1 / d0))
-        panX = mx - (mx - panX) * (nz / zoom); panY = my - (my - panY) * (nz / zoom); zoom = nz
-      }
-    }
-    touches = [...e.touches]; draw()
-  }, { passive: false })
-  scroll.addEventListener('touchend', (e) => { touches = [...e.touches] }, { passive: false })
-
-  // Click = select node
-  scroll.addEventListener('click', (e) => {
-    if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 5) return
-    const { cx, cy } = canvasPos(e)
-    const hit = hitTest(cx, cy)
-    selectedTreeFile = hit?.file ?? null
-    draw()
-    // Update sidebar in-place without rebuilding the canvas DOM.
-    const infoEl = document.querySelector('.tree-info')
-    if (infoEl && _graphState) {
-      const tree = reports[0]?.tree
-      if (tree) {
-        const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
-        const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
-        infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
-      }
-    }
-  })
-
-  // Zoom buttons
-  const doZoom = (factor) => {
-    const w = canvas.width / dpr, h = canvas.height / dpr
-    const cx = w / 2, cy = h / 2
-    const nz = Math.max(0.06, Math.min(10, zoom * factor))
-    panX = cx - (cx - panX) * (nz / zoom); panY = cy - (cy - panY) * (nz / zoom)
-    zoom = nz; draw()
-  }
-  container.querySelector('#zoom-in')?.addEventListener('click', () => doZoom(1.35))
-  container.querySelector('#zoom-out')?.addEventListener('click', () => doZoom(1 / 1.35))
-  container.querySelector('#zoom-fit')?.addEventListener('click', () => {
-    fitToView(canvas.width / dpr, canvas.height / dpr); draw()
-  })
-
-  // Init
-  resize(true)
-  const ro = new ResizeObserver(debouncedResize)
-  ro.observe(canvas.parentElement)
-  // Refit when fullscreen is toggled (body class change shifts layout)
-  const fsObserver = new MutationObserver(() => {
-    clearTimeout(_resizeTimer)
-    _resizeTimer = setTimeout(() => resize(true), 80)
-  })
-  fsObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
-  canvas.addEventListener('tree-node-select', () => {
-    // Update only the sidebar — don't rebuild the canvas DOM, which would
-    // destroy hover state and trigger the mousemove-flash glitch.
-    const infoEl = document.querySelector('.tree-info')
-    if (infoEl && _graphState) {
-      const tree = reports[0]?.tree
-      if (tree) {
-        const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
-        const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
-        infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
-      }
-    }
-  })
-
-  // Extend cleanup to also disconnect observers.
-  const prevCleanup = _graphState._cleanupListeners
-  _graphState._cleanupListeners = () => {
-    prevCleanup?.()
-    ro.disconnect()
-    fsObserver.disconnect()
-  }
-}
-
-// renderTreeSidebar replaced by renderTreeSidebarFull (inline in renderTreeCanvas block above).
-// Keeping a stub so any old reference doesn't hard-crash; it should never be called.
-function renderTreeSidebar(file, tree, ownCounts, transitiveCounts) {
-  return renderTreeSidebarFull(file, tree, ownCounts, transitiveCounts)
-}
-
-// Layered-DAG SVG of the import tree. Roots (no one imports them) sit
-// at the top; depth grows downward via "1 + max depth of importers"
-// (cycles are broken by the visiting-set guard).
-//
-// Within each layer, nodes are ordered by the BARYCENTER heuristic —
-// average position of neighbors in the adjacent layer, alternating
-// down-then-up passes. A handful of iterations is usually enough to
-// reach a near-minimum-crossing arrangement; this is what makes the
-// graph readable with more than a dozen files (alphabetical ordering
-// produces a spaghetti tangle).
-//
-// (Kept for reference — the active tree-tab visualization is the
-// force-directed `renderTreeCanvas` above; this layered renderer is
-// no longer reachable from render() but left in source as a fallback
-// option.)
-function renderTreeGraph(tree, findingCounts) {
-  const files = Object.keys(tree)
-  if (files.length === 0) return ''
-
-  // Build adjacency (filter out edges whose target isn't in the tree —
-  // they're dead ends for layout / hover purposes).
-  const importedBy = new Map()
-  const importsOf = new Map()
-  for (const f of files) {
-    const imps = (tree[f].imports ?? []).filter((i) => tree[i])
-    importsOf.set(f, imps)
-    for (const imp of imps) {
-      const arr = importedBy.get(imp) ?? []
-      arr.push(f)
-      importedBy.set(imp, arr)
-    }
-  }
-
-  // Layer assignment: depth(f) = longest importer chain ending at f.
-  const depth = new Map()
-  const visiting = new Set()
-  const computeDepth = (file) => {
-    if (depth.has(file)) return depth.get(file)
-    if (visiting.has(file)) return 0
-    visiting.add(file)
-    const importers = importedBy.get(file) ?? []
-    let d = 0
-    for (const imp of importers) d = Math.max(d, computeDepth(imp) + 1)
-    visiting.delete(file)
-    depth.set(file, d)
-    return d
-  }
-  for (const f of files) computeDepth(f)
-
-  const maxDepth = Math.max(0, ...depth.values())
-  const layers = []
-  for (let d = 0; d <= maxDepth; d++) layers.push([])
-  for (const f of files) layers[depth.get(f)].push(f)
-  for (const layer of layers) layer.sort()
-
-  // Position map (column index within layer). Updated after every pass.
-  const pos = new Map()
-  const refresh = () => {
-    pos.clear()
-    for (const layer of layers) layer.forEach((f, i) => pos.set(f, i))
-  }
-  refresh()
-
-  // Barycenter: average position of a node's neighbors in `adj` (the
-  // adjacent layer's adjacency map). Falls back to current position
-  // for isolated nodes so they don't drift to 0.
-  const meanPos = (neighbors) => {
-    if (neighbors.length === 0) return null
-    let sum = 0, n = 0
-    for (const x of neighbors) { const p = pos.get(x); if (p !== undefined) { sum += p; n++ } }
-    return n === 0 ? null : sum / n
-  }
-  // Six passes (3 down + 3 up) — plenty for typical graphs without
-  // burning time on the rare degenerate case.
-  for (let pass = 0; pass < 6; pass++) {
-    const downward = pass % 2 === 0
-    const range = downward
-      ? Array.from({ length: maxDepth }, (_, i) => i + 1)            // 1..maxDepth
-      : Array.from({ length: maxDepth }, (_, i) => maxDepth - 1 - i) // maxDepth-1..0
-    for (const d of range) {
-      const layer = layers[d]
-      const bary = new Map()
-      for (const f of layer) {
-        const neighbors = downward ? (importedBy.get(f) ?? []) : (importsOf.get(f) ?? [])
-        const m = meanPos(neighbors)
-        bary.set(f, m === null ? pos.get(f) : m)
-      }
-      layer.sort(byBary(bary))
-    }
-    refresh()
-  }
-
-  // Layout coords.
-  const NODE_W = 170, NODE_H = 36
-  const COL_GAP = 28, ROW_GAP = 56
-  const colW = NODE_W + COL_GAP
-  const rowH = NODE_H + ROW_GAP
-  const xy = new Map()
-  for (let d = 0; d <= maxDepth; d++) {
-    layers[d].forEach((f, i) => xy.set(f, { x: 24 + i * colW, y: 24 + d * rowH }))
-  }
-  const maxLayerSize = Math.max(1, ...layers.map((l) => l.length))
-  const width = 48 + maxLayerSize * colW - COL_GAP
-  const height = 48 + layers.length * rowH - ROW_GAP
-
-  const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
-  const indicatorFor = (counts) => {
-    if (!counts) return null
-    for (const sev of ['critical', 'high', 'medium', 'low']) {
-      if (counts[sev] > 0) return SEV_COLORS[sev]
-    }
-    return null
-  }
-
-  let svg = `<svg class="tree-graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`
-
-  // Edges first so they render under the nodes. data-from / data-to
-  // feed the post-render hover-highlight wiring.
-  svg += '<g class="edges">'
-  for (const f of files) {
-    const a = xy.get(f)
-    if (!a) continue
-    const ax = a.x + NODE_W / 2
-    const ay = a.y + NODE_H
-    for (const imp of importsOf.get(f)) {
-      const b = xy.get(imp)
-      if (!b) continue
-      const bx = b.x + NODE_W / 2
-      const by = b.y
-      const midY = (ay + by) / 2
-      svg += `<path data-from="${esc(svgNodeId(f))}" data-to="${esc(svgNodeId(imp))}" d="M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}" />`
-    }
-  }
-  svg += '</g>'
-
-  // Nodes with severity indicator strip + total-findings corner badge.
-  svg += '<g class="nodes">'
-  for (const f of files) {
-    const p = xy.get(f)
-    if (!p) continue
-    const counts = findingCounts.get(f)
-    const total = counts ? counts.critical + counts.high + counts.medium + counts.low : 0
-    const indicator = indicatorFor(counts)
-    const label = svgNodeLabel(f)
-    svg += `<g class="tree-node" id="${esc(svgNodeId(f))}" transform="translate(${p.x}, ${p.y})">`
-    svg += `<a href="#${esc(treeAnchor(f))}">`
-    svg += `<title>${esc(f)}${total > 0 ? ` (${total} finding${total === 1 ? '' : 's'})` : ''}</title>`
-    svg += `<rect class="node-bg" width="${NODE_W}" height="${NODE_H}" rx="6" ry="6" />`
-    if (indicator) svg += `<rect class="node-strip" x="0" y="0" width="4" height="${NODE_H}" fill="${indicator}" />`
-    svg += `<text x="${indicator ? 12 : NODE_W / 2}" y="${NODE_H / 2 + 4}" text-anchor="${indicator ? 'start' : 'middle'}">${esc(label)}</text>`
-    if (total > 0) {
-      const r = 9
-      svg += `<circle cx="${NODE_W - r - 6}" cy="${r + 4}" r="${r}" fill="${indicator}" />`
-      svg += `<text x="${NODE_W - r - 6}" y="${r + 4 + 3}" text-anchor="middle" class="badge-text">${total}</text>`
-    }
-    svg += '</a></g>'
-  }
-  svg += '</g>'
-  svg += '</svg>'
-  return svg
-}
-
-// attachTreeGraphInteraction is now a no-op: the canvas renderer
-// wires all interaction (pan/zoom/hover/click) internally inside
-// attachTreeGraphInteraction (defined above near renderTreeCanvas).
-
-// Render the per-file import tree as a flat list of cards. Each card
-// shows imports (linked to their target's anchor when the target is in
-// the tree), the inverse "imported by", exports, the hashes, and a
-// finding-count badge row when the file has any findings.
-function renderTreeView(tree, findingCounts) {
-  const files = Object.keys(tree).sort()
-  // Inverse adjacency: file → list of files that import it.
-  const importedBy = new Map()
-  for (const f of files) {
-    for (const imp of (tree[f].imports ?? [])) {
-      const arr = importedBy.get(imp) ?? []
-      arr.push(f)
-      importedBy.set(imp, arr)
-    }
-  }
-  const linkOrText = (target) => tree[target]
-    ? `<a href="#${esc(treeAnchor(target))}"><span class="name">${esc(target)}</span></a>`
-    : `<span class="name">${esc(target)}</span>`
-  let html = '<div class="tree-view">'
-  for (const file of files) {
-    const entry = tree[file]
-    html += `<section class="tree-file" id="${esc(treeAnchor(file))}">`
-    html += '<div class="tree-file-header">'
-    html += `<span class="name">${esc(file)}</span>`
-    const counts = findingCounts.get(file)
-    if (counts) {
-      const present = Object.entries(counts).filter(([, n]) => n > 0)
-      if (present.length > 0) {
-        html += '<span class="tree-count-chips">'
-        for (const [sev, n] of present) {
-          html += `<span class="tree-count-chip ${esc(sev)}">${n} ${esc(sev)}</span>`
-        }
-        html += '</span>'
-      }
-    }
-    html += '</div>'
-    if (entry.fileHash || entry.treeHash) {
-      const parts = []
-      if (entry.fileHash) parts.push(`file: ${esc(entry.fileHash)}`)
-      if (entry.treeHash) parts.push(`tree: ${esc(entry.treeHash)}`)
-      html += `<div class="tree-hashes hashes">${parts.join(' | ')}</div>`
-    }
-    if (entry.imports?.length > 0) {
-      html += '<div class="tree-section"><span class="tree-section-label">imports</span><ul>'
-      for (const imp of entry.imports) html += `<li>${linkOrText(imp)}</li>`
-      html += '</ul></div>'
-    }
-    const incoming = importedBy.get(file) ?? []
-    if (incoming.length > 0) {
-      html += '<div class="tree-section"><span class="tree-section-label">imported by</span><ul>'
-      for (const f of incoming) html += `<li>${linkOrText(f)}</li>`
-      html += '</ul></div>'
-    }
-    if (entry.exports?.length > 0) {
-      html += '<div class="tree-section"><span class="tree-section-label">exports</span><ul>'
-      for (const ex of entry.exports) html += `<li><span class="name">${esc(ex)}</span></li>`
-      html += '</ul></div>'
-    }
-    html += '</section>'
-  }
-  html += '</div>'
-  return html
-}
-
 function renderGroup(g) {
   const state = groupState(g)
   const sortedTabs = sortTabs(g)
@@ -2143,6 +735,20 @@ function renderGroup(g) {
   html += '</div>'
   html += '</div>'
   return html
+}
+
+// Refresh just the tree-tab right sidebar in place. Called by graph.js
+// after canvas selection changes (and from the click handlers below
+// when the selection is driven from the sidebar itself), so we don't
+// have to rebuild the canvas DOM and lose hover state.
+function refreshTreeSidebar() {
+  const infoEl = document.querySelector('.tree-info')
+  if (!infoEl || !tree.graphState) return
+  const treeData = reports[0]?.tree
+  if (!treeData) return
+  const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
+  const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
+  infoEl.innerHTML = renderTreeSidebarFull(tree.selected, treeData, findingCounts, transitiveCounts)
 }
 
 function render() {
@@ -2227,8 +833,8 @@ function render() {
   // Both Tree (graph + sidebar) and Files (per-file cards) tabs share
   // the same gate; switching files / loading a tree-less report falls
   // back to 'findings' so the user doesn't end up on a hidden tab.
-  const tree = reports[0]?.tree
-  const treeFileCount = tree ? Object.keys(tree).length : 0
+  const treeData = reports[0]?.tree
+  const treeFileCount = treeData ? Object.keys(treeData).length : 0
   const showTreeTab = treeFileCount > 1
   if (!showTreeTab && (currentView === 'tree' || currentView === 'files')) currentView = 'findings'
   if (showTreeTab) {
@@ -2245,23 +851,23 @@ function render() {
     // chips in the sidebar AND the show-all filter (a file with no own
     // findings is still kept when its subtree has some).
     const findingCounts = computeFindingCountsByFile(mergedGroups)
-    const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
+    const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
     html += '<div class="tree-layout">'
-    html += `<div class="tree-canvas">${renderTreeCanvas(tree, findingCounts, transitiveCounts)}</div>`
-    html += `<div class="tree-info">${renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)}</div>`
+    html += `<div class="tree-canvas">${renderTreeCanvas(treeData, findingCounts, transitiveCounts)}</div>`
+    html += `<div class="tree-info">${renderTreeSidebarFull(tree.selected, treeData, findingCounts, transitiveCounts)}</div>`
     html += '</div>'
     report.innerHTML = html
     report.classList.add('active')
     report.classList.toggle('show-metadata', showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
-    attachTreeGraphInteraction(report.querySelector('.tree-canvas'))
+    attachTreeGraphInteraction(report.querySelector('.tree-canvas'), refreshTreeSidebar)
     return
   }
 
   if (currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
-    html += renderTreeView(tree, findingCounts)
+    html += renderTreeView(treeData, findingCounts)
     report.innerHTML = html
     report.classList.add('active')
     report.classList.toggle('show-metadata', showMetadata)
@@ -2445,16 +1051,16 @@ report.addEventListener('click', (e) => {
   // Tree-tab: click a graph node to select it (drives the sidebar).
   const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
   if (treeNode) {
-    selectedTreeFile = treeNode.dataset.file
+    tree.selected = treeNode.dataset.file
     render()
     return
   }
   // Tree-tab sidebar: importer / import buttons select the linked file.
   const selectFileBtn = e.target.closest('[data-select-file]')
   if (selectFileBtn) {
-    selectedTreeFile = selectFileBtn.dataset.selectFile
+    tree.selected = selectFileBtn.dataset.selectFile
     // Update canvas selection highlight + sidebar without rebuilding canvas DOM.
-    if (_graphState) {
+    if (tree.graphState) {
       const canvasEl = document.querySelector('#tree-canvas')
       if (canvasEl) canvasEl.dispatchEvent(new CustomEvent('tree-node-select', { bubbles: true }))
     } else {
@@ -2465,17 +1071,9 @@ report.addEventListener('click', (e) => {
   // Tree-tab sidebar: hubs tab toggle (Issues / Imports).
   const hubsTabBtn = e.target.closest('[data-hubs-tab]')
   if (hubsTabBtn) {
-    if (_graphState) {
-      _graphState._hubsTab = hubsTabBtn.dataset.hubsTab
-      const infoEl = document.querySelector('.tree-info')
-      if (infoEl) {
-        const tree = reports[0]?.tree
-        if (tree) {
-          const findingCounts = computeFindingCountsByFile(reports.flatMap((r) => r.groups))
-          const transitiveCounts = computeTransitiveCounts(tree, findingCounts)
-          infoEl.innerHTML = renderTreeSidebarFull(selectedTreeFile, tree, findingCounts, transitiveCounts)
-        }
-      }
+    if (tree.graphState) {
+      tree.graphState._hubsTab = hubsTabBtn.dataset.hubsTab
+      refreshTreeSidebar()
     } else {
       render()
     }
@@ -2634,21 +1232,6 @@ report.addEventListener('click', (e) => {
   }
 })
 
-// Walk a list of strings and shrink the candidate prefix until every
-// string starts with it. Returns '' when no shared prefix exists. Used
-// for the print button's title heuristic when multiple reports are
-// loaded — gives the saved PDF a name that still reads as "this batch"
-// (`security-` / `2026-04-` / etc.) without having to manually pick.
-function commonPrefix(strings) {
-  if (strings.length === 0) return ''
-  let prefix = strings[0]
-  for (let i = 1; i < strings.length; i++) {
-    while (prefix && !strings[i].startsWith(prefix)) prefix = prefix.slice(0, -1)
-    if (!prefix) return ''
-  }
-  return prefix
-}
-
 report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
@@ -2667,10 +1250,9 @@ report.addEventListener('change', (e) => {
   // Tree-tab: include clean files in the force graph. Invalidates the
   // cached layout so the next render computes fresh positions.
   else if (id === 'tree-show-all') {
-    treeShowAll = e.target.checked
-    _treeLayoutCache = null
-    if (_graphState?._cleanupListeners) { _graphState._cleanupListeners() }
-    _graphState = null
+    tree.showAll = e.target.checked
+    tree.layoutCache = null
+    cleanupGraphInteraction()
     render()
   }
 })
