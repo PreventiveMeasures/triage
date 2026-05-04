@@ -12,10 +12,9 @@
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px 6px 0 0; cursor: pointer;
+  border-radius: 6px 6px 0 0;
   display: flex; justify-content: space-between; align-items: center;
 
-  &:hover { border-color: var(--accent); }
   & a { color: var(--text); }
   & a:hover { color: var(--accent); }
   & .count { user-select: none; color: var(--muted); font-weight: 400; font-size: .8rem; }

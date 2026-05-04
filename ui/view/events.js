@@ -180,12 +180,6 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // File header collapse (skip if clicking a link)
-  const header = e.target.closest('.file-header')
-  if (header && e.target.tagName !== 'A') {
-    header.parentElement.classList.toggle('collapsed')
-    return
-  }
   // Print button — set document.title to the filename (or longest common
   // prefix when multiple files are loaded) so the OS print dialog and any
   // saved PDF default to a meaningful name, then call window.print() and
