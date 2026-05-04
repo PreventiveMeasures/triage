@@ -50,6 +50,18 @@ body.theme-light {
   & .finding .tab.tab-mark-blue  { background: #ddf4ff; border-color: #80ccff; }
   & .finding .tab.tab-mark-green { background: #dafbe1; border-color: #6fdd8b; }
   & .finding .tab.tab-mark-gray  { background: #eaeef2; border-color: #afb8c1; }
+
+  /* Badge text flips to white for medium / low in light mode. The
+     dark-mode rule sets `color: #000` because --medium (amber) and
+     --low (light gray) are pale enough that black reads cleanly; in
+     light mode those vars become dark golden / slate, so black text
+     vanishes. Critical + high already use white in both modes. Same
+     fix for the per-file count chip in the Files tab — the in-graph
+     tree-count-chip / tt-chip variants stay on the dark palette
+     (graph view doesn't follow the theme). */
+  & .badge.medium, & .badge.low { color: #fff; }
+  & .tree-view .tree-count-chip.medium,
+  & .tree-view .tree-count-chip.low { color: #fff; }
 }
 
 body {
