@@ -51,20 +51,26 @@ body.theme-light {
   /* Re-tint user-applied marker backgrounds for light mode. The dark
      palette (#6b1820 etc) was sized for `var(--text)`-as-light to
      remain readable; in light mode that text turns dark and would
-     vanish on those same backgrounds. The lighter swatches here keep
-     the same hue family but read as "soft tint" against a light page,
-     and dark text remains legible on top. The mark-dot / stat-dot
-     fills (small color swatches, no text inside) keep their dark
-     palette — they're indicators, not text containers, and the dark
-     dots stay visible on a light surface. */
-  & .finding.mark-red   { background: #ffebe9; }
-  & .finding.mark-blue  { background: #ddf4ff; }
-  & .finding.mark-green { background: #dafbe1; }
-  & .finding.mark-gray  { background: #eaeef2; }
-  & .finding .tab.tab-mark-red   { background: #ffebe9; border-color: #ffcecb; }
-  & .finding .tab.tab-mark-blue  { background: #ddf4ff; border-color: #80ccff; }
-  & .finding .tab.tab-mark-green { background: #dafbe1; border-color: #6fdd8b; }
-  & .finding .tab.tab-mark-gray  { background: #eaeef2; border-color: #afb8c1; }
+     vanish on those same backgrounds.
+
+     Hierarchy mirrors dark mode: auto-applied tints (--critical-bg,
+     --surface-active) stay subtle, user-applied marks are deliberately
+     hotter so they outrank the auto wash. Earlier draft made
+     mark-red == --critical-bg and mark-blue == --surface-active —
+     a manually-marked-red critical finding looked the same as any
+     other critical, and a marked-blue finding's active tab vanished.
+
+     The mark-dot / stat-dot fills (small color swatches, no text
+     inside) keep their dark palette — they're indicators, not text
+     containers, and the dark dots stay visible on a light surface. */
+  & .finding.mark-red   { background: #ffc1bd; }
+  & .finding.mark-blue  { background: #a5d6ff; }
+  & .finding.mark-green { background: #aceebb; }
+  & .finding.mark-gray  { background: #d0d7de; }
+  & .finding .tab.tab-mark-red   { background: #ffc1bd; border-color: #ff8182; }
+  & .finding .tab.tab-mark-blue  { background: #a5d6ff; border-color: #54aeff; }
+  & .finding .tab.tab-mark-green { background: #aceebb; border-color: #4ac26b; }
+  & .finding .tab.tab-mark-gray  { background: #d0d7de; border-color: #8c959f; }
 
   /* Badge text flips to white for medium / low in light mode. The
      dark-mode rule sets `color: #000` because --medium (amber) and
