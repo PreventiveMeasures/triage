@@ -1,6 +1,6 @@
 /* file groups */
 .file-group {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
   &.hidden { display: none; }
 }
 
@@ -67,7 +67,7 @@
    - `deleted` when in trash view (opacity nudge)
    See group.js → groupState() for the rules. */
 .finding {
-  padding: .75rem; border-bottom: 1px solid var(--border);
+  padding: .5rem .75rem; border-bottom: 1px solid var(--border);
   font-size: .875rem;
 
   &:last-child { border-bottom: none; }
