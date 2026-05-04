@@ -13,10 +13,15 @@ import { treeAnchor } from './graph/utils.js'
 // selectors come first so a more specific match short-circuits before a
 // generic one (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // Top-level view switcher (Findings / Tree / Files).
+  // Top-level view switcher (Findings / Tree / Files). Switching tabs
+  // also drops fullscreen — the mode is bound to the graph canvas (it
+  // hides the sidebar + header so the canvas can fill the viewport),
+  // and persisting it across to Findings or Files leaves the page in
+  // a chrome-less half-state with no canvas to justify it.
   const viewTab = e.target.closest('.report-tab')
   if (viewTab && viewTab.dataset.view) {
     state.currentView = viewTab.dataset.view
+    document.body.classList.remove('report-fullscreen')
     render()
     return
   }
