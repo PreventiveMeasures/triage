@@ -27,6 +27,11 @@ const GRAPH_THEMES = {
     labelDefault: 'rgba(200, 210, 225, 0.78)',
     labelHover: 'rgba(230, 237, 243, 0.95)',
     labelSelected: '#fff',
+    // Edge / arrow alpha when not hovered. Vivid pkg colors at 0.22
+    // alpha read clearly against a dark canvas; light mode needs much
+    // more saturation to show up against #f6f8fa.
+    edgeAlpha: 0.22,
+    arrowAlpha: 0.4,
   },
   light: {
     bg: '#f6f8fa',
@@ -41,6 +46,8 @@ const GRAPH_THEMES = {
     labelDefault: 'rgba(50, 60, 80, 0.85)',
     labelHover: 'rgba(20, 25, 35, 0.95)',
     labelSelected: '#000',
+    edgeAlpha: 0.55,
+    arrowAlpha: 0.75,
   },
 }
 
@@ -277,7 +284,7 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
         ctx.strokeStyle = T.dimEdge
         ctx.lineWidth = 0.5 / zoom
       } else {
-        ctx.strokeStyle = pkgColorAlpha(srcPkg, 0.22)
+        ctx.strokeStyle = pkgColorAlpha(srcPkg, T.edgeAlpha)
         ctx.lineWidth = 0.85 / zoom
       }
       ctx.stroke()
@@ -297,7 +304,7 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
         ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
         ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
         ctx.closePath()
-        ctx.fillStyle = isHov ? pkgColorAlpha(srcPkg, 0.9) : pkgColorAlpha(srcPkg, 0.4)
+        ctx.fillStyle = isHov ? pkgColorAlpha(srcPkg, 0.9) : pkgColorAlpha(srcPkg, T.arrowAlpha)
         ctx.fill()
 
         // Bidi: back-arrow at start
@@ -313,7 +320,7 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
           ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
           ctx.closePath()
           const dstPkg = packageOf(b.file) ?? '__own__'
-          ctx.fillStyle = isHov ? pkgColorAlpha(dstPkg, 0.9) : pkgColorAlpha(dstPkg, 0.4)
+          ctx.fillStyle = isHov ? pkgColorAlpha(dstPkg, 0.9) : pkgColorAlpha(dstPkg, T.arrowAlpha)
           ctx.fill()
         }
       }

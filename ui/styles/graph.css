@@ -68,18 +68,28 @@
 
 .tree-canvas-el { display: block; width: 100%; height: 100%; }
 
-/* Zoom controls — pill stack bottom-right, glass over canvas */
+/* Zoom controls — pill stack bottom-right, glass over canvas. Glass
+   sits on the WRAPPER, not on each button: backdrop-filter creates a
+   stacking context, and a child with its own filter ignores the
+   parent's `border-radius + overflow:hidden` corner clipping (the
+   square button corners poke through the rounded pill). Putting one
+   backdrop-filter on the wrapper and leaving the buttons transparent
+   keeps the rounding intact and makes the glass continuous across the
+   stack. The button separator is a `border-bottom` on each button (not
+   a flex gap) so it reads as a solid line over the glass instead of a
+   transparent strip showing the canvas through. */
 .tree-zoom-controls {
   position: absolute; bottom: 16px; right: 16px;
-  display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column;
   z-index: 3; border-radius: 7px; overflow: hidden;
   border: 1px solid var(--border);
+  background: var(--surface); backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);
 }
 
 .tree-zoom-btn {
   width: 30px; height: 28px;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
+  background: transparent;
   border: none; color: var(--muted);
   cursor: pointer; font-size: 1rem; line-height: 1;
   display: flex; align-items: center; justify-content: center;
