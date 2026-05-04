@@ -1,0 +1,56 @@
+/* Files tab — one card per file with imports / imported-by / exports
+   / hashes. In-page anchors link import names to their file's card so
+   the user can navigate the graph by clicking. Note: `.tree-count-chip`
+   here uses a slightly larger/looser typography than the sidebar
+   variant in graph.css; the `low` color also differs (uses
+   `var(--low)` rather than the muted-gray treatment). The two ride on
+   source order — files.css loads after graph.css so these win. */
+.tree-view { display: flex; flex-direction: column; gap: .75rem; }
+
+.tree-file {
+  padding: .6rem .8rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  scroll-margin-top: 1rem;
+}
+
+.tree-file-header {
+  font-size: .95rem; font-weight: 600; margin-bottom: .25rem; word-break: break-all;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+
+  & .name { flex: 1; min-width: 0; }
+}
+
+.tree-count-chips { display: inline-flex; gap: .25rem; flex-wrap: wrap; }
+
+.tree-count-chip {
+  display: inline-block; font-size: .65rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .03em;
+  padding: .1rem .4rem; border-radius: 3px; line-height: 1.3;
+
+  &.critical { background: var(--critical); color: #fff; }
+  &.high     { background: var(--high); color: #fff; }
+  &.medium   { background: var(--medium); color: #000; }
+  &.low      { background: var(--low); color: #000; }
+}
+
+.tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
+
+.tree-section {
+  margin-top: .35rem;
+
+  & ul {
+    display: inline-block; list-style: none;
+    margin: 0; padding: 0; vertical-align: top;
+  }
+  & li { font-size: .85rem; padding: 0; line-height: 1.4; }
+  & a { color: var(--accent); }
+  & a:hover { text-decoration: underline; }
+  & .name { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: .8rem; }
+}
+
+.tree-section-label {
+  display: inline-block; min-width: 6rem;
+  font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em;
+  vertical-align: top;
+}

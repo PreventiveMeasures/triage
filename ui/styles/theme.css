@@ -1,0 +1,20 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3;
+  --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
+  --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  display: flex; height: 100vh; margin: 0; overflow: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; }
+
+/* Main column scrolls independently of the sidebar — body is height-
+   constrained + overflow hidden, so the report's tall finding lists
+   only push this column, not the sidebar's file list. */
+#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }

@@ -1,0 +1,319 @@
+/* ── Graph tab layout ────────────────────────────────────────────── */
+.tree-layout {
+  display: flex; gap: 0;
+  margin-bottom: 1rem;
+  height: 82vh;
+  border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
+  background: #060a0f;
+}
+
+.tree-canvas {
+  flex: 1; min-width: 0;
+  background: #060a0f;
+  display: flex; flex-direction: column;
+  position: relative;
+}
+
+/* Toolbar */
+.tree-canvas-toolbar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: .6rem;
+  padding: .4rem .7rem;
+  background: rgba(6,10,15,0.9);
+  border-bottom: 1px solid rgba(48,54,61,.5);
+  font-size: .76rem; color: var(--muted);
+  z-index: 2;
+
+  & label {
+    display: inline-flex; align-items: center; gap: .28rem;
+    cursor: pointer; user-select: none; color: var(--muted);
+    transition: color .1s;
+    &:hover { color: var(--text); }
+  }
+  & input[type=checkbox] { margin: 0; cursor: pointer; accent-color: var(--accent); }
+  & .spacer { flex: 1; }
+
+  & .toolbar-stat {
+    color: rgba(139,148,158,.55); font-size: .73rem;
+    font-variant-numeric: tabular-nums;
+    & strong { color: rgba(230,237,243,.7); font-weight: 500; }
+  }
+
+  & .icon-btn {
+    background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.7); color: var(--muted);
+    border-radius: 5px; padding: .18rem .45rem;
+    cursor: pointer; font-size: .82rem; line-height: 1.3;
+    font-family: inherit; transition: border-color .12s, color .12s, background .12s;
+    &:hover { border-color: rgba(88,166,255,.5); color: var(--accent); background: rgba(88,166,255,.06); }
+  }
+
+  & .toolbar-sep { width: 1px; height: 14px; background: rgba(48,54,61,.6); flex-shrink: 0; }
+  & .toolbar-hint { font-size: .68rem; color: rgba(139,148,158,.3); }
+}
+
+/* Canvas container */
+.tree-canvas-scroll {
+  flex: 1; overflow: hidden; position: relative;
+  cursor: grab;
+  &:active { cursor: grabbing; }
+}
+
+.tree-canvas-el { display: block; width: 100%; height: 100%; }
+
+/* Zoom controls — pill stack bottom-right */
+.tree-zoom-controls {
+  position: absolute; bottom: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: 1px;
+  z-index: 3; border-radius: 7px; overflow: hidden;
+  border: 1px solid rgba(48,54,61,.6);
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+
+.tree-zoom-btn {
+  width: 30px; height: 28px;
+  background: rgba(10,14,20,.88);
+  border: none; color: rgba(139,148,158,.7);
+  cursor: pointer; font-size: 1rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .1s, color .1s;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgba(88,166,255,.12); color: var(--accent); }
+}
+
+/* Tooltip — appears on canvas-node hover, follows the cursor. */
+.tree-node-tooltip {
+  position: absolute; pointer-events: none;
+  background: rgba(8,12,18,.97);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px; padding: .55rem .7rem;
+  font-size: .78rem; color: var(--text);
+  max-width: 240px; z-index: 10;
+  box-shadow: 0 8px 32px rgba(0,0,0,.7), 0 0 0 1px rgba(0,0,0,.3);
+  display: none; line-height: 1.45;
+
+  & .tt-name { font-weight: 600; font-size: .82rem; }
+  & .tt-pkg {
+    font-size: .7rem; margin-top: .12rem;
+    display: inline-flex; align-items: center; gap: .3rem;
+  }
+  & .tt-pkg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  & .tt-path {
+    color: rgba(139,148,158,.6); font-size: .68rem; margin-top: .2rem;
+    word-break: break-all; font-family: ui-monospace, monospace;
+  }
+  & .tt-chips { display: flex; gap: .2rem; margin-top: .35rem; flex-wrap: wrap; }
+  & .tt-chip {
+    font-size: .62rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; padding: .1rem .32rem; border-radius: 3px; line-height: 1.4;
+
+    &.critical { background: var(--critical); color: #fff; }
+    &.high     { background: var(--high); color: #fff; }
+    &.medium   { background: var(--medium); color: #000; }
+    &.low      { background: rgba(139,148,158,.3); color: rgba(230,237,243,.8); }
+  }
+  & .tt-stat { color: rgba(139,148,158,.55); font-size: .7rem; margin-top: .25rem; }
+}
+
+/* Right sidebar — legend + hubs + node detail */
+.tree-info {
+  width: 260px; flex-shrink: 0;
+  background: #080c11;
+  border-left: 1px solid rgba(48,54,61,.5);
+  overflow-y: auto; display: flex; flex-direction: column;
+  font-size: .82rem;
+
+  &::-webkit-scrollbar { width: 3px; }
+  &::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+}
+
+/* Legend panel — always shown, lists packages with color swatches */
+.tree-legend {
+  padding: .75rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+
+.tree-legend-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5); margin-bottom: .55rem;
+}
+
+.tree-legend-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: .22rem;
+}
+
+.tree-legend-item {
+  display: flex; align-items: center; gap: .45rem;
+  cursor: pointer; padding: .2rem .3rem; border-radius: 4px;
+  transition: background .1s;
+
+  &:hover { background: rgba(255,255,255,.04); }
+  &.dimmed { opacity: .35; }
+}
+
+.tree-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.tree-legend-name {
+  font-size: .75rem; color: rgba(230,237,243,.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+.tree-legend-count { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Top hubs */
+.tree-hubs {
+  padding: .65rem .85rem .5rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+  flex-shrink: 0;
+}
+
+.tree-hubs-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .45rem;
+}
+
+.tree-hubs-title {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: rgba(139,148,158,.5);
+}
+
+.tree-hubs-tabs {
+  display: flex; gap: 1px;
+  background: rgba(48,54,61,.5); border-radius: 4px; overflow: hidden;
+}
+
+.tree-hubs-tab {
+  background: transparent; border: none; color: rgba(139,148,158,.55);
+  font-size: .65rem; font-family: inherit; cursor: pointer;
+  padding: .15rem .4rem; transition: background .1s, color .1s;
+  line-height: 1.4;
+
+  &:hover { color: var(--text); background: rgba(255,255,255,.06); }
+  &.active { background: rgba(88,166,255,.18); color: var(--accent); }
+}
+
+.tree-hub-item {
+  display: flex; align-items: center; gap: .4rem;
+  padding: .22rem .3rem; border-radius: 4px; cursor: pointer;
+  transition: background .1s;
+  &:hover { background: rgba(255,255,255,.04); }
+}
+
+.tree-hub-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+.tree-hub-name {
+  font-size: .74rem; color: rgba(230,237,243,.75); flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: ui-monospace, monospace;
+}
+
+.tree-hub-conn { font-size: .68rem; color: rgba(139,148,158,.45); flex-shrink: 0; }
+
+/* Node detail panel */
+.tree-info-empty {
+  flex: 1; padding: 2rem 1.1rem; color: rgba(139,148,158,.4); text-align: center;
+  line-height: 1.7; font-size: .78rem;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .5rem;
+}
+
+.tree-info-empty-icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid rgba(139,148,158,.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem; opacity: .5;
+}
+
+.tree-info-content { padding: 0; }
+
+.tree-info-header {
+  padding: .8rem .85rem .6rem;
+  border-bottom: 1px solid rgba(48,54,61,.4);
+}
+
+.tree-info-pkg-badge {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .65rem; margin-bottom: .35rem; color: rgba(139,148,158,.6);
+}
+
+.tree-info-pkg-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.tree-info-title {
+  font-size: .8rem; font-weight: 600;
+  word-break: break-all; margin-bottom: .5rem;
+  color: var(--text); line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+.tree-info-jumps { display: flex; flex-wrap: wrap; gap: .28rem; }
+
+.tree-info-jump {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(48,54,61,.8); color: rgba(88,166,255,.8);
+  border-radius: 4px; padding: .18rem .45rem; cursor: pointer;
+  font-size: .7rem; font-family: inherit;
+  transition: border-color .12s, background .12s;
+  &:hover { border-color: rgba(88,166,255,.5); background: rgba(88,166,255,.08); }
+}
+
+.tree-info-section {
+  padding: .6rem .85rem; border-bottom: 1px solid rgba(48,54,61,.3);
+  &:last-child { border-bottom: none; }
+}
+
+.tree-info-label {
+  font-size: .6rem; text-transform: uppercase; letter-spacing: .08em;
+  color: rgba(139,148,158,.45); margin-bottom: .35rem; font-weight: 700;
+}
+
+.tree-info-empty-list { color: rgba(139,148,158,.35); font-size: .75rem; font-style: italic; }
+
+.tree-info-list {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 160px; overflow-y: auto;
+
+  &::-webkit-scrollbar { width: 2px; }
+  &::-webkit-scrollbar-thumb { background: rgba(48,54,61,.8); border-radius: 2px; }
+
+  & li { padding: 0; }
+
+  & button {
+    display: block; width: 100%; text-align: left;
+    background: transparent; border: none; color: rgba(88,166,255,.75);
+    padding: .18rem .3rem; cursor: pointer;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: .71rem; border-radius: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: background .1s, color .1s;
+    &:hover { background: rgba(88,166,255,.08); color: var(--accent); }
+  }
+
+  & .external {
+    display: block; padding: .18rem .3rem;
+    color: rgba(139,148,158,.35);
+    font-family: ui-monospace, monospace;
+    font-size: .71rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+}
+
+/* Per-file finding-count chips, used both in the tree-info sidebar
+   AND on the per-file cards (graph-files.css). Same color palette as
+   the per-finding badges. Pure label — clicks pass through to nothing;
+   the user navigates via the imports / imported-by links. */
+.tree-count-chips { display: flex; gap: .2rem; flex-wrap: wrap; }
+
+.tree-count-chip {
+  display: inline-block; font-size: .62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .08rem .3rem; border-radius: 3px; line-height: 1.35;
+
+  &.critical { background: var(--critical); color: #fff; }
+  &.high     { background: var(--high); color: #fff; }
+  &.medium   { background: var(--medium); color: #000; }
+  &.low      { background: rgba(139,148,158,.25); color: rgba(230,237,243,.7); }
+}

@@ -1,0 +1,105 @@
+/* Print: strip interactive widgets and keep each finding on one page.
+   The toolbar + stats + reset button are hidden because they're
+   noise on paper; mark-dots and x-button likewise. Individual
+   findings get `break-inside: avoid` so a finding won't be split
+   across a page boundary (file-groups can span pages — a single
+   file with many findings is more common than a finding long
+   enough to need its own page). */
+@media print {
+  /* ~9pt root maps the rem-based screen sizes onto a tighter A4/Letter
+     density than 11pt (body lands around 8pt, headings ~11.7pt, badges
+     ~6.3pt). Trades a bit of readability for noticeably more findings
+     per page on dense reports. */
+  html { font-size: 9pt; }
+  body { background: #fff; color: #000; line-height: 1.35; display: block; }
+
+  .toolbar, .stats, .finding .marks { display: none !important; }
+  #drop-zone, #sidebar { display: none !important; }
+  #report { max-width: none; padding: 0; }
+  header h1 { font-size: 1.2rem; }
+
+  .finding {
+    break-inside: avoid; page-break-inside: avoid;
+    padding: .45rem .25rem;
+
+    &.deleted { opacity: 1; }
+
+    /* Show every tab body stacked — keeps the "multiple cases of one
+       finding" framing on paper. Tab buttons themselves are redundant
+       here since every body is visible. */
+    & .tabs { display: none !important; }
+    & .tab-body { display: grid !important; }
+
+    /* Visual separator between stacked tab bodies on paper. Kept inside
+       the print block because on screen only the active body is visible
+       (see findings.css) — outside of print, a `tab-body + tab-body`
+       selector still paints on a later-selected body and shows up as a
+       stray top border. */
+    & .tab-body + .tab-body {
+      margin-top: .5rem; padding-top: .5rem;
+      border-top: 1px dashed #999;
+    }
+
+    /* Make duplicates obvious. A multi-case .finding gets a banner
+       above the stacked cases ("Multiple reports of one finding") and
+       each case-body carries an "N of M" subhead via
+       `.print-case-label`, so a reader can both see at a glance that a
+       group is duplicates and locate any specific case. No extra
+       borders or background tints — the banner + per-case label do the
+       work. */
+    &.multi-case::before {
+      content: "Multiple reports of one finding";
+      display: block;
+      font-size: .7rem; font-weight: 700; color: #555;
+      text-transform: uppercase; letter-spacing: .06em;
+      border-bottom: 1px solid #bbb;
+      padding-bottom: .2rem; margin-bottom: .35rem;
+    }
+  }
+
+  .file-header { break-after: avoid; page-break-after: avoid; font-size: .85rem; }
+
+  .print-case-label {
+    display: block;
+    grid-column: 1 / -1;
+    font-size: .65rem; font-weight: 600; color: #555;
+    background: #eee;
+    padding: .1rem .35rem;
+    border-radius: 3px;
+    margin-bottom: .25rem;
+    letter-spacing: .04em;
+  }
+
+  /* Paper-friendly ink for the value-labels (`var(--muted)` from the
+     screen palette is tuned for the dark UI background and looks
+     washed out on white). Size and spacing inherit from the screen
+     rule. */
+  .value-label { color: #777; }
+
+  /* Force the printer to render background colors. Browsers strip them
+     by default ("color adjustment: economy") which is what was leaving
+     the badges and labels black-and-white on paper. The both-name form
+     covers WebKit/Blink (-webkit-) and the standard property, since
+     some browsers still only ship the prefixed version. Scoped to the
+     elements that actually carry print-relevant fills so we don't
+     force every CSS background through the printer. */
+  .badge, .print-case-label, .finding.multi-case::before {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Severity badges on white paper: the screen palette (saturated red
+     / orange / amber / light grey) is tuned for the dark UI background
+     and bleaches out on white. Override to vivid, ink-saturated
+     variants — deep red, orange, amber, slate, all with white text —
+     so the labels read as colored chips on print. The `!important` is
+     here because the default `.badge.<sev>` rules carry the same
+     specificity and we want the print palette to win regardless of
+     source order. */
+  .badge {
+    &.critical { background: #a30b0f !important; color: #fff !important; }
+    &.high     { background: #b8400a !important; color: #fff !important; }
+    &.medium   { background: #855107 !important; color: #fff !important; }
+    &.low      { background: #374151 !important; color: #fff !important; }
+  }
+}

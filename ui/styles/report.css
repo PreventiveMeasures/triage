@@ -1,0 +1,41 @@
+/* Top-level report container — hidden until a report is loaded
+   (`#report.active`). Centered, max-width capped, scrolls inside
+   #main-content. */
+#report {
+  display: none; max-width: 1200px; margin: 0 auto; padding: 1.5rem; width: 100%; box-sizing: border-box;
+
+  &.active { display: block; }
+
+  & > header {
+    margin-bottom: 1rem;
+    & h1 { font-size: 1.3rem; }
+    & .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
+  }
+}
+
+/* Top-level view switcher — Findings / Tree / Files. Only rendered
+   when the report has a tree block with more than one file (single-file
+   reports don't gain anything from a tree view). */
+.report-tabs {
+  display: flex; gap: .25rem; margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+
+  & button {
+    background: transparent; border: none; color: var(--muted);
+    padding: .5rem 1rem; cursor: pointer;
+    font-size: .9rem; font-family: inherit;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+
+    &:hover { color: var(--text); }
+    &.active { color: var(--accent); border-bottom-color: var(--accent); }
+  }
+}
+
+/* Fullscreen — toolbar's ⛶ button toggles `body.report-fullscreen`.
+   Hides the chrome and lets the tree-canvas grow into the viewport. */
+body.report-fullscreen {
+  & #sidebar { display: none; }
+  & #report > header { display: none; }
+  & #report { max-width: none; padding: .5rem; }
+  & .tree-layout { height: calc(100vh - 64px); }
+}

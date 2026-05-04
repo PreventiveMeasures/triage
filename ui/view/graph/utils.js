@@ -1,63 +1,5 @@
-export const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
-export const NODE_MODULES_RE = /(^|\/)node_modules\//
-
 // Severity palette
 export const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
-
-export function esc(str) {
-  const el = document.createElement('span')
-  el.textContent = str
-  return el.innerHTML
-}
-
-export function isModule(file) { return NODE_MODULES_RE.test(file) }
-
-// Strip the `node_modules/<pkg>/` prefix so the path is rooted at the
-// package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
-// `node_modules/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
-// the LAST `/node_modules/` so nested layouts strip the innermost
-// package, matching the package-name extraction at export time.
-export function stripPackagePrefix(file) {
-  return file.match(/^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
-}
-
-// Strip `[export: <name>]` markers from prose when they match the
-// finding's own `exportName`. Isolate-mode injects these markers into
-// every finding/CRITICAL line of a merged per-file response so the
-// merge stays traceable to individual exports (see src/isolate.js),
-// but once post-process has lifted the name out into `f.exportName`
-// the inline marker just duplicates metadata already on the finding.
-// Markers whose name does NOT match `f.exportName` are left alone —
-// they're still useful context (e.g. "this export affects <other>").
-export function stripExportMarker(text, exportName) {
-  if (!exportName || !text) return text
-  const escaped = exportName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
-}
-
-export function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
-}
-
-export function prettyModel(model) {
-  if (!model) return model
-  return model.replace(/^[^/]+\//u, '').replace(/^claude-/, '').replaceAll('-', ' ')
-}
-
-// Walk a list of strings and shrink the candidate prefix until every
-// string starts with it. Returns '' when no shared prefix exists. Used
-// for the print button's title heuristic when multiple reports are
-// loaded — gives the saved PDF a name that still reads as "this batch"
-// (`security-` / `2026-04-` / etc.) without having to manually pick.
-export function commonPrefix(strings) {
-  if (strings.length === 0) return ''
-  let prefix = strings[0]
-  for (let i = 1; i < strings.length; i++) {
-    while (prefix && !strings[i].startsWith(prefix)) prefix = prefix.slice(0, -1)
-    if (!prefix) return ''
-  }
-  return prefix
-}
 
 // File path → in-page anchor id. Replaces every non-word char with an
 // underscore so paths with `/` `.` `@` (node_modules / scoped packages)
@@ -66,11 +8,11 @@ export function treeAnchor(file) {
   return 'tree-' + file.replace(/[^\w-]+/gu, '_')
 }
 
-// file → { critical, high, medium, low } finding-count map. Used by both
-// the tree cards and the SVG visualization to surface findings density
-// per file at a glance. Counts INDIVIDUAL findings (not groups) so the
-// numbers match the per-file stats a user would otherwise scan in the
-// findings view.
+// file → { critical, high, medium, low } finding-count map. Used by
+// both the tree cards and the force-directed visualization to surface
+// findings density per file at a glance. Counts INDIVIDUAL findings
+// (not groups) so the numbers match the per-file stats a user would
+// otherwise scan in the findings view.
 export function computeFindingCountsByFile(allGroups) {
   const counts = new Map()
   for (const g of allGroups) {
@@ -98,7 +40,7 @@ export function svgNodeLabel(file, maxLen = 22) {
 export function svgNodeId(file) { return 'tn-' + file.replace(/[^\w-]+/gu, '_') }
 
 // Numeric sort with a stable tiebreak — used by the barycenter passes
-// below, where ties on the computed mean would otherwise depend on
+// in svg.js, where ties on the computed mean would otherwise depend on
 // unstable browser sort behavior.
 export function byBary(bary) {
   return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
@@ -115,17 +57,6 @@ export function packageOf(file) {
   if (npm) return npm[1]
   const slash = file.indexOf('/')
   return slash > 0 ? file.slice(0, slash) : '/'
-}
-
-// Stable hue per package / dir name. Same group → same color across
-// the canvas, so eyes can pick out clusters at a glance. Hash → HSL
-// hue; saturation/lightness tuned for legibility on the dark theme.
-// Falls back to a neutral blue for nameless input.
-export function packageColor(pkg) {
-  if (!pkg) return 'hsl(208, 65%, 58%)'
-  let h = 0
-  for (const c of pkg) h = (h * 31 + c.charCodeAt(0)) | 0
-  return `hsl(${((h % 360) + 360) % 360}, 60%, 56%)`
 }
 
 // Wrap a long basename across at most two lines. Splits at the last
@@ -185,7 +116,7 @@ export function computeTransitiveCounts(tree, ownCounts) {
 }
 
 // Has-issues predicate: own findings OR something in its subtree has
-// findings. Used to filter out clean files when `treeShowAll` is off.
+// findings. Used to filter out clean files when `tree.showAll` is off.
 export function fileHasFindings(file, ownCounts, transitiveCounts) {
   const own = ownCounts.get(file)
   const tr = transitiveCounts.get(file)
@@ -314,13 +245,11 @@ export function indicatorFor(counts) {
 
 // ── Vivid per-package color palette ─────────────────────────────────────────
 // Each package gets a vivid, high-saturation hue so clusters read distinctly.
-// We use a set of hand-tuned anchor hues spread around the wheel to avoid
-// muddy near-neighbors, then hash the package name to the closest slot.
 // Curated flat palette — 20 perceptually distinct colors optimized for
 // dark backgrounds. Drawn from Tableau 20 + adjusted for dark-UI legibility.
 // Ordered so adjacent indices have maximum hue distance (not sequential),
 // meaning even small graphs with 3-4 packages get very distinct colors.
-export const PKG_PALETTE = [
+const PKG_PALETTE = [
   '#4e9af1', // blue
   '#f28e2b', // orange
   '#59a14f', // green
@@ -357,7 +286,6 @@ export function pkgColor(pkg) {
 }
 export function pkgColorAlpha(pkg, a) {
   const col = pkgColor(pkg)
-  // Parse hex → rgba
   const r = parseInt(col.slice(1, 3), 16)
   const g = parseInt(col.slice(3, 5), 16)
   const b = parseInt(col.slice(5, 7), 16)
