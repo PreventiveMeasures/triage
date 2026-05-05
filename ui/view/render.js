@@ -34,27 +34,43 @@ export function refreshTreeSidebar() {
 // multiple analyzer outputs. Model name is prettified the same way
 // (provider prefix + `claude-` stripped, dashes → spaces).
 function headerHtml(allGroupsLength, fileNames) {
-  const combos = [...new Set(state.reports.flatMap((r) =>
-    r.groups.flatMap((g) => g.map((f) => {
-      const type = f.type ?? 'unknown'
-      const parts = []
-      const model = prettyModel(f.model)
-      if (model) parts.push(model)
-      if (f.effort) parts.push(f.effort)
-      if (f.exportsMode) parts.push(f.exportsMode)
-      return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
-    }))
-  ))]
-  // Singular/plural keyed off the number of distinct combos shown — one
-  // combo says "analyzer", any more says "analyzers". Two runs of the
-  // same analyzer with different effort/exportsMode count as two combos
-  // and pluralize accordingly.
-  const analyzerLabel = combos.length === 1 ? 'analyzer' : 'analyzers'
-  // headerText is pre-escaped (combo strings esc'd here) so it can include
-  // mixed safe + interpolated content without re-escaping the whole thing.
-  const headerText = combos.length > 0
-    ? `DeepView results, ${analyzerLabel}: ${combos.map(esc).join(', ')}`
-    : 'DeepView results'
+  // Claude Security MD reports get their own title (no analyzer
+  // breakdown — those reports don't carry model / effort metadata,
+  // and "DeepView results, analyzers: security, performance, …" reads
+  // as if multiple analyzer runs were merged when really they're just
+  // per-finding category tags within one Claude Security report).
+  // Only switches when EVERY loaded report is claude-security; mixing
+  // a Claude Security MD with a JSON dump goes back to the regular
+  // breakdown so the JSON's analyzer info doesn't get hidden.
+  const allClaudeSecurity = state.reports.length > 0
+    && state.reports.every((r) => r.source === 'claude-security')
+
+  let headerText
+  if (allClaudeSecurity) {
+    headerText = 'Claude Security results'
+  } else {
+    const combos = [...new Set(state.reports.flatMap((r) =>
+      r.groups.flatMap((g) => g.map((f) => {
+        const type = f.type ?? 'unknown'
+        const parts = []
+        const model = prettyModel(f.model)
+        if (model) parts.push(model)
+        if (f.effort) parts.push(f.effort)
+        if (f.exportsMode) parts.push(f.exportsMode)
+        return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
+      }))
+    ))]
+    // Singular/plural keyed off the number of distinct combos shown —
+    // one combo says "analyzer", any more says "analyzers". Two runs
+    // of the same analyzer with different effort/exportsMode count as
+    // two combos and pluralize accordingly.
+    const analyzerLabel = combos.length === 1 ? 'analyzer' : 'analyzers'
+    // headerText is pre-escaped (combo strings esc'd here) so it can
+    // include mixed safe + interpolated content without re-escaping.
+    headerText = combos.length > 0
+      ? `DeepView results, ${analyzerLabel}: ${combos.map(esc).join(', ')}`
+      : 'DeepView results'
+  }
   const reportLabel = state.reports.length === 1
     ? esc(fileNames[0])
     : `${state.reports.length} reports: ${esc(fileNames.join(', '))}`

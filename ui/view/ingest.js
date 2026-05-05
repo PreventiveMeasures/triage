@@ -180,6 +180,10 @@ export function ingestReport(name, content) {
       if (dupeCount > 0) console.log(`${name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)
       state.reports.push({
         type: data.type || 'analysis',
+        // `source` is set by the markdown parser ('claude-security')
+        // and absent on JSON dumps — render.js uses it to swap the
+        // header title for an all-MD report.
+        source: data.source ?? null,
         fileName: name,
         groups,
         // Per-file imports / exports / hashes from the analyzer dump

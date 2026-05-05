@@ -60,13 +60,23 @@
    present). Same .65rem uppercase tone used by the graph-tab section
    labels (.tree-legend-title etc.) so the sidebar reads consistent
    with that vocabulary. user-select: none + non-clickable styling so
-   it's clearly a label, not a list item. */
+   it's clearly a label, not a list item.
+
+   Background uses an opaque tint of --text so it auto-adapts per
+   theme (subtle white wash in dark, subtle dark wash in light) and
+   reads as a band that's distinct from both file items and the
+   sidebar surface. Border on top (separates from previous group) and
+   bottom (separates from the first item below — file items only have
+   border-bottom themselves, so without this the header sits flush
+   against the next item with no rule between them). */
 .file-group-header {
-  padding: .55rem .75rem .25rem;
-  font-size: .65rem; font-weight: 700;
+  padding: .45rem .75rem .35rem;
+  font-size: .62rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: .08em;
-  color: var(--muted); opacity: .8;
+  color: var(--muted);
+  background: rgb(from var(--text) r g b / 0.06);
   border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   user-select: none;
 }
 

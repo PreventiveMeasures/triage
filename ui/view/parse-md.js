@@ -68,7 +68,14 @@ export function parseMarkdownFindings(content) {
   // case. 'analysis' matches the JSON path's default.
   const type = findings.find((f) => f.type)?.type || 'analysis'
 
-  return { type, findings }
+  // `source` lets the renderer recognize Claude-Security-format
+  // reports without re-parsing them — used for the page header
+  // title (`Claude Security results` instead of the JSON-style
+  // `DeepView results, analyzers: …`). Kept under a marker rather
+  // than file-extension sniffing so a renamed `.md` file doesn't
+  // change behavior, and so a future MD producer with a different
+  // identity could opt into its own label.
+  return { type, source: 'claude-security', findings }
 }
 
 function parseBlock(block) {
