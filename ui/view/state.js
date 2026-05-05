@@ -41,11 +41,6 @@ export const state = {
   filterExclude: '',
   repoUrl: '',
   sortBy: 'file',
-  // Display toggle — orthogonal to filters (doesn't affect which
-  // findings show), so it's outside resetFilters; a filter reset or a
-  // new report drop doesn't wipe it. Default off for a denser view;
-  // flip on to inspect the source-hash provenance.
-  showMetadata: false,
   // 'grouped' (default) renders per-finding cards under per-file
   // headers — the original behavior. 'list' renders the same per-
   // finding cards but flat in sort order (each in a self-contained

@@ -53,7 +53,10 @@
 
     & .view-mode-btn {
       background: transparent; border: none; color: var(--muted);
-      padding: .2rem .42rem; cursor: pointer;
+      /* Slightly bumped from .2rem .42rem / 14px icons so the trio
+         reads as a primary toolbar control without dominating it.
+         Icons are 16px (see VIEW_ICONS in render.js). */
+      padding: .28rem .5rem; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
       transition: background .12s, color .12s;
       font-family: inherit;

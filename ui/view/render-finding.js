@@ -117,12 +117,6 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
   html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
   if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
   if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
-  if (f.fileHash || f.treeHash) {
-    const parts = []
-    if (f.fileHash) parts.push(`file: ${esc(f.fileHash)}`)
-    if (f.treeHash) parts.push(`tree: ${esc(f.treeHash)}`)
-    html += `<div class="hashes">${parts.join(' | ')}</div>`
-  }
   html += '</div></div>'
   return html
 }

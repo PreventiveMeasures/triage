@@ -234,10 +234,6 @@ report.addEventListener('change', (e) => {
   else if (id === 'source-select') { state.filterSource = val; render() }
   else if (id === 'conf-min') { state.filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { state.filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
-  // Toggle `show-metadata` on #report without a full re-render —
-  // avoids reallocating the checkbox mid-click (which would blur it)
-  // and is cheap since this is a pure CSS effect.
-  else if (id === 'show-metadata') { state.showMetadata = e.target.checked; report.classList.toggle('show-metadata', state.showMetadata) }
   // Tree-tab: include clean files in the force graph. Invalidates the
   // cached layout so the next render computes fresh positions.
   else if (id === 'tree-show-all') {

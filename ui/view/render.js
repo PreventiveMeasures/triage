@@ -19,14 +19,14 @@ import { renderTreeView } from './graph/files.js'
 //   list    — three taller items with a row-bullet on the left
 //   grouped — items under a section header band on top
 const VIEW_ICONS = {
-  table: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+  table: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
     + '<rect x="2" y="3" width="12" height="1.6"/><rect x="2" y="6" width="12" height="1.6"/>'
     + '<rect x="2" y="9" width="12" height="1.6"/><rect x="2" y="12" width="12" height="1.6"/></svg>',
-  list: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+  list: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
     + '<rect x="2" y="3" width="2" height="2.2" rx=".4"/><rect x="6" y="3" width="9" height="2.2" rx=".4"/>'
     + '<rect x="2" y="7" width="2" height="2.2" rx=".4"/><rect x="6" y="7" width="9" height="2.2" rx=".4"/>'
     + '<rect x="2" y="11" width="2" height="2.2" rx=".4"/><rect x="6" y="11" width="9" height="2.2" rx=".4"/></svg>',
-  grouped: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+  grouped: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
     + '<rect x="2" y="2" width="12" height="2.4" rx=".5"/>'
     + '<rect x="3" y="6" width="11" height="1.6"/><rect x="3" y="8.5" width="11" height="1.6"/>'
     + '<rect x="3" y="11" width="11" height="1.6"/><rect x="3" y="13.5" width="11" height="1.6"/></svg>',
@@ -164,7 +164,7 @@ function statsHtml(counts, colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
-  const { showSource, showConfidence, showMetadataToggle, showRepoInput } = flags
+  const { showSource, showConfidence, showRepoInput } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
@@ -218,9 +218,6 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
     html += `<button type="button" class="view-mode-btn${active}" data-view-mode="${mode}" title="${esc(VIEW_TITLES[mode])}" aria-label="${esc(VIEW_TITLES[mode])}" aria-pressed="${state.viewMode === mode}">${VIEW_ICONS[mode]}</button>`
   }
   html += '</div>'
-  if (showMetadataToggle && state.viewMode !== 'table') {
-    html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
-  }
   // Trash toggle only shows when there's something to toggle: either
   // findings are already deleted (count > 0) or the user is currently
   // viewing the trash (showDeleted=true) and needs a way back. Empty
@@ -396,7 +393,6 @@ export function render() {
    // those.
   const hasAnyConfidence = mergedGroups.some((g) => g.some((f) => f.confidence !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
-  const hasAnyHashMetadata = mergedGroups.some((g) => g.some((f) => f.fileHash || f.treeHash))
   // Repo URL input is useful only when at least one finding could
   // benefit from it: non-node_modules AND no per-finding repo.github.
   const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
@@ -414,7 +410,6 @@ export function render() {
     // its `?? -1` placeholder. Reset to 'file' when that happens.
     if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'file'
   }
-  if (!hasAnyHashMetadata) state.showMetadata = false
 
   const filtered = applySorting(applyFilters(allGroups))
 
@@ -452,7 +447,6 @@ export function render() {
     html += '</div>'
     report.innerHTML = html
     report.classList.add('active')
-    report.classList.toggle('show-metadata', state.showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
     attachTreeGraphInteraction(report.querySelector('.tree-canvas'), refreshTreeSidebar)
@@ -464,7 +458,6 @@ export function render() {
     html += renderTreeView(treeData, findingCounts)
     report.innerHTML = html
     report.classList.add('active')
-    report.classList.toggle('show-metadata', state.showMetadata)
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
     return
@@ -474,7 +467,6 @@ export function render() {
   html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
-    showMetadataToggle: hasAnyHashMetadata,
     showRepoInput: repoInputUseful,
   })
 
@@ -490,7 +482,6 @@ export function render() {
 
   report.innerHTML = html
   report.classList.add('active')
-  report.classList.toggle('show-metadata', state.showMetadata)
   dropZone.classList.add('hidden')
   document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
 }

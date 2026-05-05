@@ -126,12 +126,10 @@
   & .desc { grid-column: 2; white-space: pre-line; }
   & .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
   & .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
-  & .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
 
-  /* `line-num` is the `line N` / `(found analyzing X)` spans; the
-     `hashes` block (`file: sha512… | tree: …`) is opt-in via the
-     "metadata" toolbar checkbox. Line numbers are always shown —
-     they're the minimum context needed to act on a finding. */
+  /* `line-num` is the `line N` / `(found analyzing X)` spans. Line
+     numbers are always shown — they're the minimum context needed to
+     act on a finding. */
   & .line-num { color: var(--muted); font-size: .8rem; }
 
   /* line-num + run-meta share one row: line-num on the left, run-meta
@@ -339,9 +337,6 @@
   }
   &.expanded .expanded-content { display: block; }
 }
-
-/* show-metadata toggle — opt-in display of the per-finding hashes block. */
-#report.show-metadata .finding .hashes { display: block; }
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;
