@@ -355,16 +355,11 @@
   /* Informational uses white text in both themes — the dark-default
      --info is a light blue (white reads cleanly on it via contrast),
      and the light-mode --info is a saturated blue where black text
-     vanishes. theme.css doesn't need to flip this one.
-     Smaller font + tighter letter-spacing because "INFORMATIONAL" is
-     13 chars vs "CRITICAL"'s 8 — at the shared .7rem it overflowed
-     the badge column in table view (pushing the title to the right)
-     and looked oversized next to the other tiers. Sized to fit the
-     same visual slot. */
-  &.informational {
-    background: var(--info); color: #fff;
-    font-size: .55rem; letter-spacing: .02em;
-  }
+     vanishes. theme.css doesn't need to flip this one. The visible
+     label is "INFO" (see badgeLabel in render-finding.js) — keeps
+     the badge the same size as the other tiers without needing a
+     font-size override. */
+  &.informational { background: var(--info); color: #fff; }
 }
 
 .conf-score {

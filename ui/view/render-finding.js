@@ -15,6 +15,15 @@ function rowLocationHtml(f) {
   return `<a href="${esc(target)}" target="_blank" rel="noopener">${esc(text)}</a>`
 }
 
+// Display label for the .badge tier text. The class still gets the
+// canonical severity string ('informational') so CSS color rules
+// match; only the visible word is shortened — "informational" at the
+// shared font-size overflowed the badge column otherwise. Other
+// tiers are short enough to render literally.
+function badgeLabel(severity) {
+  return severity === 'informational' ? 'info' : severity
+}
+
 // First non-empty line of a description, for the table-view title.
 // Markdown findings begin with a literal title line; JSON findings
 // usually have a one-paragraph description and the whole thing
@@ -64,7 +73,7 @@ export function renderTab(f, isActive) {
   if (color) classes.push(`tab-mark-${color}`)
   if (deleted) classes.push('tab-deleted')
   const confPart = f.confidence !== undefined ? `<span class="tab-conf">${f.confidence}/10</span>` : ''
-  return `<button type="button" class="${classes.join(' ')}" data-tid="${esc(key)}"><span class="tab-label"><span class="badge ${esc(f.severity)}">${esc(f.severity)}</span> ${confPart}</span></button>`
+  return `<button type="button" class="${classes.join(' ')}" data-tid="${esc(key)}"><span class="tab-label"><span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span> ${confPart}</span></button>`
 }
 
 // Render one tab's body (finding-left + content). Only the active tab
@@ -83,7 +92,7 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
   if (total > 1) html += `<div class="print-case-label">${idx + 1} of ${total}</div>`
   html += '<div class="finding-left">'
   // Sub-captions sit AFTER their values (below them visually).
-  html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+  html += `<span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span>`
   html += '<div class="value-label">Severity</div>'
   if (f.confidence !== undefined) {
     html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
@@ -215,7 +224,7 @@ export function renderTableRow(g) {
   // conf is absent the badge ends up centered across the available
   // height instead of stuck at the top.
   html += '<div class="row-score">'
-  html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+  html += `<span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span>`
   if (f.confidence !== undefined) {
     html += `<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`
   }
