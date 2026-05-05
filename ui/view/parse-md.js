@@ -59,14 +59,14 @@ export function parseMarkdownFindings(content) {
   }
   if (findings.length === 0) return null
 
-  // Top-level analyzer type — derive from the first finding's
-  // category metadata (the JSON shape's `type` field). Falls back to
-  // 'analysis' when no category is available, matching the default
-  // ingest.js applies to JSON without an explicit type.
-  const type = findings[0]._category?.toLowerCase() || 'analysis'
-  // Strip the temporary _category we used to seed `type` so it
-  // doesn't leak into per-finding state.
-  for (const f of findings) delete f._category
+  // Top-level analyzer type — used as the fallback `data.type` in
+  // ingest for findings that don't carry their own `f.type`. With the
+  // per-finding category mapped to `f.type` below, this default only
+  // matters when a finding is missing its **Category:** line; pick
+  // the first such category that appears so the document title /
+  // header keep something meaningful in the common single-category
+  // case. 'analysis' matches the JSON path's default.
+  const type = findings.find((f) => f.type)?.type || 'analysis'
 
   return { type, findings }
 }
@@ -170,7 +170,13 @@ function parseBlock(block) {
   if (meta.branch) finding.branch = meta.branch
   if (meta['date created']) finding.dateCreated = meta['date created']
   if (meta.status) finding.status = meta.status
-  if (meta.category) finding._category = meta.category  // consumed by parseMarkdownFindings for top-level type
+  // Per-finding category lands on `type` to match the JSON shape,
+  // where each finding can carry its own analyzer type. Lowercased so
+  // the header analyzer-breakdown groups consistently regardless of
+  // source casing ("Security" vs "security"). Without this mapping,
+  // ingest.js would fall back to data.type for every finding and the
+  // run-meta line would show the same category for the whole report.
+  if (meta.category) finding.type = meta.category.toLowerCase()
 
   return finding
 }
