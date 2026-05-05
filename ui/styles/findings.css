@@ -148,9 +148,15 @@
   }
 
   /* Body content */
-  & .desc { grid-column: 2; }
-  & .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; }
-  & .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; }
+  /* white-space: pre-line preserves paragraph breaks (\n\n) and line
+     breaks within description text. JSON findings are usually a single
+     paragraph and look identical; markdown-format findings carry the
+     details / impact / reproduction sections joined by \n\n and rely
+     on this rule to render as visual paragraphs instead of one wall
+     of text. */
+  & .desc { grid-column: 2; white-space: pre-line; }
+  & .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
+  & .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
   & .hashes { color: var(--muted); font-size: .75rem; margin-top: .2rem; grid-column: 2; word-break: break-all; display: none; }
 
   /* `line-num` is the `line N` / `(found analyzing X)` spans; the

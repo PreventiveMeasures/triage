@@ -7,6 +7,7 @@ import { loadPromise } from './triage.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
+import { parseMarkdownFindings } from './parse-md.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -96,7 +97,18 @@ export function ingestReport(name, content) {
       // once at module init; await it before rendering so the first
       // drop already shows stored marks/deletions for matching findings.
       await loadPromise
-      const data = JSON.parse(content)
+      // Primary input is JSON (the analyzer's native dump format).
+      // When that fails, try the markdown findings format — supported
+      // as a convenience but intentionally undocumented in the README.
+      // parseMarkdownFindings returns the same { type, findings, … }
+      // shape so the rest of this function doesn't need to branch.
+      let data
+      try {
+        data = JSON.parse(content)
+      } catch (jsonErr) {
+        data = parseMarkdownFindings(content)
+        if (!data) throw new Error(`Not JSON, and not the supported markdown format. (JSON error: ${jsonErr.message})`)
+      }
       // Reset filters whenever this is the first report in the current
       // view (cleared on switchToFile / deleteCurrent, accumulating in
       // the headless print flow). The auto-tune that follows uses the
