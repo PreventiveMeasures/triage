@@ -55,6 +55,21 @@
 
 .file-item.current button.file-name { background: var(--surface-active); color: var(--accent); }
 
+/* Section header for grouped files in the sidebar (e.g. "Claude
+   Security" above .md entries when both default + named groups are
+   present). Same .65rem uppercase tone used by the graph-tab section
+   labels (.tree-legend-title etc.) so the sidebar reads consistent
+   with that vocabulary. user-select: none + non-clickable styling so
+   it's clearly a label, not a list item. */
+.file-group-header {
+  padding: .55rem .75rem .25rem;
+  font-size: .65rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); opacity: .8;
+  border-top: 1px solid var(--border);
+  user-select: none;
+}
+
 .sidebar-actions {
   padding: .5rem .75rem; border-top: 1px solid var(--border);
   display: flex; gap: .35rem; flex-wrap: wrap;
