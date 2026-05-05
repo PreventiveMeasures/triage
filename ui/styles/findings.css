@@ -353,10 +353,15 @@
   display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
   padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
 
-  &.critical { background: var(--critical); color: #fff; }
-  &.high     { background: var(--high); color: #fff; }
-  &.medium   { background: var(--medium); color: #000; }
-  &.low      { background: var(--low); color: #000; }
+  &.critical      { background: var(--critical); color: #fff; }
+  &.high          { background: var(--high); color: #fff; }
+  &.medium        { background: var(--medium); color: #000; }
+  &.low           { background: var(--low); color: #000; }
+  /* Informational uses white text in both themes — the dark-default
+     --info is a light blue (white reads cleanly on it via contrast),
+     and the light-mode --info is a saturated blue where black text
+     vanishes. theme.css doesn't need to flip this one. */
+  &.informational { background: var(--info); color: #fff; }
 }
 
 .conf-score {

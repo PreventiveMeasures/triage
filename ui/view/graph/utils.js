@@ -1,5 +1,23 @@
-// Severity palette
-export const SEV_COLORS = { critical: '#f85149', high: '#f0883e', medium: '#d29922', low: '#8b949e' }
+// Severity palette. Mirrors the CSS --critical / --high / --medium /
+// --low / --info vars used by the badges + count chips, so the canvas
+// node indicators visually match the per-finding badges. `informational`
+// gets the same blue tone as the CSS --info dark default. Update both
+// at once when tuning a tier's color.
+export const SEV_COLORS = {
+  critical: '#f85149',
+  high: '#f0883e',
+  medium: '#d29922',
+  low: '#8b949e',
+  informational: '#218bff',
+}
+// Highest-to-lowest iteration order — see SEVERITIES in ../format.js
+// for the same list (kept duplicated here to avoid a circular import
+// from a graph-only utility back up into format.js).
+const SEVERITIES_ORDERED = ['critical', 'high', 'medium', 'low', 'informational']
+// Empty per-file counts seed used by both computeFindingCountsByFile
+// and computeTransitiveCounts so tier additions only have to land in
+// SEVERITIES_ORDERED above.
+const emptyCounts = () => Object.fromEntries(SEVERITIES_ORDERED.map((s) => [s, 0]))
 
 // File path → in-page anchor id. Replaces every non-word char with an
 // underscore so paths with `/` `.` `@` (node_modules / scoped packages)
@@ -17,7 +35,7 @@ export function computeFindingCountsByFile(allGroups) {
   const counts = new Map()
   for (const g of allGroups) {
     for (const f of g) {
-      if (!counts.has(f.file)) counts.set(f.file, { critical: 0, high: 0, medium: 0, low: 0 })
+      if (!counts.has(f.file)) counts.set(f.file, emptyCounts())
       const c = counts.get(f.file)
       if (c[f.severity] !== undefined) c[f.severity]++
     }
@@ -105,10 +123,10 @@ export function computeTransitiveCounts(tree, ownCounts) {
       visited.add(dep)
       for (const next of (tree[dep]?.imports ?? [])) if (tree[next]) stack.push(next)
     }
-    const sum = { critical: 0, high: 0, medium: 0, low: 0 }
+    const sum = emptyCounts()
     for (const f of visited) {
       const c = ownCounts.get(f)
-      if (c) for (const k of ['critical', 'high', 'medium', 'low']) sum[k] += c[k]
+      if (c) for (const k of SEVERITIES_ORDERED) sum[k] += c[k] ?? 0
     }
     transitive.set(file, sum)
   }
@@ -120,8 +138,7 @@ export function computeTransitiveCounts(tree, ownCounts) {
 export function fileHasFindings(file, ownCounts, transitiveCounts) {
   const own = ownCounts.get(file)
   const tr = transitiveCounts.get(file)
-  const total = (c) => c ? c.critical + c.high + c.medium + c.low : 0
-  return total(own) > 0 || total(tr) > 0
+  return totalFindings(own) > 0 || totalFindings(tr) > 0
 }
 
 // Fruchterman-Reingold force-directed layout.
@@ -233,11 +250,14 @@ export function forceLayout(files, importsOf, layoutW, layoutH) {
 }
 
 export function totalFindings(counts) {
-  return counts ? counts.critical + counts.high + counts.medium + counts.low : 0
+  if (!counts) return 0
+  let total = 0
+  for (const k of SEVERITIES_ORDERED) total += counts[k] ?? 0
+  return total
 }
 export function indicatorFor(counts) {
   if (!counts) return null
-  for (const sev of ['critical', 'high', 'medium', 'low']) {
+  for (const sev of SEVERITIES_ORDERED) {
     if (counts[sev] > 0) return SEV_COLORS[sev]
   }
   return null

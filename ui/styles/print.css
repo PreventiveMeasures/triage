@@ -121,9 +121,10 @@
      specificity and we want the print palette to win regardless of
      source order. */
   .badge {
-    &.critical { background: #a30b0f !important; color: #fff !important; }
-    &.high     { background: #b8400a !important; color: #fff !important; }
-    &.medium   { background: #855107 !important; color: #fff !important; }
-    &.low      { background: #374151 !important; color: #fff !important; }
+    &.critical      { background: #a30b0f !important; color: #fff !important; }
+    &.high          { background: #b8400a !important; color: #fff !important; }
+    &.medium        { background: #855107 !important; color: #fff !important; }
+    &.low           { background: #374151 !important; color: #fff !important; }
+    &.informational { background: #0550ae !important; color: #fff !important; }
   }
 }

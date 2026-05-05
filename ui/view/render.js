@@ -134,6 +134,7 @@ function statsHtml(counts, colorCounts) {
     ['high', counts.high, '--high'],
     ['medium', counts.medium, '--medium'],
     ['low', counts.low, '--low'],
+    ['informational', counts.informational, '--info'],
   ]
   for (const [sev, count, color] of statItems) {
     if (!count) continue
@@ -315,7 +316,11 @@ function findingsBodyHtml(filtered) {
   // active tab automatically.
   for (const g of items) {
     const p = activeTabFor(g)
-    const lineHtml = `<span class="line-num">${lineLink(p.file, p.line, p.repo?.github)}</span>`
+    // Skip the line span entirely when there's no line number — a
+    // bare "line ?" reads as broken metadata. lineLink returns '' in
+    // that case (codex / claude-security imports don't carry lines).
+    const lineLinkHtml = lineLink(p.file, p.line, p.repo?.github)
+    const lineHtml = lineLinkHtml ? `<span class="line-num">${lineLinkHtml}</span>` : ''
     const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
     const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
     const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
@@ -350,7 +355,7 @@ export function render() {
   // any tab is high; click "red" → all groups with any red-marked tab),
   // and gives a useful preview of filter-click results. Unmarked tabs
   // bucket under `'none'` so the user can isolate unreviewed findings.
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 }
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 }
   const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
   for (const g of allGroups) {
     const sevs = new Set(g.map((f) => f.severity))

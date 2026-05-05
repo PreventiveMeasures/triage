@@ -96,13 +96,20 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
   // In file-grouped mode this row is hidden in favor of the per-finding
   // `.finding-loc` header above the card (CSS rule under .file-group).
   html += '<div class="line-row">'
-  // Line number anchor + (when present) the export name the finding lives
-  // in, comma-separated. The exportName is plain text — only the line
-  // number gets linkified by `lineLink`. Pass `f.repo?.github` so a
-  // node_modules finding links to the package's upstream repo rather
-  // than the user-typed project URL.
-  const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
-  html += `<span class="line-num">${lineLink(f.file, f.line, f.repo?.github)}${exportPart}</span>`
+  // Line number anchor + (when present) the export name the finding
+  // lives in, comma-separated. The exportName is plain text — only the
+  // line number gets linkified by `lineLink`. Pass `f.repo?.github` so
+  // a node_modules finding links to the package's upstream repo rather
+  // than the user-typed project URL. Codex / Claude Security imports
+  // don't carry line numbers (lineLink returns ''); skip the wrapping
+  // span and the comma-separator entirely when both pieces are empty
+  // so the line-row collapses to nothing instead of leaving "line ?".
+  const lineHtml = lineLink(f.file, f.line, f.repo?.github)
+  const exportName = f.exportName ? esc(f.exportName) : ''
+  const lineRowText = lineHtml && exportName
+    ? `${lineHtml}, ${exportName}`
+    : (lineHtml || exportName)
+  if (lineRowText) html += `<span class="line-num">${lineRowText}</span>`
   if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
   const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
   if (meta) html += `<span class="run-meta">${esc(meta)}</span>`

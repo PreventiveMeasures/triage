@@ -1,6 +1,19 @@
 import { state } from './state.js'
 
-export const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 }
+// Severity ranking — higher = more severe. `informational` sits below
+// `low` (codex / claude security exports use it for findings that
+// don't represent a defect at all, just notes / observations). The
+// ordering drives sortBy='severity' in filters.js and topSeverity()
+// in render-finding.js. Adding a new tier here is the canonical
+// place — every other hardcoded severity list (counts initializers,
+// stats chips, chip CSS, indicatorFor) keys off SEVERITIES below.
+export const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1, informational: 0 }
+// Highest-to-lowest iteration order. Used by indicatorFor (returns
+// the most severe present), statItems / colorCounts builders, and
+// per-file count computations. Note: informational is intentionally
+// last so the existing "first non-zero wins" tie-breaks favor
+// stronger severities in summary slots.
+export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational']
 export const NODE_MODULES_RE = /(^|\/)node_modules\//
 
 export function esc(str) {
@@ -76,10 +89,16 @@ export function fileLink(file, githubRepo) {
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}</a>` : esc(file)
 }
 
+// Returns "line N" (linkified when a fileUrl is available) or '' when
+// `line` isn't a finite integer — codex / claude-security imports
+// don't carry line numbers and stub them as '?', and rendering a bare
+// "line ?" adds noise without information. Callers suppress the
+// wrapping `<span class="line-num">` when this returns ''.
 export function lineLink(file, line, githubRepo) {
-  const url = fileUrl(file, githubRepo)
-  const text = `line ${esc(String(line))}`
-  if (!url) return text
   const lineNum = parseInt(line, 10)
+  if (!Number.isFinite(lineNum)) return ''
+  const url = fileUrl(file, githubRepo)
+  const text = `line ${lineNum}`
+  if (!url) return text
   return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
 }

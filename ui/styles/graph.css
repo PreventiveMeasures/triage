@@ -128,10 +128,11 @@
     font-size: .62rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: .05em; padding: .1rem .32rem; border-radius: 3px; line-height: 1.4;
 
-    &.critical { background: var(--critical); color: #fff; }
-    &.high     { background: var(--high); color: #fff; }
-    &.medium   { background: var(--medium); color: #000; }
-    &.low      { background: var(--low); color: #fff; opacity: .85; }
+    &.critical      { background: var(--critical); color: #fff; }
+    &.high          { background: var(--high); color: #fff; }
+    &.medium        { background: var(--medium); color: #000; }
+    &.low           { background: var(--low); color: #fff; opacity: .85; }
+    &.informational { background: var(--info); color: #fff; }
   }
   & .tt-stat { color: var(--muted); font-size: .7rem; margin-top: .25rem; opacity: .8; }
 }
@@ -331,10 +332,11 @@
   text-transform: uppercase; letter-spacing: .04em;
   padding: .08rem .3rem; border-radius: 3px; line-height: 1.35;
 
-  &.critical { background: var(--critical); color: #fff; }
-  &.high     { background: var(--high); color: #fff; }
-  &.medium   { background: var(--medium); color: #000; }
-  &.low      { background: var(--low); color: #fff; opacity: .85; }
+  &.critical      { background: var(--critical); color: #fff; }
+  &.high          { background: var(--high); color: #fff; }
+  &.medium        { background: var(--medium); color: #000; }
+  &.low           { background: var(--low); color: #fff; opacity: .85; }
+  &.informational { background: var(--info); color: #fff; }
 }
 
 /* Light-mode variant for the in-graph low chip — needs white text on
