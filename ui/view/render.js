@@ -214,14 +214,19 @@ function findingsBodyHtml(filtered) {
     // Table view is always flat. For 'file' sort we still want
     // line-within-file ordering to match the file-grouped layout's
     // intra-file order; applySorting only handles file→line for
-    // severity / confidence sorts.
+    // severity / confidence sorts. All rows live inside a single
+    // .finding-table glass wrapper — rows themselves are transparent
+    // with just a border-bottom separator, so the whole list reads
+    // as one continuous panel rather than a strip of detached cards.
     const items = state.sortBy === 'file'
       ? [...filtered].sort((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
         return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
       })
       : filtered
+    html += '<div class="finding-table">'
     for (const g of items) html += renderTableRow(g)
+    html += '</div>'
     return html
   }
   if (state.groupByFile) {

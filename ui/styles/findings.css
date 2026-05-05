@@ -229,17 +229,37 @@
   &:hover { color: var(--green); border-color: var(--green); }
 }
 
-/* ── Table view: compact 2-row block per finding ─────────────────────
-   Selected via `View: Table` in the toolbar; never grouped by file.
-   Same semantic class flags as .finding (.is-critical, .mark-color,
-   .has-conflict, .deleted, .multi-case) so the visual treatment
-   matches the list view's at-a-glance vocabulary. */
-.finding-row {
+/* ── Table view ─────────────────────────────────────────────────────
+   .finding-table is the single glass wrapper around all rows; rows
+   themselves are transparent and separated only by a border-bottom,
+   so the list reads as one continuous panel rather than a strip of
+   detached cards. */
+.finding-table {
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: .4rem .55rem; margin-bottom: .35rem;
-  display: flex; flex-direction: column; gap: .25rem;
+  overflow: hidden;
+  box-shadow: var(--shadow-glass);
+  margin-bottom: 1rem;
+}
+
+/* One compact block per finding. Two-column grid: a fixed-width score
+   column (badge + optional confidence) on the left, body column on
+   the right. align-items: center centers the score column vertically
+   when conf is absent, so a lone badge sits in the middle of the row
+   instead of stuck at the top. */
+.finding-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: .35rem .85rem;
+  align-items: center;
+  padding: .4rem .7rem;
   font-size: .8rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .12s;
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgb(from var(--text) r g b / .04); }
 
   &.is-critical { background: var(--critical-bg); }
   &.mark-red   { background: #6b1820; }
@@ -249,8 +269,32 @@
   &.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
   &.deleted { opacity: .75; }
 
+  /* Left column — fixed width keeps badges aligned across rows. The
+     badge gets a min-width so "low" doesn't render narrower than
+     "critical" (which would unalign the badge text within the
+     column). justify-content: center handles the vertical centering
+     when conf is missing. */
+  & .row-score {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: .2rem;
+    font-variant-numeric: tabular-nums;
+
+    & .badge { min-width: 4.4rem; text-align: center; }
+    & .row-conf {
+      color: var(--muted); font-size: .72rem;
+      & strong { color: var(--text); font-size: .8rem; }
+    }
+  }
+
+  /* Right column — title / meta / tabs / expanded body stacked. */
+  & .row-body {
+    display: flex; flex-direction: column; gap: .2rem;
+    min-width: 0;  /* allow children's text-overflow:ellipsis to work */
+  }
+
   & .title-row {
-    display: flex; align-items: center; gap: .5rem;
+    display: flex; align-items: baseline; gap: .5rem;
     & .title {
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -261,15 +305,12 @@
 
   & .meta-row {
     display: flex; align-items: center; gap: .55rem;
-    & .row-conf {
-      color: var(--muted); font-size: .72rem; flex-shrink: 0;
-      font-variant-numeric: tabular-nums;
-      & strong { color: var(--text); font-size: .78rem; }
-    }
     & .row-loc {
       color: var(--muted); font-size: .72rem;
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      & a { color: inherit; }
+      & a:hover { color: var(--accent); }
     }
     & .marks {
       display: flex; gap: .35rem; align-items: center; flex-shrink: 0;
@@ -280,6 +321,23 @@
   & .tabs-row {
     & .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
   }
+
+  /* Expanded body — toggled by the click handler in events.js. Hidden
+     by default; .expanded reveals the full description, recommendation,
+     and conf-reason. white-space: pre-line preserves paragraph breaks
+     in markdown findings (same rule used by the list-view .desc). */
+  & .expanded-content {
+    display: none;
+    margin-top: .25rem;
+    padding-top: .35rem;
+    border-top: 1px solid var(--border);
+
+    & .desc { white-space: pre-line; font-size: .8rem; }
+    & .recommendation { color: var(--green); font-size: .8rem; margin-top: .35rem; white-space: pre-line; }
+    & .conf-reason { color: var(--muted); font-size: .75rem; margin-top: .25rem; white-space: pre-line; }
+    & .discovered-in { color: var(--muted); font-size: .7rem; margin-top: .25rem; font-style: italic; }
+  }
+  &.expanded .expanded-content { display: block; }
 }
 
 /* show-metadata toggle — opt-in display of the per-finding hashes block. */

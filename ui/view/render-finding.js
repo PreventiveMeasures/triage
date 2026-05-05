@@ -1,6 +1,19 @@
 import { state } from './state.js'
-import { esc, prettyModel, stripExportMarker, lineLink } from './format.js'
+import { esc, prettyModel, stripExportMarker, lineLink, fileUrl } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
+
+// Combined `file:line` link for the table-view location cell. lineLink
+// only emits "line N" since the list view shows the filename in a
+// separate file-header / flat-group-loc; the table view has no such
+// header, so we need both pieces in one slot.
+function rowLocationHtml(f) {
+  const url = fileUrl(f.file, f.repo?.github)
+  const lineNum = parseInt(f.line, 10)
+  const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
+  if (!url) return esc(text)
+  const target = Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
+  return `<a href="${esc(target)}" target="_blank" rel="noopener">${esc(text)}</a>`
+}
 
 // First non-empty line of a description, for the table-view title.
 // Markdown findings begin with a literal title line; JSON findings
@@ -161,16 +174,18 @@ export function renderGroup(g) {
   return html
 }
 
-// Compact 2-row block per finding for the table view. Never grouped
-// by file (the location lives inside the row's meta line, so file
-// info is per-row anyway). Active tab drives the displayed title /
-// confidence / location; switching tabs re-renders the whole report.
-//   row 1 — severity badge · title (first line, ellipsis) · type chip
-//   row 2 — confidence (if any) · file:line · action buttons
-//   row 3 — tab strip (multi-tab groups only)
-// `data-gid` lives on the outer div so the existing event handlers
-// (which target [data-gid]) work uniformly across .finding and
-// .finding-row without per-shape branching.
+// Compact block per finding for the table view. Layout:
+//   ┌──────────┬──────────────────────────────────────┐
+//   │  badge   │  title (first line, ellipsis)  type  │
+//   │  conf?   │  file:line               actions     │
+//   │          │  tab strip (multi-tab only)          │
+//   │          │  full description (when expanded)    │
+//   └──────────┴──────────────────────────────────────┘
+// The left column is fixed-width so badges line up across rows; when
+// confidence is absent the badge centers vertically against the body.
+// Click anywhere outside a button / link toggles `.expanded` and
+// reveals the description / recommendation / conf-reason. Never
+// grouped by file — the file:line lives in the row's meta line.
 export function renderTableRow(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
@@ -193,28 +208,48 @@ export function renderTableRow(g) {
   const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
 
   let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
-  // Row 1
-  html += '<div class="title-row">'
+
+  // Left column: badge + (optional) confidence. Centered vertically
+  // within the row by the parent's grid `align-items: center`, so when
+  // conf is absent the badge ends up centered across the available
+  // height instead of stuck at the top.
+  html += '<div class="row-score">'
   html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
-  html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
-  if (typeLabel) html += `<span class="row-type">${esc(typeLabel)}</span>`
-  html += '</div>'
-  // Row 2
-  html += '<div class="meta-row">'
   if (f.confidence !== undefined) {
     html += `<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`
   }
-  html += `<span class="row-loc">${lineLink(f.file, f.line, f.repo?.github)}${exportPart}</span>`
+  html += '</div>'
+
+  // Right column: title row, meta row, optional tab strip, optional
+  // expanded body. All rendered inside a flex column so they stack
+  // with consistent gaps regardless of which optional sections appear.
+  html += '<div class="row-body">'
+  html += '<div class="title-row">'
+  html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
+  if (typeLabel) html += `<span class="row-type">${esc(typeLabel)}</span>`
+  html += '</div>'
+  html += '<div class="meta-row">'
+  html += `<span class="row-loc">${rowLocationHtml(f)}${exportPart}</span>`
   html += '<div class="marks">'
   html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
   html += '</div>'
   html += '</div>'
-  // Row 3 — tabs only when there's more than one to switch between.
   if (sortedTabs.length > 1) {
     html += '<div class="tabs-row"><div class="tabs">'
     for (const tabF of sortedTabs) html += renderTab(tabF, tabKey(tabF) === activeKey)
     html += '</div></div>'
   }
+  // Expanded section — hidden until the row carries `.expanded`.
+  // Mirrors the list view's per-tab body content (full description,
+  // recommendation, conf-reason, discoveredIn note) minus the badge
+  // and confidence which the score column already shows.
+  html += '<div class="expanded-content">'
+  html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
+  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
+  if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
+  if (f.discoveredIn) html += `<div class="discovered-in">found analyzing ${esc(f.discoveredIn)}</div>`
   html += '</div>'
+  html += '</div>'  // /row-body
+  html += '</div>'  // /finding-row
   return html
 }

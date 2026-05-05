@@ -180,6 +180,17 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Table-view row click — expand / collapse the full description block.
+  // Has to come AFTER all the .tab / .mark-* / link handlers so a
+  // click on those still does its specific thing without also toggling
+  // expansion. The closest('a, button, label') guard is belt-and-
+  // suspenders for clicks that fall through (e.g. the row's own .marks
+  // wrapper area between buttons).
+  const rowEl = e.target.closest('.finding-row')
+  if (rowEl && !e.target.closest('a, button, label')) {
+    rowEl.classList.toggle('expanded')
+    return
+  }
   // Print button — set document.title to the filename (or longest common
   // prefix when multiple files are loaded) so the OS print dialog and any
   // saved PDF default to a meaningful name, then call window.print() and
