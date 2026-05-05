@@ -1,3 +1,17 @@
+export const VIEW_MODE_KEY = 'deepview.viewMode'
+const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
+
+// Hoisted so the `state` object literal below can call it during its
+// own initialization. Reads localStorage and validates against the
+// known set — anything else (missing, corrupted, future-only value)
+// returns null and the default kicks in.
+function readSavedViewMode() {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY)
+    return VALID_VIEW_MODES.has(v) ? v : null
+  } catch { return null }
+}
+
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
 // `state.reports`, `state.currentView = 'tree'`, etc. Keeping it as a
@@ -46,8 +60,9 @@ export const state = {
   // finding cards but flat in sort order (each in a self-contained
   // card with its own location header). 'table' renders one compact
   // block per finding, never grouped. Selected via the icon-button
-  // group in the toolbar.
-  viewMode: 'grouped',
+  // group in the toolbar; persisted to localStorage so the choice
+  // survives reloads (events.js writes on click).
+  viewMode: readSavedViewMode() ?? 'grouped',
   // Per-finding manual annotations. Keyed by `tabKey(f)` =
   // `f.id ?? String(f._id)`: the export's derived uuid when available
   // (persists across reloads via localStorage), else a session-local

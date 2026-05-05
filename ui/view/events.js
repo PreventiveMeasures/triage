@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state, VIEW_MODE_KEY } from './state.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
@@ -165,6 +165,9 @@ report.addEventListener('click', (e) => {
   const viewModeBtn = e.target.closest('[data-view-mode]')
   if (viewModeBtn) {
     state.viewMode = viewModeBtn.dataset.viewMode
+    // Persist so the user's preferred view sticks across reloads —
+    // state.js reads it back on boot.
+    try { localStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch {}
     render()
     return
   }
