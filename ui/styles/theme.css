@@ -15,9 +15,16 @@
    them. `--surface-active` stays opaque — selected/active states need
    to read as a deliberate tint, not a frost over the gradient. */
 :root {
-  --bg: #0d1117;
-  --surface: rgba(22, 27, 34, 0.78);
-  --border: #30363d; --text: #e6edf3;
+  /* Neutral grays for the dark structural palette — bg / surface /
+     border / surface-active. The previous values (#0d1117 / #161b22 /
+     #30363d / #1a2233 — GitHub dark) carried a subtle blue cast that
+     added up to a noticeably bluish UI; pure grays read as a more
+     neutral panel surface and let the colored stops in the body
+     gradient do the chromatic work. The gradient itself stays — that's
+     the "glass" hue the design wants. */
+  --bg: #121212;
+  --surface: rgba(28, 28, 28, 0.78);
+  --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
   --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
   /* Informational severity (codex / claude security). Saturated blue
@@ -27,7 +34,7 @@
      dark mode). Distinct from --accent / --low so the chip reads
      unambiguously as "info". */
   --info: #218bff;
-  --surface-active: #1a2233;
+  --surface-active: #262626;
   /* Matte = no saturate boost (avoids the "glossy" punched-up look) */
   --glass-blur: blur(10px);
   --gradient-stop-a: rgba(88, 166, 255, 0.07);
@@ -41,9 +48,9 @@
      --graph-canvas-* via the JS palette in canvas.js (it can't share
      CSS vars without a getComputedStyle round-trip per draw); the
      values mirror the ones below. */
-  --graph-canvas-bg: #060a0f;
+  --graph-canvas-bg: #0c0c0c;
   --graph-hover-bg: rgba(255, 255, 255, 0.04);
-  --graph-divider: rgba(48, 54, 61, 0.5);
+  --graph-divider: rgba(60, 60, 60, 0.5);
 }
 
 body.theme-light {

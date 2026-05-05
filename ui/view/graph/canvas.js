@@ -15,15 +15,19 @@ import {
 // color (white-on-white wouldn't read).
 const GRAPH_THEMES = {
   dark: {
-    bg: '#060a0f',
-    centerTint: 'rgba(20, 30, 50, 0.5)',
+    // Neutral grays for the canvas dark palette — same shift as the
+    // CSS --graph-canvas-bg / --graph-divider in theme.css. Previous
+    // values were near-blacks with a subtle blue cast (#060a0f /
+    // rgba(20,30,50,...) / rgba(6,10,15,...)).
+    bg: '#0c0c0c',
+    centerTint: 'rgba(40, 40, 40, 0.5)',
     centerEdge: 'rgba(0, 0, 0, 0)',
     dimEdge: 'rgba(255, 255, 255, 0.03)',
     selectRing: '#fff',
     hoverRing: 'rgba(255, 255, 255, 0.6)',
-    sevDotHalo: '#060a0f',
-    labelShadow: 'rgba(6, 10, 15, 0.98)',
-    labelOutline: 'rgba(6, 10, 15, 0.9)',
+    sevDotHalo: '#0c0c0c',
+    labelShadow: 'rgba(12, 12, 12, 0.98)',
+    labelOutline: 'rgba(12, 12, 12, 0.9)',
     labelDefault: 'rgba(200, 210, 225, 0.78)',
     labelHover: 'rgba(230, 237, 243, 0.95)',
     labelSelected: '#fff',
