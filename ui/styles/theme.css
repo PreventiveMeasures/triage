@@ -37,7 +37,11 @@
   --surface-active: #262626;
   /* Matte = no saturate boost (avoids the "glossy" punched-up look) */
   --glass-blur: blur(10px);
-  --gradient-stop-a: rgba(88, 166, 255, 0.07);
+  /* Top-left blob — switched from accent blue to a soft violet so it
+     reads as a warmer chromatic counterpart to the top-right red and
+     doesn't tug the neutral-gray bg toward visibly blue. The red and
+     bottom green stops stay where they are. */
+  --gradient-stop-a: rgba(159, 122, 234, 0.07);
   --gradient-stop-b: rgba(248, 81, 73, 0.05);
   --gradient-stop-c: rgba(63, 185, 80, 0.04);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .18);
@@ -68,7 +72,7 @@ body.theme-light {
   --green: #1a7f37;
   --info: #218bff;
   --surface-active: #ddf4ff;
-  --gradient-stop-a: rgba(9, 105, 218, 0.09);
+  --gradient-stop-a: rgba(124, 58, 237, 0.10);
   --gradient-stop-b: rgba(207, 34, 46, 0.06);
   --gradient-stop-c: rgba(26, 127, 55, 0.05);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .04);
