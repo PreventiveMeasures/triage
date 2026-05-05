@@ -71,6 +71,7 @@ export function refreshTreeSidebar() {
 const SOURCE_TITLES = {
   'claude-security': 'Claude Security results',
   'codex-security': 'Codex Security results',
+  'deepseek': 'DeepSeek results',
 }
 
 function headerHtml(allGroupsLength, fileNames) {

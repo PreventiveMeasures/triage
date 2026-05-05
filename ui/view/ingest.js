@@ -9,6 +9,7 @@ import { renderSidebar } from './sidebar.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { parseCodexCsvToScans } from './parse-codex.js'
+import { parseDeepseekFindings } from './parse-deepseek.js'
 import { deriveFindingId } from './finding-id.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
@@ -47,6 +48,15 @@ export async function addFiles(files) {
           await saveFile(codexName, json)
           last = { name: codexName, content: json }
         }
+      } else if (file.name.toLowerCase().endsWith('.md') && /^## [A-Z][A-Z_]*\s*\(\d+\)/mu.test(content)) {
+        // DeepSec (.md with `## SEVERITY (n)` per-tier headers) is
+        // saved with a `.deepseek` extension so the sidebar can
+        // separate it from the Claude Security MD bucket. The detection
+        // regex is the same one parseDeepseekFindings uses as its
+        // format guard, so the two stay in sync.
+        const targetName = file.name.replace(/\.md$/iu, '') + '.deepseek'
+        await saveFile(targetName, content)
+        last = { name: targetName, content }
       } else {
         await saveFile(file.name, content)
         last = { name: file.name, content }
@@ -118,16 +128,18 @@ export function ingestReport(name, content) {
       // drop already shows stored marks/deletions for matching findings.
       await loadPromise
       // Primary input is JSON (the analyzer's native dump format).
-      // When that fails, try the markdown findings format — supported
-      // as a convenience but intentionally undocumented in the README.
-      // parseMarkdownFindings returns the same { type, findings, … }
-      // shape so the rest of this function doesn't need to branch.
+      // When that fails, walk the markdown parser chain: DeepSec
+      // first (most specific format guard — `## SEVERITY (n)`), then
+      // Claude Security (any `# Title` doc). Each parser returns the
+      // standard { type, findings, … } shape, or null when the input
+      // doesn't look like its format.
       let data
       try {
         data = JSON.parse(content)
       } catch (jsonErr) {
-        data = parseMarkdownFindings(content)
-        if (!data) throw new Error(`Not JSON, and not the supported markdown format. (JSON error: ${jsonErr.message})`)
+        data = parseDeepseekFindings(content)
+          ?? parseMarkdownFindings(content)
+        if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`)
       }
       // Reset filters whenever this is the first report in the current
       // view (cleared on switchToFile / deleteCurrent, accumulating in

@@ -17,6 +17,7 @@ import { switchToFile, deleteCurrent } from './ingest.js'
 // just to peek at the format on each sidebar render would be wasteful.
 function groupOf(name) {
   const lower = name.toLowerCase()
+  if (lower.endsWith('.deepseek')) return 'deepseek'
   if (lower.endsWith('.codex')) return 'codex-security'
   if (lower.endsWith('.md')) return 'claude-security'
   return 'default'
@@ -25,17 +26,25 @@ function groupOf(name) {
 const GROUP_LABELS = {
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
+  'deepseek': 'DeepSeek',
 }
 
-// Render order for named groups. User asked for Codex below Claude.
-const NAMED_GROUP_ORDER = ['claude-security', 'codex-security']
+// Render order for named groups: Claude → Codex → DeepSeek.
+const NAMED_GROUP_ORDER = ['claude-security', 'codex-security', 'deepseek']
 
-// `.codex` filenames are derived (e.g. `org__repo:scan-suffix.codex`)
-// — un-sanitize the slashes and strip the suffix for the visible
-// label so the sidebar reads as the original `org/repo:scan-suffix`.
+// Filename-to-label transform for the bucket-marker suffixes ingest
+// stamps on at drop time. `.codex` filenames are derived (e.g.
+// `org__repo:scan-suffix.codex`) — un-sanitize the slashes and strip
+// the suffix for the visible label so the sidebar reads as the
+// original `org/repo:scan-suffix`. `.deepseek` is a renamed `.md`
+// drop — strip the marker so the user sees the natural filename.
 function displayName(name) {
-  if (name.toLowerCase().endsWith('.codex')) {
+  const lower = name.toLowerCase()
+  if (lower.endsWith('.codex')) {
     return name.slice(0, -'.codex'.length).replace(/__/gu, '/')
+  }
+  if (lower.endsWith('.deepseek')) {
+    return name.slice(0, -'.deepseek'.length)
   }
   return name
 }
