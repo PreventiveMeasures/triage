@@ -132,6 +132,8 @@
     &.high          { background: var(--high); color: #fff; }
     &.medium        { background: var(--medium); color: #000; }
     &.low           { background: var(--low); color: #fff; opacity: .85; }
+    &.high_bug      { background: var(--high-bug); color: #fff; }
+    &.bug           { background: var(--bug); color: #fff; }
     &.informational { background: var(--info); color: #fff; }
   }
   & .tt-stat { color: var(--muted); font-size: .7rem; margin-top: .25rem; opacity: .8; }
@@ -336,6 +338,8 @@
   &.high          { background: var(--high); color: #fff; }
   &.medium        { background: var(--medium); color: #000; }
   &.low           { background: var(--low); color: #fff; opacity: .85; }
+  &.high_bug      { background: var(--high-bug); color: #fff; }
+  &.bug           { background: var(--bug); color: #fff; }
   &.informational { background: var(--info); color: #fff; }
 }
 

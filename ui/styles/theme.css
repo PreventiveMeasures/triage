@@ -27,6 +27,12 @@
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
   --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
+     Earthy tones distinguish them from the saturated red/orange/amber
+     vuln palette: terracotta for high_bug (still draws attention),
+     warm taupe for bug (visible but quieter). White text on both. */
+  --high-bug: #a06c3f;
+  --bug: #7a6d62;
   /* Informational severity (codex / claude security). Saturated blue
      with white text — readable on both dark and light backgrounds, so
      the badge palette stays consistent across themes (the lighter
@@ -70,6 +76,8 @@ body.theme-light {
   --medium: #9a6700;
   --low: #6e7781;
   --green: #1a7f37;
+  --high-bug: #a85a14;
+  --bug: #6b5e52;
   --info: #218bff;
   --surface-active: #ddf4ff;
   --gradient-stop-a: rgba(124, 58, 237, 0.10);

@@ -37,7 +37,7 @@
 // block carry mandatory information (severity defaults to medium if
 // absent or unrecognized).
 
-const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'informational'])
+const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
   const text = content.replace(/\r\n?/g, '\n').trim()

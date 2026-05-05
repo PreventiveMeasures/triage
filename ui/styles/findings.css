@@ -352,6 +352,8 @@
   &.high          { background: var(--high); color: #fff; }
   &.medium        { background: var(--medium); color: #000; }
   &.low           { background: var(--low); color: #000; }
+  &.high_bug      { background: var(--high-bug); color: #fff; }
+  &.bug           { background: var(--bug); color: #fff; }
   /* Informational uses white text in both themes — the dark-default
      --info is a light blue (white reads cleanly on it via contrast),
      and the light-mode --info is a saturated blue where black text

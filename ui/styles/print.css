@@ -125,6 +125,8 @@
     &.high          { background: #b8400a !important; color: #fff !important; }
     &.medium        { background: #855107 !important; color: #fff !important; }
     &.low           { background: #374151 !important; color: #fff !important; }
+    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
+    &.bug           { background: #4d4538 !important; color: #fff !important; }
     &.informational { background: #0550ae !important; color: #fff !important; }
   }
 }

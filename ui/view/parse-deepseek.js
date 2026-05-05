@@ -38,26 +38,22 @@
 
 const SEVERITY_HEADER_RE = /^## ([A-Z][A-Z_]*)\s*\(\d+\)\s*$/mu
 
-// Map source severity tier to our internal one. Vercel DeepSec uses
-// CRITICAL / HIGH / MEDIUM / LOW for vulnerabilities and a parallel
-// _BUG suite (HIGH_BUG / MEDIUM_BUG / LOW_BUG) plus plain BUG for
-// non-vuln defects. Aligning on the closest internal tier:
-//
-//   CRITICAL                   → critical
-//   HIGH      / HIGH_BUG       → high
-//   MEDIUM    / MEDIUM_BUG     → medium
-//   LOW       / LOW_BUG        → low
-//   BUG / INFO / INFORMATIONAL → informational
-//
+// Map source severity tier to our internal one. Vercel DeepSec
+// distinguishes vulnerabilities (CRITICAL / HIGH / MEDIUM / LOW) from
+// non-vuln defects (HIGH_BUG and plain BUG). The internal ladder
+// preserves that distinction with `high_bug` / `bug` tiers so the
+// stats chips and graph indicators show the bug counts separately.
 // Anything else falls back to medium so a renamed / new tier still
 // stays visible (won't silently disappear).
 function mapSeverity(s) {
   switch (s.toUpperCase()) {
     case 'CRITICAL': return 'critical'
-    case 'HIGH': case 'HIGH_BUG': return 'high'
-    case 'MEDIUM': case 'MEDIUM_BUG': return 'medium'
-    case 'LOW': case 'LOW_BUG': return 'low'
-    case 'BUG': case 'INFO': case 'INFORMATIONAL': return 'informational'
+    case 'HIGH': return 'high'
+    case 'MEDIUM': return 'medium'
+    case 'LOW': return 'low'
+    case 'HIGH_BUG': return 'high_bug'
+    case 'BUG': return 'bug'
+    case 'INFO': case 'INFORMATIONAL': return 'informational'
     default: return 'medium'
   }
 }

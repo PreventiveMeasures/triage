@@ -8,12 +8,14 @@ export const SEV_COLORS = {
   high: '#f0883e',
   medium: '#d29922',
   low: '#8b949e',
+  high_bug: '#a06c3f',
+  bug: '#7a6d62',
   informational: '#218bff',
 }
 // Highest-to-lowest iteration order — see SEVERITIES in ../format.js
 // for the same list (kept duplicated here to avoid a circular import
 // from a graph-only utility back up into format.js).
-const SEVERITIES_ORDERED = ['critical', 'high', 'medium', 'low', 'informational']
+const SEVERITIES_ORDERED = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
 // Empty per-file counts seed used by both computeFindingCountsByFile
 // and computeTransitiveCounts so tier additions only have to land in
 // SEVERITIES_ORDERED above.

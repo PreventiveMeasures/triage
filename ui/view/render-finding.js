@@ -16,12 +16,14 @@ function rowLocationHtml(f) {
 }
 
 // Display label for the .badge tier text. The class still gets the
-// canonical severity string ('informational') so CSS color rules
-// match; only the visible word is shortened — "informational" at the
-// shared font-size overflowed the badge column otherwise. Other
-// tiers are short enough to render literally.
+// canonical severity string ('informational' / 'high_bug') so CSS
+// color rules match; only the visible word is adjusted:
+//   informational → info (shortened so it fits the shared badge slot)
+//   high_bug      → "high bug" (underscore → space, reads naturally
+//                   under the shared text-transform: uppercase)
 function badgeLabel(severity) {
-  return severity === 'informational' ? 'info' : severity
+  if (severity === 'informational') return 'info'
+  return severity.replace(/_/gu, ' ')
 }
 
 // First non-empty line of a description, for the table-view title.

@@ -130,17 +130,26 @@ function headerHtml(allGroupsLength, fileNames) {
 // chip is hidden so the row stays compact.
 function statsHtml(counts, colorCounts) {
   let html = '<div class="stats">'
+  // Order matches the SEVERITIES iteration in format.js. Each chip
+  // auto-hides when its count is zero (the loop below skips !count),
+  // so the bug tiers only appear when a DeepSec report contains them
+  // and stay invisible for Claude / Codex / JSON dumps.
   const statItems = [
     ['critical', counts.critical, '--critical'],
     ['high', counts.high, '--high'],
     ['medium', counts.medium, '--medium'],
     ['low', counts.low, '--low'],
+    ['high_bug', counts.high_bug, '--high-bug'],
+    ['bug', counts.bug, '--bug'],
     ['informational', counts.informational, '--info'],
   ]
   for (const [sev, count, color] of statItems) {
     if (!count) continue
     const active = state.filterSeverities.has(sev) ? ' active' : ''
-    html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${sev}</div>`
+    // `high_bug` → `high bug` for the human-readable label; data-sev
+    // keeps the raw token so click filtering still matches f.severity.
+    const label = sev.replace(/_/gu, ' ')
+    html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${label}</div>`
   }
   const colorStatItems = [
     ['red', colorCounts.red, 'red'],
@@ -381,7 +390,7 @@ export function render() {
   // any tab is high; click "red" → all groups with any red-marked tab),
   // and gives a useful preview of filter-click results. Unmarked tabs
   // bucket under `'none'` so the user can isolate unreviewed findings.
-  const counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 }
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
   for (const g of allGroups) {
     const sevs = new Set(g.map((f) => f.severity))
