@@ -271,12 +271,16 @@ function findingsBodyHtml(filtered) {
     // .finding-table glass wrapper — rows themselves are transparent
     // with just a border-bottom separator, so the whole list reads
     // as one continuous panel rather than a strip of detached cards.
+    // Skip the wrapper entirely when nothing matched: an empty
+    // .finding-table still paints its border + glass surface, which
+    // shows up as a thin panel under the "no findings match" message.
     const items = state.sortBy === 'file'
       ? [...filtered].sort((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
         return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
       })
       : filtered
+    if (items.length === 0) return html
     html += '<div class="finding-table">'
     for (const g of items) html += renderTableRow(g)
     html += '</div>'
