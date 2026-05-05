@@ -153,7 +153,14 @@ function rowToFinding(r, cols) {
     severity: (r[cols.severity] || 'medium').toLowerCase(),
     description,
     repo: { github: r[cols.repository] },
-    type: 'security',
+    // No per-finding `type` here — the codex CSV doesn't carry a
+    // category column, and stamping a synthetic 'security' on every
+    // row used to make the run-meta line read "security" on every
+    // finding even though there's nothing categorical to differentiate
+    // them. The renderer already suppresses an empty run-meta
+    // (filter(Boolean) → '' → no <span>), so leaving this off is the
+    // cleanest result. data.type at the report level still keeps a
+    // sensible 'security' default for document.title.
   }
   if (cols.commit_hash !== -1 && r[cols.commit_hash]) finding.commitHash = r[cols.commit_hash]
   if (cols.detected_at !== -1 && r[cols.detected_at]) finding.detectedAt = r[cols.detected_at]
