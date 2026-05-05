@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
-import { esc, prettyModel, fileLink, lineLink } from './format.js'
+import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { renderGroup } from './render-finding.js'
@@ -103,7 +103,14 @@ function statsHtml(counts, colorCounts) {
   return html
 }
 
-function toolbarHtml(filteredCount, allCount, deletedCount) {
+// `flags` carries per-render applicability: when no finding in the
+// current report has confidence / a node_modules path / file or tree
+// hash metadata, the corresponding control is omitted entirely (and
+// the underlying filter state is forced to its no-op value upstream
+// for confidence / source so it can't be left set from a previous
+// report). Hides chrome the user can't act on usefully.
+function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
+  const { showSource, showConfidence, showMetadataToggle } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
@@ -113,26 +120,32 @@ function toolbarHtml(filteredCount, allCount, deletedCount) {
   html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
   html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
   html += `</select>`
+  if (showSource) {
+    html += `<div class="sep"></div>`
+    html += `<label for="source-select">Source:</label>`
+    html += `<select id="source-select">`
+    html += `<option value="all"${state.filterSource === 'all' ? ' selected' : ''}>All files</option>`
+    html += `<option value="own"${state.filterSource === 'own' ? ' selected' : ''}>Own source</option>`
+    html += `<option value="modules"${state.filterSource === 'modules' ? ' selected' : ''}>node_modules</option>`
+    html += `</select>`
+  }
+  if (showConfidence) {
+    html += `<div class="sep"></div>`
+    html += `<label for="conf-min">Confidence:</label>`
+    html += `<select id="conf-min">`
+    html += `<option value="">min</option>`
+    for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMin === i ? ' selected' : ''}>${i}</option>`
+    html += `</select>`
+    html += ` &ndash; `
+    html += `<select id="conf-max">`
+    html += `<option value="">max</option>`
+    for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMax === i ? ' selected' : ''}>${i}</option>`
+    html += `</select>`
+  }
   html += `<div class="sep"></div>`
-  html += `<label for="source-select">Source:</label>`
-  html += `<select id="source-select">`
-  html += `<option value="all"${state.filterSource === 'all' ? ' selected' : ''}>All files</option>`
-  html += `<option value="own"${state.filterSource === 'own' ? ' selected' : ''}>Own source</option>`
-  html += `<option value="modules"${state.filterSource === 'modules' ? ' selected' : ''}>node_modules</option>`
-  html += `</select>`
-  html += `<div class="sep"></div>`
-  html += `<label for="conf-min">Confidence:</label>`
-  html += `<select id="conf-min">`
-  html += `<option value="">min</option>`
-  for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMin === i ? ' selected' : ''}>${i}</option>`
-  html += `</select>`
-  html += ` &ndash; `
-  html += `<select id="conf-max">`
-  html += `<option value="">max</option>`
-  for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMax === i ? ' selected' : ''}>${i}</option>`
-  html += `</select>`
-  html += `<div class="sep"></div>`
-  html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
+  if (showMetadataToggle) {
+    html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
+  }
   html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${state.groupByFile ? ' checked' : ''}> group by file</label>`
   const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
@@ -252,6 +265,24 @@ export function render() {
     for (const c of cols) colorCounts[c] = (colorCounts[c] || 0) + 1
   }
 
+  // Per-render applicability flags. The toolbar hides controls the
+   // user can't act on usefully, and the underlying filter state is
+   // forced back to its no-op value so a previously-set filter from
+   // a prior report can't keep findings hidden silently. Stats /
+   // sorting / include-exclude always make sense, so no flags for
+   // those.
+  const hasAnyConfidence = mergedGroups.some((g) => g.some((f) => f.confidence !== undefined))
+  const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
+  const hasAnyHashMetadata = mergedGroups.some((g) => g.some((f) => f.fileHash || f.treeHash))
+  // If a previously-loaded report had node_modules and the user
+  // narrowed the source filter, switching to a report without any
+  // node_modules paths would leave the filter at 'own' or 'modules'
+  // and silently empty the list. resetFilters() runs only on isFirst
+  // in ingest.js, so guard here too.
+  if (!hasAnyModulesPath && state.filterSource !== 'all') state.filterSource = 'all'
+  if (!hasAnyConfidence) { state.filterConfMin = ''; state.filterConfMax = '' }
+  if (!hasAnyHashMetadata) state.showMetadata = false
+
   const filtered = applySorting(applyFilters(allGroups))
 
   let html = headerHtml(allGroups.length, fileNames)
@@ -307,7 +338,11 @@ export function render() {
   }
 
   html += statsHtml(counts, colorCounts)
-  html += toolbarHtml(filtered.length, allGroups.length, deletedCount)
+  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
+    showSource: hasAnyModulesPath,
+    showConfidence: hasAnyConfidence,
+    showMetadataToggle: hasAnyHashMetadata,
+  })
 
   if (state.showDeleted && allGroups.length === 0) {
     html += `<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`

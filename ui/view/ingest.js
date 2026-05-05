@@ -173,16 +173,26 @@ export function ingestReport(name, content) {
       })
       if (isFirst) {
         resetFilters()
-        // Auto-tune the confidence floor so the initial view fits roughly
-        // 25 groups. Step up from 6 → 7 → 8 until the visible count is
-        // within budget; cap at 8 (the previous static default) — going
-        // higher hides too much of the report unconditionally. Counts
-        // groups, not tabs, matching the filter semantics (`g.some(...)`).
-        const countAtMin = (min) => groups.reduce((n, g) =>
-          n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
-        if (countAtMin(6) <= 25) state.filterConfMin = 6
-        else if (countAtMin(7) <= 25) state.filterConfMin = 7
-        else state.filterConfMin = 8
+        // Auto-tune the confidence floor so the initial view fits
+        // roughly 25 groups. Step up from 6 → 7 → 8 until the visible
+        // count is within budget; cap at 8 (the previous static
+        // default). Skip the auto-tune entirely when no finding in
+        // this report carries a confidence — without that guard,
+        // countAtMin(6) returns 0 ≤ 25 and the floor lands at 6,
+        // which then excludes every finding (since f.confidence is
+        // undefined for all). Clear the floor instead so the filter
+        // becomes a no-op; the toolbar hides the control too (see
+        // toolbarHtml in render.js).
+        const hasAnyConfidence = groups.some((g) => g.some((f) => f.confidence !== undefined))
+        if (hasAnyConfidence) {
+          const countAtMin = (min) => groups.reduce((n, g) =>
+            n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
+          if (countAtMin(6) <= 25) state.filterConfMin = 6
+          else if (countAtMin(7) <= 25) state.filterConfMin = 7
+          else state.filterConfMin = 8
+        } else {
+          state.filterConfMin = ''
+        }
       }
       render()
     } catch (err) {
