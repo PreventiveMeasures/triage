@@ -63,6 +63,16 @@ export function applySorting(groups) {
       const pa = primaryTab(a), pb = primaryTab(b)
       return (pa.confidence ?? 11) - (pb.confidence ?? 11) || pa.file.localeCompare(pb.file)
     })
+  } else if (state.sortBy === 'priority-desc') {
+    sorted.sort((a, b) => {
+      const pa = primaryTab(a), pb = primaryTab(b)
+      return (pb.priority ?? -1) - (pa.priority ?? -1) || pa.file.localeCompare(pb.file)
+    })
+  } else if (state.sortBy === 'priority-asc') {
+    sorted.sort((a, b) => {
+      const pa = primaryTab(a), pb = primaryTab(b)
+      return (pa.priority ?? 11) - (pb.priority ?? 11) || pa.file.localeCompare(pb.file)
+    })
   }
   return sorted
 }

@@ -174,7 +174,7 @@ function statsHtml(counts, colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
-  const { showSource, showConfidence, showRepoInput } = flags
+  const { showSource, showConfidence, showPriority, showRepoInput } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
@@ -190,6 +190,14 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   if (showConfidence) {
     html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
     html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+  }
+  // Priority — same pattern as Confidence: only renders when at
+  // least one finding carries a numeric `priority` (0.0–10.0). State
+  // is forced back to 'file' upstream if a previously-set priority
+  // sort no longer applies.
+  if (showPriority) {
+    html += `<option value="priority-desc"${state.sortBy === 'priority-desc' ? ' selected' : ''}>Priority (high first)</option>`
+    html += `<option value="priority-asc"${state.sortBy === 'priority-asc' ? ' selected' : ''}>Priority (low first)</option>`
   }
   html += `</select>`
   if (showSource) {
@@ -406,6 +414,7 @@ export function render() {
    // sorting / include-exclude always make sense, so no flags for
    // those.
   const hasAnyConfidence = mergedGroups.some((g) => g.some((f) => f.confidence !== undefined))
+  const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // Repo URL input is useful only when at least one finding could
   // benefit from it: non-node_modules AND no per-finding repo.github.
@@ -423,6 +432,12 @@ export function render() {
     // option in the dropdown and applySorting would fall through to
     // its `?? -1` placeholder. Reset to 'file' when that happens.
     if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'file'
+  }
+  // Same guard for priority — the option drops out of the dropdown
+  // when no finding carries it, so a stale state.sortBy would point
+  // at a non-existent option and applySorting would shuffle on `?? -1`.
+  if (!hasAnyPriority && (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc')) {
+    state.sortBy = 'file'
   }
 
   const filtered = applySorting(applyFilters(allGroups))
@@ -481,6 +496,7 @@ export function render() {
   html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
+    showPriority: hasAnyPriority,
     showRepoInput: repoInputUseful,
   })
 
