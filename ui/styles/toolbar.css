@@ -38,6 +38,32 @@
     &:hover { border-color: var(--accent); }
     &.active { border-color: var(--critical); color: var(--critical); }
   }
+
+  /* View-mode icon button group — three flush buttons inside a
+     bordered shell. Active button glows with the accent color; SVG
+     icons inherit currentColor so theme + state recolor automatically.
+     The "View:" label sits to the left as a sibling, not inside the
+     group, so the bordered shell only wraps the buttons. */
+  & .view-mode-label { color: var(--muted); margin-right: -.4rem; }
+
+  & .view-mode-group {
+    display: inline-flex;
+    border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden;
+
+    & .view-mode-btn {
+      background: transparent; border: none; color: var(--muted);
+      padding: .2rem .42rem; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s;
+      font-family: inherit;
+
+      &:not(:last-child) { border-right: 1px solid var(--border); }
+      &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+      &.active { color: var(--accent); background: var(--surface-active); }
+      & svg { display: block; }
+    }
+  }
 }
 
 .toolbar-row {

@@ -46,19 +46,13 @@ export const state = {
   // new report drop doesn't wipe it. Default off for a denser view;
   // flip on to inspect the source-hash provenance.
   showMetadata: false,
-  // `groupByFile` true (default) renders findings under per-file
-  // headers — the original behavior. When false, every dedup group
-  // renders flat in sort order with its own location label above it
-  // (file path + line), so the reader can scan results across files in
-  // pure severity/confidence/file order without the file-header chrome.
-  // Only meaningful in viewMode='list' — table view is always flat.
-  groupByFile: true,
-  // 'list' (default) renders the full per-finding card with badges,
-  // confidence value, full description, recommendation, etc. 'table'
-  // renders one compact 2-row block per finding (severity/title/type
-  // on top, conf/file/actions below, plus a tab strip if multi-tab) —
-  // never grouped by file, regardless of groupByFile.
-  viewMode: 'list',
+  // 'grouped' (default) renders per-finding cards under per-file
+  // headers — the original behavior. 'list' renders the same per-
+  // finding cards but flat in sort order (each in a self-contained
+  // card with its own location header). 'table' renders one compact
+  // block per finding, never grouped. Selected via the icon-button
+  // group in the toolbar.
+  viewMode: 'grouped',
   // Per-finding manual annotations. Keyed by `tabKey(f)` =
   // `f.id ?? String(f._id)`: the export's derived uuid when available
   // (persists across reloads via localStorage), else a session-local

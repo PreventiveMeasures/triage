@@ -10,6 +10,34 @@ import { renderTreeCanvas, attachTreeGraphInteraction } from './graph/canvas.js'
 import { renderTreeSidebarFull } from './graph/sidebar.js'
 import { renderTreeView } from './graph/files.js'
 
+// Inline SVGs for the View-mode icon buttons. currentColor lets the
+// CSS .active rule recolor them to var(--accent) on selection without
+// re-rendering. Kept as raw strings so the toolbar HTML can compose
+// them directly; size is set via the SVG width/height (14px) and the
+// stroke widths are tuned to read clearly at that size.
+//   table   — four dense rows, like a spreadsheet
+//   list    — three taller items with a row-bullet on the left
+//   grouped — items under a section header band on top
+const VIEW_ICONS = {
+  table: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+    + '<rect x="2" y="3" width="12" height="1.6"/><rect x="2" y="6" width="12" height="1.6"/>'
+    + '<rect x="2" y="9" width="12" height="1.6"/><rect x="2" y="12" width="12" height="1.6"/></svg>',
+  list: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+    + '<rect x="2" y="3" width="2" height="2.2" rx=".4"/><rect x="6" y="3" width="9" height="2.2" rx=".4"/>'
+    + '<rect x="2" y="7" width="2" height="2.2" rx=".4"/><rect x="6" y="7" width="9" height="2.2" rx=".4"/>'
+    + '<rect x="2" y="11" width="2" height="2.2" rx=".4"/><rect x="6" y="11" width="9" height="2.2" rx=".4"/></svg>',
+  grouped: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+    + '<rect x="2" y="2" width="12" height="2.4" rx=".5"/>'
+    + '<rect x="3" y="6" width="11" height="1.6"/><rect x="3" y="8.5" width="11" height="1.6"/>'
+    + '<rect x="3" y="11" width="11" height="1.6"/><rect x="3" y="13.5" width="11" height="1.6"/></svg>',
+}
+
+const VIEW_TITLES = {
+  table: 'Table view (compact rows, click a row to expand)',
+  list: 'List view (flat, one card per finding)',
+  grouped: 'List view, grouped by file',
+}
+
 // Refresh just the tree-tab right sidebar in place. Called by the
 // canvas after selection changes, and by event handlers when the
 // selection is driven from the sidebar itself, so the canvas DOM
@@ -159,21 +187,21 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
     html += `</select>`
   }
   html += `<div class="sep"></div>`
-  // View mode switch — list (per-finding cards) or table (compact
-  // 2-row blocks). Group-by-file only meaningfully applies to list
-  // mode (table view is always flat by spec), so the checkbox is
-  // omitted entirely in table mode rather than greyed-out — keeps
-  // the toolbar honest about what's actually toggleable.
-  html += `<label for="view-mode">View:</label>`
-  html += `<select id="view-mode">`
-  html += `<option value="list"${state.viewMode === 'list' ? ' selected' : ''}>List</option>`
-  html += `<option value="table"${state.viewMode === 'table' ? ' selected' : ''}>Table</option>`
-  html += `</select>`
-  if (showMetadataToggle && state.viewMode === 'list') {
-    html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
+  // View mode — three icon buttons replacing the previous
+  // dropdown + group-by-file checkbox combo. 'grouped' rolls in what
+  // used to be `list + groupByFile=true`. Click handler in events.js
+  // matches `[data-view-mode]`. Metadata checkbox stays scoped to the
+  // card-based views (list / grouped) — table view doesn't render
+  // .hashes anywhere so the toggle has nothing to act on there.
+  html += `<span class="view-mode-label">View:</span>`
+  html += '<div class="view-mode-group" role="group" aria-label="View mode">'
+  for (const mode of ['table', 'list', 'grouped']) {
+    const active = state.viewMode === mode ? ' active' : ''
+    html += `<button type="button" class="view-mode-btn${active}" data-view-mode="${mode}" title="${esc(VIEW_TITLES[mode])}" aria-label="${esc(VIEW_TITLES[mode])}" aria-pressed="${state.viewMode === mode}">${VIEW_ICONS[mode]}</button>`
   }
-  if (state.viewMode === 'list') {
-    html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${state.groupByFile ? ' checked' : ''}> group by file</label>`
+  html += '</div>'
+  if (showMetadataToggle && state.viewMode !== 'table') {
+    html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
   }
   const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
@@ -229,7 +257,7 @@ function findingsBodyHtml(filtered) {
     html += '</div>'
     return html
   }
-  if (state.groupByFile) {
+  if (state.viewMode === 'grouped') {
     // Group groups by file. All tabs in a dedup group share the same file
     // (dedup runs per-file by fileHash upstream), so the primary tab's
     // file is a safe representative.

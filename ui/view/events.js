@@ -159,6 +159,15 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // View-mode icon buttons (table / list / grouped). Replaces the
+  // earlier select + checkbox combo; the same `state.viewMode` field
+  // drives findingsBodyHtml's branch.
+  const viewModeBtn = e.target.closest('[data-view-mode]')
+  if (viewModeBtn) {
+    state.viewMode = viewModeBtn.dataset.viewMode
+    render()
+    return
+  }
   // Severity / color stat toggle. Both are multi-select — click toggles
   // membership in the matching Set, empty Set = no filter.
   const sevStat = e.target.closest('.stat[data-sev]')
@@ -218,7 +227,6 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
-  else if (id === 'view-mode') { state.viewMode = val; render() }
   else if (id === 'source-select') { state.filterSource = val; render() }
   else if (id === 'conf-min') { state.filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { state.filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
@@ -226,10 +234,6 @@ report.addEventListener('change', (e) => {
   // avoids reallocating the checkbox mid-click (which would blur it)
   // and is cheap since this is a pure CSS effect.
   else if (id === 'show-metadata') { state.showMetadata = e.target.checked; report.classList.toggle('show-metadata', state.showMetadata) }
-  // `group-by-file` reshapes the rendered DOM (per-file headers vs flat
-  // location labels), so it goes through a full render — checkbox blur
-  // is acceptable here since the change is structural.
-  else if (id === 'group-by-file') { state.groupByFile = e.target.checked; render() }
   // Tree-tab: include clean files in the force graph. Invalidates the
   // cached layout so the next render computes fresh positions.
   else if (id === 'tree-show-all') {
