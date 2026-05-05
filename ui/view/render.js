@@ -3,7 +3,7 @@ import { dropZone, report } from './dom.js'
 import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
-import { renderGroup } from './render-finding.js'
+import { renderGroup, renderTableRow } from './render-finding.js'
 import { tree } from './graph/state.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeCanvas, attachTreeGraphInteraction } from './graph/canvas.js'
@@ -159,10 +159,22 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
     html += `</select>`
   }
   html += `<div class="sep"></div>`
-  if (showMetadataToggle) {
+  // View mode switch — list (per-finding cards) or table (compact
+  // 2-row blocks). Group-by-file only meaningfully applies to list
+  // mode (table view is always flat by spec), so the checkbox is
+  // omitted entirely in table mode rather than greyed-out — keeps
+  // the toolbar honest about what's actually toggleable.
+  html += `<label for="view-mode">View:</label>`
+  html += `<select id="view-mode">`
+  html += `<option value="list"${state.viewMode === 'list' ? ' selected' : ''}>List</option>`
+  html += `<option value="table"${state.viewMode === 'table' ? ' selected' : ''}>Table</option>`
+  html += `</select>`
+  if (showMetadataToggle && state.viewMode === 'list') {
     html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
   }
-  html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${state.groupByFile ? ' checked' : ''}> group by file</label>`
+  if (state.viewMode === 'list') {
+    html += `<label class="checkbox-label"><input type="checkbox" id="group-by-file"${state.groupByFile ? ' checked' : ''}> group by file</label>`
+  }
   const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
   html += `<button type="button" id="toggle-trash" class="trash-btn${state.showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
@@ -192,11 +204,26 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   return html
 }
 
-// Render the body of the findings tab — file-grouped or flat, depending
-// on the `groupByFile` toggle. Returns an HTML string. `applySorting`
-// already ordered `filtered` by sortBy.
+// Render the body of the findings tab — table view (compact 2-row
+// blocks, never grouped by file) or list view (per-finding cards,
+// optionally grouped by file). `applySorting` already ordered
+// `filtered` by sortBy.
 function findingsBodyHtml(filtered) {
   let html = ''
+  if (state.viewMode === 'table') {
+    // Table view is always flat. For 'file' sort we still want
+    // line-within-file ordering to match the file-grouped layout's
+    // intra-file order; applySorting only handles file→line for
+    // severity / confidence sorts.
+    const items = state.sortBy === 'file'
+      ? [...filtered].sort((a, b) => {
+        const pa = primaryTab(a), pb = primaryTab(b)
+        return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
+      })
+      : filtered
+    for (const g of items) html += renderTableRow(g)
+    return html
+  }
   if (state.groupByFile) {
     // Group groups by file. All tabs in a dedup group share the same file
     // (dedup runs per-file by fileHash upstream), so the primary tab's

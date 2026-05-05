@@ -2,6 +2,43 @@ import { state } from './state.js'
 import { esc, prettyModel, stripExportMarker, lineLink } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
 
+// First non-empty line of a description, for the table-view title.
+// Markdown findings begin with a literal title line; JSON findings
+// usually have a one-paragraph description and the whole thing
+// becomes the title. CSS handles the visual ellipsis if it overflows.
+function firstLine(text) {
+  if (!text) return ''
+  for (const line of text.split('\n')) {
+    if (line.trim()) return line.trim()
+  }
+  return ''
+}
+
+// Action buttons (color dots + ×/restore) shared by both the list-view
+// .finding card and the table-view .finding-row. The styling is
+// hoisted out of .finding scope (see findings.css) so the same
+// markup works inside both containers.
+function actionButtonsHtml(group, sortedTabs, groupSt, activeKey) {
+  let html = ''
+  const activeColor = state.markers.get(activeKey)
+  for (const color of ['red', 'blue', 'green', 'gray']) {
+    const activeCls = activeColor === color ? ' active' : ''
+    const dotTitle = sortedTabs.length > 1
+      ? `mark ${color} (applies to active tab)`
+      : `mark ${color} (click again to clear)`
+    html += `<button class="mark-dot mark-dot-${color}${activeCls}" data-color="${color}" title="${dotTitle}"></button>`
+  }
+  if (state.showDeleted) {
+    html += `<button class="mark-restore" title="restore whole group">restore</button>`
+  } else {
+    const xTitle = groupSt.hasConflict
+      ? 'delete active tab (colors mismatch — acts per-tab)'
+      : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
+    html += `<button class="mark-x" title="${xTitle}">×</button>`
+  }
+  return html
+}
+
 // Render a single tab button. Shows the tab's severity badge + conf, and
 // carries its own color / deleted classes so per-tab triage is visible
 // from the group header.
@@ -118,23 +155,66 @@ export function renderGroup(g) {
     for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
     html += '</div>'
   }
-  const activeColor = state.markers.get(activeKey)
-  for (const color of ['red', 'blue', 'green', 'gray']) {
-    const activeCls = activeColor === color ? ' active' : ''
-    const dotTitle = sortedTabs.length > 1
-      ? `mark ${color} (applies to active tab)`
-      : `mark ${color} (click again to clear)`
-    html += `<button class="mark-dot mark-dot-${color}${activeCls}" data-color="${color}" title="${dotTitle}"></button>`
-  }
-  if (state.showDeleted) {
-    html += `<button class="mark-restore" title="restore whole group">restore</button>`
-  } else {
-    const xTitle = groupSt.hasConflict
-      ? 'delete active tab (colors mismatch — acts per-tab)'
-      : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-    html += `<button class="mark-x" title="${xTitle}">×</button>`
-  }
+  html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
   html += '</div>'
+  html += '</div>'
+  return html
+}
+
+// Compact 2-row block per finding for the table view. Never grouped
+// by file (the location lives inside the row's meta line, so file
+// info is per-row anyway). Active tab drives the displayed title /
+// confidence / location; switching tabs re-renders the whole report.
+//   row 1 — severity badge · title (first line, ellipsis) · type chip
+//   row 2 — confidence (if any) · file:line · action buttons
+//   row 3 — tab strip (multi-tab groups only)
+// `data-gid` lives on the outer div so the existing event handlers
+// (which target [data-gid]) work uniformly across .finding and
+// .finding-row without per-shape branching.
+export function renderTableRow(g) {
+  const groupSt = groupState(g)
+  const sortedTabs = sortTabs(g)
+  const active = activeTabFor(g)
+  const activeKey = tabKey(active)
+  const isCritical = g.some((f) => f.critical || f.severity === 'critical')
+  const classes = ['finding-row']
+  if (isCritical) classes.push('is-critical')
+  if (groupSt.hasConflict) classes.push('has-conflict')
+  else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
+  if (state.showDeleted) classes.push('deleted')
+  const gid = groupKey(g)
+  const f = active
+
+  const title = firstLine(stripExportMarker(f.description, f.exportName))
+  // Compact type chip — same `analyzer · model · effort · exportsMode`
+  // composition the list view's run-meta uses, just rendered as a
+  // single muted suffix to the title row.
+  const typeLabel = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
+
+  let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
+  // Row 1
+  html += '<div class="title-row">'
+  html += `<span class="badge ${esc(f.severity)}">${esc(f.severity)}</span>`
+  html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
+  if (typeLabel) html += `<span class="row-type">${esc(typeLabel)}</span>`
+  html += '</div>'
+  // Row 2
+  html += '<div class="meta-row">'
+  if (f.confidence !== undefined) {
+    html += `<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`
+  }
+  html += `<span class="row-loc">${lineLink(f.file, f.line, f.repo?.github)}${exportPart}</span>`
+  html += '<div class="marks">'
+  html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
+  html += '</div>'
+  html += '</div>'
+  // Row 3 — tabs only when there's more than one to switch between.
+  if (sortedTabs.length > 1) {
+    html += '<div class="tabs-row"><div class="tabs">'
+    for (const tabF of sortedTabs) html += renderTab(tabF, tabKey(tabF) === activeKey)
+    html += '</div></div>'
+  }
   html += '</div>'
   return html
 }

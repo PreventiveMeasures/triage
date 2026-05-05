@@ -92,7 +92,7 @@ report.addEventListener('click', (e) => {
   // tab highlight + tab body visibility + marks row color all update.
   const tabEl = e.target.closest('.tab')
   if (tabEl && tabEl.closest('.tabs')) {
-    const findingEl = tabEl.closest('.finding')
+    const findingEl = tabEl.closest('[data-gid]')
     const gid = findingEl.dataset.gid
     const tid = tabEl.dataset.tid
     state.activeTabByGroup.set(gid, tid)
@@ -104,7 +104,7 @@ report.addEventListener('click', (e) => {
   // re-render is necessary — we can't just flip classes in place.
   const dot = e.target.closest('.mark-dot')
   if (dot) {
-    const findingEl = dot.closest('.finding')
+    const findingEl = dot.closest('[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -123,7 +123,7 @@ report.addEventListener('click', (e) => {
   // Markers are preserved so restore recovers the full prior state.
   const xBtn = e.target.closest('.mark-x')
   if (xBtn) {
-    const findingEl = xBtn.closest('.finding')
+    const findingEl = xBtn.closest('[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -142,7 +142,7 @@ report.addEventListener('click', (e) => {
   // not just one member left behind.
   const restoreBtn = e.target.closest('.mark-restore')
   if (restoreBtn) {
-    const findingEl = restoreBtn.closest('.finding')
+    const findingEl = restoreBtn.closest('[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -207,6 +207,7 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
+  else if (id === 'view-mode') { state.viewMode = val; render() }
   else if (id === 'source-select') { state.filterSource = val; render() }
   else if (id === 'conf-min') { state.filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { state.filterConfMax = val === '' ? '' : parseInt(val, 10); render() }

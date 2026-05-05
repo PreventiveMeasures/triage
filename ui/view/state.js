@@ -51,7 +51,14 @@ export const state = {
   // renders flat in sort order with its own location label above it
   // (file path + line), so the reader can scan results across files in
   // pure severity/confidence/file order without the file-header chrome.
+  // Only meaningful in viewMode='list' — table view is always flat.
   groupByFile: true,
+  // 'list' (default) renders the full per-finding card with badges,
+  // confidence value, full description, recommendation, etc. 'table'
+  // renders one compact 2-row block per finding (severity/title/type
+  // on top, conf/file/actions below, plus a tab strip if multi-tab) —
+  // never grouped by file, regardless of groupByFile.
+  viewMode: 'list',
   // Per-finding manual annotations. Keyed by `tabKey(f)` =
   // `f.id ?? String(f._id)`: the export's derived uuid when available
   // (persists across reloads via localStorage), else a session-local

@@ -76,24 +76,29 @@ body.theme-light {
      The mark-dot / stat-dot fills (small color swatches, no text
      inside) keep their dark palette — they're indicators, not text
      containers, and the dark dots stay visible on a light surface. */
-  & .finding.mark-red   { background: #ffc1bd; }
-  & .finding.mark-blue  { background: #a5d6ff; }
-  & .finding.mark-green { background: #aceebb; }
-  & .finding.mark-gray  { background: #d0d7de; }
-  & .finding .tab.tab-mark-red   { background: #ffc1bd; border-color: #ff8182; }
-  & .finding .tab.tab-mark-blue  { background: #a5d6ff; border-color: #54aeff; }
-  & .finding .tab.tab-mark-green { background: #aceebb; border-color: #4ac26b; }
-  & .finding .tab.tab-mark-gray  { background: #d0d7de; border-color: #8c959f; }
+  /* :is() so the same swatches apply to both .finding (list view)
+     and .finding-row (table view) — the visual semantic of "this
+     finding is marked X" is identical in both presentations. */
+  & :is(.finding, .finding-row).mark-red   { background: #ffc1bd; }
+  & :is(.finding, .finding-row).mark-blue  { background: #a5d6ff; }
+  & :is(.finding, .finding-row).mark-green { background: #aceebb; }
+  & :is(.finding, .finding-row).mark-gray  { background: #d0d7de; }
+  & .tab.tab-mark-red   { background: #ffc1bd; border-color: #ff8182; }
+  & .tab.tab-mark-blue  { background: #a5d6ff; border-color: #54aeff; }
+  & .tab.tab-mark-green { background: #aceebb; border-color: #4ac26b; }
+  & .tab.tab-mark-gray  { background: #d0d7de; border-color: #8c959f; }
 
   /* Color-dot indicators (.mark-dot under findings, .stat-dot in the
      stats row). Originals (#6b1820 etc) are dark-on-dark — readable
      against the dark UI but dim against a light surface. Use vivid,
      mid-saturation swatches for light mode so the color names read
      unambiguously at the small dot size. */
-  & .finding .marks .mark-dot-red,   & .stat-dot-red   { background: #d73a49; }
-  & .finding .marks .mark-dot-blue,  & .stat-dot-blue  { background: #0969da; }
-  & .finding .marks .mark-dot-green, & .stat-dot-green { background: #2da44e; }
-  & .finding .marks .mark-dot-gray,  & .stat-dot-gray  { background: #6e7781; }
+  /* mark-dot is hoisted out of .finding scope (see findings.css) so
+     the same indicators light up the same way in either view. */
+  & .mark-dot-red,   & .stat-dot-red   { background: #d73a49; }
+  & .mark-dot-blue,  & .stat-dot-blue  { background: #0969da; }
+  & .mark-dot-green, & .stat-dot-green { background: #2da44e; }
+  & .mark-dot-gray,  & .stat-dot-gray  { background: #6e7781; }
 
   /* Badge text flips to white for medium / low in light mode. The
      dark-mode rule sets `color: #000` because --medium (amber) and
