@@ -8,6 +8,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { parseMarkdownFindings } from './parse-md.js'
+import { deriveFindingId } from './finding-id.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -127,9 +128,24 @@ export function ingestReport(name, content) {
           for (const f of g) if (f.id) seenIds.add(f.id)
         }
       }
+      // Derive deterministic ids for any finding that doesn't already
+      // carry one — must run BEFORE the dedup loop so MD-imported (and
+      // id-less JSON) findings dedupe by content the same way exporter-
+      // id'd findings do, and so triage (markers / deletions) persists
+      // across reloads of the same source. Mutates the original finding
+      // objects in place; `toGroup` returns them by reference, so the
+      // ids are visible to the loop below. Batched via Promise.all
+      // since crypto.subtle.digest is async — sequential awaits would
+      // serialize hundreds of hashes for no reason.
+      const rawEntries = data.findings || []
+      const idLess = rawEntries.flatMap(toGroup).filter((f) => !f.id)
+      if (idLess.length > 0) {
+        const computed = await Promise.all(idLess.map(deriveFindingId))
+        idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
+      }
       const groups = []
       let dupeCount = 0
-      for (const entry of (data.findings || [])) {
+      for (const entry of rawEntries) {
         const members = toGroup(entry)
         if (members.length === 0) continue
         const anyDupe = members.some((f) => f.id && seenIds.has(f.id))

@@ -115,16 +115,23 @@ function parseBlock(block) {
 
   // Location: prefer a markdown link `[name](url)`. The line number
   // can come from a `#L<n>` anchor in the URL, a `:<n>` suffix on the
-  // name, or absent altogether (rendered as `?`).
-  let file = '', line = '?'
+  // name, or absent altogether (rendered as `?`). The original link
+  // (URL when present, raw text otherwise) is preserved on the
+  // finding as `location` — the deterministic id derivation in
+  // finding-id.js uses it as the discriminator when no fileHash is
+  // available, so two MD imports of the same finding produce the
+  // same UUID and dedupe / share triage.
+  let file = '', line = '?', locationLink = ''
   const loc = sections.location || ''
   const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/)
   if (linkMatch) {
     file = linkMatch[1].trim()
+    locationLink = linkMatch[2]
     const lineFromUrl = linkMatch[2].match(/#L(\d+)/)
     if (lineFromUrl) line = lineFromUrl[1]
   } else {
     file = loc.trim()
+    locationLink = loc.trim()
   }
   // `:42` suffix on the file path — common shorthand. Only consume
   // if we don't already have a line from a `#L<n>` anchor.
@@ -153,6 +160,7 @@ function parseBlock(block) {
     ? stripBold(sections['recommended fix']) : undefined
 
   const finding = { file: file || 'unknown', line, severity, description }
+  if (locationLink) finding.location = locationLink
   if (recommendation) finding.recommendation = recommendation
   if (meta.repository) finding.repo = { github: meta.repository }
   // Preserve auxiliary metadata as plain string fields. The renderer
