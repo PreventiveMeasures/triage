@@ -185,10 +185,23 @@ export function ingestReport(name, content) {
         const stamped = members.map((f) => {
           if (f.id) seenIds.add(f.id)
           const filled = { ...f, _id: state.nextFindingId++ }
-          const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
-          if (!hasOwnMeta) {
-            for (const key of META_FIELDS) {
-              if (data[key] !== undefined) filled[key] = data[key]
+          // Inherit run-level meta from the report header onto
+          // findings that don't carry their own — but ONLY for native
+          // analyzer JSON dumps (no `data.source` marker). For
+          // codex / claude-security imports, the report-level type
+          // is a category label for the file as a whole, not a
+          // per-finding analyzer descriptor; copying it onto each
+          // finding produced misleading "security" run-meta rows on
+          // codex CSVs where the upstream carries no such field.
+          // Source-marked formats opt in to per-finding meta when
+          // they want to (parse-md.js sets f.type from **Category:**
+          // explicitly), and skip it otherwise.
+          if (!data.source) {
+            const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
+            if (!hasOwnMeta) {
+              for (const key of META_FIELDS) {
+                if (data[key] !== undefined) filled[key] = data[key]
+              }
             }
           }
           return filled
