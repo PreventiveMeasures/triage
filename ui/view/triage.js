@@ -1,14 +1,19 @@
 import { state } from './state.js'
 
 // Markers + deletions survive page reload via `localStorage['deepview.triage']`.
-// Payload shape: `{ <uuid>: { color?, deleted? } }` — one entry per
+// Payload shape: `{ <id>: { color?, deleted? } }` — one entry per
 // triaged finding, color/deleted both optional (omitted when absent so
-// a clean finding leaves no trace). JSON-encoded, brotli-compressed,
-// base64-encoded. Only keys matching UUID_RE are stored — session-only
-// numeric keys are filtered out so a fresh drop of the same report
-// re-applies triage under stable ids.
+// a clean finding leaves no trace). JSON-encoded, deflate-compressed,
+// base64-encoded.
+//
+// Persisted keys are anything that ISN'T a session-local numeric `_id`
+// (those drift across reloads of the same report). That covers the
+// uuid-shaped ids the analyzer's exporter emits, the deterministic
+// uuids derive-id.js computes for findings without one, AND the
+// finding-url ids the codex CSV importer attaches. Any non-numeric
+// id is treated as stable enough to round-trip.
 const TRIAGE_KEY = 'deepview.triage'
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const SESSION_ID_RE = /^\d+$/u
 
 async function compressBrotli(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))
@@ -24,11 +29,11 @@ export async function saveTriage() {
   try {
     const entries = {}
     for (const [k, color] of state.markers) {
-      if (!UUID_RE.test(k)) continue
+      if (SESSION_ID_RE.test(k)) continue
       entries[k] = { ...(entries[k] || {}), color }
     }
     for (const k of state.deletedIds) {
-      if (!UUID_RE.test(k)) continue
+      if (SESSION_ID_RE.test(k)) continue
       entries[k] = { ...(entries[k] || {}), deleted: true }
     }
     if (Object.keys(entries).length === 0) {

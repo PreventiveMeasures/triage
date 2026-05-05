@@ -61,21 +61,30 @@ export function refreshTreeSidebar() {
 // a single load can contain several combos when the user merges
 // multiple analyzer outputs. Model name is prettified the same way
 // (provider prefix + `claude-` stripped, dashes → spaces).
+// Source-specific header titles. Used when every loaded report shares
+// the same `source` marker — those reports lack the analyzer
+// (model / effort / exportsMode) metadata that `combos` builds from,
+// and the regular "DeepView results, analyzers: security,
+// performance, …" line would read as if multiple analyzer runs were
+// merged when really they're per-finding category tags within one
+// product's report.
+const SOURCE_TITLES = {
+  'claude-security': 'Claude Security results',
+  'codex-security': 'Codex Security results',
+}
+
 function headerHtml(allGroupsLength, fileNames) {
-  // Claude Security MD reports get their own title (no analyzer
-  // breakdown — those reports don't carry model / effort metadata,
-  // and "DeepView results, analyzers: security, performance, …" reads
-  // as if multiple analyzer runs were merged when really they're just
-  // per-finding category tags within one Claude Security report).
-  // Only switches when EVERY loaded report is claude-security; mixing
-  // a Claude Security MD with a JSON dump goes back to the regular
-  // breakdown so the JSON's analyzer info doesn't get hidden.
-  const allClaudeSecurity = state.reports.length > 0
-    && state.reports.every((r) => r.source === 'claude-security')
+  // Single-source title only fires when EVERY loaded report carries
+  // the same source marker. Mixing a Claude / Codex report with a
+  // JSON dump (or with each other) falls back to the analyzer
+  // breakdown so neither product's info gets hidden.
+  const sources = new Set(state.reports.map((r) => r.source))
+  const singleSource = sources.size === 1 ? [...sources][0] : null
+  const sourceTitle = singleSource ? SOURCE_TITLES[singleSource] : null
 
   let headerText
-  if (allClaudeSecurity) {
-    headerText = 'Claude Security results'
+  if (sourceTitle) {
+    headerText = sourceTitle
   } else {
     const combos = [...new Set(state.reports.flatMap((r) =>
       r.groups.flatMap((g) => g.map((f) => {

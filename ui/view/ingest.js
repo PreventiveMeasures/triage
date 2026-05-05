@@ -8,6 +8,7 @@ import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { parseMarkdownFindings } from './parse-md.js'
+import { parseCodexCsvToScans } from './parse-codex.js'
 import { deriveFindingId } from './finding-id.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
@@ -26,13 +27,30 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // active view. Multiple drops at once still all save, but only the
 // final one renders — merging across files is no longer a thing in the
 // UI; the user switches via the sidebar.
+// `.csv` drops are treated as Codex Security exports — the upstream
+// merges several scans into one CSV and we split them at drop time so
+// each scan ends up as its own sidebar entry. Slashes in repo names
+// are sanitized to `__` because OPFS doesn't accept `/` in filenames;
+// sidebar.js converts the substitution back for display. Each scan is
+// stored as its derived JSON (the exact shape ingestReport expects),
+// so loading later goes through the regular JSON.parse path.
 export async function addFiles(files) {
   let last = null
   for (const file of files) {
     try {
       const content = await file.text()
-      await saveFile(file.name, content)
-      last = { name: file.name, content }
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        const scans = parseCodexCsvToScans(content)
+        for (const { displayName, data } of scans) {
+          const codexName = displayName.replace(/\//gu, '__') + '.codex'
+          const json = JSON.stringify(data)
+          await saveFile(codexName, json)
+          last = { name: codexName, content: json }
+        }
+      } else {
+        await saveFile(file.name, content)
+        last = { name: file.name, content }
+      }
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)
     }
