@@ -171,8 +171,16 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   html += `<select id="sort-select">`
   html += `<option value="file"${state.sortBy === 'file' ? ' selected' : ''}>By file</option>`
   html += `<option value="severity"${state.sortBy === 'severity' ? ' selected' : ''}>By severity</option>`
-  html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
-  html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+  // Confidence sort options drop out alongside the Confidence
+  // min/max filter when no finding carries a confidence value
+  // (codex / claude security imports). Without this guard the
+  // user could pick "Confidence (high first)" on a report where
+  // every confidence is undefined and end up with applySorting's
+  // ?? -1 fallback shuffling the list arbitrarily.
+  if (showConfidence) {
+    html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
+    html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+  }
   html += `</select>`
   if (showSource) {
     html += `<div class="sep"></div>`
@@ -213,10 +221,20 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   if (showMetadataToggle && state.viewMode !== 'table') {
     html += `<label class="checkbox-label"><input type="checkbox" id="show-metadata"${state.showMetadata ? ' checked' : ''}> metadata</label>`
   }
-  const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
-  const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
-  html += `<button type="button" id="toggle-trash" class="trash-btn${state.showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
-  html += `<button type="button" id="print-btn" class="trash-btn" title="print report (sets the document title to the filename / common prefix while printing)">Print</button>`
+  // Trash toggle only shows when there's something to toggle: either
+  // findings are already deleted (count > 0) or the user is currently
+  // viewing the trash (showDeleted=true) and needs a way back. Empty
+  // trash + live view = button is dead chrome, hide it.
+  if (deletedCount > 0 || state.showDeleted) {
+    const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
+    const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
+    html += `<button type="button" id="toggle-trash" class="trash-btn${state.showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
+  }
+  // Print button moved out of the toolbar — now a fixed icon in the
+  // top-right corner under the theme toggle, see styles/theme.css and
+  // view.html. Visibility is gated by `body.show-print-btn` toggled in
+  // render() so it only appears on the findings tab with a report
+  // loaded.
   html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
@@ -333,6 +351,12 @@ function findingsBodyHtml(filtered) {
 }
 
 export function render() {
+  // Fixed top-right print icon visibility — only show on the
+  // findings tab with a report loaded (graph / files tabs would
+  // print useless content). Toggled via a body class so the
+  // button itself doesn't need to re-render.
+  document.body.classList.toggle('show-print-btn',
+    state.reports.length > 0 && state.currentView === 'findings')
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
@@ -382,7 +406,14 @@ export function render() {
   // and silently empty the list. resetFilters() runs only on isFirst
   // in ingest.js, so guard here too.
   if (!hasAnyModulesPath && state.filterSource !== 'all') state.filterSource = 'all'
-  if (!hasAnyConfidence) { state.filterConfMin = ''; state.filterConfMax = '' }
+  if (!hasAnyConfidence) {
+    state.filterConfMin = ''; state.filterConfMax = ''
+    // Sort options for confidence drop out alongside the filter, so a
+    // user-set confidence sort would stay selected against an absent
+    // option in the dropdown and applySorting would fall through to
+    // its `?? -1` placeholder. Reset to 'file' when that happens.
+    if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'file'
+  }
   if (!hasAnyHashMetadata) state.showMetadata = false
 
   const filtered = applySorting(applyFilters(allGroups))

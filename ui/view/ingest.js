@@ -101,6 +101,7 @@ export async function deleteCurrent() {
   report.innerHTML = ''
   dropZone.classList.remove('hidden')
   document.title = 'deepview results'
+  document.body.classList.remove('show-print-btn')
   await renderSidebar()
 }
 

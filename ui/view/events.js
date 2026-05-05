@@ -200,27 +200,31 @@ report.addEventListener('click', (e) => {
     rowEl.classList.toggle('expanded')
     return
   }
-  // Print button — set document.title to the filename (or longest common
-  // prefix when multiple files are loaded) so the OS print dialog and any
-  // saved PDF default to a meaningful name, then call window.print() and
-  // restore the original title. window.print() is synchronous in current
-  // browsers (blocks until the dialog is dismissed), so the restore lands
-  // before anything else can read the title.
-  if (e.target.closest('#print-btn')) {
-    const fileNames = state.reports.map((r) => r.fileName)
-    let target = ''
-    if (fileNames.length === 1) target = fileNames[0]
-    else if (fileNames.length > 1) target = commonPrefix(fileNames)
-    // Strip the `.json` suffix so a "Save as PDF" doesn't end up named
-    // `<report>.json.pdf`. Also handles a stripped trailing `.` from
-    // a partial common prefix like `security-foo.j` — only `.json`
-    // exactly at the end gets removed.
-    target = target.replace(/\.json$/u, '')
-    const oldTitle = document.title
-    if (target) document.title = target
-    window.print()
-    document.title = oldTitle
-  }
+})
+
+// Print button — fixed top-right icon, lives OUTSIDE #report (see
+// view.html / styles/theme.css), so the report-level click delegate
+// can't see it. Attach directly. Sets document.title to the filename
+// (or longest common prefix when multiple files are loaded) so the
+// OS print dialog and any saved PDF default to a meaningful name,
+// then calls window.print() and restores the original title.
+// window.print() is synchronous in current browsers (blocks until the
+// dialog is dismissed), so the restore lands before anything else
+// can read the title.
+document.getElementById('print-btn').addEventListener('click', () => {
+  const fileNames = state.reports.map((r) => r.fileName)
+  let target = ''
+  if (fileNames.length === 1) target = fileNames[0]
+  else if (fileNames.length > 1) target = commonPrefix(fileNames)
+  // Strip the `.json` suffix so a "Save as PDF" doesn't end up named
+  // `<report>.json.pdf`. Also handles a stripped trailing `.` from a
+  // partial common prefix like `security-foo.j` — only `.json` exactly
+  // at the end gets removed.
+  target = target.replace(/\.json$/u, '')
+  const oldTitle = document.title
+  if (target) document.title = target
+  window.print()
+  document.title = oldTitle
 })
 
 report.addEventListener('change', (e) => {
