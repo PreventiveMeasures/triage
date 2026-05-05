@@ -110,7 +110,7 @@ function statsHtml(counts, colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
-  const { showSource, showConfidence, showMetadataToggle } = flags
+  const { showSource, showConfidence, showMetadataToggle, showRepoInput } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
@@ -159,10 +159,19 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   html += `<label for="filter-exclude">Exclude:</label>`
   html += `<input type="text" id="filter-exclude" value="${esc(state.filterExclude)}" placeholder="hide text">`
   html += '</div>'
-  html += '<div class="toolbar-row">'
-  html += `<label for="repo-url">Repo:</label>`
-  html += `<input type="text" id="repo-url" value="${esc(state.repoUrl)}" placeholder="https://github.com/user/repo">`
-  html += '</div>'
+  // The Repo URL input only contributes to fileUrl() for findings
+  // that are non-node_modules AND lack a per-finding `repo.github`
+  // (see format.js fileUrl). When every finding either carries its
+  // own repo.github or sits in node_modules, the typed URL has
+  // nothing to apply to — hide the row entirely. State is preserved
+  // so a later report that needs it inherits any URL the user
+  // previously typed.
+  if (showRepoInput) {
+    html += '<div class="toolbar-row">'
+    html += `<label for="repo-url">Repo:</label>`
+    html += `<input type="text" id="repo-url" value="${esc(state.repoUrl)}" placeholder="https://github.com/user/repo">`
+    html += '</div>'
+  }
   html += '</div>'
   return html
 }
@@ -274,6 +283,9 @@ export function render() {
   const hasAnyConfidence = mergedGroups.some((g) => g.some((f) => f.confidence !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   const hasAnyHashMetadata = mergedGroups.some((g) => g.some((f) => f.fileHash || f.treeHash))
+  // Repo URL input is useful only when at least one finding could
+  // benefit from it: non-node_modules AND no per-finding repo.github.
+  const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -342,6 +354,7 @@ export function render() {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showMetadataToggle: hasAnyHashMetadata,
+    showRepoInput: repoInputUseful,
   })
 
   if (state.showDeleted && allGroups.length === 0) {
