@@ -178,6 +178,12 @@
   & .marks {
     display: flex; gap: .35rem; justify-content: flex-end;
     margin-top: .4rem; align-items: center;
+    /* Indent the row by the badge column's width so .marks-left's
+       leading items (commit ref, multi-tab strip) align under the
+       description / recommendation text in column 2 of the .tab-body
+       grid. min-width of .finding-left is 4rem; gap is .75rem;
+       4.75rem matches that for typical badges. */
+    padding-left: 4.75rem;
     /* Buttons in this row carry single-glyph labels (× / restore /
        severity badge) — they're controls, not content, so prevent the
        glyph from being caught by drag-selection. Also kills the
@@ -359,9 +365,9 @@
 .finding-row {
   display: grid;
   grid-template-columns: 5.5rem 1fr;
-  gap: .35rem .85rem;
+  gap: .2rem .85rem;
   align-items: center;
-  padding: .4rem .7rem;
+  padding: .25rem .7rem;
   font-size: .8rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
