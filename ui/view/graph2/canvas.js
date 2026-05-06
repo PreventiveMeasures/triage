@@ -368,7 +368,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     }
 
     // ── Halos (hubs / hover / selected) ─────────────────────────
-    if (graph2.showHalos) {
+    {
       for (const n of graph.nodes) {
         if (!nodeVisible(n)) continue
         const isHov = n.file === hovered
@@ -420,7 +420,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.arc(sx, sy, r, 0, Math.PI * 2)
       ctx.fill()
 
-      if (n.isHub && graph2.highlightHubs) {
+      if (n.isHub) {
         // White ring on dark, near-black on light — the hub marker
         // needs maximum contrast against the package-colored fill.
         ctx.strokeStyle = T.hubRing.replace('ALPHA', String(0.55 * dim))
@@ -602,7 +602,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       // Halo for selected / hovered / hubs — gives them visual
       // weight without changing radius (which would shift the
       // edge rim-anchors).
-      if (graph2.showHalos && (isSel || isHov || n.isHub)) {
+      if (isSel || isHov || n.isHub) {
         const haloR = r * (isSel ? 4 : isHov ? 3 : 2.4)
         const grad = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, haloR)
         grad.addColorStop(0, baseColor + alphaHex(isSel ? 0.4 : 0.25))
@@ -618,7 +618,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.arc(sx, sy, r, 0, Math.PI * 2)
       ctx.fill()
 
-      if (n.isHub && graph2.highlightHubs) {
+      if (n.isHub) {
         ctx.strokeStyle = T.hubRing.replace('ALPHA', '0.55')
         ctx.lineWidth = 0.9
         ctx.stroke()

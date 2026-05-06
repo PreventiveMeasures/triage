@@ -29,8 +29,6 @@ export const graph2 = {
   displayCollapsed: true,
   edgeOpacity: 0.22,
   nodeSize: 1.0,
-  showHalos: true,
-  highlightHubs: true,
   showLabels: false,
   // Hub-detection strategy. 'top' = top-degree node(s) per package,
   // capped (the original v2 design). 'cross' = any file that's

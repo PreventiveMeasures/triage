@@ -80,12 +80,10 @@ report.addEventListener('click', (e) => {
   const g2Toggle = e.target.closest('[data-g2-toggle]')
   if (g2Toggle) {
     const key = g2Toggle.dataset.g2Toggle
-    // Map UI-key → state field. The non-matching ones (`hubs` →
-    // `highlightHubs`, `labels` → `showLabels`, `halos` → `showHalos`)
-    // exist because the data attributes read better in the DOM as
-    // short tokens; renaming the state fields would lose context in
-    // canvas.js.
-    const map = { halos: 'showHalos', hubs: 'highlightHubs', labels: 'showLabels' }
+    // Map UI-key → state field. `labels` → `showLabels` is the
+    // only entry now that halos / hub-highlight are hardcoded
+    // on; kept as a map for symmetry with the future toggles.
+    const map = { labels: 'showLabels' }
     const field = map[key]
     if (field) {
       graph2[field] = !graph2[field]

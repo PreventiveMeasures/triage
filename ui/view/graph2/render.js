@@ -167,8 +167,6 @@ function renderControls(graph) {
     ['top', 'Top per pkg'],
     ['cross', 'Cross-imported'],
   ])
-  html += toggleRow('halos', 'Glow halos', graph2.showHalos)
-  html += toggleRow('hubs', 'Highlight hubs', graph2.highlightHubs)
   html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
   html += '</div></section>'
   return html
