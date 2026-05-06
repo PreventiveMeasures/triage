@@ -137,26 +137,38 @@ function placeFilesInDisk(graph, pkgInfo) {
   }
 }
 
-// "Spiral" — the hue-spiral projection from the original
-// graph_v2.html design. Each package sits at a unique angle on
-// the canvas (golden-angle distribution, so even N=2..3 packages
-// land on far-apart angles and the layout reads as a clean fan
-// rather than a clump), at a pseudo-random radius from the
-// center. The radius scatter is what gives the layout its
-// "spiral" feel — without it, all packages would sit on a single
-// ring (which is the "Radial" mode). Files within a package
-// cluster in a small disk around the package center; hubs sit
-// closer to the center than members so the fan reads as
-// "package = pile of files, anchored by a hub".
+// "Spiral" — concentric priority rings + greedy angular placement.
+// Two phases:
 //
-// In the synthetic-data design, groups carried a real hue
-// attribute and the angle = hue. Real packages here don't have
-// an inherent hue (pkgColor() picks from a hashed palette), so
-// we use the index-times-golden-angle trick: same visual
-// effect (maximally distinct angles), no need to back-compute a
-// hue from the assigned color. The 31-multiplier on the band
-// breaks any visual correlation between angle and radius so the
-// layout doesn't degenerate into a tight ring at certain N.
+//   1. Priority bucketing. Packages sort by cross-package degree
+//      desc (ties: file count desc) and quantize into discrete
+//      rings. Ring k spans the band slice [k/M, (k+1)/M], which
+//      maps to rank range [(k/M)² · N, ((k+1)/M)² · N) — sqrt-
+//      density bucketing, so outer rings carry proportionally
+//      more packages and the per-area density stays uniform like
+//      the old Vogel sunflower did. Most-coupled packages land
+//      on the innermost ring, leaves on the rim.
+//
+//   2. Within-ring angular optimization. For each ring inner→
+//      outer, each package picks the open slot whose direction
+//      from center is closest to the weighted barycenter of its
+//      already-placed neighbours (weight = cross-package edge
+//      count to that neighbour). Packages without placed
+//      neighbours fall back to a Vogel-style golden-angle stride
+//      so they spread evenly instead of clumping at slot 0.
+//      Greedy, single-pass: O(N × (avgNeighbours + ringSlots))
+//      ≈ O(N²/numRings). Suboptimal vs. a global solver, but
+//      consistently sub-millisecond even on 500+ packages.
+//
+// The entry-point package (largest with no incoming cross-package
+// edges — typically the project's own source root) is pinned at
+// center. Files inside each package fan out in their disk via the
+// shared placeFilesInDisk helper.
+//
+// Result: heavily-coupled packages tend to settle near the same
+// angle on the same / adjacent rings, so the cross-package edges
+// hugging that angle run as short radial chords instead of long
+// diagonal traversals across the canvas.
 export function layoutSpiral(graph, w, h) {
   const cx = w / 2, cy = h / 2
   // Work in the design's unit space (where 1.0 = half-canvas)
@@ -165,23 +177,7 @@ export function layoutSpiral(graph, w, h) {
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
   if (N === 0) return
-  // Entry-point package — the largest one with no incoming
-  // cross-package edges (typically the project's own source
-  // root: nothing in node_modules imports app code). Pinned at
-  // center; the rest of the packages spiral around it. Returns
-  // null on a fully-cyclic graph, in which case nothing is
-  // pinned and the spiral fills the full radius range.
   const entryPkg = findEntryPkg(graph)
-  // Sort others by cross-degree desc (ties: file count desc).
-  // The original spiral algorithm below uses i to drive BOTH
-  // the angle (i * 137.508°) and the radius (band = i*31 % 100
-  // / 100 — pseudo-random walk through 100 distinct values).
-  // By feeding cross-deg-desc as the input order, the most-
-  // connected non-entry package lands at i=0 → band=0 →
-  // innermost radius; subsequent indices cycle through the
-  // band sequence in cross-deg order, so the layout's
-  // arm structure (which depends on the angle/radius
-  // decoupling per step) is preserved verbatim.
   const crossDeg = crossDegByPkg(graph)
   const others = (entryPkg
     ? graph.packages.filter((p) => p !== entryPkg)
@@ -192,11 +188,8 @@ export function layoutSpiral(graph, w, h) {
       return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
     })
   const Nothers = others.length
-  // Adapt the OUTER radius to N. Tight ring at low N (so a
-  // handful of packages frame each other on a circle rather
-  // than floating sparsely), widen through medium N, full
-  // spiral at high N where the cross-degree spread is what
-  // creates the visible arm structure.
+  // Adapt the OUTER radius to N. Tight ring at low N, widening
+  // through medium N, full spiral at high N.
   let maxRUnit
   if (Nothers <= 0) maxRUnit = 0
   else if (Nothers <= 6) maxRUnit = 0.65
@@ -209,10 +202,9 @@ export function layoutSpiral(graph, w, h) {
   const entryCap = 0.22, othersCap = 0.12, padding = 0.04
   const pkgInfo = new Map()
   // Inner radius depends on whether we have an entry pinned.
-  // With an entry: push out so the closest other-package's
-  // disk rim doesn't clip into the entry's. Without an entry:
-  // use the original adaptive minRUnit so the spiral has the
-  // same density it had pre-entry-pinning.
+  // With entry: push out so the closest other-package's disk rim
+  // doesn't clip into the entry's. Without entry: start from the
+  // design's tight ring so inner packages get breathing room.
   let minRUnit
   if (entryPkg) {
     const entrySize = graph.pkgCount.get(entryPkg) ?? 0
@@ -223,45 +215,143 @@ export function layoutSpiral(graph, w, h) {
     )
     pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
   } else {
-    // No entry — start from the design's tight ring so packages
-    // near the inner edge get visible breathing room without
-    // assuming a centered anchor.
     if (Nothers <= 1) minRUnit = 0
     else if (Nothers <= 6) minRUnit = 0.40
     else if (Nothers <= 20) minRUnit = 0.32
     else minRUnit = 0.30
   }
-  for (let i = 0; i < Nothers; i++) {
-    const pkg = others[i]
-    // Vogel spiral — golden angle for the angular step,
-    // sqrt(i/(N-1)) for the radial step. This is the classic
-    // sunflower-seed packing: it gives uniform density per
-    // unit area (the area at radius r grows like 2πr, and
-    // sqrt-radius produces dN/dArea = N/π = constant), so
-    // packages spread evenly across the canvas instead of
-    // crowding the inner ring the way a linear ramp did.
-    //
-    // Cross-deg sort still feeds the loop: i=0 (most cross-
-    // connected) at band=0 (innermost), i=N-1 (least) at
-    // band=1 (rim). Mapping is monotonic, so a "very coupled"
-    // package always reads as inner and a leaf reads as outer.
-    //
-    // No hash jitter — golden-angle steps already give
-    // adjacent indices wildly different angles, and the
-    // sqrt-radius spreads adjacent ranks far enough apart on
-    // the inner rings that the spiral reads as textured
-    // without any added noise.
-    const angle = ((i * 137.508) % 360) * Math.PI / 180
-    const band = Nothers <= 1 ? 0 : Math.sqrt(i / (Nothers - 1))
-    const rUnit = Nothers === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
-    const size = graph.pkgCount.get(pkg) ?? 0
-    const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
-    pkgInfo.set(pkg, {
-      x: cx + Math.cos(angle) * rUnit * unitToPx,
-      y: cy + Math.sin(angle) * rUnit * unitToPx,
-      size, groupR: gRUnit * unitToPx,
-    })
+  if (Nothers === 0) {
+    placeFilesInDisk(graph, pkgInfo)
+    return
   }
+
+  // Pairwise package edge counts: pkgEdgesOf.get(p) → Map(other →
+  // count). Symmetric (each cross-package edge updates both
+  // endpoints) so the greedy optimizer below can look up `pkg →
+  // its placed neighbours` directly without a per-package
+  // adjacency rebuild.
+  const pkgEdgesOf = new Map()
+  for (const e of graph.edges) {
+    if (!e.cross) continue
+    const aPkg = graph.nodeByFile.get(e.a)?.pkg
+    const bPkg = graph.nodeByFile.get(e.b)?.pkg
+    if (!aPkg || !bPkg || aPkg === bPkg) continue
+    if (!pkgEdgesOf.has(aPkg)) pkgEdgesOf.set(aPkg, new Map())
+    if (!pkgEdgesOf.has(bPkg)) pkgEdgesOf.set(bPkg, new Map())
+    const aMap = pkgEdgesOf.get(aPkg)
+    const bMap = pkgEdgesOf.get(bPkg)
+    aMap.set(bPkg, (aMap.get(bPkg) ?? 0) + 1)
+    bMap.set(aPkg, (bMap.get(aPkg) ?? 0) + 1)
+  }
+
+  // Ring count grows as ~sqrt(N) so each ring stays sparse enough
+  // for angular slots not to collide. Capped at 10 — past that the
+  // ring-to-ring radial spacing gets smaller than the typical
+  // package disk diameter and the rings start visually merging.
+  const numRings = Math.max(1, Math.min(10, Math.round(Math.sqrt(Nothers) / 1.2)))
+  const ringStart = new Array(numRings + 1)
+  for (let k = 0; k <= numRings; k++) {
+    ringStart[k] = Math.floor(k * k / (numRings * numRings) * Nothers)
+  }
+  ringStart[numRings] = Nothers
+
+  // Ring radii — each ring's center sits at the band-axis midpoint
+  // of its slice, mapped through the existing minRUnit..maxRUnit
+  // window. Singleton-no-entry case stays at center to match the
+  // pre-rings behaviour (otherwise a lone package would sit
+  // arbitrarily off-center).
+  const ringRUnit = new Array(numRings)
+  for (let k = 0; k < numRings; k++) {
+    if (Nothers === 1 && !entryPkg) {
+      ringRUnit[k] = 0
+    } else {
+      const bandMid = (k + 0.5) / numRings
+      ringRUnit[k] = minRUnit + bandMid * (maxRUnit - minRUnit)
+    }
+  }
+
+  // Greedy angular placement. For each ring inner→outer, walk its
+  // packages in priority order; each picks the open slot whose
+  // direction from center is closest to the weighted barycenter of
+  // its already-placed neighbours. Slot pick uses the dot product
+  // with the target unit vector — equivalent to argmax cos(Δangle)
+  // and avoids modular arithmetic on the wrap.
+  const goldenRad = 137.508 * Math.PI / 180
+  for (let k = 0; k < numRings; k++) {
+    const startIdx = ringStart[k]
+    const endIdx = ringStart[k + 1]
+    const M = endIdx - startIdx
+    if (M === 0) continue
+    const radius = ringRUnit[k] * unitToPx
+    // Per-ring phase rotation by the golden angle so adjacent
+    // rings don't share spokes (which would read as radial
+    // alignment artefacts).
+    const phase = (k * goldenRad) % (2 * Math.PI)
+    const slotCos = new Array(M)
+    const slotSin = new Array(M)
+    const slotAngles = new Array(M)
+    for (let j = 0; j < M; j++) {
+      const a = phase + (2 * Math.PI * j) / M
+      slotAngles[j] = a
+      slotCos[j] = Math.cos(a)
+      slotSin[j] = Math.sin(a)
+    }
+    const used = new Array(M).fill(false)
+    let unconstrainedCount = 0
+
+    for (let i = startIdx; i < endIdx; i++) {
+      const pkg = others[i]
+      // Weighted barycenter of already-placed neighbours.
+      const neighbours = pkgEdgesOf.get(pkg)
+      let bx = 0, by = 0, totalW = 0
+      if (neighbours) {
+        for (const [q, weight] of neighbours) {
+          const pos = pkgInfo.get(q)
+          if (!pos) continue
+          bx += pos.x * weight
+          by += pos.y * weight
+          totalW += weight
+        }
+      }
+      // Target direction (unit vector from center). When a package
+      // has no placed neighbours, or its barycenter sits at center
+      // (only entry-coupled — entry is at center too), fall back
+      // to a golden-angle stride so unconstrained packages spread
+      // evenly across the ring instead of clumping at slot 0.
+      let tc = 0, ts = 0
+      let constrained = false
+      if (totalW > 0) {
+        bx /= totalW; by /= totalW
+        const dx = bx - cx, dy = by - cy
+        const dist = Math.hypot(dx, dy)
+        if (dist > 1) {
+          tc = dx / dist; ts = dy / dist
+          constrained = true
+        }
+      }
+      if (!constrained) {
+        const fallback = (unconstrainedCount * goldenRad) % (2 * Math.PI)
+        tc = Math.cos(fallback); ts = Math.sin(fallback)
+        unconstrainedCount++
+      }
+      // argmax slotCos·tc + slotSin·ts over open slots.
+      let bestSlot = -1
+      let bestDot = -Infinity
+      for (let j = 0; j < M; j++) {
+        if (used[j]) continue
+        const dot = slotCos[j] * tc + slotSin[j] * ts
+        if (dot > bestDot) { bestDot = dot; bestSlot = j }
+      }
+      used[bestSlot] = true
+      const angle = slotAngles[bestSlot]
+      const x = cx + Math.cos(angle) * radius
+      const y = cy + Math.sin(angle) * radius
+      const size = graph.pkgCount.get(pkg) ?? 0
+      const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
+      pkgInfo.set(pkg, { x, y, size, groupR: gRUnit * unitToPx })
+    }
+  }
+
   placeFilesInDisk(graph, pkgInfo)
 }
 
