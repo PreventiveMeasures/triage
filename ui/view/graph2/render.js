@@ -531,12 +531,14 @@ function renderDistribution(graph) {
       return (issueByPkg.get(b) ?? 0) - (issueByPkg.get(a) ?? 0)
     })
   }
-  const top = sorted.slice(0, 8)
+  // Show every package — the wrapping section flexes to fill the
+  // available sidebar height and scrolls past that, so the top-N
+  // cap that lived here previously is no longer needed.
   html += '<div class="g2-dist-list">'
-  if (top.length === 0) {
+  if (sorted.length === 0) {
     html += '<div class="g2-dist-empty">No packages with issues</div>'
   }
-  for (const pkg of top) {
+  for (const pkg of sorted) {
     const c = pkgColor(pkg)
     const fileCnt = graph.pkgCount.get(pkg) ?? 0
     const issueCnt = issueByPkg.get(pkg) ?? 0

@@ -225,12 +225,17 @@
   border-left: 1px solid var(--graph-divider);
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
-  overflow-y: auto;
-  padding: 14px 14px 60px;
+  /* Flex column so the Top-packages block can grow to fill the
+     remaining height while the Selection block above takes its
+     natural size. The panel itself doesn't scroll; the top-pkgs
+     list scrolls internally instead, so the package list can
+     extend down to the bottom of the sidebar without an outer
+     scroll competing. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px;
 }
-
-.graph2-right::-webkit-scrollbar { width: 5px; }
-.graph2-right::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .g2-panel-title {
   /* Properties spelled out instead of `font: ... inherit` —
@@ -280,7 +285,18 @@
    selection card above (the title is now :first-child of the
    wrapper, not of the right panel), so put the gap on the wrapper
    instead — total spacing stays 14px regardless. */
-#g2-top-pkgs-block { margin-top: 14px; }
+/* Top-packages block flexes to fill the remaining sidebar height
+   so the package list can extend all the way down. min-height: 0
+   is required because flex items default to a content-based
+   minimum that ignores the parent's bounded height; without it
+   the block would overflow .graph2-right and clip. */
+#g2-top-pkgs-block {
+  margin-top: 14px;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 /* Mini-tab pair — same pattern as v1's tree-hubs-tabs. Sits
    inline at the right of a panel title. Resets the title's
@@ -838,6 +854,18 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Fills the remaining height inside #g2-top-pkgs-block (panel
+     title + dist bar above are fixed-size). Long package lists
+     scroll inside this container. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  /* Match the scrollbar look of the sidebar / left-tree files. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
 .g2-dist-empty {
