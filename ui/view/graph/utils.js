@@ -305,26 +305,26 @@ const PKG_PALETTE_DARK = [
   '#d4a6c8', // lavender
 ]
 const PKG_PALETTE_LIGHT = [
-  '#0969da', // blue
-  '#bc4c00', // orange
-  '#1a7f37', // green
-  '#cf222e', // red
-  '#1f7a72', // teal
-  '#9a6700', // yellow → dark gold
-  '#8250df', // purple
-  '#bf3989', // pink → magenta
-  '#6e4a33', // brown
-  '#57606a', // gray
-  '#7a5b00', // gold → darker
-  '#a83a76', // rose
-  '#0550ae', // light blue → deeper
-  '#3e7a73', // sage
-  '#2da44e', // light green → darker green
-  '#7a5b00', // dark gold (matches gold)
-  '#1c5d59', // dark teal
-  '#b1192d', // crimson
-  '#3a3735', // warm gray
-  '#7a4a76', // lavender
+  '#2f8aef', // blue
+  '#d2691e', // orange
+  '#2ea043', // green
+  '#e63946', // red
+  '#2e9a92', // teal
+  '#b88817', // yellow
+  '#9560e8', // purple
+  '#d24a9c', // pink → magenta
+  '#8a5d40', // brown
+  '#6e7781', // gray
+  '#a07a14', // gold
+  '#c14e8e', // rose
+  '#1f7ad0', // light blue → deeper
+  '#549b94', // sage
+  '#3fb95f', // light green
+  '#a07a14', // dark gold (matches gold)
+  '#2a8278', // dark teal
+  '#cb2c40', // crimson
+  '#52504e', // warm gray
+  '#965f93', // lavender
 ]
 function isLightTheme() {
   return typeof document !== 'undefined' && document.body?.classList.contains('theme-light')
