@@ -42,35 +42,6 @@
 
 .graph2-topbar .g2-spacer { flex: 1; }
 
-.g2-seg {
-  display: flex;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 2px;
-
-  & button {
-    background: transparent;
-    border: 0;
-    color: var(--muted);
-    font: 500 11px/1 inherit;
-    padding: 5px 9px;
-    border-radius: 4px;
-    cursor: pointer;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    font-family: inherit;
-
-    &.on {
-      background: var(--surface-active);
-      color: var(--accent);
-      box-shadow: 0 0 0 1px var(--border) inset;
-    }
-    &:hover:not(.on) { color: var(--text); }
-  }
-}
-
 .g2-icon-btn {
   width: 28px; height: 28px;
   border-radius: 5px;

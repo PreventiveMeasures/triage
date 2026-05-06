@@ -1,5 +1,5 @@
 import { graph2 } from './state.js'
-import { applyLayout } from './layout.js'
+import { layoutSpiral } from './layout.js'
 import { pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
@@ -88,17 +88,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   function ensureLayout() {
     if (!needsLayout) return
     const cache = graph2.layoutCache
-    if (cache && cache.mode === graph2.layoutMode && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
+    if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
       // Reuse cached positions — copy back into the live nodes.
       for (const n of graph.nodes) {
         const p = cache.pos.get(n.file)
         if (p) { n.x = p.x; n.y = p.y }
       }
     } else {
-      applyLayout(graph2.layoutMode, graph, layoutW, layoutH)
+      layoutSpiral(graph, layoutW, layoutH)
       const pos = new Map()
       for (const n of graph.nodes) pos.set(n.file, { x: n.x, y: n.y })
-      graph2.layoutCache = { mode: graph2.layoutMode, files: graph.files, w: layoutW, h: layoutH, pos }
+      graph2.layoutCache = { files: graph.files, w: layoutW, h: layoutH, pos }
     }
     needsLayout = false
   }
@@ -519,20 +519,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   zOut?.addEventListener('click', () => zoomTo(viewport.k / 1.4))
   zFit?.addEventListener('click', () => fitToView())
 
-  // ── External hooks (called from events.js when sliders / segs / etc change) ─
-  function relayout(mode) {
-    graph2.layoutMode = mode
-    needsLayout = true
-    needsFit = true
-    ensureLayout()
-    fitToView()
-  }
-
   // Resize observer — handles container resize (sidebar collapse,
   // window resize, tab switch with different available space). The
   // relayout-on-resize is intentionally off: even cheap closed-form
   // passes would jitter the graph on every drag of the window edge.
-  // Users can hit the layout segmented control to refresh; the canvas just
+  // The canvas just
   // refits its viewport so the existing positions stay centered.
   resize()
   const ro = new ResizeObserver(() => resize())
@@ -581,7 +572,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   rafId = requestAnimationFrame(draw)
 
   graph2.graphState = {
-    relayout,
     _cleanup: () => {
       cancelAnimationFrame(rafId)
       ro.disconnect()

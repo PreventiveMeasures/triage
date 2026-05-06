@@ -1,18 +1,22 @@
-// Layout passes for the v2 graph. Three closed-form, package-aware
-// algorithms operating on real package labels: each package becomes
-// a disk in the spiral / a slice on the radial / a cell in the grid,
-// with its files jittered inside. All three write directly into
-// n.x / n.y on the passed nodes (no allocation), so a layout switch
-// is cheap. The canvas's ResizeObserver passes the actual canvas
-// dimensions, ensuring layouts match the viewport instead of an
-// arbitrary unit square.
+// Spiral layout for the v2 graph. Each package becomes a disk
+// in a Vogel sunflower (golden-angle steps + sqrt-radius
+// growth, sorted by cross-package degree desc so the most
+// coupled packages land at the center), with the entry-point
+// package pinned at center and its files jittered around it.
+// Writes directly into n.x / n.y on the passed nodes (no
+// allocation). Canvas ResizeObserver passes the actual canvas
+// dimensions, so the layout matches the viewport instead of
+// an arbitrary unit square.
 //
-// An earlier version had a Fruchterman-Reingold "force" mode (and
-// a "classic" variant pinned to graph v1's canvas size). Both got
-// removed: the closed-form passes are an order of magnitude faster
-// on large trees and produce a more legible result for this
-// visualization's purpose (clusters by package, not minimum-cross
-// edge layouts).
+// Earlier versions also shipped Fruchterman-Reingold "force",
+// a "classic" variant pinned to graph v1's canvas, "radial"
+// (single ring), and "grid" (package cells). All four got
+// removed — Force/Classic were an order of magnitude slower
+// on big trees and produced a more cluttered result; Radial
+// looked clean only at small N and crowded badly at large;
+// Grid mis-read because user nodes themselves often align
+// to a grid (file-system layout) so the cells reinforced
+// the wrong axis.
 
 // Stable per-string hash — used as a seed for jitter so a given
 // graph always paints the same way across reloads (otherwise small
@@ -114,62 +118,6 @@ function placeFilesInDisk(graph, pkgInfo) {
     n.x = info.x + Math.cos(localA) * localR
     n.y = info.y + Math.sin(localA) * localR
   }
-}
-
-export function layoutRadial(graph, w, h) {
-  const cx = w / 2, cy = h / 2
-  const unitToPx = Math.min(w, h) / 2
-  const N = graph.packages.length
-  if (N === 0) return
-  // Entry-point package — the largest one with no incoming
-  // cross-package edges. Pinned at center so the user lands on
-  // the project's core; the rest of the packages get the
-  // surrounding ring. Returns null on a fully-cyclic graph,
-  // in which case nothing is pinned and ALL packages share
-  // the ring (no carved-out center).
-  const entryPkg = findEntryPkg(graph)
-  const others = entryPkg ? graph.packages.filter((p) => p !== entryPkg) : graph.packages
-  const Nothers = others.length
-  // Group disk caps in unit space — entry gets a slightly more
-  // generous cap so it reads as the anchor; others scale by
-  // ring crowding so a hundred packages don't pile on top of
-  // each other. Sparsity factor scales the BASE disk size up
-  // for sparse layouts (handful of packages) so they don't
-  // float as tiny dots.
-  const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
-  const entryCap = 0.22, othersCap = 0.12, padding = 0.04
-  const pkgInfo = new Map()
-  // Ring radius — historically 0.42 of (min(W,H) - 64px), which
-  // works out to roughly 0.80 of half-canvas units. The earlier
-  // `0.45` value was a unit-space typo that landed at half the
-  // visual size of the historical ring; restore to 0.85 so the
-  // ring fills the canvas the way it did before the entry
-  // pinning logic was added.
-  let ringRUnit = 0.85
-  if (entryPkg) {
-    const entrySize = graph.pkgCount.get(entryPkg) ?? 0
-    const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
-    // Push out further if the entry's disk plus a max-other-disk
-    // plus padding would otherwise clip; rare but cheap to guard.
-    ringRUnit = Math.max(ringRUnit, entryGroupRUnit + othersCap + padding)
-    pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
-  }
-  for (let i = 0; i < Nothers; i++) {
-    const pkg = others[i]
-    // Evenly-spaced angles around the ring, ordered by package
-    // size descending (`others` inherits graph.packages's
-    // size-desc ordering minus the entry) so the visual
-    // emphasis tracks the data emphasis.
-    const angle = (i / Math.max(1, Nothers)) * Math.PI * 2
-    const size = graph.pkgCount.get(pkg) ?? 0
-    const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
-    pkgInfo.set(pkg, {
-      x: cx + Math.cos(angle) * ringRUnit * unitToPx,
-      y: cy + Math.sin(angle) * ringRUnit * unitToPx,
-      size, groupR: gRUnit * unitToPx,
-    })
-  }
-  placeFilesInDisk(graph, pkgInfo)
 }
 
 // "Spiral" — the hue-spiral projection from the original
@@ -300,28 +248,3 @@ export function layoutSpiral(graph, w, h) {
   placeFilesInDisk(graph, pkgInfo)
 }
 
-export function layoutGrid(graph, w, h) {
-  const N = graph.packages.length || 1
-  const cols = Math.max(1, Math.ceil(Math.sqrt(N * w / Math.max(1, h))))
-  const rows = Math.max(1, Math.ceil(N / cols))
-  const cellW = w / cols
-  const cellH = h / rows
-  const pkgIdx = new Map(graph.packages.map((p, i) => [p, i]))
-  const groupR = Math.min(cellW, cellH) * 0.36
-  for (const n of graph.nodes) {
-    const i = pkgIdx.get(n.pkg) ?? 0
-    const cx = (i % cols) * cellW + cellW / 2
-    const cy = Math.floor(i / cols) * cellH + cellH / 2
-    const h1 = hash(n.file)
-    const ja = (h1 % 1000) / 1000 * Math.PI * 2
-    const jr = ((h1 >> 10) % 1000) / 1000 * groupR
-    n.x = cx + Math.cos(ja) * jr
-    n.y = cy + Math.sin(ja) * jr
-  }
-}
-
-export function applyLayout(mode, graph, w, h) {
-  if (mode === 'radial') layoutRadial(graph, w, h)
-  else if (mode === 'grid') layoutGrid(graph, w, h)
-  else layoutSpiral(graph, w, h)
-}

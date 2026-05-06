@@ -35,36 +35,18 @@ export function renderGraph2Layout(graph) {
 }
 
 function renderTopBar() {
-  const lay = graph2.layoutMode
   let html = '<div class="graph2-topbar">'
-  // "Show all" lives at the very top because it controls the
-  // FILE SET, not just rendering — flipping it rebuilds the graph
-  // (different nodes, different edges, different layout) so it
-  // sits above the visual-only segs that follow. Reads / writes
-  // tree.showAll (shared with graph v1 so the two tabs stay
-  // consistent on the same dataset). Defaults to off → only files
-  // with own or subtree findings are kept; the "Show only issues"
+  // "Show all" controls the FILE SET, not just rendering —
+  // flipping it rebuilds the graph (different nodes, different
+  // edges, different layout). Reads / writes tree.showAll
+  // (shared with graph v1 so the two tabs stay consistent on
+  // the same dataset). Defaults to off → only files with own
+  // or subtree findings are kept; the "Show only issues"
   // toggle on the left is a separate, view-level filter that
   // still operates on whatever set this leaves behind.
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
   html += '<span>Show all</span><span class="g2-switch"></span>'
   html += '</button>'
-  // Layout modes — three positioning algorithms.
-  //   spiral  (default) — hue-spiral projection from the original
-  //                       graph_v2.html design: each package on a
-  //                       golden-angle slice, files clustered around
-  //                       the slice center. Reads as a fan-out.
-  //   radial            — packages on a single ring.
-  //   grid              — packages in cells.
-  // The previous "force" (Fruchterman-Reingold) and "classic"
-  // (FR pinned to v1's canvas size) options were dropped — both
-  // were noticeably slower on big trees and the radial / spiral
-  // closed-form passes produce a more legible result anyway.
-  html += '<div class="g2-seg" data-g2-seg="layout">'
-  for (const m of ['spiral', 'radial', 'grid']) {
-    html += `<button type="button" class="${lay === m ? 'on' : ''}" data-g2-layout="${m}">${m[0].toUpperCase() + m.slice(1)}</button>`
-  }
-  html += '</div>'
   html += '<div class="g2-spacer"></div>'
   // Fullscreen — same affordance as graph v1's toolbar button.
   // Toggles `body.report-fullscreen`, which hides the sidebar /

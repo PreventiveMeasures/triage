@@ -37,21 +37,6 @@ report.addEventListener('click', (e) => {
   // the more specific selectors hit before the generic tab/click
   // handlers below. The slider input event is wired separately
   // (input event listener at the bottom of this file).
-  const g2LayoutBtn = e.target.closest('[data-g2-layout]')
-  if (g2LayoutBtn) {
-    graph2.layoutMode = g2LayoutBtn.dataset.g2Layout
-    graph2.layoutCache = null
-    if (graph2.graphState) {
-      graph2.graphState.relayout(graph2.layoutMode)
-      // Update the segmented control's `on` class without re-rendering
-      // the whole tab (which would teardown the canvas).
-      const seg = g2LayoutBtn.parentElement
-      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === g2LayoutBtn))
-    } else {
-      render()
-    }
-    return
-  }
   const g2Pkg = e.target.closest('[data-g2-pkg]')
   if (g2Pkg) {
     const pkg = g2Pkg.dataset.g2Pkg

@@ -12,7 +12,6 @@
 // is informative even before any user input.
 export const graph2 = {
   selected: null,        // file path or null
-  layoutMode: 'spiral',  // 'spiral' | 'radial' | 'grid'
   // Right-panel "Top packages" sort axis. Same role as graph v1's
   // hubs Issues/Imports tab — issues-first by default so the user
   // lands on the actionable list, files for "what's the codebase
