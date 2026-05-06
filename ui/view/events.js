@@ -141,6 +141,15 @@ report.addEventListener('click', (e) => {
     graph2.graphState?.refit()
     return
   }
+  // v2 fullscreen — same body-class flip as v1's #tree-fullscreen.
+  // The CSS rule under body.report-fullscreen sizes both .tree-layout
+  // and .graph2-layout to the viewport, and v2's ResizeObserver on
+  // the stage element will fire when the size change lands so the
+  // canvas refits without explicit wiring.
+  if (e.target.closest('#g2-fullscreen')) {
+    document.body.classList.toggle('report-fullscreen')
+    return
+  }
   // Show-all in the v2 topbar — flips the FILE SET (same data-level
   // filter graph v1's checkbox drives, sharing tree.showAll). Both
   // graph v1's and graph v2's layout caches are now stale; tear down

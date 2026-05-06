@@ -50,8 +50,14 @@ function renderTopBar() {
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
   html += '<span>Show all</span><span class="g2-switch"></span>'
   html += '</button>'
+  // Layout modes — the four positioning algorithms. "Classic"
+  // mirrors graph v1's force-directed positions when available
+  // (so switching tabs lands on the same arrangement); the other
+  // three are v2-native (force = Fruchterman-Reingold sized to
+  // v2's viewport, radial = packages on a ring, grid = packages
+  // in cells).
   html += '<div class="g2-seg" data-g2-seg="layout">'
-  for (const m of ['force', 'radial', 'grid']) {
+  for (const m of ['classic', 'force', 'radial', 'grid']) {
     html += `<button type="button" class="${lay === m ? 'on' : ''}" data-g2-layout="${m}">${m[0].toUpperCase() + m.slice(1)}</button>`
   }
   html += '</div>'
@@ -64,6 +70,11 @@ function renderTopBar() {
   html += '<button type="button" class="g2-icon-btn" id="g2-fit-btn" title="Fit to view">'
   html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>'
   html += '</button>'
+  // Fullscreen — same affordance as graph v1's toolbar button.
+  // Toggles `body.report-fullscreen`, which hides the sidebar /
+  // header / page padding and lets the layout grow to the viewport.
+  // Esc handler in ingest.js exits fullscreen for both tabs.
+  html += '<button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>'
   html += '</div>'
   return html
 }
