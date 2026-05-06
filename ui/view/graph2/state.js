@@ -22,6 +22,11 @@ export const graph2 = {
   // lands on the actionable list, files for "what's the codebase
   // shape" exploration.
   topPkgsTab: 'issues',  // 'issues' | 'files'
+  // Collapsed state for right-panel sections. Display starts
+  // collapsed because most users don't tweak edge opacity / node
+  // size on every visit; surfacing the controls behind a click
+  // shrinks the panel's idle vertical footprint.
+  displayCollapsed: true,
   edgeOpacity: 0.22,
   minDegree: 0,
   nodeSize: 1.0,

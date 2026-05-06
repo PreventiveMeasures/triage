@@ -150,12 +150,19 @@ function renderControls(graph) {
   // severities up there gives the same visual.)
 
   // Display — sliders for the visual knobs that take a
-  // numeric value, then toggles for the booleans. Earlier
-  // versions split these into Display + Options sections,
-  // but the boundary was arbitrary (every control here is
-  // a "display tweak") and the extra heading mostly cost
-  // vertical space.
-  html += '<div class="g2-panel-title">Display</div>'
+  // numeric value, then toggles for the booleans. Wrapped in a
+  // collapsible section so the panel doesn't carry six rows
+  // of always-visible controls (most users don't tweak edge
+  // opacity / node size every visit). Header acts as the toggle
+  // button; the body is hidden via CSS when .collapsed is on
+  // its parent.
+  const isCollapsed = graph2.displayCollapsed
+  html += `<section class="g2-collapsible${isCollapsed ? ' collapsed' : ''}">`
+  html += '<button type="button" class="g2-collapsible-header" data-g2-toggle-section="display" aria-expanded="' + (!isCollapsed) + '">'
+  html += '<span class="g2-collapsible-chevron">▸</span>'
+  html += '<span>Display</span>'
+  html += '</button>'
+  html += '<div class="g2-collapsible-body">'
   html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))
   const maxDeg = Math.max(1, ...graph.nodes.map((n) => n.deg))
   html += sliderRow('min-deg', 'Min degree', graph2.minDegree, 0, Math.min(20, maxDeg), graph2.minDegree)
@@ -163,6 +170,7 @@ function renderControls(graph) {
   html += toggleRow('halos', 'Glow halos', graph2.showHalos)
   html += toggleRow('hubs', 'Highlight hubs', graph2.highlightHubs)
   html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
+  html += '</div></section>'
   return html
 }
 

@@ -103,6 +103,23 @@ report.addEventListener('click', (e) => {
     refreshGraph2Sidebar()
     return
   }
+  // Right-panel collapsible section header — flip the
+  // .collapsed class on the surrounding <section> in place,
+  // no full re-render needed. Persist the new state on
+  // graph2 so a re-render (e.g. after a click that DOES
+  // re-render, like trash toggle) keeps the section in the
+  // same expanded/collapsed state.
+  const sectionToggle = e.target.closest('[data-g2-toggle-section]')
+  if (sectionToggle) {
+    const section = sectionToggle.closest('.g2-collapsible')
+    if (section) {
+      const collapsed = section.classList.toggle('collapsed')
+      sectionToggle.setAttribute('aria-expanded', String(!collapsed))
+      const which = sectionToggle.dataset.g2ToggleSection
+      if (which === 'display') graph2.displayCollapsed = collapsed
+    }
+    return
+  }
   // Top-packages mini-tabs (Issues / Files). Pure right-panel
   // change — re-render just the block, leave the canvas alone.
   const g2TopPkgs = e.target.closest('[data-g2-top-pkgs]')
