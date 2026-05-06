@@ -41,6 +41,44 @@ function crossDegByPkg(graph) {
   return map
 }
 
+// Pick the entry-point package — the one nothing else points
+// at. A package qualifies when none of its files has an
+// importer in a DIFFERENT package; same-package importers are
+// fine (intra-package coupling is expected). Among qualifying
+// packages, pick the largest by file count.
+//
+// For a typical DeepView project this lands on the user's
+// own source: nothing in node_modules imports app code, but
+// the reverse is constant. Multiple candidates can exist
+// (e.g. `src/` and `lib/` as sibling top-level dirs both with
+// no inbound from npm), and the largest one usually carries
+// the project's main intent.
+//
+// Returns null when every package has cross-package inbound
+// (full cycle / no clear root). Callers fall back to a
+// no-pinned-center layout in that case.
+function findEntryPkg(graph) {
+  if (graph.packages.length === 0) return null
+  const hasInbound = new Set()
+  for (const [target, importers] of graph.importedBy) {
+    const targetNode = graph.nodeByFile.get(target)
+    if (!targetNode) continue
+    for (const importer of importers) {
+      const importerNode = graph.nodeByFile.get(importer)
+      if (importerNode && importerNode.pkg !== targetNode.pkg) {
+        hasInbound.add(targetNode.pkg)
+        break
+      }
+    }
+  }
+  // graph.packages is size-desc, so the first qualifying
+  // package we hit walking it is the largest one.
+  for (const pkg of graph.packages) {
+    if (!hasInbound.has(pkg)) return pkg
+  }
+  return null
+}
+
 // Distribute files inside a per-package disk, anchored on
 // (info.x, info.y) at radius `groupR` (pixels). Hubs sit
 // closer to the anchor than members so each cluster reads as
@@ -72,12 +110,14 @@ export function layoutRadial(graph, w, h) {
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
   if (N === 0) return
-  // Entry-point package — biggest by file count (graph.packages
-  // is sorted size-desc in data.js). Pinned at center so the
-  // user lands on the project's core. The rest of the packages
-  // get the surrounding ring.
-  const entryPkg = graph.packages[0]
-  const others = graph.packages.slice(1)
+  // Entry-point package — the largest one with no incoming
+  // cross-package edges. Pinned at center so the user lands on
+  // the project's core; the rest of the packages get the
+  // surrounding ring. Returns null on a fully-cyclic graph,
+  // in which case nothing is pinned and ALL packages share
+  // the ring (no carved-out center).
+  const entryPkg = findEntryPkg(graph)
+  const others = entryPkg ? graph.packages.filter((p) => p !== entryPkg) : graph.packages
   const Nothers = others.length
   // Group disk caps in unit space — entry gets a slightly more
   // generous cap so it reads as the anchor; others scale by
@@ -87,20 +127,29 @@ export function layoutRadial(graph, w, h) {
   // float as tiny dots.
   const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
   const entryCap = 0.22, othersCap = 0.12, padding = 0.04
-  const entrySize = graph.pkgCount.get(entryPkg) ?? 0
-  const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
-  // Ring radius — push out enough to clear the entry disk plus
-  // a max-other-disk plus padding. Otherwise the largest other
-  // packages would clip into the entry's cluster.
-  const ringRUnit = Math.max(0.45, entryGroupRUnit + othersCap + padding)
   const pkgInfo = new Map()
-  pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  let ringRUnit
+  if (entryPkg) {
+    const entrySize = graph.pkgCount.get(entryPkg) ?? 0
+    const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
+    // Ring radius pushed out far enough to clear the entry
+    // disk plus a max-other-disk plus padding. Otherwise the
+    // largest other packages would clip into the entry's
+    // cluster.
+    ringRUnit = Math.max(0.45, entryGroupRUnit + othersCap + padding)
+    pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  } else {
+    // No entry candidate (fully cyclic graph). Use a single
+    // ring that fills the canvas — equivalent to the pre-
+    // entry-pinning behavior.
+    ringRUnit = 0.45
+  }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
     // Evenly-spaced angles around the ring, ordered by package
-    // size descending (graph.packages.slice(1) preserves the
-    // size-desc ordering from data.js) so the visual emphasis
-    // tracks the data emphasis.
+    // size descending (`others` inherits graph.packages's
+    // size-desc ordering minus the entry) so the visual
+    // emphasis tracks the data emphasis.
     const angle = (i / Math.max(1, Nothers)) * Math.PI * 2
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
@@ -141,14 +190,14 @@ export function layoutSpiral(graph, w, h) {
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
   if (N === 0) return
-  // Entry-point package — biggest by file count (graph.packages
-  // is sorted size-desc in data.js). Pinned at center; the rest
-  // of the packages spiral around it. The user almost always
-  // wants to land on the project's core anchor when opening the
-  // graph, and pinning it gives the eye a stable focal point
-  // that the spiral arms radiate out from.
-  const entryPkg = graph.packages[0]
-  const others = graph.packages.slice(1)
+  // Entry-point package — the largest one with no incoming
+  // cross-package edges (typically the project's own source
+  // root: nothing in node_modules imports app code). Pinned at
+  // center; the rest of the packages spiral around it. Returns
+  // null on a fully-cyclic graph, in which case nothing is
+  // pinned and the spiral fills the full radius range.
+  const entryPkg = findEntryPkg(graph)
+  const others = entryPkg ? graph.packages.filter((p) => p !== entryPkg) : graph.packages
   const Nothers = others.length
   // Cross-package degree per package — drives the radius
   // assignment for non-entry packages. Most-imported packages
@@ -180,19 +229,30 @@ export function layoutSpiral(graph, w, h) {
   // of floating as tiny dots.
   const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
   const entryCap = 0.22, othersCap = 0.12, padding = 0.04
-  const entrySize = graph.pkgCount.get(entryPkg) ?? 0
-  const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
-  // Inner radius pushed out so the closest packages don't clip
-  // into the entry disk. The 0.38 floor matches what the
-  // entry+others+padding math demands at typical caps; at low
-  // N the breakpoints above might want a tighter ring (0.40),
-  // so take the larger.
-  const minRUnit = Math.max(
-    Nothers <= 6 ? 0.40 : (Nothers <= 20 ? 0.36 : 0.34),
-    entryGroupRUnit + othersCap + padding,
-  )
   const pkgInfo = new Map()
-  pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  // Inner radius depends on whether we have an entry pinned.
+  // With an entry: push out so the closest other-package's
+  // disk rim doesn't clip into the entry's. Without an entry:
+  // use the original adaptive minRUnit so the spiral has the
+  // same density it had pre-entry-pinning.
+  let minRUnit
+  if (entryPkg) {
+    const entrySize = graph.pkgCount.get(entryPkg) ?? 0
+    const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
+    minRUnit = Math.max(
+      Nothers <= 6 ? 0.40 : (Nothers <= 20 ? 0.36 : 0.34),
+      entryGroupRUnit + othersCap + padding,
+    )
+    pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  } else {
+    // No entry — start from the design's tight ring so packages
+    // near the inner edge get visible breathing room without
+    // assuming a centered anchor.
+    if (Nothers <= 1) minRUnit = 0
+    else if (Nothers <= 6) minRUnit = 0.40
+    else if (Nothers <= 20) minRUnit = 0.32
+    else minRUnit = 0.30
+  }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
     // Angle from the loop index, golden-angle stepped, so
