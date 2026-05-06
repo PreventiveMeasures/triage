@@ -388,8 +388,13 @@ function findingsBodyHtml(filtered) {
     html += '</div></div>'
     if (selectedGroup) {
       html += '<aside class="findings-table-details" id="findings-table-details">'
+      html += '<header class="findings-table-details-bar">'
+      html += '<span class="findings-table-details-label">Details</span>'
       html += '<button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>'
+      html += '</header>'
+      html += '<div class="findings-table-details-body">'
       html += renderGroup(selectedGroup)
+      html += '</div>'
       html += '</aside>'
     }
     html += '</div>'

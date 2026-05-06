@@ -247,40 +247,71 @@
 }
 .findings-table-list { min-width: 0; }
 .findings-table-list .finding-table { max-width: 1200px; }
+/* Details panel = its own glass card. Sticky so it follows the
+   user as they scroll the list, with a header bar carrying the
+   close button (instead of an absolute-positioned button that
+   would float over the rendered finding's title). */
 .findings-table-details {
   position: sticky;
   /* Sits 1rem from the top of the viewport when the user scrolls
      past it; nothing above is sticky, so a small offset is enough. */
   top: 1rem;
   max-height: calc(100vh - 2rem);
-  overflow-y: auto;
   max-width: 800px;
-  /* The close button sits absolute inside this aside; padding-top
-     accounts for it so the rendered card doesn't tuck under it. */
-  padding-top: .25rem;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  /* overflow: hidden clips the rendered finding's content to the
+     panel's rounded corners and lets the body's scrollbar live
+     inside the radius cleanly. The flex column splits the chrome
+     header from the scrollable body. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.findings-table-details-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .3rem .35rem .3rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+.findings-table-details-label {
+  font-size: .68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+.findings-table-details-close {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font: 500 16px/1 ui-monospace, monospace;
+
+  &:hover { color: var(--accent); background: var(--surface-active); }
+}
+
+.findings-table-details-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-}
-.findings-table-details-close {
-  position: absolute;
-  top: .25rem;
-  right: .25rem;
-  z-index: 1;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  color: var(--muted);
-  cursor: pointer;
-  font: 600 14px/1 ui-monospace, monospace;
-
-  &:hover { color: var(--accent); border-color: var(--accent); }
 }
 /* Selected row highlight — outline so it doesn't fight the marker /
    critical / mark-color backgrounds, just adds an accent rim. */
