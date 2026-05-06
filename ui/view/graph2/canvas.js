@@ -162,7 +162,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     // Layout in the same pixel space the canvas paints in, so
-    // forceLayout's "ideal edge length" tracks the viewport.
+    // the layout's per-package disk and ring radii track the
+    // viewport.
     if (layoutW === 0 || layoutH === 0) {
       layoutW = W; layoutH = H; needsLayout = true
     }
@@ -529,9 +530,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   // Resize observer — handles container resize (sidebar collapse,
   // window resize, tab switch with different available space). The
-  // relayout-on-resize is intentionally off: forceLayout is too
-  // expensive to re-run on every drag of the window edge. Users can
-  // hit the layout segmented control to refresh; the canvas just
+  // relayout-on-resize is intentionally off: even cheap closed-form
+  // passes would jitter the graph on every drag of the window edge.
+  // Users can hit the layout segmented control to refresh; the canvas just
   // refits its viewport so the existing positions stay centered.
   resize()
   const ro = new ResizeObserver(() => resize())

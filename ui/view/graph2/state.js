@@ -12,7 +12,7 @@
 // is informative even before any user input.
 export const graph2 = {
   selected: null,        // file path or null
-  layoutMode: 'spiral',  // 'spiral' | 'force' | 'radial' | 'grid' | 'classic'
+  layoutMode: 'spiral',  // 'spiral' | 'radial' | 'grid'
   // Right-panel "Top packages" sort axis. Same role as graph v1's
   // hubs Issues/Imports tab — issues-first by default so the user
   // lands on the actionable list, files for "what's the codebase
@@ -39,7 +39,7 @@ export const graph2 = {
   // Per-render canvas state — owned by canvas.js, re-built on every
   // attach. Cleanup tears down listeners + rAF + ResizeObserver.
   graphState: null,
-  // forceLayout result cache, keyed off (treeData, files, layoutMode).
+  // Layout result cache, keyed off (mode, files, w, h).
   // Recomputed when the user switches layouts or the underlying file
   // set changes (showAll on graph v1 invalidates v2's cache too via
   // cleanupGraph2 in events.js).

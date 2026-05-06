@@ -55,7 +55,7 @@ export function buildGraph(treeData, files, ownCounts) {
     }
   }
 
-  // Node objects: position seeded to 0,0 (layoutForce/Radial/Grid
+  // Node objects: position seeded to 0,0 (layoutSpiral/Radial/Grid
   // overwrite). issue / issueText derived from ownCounts so the same
   // map drives the canvas rings, the severity row counts, and the
   // tooltip text — single source of truth.

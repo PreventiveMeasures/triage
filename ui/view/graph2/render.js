@@ -49,19 +49,19 @@ function renderTopBar() {
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
   html += '<span>Show all</span><span class="g2-switch"></span>'
   html += '</button>'
-  // Layout modes — five positioning algorithms.
+  // Layout modes — three positioning algorithms.
   //   spiral  (default) — hue-spiral projection from the original
   //                       graph_v2.html design: each package on a
   //                       golden-angle slice, files clustered around
   //                       the slice center. Reads as a fan-out.
-  //   force             — Fruchterman-Reingold sized to v2's viewport.
   //   radial            — packages on a single ring.
   //   grid              — packages in cells.
-  //   classic           — graph v1's force layout pinned to v1's
-  //                       canonical canvas (1100×760) so proportions
-  //                       match the Graph tab regardless of v2's size.
+  // The previous "force" (Fruchterman-Reingold) and "classic"
+  // (FR pinned to v1's canvas size) options were dropped — both
+  // were noticeably slower on big trees and the radial / spiral
+  // closed-form passes produce a more legible result anyway.
   html += '<div class="g2-seg" data-g2-seg="layout">'
-  for (const m of ['spiral', 'force', 'radial', 'grid', 'classic']) {
+  for (const m of ['spiral', 'radial', 'grid']) {
     html += `<button type="button" class="${lay === m ? 'on' : ''}" data-g2-layout="${m}">${m[0].toUpperCase() + m.slice(1)}</button>`
   }
   html += '</div>'
