@@ -65,6 +65,12 @@ function renderTopBar(graph) {
     }
     html += '</div>'
   }
+  // Path-substring filter — case-insensitive match against
+  // each node's file path. Same soft-dim treatment as the
+  // severity / solo filters: non-matching nodes drop to 0.1
+  // opacity, no hard hide. Stays visible across re-renders
+  // since the value comes from graph2.pathFilter.
+  html += `<input type="text" class="g2-path-filter" id="g2-path-filter" placeholder="filter path…" value="${esc(graph2.pathFilter)}">`
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
   // edges, different layout). Reads / writes tree.showAll

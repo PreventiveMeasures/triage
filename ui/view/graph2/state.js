@@ -41,6 +41,10 @@ export const graph2 = {
   // into this single set (selecting all four = the old
   // issues-only behavior, automatically).
   selectedSeverities: new Set(),
+  // Path-substring filter. Empty = no filter. Non-empty =
+  // case-insensitive substring match; non-matching nodes
+  // dim to 0.1 (same soft-dim path as solo / severity).
+  pathFilter: '',
   // Package palette — `hidden` is the user's hide selection, `solo`
   // limits to a single package. Search box drives the muted/visible
   // state of swatches but doesn't permanently hide them so clearing

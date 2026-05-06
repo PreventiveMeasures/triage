@@ -65,6 +65,24 @@
   text-transform: uppercase;
 }
 
+/* Path-substring filter input — soft-dim filter for file
+   paths, same dim-don't-hide treatment as severity / solo.
+   Sized to fit a reasonable substring without crowding the
+   topbar's other controls. */
+.g2-path-filter {
+  width: 180px;
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 9px;
+  color: var(--text);
+  font: 400 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  outline: none;
+
+  &:focus { border-color: var(--accent); }
+  &::placeholder { color: var(--muted); opacity: 0.55; }
+}
+
 /* Severity highlight pills in the topbar. Empty selectedSeverities
    set = all pills off = no canvas dimming (default). One or more
    .on pills = matching nodes draw at full opacity, others fade

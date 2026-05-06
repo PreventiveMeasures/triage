@@ -510,4 +510,8 @@ report.addEventListener('input', (e) => {
     // No canvas redraw — search only mutes palette swatches in the
     // sidebar; node visibility doesn't change.
   }
+  else if (id === 'g2-path-filter') {
+    graph2.pathFilter = val
+    graph2.graphState?.requestDraw?.()
+  }
 })

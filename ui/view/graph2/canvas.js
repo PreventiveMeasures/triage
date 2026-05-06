@@ -197,15 +197,20 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   }
 
   // Soft-dim predicate. Returns true when a node should be
-  // rendered at reduced opacity (0.1) — currently triggered
-  // by either the severity filter (selected severities set
-  // is non-empty and this node's issue isn't in it) or the
-  // package-solo filter (a package is solo'd and this node
-  // isn't in it). Both are independent: a node passes only
-  // when it satisfies BOTH active filters.
+  // rendered at reduced opacity (0.1) — triggered by any of:
+  //   - severity filter: 1+ severities selected and this
+  //     node's issue isn't in the set
+  //   - package-solo: a package is solo'd and this node isn't
+  //     in it
+  //   - path filter: non-empty, and the node's file path
+  //     doesn't case-insensitively contain the filter text
+  // All three are independent and AND-combine — a node passes
+  // only when it satisfies every active filter.
   function nodeIsDimmed(n) {
     if (graph2.selectedSeverities.size > 0 && !(n.issue && graph2.selectedSeverities.has(n.issue))) return true
     if (graph2.solo && n.pkg !== graph2.solo) return true
+    const pathQ = graph2.pathFilter
+    if (pathQ && !n.file.toLowerCase().includes(pathQ.toLowerCase())) return true
     return false
   }
 
