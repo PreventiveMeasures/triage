@@ -2,10 +2,12 @@ import { graph2 } from './state.js'
 import { applyLayout } from './layout.js'
 import { pkgColor, pkgColorAlpha } from '../graph/utils.js'
 
-// Severity palette baked into the canvas. Mirrors the design spec —
-// vivid hot colors for critical/high so they pop above the package
-// hue, calmer tones for medium/low. Critical also drives a pulse
-// animation in the draw loop so the eye lands on it first.
+// Severity palette baked into the canvas. Vivid hot colors for
+// critical/high so they pop above the package hue, calmer tones
+// for medium/low. Theme-independent — they read as data colors
+// regardless of the surrounding chrome's lightness. Critical also
+// drives a pulse animation in the draw loop so the eye lands on
+// it first.
 const SEV_COLORS = {
   critical: '#ff5470',
   high: '#ff9d4a',
@@ -13,12 +15,35 @@ const SEV_COLORS = {
   low: '#67c2ff',
 }
 
-// Canvas backdrop. Hardcoded to dark — the v2 chrome carries its
-// own palette (see graph2.css) and even in the user's light theme
-// the canvas reads as a stand-alone "data display" tinted toward
-// the package colors, like graph v1's canvas.
-const BG = '#0b0d10'
-const GRID = 'rgba(255, 255, 255, 0.018)'
+// Theme-aware canvas palette. Mirrors graph v1's GRAPH_THEMES
+// pattern (./view/graph/canvas.js): values baked into the JS
+// rather than read from CSS so the per-frame draw doesn't pay a
+// getComputedStyle round-trip. The chrome around the canvas (panels,
+// toolbar, tooltip) is plain CSS using the shared --bg / --surface /
+// etc. vars so it flips with the user's theme; canvas-internal
+// fills flip alongside via currentTheme().
+const G2_THEMES = {
+  dark: {
+    bg: '#0c0c0c',
+    grid: 'rgba(255, 255, 255, 0.022)',
+    selectRing: '#ffffff',
+    edgeIntra: 'rgba(180, 195, 215, ALPHA)',
+    hubRing: 'rgba(255, 255, 255, ALPHA)',
+    labelFill: 'rgba(230, 233, 238, 0.78)',
+  },
+  light: {
+    bg: '#f6f8fa',
+    grid: 'rgba(0, 0, 0, 0.04)',
+    selectRing: '#0969da',
+    edgeIntra: 'rgba(50, 70, 100, ALPHA)',
+    hubRing: 'rgba(0, 0, 0, ALPHA)',
+    labelFill: 'rgba(40, 50, 70, 0.85)',
+  },
+}
+
+function currentTheme() {
+  return document.body.classList.contains('theme-light') ? G2_THEMES.light : G2_THEMES.dark
+}
 
 // 0..1 → 2-digit hex alpha — appended to a 6-digit hex color so we
 // can compose `'#ffaa00' + alphaHex(0.3)` cheaply in inner draw
@@ -170,11 +195,12 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     fps = fps * 0.92 + (1000 / Math.max(1, dt)) * 0.08
     if (fpsEl) fpsEl.textContent = `${fps.toFixed(0)} fps`
 
-    ctx.fillStyle = BG
+    const T = currentTheme()
+    ctx.fillStyle = T.bg
     ctx.fillRect(0, 0, W, H)
 
     // Subtle grid — dimmed at low zoom so it doesn't fight the data.
-    drawGrid()
+    drawGrid(T)
 
     const selected = graph2.selected
     const sel = selected ? graph.nodeByFile.get(selected) : null
@@ -210,7 +236,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
           ctx.strokeStyle = grad
           ctx.lineWidth = 0.85
         } else {
-          ctx.strokeStyle = `rgba(180,195,215,${alpha * 0.7})`
+          // Intra-package edges use the theme's neutral edge color
+          // (light gray-blue on dark, dim gray on light) so they
+          // read as "structural" rather than competing with the
+          // vivid cross-package gradients.
+          ctx.strokeStyle = T.edgeIntra.replace('ALPHA', String(alpha * 0.7))
           ctx.lineWidth = 0.55
         }
 
@@ -263,7 +293,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.fill()
 
       if (n.isHub && graph2.highlightHubs) {
-        ctx.strokeStyle = `rgba(255,255,255,${0.55 * dim})`
+        // White ring on dark, near-black on light — the hub marker
+        // needs maximum contrast against the package-colored fill.
+        ctx.strokeStyle = T.hubRing.replace('ALPHA', String(0.55 * dim))
         ctx.lineWidth = 0.8
         ctx.stroke()
       }
@@ -300,7 +332,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // ── Labels (high zoom only) ──────────────────────────────────
     if (graph2.showLabels && viewport.k > 1.4) {
       ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
-      ctx.fillStyle = 'rgba(230,233,238,0.78)'
+      ctx.fillStyle = T.labelFill
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
       for (const n of graph.nodes) {
@@ -313,10 +345,12 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     }
 
     // Selection ring on top so it never gets hidden by neighbors.
+    // White on dark canvas, accent-blue on light — same swap graph
+    // v1's GRAPH_THEMES.selectRing makes.
     if (sel && nodeVisible(sel)) {
       const [sx, sy] = worldToScreen(sel.x, sel.y)
       const r = nodeRadius(sel)
-      ctx.strokeStyle = '#ffffff'
+      ctx.strokeStyle = T.selectRing
       ctx.lineWidth = 1.5
       ctx.beginPath()
       ctx.arc(sx, sy, r + 5, 0, Math.PI * 2)
@@ -329,12 +363,12 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     drawMinimap()
   }
 
-  function drawGrid() {
+  function drawGrid(T) {
     if (viewport.k < 0.4) return
     const step = 80
     const ox = ((viewport.tx % step) + step) % step
     const oy = ((viewport.ty % step) + step) % step
-    ctx.strokeStyle = GRID
+    ctx.strokeStyle = T.grid
     ctx.lineWidth = 1
     ctx.beginPath()
     for (let x = ox; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
@@ -348,7 +382,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const mctx = miniCv.getContext('2d')
     const mr = minimap.getBoundingClientRect()
     const mw = mr.width, mh = mr.height
-    mctx.fillStyle = '#0b0d10'
+    // Same backdrop as the main canvas — the minimap reads as a
+    // zoomed-out view of the same scene, so the bg flips with theme.
+    mctx.fillStyle = currentTheme().bg
     mctx.fillRect(0, 0, mw, mh)
     if (graph.nodes.length === 0) return
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity

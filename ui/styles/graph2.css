@@ -1,27 +1,16 @@
-/* Graph v2 tab — three-column dark layout. The chrome here uses
-   its own scoped palette (--g2-*) rather than the shared theme
-   vars, because the design is intentionally an always-dark "data
-   display" surface (matches the canvas's own dark backdrop) and
-   shouldn't flip with the light-theme toggle. The few exceptions
-   (the canvas-internal SEV_COLORS, the package hue palette pulled
-   from graph/utils.js) live in canvas.js; everything visible here
-   in CSS is scoped under .graph2-layout so it can't leak into
-   findings / files / graph v1. */
+/* Graph v2 tab — three-column layout. Chrome here pulls from the
+   shared theme vars (--surface / --border / --text / --muted /
+   --accent / --graph-canvas-bg / --graph-hover-bg / --graph-divider)
+   so the panels follow the matte-glass aesthetic the rest of the
+   product uses and flip cleanly with the light theme. The canvas
+   itself paints in JS using the theme-aware palette in
+   ./view/graph2/canvas.js (mirroring graph v1's GRAPH_THEMES).
+   The severity ring colors and per-package hues are intentionally
+   theme-independent — they're vivid data colors meant to read as
+   "this node has issues" / "this is package X" regardless of the
+   surrounding chrome's lightness. */
 
 .graph2-layout {
-  --g2-bg-0: #0b0d10;
-  --g2-bg-1: #111418;
-  --g2-bg-2: #161a1f;
-  --g2-bg-3: #1c2128;
-  --g2-line: #232930;
-  --g2-line-soft: #1a1f25;
-  --g2-fg-0: #e6e9ee;
-  --g2-fg-1: #a8b0bb;
-  --g2-fg-2: #6b7380;
-  --g2-fg-3: #434b56;
-  --g2-accent: oklch(78% 0.12 220);
-  --g2-accent-soft: oklch(78% 0.12 220 / 0.18);
-
   display: grid;
   grid-template-columns: 280px 1fr 300px;
   grid-template-rows: 44px 1fr;
@@ -30,11 +19,11 @@
     "left   stage  right";
   height: 82vh;
   margin-bottom: 1rem;
-  border: 1px solid var(--g2-line);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--g2-bg-0);
-  color: var(--g2-fg-0);
+  background: var(--graph-canvas-bg);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
   font-size: 12px;
 }
@@ -46,16 +35,17 @@
   align-items: center;
   gap: 10px;
   padding: 0 12px;
-  background: var(--g2-bg-1);
-  border-bottom: 1px solid var(--g2-line);
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--graph-divider);
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }
 
 .g2-seg {
   display: flex;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2px;
   gap: 2px;
@@ -63,57 +53,61 @@
   & button {
     background: transparent;
     border: 0;
-    color: var(--g2-fg-1);
+    color: var(--muted);
     font: 500 11px/1 inherit;
     padding: 5px 9px;
     border-radius: 4px;
     cursor: pointer;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    font-family: inherit;
 
     &.on {
-      background: var(--g2-bg-3);
-      color: var(--g2-fg-0);
-      box-shadow: 0 0 0 1px var(--g2-line) inset;
+      background: var(--surface-active);
+      color: var(--accent);
+      box-shadow: 0 0 0 1px var(--border) inset;
     }
-    &:hover:not(.on) { color: var(--g2-fg-0); }
+    &:hover:not(.on) { color: var(--text); }
   }
 }
 
 .g2-icon-btn {
   width: 28px; height: 28px;
   border-radius: 5px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
-  color: var(--g2-fg-1);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
   display: grid; place-items: center;
   cursor: pointer;
+  font-family: inherit;
 
-  &:hover { color: var(--g2-fg-0); border-color: var(--g2-fg-3); }
+  &:hover { color: var(--accent); border-color: var(--accent); }
   & svg { display: block; }
 }
 
 /* ── Panels ────────────────────────────────────────────────── */
 .graph2-left,
 .graph2-right {
-  background: var(--g2-bg-1);
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
   overflow-y: auto;
   padding: 14px 14px 60px;
 }
 
-.graph2-left { grid-area: left; border-right: 1px solid var(--g2-line); }
-.graph2-right { grid-area: right; border-left: 1px solid var(--g2-line); }
+.graph2-left { grid-area: left; border-right: 1px solid var(--graph-divider); }
+.graph2-right { grid-area: right; border-left: 1px solid var(--graph-divider); }
 
 .graph2-left::-webkit-scrollbar,
 .graph2-right::-webkit-scrollbar { width: 5px; }
 .graph2-left::-webkit-scrollbar-thumb,
-.graph2-right::-webkit-scrollbar-thumb { background: var(--g2-bg-3); border-radius: 3px; }
+.graph2-right::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .g2-panel-title {
   font: 600 10px/1 inherit;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--g2-fg-2);
+  color: var(--muted);
+  opacity: 0.85;
   margin: 14px 0 8px;
   display: flex;
   align-items: baseline;
@@ -123,7 +117,8 @@
 }
 
 .g2-count {
-  color: var(--g2-fg-3);
+  color: var(--muted);
+  opacity: 0.6;
   font-weight: 400;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   text-transform: none;
@@ -141,22 +136,22 @@
 .g2-palette-search {
   flex: 1;
   min-width: 0;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
   padding: 5px 8px;
-  color: var(--g2-fg-0);
+  color: var(--text);
   font: 400 11px/1 ui-monospace, monospace;
   outline: none;
 
-  &:focus { border-color: var(--g2-fg-3); }
-  &::placeholder { color: var(--g2-fg-3); }
+  &:focus { border-color: var(--accent); }
+  &::placeholder { color: var(--muted); opacity: 0.6; }
 }
 
 .g2-palette-clear {
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
-  color: var(--g2-fg-2);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
   border-radius: 5px;
   font: 500 10px/1 inherit;
   padding: 5px 8px;
@@ -165,7 +160,7 @@
   letter-spacing: 0.06em;
   font-family: inherit;
 
-  &:hover { color: var(--g2-fg-0); border-color: var(--g2-fg-3); }
+  &:hover { color: var(--accent); border-color: var(--accent); }
 }
 
 .g2-palette {
@@ -173,8 +168,8 @@
   grid-template-columns: repeat(10, 1fr);
   gap: 3px;
   padding: 6px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -192,11 +187,11 @@
   &:hover {
     transform: scale(1.4);
     z-index: 2;
-    box-shadow: 0 0 0 1.5px var(--g2-fg-0), 0 4px 10px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 0 0 1.5px var(--text), 0 4px 10px rgba(0, 0, 0, 0.6);
   }
   &.muted { opacity: 0.18; }
   &.solo {
-    box-shadow: 0 0 0 1.5px var(--g2-fg-0), 0 0 8px var(--c);
+    box-shadow: 0 0 0 1.5px var(--accent), 0 0 8px var(--c);
     transform: scale(1.15);
     z-index: 1;
   }
@@ -212,28 +207,29 @@
 }
 
 .g2-stat {
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
 }
 
 .g2-stat-label {
   font-size: 9px;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
 .g2-stat-val {
   font: 600 16px/1.1 ui-monospace, monospace;
   margin-top: 4px;
-  color: var(--g2-fg-0);
+  color: var(--text);
 }
 .g2-stat-sub {
   font-size: 9px;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   margin-top: 3px;
   font-family: ui-monospace, monospace;
+  opacity: 0.85;
 }
 
 /* ── Issues / severity rows ─────────────────────────────────── */
@@ -250,17 +246,17 @@
   align-items: center;
   gap: 8px;
   padding: 6px 9px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
   cursor: pointer;
   font: 500 11px/1 inherit;
-  color: var(--g2-fg-1);
+  color: var(--muted);
   text-align: left;
   font-family: inherit;
   text-transform: capitalize;
 
-  &:hover { border-color: var(--g2-fg-3); }
+  &:hover { border-color: var(--accent); color: var(--text); }
   &:not(.on) { opacity: 0.42; }
   &:not(.on) .g2-sev-mark { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sev); }
 }
@@ -274,9 +270,9 @@
 
 .g2-sev-n {
   font: 500 10px/1 ui-monospace, monospace;
-  color: var(--g2-fg-2);
+  color: var(--muted);
 }
-.g2-sev-row.on .g2-sev-n { color: var(--g2-fg-0); }
+.g2-sev-row.on .g2-sev-n { color: var(--text); }
 
 /* ── Toggle rows ────────────────────────────────────────────── */
 .g2-toggle-row {
@@ -285,22 +281,22 @@
   justify-content: space-between;
   width: 100%;
   padding: 8px 11px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 11px;
-  color: var(--g2-fg-1);
+  color: var(--muted);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
 
   & + .g2-toggle-row { margin-top: 5px; }
-  &:hover { color: var(--g2-fg-0); }
+  &:hover { color: var(--text); }
 }
 
 .g2-switch {
   width: 26px; height: 14px;
-  background: var(--g2-bg-3);
+  background: var(--surface-active);
   border-radius: 8px;
   position: relative;
   transition: background .15s;
@@ -312,13 +308,14 @@
     top: 2px; left: 2px;
     width: 10px; height: 10px;
     border-radius: 50%;
-    background: var(--g2-fg-1);
+    background: var(--muted);
     transition: transform .15s, background .15s;
   }
 }
 
-.g2-toggle-row.on .g2-switch { background: var(--g2-accent-soft); }
-.g2-toggle-row.on .g2-switch::after { transform: translateX(12px); background: var(--g2-accent); }
+.g2-toggle-row.on { color: var(--text); }
+.g2-toggle-row.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.g2-toggle-row.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
 
 /* ── Display sliders ────────────────────────────────────────── */
 .g2-filter-row {
@@ -326,8 +323,8 @@
   flex-direction: column;
   gap: 5px;
   padding: 8px 11px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
 
   & + .g2-filter-row { margin-top: 5px; }
@@ -337,11 +334,11 @@
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: var(--g2-fg-1);
+  color: var(--muted);
 
   & .v {
     font-family: ui-monospace, monospace;
-    color: var(--g2-fg-0);
+    color: var(--text);
   }
 }
 
@@ -350,7 +347,7 @@
   appearance: none;
   width: 100%;
   height: 3px;
-  background: var(--g2-bg-3);
+  background: var(--surface-active);
   border-radius: 2px;
   outline: none;
 }
@@ -359,26 +356,24 @@
   appearance: none;
   width: 11px; height: 11px;
   border-radius: 50%;
-  background: var(--g2-fg-0);
+  background: var(--text);
   cursor: pointer;
-  box-shadow: 0 0 0 3px var(--g2-bg-3);
+  box-shadow: 0 0 0 3px var(--surface-active);
 }
 .graph2-layout input[type=range]::-moz-range-thumb {
   width: 11px; height: 11px;
   border-radius: 50%;
-  background: var(--g2-fg-0);
+  background: var(--text);
   cursor: pointer;
   border: 0;
-  box-shadow: 0 0 0 3px var(--g2-bg-3);
+  box-shadow: 0 0 0 3px var(--surface-active);
 }
 
 /* ── Stage ─────────────────────────────────────────────────── */
 .graph2-stage {
   grid-area: stage;
   position: relative;
-  background:
-    radial-gradient(900px 600px at 50% 50%, #14181d 0%, var(--g2-bg-0) 70%),
-    var(--g2-bg-0);
+  background: var(--graph-canvas-bg);
   overflow: hidden;
   cursor: grab;
 
@@ -393,7 +388,8 @@
 .g2-corner-tl, .g2-corner-tr, .g2-corner-bl, .g2-corner-br {
   position: absolute;
   pointer-events: none;
-  color: var(--g2-fg-3);
+  color: var(--muted);
+  opacity: 0.55;
   font: 500 9px/1.4 ui-monospace, monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -405,7 +401,8 @@
 .g2-corner-br { bottom: 10px; right: 10px; text-align: right; }
 
 .g2-axis-tag {
-  color: var(--g2-fg-2);
+  color: var(--muted);
+  opacity: 0.85;
   font-weight: 400;
 }
 
@@ -413,42 +410,43 @@
   position: absolute;
   left: 12px; bottom: 28px;
   display: flex; flex-direction: column;
-  background: rgba(17, 20, 24, 0.85);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--g2-line);
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   z-index: 3;
+  box-shadow: var(--shadow-glass);
 
   & button {
     width: 28px; height: 28px;
     background: transparent;
     border: 0;
-    color: var(--g2-fg-1);
+    color: var(--muted);
     cursor: pointer;
-    border-bottom: 1px solid var(--g2-line);
+    border-bottom: 1px solid var(--graph-divider);
     display: grid; place-items: center;
     font-family: inherit; font-size: 13px;
 
     &:last-child { border-bottom: 0; }
-    &:hover { color: var(--g2-fg-0); background: var(--g2-bg-2); }
+    &:hover { color: var(--accent); background: var(--surface-active); }
   }
 }
 
 .g2-zoom-pct {
   font: 500 9px/1 ui-monospace, monospace;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   padding: 5px 0;
   text-align: center;
-  border-bottom: 1px solid var(--g2-line);
+  border-bottom: 1px solid var(--graph-divider);
 }
 
 /* ── Tooltip ────────────────────────────────────────────────── */
 .g2-tooltip {
   position: absolute;
-  background: rgba(17, 20, 24, 0.96);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--g2-line);
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: 7px;
   padding: 9px 11px;
   pointer-events: none;
@@ -458,7 +456,7 @@
   opacity: 0;
   transition: opacity .12s;
   z-index: 10;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-glass);
 
   &.show { opacity: 1; }
 }
@@ -473,7 +471,7 @@
 .g2-tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .g2-tt-id {
   font: 500 11px/1 ui-monospace, monospace;
-  color: var(--g2-fg-0);
+  color: var(--text);
   word-break: break-all;
 }
 .g2-tt-grid {
@@ -484,14 +482,14 @@
   margin: 0;
 
   & dt {
-    color: var(--g2-fg-2);
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-size: 9px;
   }
   & dd {
     margin: 0;
-    color: var(--g2-fg-0);
+    color: var(--text);
     font-family: ui-monospace, monospace;
   }
 }
@@ -500,8 +498,8 @@
   display: inline-block;
   font-size: 8px;
   padding: 2px 4px;
-  background: var(--g2-accent-soft);
-  color: var(--g2-accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
   border-radius: 3px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -510,7 +508,10 @@
 
 /* Severity badge — sev color comes via the --sev custom prop set
    inline at render time. Same shape used in the tooltip header AND
-   the selection card status row. */
+   the selection card status row. The ring colors here are vivid
+   data colors set by the canvas; the badge wraps them in the same
+   tinted-bg + outline pattern so the tooltip and the canvas read
+   as belonging to the same severity. */
 .g2-issue-badge {
   display: inline-flex;
   align-items: center;
@@ -535,9 +536,9 @@
 
 .g2-issue-text {
   font: 500 11px/1.4 inherit;
-  color: var(--g2-fg-1);
+  color: var(--text);
   padding: 7px 9px;
-  background: color-mix(in srgb, var(--sev) 8%, var(--g2-bg-2));
+  background: color-mix(in srgb, var(--sev) 8%, var(--graph-hover-bg));
   border-left: 2px solid var(--sev);
   border-radius: 0 4px 4px 0;
   margin-top: 6px;
@@ -545,15 +546,15 @@
 
 /* ── Selection card ─────────────────────────────────────────── */
 .g2-selection-card {
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .g2-sel-head {
   padding: 11px 13px;
-  border-bottom: 1px solid var(--g2-line);
+  border-bottom: 1px solid var(--graph-divider);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -568,7 +569,7 @@
 
 .g2-sel-id {
   font: 600 12px/1 ui-monospace, monospace;
-  color: var(--g2-fg-0);
+  color: var(--text);
   word-break: break-all;
   flex: 1;
   min-width: 0;
@@ -576,7 +577,7 @@
 
 .g2-sel-grp {
   font: 500 9px/1 ui-monospace, monospace;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   flex-shrink: 0;
@@ -590,12 +591,12 @@
   gap: 12px;
   font-size: 11px;
   padding: 5px 0;
-  border-bottom: 1px solid var(--g2-line-soft);
+  border-bottom: 1px solid var(--graph-divider);
 
   &:last-child { border-bottom: 0; }
-  & .k { color: var(--g2-fg-2); flex-shrink: 0; }
+  & .k { color: var(--muted); flex-shrink: 0; }
   & .v {
-    color: var(--g2-fg-0);
+    color: var(--text);
     font-family: ui-monospace, monospace;
     word-break: break-all;
     text-align: right;
@@ -610,16 +611,16 @@
 }
 
 .g2-sel-jump {
-  background: var(--g2-bg-3);
-  border: 1px solid var(--g2-line);
-  color: var(--g2-accent);
+  background: var(--surface-active);
+  border: 1px solid var(--border);
+  color: var(--accent);
   border-radius: 4px;
   padding: 4px 9px;
   cursor: pointer;
   font: 500 10px/1 inherit;
   font-family: inherit;
 
-  &:hover { border-color: var(--g2-accent); }
+  &:hover { border-color: var(--accent); }
 }
 
 /* ── Neighbor list ──────────────────────────────────────────── */
@@ -636,34 +637,34 @@
   align-items: center;
   padding: 6px 9px;
   border-radius: 5px;
-  background: var(--g2-bg-2);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
   font-size: 11px;
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  color: var(--g2-fg-1);
+  color: var(--muted);
 
-  &:hover { border-color: var(--g2-fg-3); }
+  &:hover { border-color: var(--accent); color: var(--text); }
 }
 
 .g2-nb-dot { width: 7px; height: 7px; border-radius: 50%; }
 .g2-nb-id {
   font-family: ui-monospace, monospace;
-  color: var(--g2-fg-0);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .g2-nb-meta {
   font-family: ui-monospace, monospace;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   font-size: 10px;
 }
 
 .g2-nb-more {
   text-align: center;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   font-size: 10px;
   padding: 6px 0;
   font-family: ui-monospace, monospace;
@@ -671,17 +672,17 @@
 
 /* ── Empty state ────────────────────────────────────────────── */
 .g2-empty-state {
-  background: var(--g2-bg-2);
-  border: 1px dashed var(--g2-line);
+  background: var(--graph-hover-bg);
+  border: 1px dashed var(--border);
   border-radius: 8px;
   padding: 18px 14px;
   text-align: center;
-  color: var(--g2-fg-2);
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
 
   & strong {
-    color: var(--g2-fg-1);
+    color: var(--text);
     display: block;
     margin-bottom: 4px;
     font-weight: 500;
@@ -693,8 +694,8 @@
   position: relative;
   width: 100%;
   aspect-ratio: 4 / 3;
-  background: var(--g2-bg-0);
-  border: 1px solid var(--g2-line);
+  background: var(--graph-canvas-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
 
@@ -706,8 +707,8 @@
 
 .g2-mini-vp {
   position: absolute;
-  border: 1px solid var(--g2-accent);
-  background: color-mix(in srgb, var(--g2-accent) 10%, transparent);
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   pointer-events: none;
 }
 
@@ -718,7 +719,7 @@
   border-radius: 3px;
   overflow: hidden;
   display: flex;
-  background: var(--g2-bg-3);
+  background: var(--surface-active);
   margin-bottom: 8px;
 
   & > span {
@@ -743,7 +744,7 @@
 
   & .g2-dist-dot { width: 8px; height: 8px; border-radius: 50%; }
   & .g2-dist-name {
-    color: var(--g2-fg-1);
+    color: var(--muted);
     font-family: ui-monospace, monospace;
     white-space: nowrap;
     overflow: hidden;
@@ -751,13 +752,14 @@
   }
   & .g2-dist-count {
     font-family: ui-monospace, monospace;
-    color: var(--g2-fg-0);
+    color: var(--text);
   }
   & .g2-dist-pct {
     font-family: ui-monospace, monospace;
-    color: var(--g2-fg-2);
+    color: var(--muted);
     width: 36px;
     text-align: right;
+    opacity: 0.85;
   }
 }
 
