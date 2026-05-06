@@ -149,15 +149,17 @@ function renderControls(graph) {
   // "Show only issues" toggle is gone — selecting all four
   // severities up there gives the same visual.)
 
-  // Display sliders
+  // Display — sliders for the visual knobs that take a
+  // numeric value, then toggles for the booleans. Earlier
+  // versions split these into Display + Options sections,
+  // but the boundary was arbitrary (every control here is
+  // a "display tweak") and the extra heading mostly cost
+  // vertical space.
   html += '<div class="g2-panel-title">Display</div>'
   html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))
   const maxDeg = Math.max(1, ...graph.nodes.map((n) => n.deg))
   html += sliderRow('min-deg', 'Min degree', graph2.minDegree, 0, Math.min(20, maxDeg), graph2.minDegree)
   html += sliderRow('node-size', 'Node size', graph2.nodeSize.toFixed(1) + '×', 40, 220, Math.round(graph2.nodeSize * 100))
-
-  // Options
-  html += '<div class="g2-panel-title">Options</div>'
   html += toggleRow('halos', 'Glow halos', graph2.showHalos)
   html += toggleRow('hubs', 'Highlight hubs', graph2.highlightHubs)
   html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
