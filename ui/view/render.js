@@ -11,7 +11,7 @@ import { renderTreeSidebarFull } from './graph/sidebar.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
-import { renderGraph2Layout, renderSelectionCard } from './graph2/render.js'
+import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings } from './graph/utils.js'
 
@@ -84,6 +84,18 @@ export function refreshGraph2Sidebar() {
   const data = buildGraph2Data()
   if (!data) return
   area.innerHTML = renderSelectionCard(data.graph)
+}
+
+// Re-render only the right-panel "Top packages" block. Called when
+// the user flips the Issues/Files mini-tab. Same canvas-preserving
+// pattern as refreshGraph2Sidebar — surgical innerHTML swap, no
+// teardown of the rAF loop / hover state on the main canvas.
+export function refreshGraph2TopPkgs() {
+  const block = document.getElementById('g2-top-pkgs-block')
+  if (!block) return
+  const data = buildGraph2Data()
+  if (!data) return
+  block.innerHTML = renderTopPkgsBlock(data.graph)
 }
 
 // Build the analyzer-breakdown header line. One entry per unique

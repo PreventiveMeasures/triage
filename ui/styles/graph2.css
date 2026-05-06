@@ -151,6 +151,42 @@
   font-size: 10px;
 }
 
+/* Panel-title with right-edge controls — used by the Top-packages
+   block to host its Issues/Files toggle. Pushes the trailing child
+   to the right edge of the panel without touching the existing
+   .g2-panel-title rules. */
+.g2-panel-title-row {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Mini-tab pair — same pattern as v1's tree-hubs-tabs. Sits
+   inline at the right of a panel title. Resets the title's
+   uppercase / letter-spacing on the buttons themselves so the
+   labels read normally despite living inside .g2-panel-title. */
+.g2-mini-tabs {
+  display: flex;
+  gap: 1px;
+  background: var(--graph-divider);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.g2-mini-tab {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font: 500 9px/1.4 inherit;
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 7px;
+  cursor: pointer;
+
+  &:hover { color: var(--text); background: var(--graph-hover-bg); }
+  &.on { background: var(--surface-active); color: var(--accent); }
+}
+
 /* ── Palette ───────────────────────────────────────────────── */
 .g2-palette-toolbar {
   display: flex;
@@ -738,6 +774,15 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.g2-dist-empty {
+  color: var(--muted);
+  opacity: 0.55;
+  font-size: 10px;
+  font-style: italic;
+  padding: 6px 0;
+  text-align: center;
 }
 
 .g2-dist-item {

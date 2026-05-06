@@ -4,7 +4,7 @@ import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
-import { render, renderKeepFocus, refreshTreeSidebar, refreshGraph2Sidebar } from './render.js'
+import { render, renderKeepFocus, refreshTreeSidebar, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
@@ -113,6 +113,14 @@ report.addEventListener('click', (e) => {
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
     refreshGraph2Sidebar()
+    return
+  }
+  // Top-packages mini-tabs (Issues / Files). Pure right-panel
+  // change — re-render just the block, leave the canvas alone.
+  const g2TopPkgs = e.target.closest('[data-g2-top-pkgs]')
+  if (g2TopPkgs) {
+    graph2.topPkgsTab = g2TopPkgs.dataset.g2TopPkgs
+    refreshGraph2TopPkgs()
     return
   }
   const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')

@@ -194,11 +194,27 @@ function renderRightPanel(graph) {
   html += '<div id="g2-selection-area">'
   html += renderSelectionCard(graph)
   html += '</div>'
-
-  html += '<div class="g2-panel-title">Top packages</div>'
-  html += renderDistribution(graph)
-
+  html += '<div id="g2-top-pkgs-block">'
+  html += renderTopPkgsBlock(graph)
+  html += '</div>'
   html += '</aside>'
+  return html
+}
+
+// Top-packages section — exported so events.js can re-render it
+// in place when the user flips the Issues/Files tab without
+// rebuilding the whole canvas. Returns the title row + dist bar
+// + dist list as HTML; the caller wraps this in #g2-top-pkgs-block.
+export function renderTopPkgsBlock(graph) {
+  const tab = graph2.topPkgsTab
+  let html = '<div class="g2-panel-title g2-panel-title-row">'
+  html += '<span>Top packages</span>'
+  html += '<div class="g2-mini-tabs">'
+  html += `<button type="button" class="g2-mini-tab${tab === 'issues' ? ' on' : ''}" data-g2-top-pkgs="issues">Issues</button>`
+  html += `<button type="button" class="g2-mini-tab${tab === 'files' ? ' on' : ''}" data-g2-top-pkgs="files">Files</button>`
+  html += '</div>'
+  html += '</div>'
+  html += renderDistribution(graph)
   return html
 }
 
@@ -291,20 +307,65 @@ export function renderSelectionCard(graph) {
 }
 
 function renderDistribution(graph) {
-  const total = graph.nodes.length || 1
-  const top = graph.packages.slice(0, 8)
+  const totalFiles = graph.nodes.length || 1
+  const tab = graph2.topPkgsTab
+  // Aggregate own-issue counts per package — sum totalIssues
+  // across every node in the package. Drives the Issues sort
+  // and the count column when that tab is active.
+  const issueByPkg = new Map()
+  let totalIssues = 0
+  for (const n of graph.nodes) {
+    issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + n.totalIssues)
+    totalIssues += n.totalIssues
+  }
+  // The dist BAR always shows file-count proportions (preserves
+  // the "share of codebase" reading regardless of which tab is
+  // active — the bar is a stable spatial reference for "how the
+  // codebase splits up", not a re-sortable listing).
   let html = '<div class="g2-dist-bar">'
   for (const pkg of graph.packages) {
     const c = pkgColor(pkg)
-    const w = (graph.pkgCount.get(pkg) / total * 100).toFixed(2)
+    const w = (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
     html += `<span style="background:${c}; width:${w}%"></span>`
   }
   html += '</div>'
+  // Ranked list reorders + filters per tab. On Issues, drop
+  // packages with no issues — they're noise in an issues-first
+  // ranking (matches graph v1's hubs filter). Tie-break by the
+  // other axis so equal-issue packages don't shuffle alpha.
+  let sorted
+  if (tab === 'issues') {
+    sorted = graph.packages
+      .filter((p) => (issueByPkg.get(p) ?? 0) > 0)
+      .sort((a, b) => {
+        const ia = issueByPkg.get(a) ?? 0, ib = issueByPkg.get(b) ?? 0
+        if (ib !== ia) return ib - ia
+        return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
+      })
+  } else {
+    sorted = [...graph.packages].sort((a, b) => {
+      const fa = graph.pkgCount.get(a) ?? 0, fb = graph.pkgCount.get(b) ?? 0
+      if (fb !== fa) return fb - fa
+      return (issueByPkg.get(b) ?? 0) - (issueByPkg.get(a) ?? 0)
+    })
+  }
+  const top = sorted.slice(0, 8)
   html += '<div class="g2-dist-list">'
+  if (top.length === 0) {
+    html += '<div class="g2-dist-empty">No packages with issues</div>'
+  }
   for (const pkg of top) {
     const c = pkgColor(pkg)
-    const cnt = graph.pkgCount.get(pkg)
-    const pct = (cnt / total * 100).toFixed(1)
+    const fileCnt = graph.pkgCount.get(pkg) ?? 0
+    const issueCnt = issueByPkg.get(pkg) ?? 0
+    // Count + percentage both follow the active tab — reading
+    // "30 88.2%" on Issues makes the row monotonically decrease
+    // with the sort; mixing issue counts with file percentages
+    // (the previous behavior) read as a sorting bug.
+    const cnt = tab === 'issues' ? issueCnt : fileCnt
+    const pct = tab === 'issues'
+      ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
+      : (fileCnt / totalFiles * 100).toFixed(1)
     const label = pkg === '__own__' ? 'own source' : pkg
     html += '<div class="g2-dist-item">'
     html += `<span class="g2-dist-dot" style="background:${c}"></span>`
