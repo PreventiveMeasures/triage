@@ -13,7 +13,7 @@
 export const graph2 = {
   selected: null,        // file path or null
   layoutMode: 'spiral',  // 'spiral' | 'force' | 'radial' | 'grid' | 'classic'
-  edgeMode: 'cross',     // 'all' | 'cross' | 'none'
+  edgeMode: 'all',       // 'all' | 'cross' | 'none'
   edgeOpacity: 0.22,
   minDegree: 0,
   nodeSize: 1.0,

@@ -411,11 +411,33 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       html += `<div class="g2-issue-text" style="--sev:${SEV_COLORS[n.issue] ?? '#888'}">${escapeHtml(n.issueText)}</div>`
     }
     tooltip.innerHTML = html
-    let tx = cx - stageRect.left
-    let ty = cy - stageRect.top
+    // Show first, THEN measure — the browser doesn't compute layout
+    // for `display: none` / opacity: 0 elements and we need the real
+    // width/height to do edge-flip correctly. Adding the .show class
+    // bumps opacity, which is enough to get a reliable bbox.
+    tooltip.classList.add('show')
+    const ttW = tooltip.offsetWidth
+    const ttH = tooltip.offsetHeight
+    const sx = cx - stageRect.left
+    const sy = cy - stageRect.top
+    const stageW = stageRect.width
+    const stageH = stageRect.height
+    // Default: 12px to the right and below the cursor (matches v1's
+    // intent of "near the cursor, not under it"). Flip horizontally
+    // when it would overshoot the right edge — same logic v1 uses
+    // (`tx = cx - 254` style flip, sized to the actual tooltip
+    // width here so the flip holds for any content). Flip vertically
+    // when too close to the bottom; clamp at top so the tooltip
+    // doesn't scroll out of view when hovering near the top edge.
+    const PAD = 12
+    let tx = sx + PAD
+    if (tx + ttW > stageW - 4) tx = sx - ttW - PAD
+    if (tx < 4) tx = 4
+    let ty = sy + PAD
+    if (ty + ttH > stageH - 4) ty = sy - ttH - PAD
+    if (ty < 4) ty = 4
     tooltip.style.left = `${tx}px`
     tooltip.style.top = `${ty}px`
-    tooltip.classList.add('show')
   }
   function hideTooltip() { if (tooltip) tooltip.classList.remove('show') }
 

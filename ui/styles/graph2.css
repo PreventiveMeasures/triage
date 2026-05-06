@@ -467,6 +467,11 @@
 }
 
 /* ── Tooltip ────────────────────────────────────────────────── */
+/* Position is fully owned by canvas.js showTooltip — it measures the
+   tooltip and flips it to the other side of the cursor when the
+   default below-right slot would overflow the stage edges. No
+   CSS transform here, otherwise the JS-computed left/top would
+   land 12px off in both axes. */
 .g2-tooltip {
   position: absolute;
   background: var(--surface);
@@ -475,7 +480,6 @@
   border-radius: 7px;
   padding: 9px 11px;
   pointer-events: none;
-  transform: translate(12px, 12px);
   min-width: 170px;
   max-width: 260px;
   opacity: 0;
