@@ -60,6 +60,65 @@ export function layoutRadial(graph, w, h) {
   }
 }
 
+// "Spiral" — the hue-spiral projection from the original
+// graph_v2.html design. Each package sits at a unique angle on
+// the canvas (golden-angle distribution, so even N=2..3 packages
+// land on far-apart angles and the layout reads as a clean fan
+// rather than a clump), at a pseudo-random radius from the
+// center. The radius scatter is what gives the layout its
+// "spiral" feel — without it, all packages would sit on a single
+// ring (which is the "Radial" mode). Files within a package
+// cluster in a small disk around the package center; hubs sit
+// closer to the center than members so the fan reads as
+// "package = pile of files, anchored by a hub".
+//
+// In the synthetic-data design, groups carried a real hue
+// attribute and the angle = hue. Real packages here don't have
+// an inherent hue (pkgColor() picks from a hashed palette), so
+// we use the index-times-golden-angle trick: same visual
+// effect (maximally distinct angles), no need to back-compute a
+// hue from the assigned color. The 31-multiplier on the band
+// breaks any visual correlation between angle and radius so the
+// layout doesn't degenerate into a tight ring at certain N.
+export function layoutSpiral(graph, w, h) {
+  const cx = w / 2, cy = h / 2
+  const maxR = Math.min(w, h) * 0.45
+  const minR = maxR * 0.30
+  const N = graph.packages.length
+  const pkgInfo = new Map()
+  for (let i = 0; i < N; i++) {
+    const pkg = graph.packages[i]
+    const angle = ((i * 137.508) % 360) * Math.PI / 180
+    const band = ((i * 31) % 100) / 100
+    const r = N === 1 ? 0 : minR + band * (maxR - minR)
+    pkgInfo.set(pkg, {
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r,
+      size: graph.pkgCount.get(pkg) ?? 0,
+    })
+  }
+  const groupRBase = Math.min(w, h) * 0.04
+  for (const n of graph.nodes) {
+    const info = pkgInfo.get(n.pkg)
+    if (!info) continue
+    // Cap groupR so a single huge package doesn't swallow the
+    // canvas — sqrt scaling tames a 200-file npm package while
+    // still differentiating it from a 5-file own-source dir.
+    const groupR = Math.min(maxR * 0.5, groupRBase * (0.5 + Math.sqrt(info.size) * 0.4))
+    const h1 = hash(n.file)
+    // Different bit ranges for angle vs radius — without this
+    // the two correlate and the cluster looks like a comma
+    // instead of a disk.
+    const localA = (h1 % 10000) / 10000 * Math.PI * 2
+    const localBand = ((h1 >>> 16) % 10000) / 10000
+    const localR = n.isHub
+      ? localBand * groupR * 0.3
+      : (0.4 + localBand * 0.6) * groupR
+    n.x = info.x + Math.cos(localA) * localR
+    n.y = info.y + Math.sin(localA) * localR
+  }
+}
+
 export function layoutGrid(graph, w, h) {
   const N = graph.packages.length || 1
   const cols = Math.max(1, Math.ceil(Math.sqrt(N * w / Math.max(1, h))))
@@ -100,5 +159,6 @@ export function applyLayout(mode, graph, w, h) {
   if (mode === 'classic') layoutClassic(graph)
   else if (mode === 'radial') layoutRadial(graph, w, h)
   else if (mode === 'grid') layoutGrid(graph, w, h)
-  else layoutForce(graph, w, h)
+  else if (mode === 'force') layoutForce(graph, w, h)
+  else layoutSpiral(graph, w, h)
 }

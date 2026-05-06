@@ -12,7 +12,7 @@
 // is informative even before any user input.
 export const graph2 = {
   selected: null,        // file path or null
-  layoutMode: 'force',   // 'force' | 'radial' | 'grid'
+  layoutMode: 'spiral',  // 'spiral' | 'force' | 'radial' | 'grid' | 'classic'
   edgeMode: 'cross',     // 'all' | 'cross' | 'none'
   edgeOpacity: 0.22,
   minDegree: 0,
