@@ -638,18 +638,52 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.globalAlpha = 1
     }
 
-    // ── Labels (always visible in package view) ───────────────
+    // ── Labels (collision-avoidant) ───────────────────────────
+    // Walk nodes in a priority order so the most important labels
+    // claim screen real-estate first; subsequent labels are
+    // dropped when their AABB overlaps any already-placed one.
+    // Priority: selected > hovered > hubs > rest. The selected /
+    // hovered slot is reserved unconditionally — those always
+    // render even if a hub label would collide with them.
     ctx.font = `600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
     ctx.lineJoin = 'round'
+    const labelLineHeight = 13
+    const labelPad = 2
+    // Pre-measure every label so the overlap test below is a
+    // pure rect-vs-rect compare. measureText() runs once per node
+    // per frame; cheap on the typical <50-node focus view.
+    const labelCandidates = []
     for (const n of graph.nodes) {
       if (!nodeVisible(n)) continue
       const [sx, sy] = worldToScreen(n.x, n.y)
       const r = nodeR(n)
       const ty = sy + r + 4
+      const halfW = ctx.measureText(n.label).width / 2 + labelPad
       const isSel = n.file === selected
       const isHov = n.file === hovered
+      // Priority: selected (3) > hovered (2) > hub (1) > rest (0).
+      const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
+      labelCandidates.push({
+        n, sx, ty, halfW, isSel, isHov, prio,
+        // AABB in screen space.
+        x0: sx - halfW, x1: sx + halfW,
+        y0: ty, y1: ty + labelLineHeight,
+      })
+    }
+    labelCandidates.sort((a, b) => b.prio - a.prio)
+    const placed = []
+    const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+    for (const cand of labelCandidates) {
+      let collide = false
+      for (const p of placed) {
+        if (overlaps(cand, p)) { collide = true; break }
+      }
+      if (!collide) placed.push(cand)
+    }
+    for (const cand of placed) {
+      const { n, sx, ty, isSel, isHov } = cand
       const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.2 : 1
       ctx.globalAlpha = dim
       // Outline + shadow for legibility on any backdrop.
