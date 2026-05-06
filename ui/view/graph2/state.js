@@ -30,14 +30,6 @@ export const graph2 = {
   edgeOpacity: 0.22,
   nodeSize: 1.0,
   showLabels: false,
-  // Hub-detection strategy. 'top' = top-degree node(s) per package,
-  // capped (the original v2 design). 'cross' = any file that's
-  // imported from a different package — picks out the public
-  // surface of each package, which often reads cleaner on
-  // microservice-style graphs where the entry-point file pattern
-  // is well-defined. Switching just re-runs assignHubs on the
-  // existing graph; topology stays.
-  hubMode: 'top',        // 'top' | 'cross'
   // Severity highlight filter — empty = no filter, every node
   // draws at full opacity (the default). When 1+ severities are
   // selected, matching nodes stay full opacity and everything

@@ -103,13 +103,13 @@ function findEntryPkg(graph) {
 // differs across layouts.
 //
 // Hub-pull-to-center is gated on hub count: when a package has
-// more than 10 hubs (common in Cross-imported mode on a large
-// public-API package), pulling them all to the inner 30% piles
-// them into a tight blob and the cluster loses readability. In
-// that case, hubs use the same outer band as members and just
-// rely on their bigger radius + halo + ring for the visual
-// "this is a hub" cue.
-const HUB_PULL_LIMIT = 10
+// more than 5 hubs (common on a large public-API package),
+// pulling them all to the inner 30% piles them into a tight
+// blob and the cluster loses readability. In that case, hubs
+// use the same outer band as members and just rely on their
+// bigger radius + halo + ring for the visual "this is a hub"
+// cue.
+const HUB_PULL_LIMIT = 5
 function placeFilesInDisk(graph, pkgInfo) {
   // Count hubs per package once so the inner loop can branch
   // without walking byPkg every iteration.

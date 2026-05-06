@@ -908,22 +908,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   graph2.graphState = {
     requestDraw,
-    // Expose the active graph so external handlers (e.g. the
-    // hub-mode switch in events.js) can mutate node flags without
-    // re-attaching the canvas.
-    graph,
-    // Re-run the layout pass right now. Positions depend on
-    // isHub — hubs sit closer to package anchors — so any
-    // state that changes the hub set has to invalidate the
-    // cache and reflow. ensureLayout itself is normally only
-    // called from resize(); we invoke it directly here so the
-    // caller doesn't have to fake a resize event.
-    relayout: () => {
-      graph2.layoutCache = null
-      needsLayout = true
-      if (layoutW > 0 && layoutH > 0) ensureLayout()
-      requestDraw()
-    },
     _cleanup: () => {
       destroyed = true
       cancelAnimationFrame(rafId)
