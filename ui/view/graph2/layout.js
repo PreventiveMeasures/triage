@@ -87,6 +87,30 @@ export function layoutSpiral(graph, w, h) {
   // pixels happens once per coordinate at write time.
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
+  // Adapt the radius range and per-group disk size to N. The
+  // design's constants (0.30 minR, 0.95 maxR, 0.012 groupR base)
+  // were tuned for ~350 groups; with a handful of packages they
+  // leave 80% of the canvas empty (ring of small dots floating
+  // in a void) while still placing one package near the center
+  // and another at the rim. Three breakpoints below trade off
+  // continuity against legibility: tight ring at low N (so the
+  // few packages frame each other on a circle), widen the band
+  // through medium N, then commit to the full spiral at high N
+  // where the pseudo-random radius is what creates the visible
+  // arm structure.
+  let minRUnit, maxRUnit
+  if (N <= 1) { minRUnit = 0; maxRUnit = 0 }
+  else if (N <= 6) { minRUnit = 0.40; maxRUnit = 0.65 }
+  else if (N <= 20) { minRUnit = 0.32; maxRUnit = 0.82 }
+  else { minRUnit = 0.30; maxRUnit = 0.95 }
+  // Scale group disks UP when packages are sparse so each
+  // cluster fills a meaningful chunk of canvas instead of
+  // looking like a single fat dot floating in the void.
+  // Reference is N=50: factor 1.0 (design behavior). For fewer
+  // packages, the sqrt scaling lifts groupR so 5 packages get
+  // ~3× larger disks; for more packages, factor stays at 1 so
+  // the design's tight clusters survive.
+  const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, N)))
   const pkgInfo = new Map()
   for (let i = 0; i < N; i++) {
     const pkg = graph.packages[i]
@@ -94,14 +118,12 @@ export function layoutSpiral(graph, w, h) {
     // canvas; matches the design's `g.hue * π/180` step (since
     // each group's hue was itself i * 137.508° mod 360°).
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Pseudo-random radius band in [0.30, 0.95] half-canvas
-    // units — same magic constants the design uses. The
-    // 31-multiplier is coprime with 100 so the band cycles
-    // through 100 distinct values, breaking any correlation
-    // between angle and radius that would collapse the
-    // layout into a ring.
+    // Pseudo-random radius band — design uses (i*31)%100/100,
+    // a walk through 100 distinct values that breaks any
+    // correlation between angle and radius. Without that walk
+    // the layout would collapse into a single ring at large N.
     const band = ((i * 31) % 100) / 100
-    const rUnit = N === 1 ? 0 : 0.30 + band * 0.65
+    const rUnit = N === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
     pkgInfo.set(pkg, {
       x: cx + Math.cos(angle) * rUnit * unitToPx,
       y: cy + Math.sin(angle) * rUnit * unitToPx,
@@ -111,14 +133,13 @@ export function layoutSpiral(graph, w, h) {
   for (const n of graph.nodes) {
     const info = pkgInfo.get(n.pkg)
     if (!info) continue
-    // Per-group disk radius in unit space, ported from the
-    // design: a tiny constant + sqrt-scaled bonus for size.
-    // Keeping this small (typical 0.014–0.025 unit ≈ 4-8px on
-    // a 600px-wide canvas) is what makes the spiral structure
-    // legible — bigger disks would overlap with neighbors and
-    // collapse the visualization into a blob, which is what
-    // happened with the previous 0.04 base.
-    const groupR = (0.012 + Math.sqrt(info.size) * 0.004) * unitToPx
+    // Per-group disk radius — tiny constant + sqrt-scaled bonus
+    // for size, then lifted by sparsityFactor when packages are
+    // sparse. Cap at 0.30 unit (~30% of half-canvas) so a single
+    // huge package doesn't swallow the layout when there are
+    // very few packages overall.
+    const groupRUnit = (0.012 + Math.sqrt(info.size) * 0.004) * sparsityFactor
+    const groupR = Math.min(0.30, groupRUnit) * unitToPx
     const h1 = hash(n.file)
     // Different bit ranges for angle vs radius — without this
     // the two correlate and the cluster looks like a comma
