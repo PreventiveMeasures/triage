@@ -450,59 +450,69 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     //   2. Fewer than 50 nodes currently visible inside the
     //      canvas viewport — at that density labels can fit
     //      without much overlap.
-    // Manual graph2.showLabels still works as a force-on
-    // override. Within the label pass, every visible node is a
-    // candidate; the collision pass thins the result based on
-    // priority (selected > hovered > hub > rest).
-    const VISIBLE_THRESHOLD = 50
-    let onScreenCount = 0
-    if (viewport.k < 9 && !graph2.showLabels) {
-      // Only count when needed to decide auto-on; cap at the
-      // threshold so we exit early on dense graphs.
-      for (const n of graph.nodes) {
-        if (!nodeVisible(n)) continue
-        const [sx, sy] = worldToScreen(n.x, n.y)
-        if (sx < 0 || sx > W || sy < 0 || sy > H) continue
-        onScreenCount++
-        if (onScreenCount >= VISIBLE_THRESHOLD) break
-      }
-    }
-    const labelsAutoOn = viewport.k >= 9 || onScreenCount < VISIBLE_THRESHOLD
-    if (graph2.showLabels || labelsAutoOn) {
-      ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
-      ctx.fillStyle = T.labelFill
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'middle'
-      const lineH = 11
-      const pad = 2
-      const candidates = []
-      for (const n of graph.nodes) {
-        if (!nodeVisible(n)) continue
-        const [sx, sy] = worldToScreen(n.x, n.y)
-        const r = nodeRadius(n)
-        const tx = sx + r + 4
-        const ty = sy + 1
-        const w = ctx.measureText(n.label).width + pad
-        const isSel = n.file === graph2.selected
-        const isHov = n.file === hovered
-        const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
-        candidates.push({
-          n, tx, ty, prio,
-          x0: tx - pad, x1: tx + w,
-          y0: ty - lineH / 2, y1: ty + lineH / 2,
-        })
-      }
-      candidates.sort((a, b) => b.prio - a.prio)
-      const placed = []
-      const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
-      for (const c of candidates) {
-        let collide = false
-        for (const p of placed) {
-          if (overlaps(c, p)) { collide = true; break }
+    // Manual graph2.showLabels still works as a force-on signal.
+    //
+    // Three legibility-of-zoom brackets stay enforced regardless
+    // of how labels were turned on:
+    //   - zoom ≤ 1.4: no labels at all (text would be too small
+    //     relative to the layout density to be useful).
+    //   - 1.4 < zoom < 2.4: hubs only (load-bearing nodes get
+    //     priority screen real estate).
+    //   - zoom ≥ 2.4: all visible nodes are candidates, the
+    //     collision pass thins them by priority.
+    if (viewport.k > 1.4) {
+      const VISIBLE_THRESHOLD = 50
+      let onScreenCount = 0
+      if (viewport.k < 9 && !graph2.showLabels) {
+        // Only count when needed to decide auto-on; cap at the
+        // threshold so we exit early on dense graphs.
+        for (const n of graph.nodes) {
+          if (!nodeVisible(n)) continue
+          const [sx, sy] = worldToScreen(n.x, n.y)
+          if (sx < 0 || sx > W || sy < 0 || sy > H) continue
+          onScreenCount++
+          if (onScreenCount >= VISIBLE_THRESHOLD) break
         }
-        if (!collide) placed.push(c)
       }
-      for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
+      const labelsAutoOn = viewport.k >= 9 || onScreenCount < VISIBLE_THRESHOLD
+      if (graph2.showLabels || labelsAutoOn) {
+        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+        ctx.fillStyle = T.labelFill
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        const lineH = 11
+        const pad = 2
+        const candidates = []
+        for (const n of graph.nodes) {
+          if (!nodeVisible(n)) continue
+          // Hubs-only filter for the 1.4 < zoom < 2.4 bracket.
+          if (!n.isHub && viewport.k < 2.4) continue
+          const [sx, sy] = worldToScreen(n.x, n.y)
+          const r = nodeRadius(n)
+          const tx = sx + r + 4
+          const ty = sy + 1
+          const w = ctx.measureText(n.label).width + pad
+          const isSel = n.file === graph2.selected
+          const isHov = n.file === hovered
+          const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
+          candidates.push({
+            n, tx, ty, prio,
+            x0: tx - pad, x1: tx + w,
+            y0: ty - lineH / 2, y1: ty + lineH / 2,
+          })
+        }
+        candidates.sort((a, b) => b.prio - a.prio)
+        const placed = []
+        const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+        for (const c of candidates) {
+          let collide = false
+          for (const p of placed) {
+            if (overlaps(c, p)) { collide = true; break }
+          }
+          if (!collide) placed.push(c)
+        }
+        for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
+      }
     }
 
     // Selection ring on top so it never gets hidden by neighbors.
