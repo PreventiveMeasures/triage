@@ -373,16 +373,17 @@ export function layoutSpiral(graph, w, h) {
   //
   //   r1(0) = r0(0)
   //   r1(k) = r1(k-1) + (r0(k) - r0(k-1)) ·
-  //             sqrt( ringNodeCount(k-1) / ringGroupCount(k-1) )
+  //             cbrt( ringNodeCount(k-1) / ringGroupCount(k-1) )
   //
   // r0(k) is the ring's natural Vogel band radius (sqrt of the
   // midpoint t of the ring's rank range). The recursive step adds
   // the original gap between ring k and ring k-1, scaled by the
-  // sqrt of the previous ring's average files-per-package — so a
-  // ring sitting outside a ring full of large packages (lots of
-  // files per group) is pushed further than one outside a ring of
-  // small leaf packages. Average ≈ 1 leaves the gap unchanged;
-  // average ≈ 4 doubles it; etc.
+  // cube root of the previous ring's average files-per-package —
+  // so a ring sitting outside a ring full of large packages (lots
+  // of files per group) is pushed further than one outside a ring
+  // of small leaf packages, but with diminishing returns: avg ≈ 1
+  // leaves the gap unchanged, avg ≈ 8 only doubles it (vs sqrt
+  // which doubled at avg ≈ 4 and quadrupled at avg ≈ 16).
   //
   // Then each package's band shifts by (r1 - r0) of its own ring,
   // preserving the within-ring Vogel spread (packages keep their
@@ -411,7 +412,7 @@ export function layoutSpiral(graph, w, h) {
   for (let k = 1; k < numRings; k++) {
     const grp = ringGroupCount[k - 1]
     const nds = ringNodeCount[k - 1]
-    const factor = grp > 0 ? Math.sqrt(nds / grp) : 1
+    const factor = grp > 0 ? Math.cbrt(nds / grp) : 1
     ringR1[k] = ringR1[k - 1] + (ringR0[k] - ringR0[k - 1]) * factor
   }
   const ringDelta = new Array(numRings)
