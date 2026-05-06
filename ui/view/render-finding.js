@@ -179,7 +179,7 @@ export function renderGroup(g) {
   // regardless of how many left-side items appear.
   html += '<div class="marks-left">'
   if (active.commitHash) {
-    html += `<div class="commit-ref">commit ${commitLink(active.repo?.github, active.commitHash)}</div>`
+    html += `<div class="commit-ref">introduced in ${commitLink(active.repo?.github, active.commitHash)}</div>`
   }
   if (sortedTabs.length > 1) {
     html += '<div class="tabs">'
