@@ -185,6 +185,35 @@ function toggleRow(key, label, on) {
     + '</button>'
 }
 
+// Compute a path relative to a directory. Both inputs are
+// forward-slash separated; the result starts with `./` for
+// same-dir or `../` for an ancestor. No trailing slash on the
+// reference dir is assumed; we strip empties before walking.
+function relativePath(fromDir, toFile) {
+  const fromParts = fromDir.split('/').filter(Boolean)
+  const toParts = toFile.split('/').filter(Boolean)
+  let common = 0
+  while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {
+    common++
+  }
+  const ups = fromParts.length - common
+  const down = toParts.slice(common).join('/')
+  if (ups === 0) return './' + down
+  return '../'.repeat(ups) + down
+}
+
+// Pick the shorter representation between absolute and
+// relative-to-referenceDir. Used in the import lists so a
+// sibling file shows up as `./Logo.js` instead of
+// `src/components/Logo.js`, but a deep cross-tree import
+// still shows its full path when relative would only add
+// `../` segments.
+function shorterPath(file, referenceDir) {
+  if (!referenceDir && referenceDir !== '') return file
+  const rel = relativePath(referenceDir, file)
+  return rel.length < file.length ? rel : file
+}
+
 // File-link list — shared between file card's Imported by /
 // Imports sections and the package card's Imported by section.
 // Each row is clickable, routes through data-g2-select to the
@@ -193,7 +222,13 @@ function toggleRow(key, label, on) {
 // dominate the right panel on hub-y files. Each row gets a
 // little package-color dot so cross-package importers read
 // instantly without parsing the path prefix.
-function renderFileList(graph, label, files) {
+//
+// referenceDir (optional): when present, paths shorter than
+// the absolute form get displayed as `./...` / `../...`
+// relative to it. Title attribute always carries the full
+// absolute path so hovering reveals the canonical location
+// regardless of how the visible text reads.
+function renderFileList(graph, label, files, referenceDir) {
   const count = files.length
   let html = `<div class="g2-sel-section"><div class="g2-sel-section-label">${label} (${count})</div>`
   if (count === 0) {
@@ -204,9 +239,10 @@ function renderFileList(graph, label, files) {
     for (const f of sorted) {
       const node = graph.nodeByFile.get(f)
       const c = node ? pkgColor(node.pkg) : '#666'
+      const display = shorterPath(f, referenceDir)
       html += `<li><button type="button" class="g2-sel-file-link" data-g2-select="${esc(f)}" title="${esc(f)}">`
       html += `<span class="g2-sel-file-dot" style="background:${c}"></span>`
-      html += `<span class="g2-sel-file-path">${esc(f)}</span>`
+      html += `<span class="g2-sel-file-path">${esc(display)}</span>`
       html += '</button></li>'
     }
     html += '</ul>'
@@ -387,11 +423,15 @@ function renderFileCard(graph, n, file) {
   // earlier "Top neighbors" combined both directions and lost
   // that information, which made the section less useful for
   // tracing what depends on what. Each list scrolls past 5
-  // entries via CSS.
+  // entries via CSS. Paths are displayed relative to the
+  // selected file's directory when that's shorter than the
+  // absolute form.
   const importers = graph.importedBy.get(file) ?? []
   const imports = graph.importsOf.get(file) ?? []
-  html += renderFileList(graph, 'Imported by', importers)
-  html += renderFileList(graph, 'Imports', imports)
+  const lastSlash = file.lastIndexOf('/')
+  const referenceDir = lastSlash >= 0 ? file.slice(0, lastSlash) : ''
+  html += renderFileList(graph, 'Imported by', importers, referenceDir)
+  html += renderFileList(graph, 'Imports', imports, referenceDir)
   html += '</div>'
   return html
 }
