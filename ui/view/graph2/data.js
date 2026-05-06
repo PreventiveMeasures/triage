@@ -42,7 +42,7 @@ export function issueSummary(counts) {
 // edges (intra/cross), adj (file → edge index list), ambassadors
 // (file paths flagged as hubs). Side-effect free; all positions
 // written into nodes by the caller's layout pass.
-export function buildGraph(treeData, files, ownCounts) {
+export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
   const fileSet = new Set(files)
   const importsOf = new Map()
   const importedBy = new Map()
@@ -56,11 +56,16 @@ export function buildGraph(treeData, files, ownCounts) {
   }
 
   // Node objects: position seeded to 0,0 (layoutSpiral/Radial/Grid
-  // overwrite). issue / issueText derived from ownCounts so the same
-  // map drives the canvas rings, the severity row counts, and the
-  // tooltip text — single source of truth.
+  // overwrite). own / subtree carry the FULL per-severity count
+  // maps so the selection card and tooltip can render v1-style
+  // chips ("4 MEDIUM" / "5 LOW") without re-deriving them; `issue`
+  // and `totalIssues` are still derived for the canvas's severity
+  // ring + visibility predicate, so all three views (canvas
+  // ring, side-panel chips, tooltip chips) read from the same
+  // ownCounts source.
   const nodes = files.map((file) => {
     const own = ownCounts.get(file)
+    const subtree = transitiveCounts?.get(file) ?? null
     const totalIssues = totalFindings(own)
     const pkg = packageOf(file) ?? '__own__'
     const issue = topIssueOf(own)
@@ -74,6 +79,8 @@ export function buildGraph(treeData, files, ownCounts) {
       issue,
       issueText,
       totalIssues,
+      own,
+      subtree,
       isHub: false,
       label: file.split('/').pop() ?? file,
     }

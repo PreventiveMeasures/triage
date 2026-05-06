@@ -106,7 +106,7 @@ export function buildGraph2Data() {
       ? allFiles
       : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   }
-  return { graph: buildGraph(treeData, files, findingCounts), findingCounts }
+  return { graph: buildGraph(treeData, files, findingCounts, transitiveCounts), findingCounts }
 }
 
 // Re-render only the right-panel selection card in the graph v2 tab.

@@ -168,6 +168,22 @@ function toggleRow(key, label, on) {
     + '</button>'
 }
 
+// Severity-count chip block — used by the selection card's
+// Own / Subtree finding sections AND by the canvas tooltip.
+// Reuses graph v1's `.tree-count-chip` palette (already defined
+// global in styles/graph.css), so the chips look identical in
+// both graph tabs. Returns "none" placeholder when the counts
+// object is null or all-zero, matching v1's "none"-on-empty.
+export function renderSevChips(counts) {
+  if (!counts) return '<div class="g2-sel-section-empty">none</div>'
+  const tiers = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
+  const present = tiers.filter((s) => (counts[s] ?? 0) > 0)
+  if (present.length === 0) return '<div class="g2-sel-section-empty">none</div>'
+  return '<div class="tree-count-chips">'
+    + present.map((s) => `<span class="tree-count-chip ${s}">${counts[s]} ${s.replace(/_/gu, ' ')}</span>`).join('')
+    + '</div>'
+}
+
 function renderStage() {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
@@ -279,13 +295,15 @@ export function renderSelectionCard(graph) {
   html += `<div class="g2-sel-row"><span class="k">Degree</span><span class="v">${n.deg}</span></div>`
   html += `<div class="g2-sel-row"><span class="k">Intra-pkg</span><span class="v">${intra}</span></div>`
   html += `<div class="g2-sel-row"><span class="k">Cross-pkg</span><span class="v">${cross}</span></div>`
-  if (n.issue) {
-    html += `<div class="g2-sel-row"><span class="k">Status</span><span class="v"><span class="g2-issue-badge" style="--sev:${SEV_COLORS[n.issue]}">${n.issue}</span></span></div>`
-  } else {
-    html += `<div class="g2-sel-row"><span class="k">Status</span><span class="v">clean</span></div>`
-  }
   html += '</div>'
-  if (n.issueText) html += `<div class="g2-issue-text" style="--sev:${SEV_COLORS[n.issue] ?? '#888'}">${esc(n.issueText)}</div>`
+  // Own + subtree finding chips — same chrome as graph v1's
+  // sidebar (.tree-info-section / .tree-count-chip), so the
+  // visual reads consistently across the two graph tabs. The
+  // single-severity Status row + issue-text bar that lived
+  // here previously duplicated the data without showing the
+  // breakdown — chips are strictly more informative.
+  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Own findings</div>${renderSevChips(n.own)}</div>`
+  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Subtree findings</div>${renderSevChips(n.subtree)}</div>`
   // Quick jumps over to the existing tabs — same data, different
   // presentation. Findings filters get cleared first so the user
   // doesn't land on an empty list because of a stale exclude.

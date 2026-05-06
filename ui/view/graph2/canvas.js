@@ -1,5 +1,6 @@
 import { graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
+import { renderSevChips } from './render.js'
 import { forceLayout, pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
@@ -622,12 +623,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       graph.edges[ei].cross ? cross++ : intra++
     }
     const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
+    // The header used to carry a severity badge alongside Hub —
+    // dropped because the chip block below shows the full
+    // breakdown ("3 HIGH" / "2 MEDIUM"), so a single-tier label
+    // up top was redundant. Chips also follow v1's tooltip
+    // pattern, keeping the two graph tabs visually consistent.
     let html = `
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style="background:${col}"></span>
         <span class="g2-tt-id">${escapeHtml(n.label)}</span>
         ${n.isHub ? '<span class="g2-tt-badge">Hub</span>' : ''}
-        ${n.issue ? `<span class="g2-issue-badge" style="--sev:${SEV_COLORS[n.issue]}">${n.issue}</span>` : ''}
       </div>
       <dl class="g2-tt-grid">
         <dt>Package</dt><dd>${escapeHtml(pkgLabel)}</dd>
@@ -635,9 +640,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         <dt>Intra</dt><dd>${intra}</dd>
         <dt>Cross</dt><dd>${cross}</dd>
       </dl>`
-    if (n.issueText) {
-      html += `<div class="g2-issue-text" style="--sev:${SEV_COLORS[n.issue] ?? '#888'}">${escapeHtml(n.issueText)}</div>`
-    }
+    if (n.totalIssues > 0) html += renderSevChips(n.own)
     tooltip.innerHTML = html
     // Show first, THEN measure — the browser doesn't compute layout
     // for `display: none` / opacity: 0 elements and we need the real

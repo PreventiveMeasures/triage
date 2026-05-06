@@ -588,43 +588,19 @@
   font-weight: 600;
 }
 
-/* Severity badge — sev color comes via the --sev custom prop set
-   inline at render time. Same shape used in the tooltip header AND
-   the selection card status row. The ring colors here are vivid
-   data colors set by the canvas; the badge wraps them in the same
-   tinted-bg + outline pattern so the tooltip and the canvas read
-   as belonging to the same severity. */
-.g2-issue-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font: 600 9px/1 inherit;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 3px 5px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--sev) 16%, transparent);
-  color: var(--sev);
-  border: 1px solid color-mix(in srgb, var(--sev) 50%, transparent);
+/* Per-severity chip blocks for the selection card and tooltip.
+   The chip palette itself comes from styles/graph.css (the
+   .tree-count-chip / .tree-count-chips rules graph v1 already
+   uses); we only adjust spacing inside the v2 tooltip below. */
+.g2-tooltip .tree-count-chips { margin-top: 6px; }
 
-  &::before {
-    content: '';
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: var(--sev);
-    box-shadow: 0 0 5px var(--sev);
-  }
-}
-
-.g2-issue-text {
-  font: 500 11px/1.4 inherit;
-  color: var(--text);
-  padding: 7px 9px;
-  background: color-mix(in srgb, var(--sev) 8%, var(--graph-hover-bg));
-  border-left: 2px solid var(--sev);
-  border-radius: 0 4px 4px 0;
-  margin-top: 6px;
-}
+/* Light-theme override for medium chips in v2 — graph.css has
+   the equivalent rule scoped to v1's .tree-info, but v2 uses
+   different containers. Without this, the medium chip's
+   default `color: #000` reads as black-on-darkamber once
+   --medium darkens for light theme, hard to read. */
+body.theme-light .graph2-right .tree-count-chip.medium,
+body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 
 /* ── Selection card ─────────────────────────────────────────── */
 .g2-selection-card {
@@ -686,20 +662,36 @@
   }
 }
 
+/* Section block under the body — Own/Subtree findings live
+   here. Same divider rhythm as the body rows; chip block sits
+   inside. Mirrors v1's .tree-info-section. */
+.g2-sel-section {
+  padding: 9px 13px;
+  border-top: 1px solid var(--graph-divider);
+}
+
+.g2-sel-section-label {
+  font: 600 10px/1 inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.85;
+  margin-bottom: 5px;
+}
+
+.g2-sel-section-empty {
+  color: var(--muted);
+  opacity: 0.55;
+  font-size: 11px;
+  font-style: italic;
+}
+
 .g2-sel-jumps {
-  padding: 0 13px 11px;
+  padding: 11px 13px;
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
-}
-
-/* Add breathing room above the jump buttons when the issue-text
-   block is the immediately preceding sibling — without this
-   they sit ~7px below the issue text (just the issue-text's
-   padding-bottom), which reads as the buttons being attached
-   to the message rather than belonging to the action footer. */
-.g2-issue-text + .g2-sel-jumps {
-  padding-top: 10px;
+  border-top: 1px solid var(--graph-divider);
 }
 
 .g2-sel-jump {
