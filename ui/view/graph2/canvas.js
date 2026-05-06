@@ -569,7 +569,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     ensureLayout()
     fitToView()
   }
-  function refit() { fitToView() }
 
   // Resize observer — handles container resize (sidebar collapse,
   // window resize, tab switch with different available space). The
@@ -586,7 +585,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   rafId = requestAnimationFrame(draw)
 
   graph2.graphState = {
-    relayout, refit,
+    relayout,
     _cleanup: () => {
       cancelAnimationFrame(rafId)
       ro.disconnect()

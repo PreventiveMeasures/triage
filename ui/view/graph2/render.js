@@ -67,13 +67,12 @@ function renderTopBar() {
   }
   html += '</div>'
   html += '<div class="g2-spacer"></div>'
-  html += '<button type="button" class="g2-icon-btn" id="g2-fit-btn" title="Fit to view">'
-  html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>'
-  html += '</button>'
   // Fullscreen — same affordance as graph v1's toolbar button.
   // Toggles `body.report-fullscreen`, which hides the sidebar /
   // header / page padding and lets the layout grow to the viewport.
-  // Esc handler in ingest.js exits fullscreen for both tabs.
+  // Esc handler in ingest.js exits fullscreen for both tabs. The
+  // fit-to-view affordance lives on the floating zoom control over
+  // the canvas (⟲ in the bottom-left stack), not duplicated here.
   html += '<button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>'
   html += '</div>'
   return html
