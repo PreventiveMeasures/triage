@@ -104,12 +104,10 @@ function renderTopBar(graph) {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
-  // Fullscreen — toggles `body.report-fullscreen`, which hides the
-  // sidebar / header / page padding and lets the layout grow to
-  // the viewport. Esc handler in ingest.js exits fullscreen. The
-  // fit-to-view affordance lives on the floating zoom control over
-  // the canvas (the "fit" label in the bottom-right stack), not
-  // duplicated here.
+  // Fullscreen — toggles `body.report-fullscreen`. With the
+  // sidebar now spanning both grid rows, the topbar covers only
+  // the stage column, so the button's right-edge position here
+  // sits right at the stage / sidebar boundary.
   html += '<button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>'
   html += '</div>'
   return html

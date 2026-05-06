@@ -14,8 +14,14 @@
   display: grid;
   grid-template-columns: 1fr 300px;
   grid-template-rows: 44px 1fr;
+  /* `right` spans both rows so the sidebar starts at the very
+     top of the layout, alongside the topbar — its first row
+     (Selection title + inline fullscreen) sits at the same Y
+     as the topbar's controls instead of stacking below them.
+     Saves a row of vertical real estate the sidebar previously
+     wasted on bare chrome. */
   grid-template-areas:
-    "topbar topbar"
+    "topbar right"
     "stage  right";
   height: 82vh;
   margin-bottom: 1rem;
