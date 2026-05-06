@@ -196,23 +196,26 @@ export function layoutSpiral(graph, w, h) {
   // null on a fully-cyclic graph, in which case nothing is
   // pinned and the spiral fills the full radius range.
   const entryPkg = findEntryPkg(graph)
-  const others = entryPkg ? graph.packages.filter((p) => p !== entryPkg) : graph.packages
-  const Nothers = others.length
-  // Cross-package degree per package — drives the radius
-  // assignment for non-entry packages. Most-imported packages
-  // sit near the inner ring (close to the entry), least-imported
-  // drift to the rim. Reads as "the more central a package is
-  // to the dependency graph, the more central it is on screen".
+  // Sort others by cross-degree desc (ties: file count desc).
+  // The original spiral algorithm below uses i to drive BOTH
+  // the angle (i * 137.508°) and the radius (band = i*31 % 100
+  // / 100 — pseudo-random walk through 100 distinct values).
+  // By feeding cross-deg-desc as the input order, the most-
+  // connected non-entry package lands at i=0 → band=0 →
+  // innermost radius; subsequent indices cycle through the
+  // band sequence in cross-deg order, so the layout's
+  // arm structure (which depends on the angle/radius
+  // decoupling per step) is preserved verbatim.
   const crossDeg = crossDegByPkg(graph)
-  // Rank others by cross-degree desc; ties broken by package
-  // size desc so equal-cross packages stack large-first toward
-  // the center.
-  const ranked = [...others].sort((a, b) => {
-    const cd = (crossDeg.get(b) ?? 0) - (crossDeg.get(a) ?? 0)
-    if (cd !== 0) return cd
-    return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
-  })
-  const rankByPkg = new Map(ranked.map((p, i) => [p, i]))
+  const others = (entryPkg
+    ? graph.packages.filter((p) => p !== entryPkg)
+    : [...graph.packages])
+    .sort((a, b) => {
+      const cd = (crossDeg.get(b) ?? 0) - (crossDeg.get(a) ?? 0)
+      if (cd !== 0) return cd
+      return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
+    })
+  const Nothers = others.length
   // Adapt the OUTER radius to N. Tight ring at low N (so a
   // handful of packages frame each other on a circle rather
   // than floating sparsely), widen through medium N, full
@@ -254,34 +257,16 @@ export function layoutSpiral(graph, w, h) {
   }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
-    // Angle from the loop index, golden-angle stepped, so
-    // angular distribution stays maximally distinct regardless
-    // of how the rank-by-cross sort reorders things.
+    // Original design formulas — i drives both the golden-
+    // angle step and the pseudo-random radius band. Because
+    // `others` is sorted by cross-degree desc, low i means
+    // high cross-degree, and `band = (i * 31) % 100 / 100`
+    // returns 0 at i=0 → the most cross-connected package
+    // lands at the innermost radius. Subsequent indices cycle
+    // through the band sequence in cross-deg order.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Radius — pseudoBand (`(i * 31) % 100 / 100`) drives the
-    // main spread across [0,1]; that's what gives the spiral
-    // its arms. Cross-degree rank applies a SOFT additive
-    // shift (±0.15) on top, so well-connected packages drift
-    // toward center and leaf packages drift to the rim, but
-    // both still occupy the full radius range and the arm
-    // structure survives.
-    //
-    // An earlier 50/50 blend created two non-overlapping
-    // zones (high-cross stuck in [0, 0.5], low-cross stuck
-    // in [0.5, 1.0]). Real graphs have ~10× more leaves than
-    // hubs, so the outer half got packed solid while the
-    // inner half was sparse — the layout collapsed into a
-    // dense outer band with the entry floating in a void.
-    // Additive shift fixes that: the bias is statistical,
-    // not structural.
-    const rank = rankByPkg.get(pkg) ?? i
-    const rankFraction = Nothers <= 1 ? 0.5 : rank / (Nothers - 1)
-    const pseudoBand = ((i * 31) % 100) / 100
-    const biasShift = (rankFraction - 0.5) * 0.30
-    const seed = hash(pkg)
-    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.08
-    const band = Math.max(0, Math.min(1, pseudoBand + biasShift + jitter))
-    const rUnit = minRUnit + band * (maxRUnit - minRUnit)
+    const band = ((i * 31) % 100) / 100
+    const rUnit = Nothers === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
     pkgInfo.set(pkg, {
