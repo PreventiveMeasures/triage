@@ -152,7 +152,7 @@ function renderControls(graph) {
   html += '<div class="g2-collapsible-body">'
   html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))
   html += sliderRow('node-size', 'Node size', graph2.nodeSize.toFixed(1) + '×', 40, 220, Math.round(graph2.nodeSize * 100))
-  html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
+  html += toggleRow('labels', 'Labels', graph2.showLabels)
   html += '</div></section>'
   return html
 }

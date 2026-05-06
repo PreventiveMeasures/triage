@@ -443,15 +443,32 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       }
     }
 
-    // ── Labels (high zoom only, collision-avoidant) ─────────────
-    // Walks candidates in priority order (selected > hovered >
-    // hub > rest); each label is dropped when its AABB overlaps
-    // any already-placed one. Hubs still claim space first among
-    // the rest so they get labelled even when a less important
-    // node sits next to them. Pre-zoom-2.4 we already filter to
-    // hubs only; past that, all visible nodes get a candidate
-    // and the collision pass thins the result naturally.
-    if (graph2.showLabels && viewport.k > 1.4) {
+    // ── Labels (auto-on at high zoom or low on-screen count,
+    // collision-avoidant) ──────────────────────────────────────
+    // Auto-enable labels in two cases:
+    //   1. Zoom ≥ 900%: user is clearly inspecting in detail.
+    //   2. Fewer than 50 nodes currently visible inside the
+    //      canvas viewport — at that density labels can fit
+    //      without much overlap.
+    // Manual graph2.showLabels still works as a force-on
+    // override. Within the label pass, every visible node is a
+    // candidate; the collision pass thins the result based on
+    // priority (selected > hovered > hub > rest).
+    const VISIBLE_THRESHOLD = 50
+    let onScreenCount = 0
+    if (viewport.k < 9 && !graph2.showLabels) {
+      // Only count when needed to decide auto-on; cap at the
+      // threshold so we exit early on dense graphs.
+      for (const n of graph.nodes) {
+        if (!nodeVisible(n)) continue
+        const [sx, sy] = worldToScreen(n.x, n.y)
+        if (sx < 0 || sx > W || sy < 0 || sy > H) continue
+        onScreenCount++
+        if (onScreenCount >= VISIBLE_THRESHOLD) break
+      }
+    }
+    const labelsAutoOn = viewport.k >= 9 || onScreenCount < VISIBLE_THRESHOLD
+    if (graph2.showLabels || labelsAutoOn) {
       ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
       ctx.fillStyle = T.labelFill
       ctx.textAlign = 'left'
@@ -461,7 +478,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       const candidates = []
       for (const n of graph.nodes) {
         if (!nodeVisible(n)) continue
-        if (!n.isHub && viewport.k < 2.4) continue
         const [sx, sy] = worldToScreen(n.x, n.y)
         const r = nodeRadius(n)
         const tx = sx + r + 4
