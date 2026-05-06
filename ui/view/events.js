@@ -153,6 +153,20 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Trash toggle in graph v2's topbar — same body-level effect
+  // as the findings tab's #toggle-trash (flips state.showDeleted),
+  // PLUS canvas teardown / cache invalidation so the graph
+  // rebuilds against the new file set. The findings tab's own
+  // handler still works when the user is over there; this one
+  // adds the v2-specific cleanup.
+  if (e.target.closest('#g2-toggle-trash')) {
+    state.showDeleted = !state.showDeleted
+    graph2.layoutCache = null
+    graph2.selected = null
+    cleanupGraph2()
+    render()
+    return
+  }
   // Tree-tab: click a graph node to select it (drives the sidebar).
   const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
   if (treeNode) {

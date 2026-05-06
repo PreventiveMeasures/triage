@@ -81,6 +81,16 @@
   &.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
 }
 
+/* Trash button — same shape as the show-all toggle but with an
+   "active mode" treatment when on, since being in trash view is
+   a more disruptive context shift than "show all" and the user
+   needs to clearly see they're looking at deleted findings. */
+.g2-trash-btn.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ── Panels ────────────────────────────────────────────────── */
 .graph2-left,
 .graph2-right {

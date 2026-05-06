@@ -60,13 +60,29 @@ export function refreshTreeSidebar() {
 // Build the v2 graph data from the currently-loaded report. Returns
 // null when no tree-bearing report is loaded — callers (the tab
 // switcher in render(), the "Graph v2" event handler) use that to
-// fall back to a friendlier state. Mirrors graph v1's filter: when
-// `tree.showAll` is off, clean files are dropped from the canvas.
+// fall back to a friendlier state.
+//
+// Two filters compose:
+//   - state.showDeleted splits findings the same way the findings
+//     tab does: live findings by default, deleted findings in trash
+//     mode. Visibility is at the GROUP level (a group is "deleted"
+//     when every member is in state.deletedIds), matching the
+//     findings tab so swapping tabs reads consistently.
+//   - tree.showAll then optionally pads the file set with clean
+//     files whose subtree contains a (filtered-in) finding,
+//     reachable through imports. Off by default so the canvas
+//     focuses on issue-bearing code.
 export function buildGraph2Data() {
   const treeData = state.reports[0]?.tree
   if (!treeData) return null
   const allFiles = Object.keys(treeData)
-  const findingCounts = computeFindingCountsByFile(state.reports.flatMap((r) => r.groups))
+  const allGroups = state.reports.flatMap((r) => r.groups)
+  // Filter to live (default) or deleted (trash mode) groups
+  // BEFORE counting per-file findings, so the layout, statistics,
+  // and severity-row counts all reflect the active tab's split.
+  const visibleGroups = allGroups.filter((g) =>
+    state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
+  const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
   const files = tree.showAll
     ? allFiles

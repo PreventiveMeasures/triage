@@ -1,7 +1,9 @@
 import { esc } from '../format.js'
+import { state } from '../state.js'
 import { graph2 } from './state.js'
 import { tree } from '../graph/state.js'
 import { pkgColor } from '../graph/utils.js'
+import { isGroupDeleted } from '../group.js'
 import { issueSummary } from './data.js'
 
 const SEV_COLORS = {
@@ -47,6 +49,23 @@ function renderTopBar() {
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
   html += '<span>Show all</span><span class="g2-switch"></span>'
   html += '</button>'
+  // Trash toggle — same role as the findings tab's trash button.
+  // Visible when there are deleted findings to show OR when the
+  // user is already in trash view (so they can exit without
+  // first un-deleting). Toggling flips state.showDeleted (shared
+  // with findings) and rebuilds the graph data: the file set,
+  // statistics, and per-package issue counts all switch to the
+  // deleted-only view. This is a data-level filter, not a
+  // visual overlay.
+  const allGroups = state.reports.flatMap((r) => r.groups)
+  const deletedCount = allGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
+  if (deletedCount > 0 || state.showDeleted) {
+    const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
+    const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
+    html += `<button type="button" class="g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}" id="g2-toggle-trash" title="${trashTitle}" aria-pressed="${state.showDeleted}">`
+    html += `<span>${esc(trashLabel)}</span>`
+    html += '</button>'
+  }
   html += '<div class="g2-spacer"></div>'
   // Fullscreen — same affordance as graph v1's toolbar button.
   // Toggles `body.report-fullscreen`, which hides the sidebar /
