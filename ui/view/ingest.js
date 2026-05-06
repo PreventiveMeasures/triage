@@ -7,6 +7,7 @@ import { loadPromise } from './triage.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
+import { graph2, cleanupGraph2 } from './graph2/state.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { parseCodexCsvToScans } from './parse-codex.js'
 import { parseDeepseekFindings } from './parse-deepseek.js'
@@ -80,6 +81,15 @@ export async function switchToFile(name, content) {
   tree.selected = null
   tree.layoutCache = null
   cleanupGraphInteraction()
+  // Mirror the same reset for graph v2: clear selection / layout
+  // cache / palette state so a new report doesn't open with stale
+  // hidden packages or a soloed pkg from the previous file.
+  graph2.selected = null
+  graph2.layoutCache = null
+  graph2.solo = null
+  graph2.hidden.clear()
+  graph2.paletteSearch = ''
+  cleanupGraph2()
   try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
   if (content === undefined) {
     try {
@@ -106,6 +116,12 @@ export async function deleteCurrent() {
   tree.selected = null
   tree.layoutCache = null
   cleanupGraphInteraction()
+  graph2.selected = null
+  graph2.layoutCache = null
+  graph2.solo = null
+  graph2.hidden.clear()
+  graph2.paletteSearch = ''
+  cleanupGraph2()
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')
   report.innerHTML = ''

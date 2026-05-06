@@ -1,0 +1,556 @@
+import { graph2 } from './state.js'
+import { applyLayout } from './layout.js'
+import { pkgColor, pkgColorAlpha } from '../graph/utils.js'
+
+// Severity palette baked into the canvas. Mirrors the design spec —
+// vivid hot colors for critical/high so they pop above the package
+// hue, calmer tones for medium/low. Critical also drives a pulse
+// animation in the draw loop so the eye lands on it first.
+const SEV_COLORS = {
+  critical: '#ff5470',
+  high: '#ff9d4a',
+  medium: '#f4d35e',
+  low: '#67c2ff',
+}
+
+// Canvas backdrop. Hardcoded to dark — the v2 chrome carries its
+// own palette (see graph2.css) and even in the user's light theme
+// the canvas reads as a stand-alone "data display" tinted toward
+// the package colors, like graph v1's canvas.
+const BG = '#0b0d10'
+const GRID = 'rgba(255, 255, 255, 0.018)'
+
+// 0..1 → 2-digit hex alpha — appended to a 6-digit hex color so we
+// can compose `'#ffaa00' + alphaHex(0.3)` cheaply in inner draw
+// loops without ctx.globalAlpha bookkeeping.
+function alphaHex(a) {
+  const v = Math.max(0, Math.min(255, Math.round(a * 255)))
+  return v.toString(16).padStart(2, '0')
+}
+
+// Wire up the v2 canvas: layout (deferred to first resize so the
+// solver gets real dimensions), draw loop, hover/click hit-test,
+// pan/zoom, minimap, and all the live counters in the corner
+// readouts. The container is the .graph2-stage element; refresh is
+// a function the renderer passes in to rebuild the right-panel
+// selection card after a click (it already owns the data context
+// the card needs).
+export function attachGraph2Interaction(container, graph, refreshSidebar) {
+  const canvas = container.querySelector('#g2-canvas')
+  const tooltip = container.querySelector('#g2-tooltip')
+  const stage = container.querySelector('.graph2-stage')
+  const fpsEl = container.querySelector('#g2-fps')
+  const cursorEl = container.querySelector('#g2-cursor')
+  const visibleEl = container.querySelector('#g2-visible')
+  const zoomEl = container.querySelector('#g2-zoom-pct')
+  const miniCv = container.querySelector('#g2-mini-cv')
+  const miniVp = container.querySelector('#g2-mini-vp')
+  const minimap = container.querySelector('#g2-minimap')
+
+  if (!canvas) return
+
+  const ctx = canvas.getContext('2d')
+  let dpr = window.devicePixelRatio || 1
+  let W = 0, H = 0
+  let viewport = { tx: 0, ty: 0, k: 1 }
+  let hovered = null
+  let layoutW = 0, layoutH = 0
+  let needsLayout = true
+  let needsFit = true
+
+  // Keep a reference to the current selected file in a local for
+  // fast access in draw — the renderer mutates graph2.selected on
+  // click, but reading it through the import is fine since modules
+  // are live-bound.
+
+  // ── Layout (deferred until we have real canvas dimensions) ─────
+  function ensureLayout() {
+    if (!needsLayout) return
+    const cache = graph2.layoutCache
+    if (cache && cache.mode === graph2.layoutMode && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
+      // Reuse cached positions — copy back into the live nodes.
+      for (const n of graph.nodes) {
+        const p = cache.pos.get(n.file)
+        if (p) { n.x = p.x; n.y = p.y }
+      }
+    } else {
+      applyLayout(graph2.layoutMode, graph, layoutW, layoutH)
+      const pos = new Map()
+      for (const n of graph.nodes) pos.set(n.file, { x: n.x, y: n.y })
+      graph2.layoutCache = { mode: graph2.layoutMode, files: graph.files, w: layoutW, h: layoutH, pos }
+    }
+    needsLayout = false
+  }
+
+  function fitToView() {
+    if (graph.nodes.length === 0) {
+      viewport.k = 1
+      viewport.tx = W / 2; viewport.ty = H / 2
+      return
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of graph.nodes) {
+      if (n.x < minX) minX = n.x
+      if (n.y < minY) minY = n.y
+      if (n.x > maxX) maxX = n.x
+      if (n.y > maxY) maxY = n.y
+    }
+    const w = Math.max(20, maxX - minX), h = Math.max(20, maxY - minY)
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+    const pad = Math.min(W, H) * 0.1
+    const k = Math.min((W - pad * 2) / w, (H - pad * 2) / h, 4)
+    viewport.k = Math.max(0.05, k)
+    viewport.tx = W / 2 - cx * viewport.k
+    viewport.ty = H / 2 - cy * viewport.k
+  }
+
+  function worldToScreen(x, y) {
+    return [x * viewport.k + viewport.tx, y * viewport.k + viewport.ty]
+  }
+  function screenToWorld(sx, sy) {
+    return [(sx - viewport.tx) / viewport.k, (sy - viewport.ty) / viewport.k]
+  }
+
+  // Visibility predicate — combines every left-panel filter:
+  // package hide/solo, search-driven mute, min-degree slider, and
+  // the issue-only / per-severity rows. Centralized so the canvas,
+  // hit-test, and minimap stay consistent.
+  function nodeVisible(n) {
+    if (graph2.hidden.has(n.pkg)) return false
+    if (graph2.solo && n.pkg !== graph2.solo) return false
+    if (n.deg < graph2.minDegree) return false
+    if (graph2.issuesOnly && !n.issue) return false
+    if (n.issue && !graph2.showIssues[n.issue]) return false
+    return true
+  }
+
+  function nodeRadius(n) {
+    const base = (n.isHub ? 6 : 3.5) * graph2.nodeSize
+    const z = Math.max(0.6, Math.min(1.6, viewport.k))
+    return base * z
+  }
+
+  // ── Resize / DPR handling ─────────────────────────────────────
+  function resize() {
+    const rect = stage.getBoundingClientRect()
+    W = Math.max(80, rect.width)
+    H = Math.max(80, rect.height)
+    dpr = window.devicePixelRatio || 1
+    canvas.width = W * dpr; canvas.height = H * dpr
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // Layout in the same pixel space the canvas paints in, so
+    // forceLayout's "ideal edge length" tracks the viewport.
+    if (layoutW === 0 || layoutH === 0) {
+      layoutW = W; layoutH = H; needsLayout = true
+    }
+    ensureLayout()
+    if (needsFit) { fitToView(); needsFit = false }
+    // Minimap shares dpr but sizes from its own element.
+    if (miniCv && minimap) {
+      const mr = minimap.getBoundingClientRect()
+      miniCv.width = mr.width * dpr
+      miniCv.height = mr.height * dpr
+      miniCv.style.width = mr.width + 'px'
+      miniCv.style.height = mr.height + 'px'
+      miniCv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+  }
+
+  // ── Draw ──────────────────────────────────────────────────────
+  let lastT = performance.now()
+  let fps = 60
+  let rafId = null
+
+  function draw() {
+    rafId = requestAnimationFrame(draw)
+    const now = performance.now()
+    const dt = now - lastT
+    lastT = now
+    fps = fps * 0.92 + (1000 / Math.max(1, dt)) * 0.08
+    if (fpsEl) fpsEl.textContent = `${fps.toFixed(0)} fps`
+
+    ctx.fillStyle = BG
+    ctx.fillRect(0, 0, W, H)
+
+    // Subtle grid — dimmed at low zoom so it doesn't fight the data.
+    drawGrid()
+
+    const selected = graph2.selected
+    const sel = selected ? graph.nodeByFile.get(selected) : null
+
+    // ── Edges (back layer) ──────────────────────────────────────
+    if (graph2.edgeMode !== 'none') {
+      for (const e of graph.edges) {
+        if (graph2.edgeMode === 'cross' && !e.cross) continue
+        const na = graph.nodeByFile.get(e.a)
+        const nb = graph.nodeByFile.get(e.b)
+        if (!na || !nb) continue
+        if (!nodeVisible(na) || !nodeVisible(nb)) continue
+
+        let alpha = graph2.edgeOpacity
+        if (selected) {
+          const touches = e.a === selected || e.b === selected
+          alpha = touches ? 0.85 : graph2.edgeOpacity * 0.25
+        } else if (hovered) {
+          const touches = e.a === hovered || e.b === hovered
+          if (touches) alpha = Math.min(0.9, alpha + 0.5)
+        }
+
+        const [ax, ay] = worldToScreen(na.x, na.y)
+        const [bx, by] = worldToScreen(nb.x, nb.y)
+
+        if (e.cross) {
+          // gradient between package colors so the eye can trace
+          // who's on which side of a cross-package import without
+          // having to chase node colors visually.
+          const grad = ctx.createLinearGradient(ax, ay, bx, by)
+          grad.addColorStop(0, pkgColor(na.pkg) + alphaHex(alpha))
+          grad.addColorStop(1, pkgColor(nb.pkg) + alphaHex(alpha))
+          ctx.strokeStyle = grad
+          ctx.lineWidth = 0.85
+        } else {
+          ctx.strokeStyle = `rgba(180,195,215,${alpha * 0.7})`
+          ctx.lineWidth = 0.55
+        }
+
+        ctx.beginPath()
+        ctx.moveTo(ax, ay)
+        ctx.lineTo(bx, by)
+        ctx.stroke()
+      }
+    }
+
+    // ── Halos (hubs / hover / selected) ─────────────────────────
+    if (graph2.showHalos) {
+      for (const n of graph.nodes) {
+        if (!nodeVisible(n)) continue
+        const isHov = n.file === hovered
+        const isSel = n.file === selected
+        if (!n.isHub && !isHov && !isSel) continue
+        const [sx, sy] = worldToScreen(n.x, n.y)
+        const r = nodeRadius(n)
+        const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
+        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, haloR)
+        const col = pkgColor(n.pkg)
+        grad.addColorStop(0, col + '55')
+        grad.addColorStop(1, col + '00')
+        ctx.fillStyle = grad
+        ctx.beginPath()
+        ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+
+    // ── Nodes ───────────────────────────────────────────────────
+    let visibleCount = 0
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      visibleCount++
+      const [sx, sy] = worldToScreen(n.x, n.y)
+      const r = nodeRadius(n)
+      let dim = 1
+      if (selected && n.file !== selected) {
+        const touches = (graph.adj.get(selected) ?? []).some((ei) => {
+          const e = graph.edges[ei]; return e.a === n.file || e.b === n.file
+        })
+        dim = touches ? 1 : 0.25
+      }
+
+      ctx.fillStyle = pkgColor(n.pkg) + alphaHex(dim)
+      ctx.beginPath()
+      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.fill()
+
+      if (n.isHub && graph2.highlightHubs) {
+        ctx.strokeStyle = `rgba(255,255,255,${0.55 * dim})`
+        ctx.lineWidth = 0.8
+        ctx.stroke()
+      }
+
+      if (n.issue) {
+        const sevColor = SEV_COLORS[n.issue]
+        const ringR = r + (n.issue === 'critical' ? 4.2 : n.issue === 'high' ? 3.4 : 2.8)
+        const lw = n.issue === 'critical' ? 1.8 : n.issue === 'high' ? 1.5 : n.issue === 'medium' ? 1.3 : 1.1
+        ctx.strokeStyle = sevColor
+        ctx.globalAlpha = dim
+        ctx.lineWidth = lw
+        ctx.beginPath()
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
+        ctx.stroke()
+        if (n.issue === 'critical') {
+          // Time-driven pulse — keeps a critical-issue node visible
+          // even at low contrast / when the rest of the graph is
+          // dim from a selection. Phase derived from `now` so all
+          // critical pulses on the canvas breathe in sync.
+          const pulse = 0.5 + 0.5 * Math.sin(now / 360)
+          const pr = ringR + 2 + pulse * 4
+          const grd = ctx.createRadialGradient(sx, sy, ringR, sx, sy, pr)
+          grd.addColorStop(0, sevColor + alphaHex(0.55 * dim * (0.4 + 0.6 * pulse)))
+          grd.addColorStop(1, sevColor + '00')
+          ctx.fillStyle = grd
+          ctx.beginPath()
+          ctx.arc(sx, sy, pr, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.globalAlpha = 1
+      }
+    }
+
+    // ── Labels (high zoom only) ──────────────────────────────────
+    if (graph2.showLabels && viewport.k > 1.4) {
+      ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+      ctx.fillStyle = 'rgba(230,233,238,0.78)'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      for (const n of graph.nodes) {
+        if (!nodeVisible(n)) continue
+        if (!n.isHub && viewport.k < 2.4) continue
+        const [sx, sy] = worldToScreen(n.x, n.y)
+        const r = nodeRadius(n)
+        ctx.fillText(n.label, sx + r + 4, sy + 1)
+      }
+    }
+
+    // Selection ring on top so it never gets hidden by neighbors.
+    if (sel && nodeVisible(sel)) {
+      const [sx, sy] = worldToScreen(sel.x, sel.y)
+      const r = nodeRadius(sel)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(sx, sy, r + 5, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+
+    if (visibleEl) visibleEl.textContent = `${visibleCount.toLocaleString()} of ${graph.nodes.length.toLocaleString()} visible`
+    if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
+
+    drawMinimap()
+  }
+
+  function drawGrid() {
+    if (viewport.k < 0.4) return
+    const step = 80
+    const ox = ((viewport.tx % step) + step) % step
+    const oy = ((viewport.ty % step) + step) % step
+    ctx.strokeStyle = GRID
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (let x = ox; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
+    for (let y = oy; y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y) }
+    ctx.stroke()
+  }
+
+  // ── Minimap ───────────────────────────────────────────────────
+  function drawMinimap() {
+    if (!miniCv) return
+    const mctx = miniCv.getContext('2d')
+    const mr = minimap.getBoundingClientRect()
+    const mw = mr.width, mh = mr.height
+    mctx.fillStyle = '#0b0d10'
+    mctx.fillRect(0, 0, mw, mh)
+    if (graph.nodes.length === 0) return
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      if (n.x < minX) minX = n.x
+      if (n.y < minY) minY = n.y
+      if (n.x > maxX) maxX = n.x
+      if (n.y > maxY) maxY = n.y
+    }
+    if (!Number.isFinite(minX)) return
+    const w = Math.max(20, maxX - minX), h = Math.max(20, maxY - minY)
+    const k = Math.min(mw / w, mh / h) * 0.85
+    const cx = mw / 2, cy = mh / 2
+    const wcx = (minX + maxX) / 2, wcy = (minY + maxY) / 2
+    const toMini = (x, y) => [cx + (x - wcx) * k, cy + (y - wcy) * k]
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      const [mx, my] = toMini(n.x, n.y)
+      mctx.fillStyle = pkgColor(n.pkg) + 'cc'
+      mctx.fillRect(mx, my, 1.5, 1.5)
+    }
+    // Viewport rectangle
+    if (miniVp) {
+      const [wx0, wy0] = screenToWorld(0, 0)
+      const [wx1, wy1] = screenToWorld(W, H)
+      const [vx, vy] = toMini(wx0, wy0)
+      const vw = (wx1 - wx0) * k
+      const vh = (wy1 - wy0) * k
+      miniVp.style.left = `${Math.max(0, vx)}px`
+      miniVp.style.top = `${Math.max(0, vy)}px`
+      miniVp.style.width = `${Math.min(mw, vw)}px`
+      miniVp.style.height = `${Math.min(mh, vh)}px`
+    }
+  }
+
+  // ── Hit test ──────────────────────────────────────────────────
+  function pickNode(sx, sy) {
+    let best = null, bestD = Infinity
+    const tol = 6
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      const [nx, ny] = worldToScreen(n.x, n.y)
+      const dx = nx - sx, dy = ny - sy
+      const d = dx * dx + dy * dy
+      const r = nodeRadius(n) + tol
+      if (d < r * r && d < bestD) { bestD = d; best = n }
+    }
+    return best
+  }
+
+  function showTooltip(n, cx, cy) {
+    if (!tooltip) return
+    const stageRect = stage.getBoundingClientRect()
+    const col = pkgColor(n.pkg)
+    let intra = 0, cross = 0
+    for (const ei of (graph.adj.get(n.file) ?? [])) {
+      graph.edges[ei].cross ? cross++ : intra++
+    }
+    const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
+    let html = `
+      <div class="g2-tt-head">
+        <span class="g2-tt-dot" style="background:${col}"></span>
+        <span class="g2-tt-id">${escapeHtml(n.label)}</span>
+        ${n.isHub ? '<span class="g2-tt-badge">Hub</span>' : ''}
+        ${n.issue ? `<span class="g2-issue-badge" style="--sev:${SEV_COLORS[n.issue]}">${n.issue}</span>` : ''}
+      </div>
+      <dl class="g2-tt-grid">
+        <dt>Package</dt><dd>${escapeHtml(pkgLabel)}</dd>
+        <dt>Degree</dt><dd>${n.deg}</dd>
+        <dt>Intra</dt><dd>${intra}</dd>
+        <dt>Cross</dt><dd>${cross}</dd>
+      </dl>`
+    if (n.issueText) {
+      html += `<div class="g2-issue-text" style="--sev:${SEV_COLORS[n.issue] ?? '#888'}">${escapeHtml(n.issueText)}</div>`
+    }
+    tooltip.innerHTML = html
+    let tx = cx - stageRect.left
+    let ty = cy - stageRect.top
+    tooltip.style.left = `${tx}px`
+    tooltip.style.top = `${ty}px`
+    tooltip.classList.add('show')
+  }
+  function hideTooltip() { if (tooltip) tooltip.classList.remove('show') }
+
+  function escapeHtml(s) {
+    const el = document.createElement('span'); el.textContent = String(s ?? ''); return el.innerHTML
+  }
+
+  // ── Pan / zoom / click ────────────────────────────────────────
+  let dragging = false
+  let dragStart = null
+  let dragMoved = false
+
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return
+    dragging = true
+    dragMoved = false
+    dragStart = { x: e.clientX, y: e.clientY, tx: viewport.tx, ty: viewport.ty }
+  }
+  const onMouseMove = (e) => {
+    const rect = stage.getBoundingClientRect()
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top
+    if (dragging) {
+      const dx = e.clientX - dragStart.x
+      const dy = e.clientY - dragStart.y
+      if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true
+      viewport.tx = dragStart.tx + dx
+      viewport.ty = dragStart.ty + dy
+      hideTooltip()
+      return
+    }
+    const hit = pickNode(sx, sy)
+    const prev = hovered
+    hovered = hit?.file ?? null
+    canvas.style.cursor = hit ? 'pointer' : 'grab'
+    if (hit) showTooltip(hit, e.clientX, e.clientY)
+    else if (prev) hideTooltip()
+    if (cursorEl) {
+      const [wx, wy] = screenToWorld(sx, sy)
+      cursorEl.textContent = `x: ${(wx >= 0 ? '+' : '')}${wx.toFixed(0)}  y: ${(wy >= 0 ? '+' : '')}${wy.toFixed(0)}`
+    }
+  }
+  const onMouseUp = (e) => {
+    if (dragging && !dragMoved) {
+      const rect = stage.getBoundingClientRect()
+      const sx = e.clientX - rect.left, sy = e.clientY - rect.top
+      const hit = pickNode(sx, sy)
+      graph2.selected = hit?.file ?? null
+      refreshSidebar()
+    }
+    dragging = false
+  }
+  const onMouseLeave = () => { hovered = null; hideTooltip() }
+  const onWheel = (e) => {
+    e.preventDefault()
+    const rect = stage.getBoundingClientRect()
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top
+    const [wx, wy] = screenToWorld(sx, sy)
+    const factor = Math.exp(-e.deltaY * 0.0015)
+    const nk = Math.max(0.06, Math.min(8, viewport.k * factor))
+    viewport.k = nk
+    viewport.tx = sx - wx * viewport.k
+    viewport.ty = sy - wy * viewport.k
+  }
+
+  stage.addEventListener('mousedown', onMouseDown)
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+  stage.addEventListener('mouseleave', onMouseLeave)
+  stage.addEventListener('wheel', onWheel, { passive: false })
+
+  // Zoom buttons
+  function zoomTo(nk) {
+    nk = Math.max(0.06, Math.min(8, nk))
+    const cx = W / 2, cy = H / 2
+    const [wx, wy] = screenToWorld(cx, cy)
+    viewport.k = nk
+    viewport.tx = cx - wx * viewport.k
+    viewport.ty = cy - wy * viewport.k
+  }
+  const zIn = container.querySelector('#g2-zoom-in')
+  const zOut = container.querySelector('#g2-zoom-out')
+  const zFit = container.querySelector('#g2-zoom-fit')
+  zIn?.addEventListener('click', () => zoomTo(viewport.k * 1.4))
+  zOut?.addEventListener('click', () => zoomTo(viewport.k / 1.4))
+  zFit?.addEventListener('click', () => fitToView())
+
+  // ── External hooks (called from events.js when sliders / segs / etc change) ─
+  function relayout(mode) {
+    graph2.layoutMode = mode
+    needsLayout = true
+    needsFit = true
+    ensureLayout()
+    fitToView()
+  }
+  function refit() { fitToView() }
+
+  // Resize observer — handles container resize (sidebar collapse,
+  // window resize, tab switch with different available space). The
+  // relayout-on-resize is intentionally off: forceLayout is too
+  // expensive to re-run on every drag of the window edge. Users can
+  // hit the layout segmented control to refresh; the canvas just
+  // refits its viewport so the existing positions stay centered.
+  resize()
+  const ro = new ResizeObserver(() => resize())
+  ro.observe(stage)
+
+  // Kick the draw loop. cancelAnimationFrame() in cleanup stops it
+  // when the tab swaps so we don't burn frames in the background.
+  rafId = requestAnimationFrame(draw)
+
+  graph2.graphState = {
+    relayout, refit,
+    _cleanup: () => {
+      cancelAnimationFrame(rafId)
+      ro.disconnect()
+      stage.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      stage.removeEventListener('mouseleave', onMouseLeave)
+      stage.removeEventListener('wheel', onWheel)
+    },
+  }
+}

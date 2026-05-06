@@ -9,6 +9,11 @@ import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/uti
 import { renderTreeCanvas, attachTreeGraphInteraction } from './graph/canvas.js'
 import { renderTreeSidebarFull } from './graph/sidebar.js'
 import { renderTreeView } from './graph/files.js'
+import { graph2 } from './graph2/state.js'
+import { buildGraph } from './graph2/data.js'
+import { renderGraph2Layout, renderSelectionCard } from './graph2/render.js'
+import { attachGraph2Interaction } from './graph2/canvas.js'
+import { fileHasFindings } from './graph/utils.js'
 
 // Inline SVGs for the View-mode icon buttons. currentColor lets the
 // CSS .active rule recolor them to var(--accent) on selection without
@@ -50,6 +55,35 @@ export function refreshTreeSidebar() {
   const findingCounts = computeFindingCountsByFile(state.reports.flatMap((r) => r.groups))
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
   infoEl.innerHTML = renderTreeSidebarFull(tree.selected, treeData, findingCounts, transitiveCounts)
+}
+
+// Build the v2 graph data from the currently-loaded report. Returns
+// null when no tree-bearing report is loaded — callers (the tab
+// switcher in render(), the "Graph v2" event handler) use that to
+// fall back to a friendlier state. Mirrors graph v1's filter: when
+// `tree.showAll` is off, clean files are dropped from the canvas.
+export function buildGraph2Data() {
+  const treeData = state.reports[0]?.tree
+  if (!treeData) return null
+  const allFiles = Object.keys(treeData)
+  const findingCounts = computeFindingCountsByFile(state.reports.flatMap((r) => r.groups))
+  const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
+  const files = tree.showAll
+    ? allFiles
+    : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
+  return { graph: buildGraph(treeData, files, findingCounts), findingCounts }
+}
+
+// Re-render only the right-panel selection card in the graph v2 tab.
+// Same role as refreshTreeSidebar above — keeps the canvas DOM (and
+// thus the active rAF / hover state) intact when the user just
+// clicked a node or a neighbor button.
+export function refreshGraph2Sidebar() {
+  const area = document.getElementById('g2-selection-area')
+  if (!area) return
+  const data = buildGraph2Data()
+  if (!data) return
+  area.innerHTML = renderSelectionCard(data.graph)
 }
 
 // Build the analyzer-breakdown header line. One entry per unique
@@ -452,13 +486,14 @@ export function render() {
   const treeData = state.reports[0]?.tree
   const treeFileCount = treeData ? Object.keys(treeData).length : 0
   const showTreeTab = treeFileCount > 1
-  if (!showTreeTab && (state.currentView === 'tree' || state.currentView === 'files')) {
+  if (!showTreeTab && (state.currentView === 'tree' || state.currentView === 'files' || state.currentView === 'graph2')) {
     state.currentView = 'findings'
   }
   if (showTreeTab) {
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
     html += `<button type="button" class="report-tab${state.currentView === 'tree' ? ' active' : ''}" data-view="tree">Graph</button>`
+    html += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph v2</button>`
     html += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     html += '</div>'
   }
@@ -490,6 +525,27 @@ export function render() {
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
     return
+  }
+
+  if (state.currentView === 'graph2') {
+    // Build the same filtered file set graph v1 would use (clean
+    // files dropped when tree.showAll=off) so the two tabs stay in
+    // sync — flipping showAll on graph v1 affects v2 as well.
+    const data = buildGraph2Data()
+    if (!data) {
+      // Tree-bearing report disappeared between renders; the tab
+      // switcher above will already have reset state.currentView,
+      // but the early-out here is defensive.
+      state.currentView = 'findings'
+    } else {
+      html += renderGraph2Layout(data.graph)
+      report.innerHTML = html
+      report.classList.add('active')
+      dropZone.classList.add('hidden')
+      document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+      attachGraph2Interaction(report, data.graph, refreshGraph2Sidebar)
+      return
+    }
   }
 
   html += statsHtml(counts, colorCounts)

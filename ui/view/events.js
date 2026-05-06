@@ -4,9 +4,10 @@ import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
-import { render, renderKeepFocus, refreshTreeSidebar } from './render.js'
+import { render, renderKeepFocus, refreshTreeSidebar, refreshGraph2Sidebar } from './render.js'
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { treeAnchor } from './graph/utils.js'
+import { graph2, cleanupGraph2 } from './graph2/state.js'
 
 // All interactive elements inside #report are handled via event
 // delegation here, no inline handlers. Order matters: closer-fitting
@@ -20,9 +21,124 @@ report.addEventListener('click', (e) => {
   // a chrome-less half-state with no canvas to justify it.
   const viewTab = e.target.closest('.report-tab')
   if (viewTab && viewTab.dataset.view) {
+    // Tear down the previous tab's canvas teardown before switching
+    // so its rAF / observers / window listeners stop firing once
+    // we replace #report's innerHTML in render(). cleanupGraph2 is a
+    // no-op when graph2 wasn't active.
+    if (state.currentView === 'graph2' && viewTab.dataset.view !== 'graph2') cleanupGraph2()
     state.currentView = viewTab.dataset.view
     document.body.classList.remove('report-fullscreen')
     render()
+    return
+  }
+  // Graph v2 — segmented controls (layout / edge mode), palette
+  // swatches, severity rows, toggle rows, neighbor jumps, and the
+  // jump-to-Findings / jump-to-Files buttons. All grouped here so
+  // the more specific selectors hit before the generic tab/click
+  // handlers below. The slider input event is wired separately
+  // (input event listener at the bottom of this file).
+  const g2LayoutBtn = e.target.closest('[data-g2-layout]')
+  if (g2LayoutBtn) {
+    graph2.layoutMode = g2LayoutBtn.dataset.g2Layout
+    graph2.layoutCache = null
+    if (graph2.graphState) {
+      graph2.graphState.relayout(graph2.layoutMode)
+      // Update the segmented control's `on` class without re-rendering
+      // the whole tab (which would teardown the canvas).
+      const seg = g2LayoutBtn.parentElement
+      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === g2LayoutBtn))
+    } else {
+      render()
+    }
+    return
+  }
+  const g2EdgeBtn = e.target.closest('[data-g2-edges]')
+  if (g2EdgeBtn) {
+    graph2.edgeMode = g2EdgeBtn.dataset.g2Edges
+    const seg = g2EdgeBtn.parentElement
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === g2EdgeBtn))
+    return
+  }
+  const g2Pkg = e.target.closest('[data-g2-pkg]')
+  if (g2Pkg) {
+    const pkg = g2Pkg.dataset.g2Pkg
+    // Clicking a swatch toggles solo on that package. Clicking the
+    // currently-soloed swatch clears solo. Hidden state is left
+    // alone — there's a separate UI affordance (the search box) for
+    // narrowing without committing to a single-package view.
+    graph2.solo = graph2.solo === pkg ? null : pkg
+    const palette = g2Pkg.parentElement
+    palette.querySelectorAll('.g2-swatch').forEach((s) => {
+      const p = s.dataset.g2Pkg
+      s.classList.toggle('solo', graph2.solo === p)
+      s.classList.toggle('dim', graph2.solo && graph2.solo !== p)
+    })
+    return
+  }
+  if (e.target.closest('#g2-palette-clear')) {
+    graph2.solo = null
+    graph2.hidden.clear()
+    graph2.paletteSearch = ''
+    const search = document.getElementById('g2-palette-search')
+    if (search) search.value = ''
+    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
+      s.classList.remove('solo', 'dim', 'muted', 'hidden-pkg')
+    })
+    return
+  }
+  const g2Sev = e.target.closest('[data-g2-sev]')
+  if (g2Sev) {
+    const sev = g2Sev.dataset.g2Sev
+    graph2.showIssues[sev] = !graph2.showIssues[sev]
+    g2Sev.classList.toggle('on', graph2.showIssues[sev])
+    return
+  }
+  const g2Toggle = e.target.closest('[data-g2-toggle]')
+  if (g2Toggle) {
+    const key = g2Toggle.dataset.g2Toggle
+    // Map UI-key → state field. The two non-matching ones (`hubs` →
+    // `highlightHubs`, `labels` → `showLabels`, `halos` → `showHalos`)
+    // exist because the data attributes read better in the DOM as
+    // short tokens; renaming the state fields would lose context in
+    // canvas.js.
+    const map = { halos: 'showHalos', hubs: 'highlightHubs', labels: 'showLabels', issuesOnly: 'issuesOnly' }
+    const field = map[key]
+    if (field) {
+      graph2[field] = !graph2[field]
+      g2Toggle.classList.toggle('on', graph2[field])
+    }
+    return
+  }
+  const g2Select = e.target.closest('[data-g2-select]')
+  if (g2Select) {
+    graph2.selected = g2Select.dataset.g2Select
+    refreshGraph2Sidebar()
+    return
+  }
+  const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')
+  if (g2JumpFindings) {
+    resetFilters()
+    state.filterConfMin = ''
+    state.filterInclude = g2JumpFindings.dataset.g2JumpFindings
+    state.currentView = 'findings'
+    cleanupGraph2()
+    render()
+    return
+  }
+  const g2JumpFile = e.target.closest('[data-g2-jump-file]')
+  if (g2JumpFile) {
+    const targetFile = g2JumpFile.dataset.g2JumpFile
+    state.currentView = 'files'
+    cleanupGraph2()
+    render()
+    requestAnimationFrame(() => {
+      const target = document.getElementById(treeAnchor(targetFile))
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    return
+  }
+  if (e.target.closest('#g2-fit-btn')) {
+    graph2.graphState?.refit()
     return
   }
   // Tree-tab: click a graph node to select it (drives the sidebar).
@@ -243,6 +359,11 @@ report.addEventListener('change', (e) => {
     tree.showAll = e.target.checked
     tree.layoutCache = null
     cleanupGraphInteraction()
+    // showAll changes the file set on graph v2 too (same filter),
+    // so its cached layout is stale. Drop it so the next switch to
+    // graph v2 recomputes positions.
+    graph2.layoutCache = null
+    cleanupGraph2()
     render()
   }
 })
@@ -253,4 +374,33 @@ report.addEventListener('input', (e) => {
   if (id === 'filter-include') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
   else if (id === 'repo-url') { state.repoUrl = val; renderKeepFocus(id) }
+  // Graph v2 — sliders write straight into state.graph2 and update
+  // the inline value label. No re-render: the canvas's draw loop
+  // already reads from graph2 every frame, so the change shows up
+  // immediately.
+  else if (id === 'g2-r-edge-op') {
+    graph2.edgeOpacity = parseFloat(val) / 100
+    const lbl = document.getElementById('g2-lbl-edge-op')
+    if (lbl) lbl.textContent = graph2.edgeOpacity.toFixed(2)
+  }
+  else if (id === 'g2-r-min-deg') {
+    graph2.minDegree = parseInt(val, 10)
+    const lbl = document.getElementById('g2-lbl-min-deg')
+    if (lbl) lbl.textContent = graph2.minDegree
+  }
+  else if (id === 'g2-r-node-size') {
+    graph2.nodeSize = parseInt(val, 10) / 100
+    const lbl = document.getElementById('g2-lbl-node-size')
+    if (lbl) lbl.textContent = graph2.nodeSize.toFixed(1) + '×'
+  }
+  else if (id === 'g2-palette-search') {
+    graph2.paletteSearch = val
+    const q = val.trim().toLowerCase()
+    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
+      const pkg = s.dataset.g2Pkg
+      const label = pkg === '__own__' ? 'own source' : pkg
+      const match = !q || label.toLowerCase().includes(q)
+      s.classList.toggle('muted', !match)
+    })
+  }
 })
