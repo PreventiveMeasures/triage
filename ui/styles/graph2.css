@@ -307,39 +307,6 @@
   &.hidden-pkg { opacity: 0.05; }
 }
 
-/* ── Statistics ─────────────────────────────────────────────── */
-.g2-stat-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.g2-stat {
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-
-.g2-stat-label {
-  font-size: 9px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.g2-stat-val {
-  font: 600 16px/1.1 ui-monospace, monospace;
-  margin-top: 4px;
-  color: var(--text);
-}
-.g2-stat-sub {
-  font-size: 9px;
-  color: var(--muted);
-  margin-top: 3px;
-  font-family: ui-monospace, monospace;
-  opacity: 0.85;
-}
-
 /* ── Toggle rows ────────────────────────────────────────────── */
 .g2-toggle-row {
   display: flex;
@@ -451,16 +418,52 @@
   }
 }
 
-/* Floating back-button shown on the canvas when the user has
-   drilled into a single package. Mirrors the v1 graph's
-   matte-glass chrome so it reads as part of the canvas
-   overlay (zoom controls, etc.) rather than the topbar. The
-   `← name` label gives a breadcrumb out of the focus mode. */
-.g2-back-btn {
+/* Top-left overlay — context line (title or back button) and
+   the live statistics readout. Lives on top of the canvas so
+   the right panel doesn't have to host the always-on numbers
+   (it already carries the selection card + filters). Mirrors
+   the design's "DEEPVIEW · 2,500 NODES · …" status block. */
+.g2-stage-overlay {
   position: absolute;
   top: 12px;
   left: 12px;
   z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  max-width: calc(100% - 60px);
+}
+.g2-stage-overlay > * { pointer-events: auto; }
+
+.g2-stage-title {
+  font: 500 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.g2-stage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  color: var(--muted);
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+
+  & b {
+    font-weight: 600;
+    color: var(--text);
+    opacity: 1;
+  }
+}
+
+/* Back button — shown in the top-left overlay when the user
+   has drilled into a package. Replaces the stage title in
+   that mode. Glass chrome matches the zoom controls. */
+.g2-back-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -475,9 +478,9 @@
   cursor: pointer;
   box-shadow: var(--shadow-glass);
   white-space: nowrap;
-  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
+  align-self: flex-start;
 
   &:hover { border-color: var(--accent); background: var(--surface-active); }
 }
@@ -502,7 +505,7 @@
 
 .g2-zoom-ctrl {
   position: absolute;
-  left: 12px; bottom: 28px;
+  right: 12px; bottom: 12px;
   display: flex; flex-direction: column;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);

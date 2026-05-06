@@ -28,7 +28,7 @@ const SEV_COLORS = {
 export function renderGraph2Layout(graph) {
   let html = '<div class="graph2-layout">'
   html += renderTopBar(graph)
-  html += renderStage()
+  html += renderStage(graph)
   html += renderRightPanel(graph)
   html += '</div>'
   return html
@@ -140,18 +140,10 @@ function renderControls(graph) {
   }
   html += '</div>'
 
-  // Statistics
-  html += '<div class="g2-panel-title">Statistics</div>'
-  html += '<div class="g2-stat-grid">'
-  let cross = 0; for (const e of graph.edges) if (e.cross) cross++
-  const intra = graph.edges.length - cross
-  let hubs = 0; for (const n of graph.nodes) if (n.isHub) hubs++
-  const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
-  html += `<div class="g2-stat"><div class="g2-stat-label">Files</div><div class="g2-stat-val">${graph.nodes.length}</div><div class="g2-stat-sub">${graph.packages.length} packages</div></div>`
-  html += `<div class="g2-stat"><div class="g2-stat-label">Edges</div><div class="g2-stat-val">${graph.edges.length}</div><div class="g2-stat-sub">${intra} intra · ${cross} cross</div></div>`
-  html += `<div class="g2-stat"><div class="g2-stat-label">Hubs</div><div class="g2-stat-val">${hubs}</div><div class="g2-stat-sub">load-bearing</div></div>`
-  html += `<div class="g2-stat"><div class="g2-stat-label">Avg Degree</div><div class="g2-stat-val">${avgDeg}</div><div class="g2-stat-sub">per file</div></div>`
-  html += '</div>'
+  // (Statistics block moved to the canvas overlay — see
+  // renderStage's top-left readout. Lives there now so the
+  // control panel stays focused on filters / display tweaks.)
+
 
   // (Severity filter pills moved to the topbar; the standalone
   // "Show only issues" toggle is gone — selecting all four
@@ -201,19 +193,38 @@ export function renderSevChips(counts) {
     + '</div>'
 }
 
-function renderStage() {
+function renderStage(graph) {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
-  // Back button for the package-focus mode — overlaid on the
-  // top-left of the stage so it reads as a "you are here" /
-  // breadcrumb out of the drill-in. Only rendered when
-  // focused; otherwise the corner is empty (the spiral view
-  // has no chrome there).
+  // Top-left overlay — context line + statistics. In the
+  // full-graph mode this reads like the design's "DEEPVIEW ·
+  // 2,500 nodes · …" status block; in package-focus mode the
+  // first row becomes the back-button / breadcrumb out of
+  // the drill-in. Statistics underneath stay informative
+  // either way (counts reflect whatever's currently in scope).
+  html += '<div class="g2-stage-overlay">'
   if (graph2.focusedPkg) {
     const label = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
+  } else {
+    html += '<div class="g2-stage-title">DeepView · graph</div>'
   }
+  let cross = 0; for (const e of graph.edges) if (e.cross) cross++
+  const intra = graph.edges.length - cross
+  let hubs = 0; for (const n of graph.nodes) if (n.isHub) hubs++
+  const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
+  html += '<div class="g2-stage-stats">'
+  html += `<span><b>${graph.nodes.length}</b> files</span>`
+  html += `<span><b>${graph.packages.length}</b> packages</span>`
+  html += `<span><b>${graph.edges.length}</b> edges (${intra} intra · ${cross} cross)</span>`
+  html += `<span><b>${hubs}</b> hubs</span>`
+  html += `<span>avg degree <b>${avgDeg}</b></span>`
+  html += '</div>'
+  html += '</div>'
+  // Bottom-left: live "X of Y visible" readout (updates on
+  // hover-driven dim changes too via the canvas's redraw).
   html += '<div class="g2-corner-bl"><span id="g2-visible">— of — visible</span></div>'
+  // Bottom-right: zoom controls.
   html += '<div class="g2-zoom-ctrl">'
   html += '<button id="g2-zoom-in" title="Zoom in">+</button>'
   html += '<div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>'
