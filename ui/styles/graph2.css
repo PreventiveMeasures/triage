@@ -160,6 +160,15 @@
   gap: 8px;
 }
 
+/* Wrapper for the Top-packages block — exists so the section can
+   be re-rendered in place without rebuilding the canvas. The
+   wrapping breaks the panel-title's `:first-child { margin-top: 0 }`
+   rule that previously gave the title its 14px gap from the
+   selection card above (the title is now :first-child of the
+   wrapper, not of the right panel), so put the gap on the wrapper
+   instead — total spacing stays 14px regardless. */
+#g2-top-pkgs-block { margin-top: 14px; }
+
 /* Mini-tab pair — same pattern as v1's tree-hubs-tabs. Sits
    inline at the right of a panel title. Resets the title's
    uppercase / letter-spacing on the buttons themselves so the
