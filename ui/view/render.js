@@ -527,13 +527,13 @@ export function render() {
     // user-set confidence sort would stay selected against an absent
     // option in the dropdown and applySorting would fall through to
     // its `?? -1` placeholder. Reset to 'file' when that happens.
-    if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'file'
+    if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'severity'
   }
   // Same guard for priority — the option drops out of the dropdown
   // when no finding carries it, so a stale state.sortBy would point
   // at a non-existent option and applySorting would shuffle on `?? -1`.
   if (!hasAnyPriority && (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc')) {
-    state.sortBy = 'file'
+    state.sortBy = 'severity'
   }
 
   const filtered = applySorting(applyFilters(allGroups))

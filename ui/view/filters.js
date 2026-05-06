@@ -10,7 +10,7 @@ export function resetFilters() {
   state.filterConfMax = ''
   state.filterInclude = ''
   state.filterExclude = ''
-  state.sortBy = 'file'
+  state.sortBy = 'severity'
 }
 
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
