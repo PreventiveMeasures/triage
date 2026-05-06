@@ -128,21 +128,20 @@ export function layoutRadial(graph, w, h) {
   const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
   const entryCap = 0.22, othersCap = 0.12, padding = 0.04
   const pkgInfo = new Map()
-  let ringRUnit
+  // Ring radius — historically 0.42 of (min(W,H) - 64px), which
+  // works out to roughly 0.80 of half-canvas units. The earlier
+  // `0.45` value was a unit-space typo that landed at half the
+  // visual size of the historical ring; restore to 0.85 so the
+  // ring fills the canvas the way it did before the entry
+  // pinning logic was added.
+  let ringRUnit = 0.85
   if (entryPkg) {
     const entrySize = graph.pkgCount.get(entryPkg) ?? 0
     const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
-    // Ring radius pushed out far enough to clear the entry
-    // disk plus a max-other-disk plus padding. Otherwise the
-    // largest other packages would clip into the entry's
-    // cluster.
-    ringRUnit = Math.max(0.45, entryGroupRUnit + othersCap + padding)
+    // Push out further if the entry's disk plus a max-other-disk
+    // plus padding would otherwise clip; rare but cheap to guard.
+    ringRUnit = Math.max(ringRUnit, entryGroupRUnit + othersCap + padding)
     pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
-  } else {
-    // No entry candidate (fully cyclic graph). Use a single
-    // ring that fills the canvas — equivalent to the pre-
-    // entry-pinning behavior.
-    ringRUnit = 0.45
   }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
@@ -259,14 +258,25 @@ export function layoutSpiral(graph, w, h) {
     // angular distribution stays maximally distinct regardless
     // of how the rank-by-cross sort reorders things.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Radius from cross-rank — most cross-connected at minRUnit,
-    // least cross-connected at maxRUnit. Hash-based jitter on
-    // top so equal-rank packages don't form a perfect circle.
+    // Radius is a blend of the design's pseudo-random walk
+    // (`(i * 31) % 100 / 100` — distributes packages evenly
+    // across [0,1] with high-frequency variation) and the
+    // cross-degree rank fraction (most-connected → 0, least
+    // → 1). Pure rank-based radius collapsed the spiral into
+    // concentric rings because rank correlates with package
+    // size, which correlates with loop-index angle — so
+    // angle and radius were correlated and the spiral arms
+    // disappeared. Blending preserves the cross-degree bias
+    // (well-connected packages skew toward center) while
+    // keeping the spatial variance that makes the spiral
+    // read as arms rather than a smooth Archimedean curve.
     const rank = rankByPkg.get(pkg) ?? i
-    const fraction = Nothers <= 1 ? 0 : rank / (Nothers - 1)
+    const rankFraction = Nothers <= 1 ? 0 : rank / (Nothers - 1)
+    const pseudoBand = ((i * 31) % 100) / 100
+    const blended = rankFraction * 0.5 + pseudoBand * 0.5
     const seed = hash(pkg)
-    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.18
-    const band = Math.max(0, Math.min(1, fraction + jitter))
+    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.10
+    const band = Math.max(0, Math.min(1, blended + jitter))
     const rUnit = minRUnit + band * (maxRUnit - minRUnit)
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
