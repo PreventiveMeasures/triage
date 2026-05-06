@@ -79,7 +79,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const canvas = container.querySelector('#g2-canvas')
   const tooltip = container.querySelector('#g2-tooltip')
   const stage = container.querySelector('.graph2-stage')
-  const fpsEl = container.querySelector('#g2-fps')
   const visibleEl = container.querySelector('#g2-visible')
   const zoomEl = container.querySelector('#g2-zoom-pct')
 
@@ -213,21 +212,40 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
     if (needsFit || sizeChanged) { fitToView(); needsFit = false }
+    // Always redraw on resize: the canvas pixel buffer was just
+    // resized via canvas.width/.height, which clears it. Without
+    // an explicit draw the canvas would render blank until the
+    // next user interaction.
+    requestDraw()
   }
 
   // ── Draw ──────────────────────────────────────────────────────
-  let lastT = performance.now()
-  let fps = 60
+  // On-demand scheduling: the canvas redraws only when something
+  // changes (pan / zoom / hover / selection / layout / theme /
+  // resize). An earlier version ran requestAnimationFrame(draw)
+  // continuously to support the time-driven critical-issue
+  // pulse, but the pulse is gone and a 12k-file canvas at 60fps
+  // is wasteful. requestDraw() sets a dirty flag and coalesces
+  // multiple state changes within a frame into a single draw
+  // call via rAF.
   let rafId = null
+  let needsDraw = true
+  let drawScheduled = false
+  let destroyed = false
+  function requestDraw() {
+    needsDraw = true
+    if (drawScheduled || destroyed) return
+    drawScheduled = true
+    rafId = requestAnimationFrame(() => {
+      drawScheduled = false
+      if (needsDraw && !destroyed) {
+        needsDraw = false
+        draw()
+      }
+    })
+  }
 
   function draw() {
-    rafId = requestAnimationFrame(draw)
-    const now = performance.now()
-    const dt = now - lastT
-    lastT = now
-    fps = fps * 0.92 + (1000 / Math.max(1, dt)) * 0.08
-    if (fpsEl) fpsEl.textContent = `${fps.toFixed(0)} fps`
-
     const T = currentTheme()
     ctx.fillStyle = T.bg
     ctx.fillRect(0, 0, W, H)
@@ -248,7 +266,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // crowding, just the Vogel-laid-out subgraph rendered
     // as a subset of the main canvas.
     if (graph2.focusedPkg && graph.nodes.length <= 50) {
-      drawPackageView(T, selected, sel, now)
+      drawPackageView(T, selected, sel)
       return
     }
 
@@ -410,7 +428,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   // focused package's color). Operates on the same nodes/edges
   // as the spiral view, but with the assumption that the layout
   // pass produced a force-directed arrangement.
-  function drawPackageView(T, selected, sel, now) {
+  function drawPackageView(T, selected, sel) {
     const baseColor = pkgColor(graph2.focusedPkg)
     let visibleCount = 0
     // Connected-files set for hover dimming (mirrors v1's pattern)
@@ -697,6 +715,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       viewport.tx = dragStart.tx + dx
       viewport.ty = dragStart.ty + dy
       hideTooltip()
+      requestDraw()
       return
     }
     const hit = pickNode(sx, sy)
@@ -705,6 +724,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     canvas.style.cursor = hit ? 'pointer' : 'grab'
     if (hit) showTooltip(hit, e.clientX, e.clientY)
     else if (prev) hideTooltip()
+    if (hovered !== prev) requestDraw()
   }
   const onMouseUp = (e) => {
     if (dragging && !dragMoved) {
@@ -713,10 +733,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       const hit = pickNode(sx, sy)
       graph2.selected = hit?.file ?? null
       refreshSidebar()
+      requestDraw()
     }
     dragging = false
   }
-  const onMouseLeave = () => { hovered = null; hideTooltip() }
+  const onMouseLeave = () => {
+    const wasHovered = hovered !== null
+    hovered = null
+    hideTooltip()
+    if (wasHovered) requestDraw()
+  }
   const onWheel = (e) => {
     e.preventDefault()
     const rect = stage.getBoundingClientRect()
@@ -727,6 +753,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     viewport.k = nk
     viewport.tx = sx - wx * viewport.k
     viewport.ty = sy - wy * viewport.k
+    requestDraw()
   }
 
   stage.addEventListener('mousedown', onMouseDown)
@@ -735,7 +762,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   stage.addEventListener('mouseleave', onMouseLeave)
   stage.addEventListener('wheel', onWheel, { passive: false })
 
-  // Zoom buttons
+  // Zoom buttons — each mutation requestDraws so the next
+  // animation frame paints with the new viewport.
   function zoomTo(nk) {
     nk = Math.max(0.06, Math.min(8, nk))
     const cx = W / 2, cy = H / 2
@@ -743,13 +771,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     viewport.k = nk
     viewport.tx = cx - wx * viewport.k
     viewport.ty = cy - wy * viewport.k
+    requestDraw()
   }
   const zIn = container.querySelector('#g2-zoom-in')
   const zOut = container.querySelector('#g2-zoom-out')
   const zFit = container.querySelector('#g2-zoom-fit')
   zIn?.addEventListener('click', () => zoomTo(viewport.k * 1.4))
   zOut?.addEventListener('click', () => zoomTo(viewport.k / 1.4))
-  zFit?.addEventListener('click', () => fitToView())
+  zFit?.addEventListener('click', () => { fitToView(); requestDraw() })
 
   // Resize observer — handles container resize (sidebar collapse,
   // window resize, tab switch with different available space). The
@@ -761,17 +790,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const ro = new ResizeObserver(() => resize())
   ro.observe(stage)
 
-  // Body-class observer — same role as graph v1's fsObserver.
-  // ResizeObserver alone would catch the fullscreen-induced size
-  // change, but resize() only reruns the LAYOUT when layoutW/H
-  // are zero (first call) or there's no cached positions. To get
-  // the force-directed solver to actually retune for the new
-  // (much larger) viewport, the cache + layoutW/H need to be
-  // invalidated BEFORE the size change lands. MutationObserver
-  // fires synchronously after the body classList mutation, so we
-  // get our chance before the ResizeObserver fires on the new
-  // dimensions. attributeOldValue lets us distinguish a fullscreen
-  // toggle from a theme toggle (theme change shouldn't relayout).
+  // Body-class observer — handles two distinct triggers:
+  //   - Fullscreen toggle: the layout needs to retune to the new
+  //     viewport (forceLayout's k constant scales with canvas
+  //     dimensions), so invalidate layoutW/H + cache and let
+  //     ResizeObserver fire resize() against the new size.
+  //   - Theme toggle: canvas-internal palette changes (bg, grid,
+  //     edge colors) — needs a redraw but no layout / cache work.
+  // attributeOldValue lets us distinguish the two by comparing the
+  // old class string against the new one.
   const fsObserver = new MutationObserver((mutations) => {
     for (const m of mutations) {
       const wasFs = (m.oldValue || '').includes('report-fullscreen')
@@ -783,14 +810,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         needsFit = true
         graph2.layoutCache = null
         // ResizeObserver should fire shortly with the new size and
-        // run resize(); the setTimeout fallback covers the rare
-        // case where the size change ends up identical (e.g. the
-        // user already had the sidebar collapsed) so RO doesn't
-        // fire, but we still want a fresh layout in the new
-        // semantic context.
+        // run resize() (which itself requestDraws). setTimeout is
+        // a fallback for the rare case where the size change ends
+        // up identical (e.g. the sidebar was already collapsed),
+        // so RO doesn't fire but we still want a fresh layout.
         setTimeout(() => resize(), 80)
         return
       }
+      // Non-fullscreen body-class change (theme toggle, others) —
+      // just redraw with the current theme palette.
+      requestDraw()
     }
   })
   fsObserver.observe(document.body, {
@@ -799,12 +828,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     attributeOldValue: true,
   })
 
-  // Kick the draw loop. cancelAnimationFrame() in cleanup stops it
-  // when the tab swaps so we don't burn frames in the background.
-  rafId = requestAnimationFrame(draw)
+  // Kick the first draw — resize() above already requestDraws,
+  // but in case it was a no-op (canvas size unchanged across
+  // re-attach), force one paint so the canvas isn't blank.
+  requestDraw()
 
   graph2.graphState = {
     _cleanup: () => {
+      destroyed = true
       cancelAnimationFrame(rafId)
       ro.disconnect()
       fsObserver.disconnect()

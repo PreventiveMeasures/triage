@@ -477,10 +477,12 @@
   &:hover { border-color: var(--accent); background: var(--surface-active); }
 }
 
-/* Bottom-corner readouts — bl shows "X of Y visible", br shows
-   FPS. The top corners (branding + cursor coordinates) were
-   dropped; they read as design chrome rather than useful info. */
-.g2-corner-bl, .g2-corner-br {
+/* Bottom-left readout — "X of Y visible". The top corners
+   (branding + cursor coordinates) and the bottom-right FPS
+   counter were dropped; they read as design chrome rather
+   than useful info. (FPS especially is meaningless now that
+   the canvas redraws on demand instead of every frame.) */
+.g2-corner-bl {
   position: absolute;
   pointer-events: none;
   color: var(--muted);
@@ -489,9 +491,9 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   z-index: 2;
+  bottom: 10px;
+  left: 10px;
 }
-.g2-corner-bl { bottom: 10px; left: 10px; }
-.g2-corner-br { bottom: 10px; right: 10px; text-align: right; }
 
 .g2-zoom-ctrl {
   position: absolute;

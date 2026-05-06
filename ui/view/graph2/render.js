@@ -204,7 +204,6 @@ function renderStage() {
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
   }
   html += '<div class="g2-corner-bl"><span id="g2-visible">— of — visible</span></div>'
-  html += '<div class="g2-corner-br" id="g2-fps">— fps</div>'
   html += '<div class="g2-zoom-ctrl">'
   html += '<button id="g2-zoom-in" title="Zoom in">+</button>'
   html += '<div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>'
