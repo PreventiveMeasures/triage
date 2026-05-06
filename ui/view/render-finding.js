@@ -128,13 +128,6 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
   html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
   if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
   if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
-  // Commit reference — codex imports carry a commit_hash; render
-  // a short-SHA link to the upstream commit on GitHub. Only emit
-  // when the finding actually has a hash so non-codex sources stay
-  // unchanged.
-  if (f.commitHash) {
-    html += `<div class="commit-ref">commit ${commitLink(f.repo?.github, f.commitHash)}</div>`
-  }
   html += '</div></div>'
   return html
 }
@@ -180,13 +173,20 @@ export function renderGroup(g) {
   // in CSS) so multi-tab groups get their tab picker adjacent to the
   // other per-group controls — one action row per finding.
   html += '<div class="marks">'
-  // Tab strip — only for multi-tab groups; single findings render
-  // without tabs and the dots sit alone on the right.
+  // Left side: optional commit reference (codex imports carry a
+  // commit_hash on the active tab) + multi-tab strip. Wrapped in
+  // a sub-flex so the action buttons stay anchored to the right
+  // regardless of how many left-side items appear.
+  html += '<div class="marks-left">'
+  if (active.commitHash) {
+    html += `<div class="commit-ref">commit ${commitLink(active.repo?.github, active.commitHash)}</div>`
+  }
   if (sortedTabs.length > 1) {
     html += '<div class="tabs">'
     for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
     html += '</div>'
   }
+  html += '</div>'
   html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
   html += '</div>'
   html += '</div>'
