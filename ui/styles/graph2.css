@@ -236,7 +236,15 @@
 .graph2-right::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .g2-panel-title {
-  font: 600 10px/1 inherit;
+  /* Properties spelled out instead of `font: ... inherit` —
+     the `inherit` keyword isn't valid as a sub-value of the
+     `font` shorthand (only as the whole property), so the
+     shorthand was being discarded and the panel inherited the
+     12px from .graph2-layout. */
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -293,8 +301,13 @@
   background: transparent;
   border: 0;
   color: var(--muted);
-  font: 500 9px/1.4 inherit;
+  /* Spelled out — `font: ... inherit` is invalid (see
+     .g2-panel-title) and was silently dropping font-size,
+     leaving these to inherit 12px from .graph2-layout. */
   font-family: inherit;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.4;
   text-transform: none;
   letter-spacing: 0;
   padding: 2px 7px;
@@ -375,8 +388,12 @@
   border: 0;
   padding: 0 0 8px;
   margin: 0;
-  font: 600 10px/1 inherit;
+  /* See .g2-panel-title for why these are spelled out instead
+     of being packed into `font: ... inherit`. */
   font-family: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -580,11 +597,15 @@
 }
 
 /* The fit button carries a "fit" text label rather than a
-   glyph — matches graph v1's pattern. Type metrics override
-   the parent .g2-zoom-ctrl button rules so the label fits in
-   the 28×28 box without wrapping. */
-.g2-zoom-fit-btn {
-  font: 600 8.5px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+   glyph — matches graph v1's pattern. Selector chained with
+   the parent so it beats `.g2-zoom-ctrl button` on specificity
+   (otherwise the button rule's font-size: 13px wins and the
+   "fit" label renders too big for the 28×28 box). */
+.g2-zoom-ctrl .g2-zoom-fit-btn {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
   letter-spacing: -0.02em;
   text-transform: lowercase;
 }
