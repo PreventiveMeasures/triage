@@ -24,19 +24,30 @@ function hash(str) {
   return h
 }
 
-// Cross-package degree per package — counts each cross-package
-// edge once for each endpoint's package. Drives Spiral's
-// "well-connected toward the center" radius bias: a package
-// imported from many others reads as "core" and should sit
-// where the eye lands first.
+// Outgoing + incoming cross-package edges per package. Walks
+// the directed imports relation: for each "f imports imp"
+// where the two files live in different packages, +1 to f's
+// package (outgoing) and +1 to imp's package (incoming). Bidi
+// pairs (A↔B across packages) contribute +2 to each side.
+//
+// This is what drives Spiral's "well-connected toward the
+// center" sort: a package with lots of code pointing at it
+// AND lots of code pointing out from it both read as "core".
+// Walking edges instead would only count each cross-pair
+// once — losing the asymmetric case where a hub library has
+// many incoming but few outgoing imports.
 function crossDegByPkg(graph) {
   const map = new Map()
-  for (const e of graph.edges) {
-    if (!e.cross) continue
-    const a = graph.nodeByFile.get(e.a)
-    const b = graph.nodeByFile.get(e.b)
-    if (a) map.set(a.pkg, (map.get(a.pkg) ?? 0) + 1)
-    if (b) map.set(b.pkg, (map.get(b.pkg) ?? 0) + 1)
+  for (const [f, imps] of graph.importsOf) {
+    const fNode = graph.nodeByFile.get(f)
+    if (!fNode) continue
+    for (const imp of imps) {
+      const impNode = graph.nodeByFile.get(imp)
+      if (!impNode) continue
+      if (fNode.pkg === impNode.pkg) continue
+      map.set(fNode.pkg, (map.get(fNode.pkg) ?? 0) + 1)
+      map.set(impNode.pkg, (map.get(impNode.pkg) ?? 0) + 1)
+    }
   }
   return map
 }
