@@ -18,16 +18,6 @@
 // to a grid (file-system layout) so the cells reinforced
 // the wrong axis.
 
-// Stable per-string hash — used as a seed for jitter so a given
-// graph always paints the same way across reloads (otherwise small
-// graphs visibly reshuffle on each render and the user can't build
-// muscle memory for "where's that file?").
-function hash(str) {
-  let h = 0
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0
-  return h
-}
-
 // Outgoing + incoming cross-package edges per package. Walks
 // the directed imports relation: for each "f imports imp"
 // where the two files live in different packages, +1 to f's
@@ -94,46 +84,170 @@ function findEntryPkg(graph) {
   return null
 }
 
-// Distribute files inside a per-package disk, anchored on
-// (info.x, info.y) at radius `groupR` (pixels). Hubs sit
-// closer to the anchor than members so each cluster reads as
-// "package = pile of files anchored by a hub". Pulled out of
-// the per-layout loops since spiral / radial / grid all share
-// the same intra-disk distribution; only the disk position
-// differs across layouts.
+// Distribute files inside their per-package disks. Same two-phase
+// approach as the package-level Spiral above, applied at file scope:
+//
+//   1. Vogel slot positions inside each disk. Each file's index
+//      within the package's sorted file list maps to a fixed (angle,
+//      radius) via the same i × 137.508° / sqrt(i/(N-1)) seed
+//      pattern. Hubs occupy the inner band [0, 0.3·groupR]; members
+//      the outer band [0.4·groupR, 1.0·groupR]. The Vogel sort puts
+//      hubs at low indices (small radii) and members at higher
+//      indices (rim) automatically.
+//
+//   2. Greedy assignment. Walk packages in pkgInfo iteration order
+//      (priority order from the Spiral pass: entry first, then
+//      cross-degree desc), and within each package walk files in
+//      priority order (hubs first, then by degree desc). Each file
+//      picks the unused Vogel slot in its band closest to the
+//      barycenter of its already-placed neighbours (intra- AND
+//      cross-package). Files with no placed neighbours take the
+//      lowest unused index in their band, inheriting the Vogel
+//      golden-angle spread.
+//
+// Net effect: files with cross-package edges drift toward the rim
+// of their disk facing the connected packages, so cross-package
+// edges run as short radial chords instead of long diagonals.
 //
 // Hub-pull-to-center is gated on hub count: when a package has
-// more than 5 hubs (common on a large public-API package),
-// pulling them all to the inner 30% piles them into a tight
-// blob and the cluster loses readability. In that case, hubs
-// use the same outer band as members and just rely on their
-// bigger radius + halo + ring for the visual "this is a hub"
-// cue.
+// more than 5 hubs (common on a large public-API package), pulling
+// them all to the inner 30% piles them into a tight blob and the
+// cluster loses readability. In that case, hubs use the same outer
+// band as members and just rely on their bigger radius + halo +
+// ring for the visual "this is a hub" cue.
 const HUB_PULL_LIMIT = 5
 function placeFilesInDisk(graph, pkgInfo) {
-  // Count hubs per package once so the inner loop can branch
-  // without walking byPkg every iteration.
-  const hubsByPkg = new Map()
+  // Files-per-package buckets, in priority order (hubs first by
+  // degree, then members by degree). Computed once so the placement
+  // loop below can iterate them without re-filtering graph.nodes.
+  const filesByPkg = new Map()
   for (const n of graph.nodes) {
-    if (n.isHub) hubsByPkg.set(n.pkg, (hubsByPkg.get(n.pkg) ?? 0) + 1)
+    if (!pkgInfo.has(n.pkg)) continue
+    if (!filesByPkg.has(n.pkg)) filesByPkg.set(n.pkg, [])
+    filesByPkg.get(n.pkg).push(n)
+  }
+  for (const list of filesByPkg.values()) {
+    list.sort((a, b) => {
+      if (a.isHub !== b.isHub) return a.isHub ? -1 : 1
+      return b.deg - a.deg
+    })
   }
 
-  for (const n of graph.nodes) {
-    const info = pkgInfo.get(n.pkg)
-    if (!info) continue
+  // Tracks which files have positions written so the barycenter
+  // accumulator below can ignore not-yet-placed neighbours.
+  const placedX = new Map()
+  const placedY = new Map()
+
+  // Walk packages in pkgInfo iteration order — that's the order the
+  // Spiral pass inserted them: entry first (when present), then
+  // others in priority order. Inner packages thus place first; their
+  // outer-package neighbours (placed later) get to optimize toward
+  // the inner files' positions. The reverse direction would have
+  // outer-package files placed first and inner files optimizing
+  // outward, but inner positions are closer to the canvas centroid
+  // so they have less room to move and benefit less from the pass.
+  for (const [pkg, info] of pkgInfo) {
+    const files = filesByPkg.get(pkg)
+    if (!files || files.length === 0) continue
+    const N = files.length
+    // Re-derive the hub count from the sorted list (sort put hubs
+    // first, so they occupy the leading prefix). pullToCenter
+    // matches the gate at the top of this function.
+    let totalHubs = 0
+    for (const n of files) { if (n.isHub) totalHubs++; else break }
+    const pullToCenter = totalHubs > 0 && totalHubs <= HUB_PULL_LIMIT
+    const innerN = pullToCenter ? totalHubs : 0
+    const outerN = N - innerN
     const groupR = info.groupR
-    const h1 = hash(n.file)
-    // Different bit ranges for angle vs radius — without this
-    // they correlate and the cluster looks like a comma instead
-    // of a disk.
-    const localA = (h1 % 10000) / 10000 * Math.PI * 2
-    const localBand = ((h1 >>> 16) % 10000) / 10000
-    const pullToCenter = n.isHub && (hubsByPkg.get(n.pkg) ?? 0) <= HUB_PULL_LIMIT
-    const localR = pullToCenter
-      ? localBand * groupR * 0.3
-      : (0.4 + localBand * 0.6) * groupR
-    n.x = info.x + Math.cos(localA) * localR
-    n.y = info.y + Math.sin(localA) * localR
+
+    // Vogel slot positions for this disk. Indices [0, innerN) live
+    // in the inner band [0, 0.3·groupR]; [innerN, N) live in the
+    // outer band [0.4·groupR, groupR]. Angle is the same i ×
+    // 137.508° golden-step across both bands.
+    const slotX = new Array(N)
+    const slotY = new Array(N)
+    for (let i = 0; i < N; i++) {
+      const angle = (i * 137.508) * Math.PI / 180
+      let radius
+      if (i < innerN) {
+        radius = innerN <= 1 ? 0 : Math.sqrt(i / (innerN - 1)) * 0.3 * groupR
+      } else {
+        const m = i - innerN
+        radius = outerN <= 1
+          ? 0.4 * groupR
+          : (0.4 + Math.sqrt(m / (outerN - 1)) * 0.6) * groupR
+      }
+      slotX[i] = info.x + Math.cos(angle) * radius
+      slotY[i] = info.y + Math.sin(angle) * radius
+    }
+
+    const used = new Array(N).fill(false)
+
+    for (let fi = 0; fi < N; fi++) {
+      const f = files[fi]
+      // Slot range available to this file:
+      //   pullToCenter && hub → inner band [0, innerN)
+      //   pullToCenter && member → outer band [innerN, N)
+      //   !pullToCenter → entire disk [0, N) (hubs sort earlier so
+      //   still get the inner indices in the outer band)
+      let bandStart, bandEnd
+      if (pullToCenter && f.isHub) { bandStart = 0; bandEnd = innerN }
+      else if (pullToCenter) { bandStart = innerN; bandEnd = N }
+      else { bandStart = 0; bandEnd = N }
+
+      // Weighted barycenter of placed neighbours (intra- and cross-
+      // package). Each import / imported-by counts once; a bidi pair
+      // ends up contributing twice (once via importsOf, once via
+      // importedBy), which is the desired "stronger pull" for
+      // bidirectional coupling.
+      let bx = 0, by = 0, count = 0
+      const imps = graph.importsOf.get(f.file)
+      if (imps) {
+        for (const nei of imps) {
+          const px = placedX.get(nei)
+          if (px === undefined) continue
+          bx += px; by += placedY.get(nei); count++
+        }
+      }
+      const ibs = graph.importedBy.get(f.file)
+      if (ibs) {
+        for (const nei of ibs) {
+          const px = placedX.get(nei)
+          if (px === undefined) continue
+          bx += px; by += placedY.get(nei); count++
+        }
+      }
+      let useBary = false
+      if (count > 0) {
+        bx /= count; by /= count
+        const dx = bx - info.x, dy = by - info.y
+        // Skip the barycenter path when it sits essentially at the
+        // disk center: all slots in the band would be roughly
+        // equidistant and slot bandStart would always win, collapsing
+        // these files onto the same arc.
+        if (dx * dx + dy * dy > 1) useBary = true
+      }
+
+      let bestSlot = -1
+      if (useBary) {
+        let bestDist2 = Infinity
+        for (let j = bandStart; j < bandEnd; j++) {
+          if (used[j]) continue
+          const ddx = slotX[j] - bx, ddy = slotY[j] - by
+          const d2 = ddx * ddx + ddy * ddy
+          if (d2 < bestDist2) { bestDist2 = d2; bestSlot = j }
+        }
+      } else {
+        for (let j = bandStart; j < bandEnd; j++) {
+          if (!used[j]) { bestSlot = j; break }
+        }
+      }
+      used[bestSlot] = true
+      f.x = slotX[bestSlot]
+      f.y = slotY[bestSlot]
+      placedX.set(f.file, f.x)
+      placedY.set(f.file, f.y)
+    }
   }
 }
 
