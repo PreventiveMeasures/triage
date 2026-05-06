@@ -281,19 +281,29 @@ export function renderTopPkgsBlock(graph) {
 
 // Selection card — extracted so it can be re-rendered in place when
 // the user clicks a node, without rebuilding the whole canvas (which
-// would drop hover state). renderSelectionPanel is exported for that.
+// would drop hover state).
+//
+// Three states, in priority order:
+//   1. A file is selected (canvas click) → file card
+//   2. A package is solo'd (palette swatch or top-pkgs click) → pkg card
+//   3. Neither → empty placeholder
 export function renderSelectionCard(graph) {
   const file = graph2.selected
-  if (!file) {
-    return '<div class="g2-empty-state">'
-      + '<strong>No file selected</strong>'
-      + 'Click any node in the graph to inspect its package, dependencies, and findings.'
-      + '</div>'
-  }
-  const n = graph.nodeByFile.get(file)
-  if (!n) {
+  if (file) {
+    const n = graph.nodeByFile.get(file)
+    if (n) return renderFileCard(graph, n, file)
     return '<div class="g2-empty-state"><strong>File not in current view</strong>Adjust filters or pick another file.</div>'
   }
+  if (graph2.solo) {
+    return renderPackageCard(graph, graph2.solo)
+  }
+  return '<div class="g2-empty-state">'
+    + '<strong>No selection</strong>'
+    + 'Click a node in the graph for file details, or a package in the palette / Top packages list to inspect a whole package.'
+    + '</div>'
+}
+
+function renderFileCard(graph, n, file) {
   const col = pkgColor(n.pkg)
   let intra = 0, cross = 0
   const neighborIds = []
@@ -377,6 +387,72 @@ export function renderSelectionCard(graph) {
   return html
 }
 
+// Package selection card — shown when a package is solo'd via
+// the palette swatch or Top packages list (and no file is
+// selected). Aggregates per-file stats up to package level:
+// total file / hub counts, intra vs cross edges, summed own
+// findings broken down by severity, and a "Package graph →"
+// drill-in for the v1-style subview.
+function renderPackageCard(graph, pkg) {
+  const filesInPkg = graph.nodes.filter((n) => n.pkg === pkg)
+  const fileCount = filesInPkg.length
+  if (fileCount === 0) {
+    // The solo'd package has nothing visible — typically because
+    // the user toggled show-all off and every file in that
+    // package was clean. Offer a way out via the empty state.
+    return '<div class="g2-empty-state">'
+      + '<strong>Package has no files in view</strong>'
+      + 'Toggle "All files" to widen the file set, or pick another package.'
+      + '</div>'
+  }
+  const col = pkgColor(pkg)
+  const pkgLabel = pkg === '__own__' ? 'own source' : pkg
+
+  // Aggregate per-severity own counts across the package's files.
+  const ownAgg = {}
+  for (const sev of SEVERITIES) ownAgg[sev] = 0
+  for (const n of filesInPkg) {
+    if (!n.own) continue
+    for (const sev of SEVERITIES) ownAgg[sev] += n.own[sev] ?? 0
+  }
+  // Edge stats: intra = both endpoints in this pkg, cross = one
+  // endpoint here + the other elsewhere. Walk edges once.
+  let intraEdges = 0, crossEdges = 0
+  for (const e of graph.edges) {
+    const a = graph.nodeByFile.get(e.a)
+    const b = graph.nodeByFile.get(e.b)
+    if (!a || !b) continue
+    if (a.pkg === pkg && b.pkg === pkg) intraEdges++
+    else if (a.pkg === pkg || b.pkg === pkg) crossEdges++
+  }
+  let hubs = 0
+  for (const n of filesInPkg) if (n.isHub) hubs++
+
+  let html = '<div class="g2-selection-card">'
+  html += '<div class="g2-sel-head">'
+  html += `<span class="g2-sel-dot" style="--dot:${col}; background:${col}"></span>`
+  html += `<span class="g2-sel-id">${esc(pkgLabel)}</span>`
+  html += '<span class="g2-sel-grp">package</span>'
+  html += '</div>'
+  html += '<div class="g2-sel-body">'
+  html += `<div class="g2-sel-row"><span class="k">Files</span><span class="v">${fileCount}</span></div>`
+  html += `<div class="g2-sel-row"><span class="k">Hubs</span><span class="v">${hubs}</span></div>`
+  html += `<div class="g2-sel-row"><span class="k">Intra edges</span><span class="v">${intraEdges}</span></div>`
+  html += `<div class="g2-sel-row"><span class="k">Cross edges</span><span class="v">${crossEdges}</span></div>`
+  html += '</div>'
+  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Findings</div>${renderSevChips(ownAgg)}</div>`
+  // Drill-in — same affordance as the file card. Hidden when
+  // only one file is in the package (nothing to visualize) and
+  // when already focused on it.
+  if (fileCount > 1 && graph2.focusedPkg !== pkg) {
+    html += '<div class="g2-sel-jumps">'
+    html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(pkg)}">Package graph →</button>`
+    html += '</div>'
+  }
+  html += '</div>'
+  return html
+}
+
 function renderDistribution(graph) {
   const totalFiles = graph.nodes.length || 1
   const tab = graph2.topPkgsTab
@@ -438,12 +514,17 @@ function renderDistribution(graph) {
       ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
       : (fileCnt / totalFiles * 100).toFixed(1)
     const label = pkg === '__own__' ? 'own source' : pkg
-    html += '<div class="g2-dist-item">'
+    // Each row is a button with data-g2-pkg so the existing
+    // package-click handler in events.js (used by the palette
+    // swatches) handles top-pkgs clicks too: same toggle-solo
+    // semantics, same right-panel refresh, no duplicated logic.
+    const isSelected = graph2.solo === pkg
+    html += `<button type="button" class="g2-dist-item${isSelected ? ' on' : ''}" data-g2-pkg="${esc(pkg)}" title="${esc(label)}">`
     html += `<span class="g2-dist-dot" style="background:${c}"></span>`
-    html += `<span class="g2-dist-name" title="${esc(label)}">${esc(label)}</span>`
+    html += `<span class="g2-dist-name">${esc(label)}</span>`
     html += `<span class="g2-dist-count">${cnt}</span>`
     html += `<span class="g2-dist-pct">${pct}%</span>`
-    html += '</div>'
+    html += '</button>'
   }
   html += '</div>'
   return html

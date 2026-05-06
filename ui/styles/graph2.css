@@ -872,15 +872,33 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   text-align: center;
 }
 
+/* Top-packages list rows — clickable buttons that route to
+   the package-click handler in events.js (same as palette
+   swatches). Highlighted with .on when the user has solo'd
+   that package. */
 .g2-dist-item {
   display: grid;
   grid-template-columns: 8px 1fr auto auto;
   gap: 8px;
   align-items: center;
   font-size: 10px;
-  padding: 3px 0;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  width: calc(100% + 12px);
 
-  & .g2-dist-dot { width: 8px; height: 8px; border-radius: 50%; }
+  &:hover { background: var(--graph-hover-bg); }
+  &.on {
+    background: var(--surface-active);
+    & .g2-dist-name { color: var(--accent); }
+  }
+
+  & .g2-dist-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   & .g2-dist-name {
     color: var(--muted);
     font-family: ui-monospace, monospace;

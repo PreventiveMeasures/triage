@@ -45,12 +45,22 @@ report.addEventListener('click', (e) => {
     // alone — there's a separate UI affordance (the search box) for
     // narrowing without committing to a single-package view.
     graph2.solo = graph2.solo === pkg ? null : pkg
-    const palette = g2Pkg.parentElement
-    palette.querySelectorAll('.g2-swatch').forEach((s) => {
+    // Clear the file selection when the user solos a package —
+    // selection card switches to package mode in that case (see
+    // renderSelectionCard's priority chain). Without this, an
+    // earlier file selection would keep displaying file info
+    // even though the user just asked for package-level info.
+    if (graph2.solo) graph2.selected = null
+    // Update palette swatches in place (they live outside the
+    // sections that refreshGraph2Sidebar / refreshGraph2TopPkgs
+    // re-render, so do this manually).
+    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
       const p = s.dataset.g2Pkg
       s.classList.toggle('solo', graph2.solo === p)
       s.classList.toggle('dim', graph2.solo && graph2.solo !== p)
     })
+    refreshGraph2Sidebar()
+    refreshGraph2TopPkgs()
     graph2.graphState?.requestDraw?.()
     return
   }
@@ -63,6 +73,11 @@ report.addEventListener('click', (e) => {
     document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
       s.classList.remove('solo', 'dim', 'muted', 'hidden-pkg')
     })
+    // Selection card might have been showing the now-cleared
+    // package — refresh so it falls through to the empty state
+    // (or back to a file selection if one was set independently).
+    refreshGraph2Sidebar()
+    refreshGraph2TopPkgs()
     graph2.graphState?.requestDraw?.()
     return
   }
