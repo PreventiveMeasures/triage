@@ -82,29 +82,43 @@ export function layoutRadial(graph, w, h) {
 // layout doesn't degenerate into a tight ring at certain N.
 export function layoutSpiral(graph, w, h) {
   const cx = w / 2, cy = h / 2
-  const maxR = Math.min(w, h) * 0.45
-  const minR = maxR * 0.30
+  // Work in the design's unit space (where 1.0 = half-canvas)
+  // so the magic numbers below port over directly. Scaling to
+  // pixels happens once per coordinate at write time.
+  const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
   const pkgInfo = new Map()
   for (let i = 0; i < N; i++) {
     const pkg = graph.packages[i]
+    // Golden-angle distribution of package centers around the
+    // canvas; matches the design's `g.hue * π/180` step (since
+    // each group's hue was itself i * 137.508° mod 360°).
     const angle = ((i * 137.508) % 360) * Math.PI / 180
+    // Pseudo-random radius band in [0.30, 0.95] half-canvas
+    // units — same magic constants the design uses. The
+    // 31-multiplier is coprime with 100 so the band cycles
+    // through 100 distinct values, breaking any correlation
+    // between angle and radius that would collapse the
+    // layout into a ring.
     const band = ((i * 31) % 100) / 100
-    const r = N === 1 ? 0 : minR + band * (maxR - minR)
+    const rUnit = N === 1 ? 0 : 0.30 + band * 0.65
     pkgInfo.set(pkg, {
-      x: cx + Math.cos(angle) * r,
-      y: cy + Math.sin(angle) * r,
+      x: cx + Math.cos(angle) * rUnit * unitToPx,
+      y: cy + Math.sin(angle) * rUnit * unitToPx,
       size: graph.pkgCount.get(pkg) ?? 0,
     })
   }
-  const groupRBase = Math.min(w, h) * 0.04
   for (const n of graph.nodes) {
     const info = pkgInfo.get(n.pkg)
     if (!info) continue
-    // Cap groupR so a single huge package doesn't swallow the
-    // canvas — sqrt scaling tames a 200-file npm package while
-    // still differentiating it from a 5-file own-source dir.
-    const groupR = Math.min(maxR * 0.5, groupRBase * (0.5 + Math.sqrt(info.size) * 0.4))
+    // Per-group disk radius in unit space, ported from the
+    // design: a tiny constant + sqrt-scaled bonus for size.
+    // Keeping this small (typical 0.014–0.025 unit ≈ 4-8px on
+    // a 600px-wide canvas) is what makes the spiral structure
+    // legible — bigger disks would overlap with neighbors and
+    // collapse the visualization into a blob, which is what
+    // happened with the previous 0.04 base.
+    const groupR = (0.012 + Math.sqrt(info.size) * 0.004) * unitToPx
     const h1 = hash(n.file)
     // Different bit ranges for angle vs radius — without this
     // the two correlate and the cluster looks like a comma
