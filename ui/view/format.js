@@ -106,3 +106,28 @@ export function lineLink(file, line, githubRepo) {
   if (!url) return text
   return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
 }
+
+// Commit URL builder + link renderer. Used by codex imports which
+// carry a commit_hash column; the link points at the upstream
+// commit on GitHub. Returns plain text (no <a>) when we don't know
+// a repo to link against, so callers don't have to special-case the
+// missing-repo path.
+export function commitUrl(githubRepo, hash) {
+  if (!githubRepo || !hash) return null
+  // repo.github could already be a full URL (some imports do that)
+  // or a `user/repo` slug. Detect by leading scheme; otherwise
+  // treat as a slug under github.com.
+  const base = /^https?:/i.test(githubRepo)
+    ? githubRepo.replace(/\/$/u, '')
+    : `https://github.com/${githubRepo}`
+  return `${base}/commit/${hash}`
+}
+export function commitLink(githubRepo, hash) {
+  if (!hash) return ''
+  // Short SHA for display (first 7 chars, GitHub's default abbrev).
+  // Full hash on hover via the title attribute.
+  const short = hash.slice(0, 7)
+  const url = commitUrl(githubRepo, hash)
+  if (!url) return `<span title="${esc(hash)}">${esc(short)}</span>`
+  return `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(hash)}">${esc(short)}</a>`
+}

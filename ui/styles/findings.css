@@ -126,6 +126,19 @@
   & .desc { grid-column: 2; white-space: pre-line; }
   & .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
   & .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
+  /* Commit reference (codex imports carry one) — small muted line
+     under the description, with the SHA in monospace so it reads as
+     a code identifier. */
+  & .commit-ref {
+    color: var(--muted);
+    font-size: .75rem;
+    margin-top: .25rem;
+    grid-column: 2;
+
+    & a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    & a:hover { text-decoration: underline; }
+    & span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  }
 
   /* `line-num` is the `line N` / `(found analyzing X)` spans. Line
      numbers are always shown — they're the minimum context needed to

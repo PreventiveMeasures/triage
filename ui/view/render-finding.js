@@ -1,5 +1,5 @@
 import { state } from './state.js'
-import { esc, prettyModel, stripExportMarker, lineLink, fileUrl } from './format.js'
+import { esc, prettyModel, stripExportMarker, lineLink, fileUrl, commitLink } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
 
 // Combined `file:line` link for the table-view location cell. lineLink
@@ -128,6 +128,13 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
   html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
   if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
   if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
+  // Commit reference — codex imports carry a commit_hash; render
+  // a short-SHA link to the upstream commit on GitHub. Only emit
+  // when the finding actually has a hash so non-codex sources stay
+  // unchanged.
+  if (f.commitHash) {
+    html += `<div class="commit-ref">commit ${commitLink(f.repo?.github, f.commitHash)}</div>`
+  }
   html += '</div></div>'
   return html
 }
