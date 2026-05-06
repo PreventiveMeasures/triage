@@ -1,8 +1,12 @@
 /* Top-level report container — hidden until a report is loaded
-   (`#report.active`). Centered, max-width capped, scrolls inside
-   #main-content. */
+   (`#report.active`). Spans the full main-content width so the
+   header + tab bar + graph tabs can use as much horizontal
+   room as the viewport offers. Findings content has its own
+   max-width wrapper (.findings-content below) since long
+   description text + code blocks read better at typewriter
+   widths than at 2400px wide. */
 #report {
-  display: none; max-width: 1200px; margin: 0 auto; padding: 1.5rem; width: 100%; box-sizing: border-box;
+  display: none; padding: 1.5rem; width: 100%; box-sizing: border-box;
 
   &.active { display: block; }
 
@@ -12,6 +16,14 @@
     & .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   }
 }
+
+/* Findings list (cards / table / grouped rows) — max-width
+   capped so finding descriptions stay readable at long
+   viewport widths. Left-aligned (no auto margin) so the
+   page reads top-down with the chrome above going full-width
+   and the list anchored to the left, leaving the right side
+   empty at wide viewports. */
+.findings-content { max-width: 1200px; }
 
 /* Top-level view switcher — Findings / Tree / Files. Only rendered
    when the report has a tree block with more than one file (single-file

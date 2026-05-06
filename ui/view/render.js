@@ -595,6 +595,15 @@ export function render() {
     }
   }
 
+  // Wrap the findings-only body in a max-width container so the
+  // header + tabs above can span full width (giving the graph
+  // tabs more room to breathe), while finding cards stay
+  // readable at typewriter widths. The wrapper is left-aligned,
+  // not centered: the page reads top-down with the dense tab
+  // bar full-bleed and the finding list anchored against the
+  // sidebar edge with empty space to the right at wide
+  // viewports.
+  html += '<div class="findings-content">'
   html += statsHtml(counts, colorCounts)
   html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
     showSource: hasAnyModulesPath,
@@ -612,6 +621,7 @@ export function render() {
   }
 
   html += findingsBodyHtml(filtered)
+  html += '</div>'
 
   report.innerHTML = html
   report.classList.add('active')
