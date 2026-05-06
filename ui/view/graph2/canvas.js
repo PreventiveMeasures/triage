@@ -220,7 +220,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   }
 
   function nodeRadius(n) {
-    const base = (n.isHub ? 6 : 3.5) * graph2.nodeSize
+    // Hub : member radius ratio = 1.4× — gives hubs a clear
+    // read without overpowering the cluster (earlier 6 / 3.5 ≈
+    // 1.71× was too dominant once the cross-imported mode lit
+    // up many more files as hubs).
+    const base = (n.isHub ? 4.9 : 3.5) * graph2.nodeSize
     const z = Math.max(0.6, Math.min(1.6, viewport.k))
     return base * z
   }
