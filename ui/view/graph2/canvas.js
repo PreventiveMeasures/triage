@@ -237,7 +237,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const selected = graph2.selected
     const sel = selected ? graph.nodeByFile.get(selected) : null
 
-    if (graph2.focusedPkg) {
+    // Package-focus mode has two render paths matching the
+    // layout split. Small packages (≤ 50 files) get the v1
+    // graph treatment — curved edges, arrowheads, file labels
+    // on every node — because the file count is low enough
+    // that the chrome reads cleanly. Larger packages reuse
+    // the spiral renderer below: straight edges, opt-in
+    // labels (zoom > 1.4 via showLabels), no per-node text
+    // crowding, just the Vogel-laid-out subgraph rendered
+    // as a subset of the main canvas.
+    if (graph2.focusedPkg && graph.nodes.length <= 50) {
       drawPackageView(T, selected, sel, now)
       return
     }
