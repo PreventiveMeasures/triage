@@ -358,23 +358,6 @@ export function layoutSpiral(graph, w, h) {
     bMap.set(aPkg, (bMap.get(aPkg) ?? 0) + 1)
   }
 
-  // Pre-compute the Vogel sunflower positions for every index
-  // 0..Nothers-1. Same (i × 137.508°, sqrt(i/(N-1))) seed pattern
-  // the old layout used; what changes is which package occupies
-  // which index. Adjacent indices have very different angles
-  // (golden-step) and very close radii, so within a ring all slots
-  // share approximately the same radius and span the angular
-  // circle in golden-angle stride.
-  const vogelX = new Array(Nothers)
-  const vogelY = new Array(Nothers)
-  for (let i = 0; i < Nothers; i++) {
-    const angle = ((i * 137.508) % 360) * Math.PI / 180
-    const band = Nothers <= 1 ? 0 : Math.sqrt(i / (Nothers - 1))
-    const rUnit = Nothers === 1 ? (entryPkg ? minRUnit : 0) : minRUnit + band * (maxRUnit - minRUnit)
-    vogelX[i] = cx + Math.cos(angle) * rUnit * unitToPx
-    vogelY[i] = cy + Math.sin(angle) * rUnit * unitToPx
-  }
-
   // Ring count grows as ~sqrt(N). Capped at 10 — past that the
   // ring-to-ring radial spacing gets too tight and within-ring
   // permutation has too few slots to meaningfully optimize over.
@@ -384,6 +367,73 @@ export function layoutSpiral(graph, w, h) {
     ringStart[k] = Math.floor(k * k / (numRings * numRings) * Nothers)
   }
   ringStart[numRings] = Nothers
+
+  // Per-ring radial push-out. Each ring's centre band radius is
+  // computed recursively:
+  //
+  //   r1(0) = r0(0)
+  //   r1(k) = r1(k-1) + (r0(k) - r0(k-1)) ·
+  //             sqrt( ringNodeCount(k-1) / ringGroupCount(k-1) )
+  //
+  // r0(k) is the ring's natural Vogel band radius (sqrt of the
+  // midpoint t of the ring's rank range). The recursive step adds
+  // the original gap between ring k and ring k-1, scaled by the
+  // sqrt of the previous ring's average files-per-package — so a
+  // ring sitting outside a ring full of large packages (lots of
+  // files per group) is pushed further than one outside a ring of
+  // small leaf packages. Average ≈ 1 leaves the gap unchanged;
+  // average ≈ 4 doubles it; etc.
+  //
+  // Then each package's band shifts by (r1 - r0) of its own ring,
+  // preserving the within-ring Vogel spread (packages keep their
+  // relative radii inside the ring; only the ring centre moves).
+  // Outer rings may extend past the original maxRUnit; computeFit
+  // reads actual node positions and auto-zooms.
+  const ringGroupCount = new Array(numRings)
+  const ringNodeCount = new Array(numRings)
+  for (let k = 0; k < numRings; k++) {
+    const startIdx = ringStart[k]
+    const endIdx = ringStart[k + 1]
+    ringGroupCount[k] = endIdx - startIdx
+    let nodes = 0
+    for (let i = startIdx; i < endIdx; i++) {
+      nodes += graph.pkgCount.get(others[i]) ?? 0
+    }
+    ringNodeCount[k] = nodes
+  }
+  const ringR0 = new Array(numRings)
+  for (let k = 0; k < numRings; k++) {
+    const midT = (ringStart[k] + ringStart[k + 1] - 1) / 2 / Math.max(1, Nothers - 1)
+    ringR0[k] = Math.sqrt(Math.max(0, midT))
+  }
+  const ringR1 = new Array(numRings)
+  ringR1[0] = ringR0[0]
+  for (let k = 1; k < numRings; k++) {
+    const grp = ringGroupCount[k - 1]
+    const nds = ringNodeCount[k - 1]
+    const factor = grp > 0 ? Math.sqrt(nds / grp) : 1
+    ringR1[k] = ringR1[k - 1] + (ringR0[k] - ringR0[k - 1]) * factor
+  }
+  const ringDelta = new Array(numRings)
+  for (let k = 0; k < numRings; k++) ringDelta[k] = ringR1[k] - ringR0[k]
+
+  // Pre-compute the Vogel sunflower positions for every index
+  // 0..Nothers-1. Same (i × 137.508°, sqrt(i/(N-1))) seed pattern
+  // as before, with each package's band shifted by the per-ring
+  // delta computed above (preserves within-ring spread, just
+  // translates the ring centre).
+  const vogelX = new Array(Nothers)
+  const vogelY = new Array(Nothers)
+  let curRing = 0
+  for (let i = 0; i < Nothers; i++) {
+    while (curRing < numRings - 1 && i >= ringStart[curRing + 1]) curRing++
+    const angle = ((i * 137.508) % 360) * Math.PI / 180
+    const baseBand = Nothers <= 1 ? 0 : Math.sqrt(i / (Nothers - 1))
+    const band = baseBand + ringDelta[curRing]
+    const rUnit = Nothers === 1 ? (entryPkg ? minRUnit : 0) : minRUnit + band * (maxRUnit - minRUnit)
+    vogelX[i] = cx + Math.cos(angle) * rUnit * unitToPx
+    vogelY[i] = cy + Math.sin(angle) * rUnit * unitToPx
+  }
 
   // Greedy assignment: for each ring inner→outer, walk packages in
   // priority order; each picks the unused Vogel slot in this ring
