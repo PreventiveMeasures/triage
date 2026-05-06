@@ -92,14 +92,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   function ensureLayout() {
     if (!needsLayout) return
     const cache = graph2.layoutCache
-    // Skip the cache for "classic" — it pulls from v1's
-    // tree.layoutCache, which can be invalidated independently
-    // (e.g. v1's "Show all" toggle, or v1 simply running for the
-    // first time after v2 cached an empty fallback). Re-running
-    // layoutClassic() each time is cheap (it's a Map copy in the
-    // hit case), and guarantees v2 stays in sync with v1's view.
-    const cacheable = graph2.layoutMode !== 'classic'
-    if (cacheable && cache && cache.mode === graph2.layoutMode && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
+    if (cache && cache.mode === graph2.layoutMode && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
       // Reuse cached positions — copy back into the live nodes.
       for (const n of graph.nodes) {
         const p = cache.pos.get(n.file)
@@ -107,11 +100,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       }
     } else {
       applyLayout(graph2.layoutMode, graph, layoutW, layoutH)
-      if (cacheable) {
-        const pos = new Map()
-        for (const n of graph.nodes) pos.set(n.file, { x: n.x, y: n.y })
-        graph2.layoutCache = { mode: graph2.layoutMode, files: graph.files, w: layoutW, h: layoutH, pos }
-      }
+      const pos = new Map()
+      for (const n of graph.nodes) pos.set(n.file, { x: n.x, y: n.y })
+      graph2.layoutCache = { mode: graph2.layoutMode, files: graph.files, w: layoutW, h: layoutH, pos }
     }
     needsLayout = false
   }
