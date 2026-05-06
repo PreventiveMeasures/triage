@@ -536,6 +536,39 @@
   }
 }
 
+/* Top-right overlay — drill-in icon button when a package
+   context exists. Mirrors .g2-stage-overlay's positioning, just
+   on the opposite corner so it sits visually paired with the
+   back button (top-left) — both are in-canvas graph actions. */
+.g2-stage-overlay-tr {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+/* Square subgraph-icon button. Same chrome as .g2-back-btn
+   (glass + border + shadow) and same 28×28 footprint as the
+   bottom-right zoom controls, so the canvas's three corner
+   overlays read as the same family of controls. */
+.g2-focus-pkg-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: var(--shadow-glass);
+
+  &:hover { border-color: var(--accent); background: var(--surface-active); }
+  & svg { display: block; }
+}
+
 /* Back button — shown in the top-left overlay when the user
    has drilled into a package. Glass chrome matches the zoom
    controls. */

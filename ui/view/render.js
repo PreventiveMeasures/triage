@@ -11,7 +11,7 @@ import { renderTreeSidebarFull } from './graph/sidebar.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
-import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
+import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock, renderFocusOverlay } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 
@@ -119,6 +119,13 @@ export function refreshGraph2Sidebar() {
   const data = buildGraph2Data()
   if (!data) return
   area.innerHTML = renderSelectionCard(data.graph)
+  // The top-right canvas overlay (drill-in icon button) depends
+  // on the same selection / solo / focus state the selection
+  // card does, so refresh both from the same trigger. Slot
+  // element is rendered unconditionally by renderStage; we just
+  // swap its innerHTML.
+  const focusSlot = document.getElementById('g2-focus-overlay-slot')
+  if (focusSlot) focusSlot.innerHTML = renderFocusOverlay(data.graph)
 }
 
 // Re-render only the right-panel "Top packages" block. Called when

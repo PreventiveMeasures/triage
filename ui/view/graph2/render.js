@@ -282,6 +282,13 @@ function renderStage(graph) {
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
     html += '</div>'
   }
+  // Top-right overlay slot — pairs with the top-left back button
+  // (both are in-canvas graph actions, not navigation jumps). The
+  // wrapper is always present so we can hot-swap its content from
+  // refreshGraph2Sidebar when selection / solo / focus state
+  // changes; renderFocusOverlay decides whether the slot is
+  // populated (button) or empty (nothing to drill into).
+  html += `<div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr">${renderFocusOverlay(graph)}</div>`
   // Bottom-left stats — file/package/edge/hub/issue counts.
   // The earlier "X of Y visible" readout is gone: every node
   // stays on screen now (filters / solo soft-dim instead of
@@ -306,6 +313,40 @@ function renderStage(graph) {
   html += '</div>'
   html += '<div class="g2-tooltip" id="g2-tooltip"></div>'
   html += '</main>'
+  return html
+}
+
+// Decides whether the top-right overlay slot is populated. Shown
+// when there's a package context to drill into:
+//   - a file is selected → use that file's package, OR
+//   - a package is solo'd → use that package.
+// Hidden when there's only one file in the package (nothing to
+// visualize) or when already focused on it. Returns the button
+// HTML, or '' to leave the slot empty. Exported so the refresh
+// helper in render.js can swap it on selection change.
+export function renderFocusOverlay(graph) {
+  let pkg = null
+  if (graph2.selected) {
+    const sel = graph.nodeByFile.get(graph2.selected)
+    if (sel) pkg = sel.pkg
+  } else if (graph2.solo) {
+    pkg = graph2.solo
+  }
+  if (!pkg) return ''
+  if ((graph.pkgCount.get(pkg) ?? 0) <= 1) return ''
+  if (graph2.focusedPkg === pkg) return ''
+  const label = pkg === '__own__' ? 'own source' : pkg
+  let html = ''
+  html += `<button type="button" class="g2-focus-pkg-btn" data-g2-focus-pkg="${esc(pkg)}" title="Focus on ${esc(label)}'s graph">`
+  // Subgraph icon — three nodes connected by edges, evoking
+  // "this is a smaller graph you can zoom into".
+  html += '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
+  html += '<path d="M8 4.6 L4 11 M8 4.6 L12 11 M5 11.4 L11 11.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>'
+  html += '<circle cx="8" cy="3.6" r="2" fill="currentColor"/>'
+  html += '<circle cx="3.6" cy="11.4" r="2" fill="currentColor"/>'
+  html += '<circle cx="12.4" cy="11.4" r="2" fill="currentColor"/>'
+  html += '</svg>'
+  html += '</button>'
   return html
 }
 
@@ -398,26 +439,15 @@ function renderFileCard(graph, n, file) {
   // breakdown — chips are strictly more informative.
   html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Own findings</div>${renderSevChips(n.own)}</div>`
   html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Subtree findings</div>${renderSevChips(n.subtree)}</div>`
-  // Quick jumps over to the existing tabs — same data, different
-  // presentation. Findings filters get cleared first so the user
-  // doesn't land on an empty list because of a stale exclude.
-  // All three jumps (Findings / Files / Package graph) live on
-  // the same row: an earlier attempt put Findings inline next to
-  // the Own-findings label, but the muted-uppercase label and the
-  // accent-bordered button don't share enough weight to read as
-  // label + action — they competed instead of grouping. Keeping
-  // them together as a single action toolbar reads cleaner.
+  // Bottom row carries only the navigation jumps (Findings /
+  // Files). The package-graph drill-in is a different kind of
+  // action — it stays on the Graph tab and just narrows the
+  // canvas — so it lives on the canvas itself as a top-right
+  // icon button (rendered in renderStage), pairing with the
+  // top-left back button.
   html += '<div class="g2-sel-jumps">'
   if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
   html += `<button type="button" class="g2-sel-jump" data-g2-jump-file="${esc(file)}">Files →</button>`
-  // Package-graph drill-in — narrows the canvas to this file's
-  // package, with v1-style rendering (single hue, arrowheads,
-  // file labels). Hidden when only one file is in the package
-  // (nothing to visualize), and when already focused on it.
-  const pkgSize = graph.pkgCount.get(n.pkg) ?? 0
-  if (pkgSize > 1 && graph2.focusedPkg !== n.pkg) {
-    html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(n.pkg)}">Package graph →</button>`
-  }
   html += '</div>'
   // Directional import lists. Imported by = files that point
   // AT this one; Imports = files this one points at. The
@@ -491,14 +521,10 @@ function renderPackageCard(graph, pkg) {
   html += `<div class="g2-sel-row"><span class="k">Cross edges</span><span class="v">${crossEdges}</span></div>`
   html += '</div>'
   html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Findings</div>${renderSevChips(ownAgg)}</div>`
-  // Drill-in — same affordance as the file card. Hidden when
-  // only one file is in the package (nothing to visualize) and
-  // when already focused on it.
-  if (fileCount > 1 && graph2.focusedPkg !== pkg) {
-    html += '<div class="g2-sel-jumps">'
-    html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(pkg)}">Package graph →</button>`
-    html += '</div>'
-  }
+  // The Package-graph drill-in moved out of the selection card
+  // and onto the canvas (top-right overlay button) — see
+  // renderStage. Same affordance, just placed where it belongs:
+  // it's a graph action, not a navigation jump.
   // Imported by — every file from a different package that
   // points at any file in this package. Dedup via Set since a
   // single importer file may point at multiple files in the
