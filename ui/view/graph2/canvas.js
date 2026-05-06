@@ -697,20 +697,20 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const stageRect = stage.getBoundingClientRect()
     const col = pkgColor(n.pkg)
     const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
-    // Header carries the file label; the chip block below shows
-    // the full per-severity breakdown ("3 HIGH" / "2 MEDIUM").
-    // Type / Degree / Intra / Cross rows used to live here but
-    // were dropped — the canvas already encodes that info (hub
-    // halo, edge density), and the chips give the actionable
-    // signal. Keeps the two graph tabs visually consistent.
+    const relPath = pkgRelative(n.file, n.pkg)
+    // Three-line layout:
+    //   1. file path relative to the package root (monospace,
+    //      primary text colour) — what the user mostly cares
+    //      about identifying the node.
+    //   2. dot + package name — secondary context.
+    //   3. per-severity chips when n.totalIssues > 0 — same
+    //      block the selection card uses.
     let html = `
+      <div class="g2-tt-path">${escapeHtml(relPath)}</div>
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style="background:${col}"></span>
-        <span class="g2-tt-id">${escapeHtml(n.label)}</span>
-      </div>
-      <dl class="g2-tt-grid">
-        <dt>Package</dt><dd>${escapeHtml(pkgLabel)}</dd>
-      </dl>`
+        <span class="g2-tt-pkg">${escapeHtml(pkgLabel)}</span>
+      </div>`
     if (n.totalIssues > 0) html += renderSevChips(n.own)
     tooltip.innerHTML = html
     // Show first, THEN measure — the browser doesn't compute layout
@@ -745,6 +745,23 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   function escapeHtml(s) {
     const el = document.createElement('span'); el.textContent = String(s ?? ''); return el.innerHTML
+  }
+
+  // Strip the package's anchor prefix from a file path so the
+  // tooltip can show "index.js" instead of "node_modules/foo/
+  // index.js" (npm) or "foo/bar.js" instead of "src/foo/bar.js"
+  // (own source). Mirrors the layout packageOf builds in
+  // graph/utils.js: npm packages anchor on `node_modules/<pkg>/`,
+  // own source on the top-level dir. For root files (pkg === '/')
+  // and the synthetic '__own__' bucket we return the file as-is
+  // since there's no meaningful prefix to strip.
+  function pkgRelative(file, pkg) {
+    if (!pkg || pkg === '/' || pkg === '__own__') return file
+    const npmAnchor = 'node_modules/' + pkg + '/'
+    const nm = file.indexOf(npmAnchor)
+    if (nm >= 0) return file.slice(nm + npmAnchor.length)
+    if (file.startsWith(pkg + '/')) return file.slice(pkg.length + 1)
+    return file
   }
 
   // ── Pan / zoom / click ────────────────────────────────────────
