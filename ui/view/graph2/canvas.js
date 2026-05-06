@@ -908,13 +908,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // hub-mode switch in events.js) can mutate node flags without
     // re-attaching the canvas.
     graph,
-    // Force the next paint to re-run the layout (positions
-    // depend on isHub — hubs sit closer to package anchors —
-    // so any state that changes the hub set has to invalidate
-    // the cache and reflow).
+    // Re-run the layout pass right now. Positions depend on
+    // isHub — hubs sit closer to package anchors — so any
+    // state that changes the hub set has to invalidate the
+    // cache and reflow. ensureLayout itself is normally only
+    // called from resize(); we invoke it directly here so the
+    // caller doesn't have to fake a resize event.
     relayout: () => {
-      needsLayout = true
       graph2.layoutCache = null
+      needsLayout = true
+      if (layoutW > 0 && layoutH > 0) ensureLayout()
       requestDraw()
     },
     _cleanup: () => {
