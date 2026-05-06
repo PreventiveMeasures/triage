@@ -301,7 +301,7 @@ function renderRightPanel(graph) {
 export function renderTopPkgsBlock(graph) {
   const tab = graph2.topPkgsTab
   let html = '<div class="g2-panel-title g2-panel-title-row">'
-  html += '<span>Top packages</span>'
+  html += '<span>Packages</span>'
   html += '<div class="g2-mini-tabs">'
   html += `<button type="button" class="g2-mini-tab${tab === 'issues' ? ' on' : ''}" data-g2-top-pkgs="issues">Issues</button>`
   html += `<button type="button" class="g2-mini-tab${tab === 'files' ? ' on' : ''}" data-g2-top-pkgs="files">Files</button>`
