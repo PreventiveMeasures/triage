@@ -8,6 +8,7 @@ import { render, renderKeepFocus, refreshTreeSidebar, refreshGraph2Sidebar, refr
 import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
+import { assignHubs } from './graph2/data.js'
 
 // All interactive elements inside #report are handled via event
 // delegation here, no inline handlers. Order matters: closer-fitting
@@ -122,6 +123,24 @@ report.addEventListener('click', (e) => {
   if (g2TopPkgs) {
     graph2.topPkgsTab = g2TopPkgs.dataset.g2TopPkgs
     refreshGraph2TopPkgs()
+    return
+  }
+  // Display-section mode rows (currently just hub-mode). Each
+  // mode toggle writes its value into graph2[id-as-state-key],
+  // re-runs the hub assignment on the existing graph (no
+  // topology change), refreshes the right sidebar so any hub
+  // counts update, and requestDraws.
+  const g2Mode = e.target.closest('[data-g2-mode]')
+  if (g2Mode) {
+    const which = g2Mode.dataset.g2Mode
+    const val = g2Mode.dataset.g2ModeVal
+    if (which === 'hub-mode') {
+      graph2.hubMode = val
+      const g = graph2.graphState?.graph
+      if (g) assignHubs(g, val)
+      refreshGraph2Sidebar()
+      graph2.graphState?.requestDraw?.()
+    }
     return
   }
   const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')
@@ -477,12 +496,6 @@ report.addEventListener('input', (e) => {
     graph2.edgeOpacity = parseFloat(val) / 100
     const lbl = document.getElementById('g2-lbl-edge-op')
     if (lbl) lbl.textContent = graph2.edgeOpacity.toFixed(2)
-    graph2.graphState?.requestDraw?.()
-  }
-  else if (id === 'g2-r-min-deg') {
-    graph2.minDegree = parseInt(val, 10)
-    const lbl = document.getElementById('g2-lbl-min-deg')
-    if (lbl) lbl.textContent = graph2.minDegree
     graph2.graphState?.requestDraw?.()
   }
   else if (id === 'g2-r-node-size') {

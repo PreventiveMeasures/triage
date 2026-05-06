@@ -1,5 +1,6 @@
 import { packageOf, pkgColor, totalFindings } from '../graph/utils.js'
 import { SEVERITIES } from '../format.js'
+import { graph2 } from './state.js'
 
 // Top-severity tier for a per-file count map. Walks SEVERITIES
 // (already in highest-to-lowest order in format.js) and returns
@@ -119,27 +120,55 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
   for (const n of nodes) pkgCount.set(n.pkg, (pkgCount.get(n.pkg) ?? 0) + 1)
   const packages = [...pkgCount.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p)
 
-  // Hubs = top-degree node per package, plus any second node that
-  // also lands in the package's degree-top-third. Bounded to keep
-  // small graphs from flagging every node as a hub. Mirrors the v2
-  // design's "ambassador" concept (load-bearing nodes in a cluster);
-  // we use it to drive halos + the hub-highlight toggle.
+  // Packages-by-name lookup for the hub pass below.
   const byPkg = new Map()
   for (const n of nodes) {
     if (!byPkg.has(n.pkg)) byPkg.set(n.pkg, [])
     byPkg.get(n.pkg).push(n)
   }
-  for (const [, list] of byPkg) {
+
+  const graph = {
+    files, nodes, nodeByFile, edges, adj,
+    importsOf, importedBy, packages, pkgCount, byPkg,
+  }
+  assignHubs(graph, graph2.hubMode)
+  return graph
+}
+
+// Hub assignment — split out so the topbar's hub-mode switch can
+// recompute without rebuilding the whole graph (topology, layout,
+// adjacency stays). Clears every node's `isHub` then re-runs the
+// chosen strategy.
+//
+//   'top'   — top-degree file(s) per package, capped at min(3,
+//             ceil(N/4)). Mirrors the v2 design's "ambassador"
+//             concept; reads well when packages have a clear
+//             internal lead.
+//   'cross' — any file that's imported from a different package.
+//             Picks out the public surface — often the cleaner
+//             read on microservice-style codebases where each
+//             package has a small handful of entry points.
+export function assignHubs(graph, mode) {
+  for (const n of graph.nodes) n.isHub = false
+  if (mode === 'cross') {
+    // Walk edges; for each cross-package edge, mark whichever
+    // endpoint is the import target as a hub. The edge stores
+    // direction via fromLo / fromHi: if fromLo is true the lo
+    // file imports hi (hi is the target), and vice versa.
+    for (const e of graph.edges) {
+      if (!e.cross) continue
+      if (e.fromLo) graph.nodeByFile.get(e.b).isHub = true
+      if (e.fromHi) graph.nodeByFile.get(e.a).isHub = true
+    }
+    return
+  }
+  // Default: top-degree per package, capped.
+  for (const [, list] of graph.byPkg) {
     list.sort((a, b) => b.deg - a.deg)
     const limit = Math.max(1, Math.min(3, Math.ceil(list.length / 4)))
     for (let i = 0; i < Math.min(limit, list.length); i++) {
       if (list[i].deg > 0) list[i].isHub = true
     }
-  }
-
-  return {
-    files, nodes, nodeByFile, edges, adj,
-    importsOf, importedBy, packages, pkgCount,
   }
 }
 

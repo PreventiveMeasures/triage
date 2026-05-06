@@ -184,15 +184,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     return [(sx - viewport.tx) / viewport.k, (sy - viewport.ty) / viewport.k]
   }
 
-  // Visibility predicate — package-hide and the min-degree
-  // slider. Solo and the severity filter are NOT here on
-  // purpose: they dim non-matching nodes to 0.1 instead of
-  // hiding them, so they still occupy space and read as
-  // context (the user can see "where" the matching subgraph
-  // sits inside the larger picture).
+  // Visibility predicate — only the legacy package-hide set,
+  // which nothing currently writes to. Solo and the severity
+  // filter are NOT here on purpose: they dim non-matching nodes
+  // to 0.1 instead of hiding them, so they still occupy space
+  // and read as context (the user can see "where" the matching
+  // subgraph sits inside the larger picture).
   function nodeVisible(n) {
     if (graph2.hidden.has(n.pkg)) return false
-    if (n.deg < graph2.minDegree) return false
     return true
   }
 
@@ -905,6 +904,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   graph2.graphState = {
     requestDraw,
+    // Expose the active graph so external handlers (e.g. the
+    // hub-mode switch in events.js) can mutate node flags without
+    // re-attaching the canvas.
+    graph,
     _cleanup: () => {
       destroyed = true
       cancelAnimationFrame(rafId)

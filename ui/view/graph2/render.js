@@ -162,9 +162,11 @@ function renderControls(graph) {
   html += '</button>'
   html += '<div class="g2-collapsible-body">'
   html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))
-  const maxDeg = Math.max(1, ...graph.nodes.map((n) => n.deg))
-  html += sliderRow('min-deg', 'Min degree', graph2.minDegree, 0, Math.min(20, maxDeg), graph2.minDegree)
   html += sliderRow('node-size', 'Node size', graph2.nodeSize.toFixed(1) + '×', 40, 220, Math.round(graph2.nodeSize * 100))
+  html += modeRow('hub-mode', 'Hubs', graph2.hubMode, [
+    ['top', 'Top per pkg'],
+    ['cross', 'Cross-imported'],
+  ])
   html += toggleRow('halos', 'Glow halos', graph2.showHalos)
   html += toggleRow('hubs', 'Highlight hubs', graph2.highlightHubs)
   html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
@@ -177,6 +179,23 @@ function sliderRow(id, label, valueLabel, min, max, value) {
     + `<div class="g2-filter-label"><span>${label}</span><span class="v" id="g2-lbl-${id}">${valueLabel}</span></div>`
     + `<input type="range" id="g2-r-${id}" min="${min}" max="${max}" value="${value}">`
     + '</div>'
+}
+
+// Mini-tab segmented row — same chrome as the Top-packages
+// Issues/Files tabs, but laid out as a labelled .g2-filter-row
+// so it sits inline with the sliders / toggles. Currently used
+// for the hub-mode switch; keep generic so future Display
+// segments (edge styles, layout flavor) can reuse it.
+function modeRow(id, label, current, options) {
+  let html = '<div class="g2-filter-row">'
+  html += `<div class="g2-filter-label"><span>${label}</span></div>`
+  html += '<div class="g2-mini-tabs">'
+  for (const [val, lbl] of options) {
+    const on = current === val ? ' on' : ''
+    html += `<button type="button" class="g2-mini-tab${on}" data-g2-mode="${id}" data-g2-mode-val="${val}">${lbl}</button>`
+  }
+  html += '</div></div>'
+  return html
 }
 
 function toggleRow(key, label, on) {

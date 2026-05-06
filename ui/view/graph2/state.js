@@ -4,12 +4,12 @@
 // stale listeners and rAF callbacks.
 //
 // Most fields here back UI controls in the left/topbar panels: the
-// segmented controls (layout, edge mode), the sliders (edge opacity /
-// min degree / node size), the toggle rows (halos / hub highlight /
-// labels / issues-only), the severity-row filter, and the palette
-// solo / hidden + search state. Defaults are tuned to read well on
-// the small typical DeepView graph (10–80 files) so the empty state
-// is informative even before any user input.
+// segmented controls (layout, edge mode, hub mode), the sliders
+// (edge opacity / node size), the toggle rows (halos / hub
+// highlight / labels / issues-only), the severity-row filter, and
+// the palette solo / hidden + search state. Defaults are tuned to
+// read well on the small typical DeepView graph (10–80 files) so
+// the empty state is informative even before any user input.
 export const graph2 = {
   selected: null,        // file path or null
   // Package focus mode — when set, the canvas drops the spiral
@@ -28,11 +28,18 @@ export const graph2 = {
   // shrinks the panel's idle vertical footprint.
   displayCollapsed: true,
   edgeOpacity: 0.22,
-  minDegree: 0,
   nodeSize: 1.0,
   showHalos: true,
   highlightHubs: true,
   showLabels: false,
+  // Hub-detection strategy. 'top' = top-degree node(s) per package,
+  // capped (the original v2 design). 'cross' = any file that's
+  // imported from a different package — picks out the public
+  // surface of each package, which often reads cleaner on
+  // microservice-style graphs where the entry-point file pattern
+  // is well-defined. Switching just re-runs assignHubs on the
+  // existing graph; topology stays.
+  hubMode: 'top',        // 'top' | 'cross'
   // Severity highlight filter — empty = no filter, every node
   // draws at full opacity (the default). When 1+ severities are
   // selected, matching nodes stay full opacity and everything
