@@ -374,15 +374,6 @@ export function renderSelectionCard(graph) {
 
 function renderFileCard(graph, n, file) {
   const col = pkgColor(n.pkg)
-  // Walk adjacency to get intra / cross degree counts for the
-  // body rows. The full neighbor enumeration with sort that
-  // used to live here fed the now-removed "Top neighbors"
-  // section; importedBy / importsOf carry the directional
-  // info more directly and are walked downstream.
-  let intra = 0, cross = 0
-  for (const ei of (graph.adj.get(file) ?? [])) {
-    graph.edges[ei].cross ? cross++ : intra++
-  }
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
 
   let html = ''
@@ -394,10 +385,6 @@ function renderFileCard(graph, n, file) {
   html += '</div>'
   html += '<div class="g2-sel-body">'
   html += `<div class="g2-sel-row"><span class="k">Path</span><span class="v" title="${esc(file)}">${esc(file)}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Type</span><span class="v">${n.isHub ? 'Hub' : 'Member'}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Degree</span><span class="v">${n.deg}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Intra-pkg</span><span class="v">${intra}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Cross-pkg</span><span class="v">${cross}</span></div>`
   html += '</div>'
   // Own + subtree finding chips — same chrome as graph v1's
   // sidebar (.tree-info-section / .tree-count-chip), so the
