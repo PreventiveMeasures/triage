@@ -84,13 +84,23 @@ export function buildGraph2Data() {
     state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-  // Package-focus mode trumps everything else: only files in the
-  // focused package, regardless of show-all / trash filters.
-  // The canvas's intra-package import set falls out automatically
-  // since buildGraph filters edges to the file set.
+  // Package-focus mode narrows to files in the focused package.
+  // tree.showAll still gates the clean-file filter inside that
+  // scope: when off, drop files that have neither own findings
+  // nor a subtree (transitive) finding reachable through imports
+  // — same predicate the full-graph view uses, applied to the
+  // package subset. The canvas's intra-package import set falls
+  // out automatically since buildGraph filters edges to the file
+  // set; cross-package imports outside the focus aren't drawn,
+  // but their transitive findings still count toward keeping a
+  // file in scope (they're part of "reachable issues" the user
+  // expects to see represented).
   let files
   if (graph2.focusedPkg) {
     files = allFiles.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
+    if (!tree.showAll) {
+      files = files.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
+    }
   } else {
     files = tree.showAll
       ? allFiles
