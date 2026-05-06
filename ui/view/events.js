@@ -141,6 +141,27 @@ report.addEventListener('click', (e) => {
     graph2.graphState?.refit()
     return
   }
+  // Show-all in the v2 topbar — flips the FILE SET (same data-level
+  // filter graph v1's checkbox drives, sharing tree.showAll). Both
+  // graph v1's and graph v2's layout caches are now stale; tear down
+  // the v2 canvas (rAF + observers + window listeners) so render()
+  // can re-attach against the new node set. Graph v1's canvas, if it
+  // happens to be the next tab the user opens, will rebuild from
+  // scratch because we cleared its layout cache.
+  const g2ShowAll = e.target.closest('[data-g2-show-all]')
+  if (g2ShowAll) {
+    tree.showAll = !tree.showAll
+    tree.layoutCache = null
+    cleanupGraphInteraction()
+    graph2.layoutCache = null
+    // Selection might have pointed at a file that's now filtered
+    // out — clear it so the right panel doesn't render against a
+    // missing node.
+    graph2.selected = null
+    cleanupGraph2()
+    render()
+    return
+  }
   // Tree-tab: click a graph node to select it (drives the sidebar).
   const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
   if (treeNode) {

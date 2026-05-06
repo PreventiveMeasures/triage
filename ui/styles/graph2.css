@@ -85,6 +85,31 @@
   & svg { display: block; }
 }
 
+/* Compact topbar toggle — same on/off pill semantics as the bigger
+   .g2-toggle-row in the left panel, sized down to fit the 44px
+   topbar without wrapping. The .g2-switch child reuses the same
+   styling rules from below, so the visual stays consistent across
+   the two locations. */
+.g2-topbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font: 500 11px/1 inherit;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+
+  &:hover { color: var(--text); border-color: var(--accent); }
+  &.on { color: var(--text); }
+  &.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  &.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
+}
+
 /* ── Panels ────────────────────────────────────────────────── */
 .graph2-left,
 .graph2-right {
