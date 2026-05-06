@@ -36,7 +36,6 @@ export function renderGraph2Layout(graph) {
 
 function renderTopBar() {
   const lay = graph2.layoutMode
-  const edge = graph2.edgeMode
   let html = '<div class="graph2-topbar">'
   // "Show all" lives at the very top because it controls the
   // FILE SET, not just rendering — flipping it rebuilds the graph
@@ -64,11 +63,6 @@ function renderTopBar() {
   html += '<div class="g2-seg" data-g2-seg="layout">'
   for (const m of ['spiral', 'force', 'radial', 'grid', 'classic']) {
     html += `<button type="button" class="${lay === m ? 'on' : ''}" data-g2-layout="${m}">${m[0].toUpperCase() + m.slice(1)}</button>`
-  }
-  html += '</div>'
-  html += '<div class="g2-seg" data-g2-seg="edge">'
-  for (const [val, label] of [['all', 'All edges'], ['cross', 'Cross-pkg'], ['none', 'No edges']]) {
-    html += `<button type="button" class="${edge === val ? 'on' : ''}" data-g2-edges="${val}">${label}</button>`
   }
   html += '</div>'
   html += '<div class="g2-spacer"></div>'
@@ -173,8 +167,6 @@ function toggleRow(key, label, on) {
 function renderStage() {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
-  html += '<div class="g2-corner-tl">DEEPVIEW · graph v2<br><span class="g2-axis-tag">drag to pan · scroll to zoom</span></div>'
-  html += '<div class="g2-corner-tr"><span id="g2-cursor">x: +0  y: +0</span></div>'
   html += '<div class="g2-corner-bl"><span id="g2-visible">— of — visible</span></div>'
   html += '<div class="g2-corner-br" id="g2-fps">— fps</div>'
   html += '<div class="g2-zoom-ctrl">'

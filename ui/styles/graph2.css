@@ -455,7 +455,10 @@
   }
 }
 
-.g2-corner-tl, .g2-corner-tr, .g2-corner-bl, .g2-corner-br {
+/* Bottom-corner readouts — bl shows "X of Y visible", br shows
+   FPS. The top corners (branding + cursor coordinates) were
+   dropped; they read as design chrome rather than useful info. */
+.g2-corner-bl, .g2-corner-br {
   position: absolute;
   pointer-events: none;
   color: var(--muted);
@@ -465,16 +468,8 @@
   text-transform: uppercase;
   z-index: 2;
 }
-.g2-corner-tl { top: 10px; left: 10px; }
-.g2-corner-tr { top: 10px; right: 10px; text-align: right; }
 .g2-corner-bl { bottom: 10px; left: 10px; }
 .g2-corner-br { bottom: 10px; right: 10px; text-align: right; }
-
-.g2-axis-tag {
-  color: var(--muted);
-  opacity: 0.85;
-  font-weight: 400;
-}
 
 .g2-zoom-ctrl {
   position: absolute;

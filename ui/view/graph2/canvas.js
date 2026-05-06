@@ -65,7 +65,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const tooltip = container.querySelector('#g2-tooltip')
   const stage = container.querySelector('.graph2-stage')
   const fpsEl = container.querySelector('#g2-fps')
-  const cursorEl = container.querySelector('#g2-cursor')
   const visibleEl = container.querySelector('#g2-visible')
   const zoomEl = container.querySelector('#g2-zoom-pct')
 
@@ -201,50 +200,49 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const selected = graph2.selected
     const sel = selected ? graph.nodeByFile.get(selected) : null
 
-    // ── Edges (back layer) ──────────────────────────────────────
-    if (graph2.edgeMode !== 'none') {
-      for (const e of graph.edges) {
-        if (graph2.edgeMode === 'cross' && !e.cross) continue
-        const na = graph.nodeByFile.get(e.a)
-        const nb = graph.nodeByFile.get(e.b)
-        if (!na || !nb) continue
-        if (!nodeVisible(na) || !nodeVisible(nb)) continue
+    // ── Edges (back layer) — always drawn, cross/intra still
+    // get distinct visual treatment (cross = gradient between
+    // package hues, intra = neutral structural gray) so the
+    // axis is still readable without a topbar toggle.
+    for (const e of graph.edges) {
+      const na = graph.nodeByFile.get(e.a)
+      const nb = graph.nodeByFile.get(e.b)
+      if (!na || !nb) continue
+      if (!nodeVisible(na) || !nodeVisible(nb)) continue
 
-        let alpha = graph2.edgeOpacity
-        if (selected) {
-          const touches = e.a === selected || e.b === selected
-          alpha = touches ? 0.85 : graph2.edgeOpacity * 0.25
-        } else if (hovered) {
-          const touches = e.a === hovered || e.b === hovered
-          if (touches) alpha = Math.min(0.9, alpha + 0.5)
-        }
-
-        const [ax, ay] = worldToScreen(na.x, na.y)
-        const [bx, by] = worldToScreen(nb.x, nb.y)
-
-        if (e.cross) {
-          // gradient between package colors so the eye can trace
-          // who's on which side of a cross-package import without
-          // having to chase node colors visually.
-          const grad = ctx.createLinearGradient(ax, ay, bx, by)
-          grad.addColorStop(0, pkgColor(na.pkg) + alphaHex(alpha))
-          grad.addColorStop(1, pkgColor(nb.pkg) + alphaHex(alpha))
-          ctx.strokeStyle = grad
-          ctx.lineWidth = 0.85
-        } else {
-          // Intra-package edges use the theme's neutral edge color
-          // (light gray-blue on dark, dim gray on light) so they
-          // read as "structural" rather than competing with the
-          // vivid cross-package gradients.
-          ctx.strokeStyle = T.edgeIntra.replace('ALPHA', String(alpha * 0.7))
-          ctx.lineWidth = 0.55
-        }
-
-        ctx.beginPath()
-        ctx.moveTo(ax, ay)
-        ctx.lineTo(bx, by)
-        ctx.stroke()
+      let alpha = graph2.edgeOpacity
+      if (selected) {
+        const touches = e.a === selected || e.b === selected
+        alpha = touches ? 0.85 : graph2.edgeOpacity * 0.25
+      } else if (hovered) {
+        const touches = e.a === hovered || e.b === hovered
+        if (touches) alpha = Math.min(0.9, alpha + 0.5)
       }
+
+      const [ax, ay] = worldToScreen(na.x, na.y)
+      const [bx, by] = worldToScreen(nb.x, nb.y)
+
+      if (e.cross) {
+        // Gradient between package colors so the eye can trace
+        // who's on which side of a cross-package import without
+        // having to chase node colors visually.
+        const grad = ctx.createLinearGradient(ax, ay, bx, by)
+        grad.addColorStop(0, pkgColor(na.pkg) + alphaHex(alpha))
+        grad.addColorStop(1, pkgColor(nb.pkg) + alphaHex(alpha))
+        ctx.strokeStyle = grad
+        ctx.lineWidth = 0.85
+      } else {
+        // Intra-package edges use the theme's neutral edge color
+        // so they read as "structural" rather than competing
+        // with the vivid cross-package gradients.
+        ctx.strokeStyle = T.edgeIntra.replace('ALPHA', String(alpha * 0.7))
+        ctx.lineWidth = 0.55
+      }
+
+      ctx.beginPath()
+      ctx.moveTo(ax, ay)
+      ctx.lineTo(bx, by)
+      ctx.stroke()
     }
 
     // ── Halos (hubs / hover / selected) ─────────────────────────
@@ -474,10 +472,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     canvas.style.cursor = hit ? 'pointer' : 'grab'
     if (hit) showTooltip(hit, e.clientX, e.clientY)
     else if (prev) hideTooltip()
-    if (cursorEl) {
-      const [wx, wy] = screenToWorld(sx, sy)
-      cursorEl.textContent = `x: ${(wx >= 0 ? '+' : '')}${wx.toFixed(0)}  y: ${(wy >= 0 ? '+' : '')}${wy.toFixed(0)}`
-    }
   }
   const onMouseUp = (e) => {
     if (dragging && !dragMoved) {

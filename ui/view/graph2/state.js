@@ -13,7 +13,6 @@
 export const graph2 = {
   selected: null,        // file path or null
   layoutMode: 'spiral',  // 'spiral' | 'force' | 'radial' | 'grid' | 'classic'
-  edgeMode: 'all',       // 'all' | 'cross' | 'none'
   // Right-panel "Top packages" sort axis. Same role as graph v1's
   // hubs Issues/Imports tab — issues-first by default so the user
   // lands on the actionable list, files for "what's the codebase

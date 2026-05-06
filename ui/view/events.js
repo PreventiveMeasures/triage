@@ -52,13 +52,6 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  const g2EdgeBtn = e.target.closest('[data-g2-edges]')
-  if (g2EdgeBtn) {
-    graph2.edgeMode = g2EdgeBtn.dataset.g2Edges
-    const seg = g2EdgeBtn.parentElement
-    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === g2EdgeBtn))
-    return
-  }
   const g2Pkg = e.target.closest('[data-g2-pkg]')
   if (g2Pkg) {
     const pkg = g2Pkg.dataset.g2Pkg
