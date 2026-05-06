@@ -14,13 +14,14 @@ function readSavedViewMode() {
 
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
-// `state.reports`, `state.currentView = 'tree'`, etc. Keeping it as a
-// single object means we never have to chase scattered `let` bindings
-// across modules (ES module live bindings are read-only from outside,
-// so cross-module assignment would otherwise need setter functions).
+// `state.reports`, `state.currentView = 'graph2'`, etc. Keeping it as
+// a single object means we never have to chase scattered `let`
+// bindings across modules (ES module live bindings are read-only from
+// outside, so cross-module assignment would otherwise need setter
+// functions).
 //
-// Tree-tab state lives separately in `./graph/state.js` because it has
-// its own teardown semantics tied to the canvas lifecycle.
+// Graph-tab state lives separately in `./graph2/state.js` because it
+// has its own teardown semantics tied to the canvas lifecycle.
 export const state = {
   // Exactly one OPFS-backed report is active at a time — the sidebar
   // switches between them; merging is gone. Headless callers
@@ -33,9 +34,9 @@ export const state = {
   // (drop zone visible). Tracked separately from `reports` so the
   // sidebar can highlight the active file even before render finishes.
   currentFile: null,
-  // Top-level tab — 'findings' (default), 'tree' (force-directed graph
-  // with file info sidebar), or 'files' (the per-file cards listing).
-  // Tree / files tabs are only visible when the loaded report carries
+  // Top-level tab — 'findings' (default), 'graph2' (canvas graph with
+  // selection card sidebar), or 'files' (the per-file cards listing).
+  // Graph / files tabs are only visible when the loaded report carries
   // a `tree` block with more than one file; switching files / loading
   // a tree-less report auto-falls back to 'findings' inside render().
   currentView: 'findings',

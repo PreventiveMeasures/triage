@@ -44,13 +44,12 @@
 }
 
 /* Fullscreen — toolbar's ⛶ button toggles `body.report-fullscreen`.
-   Hides the chrome and lets the tree-canvas / graph2-layout grow
-   into the viewport. The 64px subtraction leaves room for the .report-tabs
-   bar at the top. */
+   Hides the chrome and lets the graph2-layout grow into the viewport.
+   The 64px subtraction leaves room for the .report-tabs bar at the
+   top. */
 body.report-fullscreen {
   & #sidebar { display: none; }
   & #report > header { display: none; }
   & #report { max-width: none; padding: .5rem; }
-  & .tree-layout { height: calc(100vh - 64px); }
   & .graph2-layout { height: calc(100vh - 64px); }
 }

@@ -1,7 +1,6 @@
 import { SEVERITIES, esc } from '../format.js'
 import { state } from '../state.js'
 import { graph2 } from './state.js'
-import { tree } from '../graph/state.js'
 import { pkgColor } from '../graph/utils.js'
 import { pkgRelative } from './data.js'
 import { isGroupDeleted } from '../group.js'
@@ -82,11 +81,9 @@ function renderTopBar(graph) {
   html += '</div>'
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
-  // edges, different layout). Reads / writes tree.showAll
-  // (shared with graph v1 so the two tabs stay consistent on
-  // the same dataset). Defaults to off → only files with own
-  // or subtree findings are kept.
-  html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
+  // edges, different layout). Defaults to off → only files
+  // with own or subtree findings are kept.
+  html += `<button type="button" class="g2-topbar-toggle${graph2.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${graph2.showAll}">`
   html += '<span>All files</span><span class="g2-switch"></span>'
   html += '</button>'
   // Trash toggle — same role as the findings tab's trash button.
@@ -107,19 +104,12 @@ function renderTopBar(graph) {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
-  // v0 button — fall back to graph v1's force-directed canvas
-  // for users who still prefer the old presentation. Sits to
-  // the left of fullscreen so it reads as part of the chrome
-  // controls. The Graph tab itself is shared between v1 and
-  // v2 (active when currentView is either), so coming back to
-  // v2 from v1 is just clicking Graph again.
-  html += '<button type="button" class="g2-icon-btn g2-v0-btn" id="g2-v0-btn" title="Old graph (v0)">v0</button>'
-  // Fullscreen — same affordance as graph v1's toolbar button.
-  // Toggles `body.report-fullscreen`, which hides the sidebar /
-  // header / page padding and lets the layout grow to the viewport.
-  // Esc handler in ingest.js exits fullscreen for both tabs. The
+  // Fullscreen — toggles `body.report-fullscreen`, which hides the
+  // sidebar / header / page padding and lets the layout grow to
+  // the viewport. Esc handler in ingest.js exits fullscreen. The
   // fit-to-view affordance lives on the floating zoom control over
-  // the canvas (⟲ in the bottom-left stack), not duplicated here.
+  // the canvas (the "fit" label in the bottom-right stack), not
+  // duplicated here.
   html += '<button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>'
   html += '</div>'
   return html

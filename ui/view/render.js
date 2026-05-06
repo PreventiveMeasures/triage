@@ -4,10 +4,7 @@ import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { renderGroup, renderTableRow } from './render-finding.js'
-import { tree } from './graph/state.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
-import { renderTreeCanvas, attachTreeGraphInteraction } from './graph/canvas.js'
-import { renderTreeSidebarFull } from './graph/sidebar.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
@@ -43,20 +40,6 @@ const VIEW_TITLES = {
   grouped: 'List view, grouped by file',
 }
 
-// Refresh just the tree-tab right sidebar in place. Called by the
-// canvas after selection changes, and by event handlers when the
-// selection is driven from the sidebar itself, so the canvas DOM
-// (and its hover state) survives.
-export function refreshTreeSidebar() {
-  const infoEl = document.querySelector('.tree-info')
-  if (!infoEl || !tree.graphState) return
-  const treeData = state.reports[0]?.tree
-  if (!treeData) return
-  const findingCounts = computeFindingCountsByFile(state.reports.flatMap((r) => r.groups))
-  const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-  infoEl.innerHTML = renderTreeSidebarFull(tree.selected, treeData, findingCounts, transitiveCounts)
-}
-
 // Build the v2 graph data from the currently-loaded report. Returns
 // null when no tree-bearing report is loaded — callers (the tab
 // switcher in render(), the "Graph v2" event handler) use that to
@@ -68,7 +51,7 @@ export function refreshTreeSidebar() {
 //     mode. Visibility is at the GROUP level (a group is "deleted"
 //     when every member is in state.deletedIds), matching the
 //     findings tab so swapping tabs reads consistently.
-//   - tree.showAll then optionally pads the file set with clean
+//   - graph2.showAll then optionally pads the file set with clean
 //     files whose subtree contains a (filtered-in) finding,
 //     reachable through imports. Off by default so the canvas
 //     focuses on issue-bearing code.
@@ -85,7 +68,7 @@ export function buildGraph2Data() {
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
   // Package-focus mode narrows to files in the focused package.
-  // tree.showAll still gates the clean-file filter inside that
+  // graph2.showAll still gates the clean-file filter inside that
   // scope: when off, drop files that have neither own findings
   // nor a subtree (transitive) finding reachable through imports
   // — same predicate the full-graph view uses, applied to the
@@ -98,21 +81,21 @@ export function buildGraph2Data() {
   let files
   if (graph2.focusedPkg) {
     files = allFiles.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
-    if (!tree.showAll) {
+    if (!graph2.showAll) {
       files = files.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
     }
   } else {
-    files = tree.showAll
+    files = graph2.showAll
       ? allFiles
       : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   }
   return { graph: buildGraph(treeData, files, findingCounts, transitiveCounts), findingCounts }
 }
 
-// Re-render only the right-panel selection card in the graph v2 tab.
-// Same role as refreshTreeSidebar above — keeps the canvas DOM (and
-// thus the active rAF / hover state) intact when the user just
-// clicked a node or a neighbor button.
+// Re-render only the right-panel selection card in the graph tab.
+// Surgical innerHTML swap so the canvas DOM (and thus the active
+// rAF / hover state) survives a click on a node or a sidebar
+// neighbor link.
 export function refreshGraph2Sidebar() {
   const area = document.getElementById('g2-selection-area')
   if (!area) return
@@ -540,44 +523,15 @@ export function render() {
   const treeData = state.reports[0]?.tree
   const treeFileCount = treeData ? Object.keys(treeData).length : 0
   const showTreeTab = treeFileCount > 1
-  if (!showTreeTab && (state.currentView === 'tree' || state.currentView === 'files' || state.currentView === 'graph2')) {
+  if (!showTreeTab && (state.currentView === 'files' || state.currentView === 'graph2')) {
     state.currentView = 'findings'
   }
   if (showTreeTab) {
-    // Tab bar — note that the "Graph" tab routes to v2, not the
-    // legacy v1 graph. v1 is still reachable via the "v0" button
-    // in v2's topbar; the standalone Graph tab button for v1 was
-    // dropped because v2 supersedes it for the common case. We
-    // mark the Graph tab active for BOTH currentView values
-    // ('graph2' and 'tree') so the user always sees a visible
-    // active tab while inside either graph; clicking it always
-    // navigates back to v2 (so v0 is one click away on v2 and
-    // the round trip back to v2 is also one click).
-    const graphActive = state.currentView === 'graph2' || state.currentView === 'tree'
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
-    html += `<button type="button" class="report-tab${graphActive ? ' active' : ''}" data-view="graph2">Graph</button>`
+    html += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph</button>`
     html += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     html += '</div>'
-  }
-
-  if (state.currentView === 'tree') {
-    // Pre-filter finding counts (total per file, by severity); plus the
-    // transitive subtree rollup that drives both the "subtree findings"
-    // chips in the sidebar AND the show-all filter (a file with no own
-    // findings is still kept when its subtree has some).
-    const findingCounts = computeFindingCountsByFile(mergedGroups)
-    const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-    html += '<div class="tree-layout">'
-    html += `<div class="tree-canvas">${renderTreeCanvas(treeData, findingCounts, transitiveCounts)}</div>`
-    html += `<div class="tree-info">${renderTreeSidebarFull(tree.selected, treeData, findingCounts, transitiveCounts)}</div>`
-    html += '</div>'
-    report.innerHTML = html
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
-    document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
-    attachTreeGraphInteraction(report.querySelector('.tree-canvas'), refreshTreeSidebar)
-    return
   }
 
   if (state.currentView === 'files') {
@@ -591,9 +545,6 @@ export function render() {
   }
 
   if (state.currentView === 'graph2') {
-    // Build the same filtered file set graph v1 would use (clean
-    // files dropped when tree.showAll=off) so the two tabs stay in
-    // sync — flipping showAll on graph v1 affects v2 as well.
     const data = buildGraph2Data()
     if (!data) {
       // Tree-bearing report disappeared between renders; the tab

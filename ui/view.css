@@ -1,7 +1,5 @@
-/* Entry point — @imports are resolved at load time. Order matters:
-   `graph-files.css` deliberately follows `graph.css` because both
-   define `.tree-count-chip` and the files-tab variant should win.
-   `print.css` last so its `!important` palette overrides anything
+/* Entry point — @imports are resolved at load time.
+   `print.css` is last so its `!important` palette overrides anything
    above on paper. */
 @import url('./styles/theme.css');
 @import url('./styles/sidebar.css');
@@ -9,7 +7,6 @@
 @import url('./styles/report.css');
 @import url('./styles/toolbar.css');
 @import url('./styles/findings.css');
-@import url('./styles/graph.css');
 @import url('./styles/graph-files.css');
 @import url('./styles/graph2.css');
 @import url('./styles/print.css');

@@ -4,8 +4,7 @@ import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
-import { render, renderKeepFocus, refreshTreeSidebar, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
-import { tree, cleanupGraphInteraction } from './graph/state.js'
+import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -165,29 +164,13 @@ report.addEventListener('click', (e) => {
     document.body.classList.toggle('report-fullscreen')
     return
   }
-  // v0 button — escape hatch back to graph v1's canvas. Tear
-  // down v2's rAF / observers since render() will replace the
-  // #report DOM and orphan them otherwise. Clear graph2.selected
-  // so v2 doesn't reopen on a stale selection if the user comes
-  // back later with a different file in mind.
-  if (e.target.closest('#g2-v0-btn')) {
-    cleanupGraph2()
-    state.currentView = 'tree'
-    render()
-    return
-  }
-  // Show-all in the v2 topbar — flips the FILE SET (same data-level
-  // filter graph v1's checkbox drives, sharing tree.showAll). Both
-  // graph v1's and graph v2's layout caches are now stale; tear down
-  // the v2 canvas (rAF + observers + window listeners) so render()
-  // can re-attach against the new node set. Graph v1's canvas, if it
-  // happens to be the next tab the user opens, will rebuild from
-  // scratch because we cleared its layout cache.
+  // Show-all in the v2 topbar — flips the FILE SET, so the
+  // graph rebuilds with different nodes / edges / layout. Tear
+  // down the v2 canvas (rAF + observers + window listeners) so
+  // render() can re-attach against the new set.
   const g2ShowAll = e.target.closest('[data-g2-show-all]')
   if (g2ShowAll) {
-    tree.showAll = !tree.showAll
-    tree.layoutCache = null
-    cleanupGraphInteraction()
+    graph2.showAll = !graph2.showAll
     graph2.layoutCache = null
     // Selection might have pointed at a file that's now filtered
     // out — clear it so the right panel doesn't render against a
@@ -233,69 +216,6 @@ report.addEventListener('click', (e) => {
     graph2.layoutCache = null
     cleanupGraph2()
     render()
-    return
-  }
-  // Tree-tab: click a graph node to select it (drives the sidebar).
-  const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
-  if (treeNode) {
-    tree.selected = treeNode.dataset.file
-    render()
-    return
-  }
-  // Tree-tab sidebar: importer / import buttons select the linked file.
-  const selectFileBtn = e.target.closest('[data-select-file]')
-  if (selectFileBtn) {
-    tree.selected = selectFileBtn.dataset.selectFile
-    // Update canvas selection highlight + sidebar without rebuilding canvas DOM.
-    if (tree.graphState) {
-      const canvasEl = document.querySelector('#tree-canvas')
-      if (canvasEl) canvasEl.dispatchEvent(new CustomEvent('tree-node-select', { bubbles: true }))
-    } else {
-      render()
-    }
-    return
-  }
-  // Tree-tab sidebar: hubs tab toggle (Issues / Imports).
-  const hubsTabBtn = e.target.closest('[data-hubs-tab]')
-  if (hubsTabBtn) {
-    if (tree.graphState) {
-      tree.graphState._hubsTab = hubsTabBtn.dataset.hubsTab
-      refreshTreeSidebar()
-    } else {
-      render()
-    }
-    return
-  }
-  // Tree-tab toolbar: fullscreen toggle. Adds / removes a class on
-  // <body>; the @media-style rules in CSS hide the chrome.
-  if (e.target.closest('#tree-fullscreen')) {
-    document.body.classList.toggle('report-fullscreen')
-    return
-  }
-  // Tree-tab sidebar: "Open in Findings" resets ALL filters, then narrows
-  // to the selected file's path so only that file's findings show.
-  const jumpFindingsBtn = e.target.closest('[data-jump-findings]')
-  if (jumpFindingsBtn) {
-    resetFilters()
-    state.filterConfMin = ''
-    state.filterInclude = jumpFindingsBtn.dataset.jumpFindings
-    state.currentView = 'findings'
-    render()
-    return
-  }
-  // Tree-tab sidebar: "Open in Files" jumps to the Files tab and
-  // scrolls to the selected file's card.
-  const jumpBtn = e.target.closest('[data-jump-file]')
-  if (jumpBtn) {
-    const targetFile = jumpBtn.dataset.jumpFile
-    state.currentView = 'files'
-    render()
-    // Wait one frame so the Files tab DOM exists before we look up
-    // the anchor (render() rewrote innerHTML).
-    requestAnimationFrame(() => {
-      const target = document.getElementById(treeAnchor(targetFile))
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
     return
   }
   // Tab click — switch the active tab within a group. Re-render because
@@ -447,19 +367,6 @@ report.addEventListener('change', (e) => {
   else if (id === 'source-select') { state.filterSource = val; render() }
   else if (id === 'conf-min') { state.filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
   else if (id === 'conf-max') { state.filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
-  // Tree-tab: include clean files in the force graph. Invalidates the
-  // cached layout so the next render computes fresh positions.
-  else if (id === 'tree-show-all') {
-    tree.showAll = e.target.checked
-    tree.layoutCache = null
-    cleanupGraphInteraction()
-    // showAll changes the file set on graph v2 too (same filter),
-    // so its cached layout is stale. Drop it so the next switch to
-    // graph v2 recomputes positions.
-    graph2.layoutCache = null
-    cleanupGraph2()
-    render()
-  }
 })
 
 report.addEventListener('input', (e) => {

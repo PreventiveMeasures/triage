@@ -56,15 +56,6 @@
   & svg { display: block; }
 }
 
-/* The v0 button shares the icon-btn shape but carries a text
-   label, so set explicit type metrics that don't rely on a
-   centered glyph. */
-.g2-v0-btn {
-  font: 600 10px/1 inherit;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 /* Path / package substring filter — soft-dim filter, same
    dim-don't-hide treatment as severity / solo. Wrapper anchors
    a clear button at the right edge of the input. Padding /
@@ -702,16 +693,15 @@
 }
 
 /* Per-severity chip blocks for the selection card and tooltip.
-   The chip palette itself comes from styles/graph.css (the
-   .tree-count-chip / .tree-count-chips rules graph v1 already
-   uses); we only adjust spacing inside the v2 tooltip below. */
+   The chip palette itself comes from styles/graph-files.css (the
+   .tree-count-chip / .tree-count-chips rules the Files tab
+   already uses); we only adjust spacing inside the v2 tooltip
+   below. */
 .g2-tooltip .tree-count-chips { margin-top: 6px; }
 
-/* Light-theme override for medium chips in v2 — graph.css has
-   the equivalent rule scoped to v1's .tree-info, but v2 uses
-   different containers. Without this, the medium chip's
-   default `color: #000` reads as black-on-darkamber once
-   --medium darkens for light theme, hard to read. */
+/* Light-theme override for medium chips in v2. Without this, the
+   medium chip's default `color: #000` reads as black-on-darkamber
+   once --medium darkens for light theme, hard to read. */
 body.theme-light .graph2-right .tree-count-chip.medium,
 body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 
@@ -1027,8 +1017,8 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   }
 }
 
-/* Print: the v2 graph is interactive-only, like graph v1. Hide it
-   on paper so the print path doesn't dump a giant black box. */
+/* Print: the graph is interactive-only. Hide it on paper so the
+   print path doesn't dump a giant black box. */
 @media print {
   .graph2-layout { display: none !important; }
 }

@@ -1,17 +1,3 @@
-// Severity palette. Mirrors the CSS --critical / --high / --medium /
-// --low / --info vars used by the badges + count chips, so the canvas
-// node indicators visually match the per-finding badges. `informational`
-// gets the same blue tone as the CSS --info dark default. Update both
-// at once when tuning a tier's color.
-export const SEV_COLORS = {
-  critical: '#f85149',
-  high: '#f0883e',
-  medium: '#d29922',
-  low: '#8b949e',
-  high_bug: '#a06c3f',
-  bug: '#7a6d62',
-  informational: '#218bff',
-}
 // Highest-to-lowest iteration order — see SEVERITIES in ../format.js
 // for the same list (kept duplicated here to avoid a circular import
 // from a graph-only utility back up into format.js).
@@ -45,27 +31,6 @@ export function computeFindingCountsByFile(allGroups) {
   return counts
 }
 
-// Short, distinguishing label for a node. Last two path segments —
-// `lib/foo.js` from `src/lib/foo.js`, `queue/index.mjs` from
-// `node_modules/@chalker/queue/index.mjs`. Full path is always
-// available via the node's `<title>` tooltip and the linked card.
-export function svgNodeLabel(file, maxLen = 22) {
-  const parts = file.split('/')
-  const tail = parts.slice(-2).join('/')
-  return tail.length <= maxLen ? tail : '…' + tail.slice(-(maxLen - 1))
-}
-
-// Sanitize file path → SVG-safe id. Used to cross-reference nodes and
-// edges from the post-render hover-highlight wiring.
-export function svgNodeId(file) { return 'tn-' + file.replace(/[^\w-]+/gu, '_') }
-
-// Numeric sort with a stable tiebreak — used by the barycenter passes
-// in svg.js, where ties on the computed mean would otherwise depend on
-// unstable browser sort behavior.
-export function byBary(bary) {
-  return (a, b) => (bary.get(a) - bary.get(b)) || a.localeCompare(b)
-}
-
 // Group key for clustering + coloring nodes in the graph. npm packages
 // stay grouped by package name. Own source (anything outside
 // node_modules) groups by top-level directory — so `src/...` files all
@@ -77,38 +42,6 @@ export function packageOf(file) {
   if (npm) return npm[1]
   const slash = file.indexOf('/')
   return slash > 0 ? file.slice(0, slash) : '/'
-}
-
-// Wrap a long basename across at most two lines. Splits at the last
-// hyphen / underscore that keeps both halves under `maxLine`. If no
-// suitable split exists, truncates with a trailing ellipsis. Returns
-// an array of 1-2 strings ready to render as <text>/<tspan>.
-export function multiLineLabel(file, maxLine = 18) {
-  const base = file.split('/').pop() ?? file
-  if (base.length <= maxLine) return [base]
-  const seps = []
-  for (let i = 0; i < base.length; i++) if (base[i] === '-' || base[i] === '_') seps.push(i)
-  if (seps.length === 0) return [base.slice(0, maxLine - 1) + '…']
-  // Pick the split point closest to the middle that keeps both halves
-  // within maxLine. Falls back to the most-balanced of any choice if
-  // none fits cleanly (still better than mid-token truncation).
-  const mid = base.length / 2
-  let best = null
-  for (const s of seps) {
-    const a = s + 1, b = base.length - s - 1
-    if (a > maxLine || b > maxLine) continue
-    const score = Math.abs(s - mid)
-    if (!best || score < best.score) best = { s, score }
-  }
-  if (!best) {
-    // No clean split — pick the split with smallest max(a, b) and let
-    // the longer side wrap visually rather than truncate the basename.
-    for (const s of seps) {
-      const max = Math.max(s + 1, base.length - s - 1)
-      if (!best || max < best.max) best = { s, max }
-    }
-  }
-  return [base.slice(0, best.s + 1), base.slice(best.s + 1)]
 }
 
 // transitive subtree finding counts: for each file, sum of own counts
@@ -136,7 +69,7 @@ export function computeTransitiveCounts(tree, ownCounts) {
 }
 
 // Has-issues predicate: own findings OR something in its subtree has
-// findings. Used to filter out clean files when `tree.showAll` is off.
+// findings. Used to filter out clean files when graph2.showAll is off.
 export function fileHasFindings(file, ownCounts, transitiveCounts) {
   const own = ownCounts.get(file)
   const tr = transitiveCounts.get(file)
@@ -257,13 +190,6 @@ export function totalFindings(counts) {
   for (const k of SEVERITIES_ORDERED) total += counts[k] ?? 0
   return total
 }
-export function indicatorFor(counts) {
-  if (!counts) return null
-  for (const sev of SEVERITIES_ORDERED) {
-    if (counts[sev] > 0) return SEV_COLORS[sev]
-  }
-  return null
-}
 
 // ── Vivid per-package color palette ─────────────────────────────────────────
 // Each package gets a vivid, high-saturation hue so clusters read distinctly.
@@ -348,18 +274,4 @@ export function pkgColor(pkg) {
   const col = palette[idx]
   _pkgColorCache.set(cacheKey, col)
   return col
-}
-export function pkgColorAlpha(pkg, a) {
-  const col = pkgColor(pkg)
-  const r = parseInt(col.slice(1, 3), 16)
-  const g = parseInt(col.slice(3, 5), 16)
-  const b = parseInt(col.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${a})`
-}
-
-// Radius formula: much wider range so hubs really stand out.
-export function radiusOfNode(file, importsOf, importedBy, ownCounts, transitiveCounts) {
-  const conn = (importsOf.get(file)?.length ?? 0) + (importedBy.get(file)?.length ?? 0)
-  const findings = totalFindings(ownCounts.get(file)) + totalFindings(transitiveCounts.get(file)) * 0.2
-  return Math.max(4, 4 + Math.pow(conn, 0.62) * 3.2 + Math.sqrt(findings) * 1.4)
 }

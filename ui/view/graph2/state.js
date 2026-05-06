@@ -11,6 +11,13 @@
 // read well on the small typical DeepView graph (10–80 files) so
 // the empty state is informative even before any user input.
 export const graph2 = {
+  // Include clean files (no own / subtree findings) in the
+  // canvas. Off by default so the layout focuses on
+  // issue-bearing code. Toggled via the topbar's "All files"
+  // button. Was tree.showAll back when the legacy v0 graph
+  // shared this flag with v2; v0 is gone, so the field lives
+  // here directly.
+  showAll: false,
   selected: null,        // file path or null
   // Package focus mode — when set, the canvas drops the spiral
   // and renders ONLY this package's intra-imports in graph v1

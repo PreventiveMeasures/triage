@@ -6,16 +6,15 @@ import { state } from './state.js'
 // DeepSec maps HIGH_BUG to high_bug and plain BUG to bug; the other
 // formats only use the vuln tiers + informational. Adding a new
 // tier here is the canonical place — every other hardcoded severity
-// list (counts initializers, stats chips, chip CSS, indicatorFor)
-// keys off SEVERITIES below.
+// list (counts initializers, stats chips, chip CSS, etc.) keys off
+// SEVERITIES below.
 export const SEVERITY_ORDER = {
   critical: 6, high: 5, medium: 4, low: 3,
   high_bug: 2, bug: 1, informational: 0,
 }
-// Highest-to-lowest iteration order. Used by indicatorFor (returns
-// the most severe present), statItems / colorCounts builders, and
-// per-file count computations. The bug tiers sit between low and
-// informational so a graph node with only bugs still gets a
+// Highest-to-lowest iteration order. Used by statItems / colorCounts
+// builders and per-file count computations. The bug tiers sit between
+// low and informational so a graph node with only bugs still gets a
 // recognizable color hint without competing with vuln tiers in the
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']

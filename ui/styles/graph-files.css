@@ -1,10 +1,6 @@
 /* Files tab — one card per file with imports / imported-by / exports
    / hashes. In-page anchors link import names to their file's card so
-   the user can navigate the graph by clicking. Note: `.tree-count-chip`
-   here uses a slightly larger/looser typography than the sidebar
-   variant in graph.css; the `low` color also differs (uses
-   `var(--low)` rather than the muted-gray treatment). The two ride on
-   source order — files.css loads after graph.css so these win. */
+   the user can navigate the graph by clicking. */
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 
 .tree-file {

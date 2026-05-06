@@ -6,7 +6,6 @@ import { resetFilters } from './filters.js'
 import { loadPromise } from './triage.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
-import { tree, cleanupGraphInteraction } from './graph/state.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 import { parseMarkdownFindings } from './parse-md.js'
 import { parseCodexCsvToScans } from './parse-codex.js'
@@ -75,15 +74,9 @@ export async function addFiles(files) {
 export async function switchToFile(name, content) {
   state.reports = []
   state.currentFile = name
-  // Reset tree-tab state so the new report opens clean: no leftover
-  // selection from the previous report's file list, and the layout
-  // cache invalidates (a new tree → re-layout).
-  tree.selected = null
-  tree.layoutCache = null
-  cleanupGraphInteraction()
-  // Mirror the same reset for graph v2: clear selection / layout
-  // cache / palette state so a new report doesn't open with stale
-  // hidden packages or a soloed pkg from the previous file.
+  // Reset graph v2 state so a new report doesn't open with stale
+  // selection / hidden packages / a soloed pkg from the previous
+  // file. The layout cache also invalidates (a new tree → re-layout).
   graph2.selected = null
   graph2.focusedPkg = null
   graph2.layoutCache = null
@@ -114,9 +107,6 @@ export async function deleteCurrent() {
   await deleteFile(name)
   state.currentFile = null
   state.reports = []
-  tree.selected = null
-  tree.layoutCache = null
-  cleanupGraphInteraction()
   graph2.selected = null
   graph2.focusedPkg = null
   graph2.layoutCache = null

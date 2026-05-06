@@ -52,12 +52,11 @@
   --gradient-stop-c: rgba(63, 185, 80, 0.04);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .18);
   /* Graph palette — chrome around the canvas (toolbar, info sidebar,
-     tooltip, zoom controls) and the canvas's own fill. Was hardcoded
-     dark across graph.css + canvas.js; lifting it into vars lets the
-     light theme override in one place. The canvas JS reads
-     --graph-canvas-* via the JS palette in canvas.js (it can't share
-     CSS vars without a getComputedStyle round-trip per draw); the
-     values mirror the ones below. */
+     tooltip, zoom controls) and the canvas's own fill. Lifting it
+     into vars lets the light theme override in one place. The canvas
+     JS reads --graph-canvas-* via the JS palette in graph2/canvas.js
+     (it can't share CSS vars without a getComputedStyle round-trip
+     per draw); the values mirror the ones below. */
   --graph-canvas-bg: #0c0c0c;
   --graph-hover-bg: rgba(255, 255, 255, 0.04);
   --graph-divider: rgba(60, 60, 60, 0.5);
