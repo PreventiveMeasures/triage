@@ -455,14 +455,25 @@ function renderPackageCard(graph, pkg) {
 function renderDistribution(graph) {
   const totalFiles = graph.nodes.length || 1
   const tab = graph2.topPkgsTab
-  // Aggregate own-issue counts per package — sum totalIssues
-  // across every node in the package. Drives the Issues sort
-  // and the count column when that tab is active.
+  // Aggregate own-issue counts per package. When the topbar's
+  // severity filter has 1+ tiers selected, count only those
+  // tiers — same scope the canvas highlights — so the Issues
+  // tab here reflects what the user is currently looking at.
+  // Empty selection = count every tier (default).
+  const sevFilter = graph2.selectedSeverities
+  const useFilter = sevFilter.size > 0
   const issueByPkg = new Map()
   let totalIssues = 0
   for (const n of graph.nodes) {
-    issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + n.totalIssues)
-    totalIssues += n.totalIssues
+    let count
+    if (useFilter) {
+      count = 0
+      if (n.own) for (const sev of sevFilter) count += n.own[sev] ?? 0
+    } else {
+      count = n.totalIssues
+    }
+    issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + count)
+    totalIssues += count
   }
   // The dist BAR always shows file-count proportions (preserves
   // the "share of codebase" reading regardless of which tab is

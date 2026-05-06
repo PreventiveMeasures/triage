@@ -69,6 +69,11 @@ report.addEventListener('click', (e) => {
     g2Sev.classList.toggle('on', graph2.selectedSeverities.has(sev))
     g2Sev.setAttribute('aria-pressed', String(graph2.selectedSeverities.has(sev)))
     graph2.graphState?.requestDraw?.()
+    // Refresh the Top-packages block — its Issues counts now
+    // factor the selected severities in, so flipping a pill
+    // should re-rank the list. Selection card untouched (file
+    // / package selection isn't filter-derived).
+    refreshGraph2TopPkgs()
     return
   }
   const g2Toggle = e.target.closest('[data-g2-toggle]')
