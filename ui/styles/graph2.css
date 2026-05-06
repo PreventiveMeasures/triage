@@ -698,6 +698,52 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   gap: 8px;
 }
 
+/* File-card header — vertical stack: relative path on top, dot
+   + package name underneath. The full path lives in its own
+   sibling block below so the head's bottom border doubles as
+   the divider in the user's mock layout. */
+.g2-sel-file-head {
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--graph-divider);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.g2-sel-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+  word-break: break-all;
+}
+.g2-sel-pkg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.g2-sel-pkg {
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+  min-width: 0;
+}
+/* Full path under the head — small monospace muted, single
+   line with ellipsis. Hover reveals the untruncated path via
+   the title attribute. */
+.g2-sel-fullpath {
+  padding: 7px 13px;
+  border-bottom: 1px solid var(--graph-divider);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .g2-sel-dot {
   width: 11px; height: 11px;
   border-radius: 50%;

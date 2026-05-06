@@ -3,6 +3,7 @@ import { state } from '../state.js'
 import { graph2 } from './state.js'
 import { tree } from '../graph/state.js'
 import { pkgColor } from '../graph/utils.js'
+import { pkgRelative } from './data.js'
 import { isGroupDeleted } from '../group.js'
 
 const SEV_COLORS = {
@@ -369,17 +370,26 @@ export function renderSelectionCard(graph) {
 function renderFileCard(graph, n, file) {
   const col = pkgColor(n.pkg)
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
+  const relPath = pkgRelative(file, n.pkg)
 
   let html = ''
   html += '<div class="g2-selection-card">'
-  html += '<div class="g2-sel-head">'
+  // Three-line header (matches the hover tooltip):
+  //   1. file path relative to the package root — primary
+  //      identifier, monospace, full text colour.
+  //   2. dot + package name — secondary context.
+  //   3. (below the head's border) full path in small muted
+  //      monospace, ellipsis-clipped if the column is narrow.
+  //      Title attr keeps the full path discoverable on hover
+  //      when truncation kicks in.
+  html += '<div class="g2-sel-file-head">'
+  html += `<div class="g2-sel-path">${esc(relPath)}</div>`
+  html += '<div class="g2-sel-pkg-row">'
   html += `<span class="g2-sel-dot" style="--dot:${col}; background:${col}"></span>`
-  html += `<span class="g2-sel-id">${esc(n.label)}</span>`
-  html += `<span class="g2-sel-grp">${esc(pkgLabel)}</span>`
+  html += `<span class="g2-sel-pkg">${esc(pkgLabel)}</span>`
   html += '</div>'
-  html += '<div class="g2-sel-body">'
-  html += `<div class="g2-sel-row"><span class="k">Path</span><span class="v" title="${esc(file)}">${esc(file)}</span></div>`
   html += '</div>'
+  html += `<div class="g2-sel-fullpath" title="${esc(file)}">${esc(file)}</div>`
   // Own + subtree finding chips — same chrome as graph v1's
   // sidebar (.tree-info-section / .tree-count-chip), so the
   // visual reads consistently across the two graph tabs. The

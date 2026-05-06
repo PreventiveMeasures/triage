@@ -170,3 +170,20 @@ export function assignHubs(graph) {
 export function nodeColor(n) {
   return pkgColor(n.pkg)
 }
+
+// Strip a file path's package anchor so callers can show
+// "index.js" instead of "node_modules/foo/index.js" (npm) or
+// "foo/bar.js" instead of "src/foo/bar.js" (own source).
+// Mirrors packageOf in graph/utils.js: npm packages anchor on
+// `node_modules/<pkg>/`, own source on the top-level dir. For
+// root files (pkg === '/') and the synthetic '__own__' bucket
+// the file is returned as-is — there's no meaningful prefix to
+// strip and consumers should fall back to the full path.
+export function pkgRelative(file, pkg) {
+  if (!pkg || pkg === '/' || pkg === '__own__') return file
+  const npmAnchor = 'node_modules/' + pkg + '/'
+  const nm = file.indexOf(npmAnchor)
+  if (nm >= 0) return file.slice(nm + npmAnchor.length)
+  if (file.startsWith(pkg + '/')) return file.slice(pkg.length + 1)
+  return file
+}

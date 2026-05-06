@@ -1,6 +1,7 @@
 import { graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
+import { pkgRelative } from './data.js'
 import { forceLayout, pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
@@ -745,23 +746,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   function escapeHtml(s) {
     const el = document.createElement('span'); el.textContent = String(s ?? ''); return el.innerHTML
-  }
-
-  // Strip the package's anchor prefix from a file path so the
-  // tooltip can show "index.js" instead of "node_modules/foo/
-  // index.js" (npm) or "foo/bar.js" instead of "src/foo/bar.js"
-  // (own source). Mirrors the layout packageOf builds in
-  // graph/utils.js: npm packages anchor on `node_modules/<pkg>/`,
-  // own source on the top-level dir. For root files (pkg === '/')
-  // and the synthetic '__own__' bucket we return the file as-is
-  // since there's no meaningful prefix to strip.
-  function pkgRelative(file, pkg) {
-    if (!pkg || pkg === '/' || pkg === '__own__') return file
-    const npmAnchor = 'node_modules/' + pkg + '/'
-    const nm = file.indexOf(npmAnchor)
-    if (nm >= 0) return file.slice(nm + npmAnchor.length)
-    if (file.startsWith(pkg + '/')) return file.slice(pkg.length + 1)
-    return file
   }
 
   // ── Pan / zoom / click ────────────────────────────────────────
