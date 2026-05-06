@@ -780,13 +780,17 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 /* ── File-link list (Imported by / Imports inside selection
    sections) ─────────────────────────────────────────────────── */
 /* List of clickable file rows. Caps at ~5 visible entries
-   (110px) and scrolls; thinner thumb than the panel scroll. */
+   (110px) and scrolls vertically. overflow-x explicitly
+   clipped — without it, the spec promotes overflow-x from
+   `visible` to `auto` whenever overflow-y is `auto`, which
+   produced a phantom horizontal scrollbar even with content
+   that fit on one line. */
 .g2-sel-file-list {
   list-style: none;
   margin: 0;
   padding: 0;
   max-height: 110px;
-  overflow-y: auto;
+  overflow: hidden auto;
 
   &::-webkit-scrollbar { width: 4px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -803,13 +807,10 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   border: 0;
   border-radius: 3px;
   padding: 3px 6px;
-  margin: 0 -6px;
-  width: calc(100% + 12px);
   font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   color: var(--accent);
   cursor: pointer;
   text-align: left;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 
   &:hover { background: var(--graph-hover-bg); }
 
