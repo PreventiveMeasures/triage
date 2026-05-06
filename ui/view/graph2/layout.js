@@ -137,38 +137,38 @@ function placeFilesInDisk(graph, pkgInfo) {
   }
 }
 
-// "Spiral" — concentric priority rings + greedy angular placement.
+// "Spiral" — Vogel sunflower positions (the same (i × 137.5°,
+// sqrt(i/(N-1))) seed pattern as before) with greedy assignment
+// of packages to those positions. The slot geometry is fixed; the
+// degree of freedom is which priority-ranked package occupies which
+// slot.
+//
 // Two phases:
 //
 //   1. Priority bucketing. Packages sort by cross-package degree
-//      desc (ties: file count desc) and quantize into discrete
-//      rings. Ring k spans the band slice [k/M, (k+1)/M], which
-//      maps to rank range [(k/M)² · N, ((k+1)/M)² · N) — sqrt-
-//      density bucketing, so outer rings carry proportionally
-//      more packages and the per-area density stays uniform like
-//      the old Vogel sunflower did. Most-coupled packages land
+//      desc (ties: file count desc) and quantize the resulting
+//      rank order into discrete rings. Ring k spans rank range
+//      [(k/M)² · N, ((k+1)/M)² · N) — sqrt-density bucketing, so
+//      outer rings carry proportionally more packages just like
+//      the Vogel index ordering did. Most-coupled packages land
 //      on the innermost ring, leaves on the rim.
 //
-//   2. Within-ring angular optimization. For each ring inner→
-//      outer, each package picks the open slot whose direction
-//      from center is closest to the weighted barycenter of its
-//      already-placed neighbours (weight = cross-package edge
-//      count to that neighbour). Packages without placed
-//      neighbours fall back to a Vogel-style golden-angle stride
-//      so they spread evenly instead of clumping at slot 0.
-//      Greedy, single-pass: O(N × (avgNeighbours + ringSlots))
-//      ≈ O(N²/numRings). Suboptimal vs. a global solver, but
-//      consistently sub-millisecond even on 500+ packages.
+//   2. Within-ring assignment. For each ring inner→outer, walk
+//      packages in priority order; each picks the unused Vogel
+//      slot in this ring closest to the weighted barycenter of
+//      its already-placed neighbours (weight = cross-package edge
+//      count). Packages without placed neighbours take the next-
+//      available slot in Vogel index order, which preserves the
+//      original spiral's golden-angle spread for unconstrained
+//      placements.
 //
 // The entry-point package (largest with no incoming cross-package
 // edges — typically the project's own source root) is pinned at
 // center. Files inside each package fan out in their disk via the
 // shared placeFilesInDisk helper.
 //
-// Result: heavily-coupled packages tend to settle near the same
-// angle on the same / adjacent rings, so the cross-package edges
-// hugging that angle run as short radial chords instead of long
-// diagonal traversals across the canvas.
+// Greedy, single-pass: O(N × (avgNeighbours + ringSlots))
+// ≈ O(N²/numRings). Sub-millisecond on 500+ packages.
 export function layoutSpiral(graph, w, h) {
   const cx = w / 2, cy = h / 2
   // Work in the design's unit space (where 1.0 = half-canvas)
@@ -244,10 +244,26 @@ export function layoutSpiral(graph, w, h) {
     bMap.set(aPkg, (bMap.get(aPkg) ?? 0) + 1)
   }
 
-  // Ring count grows as ~sqrt(N) so each ring stays sparse enough
-  // for angular slots not to collide. Capped at 10 — past that the
-  // ring-to-ring radial spacing gets smaller than the typical
-  // package disk diameter and the rings start visually merging.
+  // Pre-compute the Vogel sunflower positions for every index
+  // 0..Nothers-1. Same (i × 137.508°, sqrt(i/(N-1))) seed pattern
+  // the old layout used; what changes is which package occupies
+  // which index. Adjacent indices have very different angles
+  // (golden-step) and very close radii, so within a ring all slots
+  // share approximately the same radius and span the angular
+  // circle in golden-angle stride.
+  const vogelX = new Array(Nothers)
+  const vogelY = new Array(Nothers)
+  for (let i = 0; i < Nothers; i++) {
+    const angle = ((i * 137.508) % 360) * Math.PI / 180
+    const band = Nothers <= 1 ? 0 : Math.sqrt(i / (Nothers - 1))
+    const rUnit = Nothers === 1 ? (entryPkg ? minRUnit : 0) : minRUnit + band * (maxRUnit - minRUnit)
+    vogelX[i] = cx + Math.cos(angle) * rUnit * unitToPx
+    vogelY[i] = cy + Math.sin(angle) * rUnit * unitToPx
+  }
+
+  // Ring count grows as ~sqrt(N). Capped at 10 — past that the
+  // ring-to-ring radial spacing gets too tight and within-ring
+  // permutation has too few slots to meaningfully optimize over.
   const numRings = Math.max(1, Math.min(10, Math.round(Math.sqrt(Nothers) / 1.2)))
   const ringStart = new Array(numRings + 1)
   for (let k = 0; k <= numRings; k++) {
@@ -255,49 +271,19 @@ export function layoutSpiral(graph, w, h) {
   }
   ringStart[numRings] = Nothers
 
-  // Ring radii — each ring's center sits at the band-axis midpoint
-  // of its slice, mapped through the existing minRUnit..maxRUnit
-  // window. Singleton-no-entry case stays at center to match the
-  // pre-rings behaviour (otherwise a lone package would sit
-  // arbitrarily off-center).
-  const ringRUnit = new Array(numRings)
-  for (let k = 0; k < numRings; k++) {
-    if (Nothers === 1 && !entryPkg) {
-      ringRUnit[k] = 0
-    } else {
-      const bandMid = (k + 0.5) / numRings
-      ringRUnit[k] = minRUnit + bandMid * (maxRUnit - minRUnit)
-    }
-  }
-
-  // Greedy angular placement. For each ring inner→outer, walk its
-  // packages in priority order; each picks the open slot whose
-  // direction from center is closest to the weighted barycenter of
-  // its already-placed neighbours. Slot pick uses the dot product
-  // with the target unit vector — equivalent to argmax cos(Δangle)
-  // and avoids modular arithmetic on the wrap.
-  const goldenRad = 137.508 * Math.PI / 180
+  // Greedy assignment: for each ring inner→outer, walk packages in
+  // priority order; each picks the unused Vogel slot in this ring
+  // closest to the weighted barycenter of its already-placed
+  // neighbours. Packages with no placed neighbours (or whose
+  // barycenter sits at center — only entry-coupled) take the next-
+  // available slot in Vogel index order, which inherits the original
+  // spiral's golden-angle spread.
   for (let k = 0; k < numRings; k++) {
     const startIdx = ringStart[k]
     const endIdx = ringStart[k + 1]
     const M = endIdx - startIdx
     if (M === 0) continue
-    const radius = ringRUnit[k] * unitToPx
-    // Per-ring phase rotation by the golden angle so adjacent
-    // rings don't share spokes (which would read as radial
-    // alignment artefacts).
-    const phase = (k * goldenRad) % (2 * Math.PI)
-    const slotCos = new Array(M)
-    const slotSin = new Array(M)
-    const slotAngles = new Array(M)
-    for (let j = 0; j < M; j++) {
-      const a = phase + (2 * Math.PI * j) / M
-      slotAngles[j] = a
-      slotCos[j] = Math.cos(a)
-      slotSin[j] = Math.sin(a)
-    }
     const used = new Array(M).fill(false)
-    let unconstrainedCount = 0
 
     for (let i = startIdx; i < endIdx; i++) {
       const pkg = others[i]
@@ -313,42 +299,49 @@ export function layoutSpiral(graph, w, h) {
           totalW += weight
         }
       }
-      // Target direction (unit vector from center). When a package
-      // has no placed neighbours, or its barycenter sits at center
-      // (only entry-coupled — entry is at center too), fall back
-      // to a golden-angle stride so unconstrained packages spread
-      // evenly across the ring instead of clumping at slot 0.
-      let tc = 0, ts = 0
-      let constrained = false
+      let useBary = false
       if (totalW > 0) {
         bx /= totalW; by /= totalW
         const dx = bx - cx, dy = by - cy
-        const dist = Math.hypot(dx, dy)
-        if (dist > 1) {
-          tc = dx / dist; ts = dy / dist
-          constrained = true
+        // Skip the barycenter path when it sits essentially at
+        // center (only entry-coupled): all slots in this ring
+        // would be equidistant and slot 0 would always win,
+        // collapsing the entry-only packages onto the same arc.
+        if (dx * dx + dy * dy > 1) useBary = true
+      }
+      let bestSlot = -1
+      if (useBary) {
+        // Pick the unused slot in this ring with smallest
+        // Euclidean distance to the barycenter. Within a ring all
+        // slots share approximately the same radius, so this is
+        // effectively angular matching with a small radial bias
+        // when the barycenter sits inside / outside the ring.
+        let bestDist2 = Infinity
+        for (let j = 0; j < M; j++) {
+          if (used[j]) continue
+          const slotIdx = startIdx + j
+          const ddx = vogelX[slotIdx] - bx
+          const ddy = vogelY[slotIdx] - by
+          const d2 = ddx * ddx + ddy * ddy
+          if (d2 < bestDist2) { bestDist2 = d2; bestSlot = j }
+        }
+      } else {
+        // Unconstrained — take the lowest unused index, which
+        // delivers the next golden-angle slot in Vogel order.
+        for (let j = 0; j < M; j++) {
+          if (!used[j]) { bestSlot = j; break }
         }
       }
-      if (!constrained) {
-        const fallback = (unconstrainedCount * goldenRad) % (2 * Math.PI)
-        tc = Math.cos(fallback); ts = Math.sin(fallback)
-        unconstrainedCount++
-      }
-      // argmax slotCos·tc + slotSin·ts over open slots.
-      let bestSlot = -1
-      let bestDot = -Infinity
-      for (let j = 0; j < M; j++) {
-        if (used[j]) continue
-        const dot = slotCos[j] * tc + slotSin[j] * ts
-        if (dot > bestDot) { bestDot = dot; bestSlot = j }
-      }
       used[bestSlot] = true
-      const angle = slotAngles[bestSlot]
-      const x = cx + Math.cos(angle) * radius
-      const y = cy + Math.sin(angle) * radius
+      const slotIdx = startIdx + bestSlot
       const size = graph.pkgCount.get(pkg) ?? 0
       const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
-      pkgInfo.set(pkg, { x, y, size, groupR: gRUnit * unitToPx })
+      pkgInfo.set(pkg, {
+        x: vogelX[slotIdx],
+        y: vogelY[slotIdx],
+        size,
+        groupR: gRUnit * unitToPx,
+      })
     }
   }
 
