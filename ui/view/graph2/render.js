@@ -159,8 +159,8 @@ function renderControls(graph) {
   const isCollapsed = graph2.displayCollapsed
   html += `<section class="g2-collapsible${isCollapsed ? ' collapsed' : ''}">`
   html += '<button type="button" class="g2-collapsible-header" data-g2-toggle-section="display" aria-expanded="' + (!isCollapsed) + '">'
-  html += '<span class="g2-collapsible-chevron">▸</span>'
   html += '<span>Display</span>'
+  html += '<span class="g2-collapsible-chevron">▸</span>'
   html += '</button>'
   html += '<div class="g2-collapsible-body">'
   html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))

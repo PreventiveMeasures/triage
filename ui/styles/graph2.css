@@ -370,7 +370,7 @@
 
 .g2-collapsible-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   width: 100%;
   background: transparent;
@@ -389,14 +389,16 @@
   &:hover { color: var(--text); opacity: 1; }
 }
 
-/* Chevron — rotates when the section expands. Position fixed
-   at the start of the header line so the label aligns
-   regardless of state. */
+/* Chevron — rotates when the section expands. Sits inline
+   right after the label (not at the panel's right edge),
+   matching the "Packages N" / "Issues N" inline-count pattern
+   the panel-titles already use. Sized noticeably larger than
+   the uppercase label so it reads as a deliberate affordance
+   rather than chrome. */
 .g2-collapsible-chevron {
   display: inline-block;
-  font-size: 10px;
-  width: 10px;
-  text-align: center;
+  font-size: 14px;
+  line-height: 1;
   transition: transform .15s;
   opacity: 0.7;
 }
