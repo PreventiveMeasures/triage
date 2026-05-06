@@ -580,6 +580,44 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const ro = new ResizeObserver(() => resize())
   ro.observe(stage)
 
+  // Body-class observer — same role as graph v1's fsObserver.
+  // ResizeObserver alone would catch the fullscreen-induced size
+  // change, but resize() only reruns the LAYOUT when layoutW/H
+  // are zero (first call) or there's no cached positions. To get
+  // the force-directed solver to actually retune for the new
+  // (much larger) viewport, the cache + layoutW/H need to be
+  // invalidated BEFORE the size change lands. MutationObserver
+  // fires synchronously after the body classList mutation, so we
+  // get our chance before the ResizeObserver fires on the new
+  // dimensions. attributeOldValue lets us distinguish a fullscreen
+  // toggle from a theme toggle (theme change shouldn't relayout).
+  const fsObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      const wasFs = (m.oldValue || '').includes('report-fullscreen')
+      const isFs = document.body.classList.contains('report-fullscreen')
+      if (wasFs !== isFs) {
+        layoutW = 0
+        layoutH = 0
+        needsLayout = true
+        needsFit = true
+        graph2.layoutCache = null
+        // ResizeObserver should fire shortly with the new size and
+        // run resize(); the setTimeout fallback covers the rare
+        // case where the size change ends up identical (e.g. the
+        // user already had the sidebar collapsed) so RO doesn't
+        // fire, but we still want a fresh layout in the new
+        // semantic context.
+        setTimeout(() => resize(), 80)
+        return
+      }
+    }
+  })
+  fsObserver.observe(document.body, {
+    attributes: true,
+    attributeFilter: ['class'],
+    attributeOldValue: true,
+  })
+
   // Kick the draw loop. cancelAnimationFrame() in cleanup stops it
   // when the tab swaps so we don't burn frames in the background.
   rafId = requestAnimationFrame(draw)
@@ -589,6 +627,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     _cleanup: () => {
       cancelAnimationFrame(rafId)
       ro.disconnect()
+      fsObserver.disconnect()
       stage.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)

@@ -576,12 +576,42 @@ export function attachTreeGraphInteraction(container, refreshSidebar) {
   resize(true)
   const ro = new ResizeObserver(debouncedResize)
   ro.observe(canvas.parentElement)
-  // Refit when fullscreen is toggled (body class change shifts layout)
-  const fsObserver = new MutationObserver(() => {
+  // Body-class observer — handles BOTH fullscreen and theme
+  // changes, but reacts differently:
+  //   - Fullscreen toggle (`report-fullscreen` added/removed):
+  //     viewport jumps from a sidebar-shrunk panel to (almost)
+  //     the whole window, so the existing force-directed layout
+  //     looks cramped or sparse. Invalidate the cache and the
+  //     closure's nodes/edges so resize(true) re-runs forceLayout
+  //     against the new dimensions.
+  //   - Other class changes (theme toggle): just refit + redraw;
+  //     positions are still good in the same viewport.
+  // attributeOldValue gives us the previous class string so we
+  // can tell which axis changed. Comparing oldValue.includes
+  // against the current classList tells us the direction.
+  const fsObserver = new MutationObserver((mutations) => {
+    let fsToggled = false
+    for (const m of mutations) {
+      const wasFs = (m.oldValue || '').includes('report-fullscreen')
+      const isFs = document.body.classList.contains('report-fullscreen')
+      if (wasFs !== isFs) { fsToggled = true; break }
+    }
+    if (fsToggled) {
+      nodes = null
+      edges = null
+      tree.layoutCache = null
+      tree.graphState.nodes = null
+      tree.graphState.edges = null
+      tree.graphState._needsRefit = true
+    }
     clearTimeout(_resizeTimer)
     _resizeTimer = setTimeout(() => resize(true), 80)
   })
-  fsObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+  fsObserver.observe(document.body, {
+    attributes: true,
+    attributeFilter: ['class'],
+    attributeOldValue: true,
+  })
   canvas.addEventListener('tree-node-select', () => {
     // Update only the sidebar — don't rebuild the canvas DOM, which would
     // destroy hover state and trigger the mousemove-flash glitch.
