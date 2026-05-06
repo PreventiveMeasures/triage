@@ -28,23 +28,21 @@ const SEV_COLORS = {
 //               distribution and the per-package issue counts
 export function renderGraph2Layout(graph) {
   let html = '<div class="graph2-layout">'
-  html += renderTopBar()
+  html += renderTopBar(graph)
   html += renderStage()
   html += renderRightPanel(graph)
   html += '</div>'
   return html
 }
 
-function renderTopBar() {
+function renderTopBar(graph) {
   let html = '<div class="graph2-topbar">'
   // "Show all" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
   // edges, different layout). Reads / writes tree.showAll
   // (shared with graph v1 so the two tabs stay consistent on
   // the same dataset). Defaults to off → only files with own
-  // or subtree findings are kept; the "Show only issues"
-  // toggle on the left is a separate, view-level filter that
-  // still operates on whatever set this leaves behind.
+  // or subtree findings are kept.
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
   html += '<span>Show all</span><span class="g2-switch"></span>'
   html += '</button>'
@@ -66,6 +64,30 @@ function renderTopBar() {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
+  // Severity highlight pills — clicking a pill toggles its
+  // membership in graph2.selectedSeverities. Empty set = no
+  // filter (everything full opacity). 1+ selected = matching
+  // nodes stay full, others dim to 0.1. Counts come from the
+  // current graph; tiers with zero count are still rendered
+  // (so the row shape is stable across re-renders) but only
+  // when at least one is non-zero — purely-clean reports skip
+  // the row entirely since there's nothing to filter.
+  const issueCounts = { critical: 0, high: 0, medium: 0, low: 0 }
+  for (const n of graph.nodes) if (n.issue) issueCounts[n.issue]++
+  const totalIssues = issueCounts.critical + issueCounts.high + issueCounts.medium + issueCounts.low
+  if (totalIssues > 0) {
+    html += '<div class="g2-sev-filters">'
+    for (const sev of ['critical', 'high', 'medium', 'low']) {
+      const on = graph2.selectedSeverities.has(sev) ? ' on' : ''
+      const count = issueCounts[sev]
+      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${graph2.selectedSeverities.has(sev)}">`
+      html += '<span class="g2-sev-mark"></span>'
+      html += `<span class="g2-sev-pill-label">${sev}</span>`
+      html += `<span class="g2-sev-pill-count">${count}</span>`
+      html += '</button>'
+    }
+    html += '</div>'
+  }
   // v0 button — fall back to graph v1's force-directed canvas
   // for users who still prefer the old presentation. Sits to
   // the left of fullscreen so it reads as part of the chrome
@@ -127,25 +149,9 @@ function renderControls(graph) {
   html += `<div class="g2-stat"><div class="g2-stat-label">Avg Degree</div><div class="g2-stat-val">${avgDeg}</div><div class="g2-stat-sub">per file</div></div>`
   html += '</div>'
 
-  // Issues
-  const issueCounts = { critical: 0, high: 0, medium: 0, low: 0 }
-  for (const n of graph.nodes) if (n.issue) issueCounts[n.issue]++
-  const total = issueCounts.critical + issueCounts.high + issueCounts.medium + issueCounts.low
-  html += '<div class="g2-panel-title">Issues '
-  html += `<span class="g2-count">${total}</span></div>`
-  html += '<div class="g2-sev-list">'
-  for (const sev of ['critical', 'high', 'medium', 'low']) {
-    const on = graph2.showIssues[sev] ? ' on' : ''
-    html += `<button type="button" class="g2-sev-row${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}">`
-    html += '<span class="g2-sev-mark"></span>'
-    html += `<span class="g2-sev-label">${sev}</span>`
-    html += `<span class="g2-sev-n">${issueCounts[sev]}</span>`
-    html += '</button>'
-  }
-  html += '</div>'
-  html += `<button type="button" class="g2-toggle-row${graph2.issuesOnly ? ' on' : ''}" data-g2-toggle="issuesOnly">`
-  html += '<span>Show only issues</span><span class="g2-switch"></span>'
-  html += '</button>'
+  // (Severity filter pills moved to the topbar; the standalone
+  // "Show only issues" toggle is gone — selecting all four
+  // severities up there gives the same visual.)
 
   // Display sliders
   html += '<div class="g2-panel-title">Display</div>'

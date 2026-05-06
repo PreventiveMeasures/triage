@@ -28,11 +28,14 @@ export const graph2 = {
   showHalos: true,
   highlightHubs: true,
   showLabels: false,
-  issuesOnly: false,
-  // Severity filter — clicking a row in the Issues panel toggles its
-  // entry; nodes whose top-severity isn't enabled drop out of the
-  // canvas (and the issue counts).
-  showIssues: { critical: true, high: true, medium: true, low: true },
+  // Severity highlight filter — empty = no filter, every node
+  // draws at full opacity (the default). When 1+ severities are
+  // selected, matching nodes stay full opacity and everything
+  // else dims to 0.1; the previous boolean-per-severity model
+  // and the standalone "Show only issues" toggle both collapse
+  // into this single set (selecting all four = the old
+  // issues-only behavior, automatically).
+  selectedSeverities: new Set(),
   // Package palette — `hidden` is the user's hide selection, `solo`
   // limits to a single package. Search box drives the muted/visible
   // state of swatches but doesn't permanently hide them so clearing

@@ -65,6 +65,53 @@
   text-transform: uppercase;
 }
 
+/* Severity highlight pills in the topbar. Empty selectedSeverities
+   set = all pills off = no canvas dimming (default). One or more
+   .on pills = matching nodes draw at full opacity, others fade
+   to 0.1 in canvas.js. The .on style uses each pill's --sev
+   color (set inline at render time) so the highlighted set
+   reads as the pinned severity tier. */
+.g2-sev-filters {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.g2-sev-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: var(--graph-hover-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font: 500 10px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+
+  &:hover { color: var(--text); }
+  &.on {
+    background: color-mix(in srgb, var(--sev) 18%, transparent);
+    border-color: var(--sev);
+    color: var(--sev);
+  }
+
+  & .g2-sev-mark {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    background: var(--sev);
+    box-shadow: 0 0 5px var(--sev);
+  }
+  & .g2-sev-pill-count {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    opacity: 0.7;
+    font-weight: 600;
+  }
+}
+
 /* Compact topbar toggle — same on/off pill semantics as the bigger
    .g2-toggle-row in the left panel, sized down to fit the 44px
    topbar without wrapping. The .g2-switch child reuses the same
@@ -292,48 +339,6 @@
   font-family: ui-monospace, monospace;
   opacity: 0.85;
 }
-
-/* ── Issues / severity rows ─────────────────────────────────── */
-.g2-sev-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-bottom: 6px;
-}
-
-.g2-sev-row {
-  display: grid;
-  grid-template-columns: 12px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 9px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  font: 500 11px/1 inherit;
-  color: var(--muted);
-  text-align: left;
-  font-family: inherit;
-  text-transform: capitalize;
-
-  &:hover { border-color: var(--accent); color: var(--text); }
-  &:not(.on) { opacity: 0.42; }
-  &:not(.on) .g2-sev-mark { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sev); }
-}
-
-.g2-sev-mark {
-  width: 9px; height: 9px;
-  border-radius: 2px;
-  background: var(--sev);
-  box-shadow: 0 0 6px var(--sev);
-}
-
-.g2-sev-n {
-  font: 500 10px/1 ui-monospace, monospace;
-  color: var(--muted);
-}
-.g2-sev-row.on .g2-sev-n { color: var(--text); }
 
 /* ── Toggle rows ────────────────────────────────────────────── */
 .g2-toggle-row {

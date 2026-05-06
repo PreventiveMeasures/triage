@@ -51,6 +51,7 @@ report.addEventListener('click', (e) => {
       s.classList.toggle('solo', graph2.solo === p)
       s.classList.toggle('dim', graph2.solo && graph2.solo !== p)
     })
+    graph2.graphState?.requestDraw?.()
     return
   }
   if (e.target.closest('#g2-palette-clear')) {
@@ -62,28 +63,37 @@ report.addEventListener('click', (e) => {
     document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
       s.classList.remove('solo', 'dim', 'muted', 'hidden-pkg')
     })
+    graph2.graphState?.requestDraw?.()
     return
   }
   const g2Sev = e.target.closest('[data-g2-sev]')
   if (g2Sev) {
+    // Toggle membership in the highlight-filter set. Empty set
+    // = no filter (all nodes full opacity); non-empty = matching
+    // nodes full, others dim to 0.1. The class swap keeps the
+    // pill's active appearance in sync without a full re-render.
     const sev = g2Sev.dataset.g2Sev
-    graph2.showIssues[sev] = !graph2.showIssues[sev]
-    g2Sev.classList.toggle('on', graph2.showIssues[sev])
+    if (graph2.selectedSeverities.has(sev)) graph2.selectedSeverities.delete(sev)
+    else graph2.selectedSeverities.add(sev)
+    g2Sev.classList.toggle('on', graph2.selectedSeverities.has(sev))
+    g2Sev.setAttribute('aria-pressed', String(graph2.selectedSeverities.has(sev)))
+    graph2.graphState?.requestDraw?.()
     return
   }
   const g2Toggle = e.target.closest('[data-g2-toggle]')
   if (g2Toggle) {
     const key = g2Toggle.dataset.g2Toggle
-    // Map UI-key → state field. The two non-matching ones (`hubs` →
+    // Map UI-key → state field. The non-matching ones (`hubs` →
     // `highlightHubs`, `labels` → `showLabels`, `halos` → `showHalos`)
     // exist because the data attributes read better in the DOM as
     // short tokens; renaming the state fields would lose context in
     // canvas.js.
-    const map = { halos: 'showHalos', hubs: 'highlightHubs', labels: 'showLabels', issuesOnly: 'issuesOnly' }
+    const map = { halos: 'showHalos', hubs: 'highlightHubs', labels: 'showLabels' }
     const field = map[key]
     if (field) {
       graph2[field] = !graph2[field]
       g2Toggle.classList.toggle('on', graph2[field])
+      graph2.graphState?.requestDraw?.()
     }
     return
   }
@@ -435,24 +445,26 @@ report.addEventListener('input', (e) => {
   if (id === 'filter-include') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
   else if (id === 'repo-url') { state.repoUrl = val; renderKeepFocus(id) }
-  // Graph v2 — sliders write straight into state.graph2 and update
-  // the inline value label. No re-render: the canvas's draw loop
-  // already reads from graph2 every frame, so the change shows up
-  // immediately.
+  // Graph v2 — sliders write straight into state.graph2, update
+  // the inline value label, and requestDraw so the next animation
+  // frame paints with the new value (no canvas re-attach).
   else if (id === 'g2-r-edge-op') {
     graph2.edgeOpacity = parseFloat(val) / 100
     const lbl = document.getElementById('g2-lbl-edge-op')
     if (lbl) lbl.textContent = graph2.edgeOpacity.toFixed(2)
+    graph2.graphState?.requestDraw?.()
   }
   else if (id === 'g2-r-min-deg') {
     graph2.minDegree = parseInt(val, 10)
     const lbl = document.getElementById('g2-lbl-min-deg')
     if (lbl) lbl.textContent = graph2.minDegree
+    graph2.graphState?.requestDraw?.()
   }
   else if (id === 'g2-r-node-size') {
     graph2.nodeSize = parseInt(val, 10) / 100
     const lbl = document.getElementById('g2-lbl-node-size')
     if (lbl) lbl.textContent = graph2.nodeSize.toFixed(1) + '×'
+    graph2.graphState?.requestDraw?.()
   }
   else if (id === 'g2-palette-search') {
     graph2.paletteSearch = val
@@ -463,5 +475,7 @@ report.addEventListener('input', (e) => {
       const match = !q || label.toLowerCase().includes(q)
       s.classList.toggle('muted', !match)
     })
+    // No canvas redraw — search only mutes palette swatches in the
+    // sidebar; node visibility doesn't change.
   }
 })

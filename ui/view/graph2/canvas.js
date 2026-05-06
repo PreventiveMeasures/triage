@@ -168,17 +168,26 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     return [(sx - viewport.tx) / viewport.k, (sy - viewport.ty) / viewport.k]
   }
 
-  // Visibility predicate — combines every left-panel filter:
-  // package hide/solo, search-driven mute, min-degree slider, and
-  // the issue-only / per-severity rows. Centralized so the canvas
-  // and the hit-test stay consistent.
+  // Visibility predicate — package hide/solo plus the min-degree
+  // slider. The severity filter is NOT in here on purpose: it
+  // dims non-matching nodes to 0.1 instead of hiding them, so
+  // they still occupy space and read as context. Centralized so
+  // the canvas, hit-test, and minimap stay consistent on whether
+  // a node is in scope at all.
   function nodeVisible(n) {
     if (graph2.hidden.has(n.pkg)) return false
     if (graph2.solo && n.pkg !== graph2.solo) return false
     if (n.deg < graph2.minDegree) return false
-    if (graph2.issuesOnly && !n.issue) return false
-    if (n.issue && !graph2.showIssues[n.issue]) return false
     return true
+  }
+
+  // Severity-filter predicate. When the selectedSeverities set
+  // is empty, every node "matches" (no dimming). When at least
+  // one severity is selected, only nodes whose top-issue is in
+  // the set match — others get dimmed in the draw paths.
+  function nodeMatchesSevFilter(n) {
+    if (graph2.selectedSeverities.size === 0) return true
+    return n.issue && graph2.selectedSeverities.has(n.issue)
   }
 
   function nodeRadius(n) {
@@ -274,6 +283,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // get distinct visual treatment (cross = gradient between
     // package hues, intra = neutral structural gray) so the
     // axis is still readable without a topbar toggle.
+    const sevFilterActive = graph2.selectedSeverities.size > 0
     for (const e of graph.edges) {
       const na = graph.nodeByFile.get(e.a)
       const nb = graph.nodeByFile.get(e.b)
@@ -287,6 +297,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       } else if (hovered) {
         const touches = e.a === hovered || e.b === hovered
         if (touches) alpha = Math.min(0.9, alpha + 0.5)
+      }
+      // Severity dim — when neither endpoint matches the active
+      // filter, the edge connects two "context" nodes; fade it
+      // hard so the matching subgraph stands out. When at least
+      // one endpoint matches, keep the edge legible so the user
+      // can trace what the matching node connects to.
+      if (sevFilterActive && !nodeMatchesSevFilter(na) && !nodeMatchesSevFilter(nb)) {
+        alpha = Math.min(alpha, 0.04)
       }
 
       const [ax, ay] = worldToScreen(na.x, na.y)
@@ -322,6 +340,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         const isHov = n.file === hovered
         const isSel = n.file === selected
         if (!n.isHub && !isHov && !isSel) continue
+        // Skip halos for non-matching nodes when the severity
+        // filter is active (unless they're the hover/selection
+        // target — those should always read clearly).
+        if (sevFilterActive && !nodeMatchesSevFilter(n) && !isHov && !isSel) continue
         const [sx, sy] = worldToScreen(n.x, n.y)
         const r = nodeRadius(n)
         const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
@@ -349,6 +371,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
           const e = graph.edges[ei]; return e.a === n.file || e.b === n.file
         })
         dim = touches ? 1 : 0.25
+      }
+      // Severity dim — non-matching nodes drop to 0.1 so the
+      // matching subgraph reads as the "highlighted" one. Stacks
+      // multiplicatively with selection-driven dim so a non-
+      // matching, non-touching node ends up at min(0.25, 0.1).
+      if (sevFilterActive && !nodeMatchesSevFilter(n)) {
+        dim = Math.min(dim, 0.1)
       }
 
       ctx.fillStyle = pkgColor(n.pkg) + alphaHex(dim)
@@ -834,6 +863,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   requestDraw()
 
   graph2.graphState = {
+    requestDraw,
     _cleanup: () => {
       destroyed = true
       cancelAnimationFrame(rafId)
