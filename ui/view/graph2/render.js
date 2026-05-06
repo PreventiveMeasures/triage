@@ -36,6 +36,35 @@ export function renderGraph2Layout(graph) {
 
 function renderTopBar(graph) {
   let html = '<div class="graph2-topbar">'
+  // Severity highlight pills — same tier set as the findings
+  // tab (critical, high, medium, low, high_bug, bug,
+  // informational from format.js's SEVERITIES). Skip tiers
+  // with zero count UNLESS that tier is currently in the
+  // selected set, so the user can always click an active pill
+  // to deselect it even if the dataset has stopped containing
+  // that severity. Empty selectedSeverities = no canvas dimming.
+  // Lives at the left edge of the topbar (before Show all)
+  // since it's the most-frequently-used control.
+  const issueCounts = {}
+  for (const sev of SEVERITIES) issueCounts[sev] = 0
+  for (const n of graph.nodes) if (n.issue && issueCounts[n.issue] !== undefined) issueCounts[n.issue]++
+  const hasAnyVisible = SEVERITIES.some((sev) => issueCounts[sev] > 0 || graph2.selectedSeverities.has(sev))
+  if (hasAnyVisible) {
+    html += '<div class="g2-sev-filters">'
+    for (const sev of SEVERITIES) {
+      const count = issueCounts[sev]
+      const isSelected = graph2.selectedSeverities.has(sev)
+      if (count === 0 && !isSelected) continue
+      const on = isSelected ? ' on' : ''
+      const label = sev.replace(/_/gu, ' ')
+      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${isSelected}">`
+      html += '<span class="g2-sev-mark"></span>'
+      html += `<span class="g2-sev-pill-label">${esc(label)}</span>`
+      html += `<span class="g2-sev-pill-count">${count}</span>`
+      html += '</button>'
+    }
+    html += '</div>'
+  }
   // "Show all" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
   // edges, different layout). Reads / writes tree.showAll
@@ -63,33 +92,6 @@ function renderTopBar(graph) {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
-  // Severity highlight pills — same tier set as the findings
-  // tab (critical, high, medium, low, high_bug, bug,
-  // informational from format.js's SEVERITIES). Skip tiers
-  // with zero count UNLESS that tier is currently in the
-  // selected set, so the user can always click an active pill
-  // to deselect it even if the dataset has stopped containing
-  // that severity. Empty selectedSeverities = no canvas dimming.
-  const issueCounts = {}
-  for (const sev of SEVERITIES) issueCounts[sev] = 0
-  for (const n of graph.nodes) if (n.issue && issueCounts[n.issue] !== undefined) issueCounts[n.issue]++
-  const hasAnyVisible = SEVERITIES.some((sev) => issueCounts[sev] > 0 || graph2.selectedSeverities.has(sev))
-  if (hasAnyVisible) {
-    html += '<div class="g2-sev-filters">'
-    for (const sev of SEVERITIES) {
-      const count = issueCounts[sev]
-      const isSelected = graph2.selectedSeverities.has(sev)
-      if (count === 0 && !isSelected) continue
-      const on = isSelected ? ' on' : ''
-      const label = sev.replace(/_/gu, ' ')
-      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${isSelected}">`
-      html += '<span class="g2-sev-mark"></span>'
-      html += `<span class="g2-sev-pill-label">${esc(label)}</span>`
-      html += `<span class="g2-sev-pill-count">${count}</span>`
-      html += '</button>'
-    }
-    html += '</div>'
-  }
   // v0 button — fall back to graph v1's force-directed canvas
   // for users who still prefer the old presentation. Sits to
   // the left of fullscreen so it reads as part of the chrome
