@@ -14,7 +14,7 @@ const SEV_COLORS = {
 // Build the entire v2 layout HTML in one pass. Three columns —
 // left panel (palette / stats / issues / display / options), stage
 // (canvas + corner readouts + zoom controls + tooltip), right
-// panel (selection + minimap + top groups). The stage canvas needs
+// panel (selection + top groups). The stage canvas needs
 // real dimensions before its layout can run, so all ancestor
 // elements ship with a flex / grid sizing rule that's set by CSS
 // (.graph2-layout / .graph2-stage). attachGraph2Interaction wires
@@ -193,12 +193,6 @@ function renderRightPanel(graph) {
   html += '<div class="g2-panel-title">Selection</div>'
   html += '<div id="g2-selection-area">'
   html += renderSelectionCard(graph)
-  html += '</div>'
-
-  html += '<div class="g2-panel-title">Minimap</div>'
-  html += '<div class="g2-minimap" id="g2-minimap">'
-  html += '<canvas id="g2-mini-cv"></canvas>'
-  html += '<div class="g2-mini-vp" id="g2-mini-vp"></div>'
   html += '</div>'
 
   html += '<div class="g2-panel-title">Top packages</div>'

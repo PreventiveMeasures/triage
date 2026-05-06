@@ -714,29 +714,6 @@
   }
 }
 
-/* ── Minimap ────────────────────────────────────────────────── */
-.g2-minimap {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  background: var(--graph-canvas-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-
-  & canvas {
-    width: 100%; height: 100%;
-    position: absolute; inset: 0;
-  }
-}
-
-.g2-mini-vp {
-  position: absolute;
-  border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  pointer-events: none;
-}
-
 /* ── Distribution ───────────────────────────────────────────── */
 .g2-dist-bar {
   width: 100%;

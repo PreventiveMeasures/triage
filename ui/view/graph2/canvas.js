@@ -1,6 +1,6 @@
 import { graph2 } from './state.js'
 import { applyLayout } from './layout.js'
-import { pkgColor, pkgColorAlpha } from '../graph/utils.js'
+import { pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones
@@ -55,9 +55,9 @@ function alphaHex(a) {
 
 // Wire up the v2 canvas: layout (deferred to first resize so the
 // solver gets real dimensions), draw loop, hover/click hit-test,
-// pan/zoom, minimap, and all the live counters in the corner
-// readouts. The container is the .graph2-stage element; refresh is
-// a function the renderer passes in to rebuild the right-panel
+// pan/zoom, and all the live counters in the corner readouts.
+// The container is the .graph2-stage element; refresh is a
+// function the renderer passes in to rebuild the right-panel
 // selection card after a click (it already owns the data context
 // the card needs).
 export function attachGraph2Interaction(container, graph, refreshSidebar) {
@@ -68,9 +68,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const cursorEl = container.querySelector('#g2-cursor')
   const visibleEl = container.querySelector('#g2-visible')
   const zoomEl = container.querySelector('#g2-zoom-pct')
-  const miniCv = container.querySelector('#g2-mini-cv')
-  const miniVp = container.querySelector('#g2-mini-vp')
-  const minimap = container.querySelector('#g2-minimap')
 
   if (!canvas) return
 
@@ -138,8 +135,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   // Visibility predicate — combines every left-panel filter:
   // package hide/solo, search-driven mute, min-degree slider, and
-  // the issue-only / per-severity rows. Centralized so the canvas,
-  // hit-test, and minimap stay consistent.
+  // the issue-only / per-severity rows. Centralized so the canvas
+  // and the hit-test stay consistent.
   function nodeVisible(n) {
     if (graph2.hidden.has(n.pkg)) return false
     if (graph2.solo && n.pkg !== graph2.solo) return false
@@ -179,15 +176,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
     if (needsFit || sizeChanged) { fitToView(); needsFit = false }
-    // Minimap shares dpr but sizes from its own element.
-    if (miniCv && minimap) {
-      const mr = minimap.getBoundingClientRect()
-      miniCv.width = mr.width * dpr
-      miniCv.height = mr.height * dpr
-      miniCv.style.width = mr.width + 'px'
-      miniCv.style.height = mr.height + 'px'
-      miniCv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0)
-    }
   }
 
   // ── Draw ──────────────────────────────────────────────────────
@@ -367,8 +355,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
     if (visibleEl) visibleEl.textContent = `${visibleCount.toLocaleString()} of ${graph.nodes.length.toLocaleString()} visible`
     if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
-
-    drawMinimap()
   }
 
   function drawGrid(T) {
@@ -382,51 +368,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     for (let x = ox; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
     for (let y = oy; y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y) }
     ctx.stroke()
-  }
-
-  // ── Minimap ───────────────────────────────────────────────────
-  function drawMinimap() {
-    if (!miniCv) return
-    const mctx = miniCv.getContext('2d')
-    const mr = minimap.getBoundingClientRect()
-    const mw = mr.width, mh = mr.height
-    // Same backdrop as the main canvas — the minimap reads as a
-    // zoomed-out view of the same scene, so the bg flips with theme.
-    mctx.fillStyle = currentTheme().bg
-    mctx.fillRect(0, 0, mw, mh)
-    if (graph.nodes.length === 0) return
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of graph.nodes) {
-      if (!nodeVisible(n)) continue
-      if (n.x < minX) minX = n.x
-      if (n.y < minY) minY = n.y
-      if (n.x > maxX) maxX = n.x
-      if (n.y > maxY) maxY = n.y
-    }
-    if (!Number.isFinite(minX)) return
-    const w = Math.max(20, maxX - minX), h = Math.max(20, maxY - minY)
-    const k = Math.min(mw / w, mh / h) * 0.85
-    const cx = mw / 2, cy = mh / 2
-    const wcx = (minX + maxX) / 2, wcy = (minY + maxY) / 2
-    const toMini = (x, y) => [cx + (x - wcx) * k, cy + (y - wcy) * k]
-    for (const n of graph.nodes) {
-      if (!nodeVisible(n)) continue
-      const [mx, my] = toMini(n.x, n.y)
-      mctx.fillStyle = pkgColor(n.pkg) + 'cc'
-      mctx.fillRect(mx, my, 1.5, 1.5)
-    }
-    // Viewport rectangle
-    if (miniVp) {
-      const [wx0, wy0] = screenToWorld(0, 0)
-      const [wx1, wy1] = screenToWorld(W, H)
-      const [vx, vy] = toMini(wx0, wy0)
-      const vw = (wx1 - wx0) * k
-      const vh = (wy1 - wy0) * k
-      miniVp.style.left = `${Math.max(0, vx)}px`
-      miniVp.style.top = `${Math.max(0, vy)}px`
-      miniVp.style.width = `${Math.min(mw, vw)}px`
-      miniVp.style.height = `${Math.min(mh, vh)}px`
-    }
   }
 
   // ── Hit test ──────────────────────────────────────────────────
