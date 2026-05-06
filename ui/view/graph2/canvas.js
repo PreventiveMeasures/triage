@@ -482,6 +482,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         ctx.textBaseline = 'middle'
         const lineH = 11
         const pad = 2
+        // Pre-build AABBs for every visible node circle. The label
+        // collision pass checks against these so a label can't
+        // straddle a neighbour's dot — the prior version only
+        // checked label-vs-label, so labels happily covered nearby
+        // nodes.
+        const nodeBoxes = []
+        for (const n of graph.nodes) {
+          if (!nodeVisible(n)) continue
+          const [sx, sy] = worldToScreen(n.x, n.y)
+          const r = nodeRadius(n)
+          nodeBoxes.push({
+            file: n.file,
+            x0: sx - r, x1: sx + r,
+            y0: sy - r, y1: sy + r,
+          })
+        }
         const candidates = []
         for (const n of graph.nodes) {
           if (!nodeVisible(n)) continue
@@ -496,7 +512,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
           const isHov = n.file === hovered
           const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
           candidates.push({
-            n, tx, ty, prio,
+            file: n.file, n, tx, ty, prio,
             x0: tx - pad, x1: tx + w,
             y0: ty - lineH / 2, y1: ty + lineH / 2,
           })
@@ -506,8 +522,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
         for (const c of candidates) {
           let collide = false
-          for (const p of placed) {
-            if (overlaps(c, p)) { collide = true; break }
+          // Reject if the label box would cover another node's
+          // circle (skip the candidate's own node — its label
+          // sits adjacent to its own dot by design).
+          for (const nb of nodeBoxes) {
+            if (nb.file === c.file) continue
+            if (overlaps(c, nb)) { collide = true; break }
+          }
+          if (!collide) {
+            for (const p of placed) {
+              if (overlaps(c, p)) { collide = true; break }
+            }
           }
           if (!collide) placed.push(c)
         }
