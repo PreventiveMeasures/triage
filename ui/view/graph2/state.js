@@ -29,11 +29,9 @@ export const graph2 = {
   // lands on the actionable list, files for "what's the codebase
   // shape" exploration.
   topPkgsTab: 'issues',  // 'issues' | 'files'
-  // Collapsed state for right-panel sections. Display starts
-  // collapsed because most users don't tweak edge opacity / node
-  // size on every visit; surfacing the controls behind a click
-  // shrinks the panel's idle vertical footprint.
-  displayCollapsed: true,
+  // Visual constants — were sliders / toggles in the Display
+  // section before it was removed. Canvas reads them as fixed
+  // values now; tune the defaults here when needed.
   edgeOpacity: 0.22,
   nodeSize: 1.0,
   showLabels: false,

@@ -75,42 +75,10 @@ report.addEventListener('click', (e) => {
     refreshGraph2TopPkgs()
     return
   }
-  const g2Toggle = e.target.closest('[data-g2-toggle]')
-  if (g2Toggle) {
-    const key = g2Toggle.dataset.g2Toggle
-    // Map UI-key → state field. `labels` → `showLabels` is the
-    // only entry now that halos / hub-highlight are hardcoded
-    // on; kept as a map for symmetry with the future toggles.
-    const map = { labels: 'showLabels' }
-    const field = map[key]
-    if (field) {
-      graph2[field] = !graph2[field]
-      g2Toggle.classList.toggle('on', graph2[field])
-      graph2.graphState?.requestDraw?.()
-    }
-    return
-  }
   const g2Select = e.target.closest('[data-g2-select]')
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
     refreshGraph2Sidebar()
-    return
-  }
-  // Right-panel collapsible section header — flip the
-  // .collapsed class on the surrounding <section> in place,
-  // no full re-render needed. Persist the new state on
-  // graph2 so a re-render (e.g. after a click that DOES
-  // re-render, like trash toggle) keeps the section in the
-  // same expanded/collapsed state.
-  const sectionToggle = e.target.closest('[data-g2-toggle-section]')
-  if (sectionToggle) {
-    const section = sectionToggle.closest('.g2-collapsible')
-    if (section) {
-      const collapsed = section.classList.toggle('collapsed')
-      sectionToggle.setAttribute('aria-expanded', String(!collapsed))
-      const which = sectionToggle.dataset.g2ToggleSection
-      if (which === 'display') graph2.displayCollapsed = collapsed
-    }
     return
   }
   // Top-packages mini-tabs (Issues / Files). Pure right-panel
@@ -375,21 +343,6 @@ report.addEventListener('input', (e) => {
   if (id === 'filter-include') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
   else if (id === 'repo-url') { state.repoUrl = val; renderKeepFocus(id) }
-  // Graph v2 — sliders write straight into state.graph2, update
-  // the inline value label, and requestDraw so the next animation
-  // frame paints with the new value (no canvas re-attach).
-  else if (id === 'g2-r-edge-op') {
-    graph2.edgeOpacity = parseFloat(val) / 100
-    const lbl = document.getElementById('g2-lbl-edge-op')
-    if (lbl) lbl.textContent = graph2.edgeOpacity.toFixed(2)
-    graph2.graphState?.requestDraw?.()
-  }
-  else if (id === 'g2-r-node-size') {
-    graph2.nodeSize = parseInt(val, 10) / 100
-    const lbl = document.getElementById('g2-lbl-node-size')
-    if (lbl) lbl.textContent = graph2.nodeSize.toFixed(1) + '×'
-    graph2.graphState?.requestDraw?.()
-  }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()

@@ -113,63 +113,6 @@ function renderTopBar(graph) {
   return html
 }
 
-// Controls that previously lived in the left panel — display
-// sliders + visual toggles. Returned as inner HTML (no
-// wrapping <aside>) so renderRightPanel can append them after
-// the Selection / Top-packages blocks.
-//
-// The "Packages" color grid + search box used to live here too;
-// dropped because the topbar's path/package filter covers the
-// search use case (with soft-dim instead of palette muting),
-// and the Top packages block in the right panel above already
-// shows package colors next to names — clicking a row solos
-// the package, same as the swatches did.
-function renderControls(graph) {
-  let html = ''
-
-  // (Statistics block moved to the canvas overlay — see
-  // renderStage's top-left readout. Lives there now so the
-  // control panel stays focused on filters / display tweaks.)
-
-
-  // (Severity filter pills moved to the topbar; the standalone
-  // "Show only issues" toggle is gone — selecting all four
-  // severities up there gives the same visual.)
-
-  // Display — sliders for the visual knobs that take a
-  // numeric value, then toggles for the booleans. Wrapped in a
-  // collapsible section so the panel doesn't carry six rows
-  // of always-visible controls (most users don't tweak edge
-  // opacity / node size every visit). Header acts as the toggle
-  // button; the body is hidden via CSS when .collapsed is on
-  // its parent.
-  const isCollapsed = graph2.displayCollapsed
-  html += `<section class="g2-collapsible${isCollapsed ? ' collapsed' : ''}">`
-  html += '<button type="button" class="g2-collapsible-header" data-g2-toggle-section="display" aria-expanded="' + (!isCollapsed) + '">'
-  html += '<span>Display</span>'
-  html += '<span class="g2-collapsible-chevron">▸</span>'
-  html += '</button>'
-  html += '<div class="g2-collapsible-body">'
-  html += sliderRow('edge-op', 'Edge opacity', graph2.edgeOpacity.toFixed(2), 0, 100, Math.round(graph2.edgeOpacity * 100))
-  html += sliderRow('node-size', 'Node size', graph2.nodeSize.toFixed(1) + '×', 40, 220, Math.round(graph2.nodeSize * 100))
-  html += toggleRow('labels', 'Labels', graph2.showLabels)
-  html += '</div></section>'
-  return html
-}
-
-function sliderRow(id, label, valueLabel, min, max, value) {
-  return '<div class="g2-filter-row">'
-    + `<div class="g2-filter-label"><span>${label}</span><span class="v" id="g2-lbl-${id}">${valueLabel}</span></div>`
-    + `<input type="range" id="g2-r-${id}" min="${min}" max="${max}" value="${value}">`
-    + '</div>'
-}
-
-function toggleRow(key, label, on) {
-  return `<button type="button" class="g2-toggle-row${on ? ' on' : ''}" data-g2-toggle="${key}">`
-    + `<span>${label}</span><span class="g2-switch"></span>`
-    + '</button>'
-}
-
 // Compute a path relative to a directory. Both inputs are
 // forward-slash separated; the result starts with `./` for
 // same-dir or `../` for an ancestor. No trailing slash on the
@@ -347,11 +290,6 @@ function renderRightPanel(graph) {
   html += '<div id="g2-top-pkgs-block">'
   html += renderTopPkgsBlock(graph)
   html += '</div>'
-  // Migrated from the old left panel — palette / stats / issues
-  // / display / options. Lives at the bottom of the right panel
-  // and shares its scroll. Trade-off: less "always visible"
-  // chrome, more horizontal canvas room.
-  html += renderControls(graph)
   html += '</aside>'
   return html
 }

@@ -315,34 +315,10 @@
 }
 
 
-/* ── Toggle rows ────────────────────────────────────────────── */
-.g2-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 8px 11px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-
-  &:hover { color: var(--text); }
-}
-
-/* Vertical gap between any two adjacent control rows in the
-   Display section — covers all four sibling combos
-   (filter→filter, filter→toggle, toggle→filter, toggle→toggle).
-   Earlier the gap was scoped to same-type adjacency only, so
-   the join between sliders and toggles had no breathing room. */
-:is(.g2-filter-row, .g2-toggle-row) + :is(.g2-filter-row, .g2-toggle-row) {
-  margin-top: 5px;
-}
-
+/* The .g2-switch class is still used by the topbar's "All files"
+   pill (.g2-topbar-toggle .g2-switch); other toggle / collapsible /
+   slider chrome that lived in the now-removed Display panel was
+   stripped along with the markup. */
 .g2-switch {
   width: 26px; height: 14px;
   /* Track uses --border so it stays visible against the panel
@@ -365,114 +341,6 @@
     background: var(--muted);
     transition: transform .15s, background .15s;
   }
-}
-
-.g2-toggle-row.on { color: var(--text); }
-.g2-toggle-row.on .g2-switch { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.g2-toggle-row.on .g2-switch::after { transform: translateX(12px); background: var(--accent); }
-
-/* ── Collapsible right-panel section ───────────────────────── */
-/* Wraps a panel-title-like header (with chevron) and a body
-   that hides when .collapsed is on the section. Header reuses
-   the same type metrics as .g2-panel-title so the heading
-   reads consistently across collapsed and non-collapsed
-   sections in the panel. */
-.g2-collapsible {
-  margin-top: 14px;
-}
-
-.g2-collapsible-header {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  width: 100%;
-  background: transparent;
-  border: 0;
-  padding: 0 0 8px;
-  margin: 0;
-  /* See .g2-panel-title for why these are spelled out instead
-     of being packed into `font: ... inherit`. */
-  font-family: inherit;
-  font-weight: 600;
-  font-size: 11px;
-  line-height: 1;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-  opacity: 0.85;
-  cursor: pointer;
-  text-align: left;
-
-  &:hover { color: var(--text); opacity: 1; }
-}
-
-/* Chevron — rotates when the section expands. Sits inline
-   right after the label (not at the panel's right edge),
-   matching the "Packages N" / "Issues N" inline-count pattern
-   the panel-titles already use. Sized noticeably larger than
-   the uppercase label so it reads as a deliberate affordance
-   rather than chrome. */
-.g2-collapsible-chevron {
-  display: inline-block;
-  font-size: 14px;
-  line-height: 1;
-  transition: transform .15s;
-  opacity: 0.7;
-}
-.g2-collapsible:not(.collapsed) .g2-collapsible-chevron { transform: rotate(90deg); }
-
-/* Body holds the rows. When collapsed, drop it from the layout
-   so the panel doesn't carry the empty padding-bottom either. */
-.g2-collapsible.collapsed .g2-collapsible-body { display: none; }
-
-/* ── Display sliders ────────────────────────────────────────── */
-.g2-filter-row {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px 11px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.g2-filter-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--muted);
-
-  & .v {
-    font-family: ui-monospace, monospace;
-    color: var(--text);
-  }
-}
-
-.graph2-layout input[type=range] {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 3px;
-  background: var(--surface-active);
-  border-radius: 2px;
-  outline: none;
-}
-.graph2-layout input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: var(--text);
-  cursor: pointer;
-  box-shadow: 0 0 0 3px var(--surface-active);
-}
-.graph2-layout input[type=range]::-moz-range-thumb {
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: var(--text);
-  cursor: pointer;
-  border: 0;
-  box-shadow: 0 0 0 3px var(--surface-active);
 }
 
 /* ── Stage ─────────────────────────────────────────────────── */
