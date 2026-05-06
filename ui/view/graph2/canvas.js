@@ -146,11 +146,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     needsLayout = false
   }
 
-  function fitToView() {
+  // Computes the (k, tx, ty) that would fit the graph's
+  // bounding box into the viewport with 10% padding. Pure
+  // function — doesn't mutate viewport. Used by fitToView()
+  // and by the wheel handler to clamp min-zoom and to know
+  // where "centered" is for the pan-to-center fallback.
+  function computeFit() {
     if (graph.nodes.length === 0) {
-      viewport.k = 1
-      viewport.tx = W / 2; viewport.ty = H / 2
-      return
+      return { k: 1, tx: W / 2, ty: H / 2 }
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     for (const n of graph.nodes) {
@@ -162,10 +165,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const w = Math.max(20, maxX - minX), h = Math.max(20, maxY - minY)
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
     const pad = Math.min(W, H) * 0.1
-    const k = Math.min((W - pad * 2) / w, (H - pad * 2) / h, 4)
-    viewport.k = Math.max(0.05, k)
-    viewport.tx = W / 2 - cx * viewport.k
-    viewport.ty = H / 2 - cy * viewport.k
+    const rawK = Math.min((W - pad * 2) / w, (H - pad * 2) / h, 4)
+    const k = Math.max(0.05, rawK)
+    return { k, tx: W / 2 - cx * k, ty: H / 2 - cy * k }
+  }
+
+  function fitToView() {
+    const fit = computeFit()
+    viewport.k = fit.k
+    viewport.tx = fit.tx
+    viewport.ty = fit.ty
   }
 
   function worldToScreen(x, y) {
@@ -784,9 +793,27 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     e.preventDefault()
     const rect = stage.getBoundingClientRect()
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top
-    const [wx, wy] = screenToWorld(sx, sy)
     const factor = Math.exp(-e.deltaY * 0.0015)
-    const nk = Math.max(0.06, Math.min(8, viewport.k * factor))
+    const fit = computeFit()
+    // Trying to zoom out further than the fit zoom doesn't
+    // make the graph any smaller — instead, re-center the
+    // viewport. Each scroll-out step lerps current tx/ty
+    // toward the fit-centered position; repeated scrolls
+    // converge on center. Step size proportional to wheel
+    // magnitude so trackpad ticks feel smooth and mouse-wheel
+    // ticks feel decisive without overshooting.
+    if (factor < 1 && viewport.k <= fit.k * 1.0001) {
+      viewport.k = fit.k
+      const step = Math.min(0.4, (1 - factor) * 3)
+      viewport.tx += (fit.tx - viewport.tx) * step
+      viewport.ty += (fit.ty - viewport.ty) * step
+      requestDraw()
+      return
+    }
+    // Normal cursor-anchored zoom. Min = fit.k (no zooming
+    // out past it), max = 9.99 (~999% in the readout).
+    const [wx, wy] = screenToWorld(sx, sy)
+    const nk = Math.max(fit.k, Math.min(9.99, viewport.k * factor))
     viewport.k = nk
     viewport.tx = sx - wx * viewport.k
     viewport.ty = sy - wy * viewport.k
@@ -800,9 +827,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   stage.addEventListener('wheel', onWheel, { passive: false })
 
   // Zoom buttons — each mutation requestDraws so the next
-  // animation frame paints with the new viewport.
+  // animation frame paints with the new viewport. Min = fit
+  // zoom (same floor the wheel handler enforces), max = 9.99.
   function zoomTo(nk) {
-    nk = Math.max(0.06, Math.min(8, nk))
+    const fitK = computeFit().k
+    nk = Math.max(fitK, Math.min(9.99, nk))
     const cx = W / 2, cy = H / 2
     const [wx, wy] = screenToWorld(cx, cy)
     viewport.k = nk

@@ -238,7 +238,7 @@ function renderStage(graph) {
   html += '<button id="g2-zoom-in" title="Zoom in">+</button>'
   html += '<div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>'
   html += '<button id="g2-zoom-out" title="Zoom out">−</button>'
-  html += '<button id="g2-zoom-fit" title="Fit to view">⟲</button>'
+  html += '<button id="g2-zoom-fit" class="g2-zoom-fit-btn" title="Fit to view">fit</button>'
   html += '</div>'
   html += '<div class="g2-tooltip" id="g2-tooltip"></div>'
   html += '</main>'

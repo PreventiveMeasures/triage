@@ -581,6 +581,16 @@
   border-bottom: 1px solid var(--graph-divider);
 }
 
+/* The fit button carries a "fit" text label rather than a
+   glyph — matches graph v1's pattern. Type metrics override
+   the parent .g2-zoom-ctrl button rules so the label fits in
+   the 28×28 box without wrapping. */
+.g2-zoom-fit-btn {
+  font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+
 /* ── Tooltip ────────────────────────────────────────────────── */
 /* Position is fully owned by canvas.js showTooltip — it measures the
    tooltip and flips it to the other side of the cursor when the
