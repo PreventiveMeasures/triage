@@ -267,11 +267,22 @@ export function indicatorFor(counts) {
 
 // ── Vivid per-package color palette ─────────────────────────────────────────
 // Each package gets a vivid, high-saturation hue so clusters read distinctly.
-// Curated flat palette — 20 perceptually distinct colors optimized for
-// dark backgrounds. Drawn from Tableau 20 + adjusted for dark-UI legibility.
-// Ordered so adjacent indices have maximum hue distance (not sequential),
-// meaning even small graphs with 3-4 packages get very distinct colors.
-const PKG_PALETTE = [
+// Curated flat palette — 20 perceptually distinct colors. Drawn from
+// Tableau 20 + adjusted for UI legibility. Ordered so adjacent indices
+// have maximum hue distance (not sequential), meaning even small
+// graphs with 3-4 packages get very distinct colors.
+//
+// Two parallel palettes — same hue order, different lightness, so a
+// package keeps its identity (a "blue package" stays blue) when the
+// user toggles between dark and light themes; only the saturation /
+// lightness shifts. The dark palette stays bright and pastel so it
+// reads on the near-black canvas backdrop; the light palette pulls
+// every color toward GitHub-primary saturated tones so it doesn't
+// wash out against #f6f8fa. Several of the dark variants (the pinks,
+// pale blues, light grays, sage greens) drop ~25-30 lightness in the
+// light variant — they were the worst offenders for "I can barely
+// see the node" on a light bg.
+const PKG_PALETTE_DARK = [
   '#4e9af1', // blue
   '#f28e2b', // orange
   '#59a14f', // green
@@ -293,17 +304,49 @@ const PKG_PALETTE = [
   '#79706e', // warm gray
   '#d4a6c8', // lavender
 ]
+const PKG_PALETTE_LIGHT = [
+  '#0969da', // blue
+  '#bc4c00', // orange
+  '#1a7f37', // green
+  '#cf222e', // red
+  '#1f7a72', // teal
+  '#9a6700', // yellow → dark gold
+  '#8250df', // purple
+  '#bf3989', // pink → magenta
+  '#6e4a33', // brown
+  '#57606a', // gray
+  '#7a5b00', // gold → darker
+  '#a83a76', // rose
+  '#0550ae', // light blue → deeper
+  '#3e7a73', // sage
+  '#2da44e', // light green → darker green
+  '#7a5b00', // dark gold (matches gold)
+  '#1c5d59', // dark teal
+  '#b1192d', // crimson
+  '#3a3735', // warm gray
+  '#7a4a76', // lavender
+]
+function isLightTheme() {
+  return typeof document !== 'undefined' && document.body?.classList.contains('theme-light')
+}
+// Cache is keyed by `${theme}:${pkg}` so the dark + light variants
+// don't collide. Toggling the theme doesn't invalidate the cache — we
+// just look up under the new prefix on the next call. Old entries
+// stay around but they're tiny and the package-name set is bounded.
 const _pkgColorCache = new Map()
 export function pkgColor(pkg) {
-  if (_pkgColorCache.has(pkg)) return _pkgColorCache.get(pkg)
+  const palette = isLightTheme() ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
+  const themeKey = palette === PKG_PALETTE_LIGHT ? 'l' : 'd'
+  const cacheKey = `${themeKey}:${pkg ?? '__own__'}`
+  if (_pkgColorCache.has(cacheKey)) return _pkgColorCache.get(cacheKey)
   const key = pkg ?? '__own__'
   let h = 0
   for (const c of key) h = (h * 37 + c.charCodeAt(0)) | 0
   // Spread indices: interleave halves so sequential packages get distant hues
-  const raw = ((h % PKG_PALETTE.length) + PKG_PALETTE.length) % PKG_PALETTE.length
-  const idx = (raw * 7 + 3) % PKG_PALETTE.length
-  const col = PKG_PALETTE[idx]
-  _pkgColorCache.set(pkg, col)
+  const raw = ((h % palette.length) + palette.length) % palette.length
+  const idx = (raw * 7 + 3) % palette.length
+  const col = palette[idx]
+  _pkgColorCache.set(cacheKey, col)
   return col
 }
 export function pkgColorAlpha(pkg, a) {
