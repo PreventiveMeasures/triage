@@ -755,6 +755,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   const onMouseDown = (e) => {
     if (e.button !== 0) return
+    // Bail when the press originates inside one of the canvas's
+    // corner overlays (back button, zoom controls, focus-pkg
+    // icon). Without this, mousedown sets dragging=true →
+    // mouseup picks a node at the overlay's corner (none, so
+    // selection clears) → refreshSidebar replaces the overlay
+    // slot → the original button is detached → its click
+    // handler never runs. The overlay's own click handlers
+    // already do the right thing; the canvas just needs to
+    // stay out of their way.
+    if (e.target.closest('.g2-stage-overlay, .g2-stage-overlay-tr, .g2-zoom-ctrl')) return
     dragging = true
     dragMoved = false
     dragStart = { x: e.clientX, y: e.clientY, tx: viewport.tx, ty: viewport.ty }
