@@ -234,12 +234,16 @@ function renderFileList(graph, label, files, referenceDir) {
   if (count === 0) {
     html += '<div class="g2-sel-section-empty">none</div>'
   } else {
-    const sorted = [...files].sort()
+    // Sort by the displayed string so the list reads in the
+    // order it visually shows. Computing display once per file
+    // (vs. inside the comparator) keeps it O(n + n log n)
+    // rather than recomputing relativePath on every compare.
+    const items = files.map((f) => ({ file: f, display: shorterPath(f, referenceDir) }))
+    items.sort((a, b) => a.display.localeCompare(b.display))
     html += '<ul class="g2-sel-file-list">'
-    for (const f of sorted) {
+    for (const { file: f, display } of items) {
       const node = graph.nodeByFile.get(f)
       const c = node ? pkgColor(node.pkg) : '#666'
-      const display = shorterPath(f, referenceDir)
       html += `<li><button type="button" class="g2-sel-file-link" data-g2-select="${esc(f)}" title="${esc(f)}">`
       html += `<span class="g2-sel-file-dot" style="background:${c}"></span>`
       html += `<span class="g2-sel-file-path">${esc(display)}</span>`
