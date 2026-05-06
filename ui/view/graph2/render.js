@@ -66,6 +66,13 @@ function renderTopBar() {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
+  // v0 button — fall back to graph v1's force-directed canvas
+  // for users who still prefer the old presentation. Sits to
+  // the left of fullscreen so it reads as part of the chrome
+  // controls. The Graph tab itself is shared between v1 and
+  // v2 (active when currentView is either), so coming back to
+  // v2 from v1 is just clicking Graph again.
+  html += '<button type="button" class="g2-icon-btn g2-v0-btn" id="g2-v0-btn" title="Old graph (v0)">v0</button>'
   // Fullscreen — same affordance as graph v1's toolbar button.
   // Toggles `body.report-fullscreen`, which hides the sidebar /
   // header / page padding and lets the layout grow to the viewport.

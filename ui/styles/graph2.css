@@ -56,6 +56,15 @@
   & svg { display: block; }
 }
 
+/* The v0 button shares the icon-btn shape but carries a text
+   label, so set explicit type metrics that don't rely on a
+   centered glyph. */
+.g2-v0-btn {
+  font: 600 10px/1 inherit;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* Compact topbar toggle — same on/off pill semantics as the bigger
    .g2-toggle-row in the left panel, sized down to fit the 44px
    topbar without wrapping. The .g2-switch child reuses the same

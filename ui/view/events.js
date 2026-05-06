@@ -132,6 +132,17 @@ report.addEventListener('click', (e) => {
     document.body.classList.toggle('report-fullscreen')
     return
   }
+  // v0 button — escape hatch back to graph v1's canvas. Tear
+  // down v2's rAF / observers since render() will replace the
+  // #report DOM and orphan them otherwise. Clear graph2.selected
+  // so v2 doesn't reopen on a stale selection if the user comes
+  // back later with a different file in mind.
+  if (e.target.closest('#g2-v0-btn')) {
+    cleanupGraph2()
+    state.currentView = 'tree'
+    render()
+    return
+  }
   // Show-all in the v2 topbar — flips the FILE SET (same data-level
   // filter graph v1's checkbox drives, sharing tree.showAll). Both
   // graph v1's and graph v2's layout caches are now stale; tear down

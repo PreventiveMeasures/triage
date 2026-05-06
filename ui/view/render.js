@@ -537,10 +537,19 @@ export function render() {
     state.currentView = 'findings'
   }
   if (showTreeTab) {
+    // Tab bar — note that the "Graph" tab routes to v2, not the
+    // legacy v1 graph. v1 is still reachable via the "v0" button
+    // in v2's topbar; the standalone Graph tab button for v1 was
+    // dropped because v2 supersedes it for the common case. We
+    // mark the Graph tab active for BOTH currentView values
+    // ('graph2' and 'tree') so the user always sees a visible
+    // active tab while inside either graph; clicking it always
+    // navigates back to v2 (so v0 is one click away on v2 and
+    // the round trip back to v2 is also one click).
+    const graphActive = state.currentView === 'graph2' || state.currentView === 'tree'
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
-    html += `<button type="button" class="report-tab${state.currentView === 'tree' ? ' active' : ''}" data-view="tree">Graph</button>`
-    html += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph v2</button>`
+    html += `<button type="button" class="report-tab${graphActive ? ' active' : ''}" data-view="graph2">Graph</button>`
     html += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     html += '</div>'
   }
