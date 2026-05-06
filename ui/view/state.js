@@ -55,15 +55,16 @@ export const state = {
   filterInclude: '',
   filterExclude: '',
   repoUrl: '',
-  sortBy: 'file',
-  // 'grouped' (default) renders per-finding cards under per-file
-  // headers — the original behavior. 'list' renders the same per-
-  // finding cards but flat in sort order (each in a self-contained
-  // card with its own location header). 'table' renders one compact
-  // block per finding, never grouped. Selected via the icon-button
-  // group in the toolbar; persisted to localStorage so the choice
-  // survives reloads (events.js writes on click).
-  viewMode: readSavedViewMode() ?? 'grouped',
+  sortBy: 'severity',
+  // 'table' (default) renders one compact block per finding, never
+  // grouped — the most scannable layout for triage. 'list' renders
+  // per-finding cards flat in sort order (each in a self-contained
+  // card with its own location header). 'grouped' renders the same
+  // per-finding cards under per-file headers, the original layout.
+  // Selected via the icon-button group in the toolbar; persisted
+  // to localStorage so the choice survives reloads (events.js
+  // writes on click).
+  viewMode: readSavedViewMode() ?? 'table',
   // Per-finding manual annotations. Keyed by `tabKey(f)` =
   // `f.id ?? String(f._id)`: the export's derived uuid when available
   // (persists across reloads via localStorage), else a session-local
