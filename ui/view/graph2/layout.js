@@ -268,15 +268,28 @@ export function layoutSpiral(graph, w, h) {
   }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
-    // Original design formulas — i drives both the golden-
-    // angle step and the pseudo-random radius band. Because
-    // `others` is sorted by cross-degree desc, low i means
-    // high cross-degree, and `band = (i * 31) % 100 / 100`
-    // returns 0 at i=0 → the most cross-connected package
-    // lands at the innermost radius. Subsequent indices cycle
-    // through the band sequence in cross-deg order.
+    // Angle: golden-angle stepped, so adjacent indices land
+    // at maximally distinct angles regardless of how the
+    // cross-deg sort reorders things. This is the spiral's
+    // arm-creating mechanism.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    const band = ((i * 31) % 100) / 100
+    // Radius: linear ramp i/(Nothers-1) so the cross-deg
+    // sort ACTUALLY produces monotonic radius — most-coupled
+    // at the inner edge, least-coupled at the rim. The
+    // design's `(i * 31) % 100 / 100` walk was abandoned
+    // because it cycles every 100 indices, so packages at
+    // i=0, 100, 200, … all land at band=0 regardless of how
+    // few cross-package edges they actually have. With
+    // golden-angle steps for the angle, the linear radius
+    // produces an Archimedean spiral; the small hash-based
+    // jitter (±0.04 of the band range) breaks the perfect
+    // curve into a softly-textured spiral without inverting
+    // the rank order at scale (a #2 can't end up outside
+    // a #200, only adjacent pairs can swap).
+    const drift = Nothers <= 1 ? 0 : i / (Nothers - 1)
+    const seed = hash(pkg)
+    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.08
+    const band = Math.max(0, Math.min(1, drift + jitter))
     const rUnit = Nothers === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
