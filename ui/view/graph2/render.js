@@ -29,7 +29,6 @@ const SEV_COLORS = {
 export function renderGraph2Layout(graph) {
   let html = '<div class="graph2-layout">'
   html += renderTopBar()
-  html += renderLeftPanel(graph)
   html += renderStage()
   html += renderRightPanel(graph)
   html += '</div>'
@@ -78,9 +77,15 @@ function renderTopBar() {
   return html
 }
 
-function renderLeftPanel(graph) {
-  let html = '<aside class="graph2-left">'
-
+// Controls that previously lived in the left panel — palette /
+// statistics / issues / display sliders / options. Returned as
+// inner HTML (no wrapping <aside>) so renderRightPanel can append
+// them after the Selection / Top-packages blocks. The left panel
+// is gone — this content piggybacks on the right panel's
+// scroll, trading a fixed sidebar of always-visible controls for
+// more horizontal canvas room.
+function renderControls(graph) {
+  let html = ''
   // Palette
   html += '<div class="g2-panel-title">Packages '
   html += `<span class="g2-count">${graph.packages.length}</span>`
@@ -147,8 +152,6 @@ function renderLeftPanel(graph) {
   html += toggleRow('halos', 'Glow halos', graph2.showHalos)
   html += toggleRow('hubs', 'Highlight hubs', graph2.highlightHubs)
   html += toggleRow('labels', 'Labels (zoom > 140%)', graph2.showLabels)
-
-  html += '</aside>'
   return html
 }
 
@@ -199,6 +202,11 @@ function renderRightPanel(graph) {
   html += '<div id="g2-top-pkgs-block">'
   html += renderTopPkgsBlock(graph)
   html += '</div>'
+  // Migrated from the old left panel — palette / stats / issues
+  // / display / options. Lives at the bottom of the right panel
+  // and shares its scroll. Trade-off: less "always visible"
+  // chrome, more horizontal canvas room.
+  html += renderControls(graph)
   html += '</aside>'
   return html
 }

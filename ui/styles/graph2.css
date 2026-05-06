@@ -12,11 +12,11 @@
 
 .graph2-layout {
   display: grid;
-  grid-template-columns: 280px 1fr 300px;
+  grid-template-columns: 1fr 300px;
   grid-template-rows: 44px 1fr;
   grid-template-areas:
-    "topbar topbar topbar"
-    "left   stage  right";
+    "topbar topbar"
+    "stage  right";
   height: 82vh;
   margin-bottom: 1rem;
   border: 1px solid var(--border);
@@ -91,21 +91,22 @@
   color: var(--accent);
 }
 
-/* ── Panels ────────────────────────────────────────────────── */
-.graph2-left,
+/* ── Right panel ───────────────────────────────────────────── */
+/* Single side panel — selection card, top-packages distribution,
+   palette, statistics, severity rows, display sliders, options.
+   The left-panel column was removed in favor of more horizontal
+   canvas space; everything that used to live there now scrolls
+   inside this panel below the selection block. */
 .graph2-right {
+  grid-area: right;
+  border-left: 1px solid var(--graph-divider);
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   overflow-y: auto;
   padding: 14px 14px 60px;
 }
 
-.graph2-left { grid-area: left; border-right: 1px solid var(--graph-divider); }
-.graph2-right { grid-area: right; border-left: 1px solid var(--graph-divider); }
-
-.graph2-left::-webkit-scrollbar,
 .graph2-right::-webkit-scrollbar { width: 5px; }
-.graph2-left::-webkit-scrollbar-thumb,
 .graph2-right::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .g2-panel-title {
