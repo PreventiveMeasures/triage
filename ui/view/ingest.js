@@ -7,9 +7,9 @@ import { loadPromise } from './triage.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
-import { parseMarkdownFindings } from './parse-md.js'
-import { parseCodexCsvToScans } from './parse-codex.js'
-import { parseDeepseekFindings } from './parse-deepseek.js'
+import { parseMarkdownFindings } from '../../common/parse-md.js'
+import { parseCodexCsvToScans } from '../../common/parse-codex.js'
+import { parseDeepseekFindings } from '../../common/parse-deepseek.js'
 import { deriveFindingId } from './finding-id.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
