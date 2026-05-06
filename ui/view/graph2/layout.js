@@ -258,25 +258,29 @@ export function layoutSpiral(graph, w, h) {
     // angular distribution stays maximally distinct regardless
     // of how the rank-by-cross sort reorders things.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Radius is a blend of the design's pseudo-random walk
-    // (`(i * 31) % 100 / 100` — distributes packages evenly
-    // across [0,1] with high-frequency variation) and the
-    // cross-degree rank fraction (most-connected → 0, least
-    // → 1). Pure rank-based radius collapsed the spiral into
-    // concentric rings because rank correlates with package
-    // size, which correlates with loop-index angle — so
-    // angle and radius were correlated and the spiral arms
-    // disappeared. Blending preserves the cross-degree bias
-    // (well-connected packages skew toward center) while
-    // keeping the spatial variance that makes the spiral
-    // read as arms rather than a smooth Archimedean curve.
+    // Radius — pseudoBand (`(i * 31) % 100 / 100`) drives the
+    // main spread across [0,1]; that's what gives the spiral
+    // its arms. Cross-degree rank applies a SOFT additive
+    // shift (±0.15) on top, so well-connected packages drift
+    // toward center and leaf packages drift to the rim, but
+    // both still occupy the full radius range and the arm
+    // structure survives.
+    //
+    // An earlier 50/50 blend created two non-overlapping
+    // zones (high-cross stuck in [0, 0.5], low-cross stuck
+    // in [0.5, 1.0]). Real graphs have ~10× more leaves than
+    // hubs, so the outer half got packed solid while the
+    // inner half was sparse — the layout collapsed into a
+    // dense outer band with the entry floating in a void.
+    // Additive shift fixes that: the bias is statistical,
+    // not structural.
     const rank = rankByPkg.get(pkg) ?? i
-    const rankFraction = Nothers <= 1 ? 0 : rank / (Nothers - 1)
+    const rankFraction = Nothers <= 1 ? 0.5 : rank / (Nothers - 1)
     const pseudoBand = ((i * 31) % 100) / 100
-    const blended = rankFraction * 0.5 + pseudoBand * 0.5
+    const biasShift = (rankFraction - 0.5) * 0.30
     const seed = hash(pkg)
-    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.10
-    const band = Math.max(0, Math.min(1, blended + jitter))
+    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.08
+    const band = Math.max(0, Math.min(1, pseudoBand + biasShift + jitter))
     const rUnit = minRUnit + band * (maxRUnit - minRUnit)
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
