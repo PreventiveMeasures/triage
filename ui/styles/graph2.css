@@ -474,11 +474,10 @@
   }
 }
 
-/* Top-left overlay — context line (title or back button) and
-   the live statistics readout. Lives on top of the canvas so
-   the right panel doesn't have to host the always-on numbers
-   (it already carries the selection card + filters). Mirrors
-   the design's "DEEPVIEW · 2,500 NODES · …" status block. */
+/* Top-left overlay — wraps the back button when the user has
+   drilled into a package. Empty in normal mode (the back
+   button is the only thing it ever holds these days; stats
+   moved to .g2-stage-stats at bottom-left). */
 .g2-stage-overlay {
   position: absolute;
   top: 12px;
@@ -492,15 +491,28 @@
 }
 .g2-stage-overlay > * { pointer-events: auto; }
 
+/* Stats overlay at the bottom-left — file/package/edge/hub
+   counts. Was previously top-left next to the back button,
+   then "DEEPVIEW · graph" stage title; now lives at the
+   bottom-left where it doesn't compete with the focused
+   subgraph for attention and replaces the old "X of Y
+   visible" readout (which always read X == Y now that
+   filters soft-dim instead of hide). */
 .g2-stage-stats {
+  position: absolute;
+  bottom: 10px;
+  left: 12px;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: 2px 14px;
   font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   color: var(--muted);
   opacity: 0.7;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  pointer-events: none;
+  max-width: calc(100% - 80px);
 
   & b {
     font-weight: 600;
@@ -510,8 +522,8 @@
 }
 
 /* Back button — shown in the top-left overlay when the user
-   has drilled into a package. Replaces the stage title in
-   that mode. Glass chrome matches the zoom controls. */
+   has drilled into a package. Glass chrome matches the zoom
+   controls. */
 .g2-back-btn {
   display: inline-flex;
   align-items: center;
@@ -532,24 +544,6 @@
   align-self: flex-start;
 
   &:hover { border-color: var(--accent); background: var(--surface-active); }
-}
-
-/* Bottom-left readout — "X of Y visible". The top corners
-   (branding + cursor coordinates) and the bottom-right FPS
-   counter were dropped; they read as design chrome rather
-   than useful info. (FPS especially is meaningless now that
-   the canvas redraws on demand instead of every frame.) */
-.g2-corner-bl {
-  position: absolute;
-  pointer-events: none;
-  color: var(--muted);
-  opacity: 0.55;
-  font: 500 9px/1.4 ui-monospace, monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  z-index: 2;
-  bottom: 10px;
-  left: 10px;
 }
 
 .g2-zoom-ctrl {

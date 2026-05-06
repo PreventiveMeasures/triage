@@ -87,7 +87,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const canvas = container.querySelector('#g2-canvas')
   const tooltip = container.querySelector('#g2-tooltip')
   const stage = container.querySelector('.graph2-stage')
-  const visibleEl = container.querySelector('#g2-visible')
   const zoomEl = container.querySelector('#g2-zoom-pct')
 
   if (!canvas) return
@@ -371,10 +370,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     }
 
     // ── Nodes ───────────────────────────────────────────────────
-    let visibleCount = 0
     for (const n of graph.nodes) {
       if (!nodeVisible(n)) continue
-      visibleCount++
       const [sx, sy] = worldToScreen(n.x, n.y)
       const r = nodeRadius(n)
       let dim = 1
@@ -450,7 +447,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.stroke()
     }
 
-    if (visibleEl) visibleEl.textContent = `${visibleCount.toLocaleString()} of ${graph.nodes.length.toLocaleString()} visible`
     if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
   }
 
@@ -474,7 +470,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   // pass produced a force-directed arrangement.
   function drawPackageView(T, selected, sel) {
     const baseColor = pkgColor(graph2.focusedPkg)
-    let visibleCount = 0
     // Connected-files set for hover dimming (mirrors v1's pattern)
     const connected = new Set()
     if (hovered) {
@@ -574,7 +569,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // ── Nodes ─────────────────────────────────────────────────
     for (const n of graph.nodes) {
       if (!nodeVisible(n)) continue
-      visibleCount++
       const [sx, sy] = worldToScreen(n.x, n.y)
       const r = nodeR(n)
       const isHov = n.file === hovered
@@ -657,7 +651,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       ctx.stroke()
     }
 
-    if (visibleEl) visibleEl.textContent = `${visibleCount.toLocaleString()} of ${graph.nodes.length.toLocaleString()} visible`
     if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
   }
 

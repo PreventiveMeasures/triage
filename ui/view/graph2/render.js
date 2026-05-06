@@ -206,17 +206,22 @@ export function renderSevChips(counts) {
 function renderStage(graph) {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
-  // Top-left overlay — back button (only in package-focus
-  // mode) + statistics. Earlier versions also rendered a
-  // "DeepView · graph" title line, but it was decorative
-  // chrome rather than information; the stats row carries
-  // the actual context (file/edge/hub counts) and reads
-  // fine on its own.
-  html += '<div class="g2-stage-overlay">'
+  // Top-left overlay — back button only (in package-focus
+  // mode). Stats moved to the bottom-left where they don't
+  // compete with the focused subgraph for attention; only
+  // shown here when there's something to render (the back
+  // button), so the corner is empty in normal mode.
   if (graph2.focusedPkg) {
+    html += '<div class="g2-stage-overlay">'
     const label = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
+    html += '</div>'
   }
+  // Bottom-left stats — file/package/edge/hub counts. The
+  // earlier "X of Y visible" readout is gone: every node now
+  // stays on screen (filters / solo soft-dim instead of
+  // hiding), so visibleCount always equaled total. The stats
+  // are the more useful readout to leave up.
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let hubs = 0; for (const n of graph.nodes) if (n.isHub) hubs++
@@ -228,10 +233,6 @@ function renderStage(graph) {
   html += `<span><b>${hubs}</b> hubs</span>`
   html += `<span>avg degree <b>${avgDeg}</b></span>`
   html += '</div>'
-  html += '</div>'
-  // Bottom-left: live "X of Y visible" readout (updates on
-  // hover-driven dim changes too via the canvas's redraw).
-  html += '<div class="g2-corner-bl"><span id="g2-visible">— of — visible</span></div>'
   // Bottom-right: zoom controls.
   html += '<div class="g2-zoom-ctrl">'
   html += '<button id="g2-zoom-in" title="Zoom in">+</button>'
