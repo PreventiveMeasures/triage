@@ -345,7 +345,12 @@
 
 .g2-switch {
   width: 26px; height: 14px;
-  background: var(--surface-active);
+  /* Track uses --border so it stays visible against the panel
+     surface in both themes. --surface-active was a pale blue
+     (#ddf4ff) in light mode and read as almost no contrast
+     against the white-ish panel; --border (#d1d9e0 light /
+     #2c2c2c dark) gives a clear off-state slot in both. */
+  background: var(--border);
   border-radius: 8px;
   position: relative;
   transition: background .15s;

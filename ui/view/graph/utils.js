@@ -218,7 +218,7 @@ const PKG_PALETTE_DARK = [
   '#b07aa1', // purple
   '#ff9da7', // pink
   '#9c755f', // brown
-  '#bab0ac', // gray
+  '#5cd1e5', // cyan (was '#bab0ac' gray — read as a "missing" color)
   '#f1ce63', // gold
   '#d37295', // rose
   '#a0cbe8', // light blue
@@ -227,7 +227,7 @@ const PKG_PALETTE_DARK = [
   '#b6992d', // dark gold
   '#499894', // dark teal
   '#e15759', // crimson (intentional near-repeat — far enough in ordering)
-  '#79706e', // warm gray
+  '#e879c7', // magenta (was '#79706e' warm gray)
   '#d4a6c8', // lavender
 ]
 const PKG_PALETTE_LIGHT = [
@@ -240,7 +240,7 @@ const PKG_PALETTE_LIGHT = [
   '#9560e8', // purple
   '#d24a9c', // pink → magenta
   '#8a5d40', // brown
-  '#6e7781', // gray
+  '#0891b2', // cyan (was '#6e7781' gray)
   '#a07a14', // gold
   '#c14e8e', // rose
   '#1f7ad0', // light blue → deeper
@@ -249,7 +249,7 @@ const PKG_PALETTE_LIGHT = [
   '#a07a14', // dark gold (matches gold)
   '#2a8278', // dark teal
   '#cb2c40', // crimson
-  '#52504e', // warm gray
+  '#c026d3', // magenta (was '#52504e' warm gray)
   '#965f93', // lavender
 ]
 function isLightTheme() {

@@ -65,17 +65,15 @@
    Background uses an opaque tint of --text so it auto-adapts per
    theme (subtle white wash in dark, subtle dark wash in light) and
    reads as a band that's distinct from both file items and the
-   sidebar surface. Border on top (separates from previous group) and
-   bottom (separates from the first item below — file items only have
-   border-bottom themselves, so without this the header sits flush
-   against the next item with no rule between them). */
+   sidebar surface. Only border-bottom: the previous file-item
+   already has its own border-bottom, so a border-top here would
+   stack to a 2px line. */
 .file-group-header {
   padding: .45rem .75rem .35rem;
   font-size: .62rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: .08em;
   color: var(--muted);
   background: rgb(from var(--text) r g b / 0.06);
-  border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   user-select: none;
 }
