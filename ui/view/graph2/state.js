@@ -45,13 +45,13 @@ export const graph2 = {
   // case-insensitive substring match; non-matching nodes
   // dim to 0.1 (same soft-dim path as solo / severity).
   pathFilter: '',
-  // Package palette — `hidden` is the user's hide selection, `solo`
-  // limits to a single package. Search box drives the muted/visible
-  // state of swatches but doesn't permanently hide them so clearing
-  // restores the full set.
+  // Package solo — narrows the canvas highlight to a single
+  // package via the Top-packages list click. `hidden` is a
+  // legacy hide-set that nothing currently writes to, kept as
+  // an empty Set so nodeVisible can still read it without an
+  // undefined check.
   hidden: new Set(),
   solo: null,
-  paletteSearch: '',
   // Per-render canvas state — owned by canvas.js, re-built on every
   // attach. Cleanup tears down listeners + rAF + ResizeObserver.
   graphState: null,

@@ -65,23 +65,75 @@
   text-transform: uppercase;
 }
 
-/* Path-substring filter input — soft-dim filter for file
-   paths, same dim-don't-hide treatment as severity / solo.
-   Sized to fit a reasonable substring without crowding the
-   topbar's other controls. */
+/* Path / package substring filter — soft-dim filter, same
+   dim-don't-hide treatment as severity / solo. Wrapper anchors
+   a clear button at the right edge of the input. Padding /
+   font / border numbers mirror .g2-topbar-toggle exactly so
+   the natural box height matches: 5+11+5 padding+font+padding
+   plus 2 border = 23px on both. The UA-stylesheet `min-height`
+   reset is the missing piece — without it WebKit/Blink force
+   the input ~3-5px taller than the matching <button>. */
+.g2-path-filter-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Total height pinned to 26px to match the .g2-sev-pill /
+   .g2-topbar-toggle buttons next to it. The buttons compute
+   to 26px naturally (4px padding + 16px content row + 4px
+   padding + 1px border × 2); the input was sitting at 24.5px
+   with the same explicit padding because the flex children
+   inside the buttons stretch the row to ~16px while the
+   input's content height tracks line-height directly.
+   Forcing height + line-height equal to the inner content box
+   keeps the typed text vertically centered. */
 .g2-path-filter {
-  width: 180px;
+  width: 200px;
+  height: 26px;
+  box-sizing: border-box;
+  margin: 0;
   background: var(--graph-hover-bg);
   border: 1px solid var(--border);
   border-radius: 5px;
-  padding: 5px 9px;
+  padding: 0 26px 0 9px;
   color: var(--text);
-  font: 400 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  line-height: 24px;
   outline: none;
 
   &:focus { border-color: var(--accent); }
   &::placeholder { color: var(--muted); opacity: 0.55; }
 }
+
+/* Inline clear ✕ — sits inside the input's right padding
+   slot. Hidden via CSS when the input is empty (placeholder
+   visible) so the slot reads as clean until the user types.
+   Round target larger than the glyph for easier clicking. */
+.g2-path-filter-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  font: 400 10px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+
+  &:hover { color: var(--text); background: var(--surface-active); }
+}
+
+/* Hide the clear button when the input is empty (placeholder
+   showing). Live-checks the input's actual value, so it works
+   without re-rendering the topbar on every keystroke. */
+.g2-path-filter:placeholder-shown + .g2-path-filter-clear { display: none; }
 
 /* Severity highlight pills in the topbar. Empty selectedSeverities
    set = all pills off = no canvas dimming (default). One or more
@@ -252,78 +304,6 @@
   &.on { background: var(--surface-active); color: var(--accent); }
 }
 
-/* ── Palette ───────────────────────────────────────────────── */
-.g2-palette-toolbar {
-  display: flex;
-  gap: 5px;
-  margin-bottom: 6px;
-}
-
-.g2-palette-search {
-  flex: 1;
-  min-width: 0;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 8px;
-  color: var(--text);
-  font: 400 11px/1 ui-monospace, monospace;
-  outline: none;
-
-  &:focus { border-color: var(--accent); }
-  &::placeholder { color: var(--muted); opacity: 0.6; }
-}
-
-.g2-palette-clear {
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: 5px;
-  font: 500 10px/1 inherit;
-  padding: 5px 8px;
-  cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-family: inherit;
-
-  &:hover { color: var(--accent); border-color: var(--accent); }
-}
-
-.g2-palette {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 3px;
-  padding: 6px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.g2-swatch {
-  aspect-ratio: 1;
-  min-width: 14px;
-  border: 0;
-  padding: 0;
-  border-radius: 3px;
-  background: var(--c);
-  cursor: pointer;
-  position: relative;
-  transition: transform .12s, box-shadow .12s, opacity .15s;
-
-  &:hover {
-    transform: scale(1.4);
-    z-index: 2;
-    box-shadow: 0 0 0 1.5px var(--text), 0 4px 10px rgba(0, 0, 0, 0.6);
-  }
-  &.muted { opacity: 0.18; }
-  &.solo {
-    box-shadow: 0 0 0 1.5px var(--accent), 0 0 8px var(--c);
-    transform: scale(1.15);
-    z-index: 1;
-  }
-  &.dim { opacity: 0.1; }
-  &.hidden-pkg { opacity: 0.05; }
-}
 
 /* ── Toggle rows ────────────────────────────────────────────── */
 .g2-toggle-row {

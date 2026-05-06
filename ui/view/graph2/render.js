@@ -65,12 +65,20 @@ function renderTopBar(graph) {
     }
     html += '</div>'
   }
-  // Path-substring filter — case-insensitive match against
-  // each node's file path. Same soft-dim treatment as the
-  // severity / solo filters: non-matching nodes drop to 0.1
-  // opacity, no hard hide. Stays visible across re-renders
-  // since the value comes from graph2.pathFilter.
-  html += `<input type="text" class="g2-path-filter" id="g2-path-filter" placeholder="filter path…" value="${esc(graph2.pathFilter)}">`
+  // Path / package substring filter — case-insensitive match
+  // against each node's file path AND its package name. Same
+  // soft-dim treatment as the severity / solo filters: non-
+  // matching nodes drop to 0.1 opacity, no hard hide.
+  //
+  // Clear button is always rendered, hidden via CSS when the
+  // input is empty (using :placeholder-shown sibling). Doing
+  // it that way keeps the button live across user typing
+  // without needing to re-render the topbar on every keystroke
+  // — the canvas redraws on input but the chrome doesn't.
+  html += '<div class="g2-path-filter-wrap">'
+  html += `<input type="text" class="g2-path-filter" id="g2-path-filter" placeholder="filter path/package…" value="${esc(graph2.pathFilter)}">`
+  html += '<button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>'
+  html += '</div>'
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
   // edges, different layout). Reads / writes tree.showAll
@@ -116,35 +124,19 @@ function renderTopBar(graph) {
   return html
 }
 
-// Controls that previously lived in the left panel — palette /
-// statistics / issues / display sliders / options. Returned as
-// inner HTML (no wrapping <aside>) so renderRightPanel can append
-// them after the Selection / Top-packages blocks. The left panel
-// is gone — this content piggybacks on the right panel's
-// scroll, trading a fixed sidebar of always-visible controls for
-// more horizontal canvas room.
+// Controls that previously lived in the left panel — display
+// sliders + visual toggles. Returned as inner HTML (no
+// wrapping <aside>) so renderRightPanel can append them after
+// the Selection / Top-packages blocks.
+//
+// The "Packages" color grid + search box used to live here too;
+// dropped because the topbar's path/package filter covers the
+// search use case (with soft-dim instead of palette muting),
+// and the Top packages block in the right panel above already
+// shows package colors next to names — clicking a row solos
+// the package, same as the swatches did.
 function renderControls(graph) {
   let html = ''
-  // Palette
-  html += '<div class="g2-panel-title">Packages '
-  html += `<span class="g2-count">${graph.packages.length}</span>`
-  html += '</div>'
-  html += '<div class="g2-palette-toolbar">'
-  html += `<input type="text" class="g2-palette-search" id="g2-palette-search" placeholder="search package…" value="${esc(graph2.paletteSearch)}">`
-  html += '<button type="button" class="g2-palette-clear" id="g2-palette-clear">Reset</button>'
-  html += '</div>'
-  html += '<div class="g2-palette" id="g2-palette">'
-  const q = graph2.paletteSearch.trim().toLowerCase()
-  for (const pkg of graph.packages) {
-    const c = pkgColor(pkg)
-    const label = pkg === '__own__' ? 'own source' : pkg
-    const muted = q && !label.toLowerCase().includes(q) ? ' muted' : ''
-    const solo = graph2.solo === pkg ? ' solo' : ''
-    const dim = graph2.solo && graph2.solo !== pkg ? ' dim' : ''
-    const hidden = graph2.hidden.has(pkg) ? ' hidden-pkg' : ''
-    html += `<button type="button" class="g2-swatch${muted}${solo}${dim}${hidden}" data-g2-pkg="${esc(pkg)}" title="${esc(label)} · ${graph.pkgCount.get(pkg)} files" style="--c:${c}"></button>`
-  }
-  html += '</div>'
 
   // (Statistics block moved to the canvas overlay — see
   // renderStage's top-left readout. Lives there now so the

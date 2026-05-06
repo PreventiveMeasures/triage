@@ -40,10 +40,11 @@ report.addEventListener('click', (e) => {
   const g2Pkg = e.target.closest('[data-g2-pkg]')
   if (g2Pkg) {
     const pkg = g2Pkg.dataset.g2Pkg
-    // Clicking a swatch toggles solo on that package. Clicking the
-    // currently-soloed swatch clears solo. Hidden state is left
-    // alone — there's a separate UI affordance (the search box) for
-    // narrowing without committing to a single-package view.
+    // Clicking a package row (Top packages list) toggles solo on
+    // that package. Clicking the currently-soloed entry clears
+    // solo. Used to also drive a swatch palette in the right
+    // panel; that grid is gone now, so the only DOM surface to
+    // update is the right-panel sections via refresh helpers.
     graph2.solo = graph2.solo === pkg ? null : pkg
     // Clear the file selection when the user solos a package —
     // selection card switches to package mode in that case (see
@@ -51,31 +52,6 @@ report.addEventListener('click', (e) => {
     // earlier file selection would keep displaying file info
     // even though the user just asked for package-level info.
     if (graph2.solo) graph2.selected = null
-    // Update palette swatches in place (they live outside the
-    // sections that refreshGraph2Sidebar / refreshGraph2TopPkgs
-    // re-render, so do this manually).
-    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
-      const p = s.dataset.g2Pkg
-      s.classList.toggle('solo', graph2.solo === p)
-      s.classList.toggle('dim', graph2.solo && graph2.solo !== p)
-    })
-    refreshGraph2Sidebar()
-    refreshGraph2TopPkgs()
-    graph2.graphState?.requestDraw?.()
-    return
-  }
-  if (e.target.closest('#g2-palette-clear')) {
-    graph2.solo = null
-    graph2.hidden.clear()
-    graph2.paletteSearch = ''
-    const search = document.getElementById('g2-palette-search')
-    if (search) search.value = ''
-    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
-      s.classList.remove('solo', 'dim', 'muted', 'hidden-pkg')
-    })
-    // Selection card might have been showing the now-cleared
-    // package — refresh so it falls through to the empty state
-    // (or back to a file selection if one was set independently).
     refreshGraph2Sidebar()
     refreshGraph2TopPkgs()
     graph2.graphState?.requestDraw?.()
@@ -163,6 +139,18 @@ report.addEventListener('click', (e) => {
       const target = document.getElementById(treeAnchor(targetFile))
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
+    return
+  }
+  // Path/package filter clear button — wipe the input value
+  // and redraw. The clear button itself is hidden via CSS
+  // when the input shows its placeholder (i.e. empty), so no
+  // re-render is needed; the button just disappears once the
+  // input value is cleared.
+  if (e.target.closest('#g2-path-filter-clear')) {
+    graph2.pathFilter = ''
+    const input = document.getElementById('g2-path-filter')
+    if (input) input.value = ''
+    graph2.graphState?.requestDraw?.()
     return
   }
   // v2 fullscreen — same body-class flip as v1's #tree-fullscreen.
@@ -497,18 +485,6 @@ report.addEventListener('input', (e) => {
     const lbl = document.getElementById('g2-lbl-node-size')
     if (lbl) lbl.textContent = graph2.nodeSize.toFixed(1) + '×'
     graph2.graphState?.requestDraw?.()
-  }
-  else if (id === 'g2-palette-search') {
-    graph2.paletteSearch = val
-    const q = val.trim().toLowerCase()
-    document.querySelectorAll('#g2-palette .g2-swatch').forEach((s) => {
-      const pkg = s.dataset.g2Pkg
-      const label = pkg === '__own__' ? 'own source' : pkg
-      const match = !q || label.toLowerCase().includes(q)
-      s.classList.toggle('muted', !match)
-    })
-    // No canvas redraw — search only mutes palette swatches in the
-    // sidebar; node visibility doesn't change.
   }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val

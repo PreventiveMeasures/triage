@@ -89,7 +89,7 @@ export async function switchToFile(name, content) {
   graph2.layoutCache = null
   graph2.solo = null
   graph2.hidden.clear()
-  graph2.paletteSearch = ''
+  graph2.pathFilter = ''
   cleanupGraph2()
   try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
   if (content === undefined) {
@@ -122,7 +122,7 @@ export async function deleteCurrent() {
   graph2.layoutCache = null
   graph2.solo = null
   graph2.hidden.clear()
-  graph2.paletteSearch = ''
+  graph2.pathFilter = ''
   cleanupGraph2()
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')

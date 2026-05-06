@@ -202,15 +202,21 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   //     node's issue isn't in the set
   //   - package-solo: a package is solo'd and this node isn't
   //     in it
-  //   - path filter: non-empty, and the node's file path
-  //     doesn't case-insensitively contain the filter text
+  //   - path/package filter: non-empty, and neither the file
+  //     path nor the package name case-insensitively contains
+  //     the filter text
   // All three are independent and AND-combine — a node passes
   // only when it satisfies every active filter.
   function nodeIsDimmed(n) {
     if (graph2.selectedSeverities.size > 0 && !(n.issue && graph2.selectedSeverities.has(n.issue))) return true
     if (graph2.solo && n.pkg !== graph2.solo) return true
     const pathQ = graph2.pathFilter
-    if (pathQ && !n.file.toLowerCase().includes(pathQ.toLowerCase())) return true
+    if (pathQ) {
+      const q = pathQ.toLowerCase()
+      const matchesFile = n.file.toLowerCase().includes(q)
+      const matchesPkg = n.pkg && n.pkg.toLowerCase().includes(q)
+      if (!matchesFile && !matchesPkg) return true
+    }
     return false
   }
 
