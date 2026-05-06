@@ -908,6 +908,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // hub-mode switch in events.js) can mutate node flags without
     // re-attaching the canvas.
     graph,
+    // Force the next paint to re-run the layout (positions
+    // depend on isHub — hubs sit closer to package anchors —
+    // so any state that changes the hub set has to invalidate
+    // the cache and reflow).
+    relayout: () => {
+      needsLayout = true
+      graph2.layoutCache = null
+      requestDraw()
+    },
     _cleanup: () => {
       destroyed = true
       cancelAnimationFrame(rafId)

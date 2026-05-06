@@ -139,7 +139,11 @@ report.addEventListener('click', (e) => {
       const g = graph2.graphState?.graph
       if (g) assignHubs(g, val)
       refreshGraph2Sidebar()
-      graph2.graphState?.requestDraw?.()
+      // Hubs influence intra-package file placement (hubs sit
+      // closer to the cluster anchor), so a mode flip needs the
+      // layout to reflow — relayout invalidates the cache,
+      // marks needsLayout, and requestDraws on its own.
+      graph2.graphState?.relayout?.()
     }
     return
   }
