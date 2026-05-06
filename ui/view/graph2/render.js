@@ -198,18 +198,16 @@ export function renderSevChips(counts) {
 function renderStage(graph) {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
-  // Top-left overlay — context line + statistics. In the
-  // full-graph mode this reads like the design's "DEEPVIEW ·
-  // 2,500 nodes · …" status block; in package-focus mode the
-  // first row becomes the back-button / breadcrumb out of
-  // the drill-in. Statistics underneath stay informative
-  // either way (counts reflect whatever's currently in scope).
+  // Top-left overlay — back button (only in package-focus
+  // mode) + statistics. Earlier versions also rendered a
+  // "DeepView · graph" title line, but it was decorative
+  // chrome rather than information; the stats row carries
+  // the actual context (file/edge/hub counts) and reads
+  // fine on its own.
   html += '<div class="g2-stage-overlay">'
   if (graph2.focusedPkg) {
     const label = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
-  } else {
-    html += '<div class="g2-stage-title">DeepView · graph</div>'
   }
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross

@@ -436,13 +436,6 @@
 }
 .g2-stage-overlay > * { pointer-events: auto; }
 
-.g2-stage-title {
-  font: 500 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
 .g2-stage-stats {
   display: flex;
   flex-wrap: wrap;
