@@ -443,19 +443,50 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       }
     }
 
-    // ── Labels (high zoom only) ──────────────────────────────────
+    // ── Labels (high zoom only, collision-avoidant) ─────────────
+    // Walks candidates in priority order (selected > hovered >
+    // hub > rest); each label is dropped when its AABB overlaps
+    // any already-placed one. Hubs still claim space first among
+    // the rest so they get labelled even when a less important
+    // node sits next to them. Pre-zoom-2.4 we already filter to
+    // hubs only; past that, all visible nodes get a candidate
+    // and the collision pass thins the result naturally.
     if (graph2.showLabels && viewport.k > 1.4) {
       ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
       ctx.fillStyle = T.labelFill
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
+      const lineH = 11
+      const pad = 2
+      const candidates = []
       for (const n of graph.nodes) {
         if (!nodeVisible(n)) continue
         if (!n.isHub && viewport.k < 2.4) continue
         const [sx, sy] = worldToScreen(n.x, n.y)
         const r = nodeRadius(n)
-        ctx.fillText(n.label, sx + r + 4, sy + 1)
+        const tx = sx + r + 4
+        const ty = sy + 1
+        const w = ctx.measureText(n.label).width + pad
+        const isSel = n.file === graph2.selected
+        const isHov = n.file === hovered
+        const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
+        candidates.push({
+          n, tx, ty, prio,
+          x0: tx - pad, x1: tx + w,
+          y0: ty - lineH / 2, y1: ty + lineH / 2,
+        })
       }
+      candidates.sort((a, b) => b.prio - a.prio)
+      const placed = []
+      const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+      for (const c of candidates) {
+        let collide = false
+        for (const p of placed) {
+          if (overlaps(c, p)) { collide = true; break }
+        }
+        if (!collide) placed.push(c)
+      }
+      for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
     }
 
     // Selection ring on top so it never gets hidden by neighbors.
