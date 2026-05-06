@@ -436,6 +436,37 @@
   }
 }
 
+/* Floating back-button shown on the canvas when the user has
+   drilled into a single package. Mirrors the v1 graph's
+   matte-glass chrome so it reads as part of the canvas
+   overlay (zoom controls, etc.) rather than the topbar. The
+   `← name` label gives a breadcrumb out of the focus mode. */
+.g2-back-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 11px;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font: 500 11px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow-glass);
+  white-space: nowrap;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover { border-color: var(--accent); background: var(--surface-active); }
+}
+
 /* Bottom-corner readouts — bl shows "X of Y visible", br shows
    FPS. The top corners (branding + cursor coordinates) were
    dropped; they read as design chrome rather than useful info. */
@@ -658,6 +689,16 @@
   padding: 0 13px 11px;
   display: flex;
   gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* Add breathing room above the jump buttons when the issue-text
+   block is the immediately preceding sibling — without this
+   they sit ~7px below the issue text (just the issue-text's
+   padding-bottom), which reads as the buttons being attached
+   to the message rather than belonging to the action footer. */
+.g2-issue-text + .g2-sel-jumps {
+  padding-top: 10px;
 }
 
 .g2-sel-jump {

@@ -1,6 +1,6 @@
 import { graph2 } from './state.js'
 import { layoutSpiral } from './layout.js'
-import { pkgColor } from '../graph/utils.js'
+import { forceLayout, pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones
@@ -30,6 +30,14 @@ const G2_THEMES = {
     edgeIntra: 'rgba(180, 195, 215, ALPHA)',
     hubRing: 'rgba(255, 255, 255, ALPHA)',
     labelFill: 'rgba(230, 233, 238, 0.78)',
+    // Package-view label palette — mirrors graph v1's colors so
+    // labels read against the canvas backdrop without bleeding
+    // into adjacent nodes.
+    labelShadow: 'rgba(12, 12, 12, 0.98)',
+    labelOutline: 'rgba(12, 12, 12, 0.9)',
+    labelDefault: 'rgba(200, 210, 225, 0.78)',
+    labelHover: 'rgba(230, 237, 243, 0.95)',
+    labelSelected: '#fff',
   },
   light: {
     bg: '#f6f8fa',
@@ -38,6 +46,11 @@ const G2_THEMES = {
     edgeIntra: 'rgba(50, 70, 100, ALPHA)',
     hubRing: 'rgba(0, 0, 0, ALPHA)',
     labelFill: 'rgba(40, 50, 70, 0.85)',
+    labelShadow: 'rgba(255, 255, 255, 0.95)',
+    labelOutline: 'rgba(255, 255, 255, 0.9)',
+    labelDefault: 'rgba(50, 60, 80, 0.85)',
+    labelHover: 'rgba(20, 25, 35, 0.95)',
+    labelSelected: '#000',
   },
 }
 
@@ -88,17 +101,32 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   function ensureLayout() {
     if (!needsLayout) return
     const cache = graph2.layoutCache
-    if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH) {
+    const focused = graph2.focusedPkg
+    if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH && cache.focused === focused) {
       // Reuse cached positions — copy back into the live nodes.
       for (const n of graph.nodes) {
         const p = cache.pos.get(n.file)
         if (p) { n.x = p.x; n.y = p.y }
       }
     } else {
-      layoutSpiral(graph, layoutW, layoutH)
+      if (focused) {
+        // Package-focus mode: graph v1's force-directed solver
+        // shines on a small, single-package subgraph (it's slow
+        // on big trees but fine on a few dozen files), and the
+        // result has the structural-cluster look the user
+        // expects from the v1 graph.
+        const sol = forceLayout(graph.files, graph.importsOf, layoutW, layoutH)
+        const idx = new Map(sol.map((s) => [s.file, s]))
+        for (const n of graph.nodes) {
+          const p = idx.get(n.file)
+          if (p) { n.x = p.x; n.y = p.y }
+        }
+      } else {
+        layoutSpiral(graph, layoutW, layoutH)
+      }
       const pos = new Map()
       for (const n of graph.nodes) pos.set(n.file, { x: n.x, y: n.y })
-      graph2.layoutCache = { files: graph.files, w: layoutW, h: layoutH, pos }
+      graph2.layoutCache = { files: graph.files, w: layoutW, h: layoutH, pos, focused }
     }
     needsLayout = false
   }
@@ -200,6 +228,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
     const selected = graph2.selected
     const sel = selected ? graph.nodeByFile.get(selected) : null
+
+    if (graph2.focusedPkg) {
+      drawPackageView(T, selected, sel, now)
+      return
+    }
 
     // ── Edges (back layer) — always drawn, cross/intra still
     // get distinct visual treatment (cross = gradient between
@@ -367,6 +400,211 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     for (let x = ox; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
     for (let y = oy; y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y) }
     ctx.stroke()
+  }
+
+  // Package-focus rendering — v1-style: curved edges with
+  // arrowheads, file labels on every node, single hue (the
+  // focused package's color). Operates on the same nodes/edges
+  // as the spiral view, but with the assumption that the layout
+  // pass produced a force-directed arrangement.
+  function drawPackageView(T, selected, sel, now) {
+    const baseColor = pkgColor(graph2.focusedPkg)
+    let visibleCount = 0
+    // Connected-files set for hover dimming (mirrors v1's pattern)
+    const connected = new Set()
+    if (hovered) {
+      connected.add(hovered)
+      for (const ei of (graph.adj.get(hovered) ?? [])) {
+        const e = graph.edges[ei]
+        connected.add(e.a); connected.add(e.b)
+      }
+    }
+    // Nodes' display radius — bigger than spiral's tight dots
+    // since the package view zooms into a small subgraph and
+    // can afford to read at a coarser grain.
+    const nodeR = (n) => {
+      const base = (n.isHub ? 6 : 4) * graph2.nodeSize
+      return base
+    }
+
+    // ── Edges with curves + arrowheads ────────────────────────
+    for (const e of graph.edges) {
+      const na = graph.nodeByFile.get(e.a)
+      const nb = graph.nodeByFile.get(e.b)
+      if (!na || !nb) continue
+      if (!nodeVisible(na) || !nodeVisible(nb)) continue
+      // Direction: bidi (both directions present) → arrows on
+      // both ends; unidirectional → arrow on the target end.
+      // `fromLo/fromHi` was set in data.js from the original
+      // imports relation before edge dedup.
+      const bidi = e.fromLo && e.fromHi
+      const reversed = !bidi && e.fromHi
+      const a = reversed ? nb : na
+      const b = reversed ? na : nb
+      const isHov = hovered && (e.a === hovered || e.b === hovered)
+      const isSel = selected && (e.a === selected || e.b === selected)
+      const isDim = (selected || hovered) && !isHov && !isSel
+
+      const ra = nodeR(a), rb = nodeR(b)
+      const [ax, ay] = worldToScreen(a.x, a.y)
+      const [bx, by] = worldToScreen(b.x, b.y)
+      const dx = bx - ax, dy = by - ay
+      const len = Math.sqrt(dx * dx + dy * dy) || 1
+      const ux = dx / len, uy = dy / len
+      // Inset endpoints by node radius so the curve starts on
+      // the rim of the source and ends on the rim of the target.
+      const sx = ax + ux * (ra + 1.5), sy = ay + uy * (ra + 1.5)
+      const ex = bx - ux * (rb + 3.5), ey = by - uy * (rb + 3.5)
+      const off = Math.min(len * 0.15, 30)
+      const qcx = (sx + ex) / 2 - uy * off
+      const qcy = (sy + ey) / 2 + ux * off
+
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
+      let edgeAlpha
+      if (isSel) edgeAlpha = 0.9
+      else if (isHov) edgeAlpha = 0.85
+      else if (isDim) edgeAlpha = 0.05
+      else edgeAlpha = Math.min(0.85, graph2.edgeOpacity * 3)
+      ctx.strokeStyle = baseColor + alphaHex(edgeAlpha)
+      ctx.lineWidth = isSel || isHov ? 1.5 : 0.85
+      ctx.stroke()
+
+      if (isDim) continue
+      // Arrowhead at the curve's endpoint. Tangent direction
+      // computed from the quadratic Bezier derivative at t=0.9
+      // (just before the end so the arrow doesn't overshoot).
+      const arrowLen = Math.max(5, 7)
+      const arrowW = arrowLen * 0.42
+      const t = 0.9
+      const tx = 2 * (1 - t) * (qcx - sx) + 2 * t * (ex - qcx)
+      const ty = 2 * (1 - t) * (qcy - sy) + 2 * t * (ey - qcy)
+      const tl = Math.sqrt(tx * tx + ty * ty) || 1
+      const tux = tx / tl, tuy = ty / tl
+      ctx.beginPath()
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(ex - tux * arrowLen + tuy * arrowW, ey - tuy * arrowLen - tux * arrowW)
+      ctx.lineTo(ex - tux * arrowLen - tuy * arrowW, ey - tuy * arrowLen + tux * arrowW)
+      ctx.closePath()
+      ctx.fillStyle = baseColor + alphaHex(Math.min(1, edgeAlpha + 0.15))
+      ctx.fill()
+
+      if (bidi) {
+        // Back-arrow at the start of the curve for bidi pairs.
+        const t0 = 0.1
+        const tx0 = 2 * (1 - t0) * (qcx - sx) + 2 * t0 * (ex - qcx)
+        const ty0 = 2 * (1 - t0) * (qcy - sy) + 2 * t0 * (ey - qcy)
+        const tl0 = Math.sqrt(tx0 * tx0 + ty0 * ty0) || 1
+        const tux0 = tx0 / tl0, tuy0 = ty0 / tl0
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(sx + tux0 * arrowLen - tuy0 * arrowW, sy + tuy0 * arrowLen + tux0 * arrowW)
+        ctx.lineTo(sx + tux0 * arrowLen + tuy0 * arrowW, sy + tuy0 * arrowLen - tux0 * arrowW)
+        ctx.closePath()
+        ctx.fill()
+      }
+    }
+
+    // ── Nodes ─────────────────────────────────────────────────
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      visibleCount++
+      const [sx, sy] = worldToScreen(n.x, n.y)
+      const r = nodeR(n)
+      const isHov = n.file === hovered
+      const isSel = n.file === selected
+      const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.15 : 1
+
+      ctx.globalAlpha = dim
+      // Halo for selected / hovered / hubs — gives them visual
+      // weight without changing radius (which would shift the
+      // edge rim-anchors).
+      if (graph2.showHalos && (isSel || isHov || n.isHub)) {
+        const haloR = r * (isSel ? 4 : isHov ? 3 : 2.4)
+        const grad = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, haloR)
+        grad.addColorStop(0, baseColor + alphaHex(isSel ? 0.4 : 0.25))
+        grad.addColorStop(1, baseColor + '00')
+        ctx.fillStyle = grad
+        ctx.beginPath()
+        ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.fillStyle = baseColor
+      ctx.beginPath()
+      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.fill()
+
+      if (n.isHub && graph2.highlightHubs) {
+        ctx.strokeStyle = T.hubRing.replace('ALPHA', '0.55')
+        ctx.lineWidth = 0.9
+        ctx.stroke()
+      }
+
+      if (n.issue) {
+        const sevColor = SEV_COLORS[n.issue]
+        const ringR = r + (n.issue === 'critical' ? 4.2 : n.issue === 'high' ? 3.4 : 2.8)
+        const lw = n.issue === 'critical' ? 1.8 : n.issue === 'high' ? 1.5 : n.issue === 'medium' ? 1.3 : 1.1
+        ctx.strokeStyle = sevColor
+        ctx.lineWidth = lw
+        ctx.beginPath()
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
+        ctx.stroke()
+        if (n.issue === 'critical') {
+          const pulse = 0.5 + 0.5 * Math.sin(now / 360)
+          const pr = ringR + 2 + pulse * 4
+          const grd = ctx.createRadialGradient(sx, sy, ringR, sx, sy, pr)
+          grd.addColorStop(0, sevColor + alphaHex(0.55 * (0.4 + 0.6 * pulse)))
+          grd.addColorStop(1, sevColor + '00')
+          ctx.fillStyle = grd
+          ctx.beginPath()
+          ctx.arc(sx, sy, pr, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+      ctx.globalAlpha = 1
+    }
+
+    // ── Labels (always visible in package view) ───────────────
+    ctx.font = `600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.lineJoin = 'round'
+    for (const n of graph.nodes) {
+      if (!nodeVisible(n)) continue
+      const [sx, sy] = worldToScreen(n.x, n.y)
+      const r = nodeR(n)
+      const ty = sy + r + 4
+      const isSel = n.file === selected
+      const isHov = n.file === hovered
+      const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.2 : 1
+      ctx.globalAlpha = dim
+      // Outline + shadow for legibility on any backdrop.
+      ctx.shadowColor = T.labelShadow
+      ctx.shadowBlur = 4
+      ctx.strokeStyle = T.labelOutline
+      ctx.lineWidth = 3
+      ctx.strokeText(n.label, sx, ty)
+      ctx.shadowBlur = 0
+      ctx.fillStyle = isSel ? T.labelSelected : isHov ? T.labelHover : T.labelDefault
+      ctx.fillText(n.label, sx, ty)
+      ctx.globalAlpha = 1
+    }
+
+    // Selection ring on top.
+    if (sel && nodeVisible(sel)) {
+      const [sx, sy] = worldToScreen(sel.x, sel.y)
+      const r = nodeR(sel)
+      ctx.strokeStyle = T.selectRing
+      ctx.lineWidth = 1.8
+      ctx.beginPath()
+      ctx.arc(sx, sy, r + 4, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+
+    if (visibleEl) visibleEl.textContent = `${visibleCount.toLocaleString()} of ${graph.nodes.length.toLocaleString()} visible`
+    if (zoomEl) zoomEl.textContent = `${Math.round(viewport.k * 100)}%`
   }
 
   // ── Hit test ──────────────────────────────────────────────────

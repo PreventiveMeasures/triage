@@ -167,6 +167,30 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Package-graph drill-in (selection card → "Package graph →"):
+  // narrows the canvas to a single package's intra-imports with
+  // v1-style rendering. Selection is preserved when the file
+  // belongs to the package being focused, so the right panel
+  // keeps showing it; cleared otherwise.
+  const g2FocusPkg = e.target.closest('[data-g2-focus-pkg]')
+  if (g2FocusPkg) {
+    graph2.focusedPkg = g2FocusPkg.dataset.g2FocusPkg
+    graph2.layoutCache = null
+    cleanupGraph2()
+    render()
+    return
+  }
+  // Back-to-full from the package-focus mode — restores the
+  // spiral over the whole file set. Selection is kept (it's
+  // valid in both modes since the file still exists in the
+  // full graph).
+  if (e.target.closest('#g2-back-to-full')) {
+    graph2.focusedPkg = null
+    graph2.layoutCache = null
+    cleanupGraph2()
+    render()
+    return
+  }
   // Tree-tab: click a graph node to select it (drives the sidebar).
   const treeNode = e.target.closest('.tree-canvas-svg .tree-node[data-file]')
   if (treeNode) {

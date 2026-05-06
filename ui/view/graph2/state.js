@@ -12,6 +12,11 @@
 // is informative even before any user input.
 export const graph2 = {
   selected: null,        // file path or null
+  // Package focus mode — when set, the canvas drops the spiral
+  // and renders ONLY this package's intra-imports in graph v1
+  // style (single hue, arrowheads, file labels). null = full
+  // graph; reset on report swap and on the back-button click.
+  focusedPkg: null,
   // Right-panel "Top packages" sort axis. Same role as graph v1's
   // hubs Issues/Imports tab — issues-first by default so the user
   // lands on the actionable list, files for "what's the codebase

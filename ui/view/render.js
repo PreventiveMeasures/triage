@@ -13,7 +13,7 @@ import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
 import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
-import { fileHasFindings } from './graph/utils.js'
+import { fileHasFindings, packageOf } from './graph/utils.js'
 
 // Inline SVGs for the View-mode icon buttons. currentColor lets the
 // CSS .active rule recolor them to var(--accent) on selection without
@@ -84,9 +84,18 @@ export function buildGraph2Data() {
     state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-  const files = tree.showAll
-    ? allFiles
-    : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
+  // Package-focus mode trumps everything else: only files in the
+  // focused package, regardless of show-all / trash filters.
+  // The canvas's intra-package import set falls out automatically
+  // since buildGraph filters edges to the file set.
+  let files
+  if (graph2.focusedPkg) {
+    files = allFiles.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
+  } else {
+    files = tree.showAll
+      ? allFiles
+      : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
+  }
   return { graph: buildGraph(treeData, files, findingCounts), findingCounts }
 }
 

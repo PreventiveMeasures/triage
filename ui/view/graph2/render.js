@@ -168,6 +168,15 @@ function toggleRow(key, label, on) {
 function renderStage() {
   let html = '<main class="graph2-stage">'
   html += '<canvas id="g2-canvas"></canvas>'
+  // Back button for the package-focus mode — overlaid on the
+  // top-left of the stage so it reads as a "you are here" /
+  // breadcrumb out of the drill-in. Only rendered when
+  // focused; otherwise the corner is empty (the spiral view
+  // has no chrome there).
+  if (graph2.focusedPkg) {
+    const label = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
+    html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
+  }
   html += '<div class="g2-corner-bl"><span id="g2-visible">— of — visible</span></div>'
   html += '<div class="g2-corner-br" id="g2-fps">— fps</div>'
   html += '<div class="g2-zoom-ctrl">'
@@ -275,6 +284,14 @@ export function renderSelectionCard(graph) {
   html += '<div class="g2-sel-jumps">'
   if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
   html += `<button type="button" class="g2-sel-jump" data-g2-jump-file="${esc(file)}">Files →</button>`
+  // Package-graph drill-in — narrows the canvas to this file's
+  // package, with v1-style rendering (single hue, arrowheads,
+  // file labels). Hidden when only one file is in the package
+  // (nothing to visualize), and when already focused on it.
+  const pkgSize = graph.pkgCount.get(n.pkg) ?? 0
+  if (pkgSize > 1 && graph2.focusedPkg !== n.pkg) {
+    html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(n.pkg)}">Package graph →</button>`
+  }
   html += '</div>'
   html += '</div>'
 

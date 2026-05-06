@@ -85,6 +85,7 @@ export async function switchToFile(name, content) {
   // cache / palette state so a new report doesn't open with stale
   // hidden packages or a soloed pkg from the previous file.
   graph2.selected = null
+  graph2.focusedPkg = null
   graph2.layoutCache = null
   graph2.solo = null
   graph2.hidden.clear()
@@ -117,6 +118,7 @@ export async function deleteCurrent() {
   tree.layoutCache = null
   cleanupGraphInteraction()
   graph2.selected = null
+  graph2.focusedPkg = null
   graph2.layoutCache = null
   graph2.solo = null
   graph2.hidden.clear()

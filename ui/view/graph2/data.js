@@ -88,20 +88,28 @@ export function buildGraph(treeData, files, ownCounts) {
   // links collapse to a single record (the canvas doesn't draw
   // arrows in v2 so direction doesn't matter for rendering, only the
   // cross/intra classification).
-  const edges = []
-  const seen = new Set()
+  const edgeMap = new Map()
   for (const f of files) {
     for (const imp of importsOf.get(f) ?? []) {
       const [lo, hi] = f < imp ? [f, imp] : [imp, f]
       const k = `${lo}\0${hi}`
-      if (seen.has(k)) continue
-      seen.add(k)
-      const a = nodeByFile.get(lo), b = nodeByFile.get(hi)
-      if (!a || !b) continue
-      edges.push({ a: lo, b: hi, cross: a.pkg !== b.pkg })
-      a.deg++; b.deg++
+      let edge = edgeMap.get(k)
+      if (!edge) {
+        const a = nodeByFile.get(lo), b = nodeByFile.get(hi)
+        if (!a || !b) continue
+        edge = { a: lo, b: hi, cross: a.pkg !== b.pkg, fromLo: false, fromHi: false }
+        edgeMap.set(k, edge)
+        a.deg++; b.deg++
+      }
+      // Track which endpoint(s) actually originate the import.
+      // Both flags true = bidirectional (rare across packages, more
+      // common within one). The Package-graph view uses these to
+      // draw arrowheads; the spiral view ignores them.
+      if (f === lo) edge.fromLo = true
+      else edge.fromHi = true
     }
   }
+  const edges = [...edgeMap.values()]
 
   // adjacency map: file → edge indices. Used by selection rendering
   // (find neighbors) and hover-edge dimming on the canvas. Map
