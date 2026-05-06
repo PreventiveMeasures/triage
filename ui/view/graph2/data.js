@@ -1,38 +1,20 @@
 import { packageOf, pkgColor, totalFindings } from '../graph/utils.js'
-import { SEVERITY_ORDER, SEVERITIES } from '../format.js'
+import { SEVERITIES } from '../format.js'
 
-// Map a per-file own-counts object to the four-tier issue bucket the
-// v2 chrome speaks. The chrome's severity rows (critical/high/medium/
-// low) don't carry slots for high_bug / bug / informational — folding
-// the bug tiers into the closest vuln tier preserves the visual
-// signal (a file with a bug still gets a ring) without inventing two
-// new chrome rows. high_bug → high, bug → medium, informational → low.
-// Returns the highest-severity tier present, or null when clean.
+// Top-severity tier for a per-file count map. Walks SEVERITIES
+// (already in highest-to-lowest order in format.js) and returns
+// the first tier with a non-zero count, or null when clean.
+// Returns the FULL 7-tier set the findings tab uses (critical,
+// high, medium, low, high_bug, bug, informational) — earlier
+// versions collapsed bug / info tiers into the closest vuln
+// tier, but that hid information; the topbar pill row now
+// shows all seven so the canvas should reflect them too.
 export function topIssueOf(counts) {
   if (!counts) return null
-  const map = { critical: 'critical', high: 'high', high_bug: 'high', medium: 'medium', bug: 'medium', low: 'low', informational: 'low' }
-  let best = null, bestRank = -1
   for (const sev of SEVERITIES) {
-    if ((counts[sev] ?? 0) === 0) continue
-    const rank = SEVERITY_ORDER[sev]
-    if (rank > bestRank) { bestRank = rank; best = map[sev] ?? sev }
+    if ((counts[sev] ?? 0) > 0) return sev
   }
-  return best
-}
-
-// Short summary text for the selection card / tooltip — "3 critical
-// · 1 high" etc. Skips zero-count tiers and drops the bug / info
-// tiers into the same fold-down map as topIssueOf so the strings
-// match the bucket the visualization paints.
-export function issueSummary(counts) {
-  if (!counts) return ''
-  const buckets = { critical: 0, high: 0, medium: 0, low: 0 }
-  const map = { critical: 'critical', high: 'high', high_bug: 'high', medium: 'medium', bug: 'medium', low: 'low', informational: 'low' }
-  for (const sev of SEVERITIES) buckets[map[sev]] += counts[sev] ?? 0
-  return ['critical', 'high', 'medium', 'low']
-    .filter((s) => buckets[s] > 0)
-    .map((s) => `${buckets[s]} ${s}`)
-    .join(' · ')
+  return null
 }
 
 // Build the full v2 graph data structure from a treeData blob and
@@ -69,7 +51,6 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
     const totalIssues = totalFindings(own)
     const pkg = packageOf(file) ?? '__own__'
     const issue = topIssueOf(own)
-    const issueText = issue ? issueSummary(own) : ''
     return {
       id: file,
       file,
@@ -77,7 +58,6 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
       x: 0, y: 0,
       deg: 0,
       issue,
-      issueText,
       totalIssues,
       own,
       subtree,

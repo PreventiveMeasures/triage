@@ -1,10 +1,9 @@
-import { esc } from '../format.js'
+import { SEVERITIES, esc } from '../format.js'
 import { state } from '../state.js'
 import { graph2 } from './state.js'
 import { tree } from '../graph/state.js'
 import { pkgColor } from '../graph/utils.js'
 import { isGroupDeleted } from '../group.js'
-import { issueSummary } from './data.js'
 
 const SEV_COLORS = {
   critical: '#ff5470',
@@ -64,25 +63,28 @@ function renderTopBar(graph) {
     html += '</button>'
   }
   html += '<div class="g2-spacer"></div>'
-  // Severity highlight pills — clicking a pill toggles its
-  // membership in graph2.selectedSeverities. Empty set = no
-  // filter (everything full opacity). 1+ selected = matching
-  // nodes stay full, others dim to 0.1. Counts come from the
-  // current graph; tiers with zero count are still rendered
-  // (so the row shape is stable across re-renders) but only
-  // when at least one is non-zero — purely-clean reports skip
-  // the row entirely since there's nothing to filter.
-  const issueCounts = { critical: 0, high: 0, medium: 0, low: 0 }
-  for (const n of graph.nodes) if (n.issue) issueCounts[n.issue]++
-  const totalIssues = issueCounts.critical + issueCounts.high + issueCounts.medium + issueCounts.low
-  if (totalIssues > 0) {
+  // Severity highlight pills — same tier set as the findings
+  // tab (critical, high, medium, low, high_bug, bug,
+  // informational from format.js's SEVERITIES). Skip tiers
+  // with zero count UNLESS that tier is currently in the
+  // selected set, so the user can always click an active pill
+  // to deselect it even if the dataset has stopped containing
+  // that severity. Empty selectedSeverities = no canvas dimming.
+  const issueCounts = {}
+  for (const sev of SEVERITIES) issueCounts[sev] = 0
+  for (const n of graph.nodes) if (n.issue && issueCounts[n.issue] !== undefined) issueCounts[n.issue]++
+  const hasAnyVisible = SEVERITIES.some((sev) => issueCounts[sev] > 0 || graph2.selectedSeverities.has(sev))
+  if (hasAnyVisible) {
     html += '<div class="g2-sev-filters">'
-    for (const sev of ['critical', 'high', 'medium', 'low']) {
-      const on = graph2.selectedSeverities.has(sev) ? ' on' : ''
+    for (const sev of SEVERITIES) {
       const count = issueCounts[sev]
-      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${graph2.selectedSeverities.has(sev)}">`
+      const isSelected = graph2.selectedSeverities.has(sev)
+      if (count === 0 && !isSelected) continue
+      const on = isSelected ? ' on' : ''
+      const label = sev.replace(/_/gu, ' ')
+      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${isSelected}">`
       html += '<span class="g2-sev-mark"></span>'
-      html += `<span class="g2-sev-pill-label">${sev}</span>`
+      html += `<span class="g2-sev-pill-label">${esc(label)}</span>`
       html += `<span class="g2-sev-pill-count">${count}</span>`
       html += '</button>'
     }

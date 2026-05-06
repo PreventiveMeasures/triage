@@ -5,16 +5,24 @@ import { forceLayout, pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones
-// for medium/low. Theme-independent — they read as data colors
-// regardless of the surrounding chrome's lightness. Critical
+// for medium/low; bug-class tiers (high_bug, bug) use earthy
+// browns to differentiate them from the saturated vuln palette;
+// informational uses a saturated blue. Theme-independent — they
+// read as data colors regardless of chrome lightness. Critical
 // rings get a slightly larger radius + thicker stroke (see the
-// ringR / lw branches in draw) so they stand out without needing
-// the time-driven pulse the design originally used.
+// ringR / lw branches in draw) so they stand out without
+// needing the time-driven pulse the design originally used.
+//
+// Tier set matches format.js SEVERITIES so the topbar pill row
+// can display every tier the findings tab can produce.
 const SEV_COLORS = {
   critical: '#ff5470',
   high: '#ff9d4a',
   medium: '#f4d35e',
   low: '#67c2ff',
+  high_bug: '#a06c3f',
+  bug: '#7a6d62',
+  informational: '#218bff',
 }
 
 // Theme-aware canvas palette. Mirrors graph v1's GRAPH_THEMES
