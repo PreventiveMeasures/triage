@@ -101,7 +101,23 @@ function findEntryPkg(graph) {
 // the per-layout loops since spiral / radial / grid all share
 // the same intra-disk distribution; only the disk position
 // differs across layouts.
+//
+// Hub-pull-to-center is gated on hub count: when a package has
+// more than 10 hubs (common in Cross-imported mode on a large
+// public-API package), pulling them all to the inner 30% piles
+// them into a tight blob and the cluster loses readability. In
+// that case, hubs use the same outer band as members and just
+// rely on their bigger radius + halo + ring for the visual
+// "this is a hub" cue.
+const HUB_PULL_LIMIT = 10
 function placeFilesInDisk(graph, pkgInfo) {
+  // Count hubs per package once so the inner loop can branch
+  // without walking byPkg every iteration.
+  const hubsByPkg = new Map()
+  for (const n of graph.nodes) {
+    if (n.isHub) hubsByPkg.set(n.pkg, (hubsByPkg.get(n.pkg) ?? 0) + 1)
+  }
+
   for (const n of graph.nodes) {
     const info = pkgInfo.get(n.pkg)
     if (!info) continue
@@ -112,7 +128,8 @@ function placeFilesInDisk(graph, pkgInfo) {
     // of a disk.
     const localA = (h1 % 10000) / 10000 * Math.PI * 2
     const localBand = ((h1 >>> 16) % 10000) / 10000
-    const localR = n.isHub
+    const pullToCenter = n.isHub && (hubsByPkg.get(n.pkg) ?? 0) <= HUB_PULL_LIMIT
+    const localR = pullToCenter
       ? localBand * groupR * 0.3
       : (0.4 + localBand * 0.6) * groupR
     n.x = info.x + Math.cos(localA) * localR
