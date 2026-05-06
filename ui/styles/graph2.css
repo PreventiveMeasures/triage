@@ -847,10 +847,15 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   border: 1px solid var(--border);
   color: var(--accent);
   border-radius: 4px;
-  padding: 4px 9px;
+  padding: 2px 8px;
   cursor: pointer;
-  font: 500 10px/1 inherit;
+  /* Properties spelled out — `font: ... inherit` is invalid as a
+     shorthand and was being discarded, leaving the button at the
+     inherited 12px and a chunkier height than intended. */
   font-family: inherit;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.3;
 
   &:hover { border-color: var(--accent); }
 }
