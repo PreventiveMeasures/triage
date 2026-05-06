@@ -24,30 +24,93 @@ function hash(str) {
   return h
 }
 
+// Cross-package degree per package — counts each cross-package
+// edge once for each endpoint's package. Drives Spiral's
+// "well-connected toward the center" radius bias: a package
+// imported from many others reads as "core" and should sit
+// where the eye lands first.
+function crossDegByPkg(graph) {
+  const map = new Map()
+  for (const e of graph.edges) {
+    if (!e.cross) continue
+    const a = graph.nodeByFile.get(e.a)
+    const b = graph.nodeByFile.get(e.b)
+    if (a) map.set(a.pkg, (map.get(a.pkg) ?? 0) + 1)
+    if (b) map.set(b.pkg, (map.get(b.pkg) ?? 0) + 1)
+  }
+  return map
+}
+
+// Distribute files inside a per-package disk, anchored on
+// (info.x, info.y) at radius `groupR` (pixels). Hubs sit
+// closer to the anchor than members so each cluster reads as
+// "package = pile of files anchored by a hub". Pulled out of
+// the per-layout loops since spiral / radial / grid all share
+// the same intra-disk distribution; only the disk position
+// differs across layouts.
+function placeFilesInDisk(graph, pkgInfo) {
+  for (const n of graph.nodes) {
+    const info = pkgInfo.get(n.pkg)
+    if (!info) continue
+    const groupR = info.groupR
+    const h1 = hash(n.file)
+    // Different bit ranges for angle vs radius — without this
+    // they correlate and the cluster looks like a comma instead
+    // of a disk.
+    const localA = (h1 % 10000) / 10000 * Math.PI * 2
+    const localBand = ((h1 >>> 16) % 10000) / 10000
+    const localR = n.isHub
+      ? localBand * groupR * 0.3
+      : (0.4 + localBand * 0.6) * groupR
+    n.x = info.x + Math.cos(localA) * localR
+    n.y = info.y + Math.sin(localA) * localR
+  }
+}
+
 export function layoutRadial(graph, w, h) {
   const cx = w / 2, cy = h / 2
-  const radius = Math.min(w, h) * 0.38
-  // Each package gets an angular slice on a ring; files within a
-  // package jitter inside a small disk centered on that slice. Slice
-  // ordering is by package size descending (graph.packages already
-  // ordered) so the visual emphasis tracks the data emphasis.
+  const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
-  const pkgIdx = new Map(graph.packages.map((p, i) => [p, i]))
-  const pad = 32
-  const innerW = w - pad * 2, innerH = h - pad * 2
-  const r = Math.min(innerW, innerH) * 0.42
-  const groupR = Math.max(40, r * 0.18 / Math.sqrt(Math.max(1, N)))
-  for (const n of graph.nodes) {
-    const i = pkgIdx.get(n.pkg) ?? 0
-    const angle = (i / Math.max(1, N)) * Math.PI * 2
-    const gx = cx + Math.cos(angle) * r
-    const gy = cy + Math.sin(angle) * r
-    const h1 = hash(n.file)
-    const ja = (h1 % 1000) / 1000 * Math.PI * 2
-    const jr = ((h1 >> 10) % 1000) / 1000 * groupR
-    n.x = gx + Math.cos(ja) * jr
-    n.y = gy + Math.sin(ja) * jr
+  if (N === 0) return
+  // Entry-point package — biggest by file count (graph.packages
+  // is sorted size-desc in data.js). Pinned at center so the
+  // user lands on the project's core. The rest of the packages
+  // get the surrounding ring.
+  const entryPkg = graph.packages[0]
+  const others = graph.packages.slice(1)
+  const Nothers = others.length
+  // Group disk caps in unit space — entry gets a slightly more
+  // generous cap so it reads as the anchor; others scale by
+  // ring crowding so a hundred packages don't pile on top of
+  // each other. Sparsity factor scales the BASE disk size up
+  // for sparse layouts (handful of packages) so they don't
+  // float as tiny dots.
+  const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
+  const entryCap = 0.22, othersCap = 0.12, padding = 0.04
+  const entrySize = graph.pkgCount.get(entryPkg) ?? 0
+  const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
+  // Ring radius — push out enough to clear the entry disk plus
+  // a max-other-disk plus padding. Otherwise the largest other
+  // packages would clip into the entry's cluster.
+  const ringRUnit = Math.max(0.45, entryGroupRUnit + othersCap + padding)
+  const pkgInfo = new Map()
+  pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  for (let i = 0; i < Nothers; i++) {
+    const pkg = others[i]
+    // Evenly-spaced angles around the ring, ordered by package
+    // size descending (graph.packages.slice(1) preserves the
+    // size-desc ordering from data.js) so the visual emphasis
+    // tracks the data emphasis.
+    const angle = (i / Math.max(1, Nothers)) * Math.PI * 2
+    const size = graph.pkgCount.get(pkg) ?? 0
+    const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
+    pkgInfo.set(pkg, {
+      x: cx + Math.cos(angle) * ringRUnit * unitToPx,
+      y: cy + Math.sin(angle) * ringRUnit * unitToPx,
+      size, groupR: gRUnit * unitToPx,
+    })
   }
+  placeFilesInDisk(graph, pkgInfo)
 }
 
 // "Spiral" — the hue-spiral projection from the original
@@ -77,71 +140,83 @@ export function layoutSpiral(graph, w, h) {
   // pixels happens once per coordinate at write time.
   const unitToPx = Math.min(w, h) / 2
   const N = graph.packages.length
-  // Adapt the radius range and per-group disk size to N. The
-  // design's constants (0.30 minR, 0.95 maxR, 0.012 groupR base)
-  // were tuned for ~350 groups; with a handful of packages they
-  // leave 80% of the canvas empty (ring of small dots floating
-  // in a void) while still placing one package near the center
-  // and another at the rim. Three breakpoints below trade off
-  // continuity against legibility: tight ring at low N (so the
-  // few packages frame each other on a circle), widen the band
-  // through medium N, then commit to the full spiral at high N
-  // where the pseudo-random radius is what creates the visible
-  // arm structure.
-  let minRUnit, maxRUnit
-  if (N <= 1) { minRUnit = 0; maxRUnit = 0 }
-  else if (N <= 6) { minRUnit = 0.40; maxRUnit = 0.65 }
-  else if (N <= 20) { minRUnit = 0.32; maxRUnit = 0.82 }
-  else { minRUnit = 0.30; maxRUnit = 0.95 }
-  // Scale group disks UP when packages are sparse so each
-  // cluster fills a meaningful chunk of canvas instead of
-  // looking like a single fat dot floating in the void.
-  // Reference is N=50: factor 1.0 (design behavior). For fewer
-  // packages, the sqrt scaling lifts groupR so 5 packages get
-  // ~3× larger disks; for more packages, factor stays at 1 so
-  // the design's tight clusters survive.
-  const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, N)))
+  if (N === 0) return
+  // Entry-point package — biggest by file count (graph.packages
+  // is sorted size-desc in data.js). Pinned at center; the rest
+  // of the packages spiral around it. The user almost always
+  // wants to land on the project's core anchor when opening the
+  // graph, and pinning it gives the eye a stable focal point
+  // that the spiral arms radiate out from.
+  const entryPkg = graph.packages[0]
+  const others = graph.packages.slice(1)
+  const Nothers = others.length
+  // Cross-package degree per package — drives the radius
+  // assignment for non-entry packages. Most-imported packages
+  // sit near the inner ring (close to the entry), least-imported
+  // drift to the rim. Reads as "the more central a package is
+  // to the dependency graph, the more central it is on screen".
+  const crossDeg = crossDegByPkg(graph)
+  // Rank others by cross-degree desc; ties broken by package
+  // size desc so equal-cross packages stack large-first toward
+  // the center.
+  const ranked = [...others].sort((a, b) => {
+    const cd = (crossDeg.get(b) ?? 0) - (crossDeg.get(a) ?? 0)
+    if (cd !== 0) return cd
+    return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
+  })
+  const rankByPkg = new Map(ranked.map((p, i) => [p, i]))
+  // Adapt the OUTER radius to N. Tight ring at low N (so a
+  // handful of packages frame each other on a circle rather
+  // than floating sparsely), widen through medium N, full
+  // spiral at high N where the cross-degree spread is what
+  // creates the visible arm structure.
+  let maxRUnit
+  if (Nothers <= 0) maxRUnit = 0
+  else if (Nothers <= 6) maxRUnit = 0.65
+  else if (Nothers <= 20) maxRUnit = 0.82
+  else maxRUnit = 0.95
+  // Sparsity factor scales the per-package disk size for low
+  // package counts so a few clusters fill the canvas instead
+  // of floating as tiny dots.
+  const sparsityFactor = Math.max(1, Math.sqrt(50 / Math.max(1, Nothers)))
+  const entryCap = 0.22, othersCap = 0.12, padding = 0.04
+  const entrySize = graph.pkgCount.get(entryPkg) ?? 0
+  const entryGroupRUnit = Math.min(entryCap, (0.012 + Math.sqrt(entrySize) * 0.004) * sparsityFactor)
+  // Inner radius pushed out so the closest packages don't clip
+  // into the entry disk. The 0.38 floor matches what the
+  // entry+others+padding math demands at typical caps; at low
+  // N the breakpoints above might want a tighter ring (0.40),
+  // so take the larger.
+  const minRUnit = Math.max(
+    Nothers <= 6 ? 0.40 : (Nothers <= 20 ? 0.36 : 0.34),
+    entryGroupRUnit + othersCap + padding,
+  )
   const pkgInfo = new Map()
-  for (let i = 0; i < N; i++) {
-    const pkg = graph.packages[i]
-    // Golden-angle distribution of package centers around the
-    // canvas; matches the design's `g.hue * π/180` step (since
-    // each group's hue was itself i * 137.508° mod 360°).
+  pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  for (let i = 0; i < Nothers; i++) {
+    const pkg = others[i]
+    // Angle from the loop index, golden-angle stepped, so
+    // angular distribution stays maximally distinct regardless
+    // of how the rank-by-cross sort reorders things.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Pseudo-random radius band — design uses (i*31)%100/100,
-    // a walk through 100 distinct values that breaks any
-    // correlation between angle and radius. Without that walk
-    // the layout would collapse into a single ring at large N.
-    const band = ((i * 31) % 100) / 100
-    const rUnit = N === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
+    // Radius from cross-rank — most cross-connected at minRUnit,
+    // least cross-connected at maxRUnit. Hash-based jitter on
+    // top so equal-rank packages don't form a perfect circle.
+    const rank = rankByPkg.get(pkg) ?? i
+    const fraction = Nothers <= 1 ? 0 : rank / (Nothers - 1)
+    const seed = hash(pkg)
+    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.18
+    const band = Math.max(0, Math.min(1, fraction + jitter))
+    const rUnit = minRUnit + band * (maxRUnit - minRUnit)
+    const size = graph.pkgCount.get(pkg) ?? 0
+    const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
     pkgInfo.set(pkg, {
       x: cx + Math.cos(angle) * rUnit * unitToPx,
       y: cy + Math.sin(angle) * rUnit * unitToPx,
-      size: graph.pkgCount.get(pkg) ?? 0,
+      size, groupR: gRUnit * unitToPx,
     })
   }
-  for (const n of graph.nodes) {
-    const info = pkgInfo.get(n.pkg)
-    if (!info) continue
-    // Per-group disk radius — tiny constant + sqrt-scaled bonus
-    // for size, then lifted by sparsityFactor when packages are
-    // sparse. Cap at 0.30 unit (~30% of half-canvas) so a single
-    // huge package doesn't swallow the layout when there are
-    // very few packages overall.
-    const groupRUnit = (0.012 + Math.sqrt(info.size) * 0.004) * sparsityFactor
-    const groupR = Math.min(0.30, groupRUnit) * unitToPx
-    const h1 = hash(n.file)
-    // Different bit ranges for angle vs radius — without this
-    // the two correlate and the cluster looks like a comma
-    // instead of a disk.
-    const localA = (h1 % 10000) / 10000 * Math.PI * 2
-    const localBand = ((h1 >>> 16) % 10000) / 10000
-    const localR = n.isHub
-      ? localBand * groupR * 0.3
-      : (0.4 + localBand * 0.6) * groupR
-    n.x = info.x + Math.cos(localA) * localR
-    n.y = info.y + Math.sin(localA) * localR
-  }
+  placeFilesInDisk(graph, pkgInfo)
 }
 
 export function layoutGrid(graph, w, h) {
