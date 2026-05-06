@@ -43,7 +43,7 @@ function renderTopBar(graph) {
   // selected set, so the user can always click an active pill
   // to deselect it even if the dataset has stopped containing
   // that severity. Empty selectedSeverities = no canvas dimming.
-  // Lives at the left edge of the topbar (before Show all)
+  // Lives at the left edge of the topbar (before All files)
   // since it's the most-frequently-used control.
   const issueCounts = {}
   for (const sev of SEVERITIES) issueCounts[sev] = 0
@@ -65,14 +65,14 @@ function renderTopBar(graph) {
     }
     html += '</div>'
   }
-  // "Show all" controls the FILE SET, not just rendering —
+  // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
   // edges, different layout). Reads / writes tree.showAll
   // (shared with graph v1 so the two tabs stay consistent on
   // the same dataset). Defaults to off → only files with own
   // or subtree findings are kept.
   html += `<button type="button" class="g2-topbar-toggle${tree.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${tree.showAll}">`
-  html += '<span>Show all</span><span class="g2-switch"></span>'
+  html += '<span>All files</span><span class="g2-switch"></span>'
   html += '</button>'
   // Trash toggle — same role as the findings tab's trash button.
   // Visible when there are deleted findings to show OR when the
