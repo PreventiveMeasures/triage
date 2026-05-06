@@ -812,21 +812,6 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   margin-bottom: 5px;
 }
 
-/* Section header row — label on the left, optional inline action
-   button (e.g. "Findings →" on the Own-findings section) on the
-   right. Uses the same vertical rhythm as a bare label so the
-   chip block below sits at the same offset whether the action is
-   present or not. */
-.g2-sel-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 5px;
-
-  & .g2-sel-section-label { margin-bottom: 0; }
-}
-
 .g2-sel-section-empty {
   color: var(--muted);
   opacity: 0.55;

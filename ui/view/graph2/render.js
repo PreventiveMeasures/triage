@@ -396,20 +396,19 @@ function renderFileCard(graph, n, file) {
   // single-severity Status row + issue-text bar that lived
   // here previously duplicated the data without showing the
   // breakdown — chips are strictly more informative.
-  // Own-findings header row carries the inline "Findings →" jump
-  // when the file has any issues — keeps the action right next to
-  // the data it belongs to (instead of in the bottom jumps row,
-  // where users had to look for it). Subtree-findings has no
-  // analogous single-target jump, so it stays a bare label.
-  html += '<div class="g2-sel-section"><div class="g2-sel-section-head">'
-  html += '<div class="g2-sel-section-label">Own findings</div>'
-  if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
-  html += `</div>${renderSevChips(n.own)}</div>`
+  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Own findings</div>${renderSevChips(n.own)}</div>`
   html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Subtree findings</div>${renderSevChips(n.subtree)}</div>`
   // Quick jumps over to the existing tabs — same data, different
   // presentation. Findings filters get cleared first so the user
   // doesn't land on an empty list because of a stale exclude.
+  // All three jumps (Findings / Files / Package graph) live on
+  // the same row: an earlier attempt put Findings inline next to
+  // the Own-findings label, but the muted-uppercase label and the
+  // accent-bordered button don't share enough weight to read as
+  // label + action — they competed instead of grouping. Keeping
+  // them together as a single action toolbar reads cleaner.
   html += '<div class="g2-sel-jumps">'
+  if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
   html += `<button type="button" class="g2-sel-jump" data-g2-jump-file="${esc(file)}">Files →</button>`
   // Package-graph drill-in — narrows the canvas to this file's
   // package, with v1-style rendering (single hue, arrowheads,
