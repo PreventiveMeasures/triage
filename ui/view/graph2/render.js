@@ -215,20 +215,21 @@ function renderStage(graph) {
     html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
     html += '</div>'
   }
-  // Bottom-left stats — file/package/edge/hub counts. The
-  // earlier "X of Y visible" readout is gone: every node now
-  // stays on screen (filters / solo soft-dim instead of
-  // hiding), so visibleCount always equaled total. The stats
-  // are the more useful readout to leave up.
+  // Bottom-left stats — file/package/edge/hub/issue counts.
+  // The earlier "X of Y visible" readout is gone: every node
+  // stays on screen now (filters / solo soft-dim instead of
+  // hiding), so visibleCount always equaled total.
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let hubs = 0; for (const n of graph.nodes) if (n.isHub) hubs++
+  let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
   const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
   html += '<div class="g2-stage-stats">'
   html += `<span><b>${graph.nodes.length}</b> files</span>`
   html += `<span><b>${graph.packages.length}</b> packages</span>`
   html += `<span><b>${graph.edges.length}</b> edges (${intra} intra · ${cross} cross)</span>`
   html += `<span><b>${hubs}</b> hubs</span>`
+  html += `<span><b>${issues}</b> issues</span>`
   html += `<span>avg degree <b>${avgDeg}</b></span>`
   html += '</div>'
   // Bottom-right: zoom controls.
@@ -297,8 +298,7 @@ export function renderSelectionCard(graph) {
     return renderPackageCard(graph, graph2.solo)
   }
   return '<div class="g2-empty-state">'
-    + '<strong>No selection</strong>'
-    + 'Click a node in the graph for file details, or a package in the palette / Top packages list to inspect a whole package.'
+    + 'Click a node or a package row to inspect.'
     + '</div>'
 }
 
