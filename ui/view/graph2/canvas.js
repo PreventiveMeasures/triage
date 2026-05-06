@@ -5,9 +5,10 @@ import { forceLayout, pkgColor } from '../graph/utils.js'
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones
 // for medium/low. Theme-independent — they read as data colors
-// regardless of the surrounding chrome's lightness. Critical also
-// drives a pulse animation in the draw loop so the eye lands on
-// it first.
+// regardless of the surrounding chrome's lightness. Critical
+// rings get a slightly larger radius + thicker stroke (see the
+// ringR / lw branches in draw) so they stand out without needing
+// the time-driven pulse the design originally used.
 const SEV_COLORS = {
   critical: '#ff5470',
   high: '#ff9d4a',
@@ -345,21 +346,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         ctx.beginPath()
         ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
         ctx.stroke()
-        if (n.issue === 'critical') {
-          // Time-driven pulse — keeps a critical-issue node visible
-          // even at low contrast / when the rest of the graph is
-          // dim from a selection. Phase derived from `now` so all
-          // critical pulses on the canvas breathe in sync.
-          const pulse = 0.5 + 0.5 * Math.sin(now / 360)
-          const pr = ringR + 2 + pulse * 4
-          const grd = ctx.createRadialGradient(sx, sy, ringR, sx, sy, pr)
-          grd.addColorStop(0, sevColor + alphaHex(0.55 * dim * (0.4 + 0.6 * pulse)))
-          grd.addColorStop(1, sevColor + '00')
-          ctx.fillStyle = grd
-          ctx.beginPath()
-          ctx.arc(sx, sy, pr, 0, Math.PI * 2)
-          ctx.fill()
-        }
         ctx.globalAlpha = 1
       }
     }
@@ -558,17 +544,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         ctx.beginPath()
         ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
         ctx.stroke()
-        if (n.issue === 'critical') {
-          const pulse = 0.5 + 0.5 * Math.sin(now / 360)
-          const pr = ringR + 2 + pulse * 4
-          const grd = ctx.createRadialGradient(sx, sy, ringR, sx, sy, pr)
-          grd.addColorStop(0, sevColor + alphaHex(0.55 * (0.4 + 0.6 * pulse)))
-          grd.addColorStop(1, sevColor + '00')
-          ctx.fillStyle = grd
-          ctx.beginPath()
-          ctx.arc(sx, sy, pr, 0, Math.PI * 2)
-          ctx.fill()
-        }
       }
       ctx.globalAlpha = 1
     }
