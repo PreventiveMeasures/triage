@@ -396,13 +396,20 @@ function renderFileCard(graph, n, file) {
   // single-severity Status row + issue-text bar that lived
   // here previously duplicated the data without showing the
   // breakdown — chips are strictly more informative.
-  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Own findings</div>${renderSevChips(n.own)}</div>`
+  // Own-findings header row carries the inline "Findings →" jump
+  // when the file has any issues — keeps the action right next to
+  // the data it belongs to (instead of in the bottom jumps row,
+  // where users had to look for it). Subtree-findings has no
+  // analogous single-target jump, so it stays a bare label.
+  html += '<div class="g2-sel-section"><div class="g2-sel-section-head">'
+  html += '<div class="g2-sel-section-label">Own findings</div>'
+  if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
+  html += `</div>${renderSevChips(n.own)}</div>`
   html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Subtree findings</div>${renderSevChips(n.subtree)}</div>`
   // Quick jumps over to the existing tabs — same data, different
   // presentation. Findings filters get cleared first so the user
   // doesn't land on an empty list because of a stale exclude.
   html += '<div class="g2-sel-jumps">'
-  if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
   html += `<button type="button" class="g2-sel-jump" data-g2-jump-file="${esc(file)}">Files →</button>`
   // Package-graph drill-in — narrows the canvas to this file's
   // package, with v1-style rendering (single hue, arrowheads,

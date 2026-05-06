@@ -797,12 +797,34 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 }
 
 .g2-sel-section-label {
-  font: 600 10px/1 inherit;
+  /* Properties spelled out — `font: ... inherit` is invalid as a
+     shorthand and was being silently discarded, leaving the
+     label at the inherited 12px. See .g2-panel-title for the
+     same fix in the right-panel headers. */
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
   opacity: 0.85;
   margin-bottom: 5px;
+}
+
+/* Section header row — label on the left, optional inline action
+   button (e.g. "Findings →" on the Own-findings section) on the
+   right. Uses the same vertical rhythm as a bare label so the
+   chip block below sits at the same offset whether the action is
+   present or not. */
+.g2-sel-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+
+  & .g2-sel-section-label { margin-bottom: 0; }
 }
 
 .g2-sel-section-empty {
