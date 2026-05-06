@@ -777,51 +777,55 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   &:hover { border-color: var(--accent); }
 }
 
-/* ── Neighbor list ──────────────────────────────────────────── */
-.g2-neighbor-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* ── File-link list (Imported by / Imports inside selection
+   sections) ─────────────────────────────────────────────────── */
+/* List of clickable file rows. Caps at ~5 visible entries
+   (110px) and scrolls; thinner thumb than the panel scroll. */
+.g2-sel-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 110px;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  & li { padding: 0; }
 }
 
-.g2-nb {
-  display: grid;
-  grid-template-columns: 8px 1fr auto;
-  gap: 8px;
+.g2-sel-file-link {
+  display: flex;
   align-items: center;
-  padding: 6px 9px;
-  border-radius: 5px;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  font-size: 11px;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  width: calc(100% + 12px);
+  font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  color: var(--accent);
   cursor: pointer;
   text-align: left;
-  font-family: inherit;
-  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 
-  &:hover { border-color: var(--accent); color: var(--text); }
-}
+  &:hover { background: var(--graph-hover-bg); }
 
-.g2-nb-dot { width: 7px; height: 7px; border-radius: 50%; }
-.g2-nb-id {
-  font-family: ui-monospace, monospace;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.g2-nb-meta {
-  font-family: ui-monospace, monospace;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.g2-nb-more {
-  text-align: center;
-  color: var(--muted);
-  font-size: 10px;
-  padding: 6px 0;
-  font-family: ui-monospace, monospace;
+  & .g2-sel-file-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  & .g2-sel-file-path {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 /* ── Empty state ────────────────────────────────────────────── */

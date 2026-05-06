@@ -185,6 +185,36 @@ function toggleRow(key, label, on) {
     + '</button>'
 }
 
+// File-link list — shared between file card's Imported by /
+// Imports sections and the package card's Imported by section.
+// Each row is clickable, routes through data-g2-select to the
+// existing file-selection handler. The list itself becomes a
+// scroll container past 5 visible rows so the section doesn't
+// dominate the right panel on hub-y files. Each row gets a
+// little package-color dot so cross-package importers read
+// instantly without parsing the path prefix.
+function renderFileList(graph, label, files) {
+  const count = files.length
+  let html = `<div class="g2-sel-section"><div class="g2-sel-section-label">${label} (${count})</div>`
+  if (count === 0) {
+    html += '<div class="g2-sel-section-empty">none</div>'
+  } else {
+    const sorted = [...files].sort()
+    html += '<ul class="g2-sel-file-list">'
+    for (const f of sorted) {
+      const node = graph.nodeByFile.get(f)
+      const c = node ? pkgColor(node.pkg) : '#666'
+      html += `<li><button type="button" class="g2-sel-file-link" data-g2-select="${esc(f)}" title="${esc(f)}">`
+      html += `<span class="g2-sel-file-dot" style="background:${c}"></span>`
+      html += `<span class="g2-sel-file-path">${esc(f)}</span>`
+      html += '</button></li>'
+    }
+    html += '</ul>'
+  }
+  html += '</div>'
+  return html
+}
+
 // Severity-count chip block — used by the selection card's
 // Own / Subtree finding sections AND by the canvas tooltip.
 // Reuses graph v1's `.tree-count-chip` palette (already defined
@@ -304,26 +334,15 @@ export function renderSelectionCard(graph) {
 
 function renderFileCard(graph, n, file) {
   const col = pkgColor(n.pkg)
+  // Walk adjacency to get intra / cross degree counts for the
+  // body rows. The full neighbor enumeration with sort that
+  // used to live here fed the now-removed "Top neighbors"
+  // section; importedBy / importsOf carry the directional
+  // info more directly and are walked downstream.
   let intra = 0, cross = 0
-  const neighborIds = []
   for (const ei of (graph.adj.get(file) ?? [])) {
-    const e = graph.edges[ei]
-    const other = e.a === file ? e.b : e.a
-    neighborIds.push({ file: other, cross: e.cross })
-    e.cross ? cross++ : intra++
+    graph.edges[ei].cross ? cross++ : intra++
   }
-  // Cross-package neighbors first; within each bucket, by total
-  // findings then degree — surfaces the "what else is going wrong
-  // in adjacent code" view first.
-  neighborIds.sort((a, b) => {
-    if (a.cross !== b.cross) return b.cross - a.cross
-    const na = graph.nodeByFile.get(a.file), nb = graph.nodeByFile.get(b.file)
-    if (!na || !nb) return 0
-    if (na.totalIssues !== nb.totalIssues) return nb.totalIssues - na.totalIssues
-    return nb.deg - na.deg
-  })
-  const top = neighborIds.slice(0, 12)
-
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
 
   let html = ''
@@ -363,25 +382,16 @@ function renderFileCard(graph, n, file) {
     html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(n.pkg)}">Package graph →</button>`
   }
   html += '</div>'
-  html += '</div>'
-
-  // Neighbors
-  html += '<div class="g2-panel-title" style="margin-top:14px">Top neighbors</div>'
-  html += '<div class="g2-neighbor-list">'
-  for (const nb of top) {
-    const m = graph.nodeByFile.get(nb.file)
-    if (!m) continue
-    const c = pkgColor(m.pkg)
-    const meta = `deg ${m.deg}${nb.cross ? ' · cross' : ''}`
-    html += `<button type="button" class="g2-nb" data-g2-select="${esc(nb.file)}">`
-    html += `<span class="g2-nb-dot" style="background:${c}"></span>`
-    html += `<span class="g2-nb-id">${esc(m.label)}</span>`
-    html += `<span class="g2-nb-meta">${meta}</span>`
-    html += '</button>'
-  }
-  if (neighborIds.length > top.length) {
-    html += `<div class="g2-nb-more">+${neighborIds.length - top.length} more</div>`
-  }
+  // Directional import lists. Imported by = files that point
+  // AT this one; Imports = files this one points at. The
+  // earlier "Top neighbors" combined both directions and lost
+  // that information, which made the section less useful for
+  // tracing what depends on what. Each list scrolls past 5
+  // entries via CSS.
+  const importers = graph.importedBy.get(file) ?? []
+  const imports = graph.importsOf.get(file) ?? []
+  html += renderFileList(graph, 'Imported by', importers)
+  html += renderFileList(graph, 'Imports', imports)
   html += '</div>'
   return html
 }
@@ -448,6 +458,19 @@ function renderPackageCard(graph, pkg) {
     html += `<button type="button" class="g2-sel-jump" data-g2-focus-pkg="${esc(pkg)}">Package graph →</button>`
     html += '</div>'
   }
+  // Imported by — every file from a different package that
+  // points at any file in this package. Dedup via Set since a
+  // single importer file may point at multiple files in the
+  // package; we want to list each importer once. Same scrollable
+  // list rendering the file card uses.
+  const importerSet = new Set()
+  for (const n of filesInPkg) {
+    for (const f of (graph.importedBy.get(n.file) ?? [])) {
+      const importerNode = graph.nodeByFile.get(f)
+      if (importerNode && importerNode.pkg !== pkg) importerSet.add(f)
+    }
+  }
+  html += renderFileList(graph, 'Imported by', [...importerSet])
   html += '</div>'
   return html
 }
