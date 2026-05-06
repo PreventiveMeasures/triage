@@ -268,28 +268,26 @@ export function layoutSpiral(graph, w, h) {
   }
   for (let i = 0; i < Nothers; i++) {
     const pkg = others[i]
-    // Angle: golden-angle stepped, so adjacent indices land
-    // at maximally distinct angles regardless of how the
-    // cross-deg sort reorders things. This is the spiral's
-    // arm-creating mechanism.
+    // Vogel spiral — golden angle for the angular step,
+    // sqrt(i/(N-1)) for the radial step. This is the classic
+    // sunflower-seed packing: it gives uniform density per
+    // unit area (the area at radius r grows like 2πr, and
+    // sqrt-radius produces dN/dArea = N/π = constant), so
+    // packages spread evenly across the canvas instead of
+    // crowding the inner ring the way a linear ramp did.
+    //
+    // Cross-deg sort still feeds the loop: i=0 (most cross-
+    // connected) at band=0 (innermost), i=N-1 (least) at
+    // band=1 (rim). Mapping is monotonic, so a "very coupled"
+    // package always reads as inner and a leaf reads as outer.
+    //
+    // No hash jitter — golden-angle steps already give
+    // adjacent indices wildly different angles, and the
+    // sqrt-radius spreads adjacent ranks far enough apart on
+    // the inner rings that the spiral reads as textured
+    // without any added noise.
     const angle = ((i * 137.508) % 360) * Math.PI / 180
-    // Radius: linear ramp i/(Nothers-1) so the cross-deg
-    // sort ACTUALLY produces monotonic radius — most-coupled
-    // at the inner edge, least-coupled at the rim. The
-    // design's `(i * 31) % 100 / 100` walk was abandoned
-    // because it cycles every 100 indices, so packages at
-    // i=0, 100, 200, … all land at band=0 regardless of how
-    // few cross-package edges they actually have. With
-    // golden-angle steps for the angle, the linear radius
-    // produces an Archimedean spiral; the small hash-based
-    // jitter (±0.04 of the band range) breaks the perfect
-    // curve into a softly-textured spiral without inverting
-    // the rank order at scale (a #2 can't end up outside
-    // a #200, only adjacent pairs can swap).
-    const drift = Nothers <= 1 ? 0 : i / (Nothers - 1)
-    const seed = hash(pkg)
-    const jitter = ((seed % 1000) / 1000 - 0.5) * 0.08
-    const band = Math.max(0, Math.min(1, drift + jitter))
+    const band = Nothers <= 1 ? 0 : Math.sqrt(i / (Nothers - 1))
     const rUnit = Nothers === 1 ? 0 : minRUnit + band * (maxRUnit - minRUnit)
     const size = graph.pkgCount.get(pkg) ?? 0
     const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
