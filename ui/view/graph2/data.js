@@ -144,21 +144,31 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
 //             ceil(N/4)). Mirrors the v2 design's "ambassador"
 //             concept; reads well when packages have a clear
 //             internal lead.
-//   'cross' — any file that's imported from a different package.
-//             Picks out the public surface — often the cleaner
-//             read on microservice-style codebases where each
-//             package has a small handful of entry points.
+//   'cross' — any file that's imported from a different package
+//             OR not imported by anything at all (= not imported
+//             from within its own package, since the cross case
+//             is already covered). Picks out package entry
+//             points: the public surface plus root files like
+//             CLI mains that no internal file pulls in.
 export function assignHubs(graph, mode) {
   for (const n of graph.nodes) n.isHub = false
   if (mode === 'cross') {
-    // Walk edges; for each cross-package edge, mark whichever
-    // endpoint is the import target as a hub. The edge stores
-    // direction via fromLo / fromHi: if fromLo is true the lo
-    // file imports hi (hi is the target), and vice versa.
+    // First pass: any file with an incoming cross-package edge.
+    // The edge stores direction via fromLo / fromHi: if fromLo is
+    // true the lo file imports hi (hi is the target), and vice
+    // versa.
     for (const e of graph.edges) {
       if (!e.cross) continue
       if (e.fromLo) graph.nodeByFile.get(e.b).isHub = true
       if (e.fromHi) graph.nodeByFile.get(e.a).isHub = true
+    }
+    // Second pass: roots — files not imported by anyone. The
+    // importedBy map is keyed only for files that have at least
+    // one importer (built in buildGraph above), so a missing or
+    // empty list means the file is a root.
+    for (const n of graph.nodes) {
+      const importers = graph.importedBy.get(n.file)
+      if (!importers || importers.length === 0) n.isHub = true
     }
     return
   }
