@@ -475,14 +475,23 @@ function renderDistribution(graph) {
     issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + count)
     totalIssues += count
   }
-  // The dist BAR always shows file-count proportions (preserves
-  // the "share of codebase" reading regardless of which tab is
-  // active — the bar is a stable spatial reference for "how the
-  // codebase splits up", not a re-sortable listing).
+  // The dist BAR follows the active tab so the segment widths
+  // line up with the percentages in the list rows below. On
+  // Files: width = pkg's file share. On Issues (with the
+  // severity filter applied if any): width = pkg's share of
+  // the visible issue total. Packages with 0 in the chosen
+  // axis collapse to zero-width segments.
   let html = '<div class="g2-dist-bar">'
   for (const pkg of graph.packages) {
     const c = pkgColor(pkg)
-    const w = (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
+    let w
+    if (tab === 'issues') {
+      w = totalIssues > 0
+        ? ((issueByPkg.get(pkg) ?? 0) / totalIssues * 100).toFixed(2)
+        : '0'
+    } else {
+      w = (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
+    }
     html += `<span style="background:${c}; width:${w}%"></span>`
   }
   html += '</div>'
