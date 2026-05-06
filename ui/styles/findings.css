@@ -228,10 +228,67 @@
 }
 
 /* ── Table view ─────────────────────────────────────────────────────
-   .finding-table is the single glass wrapper around all rows; rows
-   themselves are transparent and separated only by a border-bottom,
-   so the list reads as one continuous panel rather than a strip of
-   detached cards. */
+   When a row is selected, the table view splits into a list column
+   on the left and a sticky details panel on the right (3 fr : 2 fr,
+   capped at 1200 px : 800 px). When nothing is selected, the list
+   takes the full width. The details panel renders the same per-
+   finding card the list view uses (renderGroup) so the body content
+   reads consistently across the two view modes. */
+.findings-table-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+.findings-table-layout.open {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  /* No own max-width — the parent .findings-content.with-details
+     already caps at 2000 px (1200 list + 800 panel). */
+}
+.findings-table-list { min-width: 0; }
+.findings-table-list .finding-table { max-width: 1200px; }
+.findings-table-details {
+  position: sticky;
+  /* Sits 1rem from the top of the viewport when the user scrolls
+     past it; nothing above is sticky, so a small offset is enough. */
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  max-width: 800px;
+  /* The close button sits absolute inside this aside; padding-top
+     accounts for it so the rendered card doesn't tuck under it. */
+  padding-top: .25rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+.findings-table-details-close {
+  position: absolute;
+  top: .25rem;
+  right: .25rem;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  font: 600 14px/1 ui-monospace, monospace;
+
+  &:hover { color: var(--accent); border-color: var(--accent); }
+}
+/* Selected row highlight — outline so it doesn't fight the marker /
+   critical / mark-color backgrounds, just adds an accent rim. */
+.finding-row.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .finding-table {
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: 6px;
@@ -320,22 +377,10 @@
     & .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
   }
 
-  /* Expanded body — toggled by the click handler in events.js. Hidden
-     by default; .expanded reveals the full description, recommendation,
-     and conf-reason. white-space: pre-line preserves paragraph breaks
-     in markdown findings (same rule used by the list-view .desc). */
-  & .expanded-content {
-    display: none;
-    margin-top: .25rem;
-    padding-top: .35rem;
-    border-top: 1px solid var(--border);
-
-    & .desc { white-space: pre-line; font-size: .8rem; }
-    & .recommendation { color: var(--green); font-size: .8rem; margin-top: .35rem; white-space: pre-line; }
-    & .conf-reason { color: var(--muted); font-size: .75rem; margin-top: .25rem; white-space: pre-line; }
-    & .discovered-in { color: var(--muted); font-size: .7rem; margin-top: .25rem; font-style: italic; }
-  }
-  &.expanded .expanded-content { display: block; }
+  /* Selected-row body content moved out to the side details panel
+     (.findings-table-details renders renderGroup) — the inline
+     .expanded-content section the table row used to carry is gone
+     along with the .expanded toggle. */
 }
 
 .finding-left {

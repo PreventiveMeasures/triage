@@ -22,8 +22,13 @@
    viewport widths. Left-aligned (no auto margin) so the
    page reads top-down with the chrome above going full-width
    and the list anchored to the left, leaving the right side
-   empty at wide viewports. */
+   empty at wide viewports.
+
+   `.with-details` is added by render.js when the table view's
+   details panel is open: the wrapper grows to fit the 3 fr +
+   2 fr split (1200 list + 800 panel = 2000 max). */
 .findings-content { max-width: 1200px; }
+.findings-content.with-details { max-width: 2000px; }
 
 /* Top-level view switcher — Findings / Tree / Files. Only rendered
    when the report has a tree block with more than one file (single-file

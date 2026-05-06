@@ -191,13 +191,14 @@ export function renderGroup(g) {
 //   │  badge   │  title (first line, ellipsis)  type  │
 //   │  conf?   │  file:line               actions     │
 //   │          │  tab strip (multi-tab only)          │
-//   │          │  full description (when expanded)    │
 //   └──────────┴──────────────────────────────────────┘
 // The left column is fixed-width so badges line up across rows; when
 // confidence is absent the badge centers vertically against the body.
-// Click anywhere outside a button / link toggles `.expanded` and
-// reveals the description / recommendation / conf-reason. Never
-// grouped by file — the file:line lives in the row's meta line.
+// Click anywhere outside a button / link selects the row; the full
+// description / recommendation / conf-reason render in the
+// side-by-side details panel (see findingsBodyHtml in render.js).
+// Never grouped by file — the file:line lives in the row's meta
+// line.
 export function renderTableRow(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
@@ -210,6 +211,7 @@ export function renderTableRow(g) {
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
   if (state.showDeleted) classes.push('deleted')
   const gid = groupKey(g)
+  if (state.tableSelectedGid === gid) classes.push('selected')
   const f = active
 
   const title = firstLine(stripExportMarker(f.description, f.exportName))
@@ -232,9 +234,9 @@ export function renderTableRow(g) {
   }
   html += '</div>'
 
-  // Right column: title row, meta row, optional tab strip, optional
-  // expanded body. All rendered inside a flex column so they stack
-  // with consistent gaps regardless of which optional sections appear.
+  // Right column: title row, meta row, optional tab strip. All
+  // rendered inside a flex column so they stack with consistent
+  // gaps regardless of which optional sections appear.
   html += '<div class="row-body">'
   html += '<div class="title-row">'
   html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
@@ -251,16 +253,6 @@ export function renderTableRow(g) {
     for (const tabF of sortedTabs) html += renderTab(tabF, tabKey(tabF) === activeKey)
     html += '</div></div>'
   }
-  // Expanded section — hidden until the row carries `.expanded`.
-  // Mirrors the list view's per-tab body content (full description,
-  // recommendation, conf-reason, discoveredIn note) minus the badge
-  // and confidence which the score column already shows.
-  html += '<div class="expanded-content">'
-  html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
-  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
-  if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
-  if (f.discoveredIn) html += `<div class="discovered-in">found analyzing ${esc(f.discoveredIn)}</div>`
-  html += '</div>'
   html += '</div>'  // /row-body
   html += '</div>'  // /finding-row
   return html

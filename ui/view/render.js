@@ -1,7 +1,7 @@
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
 import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
-import { tabKey, primaryTab, activeTabFor, isGroupDeleted } from './group.js'
+import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { renderGroup, renderTableRow } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
@@ -370,8 +370,28 @@ function findingsBodyHtml(filtered) {
       })
       : filtered
     if (items.length === 0) return html
-    html += '<div class="finding-table">'
+    // Find the selected group, if any. Re-validate against the
+    // current filtered set so a stale gid (filter or sort changed,
+    // showDeleted flipped) doesn't open the details panel against
+    // a row no longer rendered.
+    const selectedGroup = state.tableSelectedGid
+      ? items.find((g) => groupKey(g) === state.tableSelectedGid)
+      : null
+    // Two-column layout when a row is selected: list on the left
+    // (3 fr, capped at 1200px), details panel on the right (2 fr,
+    // capped at 800px). When no row is selected, the list takes
+    // the full width by collapsing the wrapper to single-column.
+    const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
+    html += `<div class="${layoutClass}">`
+    html += '<div class="findings-table-list"><div class="finding-table">'
     for (const g of items) html += renderTableRow(g)
+    html += '</div></div>'
+    if (selectedGroup) {
+      html += '<aside class="findings-table-details" id="findings-table-details">'
+      html += '<button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>'
+      html += renderGroup(selectedGroup)
+      html += '</aside>'
+    }
     html += '</div>'
     return html
   }
@@ -570,7 +590,16 @@ export function render() {
   // bar full-bleed and the finding list anchored against the
   // sidebar edge with empty space to the right at wide
   // viewports.
-  html += '<div class="findings-content">'
+  //
+  // When the table view has its details panel open, the wrapper
+  // expands to accommodate both the 1200px list + the 800px
+  // details panel side-by-side (max 2000px). The .with-details
+  // modifier flips the cap; CSS handles the rest.
+  const tableWithDetails =
+    state.viewMode === 'table' &&
+    state.tableSelectedGid &&
+    filtered.some((g) => groupKey(g) === state.tableSelectedGid)
+  html += `<div class="findings-content${tableWithDetails ? ' with-details' : ''}">`
   html += statsHtml(counts, colorCounts)
   html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
     showSource: hasAnyModulesPath,

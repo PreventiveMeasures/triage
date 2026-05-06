@@ -290,15 +290,24 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Table-view row click — expand / collapse the full description block.
-  // Has to come AFTER all the .tab / .mark-* / link handlers so a
-  // click on those still does its specific thing without also toggling
-  // expansion. The closest('a, button, label') guard is belt-and-
-  // suspenders for clicks that fall through (e.g. the row's own .marks
-  // wrapper area between buttons).
+  // Table-view details panel close button — clears selection and
+  // re-renders so the list expands back to full width.
+  if (e.target.closest('[data-table-deselect]')) {
+    state.tableSelectedGid = null
+    render()
+    return
+  }
+  // Table-view row click — select the row so the side details panel
+  // shows its contents. Re-clicking the same row deselects (closes
+  // the panel). Has to come AFTER all the .tab / .mark-* / link
+  // handlers so a click on those still does its specific thing
+  // without also flipping selection. The closest('a, button, label')
+  // guard is belt-and-suspenders for clicks that fall through.
   const rowEl = e.target.closest('.finding-row')
   if (rowEl && !e.target.closest('a, button, label')) {
-    rowEl.classList.toggle('expanded')
+    const gid = rowEl.dataset.gid
+    state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
+    render()
     return
   }
 })

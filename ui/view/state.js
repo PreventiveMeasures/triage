@@ -81,4 +81,9 @@ export const state = {
   // when absent or when the stored tab no longer exists. Session-only;
   // NOT persisted (it's a pure UI focus state, not triage).
   activeTabByGroup: new Map(),
+  // Table view: gid of the currently-selected row. Null when no row
+  // is selected (the details panel is hidden and the list takes the
+  // full width). Set by clicking a row in the table view; cleared by
+  // re-clicking the same row.
+  tableSelectedGid: null,
 }
