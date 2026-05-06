@@ -248,3 +248,25 @@ export function layoutSpiral(graph, w, h) {
   placeFilesInDisk(graph, pkgInfo)
 }
 
+// File-level Vogel sunflower — used by the package-focus mode
+// when the package is too large for graph v1's force-directed
+// solver to finish in interactive time (>50 files). Treats each
+// file as its own seed in a sunflower spiral: golden-angle
+// steps + sqrt-radius growth, sorted by intra-package degree
+// desc so hubs land near the center and leaves drift to the
+// rim. Same per-area uniform density argument as layoutSpiral,
+// just operating on individual files instead of packages.
+export function layoutFilesVogel(graph, w, h) {
+  const cx = w / 2, cy = h / 2
+  const unitToPx = Math.min(w, h) / 2
+  const N = graph.nodes.length
+  if (N === 0) return
+  const sorted = [...graph.nodes].sort((a, b) => b.deg - a.deg)
+  for (let i = 0; i < N; i++) {
+    const n = sorted[i]
+    const angle = ((i * 137.508) % 360) * Math.PI / 180
+    const band = N <= 1 ? 0 : Math.sqrt(i / (N - 1))
+    n.x = cx + Math.cos(angle) * band * 0.85 * unitToPx
+    n.y = cy + Math.sin(angle) * band * 0.85 * unitToPx
+  }
+}

@@ -1,5 +1,5 @@
 import { graph2 } from './state.js'
-import { layoutSpiral } from './layout.js'
+import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { forceLayout, pkgColor } from '../graph/utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
@@ -111,15 +111,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     } else {
       if (focused) {
         // Package-focus mode: graph v1's force-directed solver
-        // shines on a small, single-package subgraph (it's slow
-        // on big trees but fine on a few dozen files), and the
-        // result has the structural-cluster look the user
-        // expects from the v1 graph.
-        const sol = forceLayout(graph.files, graph.importsOf, layoutW, layoutH)
-        const idx = new Map(sol.map((s) => [s.file, s]))
-        for (const n of graph.nodes) {
-          const p = idx.get(n.file)
-          if (p) { n.x = p.x; n.y = p.y }
+        // shines on small subgraphs (a few dozen files) and
+        // gives the structural-cluster look the user expects
+        // from v1, but it's O(N²) per iteration and locks up
+        // the UI on packages with hundreds of files. Switch to
+        // a file-level Vogel sunflower past 50 files — instant,
+        // visually consistent with the spiral view, hubs still
+        // land at center via the degree-desc sort.
+        if (graph.nodes.length > 50) {
+          layoutFilesVogel(graph, layoutW, layoutH)
+        } else {
+          const sol = forceLayout(graph.files, graph.importsOf, layoutW, layoutH)
+          const idx = new Map(sol.map((s) => [s.file, s]))
+          for (const n of graph.nodes) {
+            const p = idx.get(n.file)
+            if (p) { n.x = p.x; n.y = p.y }
+          }
         }
       } else {
         layoutSpiral(graph, layoutW, layoutH)
