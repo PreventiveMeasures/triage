@@ -10,14 +10,19 @@
 //     track div instead of an absolutely-positioned `.range` div
 //     resized via `--low` / `--high` CSS vars (one fewer element,
 //     no overlap fights with the inputs).
-//   * Crossing thumbs CLAMP rather than swap. The old impl sorted
-//     values on every input and re-pointed the inputs, which felt
-//     unpredictable (the thumb you grab can suddenly become the
-//     other thumb mid-drag). Clamping pins the dragged thumb at
-//     its companion's value — same constraint, more intuitive.
-//   * Two events: `input` (continuous, fires during drag — host
-//     can choose to ignore for filter heaviness reasons) and
-//     `change` (final, fires on release). Both carry
+//   * Crossing thumbs SWAP roles cleanly: when the user drags the
+//     low thumb past the high thumb (or vice versa), the dragged
+//     thumb keeps following the cursor and now represents the
+//     opposite end of the range. `low` / `high` are derived as
+//     `min` / `max` of the two raw inputs, so the visual track
+//     and the property values stay consistent regardless of which
+//     native `<input>` element holds which logical value. The
+//     inputs are uncontrolled (no reactive `.value=` binding) so
+//     a re-render mid-drag doesn't yank the dragged thumb back to
+//     a sorted slot.
+//   * Two events: `range-input` (continuous, fires during drag —
+//     host can choose to ignore for filter heaviness reasons) and
+//     `range-change` (final, fires on release). Both carry
 //     `{ low, high }` in `event.detail` and bubble + compose so
 //     the host can listen on a parent without piercing the shadow.
 //   * `step` is honored end-to-end (forwarded to both inputs).
@@ -143,30 +148,60 @@ class RangeSlider extends LitElement {
     const span = (this.max - this.min) || 1
     const lowPct = ((this.low - this.min) / span) * 100
     const highPct = ((this.high - this.min) / span) * 100
+    // `.value=` is intentionally NOT bound on the inputs — they're
+    // uncontrolled so a re-render triggered mid-drag (e.g. by our own
+    // _onInput updating `low` / `high`) doesn't reassign their values
+    // and yank the thumb the user is holding. `firstUpdated` seeds
+    // the initial values; `updated` syncs only when external code
+    // changes `low` / `high`.
     return html`<div class="track-wrap" style=${`--low:${lowPct}%;--high:${highPct}%`}>
       <div class="track"></div>
       <input type="range" min=${this.min} max=${this.max} step=${this.step}
-        .value=${String(this.low)}
-        @input=${this._onLowInput}
+        @input=${this._onInput}
         @change=${this._onChange}>
       <input type="range" min=${this.min} max=${this.max} step=${this.step}
-        .value=${String(this.high)}
-        @input=${this._onHighInput}
+        @input=${this._onInput}
         @change=${this._onChange}>
     </div>`
   }
 
-  _onLowInput = (e) => {
-    let v = Number(e.target.value)
-    if (v > this.high) v = this.high
-    this.low = v
-    this._emit('range-input')
+  firstUpdated() {
+    this._inputs = [...this.renderRoot.querySelectorAll('input[type="range"]')]
+    this._inputs[0].value = this.low
+    this._inputs[1].value = this.high
   }
 
-  _onHighInput = (e) => {
-    let v = Number(e.target.value)
-    if (v < this.low) v = this.low
-    this.high = v
+  // Sync inputs to current `low` / `high` only when an external update
+  // changed them. Mid-drag, our own `_onInput` derives `low` / `high`
+  // from the inputs (so the inputs already match) and the diff guards
+  // below short-circuit. The `inverted` check keeps the dragged thumb
+  // in place when the slider is in a swapped state — programmatically
+  // setting `low = 4` on a swapped slider writes to whichever input
+  // currently represents the lower value, leaving the other where the
+  // user dropped it.
+  updated(changed) {
+    if (!this._inputs) return
+    if (!(changed.has('low') || changed.has('high'))) return
+    const cur = this._inputs.map((x) => Number(x.value))
+    const inverted = cur[0] > cur[1]
+    const lowIdx = inverted ? 1 : 0
+    const highIdx = inverted ? 0 : 1
+    if (this.low !== cur[lowIdx]) this._inputs[lowIdx].value = this.low
+    if (this.high !== cur[highIdx]) this._inputs[highIdx].value = this.high
+  }
+
+  // Both raw input values are sources of truth during drag. Recompute
+  // `low` / `high` by sorting (min / max) so the thumb that crosses
+  // its companion swaps roles naturally — the dragged thumb stays
+  // under the user's cursor and now represents the opposite end of
+  // the range. Lit's reactive update on `low` / `high` triggers a
+  // re-render that updates the gradient track but leaves the inputs
+  // alone (see render() comment).
+  _onInput = () => {
+    const a = Number(this._inputs[0].value)
+    const b = Number(this._inputs[1].value)
+    this.low = Math.min(a, b)
+    this.high = Math.max(a, b)
     this._emit('range-input')
   }
 

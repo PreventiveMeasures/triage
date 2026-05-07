@@ -411,6 +411,17 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
+  // View mode leads the row — three icon buttons (table / list /
+  // grouped) immediately followed by the Sort dropdown with no
+  // separator between them; the two together read as one
+  // "presentation" group at the left edge of the toolbar.
+  html += `<span class="view-mode-label">View:</span>`
+  html += '<div class="view-mode-group" role="group" aria-label="View mode">'
+  for (const mode of ['table', 'list', 'grouped']) {
+    const active = state.viewMode === mode ? ' active' : ''
+    html += `<button type="button" class="view-mode-btn${active}" data-view-mode="${mode}" title="${esc(VIEW_TITLES[mode])}" aria-label="${esc(VIEW_TITLES[mode])}" aria-pressed="${state.viewMode === mode}">${VIEW_ICONS[mode]}</button>`
+  }
+  html += '</div>'
   // Sort dropdown — bare select (no `Sort:` label preceding it). The
   // selected option's text already advertises what it sorts by, plus
   // a `↓` / `↑` arrow showing direction, so the label was redundant
@@ -462,20 +473,6 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
     html += `<range-slider id="conf-range" min="0" max="10" step="1" low="${state.filterConfMin}" high="${state.filterConfMax}" aria-label="Confidence range"></range-slider>`
     html += `<span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>`
   }
-  html += `<div class="sep"></div>`
-  // View mode — three icon buttons replacing the previous
-  // dropdown + group-by-file checkbox combo. 'grouped' rolls in what
-  // used to be `list + groupByFile=true`. Click handler in events.js
-  // matches `[data-view-mode]`. Metadata checkbox stays scoped to the
-  // card-based views (list / grouped) — table view doesn't render
-  // .hashes anywhere so the toggle has nothing to act on there.
-  html += `<span class="view-mode-label">View:</span>`
-  html += '<div class="view-mode-group" role="group" aria-label="View mode">'
-  for (const mode of ['table', 'list', 'grouped']) {
-    const active = state.viewMode === mode ? ' active' : ''
-    html += `<button type="button" class="view-mode-btn${active}" data-view-mode="${mode}" title="${esc(VIEW_TITLES[mode])}" aria-label="${esc(VIEW_TITLES[mode])}" aria-pressed="${state.viewMode === mode}">${VIEW_ICONS[mode]}</button>`
-  }
-  html += '</div>'
   // Trash toggle only shows when there's something to toggle: either
   // findings are already deleted (count > 0) or the user is currently
   // viewing the trash (showDeleted=true) and needs a way back. Empty
