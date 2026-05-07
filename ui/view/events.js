@@ -218,24 +218,6 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Mark-dot: color applies to the ACTIVE tab only (per spec rule 4).
-  // This may change tab sort order (colored tabs come first), so a full
-  // re-render is necessary — we can't just flip classes in place.
-  const dot = pathClosest(e, '.mark-dot')
-  if (dot) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl.dataset.gid
-    const group = findGroupById(gid)
-    if (!group) return
-    const activeKey = tabKey(activeTabFor(group))
-    const color = dot.dataset.color
-    const current = state.markers.get(activeKey)
-    if (current === color) state.markers.delete(activeKey)
-    else state.markers.set(activeKey, color)
-    saveTriage()
-    render()
-    return
-  }
   // Delete-x: soft-delete (moved to trash, not discarded).
   //   - No color conflict → delete the whole group (spec rule 4 exception).
   //   - Color conflict     → per-tab delete (spec rule 4 general case).
@@ -330,6 +312,27 @@ report.addEventListener('row-select', (e) => {
   const gid = e.detail?.gid
   if (!gid) return
   state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
+  render()
+})
+
+// mark-color fires from `<color-marker>` (composed:true) when one of
+// its dots is clicked. Color applies to the ACTIVE tab only (per
+// spec rule 4); clicking the currently-marked color toggles it off.
+// This may change tab sort order (colored tabs come first), so a
+// full re-render is necessary — we can't just flip classes in place.
+report.addEventListener('mark-color', (e) => {
+  const findingEl = pathClosest(e, '[data-gid]')
+  if (!findingEl) return
+  const gid = findingEl.dataset.gid
+  const group = findGroupById(gid)
+  if (!group) return
+  const activeKey = tabKey(activeTabFor(group))
+  const color = e.detail?.color
+  if (!color) return
+  const current = state.markers.get(activeKey)
+  if (current === color) state.markers.delete(activeKey)
+  else state.markers.set(activeKey, color)
+  saveTriage()
   render()
 })
 

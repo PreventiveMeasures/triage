@@ -72,26 +72,24 @@ function commitLinkTemplate(githubRepo, hash) {
   return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
 }
 
-// Action buttons (color dots + ×/restore) shared by both the list-view
-// .finding card and the table-view .finding-row. The styling is
-// hoisted out of any container scope so the same markup works inside
-// both finding-row.css and finding-card.css.
+// Action buttons — `<color-marker>` (the 4-dot color picker) plus
+// either the delete `×` or the trash-mode `restore` button. The
+// dots themselves live in their own component (see view/color-marker.js)
+// so finding-row / finding-card don't carry duplicate `.mark-dot`
+// styling. Click on a dot bubbles up as a composed `mark-color`
+// event with `{ detail: { color } }` — events.js's delegate on
+// `report` resolves the gid via the same `[data-gid]` walk used for
+// the other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
-  const activeColor = state.markers.get(activeKey)
-  const dots = ['red', 'blue', 'green', 'gray'].map((color) => {
-    const cls = `mark-dot mark-dot-${color}${activeColor === color ? ' active' : ''}`
-    const dotTitle = sortedTabs.length > 1
-      ? `mark ${color} (applies to active tab)`
-      : `mark ${color} (click again to clear)`
-    return html`<button class=${cls} data-color=${color} title=${dotTitle}></button>`
-  })
+  const activeColor = state.markers.get(activeKey) ?? null
+  const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   if (state.showDeleted) {
-    return html`${dots}<button class="mark-restore" title="restore whole group">restore</button>`
+    return html`${picker}<button class="mark-restore" title="restore whole group">restore</button>`
   }
   const xTitle = groupSt.hasConflict
     ? 'delete active tab (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-  return html`${dots}<button class="mark-x" title=${xTitle}>×</button>`
+  return html`${picker}<button class="mark-x" title=${xTitle}>×</button>`
 }
 
 // One tab button. Carries severity badge + (optional) confidence,

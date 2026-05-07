@@ -12,6 +12,7 @@ import './view/events.js'
 import './view/theme.js'
 import './view/finding-table.js'
 import './view/finding-card.js'
+import './view/color-marker.js'
 
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file

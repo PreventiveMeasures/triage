@@ -3,13 +3,12 @@
    host by finding-row.js) drive the row-level backgrounds and
    outline. The grid layout and the score / body / tabs sub-cells
    live here; the row-internal building blocks (`.badge`, `.tab`,
-   `.mark-dot`, `.mark-x`, `.mark-restore`, `.line-num`) are
-   duplicated from styles/findings.css so the inner HTML produced by
-   render-finding.js renders without leaking into or relying on the
-   global stylesheet. The originals stay in findings.css because the
-   list / grouped views (still light DOM) use them too. CSS variables
-   (--surface, --border, --text, etc.) inherit through the shadow
-   boundary so theme switching keeps working. */
+   `.mark-x`, `.mark-restore`, `.line-num`) are inlined here so the
+   shadow root is self-contained. The mark-dot color picker lives in
+   its own component (see view/color-marker.js); this file no longer
+   needs the `.mark-dot` rules. CSS variables (--surface, --border,
+   --text, etc.) inherit through the shadow boundary so theme
+   switching keeps working. */
 
 /* Visible chrome (grid layout, padding, border, backgrounds, hover /
    selected outlines) lives on a shadow-DOM `.row` wrapper rather than
@@ -161,19 +160,6 @@
   &.tab-mark-blue .tab-conf,
   &.tab-mark-green .tab-conf,
   &.tab-mark-gray .tab-conf { color: var(--text); }
-}
-
-.mark-dot {
-  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
-  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
-
-  &:hover { opacity: 1; transform: scale(1.15); }
-  &.active { opacity: 1; border-color: var(--text); }
-
-  &.mark-dot-red   { background: #6b1820; }
-  &.mark-dot-blue  { background: #1a2f5a; }
-  &.mark-dot-green { background: #1a4a2a; }
-  &.mark-dot-gray  { background: #2a2f37; }
 }
 
 .mark-x {

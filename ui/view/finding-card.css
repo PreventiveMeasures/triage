@@ -160,19 +160,6 @@
   &.tab-mark-gray .tab-conf { color: var(--text); }
 }
 
-.mark-dot {
-  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
-  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
-
-  &:hover { opacity: 1; transform: scale(1.15); }
-  &.active { opacity: 1; border-color: var(--text); }
-
-  &.mark-dot-red   { background: #6b1820; }
-  &.mark-dot-blue  { background: #1a2f5a; }
-  &.mark-dot-green { background: #1a4a2a; }
-  &.mark-dot-gray  { background: #2a2f37; }
-}
-
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
