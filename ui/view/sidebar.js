@@ -60,23 +60,26 @@ function displayName(name) {
 }
 
 // Inline `<svg>` for the file-row icon. Outline file-page glyph at
-// 14px to match the chrome's other icon buttons. Source-marked
-// groups paint the upstream's official mark (Anthropic "A" for
-// Claude Security, OpenAI bloom for Codex Security, Vercel triangle
-// for DeepSec) centered in the lower body of the sheet, fitting
-// inside the page outline below the folded corner. Brand fills are
-// themed via the `.brand-claude` / `.brand-codex` / `.brand-vercel`
-// classes in sidebar.css. The default JSON bucket keeps the plain
-// outline. Path coordinates have been baked through svgo, so the
-// brand glyphs land at their final positions without runtime
-// transforms. Re-baked into each row's HTML rather than referenced
-// by id so a single `innerHTML` write paints the whole list.
+// 14px to match the chrome's other icon buttons. The default JSON
+// bucket renders the plain outline. Source-marked groups switch to
+// a filled "sticker" treatment: the sheet body fills with the
+// upstream's brand color (Claude salmon, OpenAI white, Vercel
+// black), a translucent black triangle in the corner reads as a
+// folded-over flap, and the official mark sits centered in the
+// foreground color. Bg / fg fills are themed via the
+// `.brand-claude` / `.brand-codex` / `.brand-vercel` classes on the
+// SVG root in sidebar.css; path coordinates have been baked through
+// svgo so the brand glyphs land at their final positions without
+// runtime transforms. Re-baked into each row's HTML rather than
+// referenced by id so a single `innerHTML` write paints the whole
+// list.
 const FILE_OUTLINE = '<g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2h6l4 4v8H3z"/><path d="M9 2v4h4"/></g>'
+const STICKER_BASE = '<path class="bg" d="M3 2h6l4 4v8H3z"/><path fill="rgba(0,0,0,.18)" d="M9 2v4h4Z"/>'
 const FILE_ICONS = {
   'default': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}</svg>`,
-  'claude-security': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-claude" d="M9.548 7.533H8.476l1.954 4.935h1.07Zm-3.095 0L4.5 12.468h1.092l.4-1.037h2.043l.4 1.037h1.092L7.573 7.533Zm-.108 2.982.668-1.734.669 1.734Z"/></svg>`,
-  'codex-security': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-codex" d="M11.04 9.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V9.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0l-1.428-.813a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125-1.724-.988.596-.339a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436v-1.656a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zm-3.738 1.206-.597-.34a.02.02 0 0 1-.012-.016V8.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z"/></svg>`,
-  'deepseek': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-vercel" d="m8 6.97 3.5 6.062h-7Z"/></svg>`,
+  'claude-security': `<svg class="file-icon brand-claude" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m5.875 10.154 1.376-.772.023-.067-.023-.037h-.067l-.23-.015-.787-.02-.681-.03-.661-.035-.166-.035-.156-.205.016-.103.14-.094.2.018.442.03.665.046.481.028.714.075h.113l.016-.047-.039-.028-.03-.028-.687-.466-.744-.492-.39-.284-.21-.143-.106-.135-.046-.294.19-.21.258.017.065.018.26.2.557.43.726.535.106.089.042-.03.006-.022-.048-.08-.395-.713-.422-.726-.187-.301-.05-.18a1 1 0 0 1-.03-.213l.218-.296.12-.039.29.039.123.106.18.413.293.65.453.884.133.262.07.242.027.075h.046v-.043l.038-.497.069-.611.067-.787.023-.221.11-.266.218-.143.17.081.14.2-.02.13-.083.54-.163.846-.106.567h.062l.07-.07.287-.382.482-.602.213-.239.248-.264.159-.125h.301l.221.329-.099.34-.31.393-.256.333-.369.496-.23.397.021.032.055-.006.832-.177.45-.081.537-.092.243.113.026.115-.096.236-.573.141-.673.135-1.003.237-.012.01.014.017.452.042.193.01h.473l.88.066.23.153.138.186-.023.141-.354.181-.478-.113-1.116-.266-.383-.096h-.053v.032l.32.312.584.528.731.68.037.168-.094.133-.099-.014-.643-.484-.248-.218-.561-.472H9.08v.05l.129.189.684 1.027.035.315-.05.103-.177.062-.194-.036-.4-.561-.413-.632-.333-.567-.041.023-.197 2.116-.092.108-.212.082-.177-.135-.094-.218.094-.43.113-.561.092-.447.083-.554.05-.184-.004-.013-.04.006-.418.574-.636.858-.503.539-.12.048-.21-.108.02-.193.117-.172.696-.886.42-.549.27-.317-.001-.046h-.016l-1.85 1.201-.328.042-.142-.132.018-.218.067-.071.556-.383Z"/></svg>`,
+  'codex-security': `<svg class="file-icon brand-codex" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="M11.04 8.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V8.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0L5.63 9.587a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125L8.327 7.94l.596-.34a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436V9.122a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zM6.908 9.252l-.597-.34a.02.02 0 0 1-.012-.016V7.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z"/></svg>`,
+  'deepseek': `<svg class="file-icon brand-vercel" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m8 5.97 3.5 6.062h-7Z"/></svg>`,
 }
 
 // Live module state — the search-box query, applied as a

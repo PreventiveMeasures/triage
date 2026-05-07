@@ -157,17 +157,16 @@
   & .file-icon {
     flex-shrink: 0; color: var(--muted);
 
-    /* Brand marks centered in the lower body of the file outline
-       (below the folded corner). Each fills with the upstream's
-       signature color so the user can spot a Claude / Codex /
-       DeepSec entry at a glance without reading the section
-       header. The colors match the brand palettes — Anthropic
-       salmon, OpenAI teal — and Vercel's triangle picks up
-       `var(--text)` so it inverts cleanly between dark and light
-       themes. */
-    & .brand-claude { fill: #d97757; }
-    & .brand-codex  { fill: #10a37f; }
-    & .brand-vercel { fill: var(--text); }
+    /* Branded "sticker" file icons — the sheet body fills with the
+       upstream's brand color and the official mark sits on top in a
+       contrasting foreground. Bg pairs are the brand palettes
+       (Claude salmon on white, OpenAI white on black, Vercel black
+       on white). The white and black sheets pick up a hairline
+       border in the contrasting color so neither blends into the
+       sidebar surface across themes. */
+    &.brand-claude { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+    &.brand-codex  { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+    &.brand-vercel { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
   }
   & .file-label {
     flex: 1; min-width: 0;
