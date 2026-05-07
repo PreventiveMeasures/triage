@@ -134,12 +134,17 @@ const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" he
 // the section header.
 const WORKSPACE_EXPORT_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>'
 function workspaceItemHtml(w, reportCount) {
-  const countHtml = reportCount > 0 ? `<span class="file-count">${reportCount}</span>` : ''
+  const countHtml = reportCount > 0 ? `<span class="file-count workspace-count">${reportCount}</span>` : ''
   // Per-workspace export button. `data-action="export-workspace"` is
   // dispatched by the sidebar click delegate and reads the parent
-  // li's data-workspace-id to find which workspace to bundle.
+  // li's data-workspace-id to find which workspace to bundle. The
+  // download button sits inside the main file-name button so it
+  // travels with the label, while the count chip lives outside as
+  // the rightmost element of the row — matching the chrome of the
+  // workspace section header (count on the right, action button to
+  // its left).
   const exportBtn = `<button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>`
-  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span>${countHtml}</button>${exportBtn}</li>`
+  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button>${exportBtn}${countHtml}</li>`
 }
 
 function matchesSearch(name) {

@@ -133,13 +133,16 @@
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
 }
 
-/* Per-workspace export button — flex sibling of the workspace's main
-   button. Hidden by default, revealed on row hover / focus so the
-   chrome stays clean when the user isn't aiming at it. */
+/* Workspace row layout: name (flex-fill) | hover-revealed export
+   button | count chip. The count chip is the rightmost element to
+   mirror the section-header layout and the per-file rows; the export
+   button sits to its left, hidden until the row is hovered or
+   keyboard-focused. */
 .file-item.workspace-item {
   display: flex; align-items: stretch; gap: .15rem;
 }
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
+.file-item.workspace-item .workspace-count { align-self: center; }
 
 .workspace-export {
   flex-shrink: 0;
