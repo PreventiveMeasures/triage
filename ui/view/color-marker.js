@@ -37,10 +37,10 @@ class ColorMarker extends LitElement {
     }
 
     button {
-      width: 1.35rem; height: 1.35rem;
+      width: .9rem; height: .9rem;
       padding: 0;
       background: transparent;
-      border: 2px solid currentColor;
+      border: 1.5px solid currentColor;
       border-radius: 50%;
       cursor: pointer;
       display: grid; place-items: center;
@@ -48,7 +48,7 @@ class ColorMarker extends LitElement {
     }
     button::before {
       content: '';
-      width: 60%; height: 60%;
+      width: 55%; height: 55%;
       border-radius: 50%;
       background: currentColor;
       transform: scale(0);
