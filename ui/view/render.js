@@ -8,6 +8,7 @@ import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/uti
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
+import { listWorkspaces } from './workspaces.js'
 import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock, renderFocusOverlay } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
@@ -297,7 +298,16 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
-  const titleText = singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings'
+  // Workspace mode wins over the source-based title — the user
+  // picked a named workspace, so the header should say so.
+  // Falls through to the source / generic title when the workspace
+  // can't be resolved (deleted between switch and render).
+  const ws = state.currentWorkspace
+    ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
+    : null
+  const titleText = ws
+    ? `Workspace ${ws.name}`
+    : (singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings')
 
   // File chip: single-file reports get the filename verbatim; merged
   // loads collapse to a count to keep the chip compact. The chip is
