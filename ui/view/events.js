@@ -8,6 +8,22 @@ import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } f
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
+// composedPath-aware variant of Element.closest — needed for clicks
+// that originate inside a shadow DOM (e.g. `<finding-table>`'s
+// `.tab` / `.mark-dot` / `.mark-x` / `.mark-restore` buttons). Native
+// click events bubble out composed:true, but `e.target` retargets to
+// the shadow host on the way up, so a plain `e.target.closest('.tab')`
+// from this delegate would miss the inner element. Walking
+// composedPath sees the original target. Returns the deepest matching
+// element, or null. Works equally for light-DOM clicks since the path
+// starts at the same node.
+function pathClosest(e, selector) {
+  for (const el of e.composedPath()) {
+    if (el?.matches?.(selector)) return el
+  }
+  return null
+}
+
 // All interactive elements inside #report are handled via event
 // delegation here, no inline handlers. Order matters: closer-fitting
 // selectors come first so a more specific match short-circuits before a
@@ -188,9 +204,14 @@ report.addEventListener('click', (e) => {
   }
   // Tab click — switch the active tab within a group. Re-render because
   // tab highlight + tab body visibility + marks row color all update.
-  const tabEl = e.target.closest('.tab')
-  if (tabEl && tabEl.closest('.tabs')) {
-    const findingEl = tabEl.closest('[data-gid]')
+  // pathClosest (rather than e.target.closest) so the lookup works for
+  // tabs rendered inside `<finding-table>`'s shadow DOM. Same applies
+  // to the mark-dot / mark-x / mark-restore handlers below; the `[data-gid]`
+  // ancestor is also resolved off the path because it's the
+  // `.finding-row` inside the same shadow tree.
+  const tabEl = pathClosest(e, '.tab')
+  if (tabEl && pathClosest(e, '.tabs')) {
+    const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const tid = tabEl.dataset.tid
     state.activeTabByGroup.set(gid, tid)
@@ -200,9 +221,9 @@ report.addEventListener('click', (e) => {
   // Mark-dot: color applies to the ACTIVE tab only (per spec rule 4).
   // This may change tab sort order (colored tabs come first), so a full
   // re-render is necessary — we can't just flip classes in place.
-  const dot = e.target.closest('.mark-dot')
+  const dot = pathClosest(e, '.mark-dot')
   if (dot) {
-    const findingEl = dot.closest('[data-gid]')
+    const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -219,9 +240,9 @@ report.addEventListener('click', (e) => {
   //   - No color conflict → delete the whole group (spec rule 4 exception).
   //   - Color conflict     → per-tab delete (spec rule 4 general case).
   // Markers are preserved so restore recovers the full prior state.
-  const xBtn = e.target.closest('.mark-x')
+  const xBtn = pathClosest(e, '.mark-x')
   if (xBtn) {
-    const findingEl = xBtn.closest('[data-gid]')
+    const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -238,9 +259,9 @@ report.addEventListener('click', (e) => {
   // Restore: per spec rule 5, applies to EVERY tab in the group — a
   // user in trash view clicking restore expects the whole entry back,
   // not just one member left behind.
-  const restoreBtn = e.target.closest('.mark-restore')
+  const restoreBtn = pathClosest(e, '.mark-restore')
   if (restoreBtn) {
-    const findingEl = restoreBtn.closest('[data-gid]')
+    const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
@@ -297,19 +318,19 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Table-view row click — select the row so the side details panel
-  // shows its contents. Re-clicking the same row deselects (closes
-  // the panel). Has to come AFTER all the .tab / .mark-* / link
-  // handlers so a click on those still does its specific thing
-  // without also flipping selection. The closest('a, button, label')
-  // guard is belt-and-suspenders for clicks that fall through.
-  const rowEl = e.target.closest('.finding-row')
-  if (rowEl && !e.target.closest('a, button, label')) {
-    const gid = rowEl.dataset.gid
-    state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
-    render()
-    return
-  }
+  // Table-view row click is no longer a delegate here; <finding-table>
+  // owns row selection and dispatches a `row-select` CustomEvent
+  // (handled below) on clicks that aren't on a button / link / label.
+})
+
+// row-select fires from inside `<finding-table>`'s shadow DOM with
+// composed:true, so it bubbles up to the report element. Re-clicking
+// the same row deselects (closes the side details panel).
+report.addEventListener('row-select', (e) => {
+  const gid = e.detail?.gid
+  if (!gid) return
+  state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
+  render()
 })
 
 // Print button — fixed top-right icon, lives OUTSIDE #report (see

@@ -206,7 +206,11 @@ export function renderGroup(g) {
 // side-by-side details panel (see findingsBodyHtml in render.js).
 // Never grouped by file — the file:line lives in the row's meta
 // line.
-export function renderTableRow(g) {
+export function renderTableRow(g, opts = {}) {
+  // selectedGid is passed in (rather than read from state) so the
+  // <finding-table> Lit component can drive selection through its
+  // own property instead of leaning on global state.
+  const selectedGid = opts.selectedGid ?? state.tableSelectedGid
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
   const active = activeTabFor(g)
@@ -218,7 +222,7 @@ export function renderTableRow(g) {
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
   if (state.showDeleted) classes.push('deleted')
   const gid = groupKey(g)
-  if (state.tableSelectedGid === gid) classes.push('selected')
+  if (selectedGid === gid) classes.push('selected')
   const f = active
 
   const title = firstLine(stripExportMarker(f.description, f.exportName))

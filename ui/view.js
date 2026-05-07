@@ -10,6 +10,7 @@ import { renderSidebar } from './view/sidebar.js'
 import { switchToFile, LAST_FILE_KEY } from './view/ingest.js'
 import './view/events.js'
 import './view/theme.js'
+import './view/finding-table.js'
 
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file

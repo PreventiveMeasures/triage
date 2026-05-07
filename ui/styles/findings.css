@@ -275,7 +275,6 @@
      already caps at 2000 px (1200 list + 800 panel). */
 }
 .findings-table-list { min-width: 0; }
-.findings-table-list .finding-table { max-width: 1200px; }
 /* Details panel = its own glass card. Sticky so it follows the
    user as they scroll the list, with a header bar carrying the
    close button (instead of an absolute-positioned button that
@@ -342,106 +341,14 @@
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
-/* Selected row highlight — outline so it doesn't fight the marker /
-   critical / mark-color backgrounds, just adds an accent rim. */
-.finding-row.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.finding-table {
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
-  overflow: hidden;
-  box-shadow: var(--shadow-glass);
-  margin-bottom: 1rem;
-}
-
-/* One compact block per finding. Two-column grid: a fixed-width score
-   column (badge + optional confidence) on the left, body column on
-   the right. align-items: center centers the score column vertically
-   when conf is absent, so a lone badge sits in the middle of the row
-   instead of stuck at the top. */
-.finding-row {
-  display: grid;
-  grid-template-columns: 5.5rem 1fr;
-  gap: .2rem .85rem;
-  align-items: center;
-  padding: .25rem .7rem;
-  font-size: .8rem;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background .12s;
-
-  &:last-child { border-bottom: none; }
-  &:hover { background: rgb(from var(--text) r g b / .04); }
-
-  &.is-critical { background: var(--critical-bg); }
-  &.mark-red   { background: #6b1820; }
-  &.mark-blue  { background: #1a2f5a; }
-  &.mark-green { background: #1a4a2a; }
-  &.mark-gray  { background: #2a2f37; }
-  &.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
-  &.deleted { opacity: .75; }
-
-  /* Left column — fixed width keeps badges aligned across rows. The
-     badge gets a min-width so "low" doesn't render narrower than
-     "critical" (which would unalign the badge text within the
-     column). justify-content: center handles the vertical centering
-     when conf is missing. */
-  & .row-score {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    gap: .2rem;
-    font-variant-numeric: tabular-nums;
-
-    & .badge { min-width: 4.4rem; text-align: center; }
-    & .row-conf {
-      color: var(--muted); font-size: .72rem;
-      & strong { color: var(--text); font-size: .8rem; }
-    }
-  }
-
-  /* Right column — title / meta / tabs / expanded body stacked. */
-  & .row-body {
-    display: flex; flex-direction: column; gap: .2rem;
-    min-width: 0;  /* allow children's text-overflow:ellipsis to work */
-  }
-
-  & .title-row {
-    display: flex; align-items: baseline; gap: .5rem;
-    & .title {
-      flex: 1; min-width: 0;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      font-weight: 500;
-    }
-    & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
-  }
-
-  & .meta-row {
-    display: flex; align-items: center; gap: .55rem;
-    & .row-loc {
-      color: var(--muted); font-size: .72rem;
-      flex: 1; min-width: 0;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      & a { color: inherit; }
-      & a:hover { color: var(--accent); }
-    }
-    & .marks {
-      display: flex; gap: .35rem; align-items: center; flex-shrink: 0;
-      user-select: none;
-    }
-  }
-
-  & .tabs-row {
-    & .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
-  }
-
-  /* Selected-row body content moved out to the side details panel
-     (.findings-table-details renders renderGroup) — the inline
-     .expanded-content section the table row used to carry is gone
-     along with the .expanded toggle. */
-}
+/* `.finding-table`, `.finding-row` and its descendants
+   (`.row-score`, `.row-body`, `.title-row`, `.meta-row`, `.tabs-row`,
+   `.row-loc`, `.row-conf`, `.row-type`, `.title`, `.marks`) have moved
+   into `<finding-table>`'s shadow DOM (see view/finding-table.css).
+   Only the table view used those rules, so nothing in the global
+   stylesheet depends on them anymore. The `.tab` / `.mark-*` /
+   `.badge` rules below are intentionally kept here too — list /
+   grouped views are still light DOM and rely on them. */
 
 .finding-left {
   align-self: start; text-align: center; min-width: 4rem;

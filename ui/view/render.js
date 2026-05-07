@@ -3,7 +3,7 @@ import { dropZone, report } from './dom.js'
 import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
-import { renderGroup, renderTableRow } from './render-finding.js'
+import { renderGroup } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
@@ -350,19 +350,22 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
 // blocks, never grouped by file) or list view (per-finding cards,
 // optionally grouped by file). `applySorting` already ordered
 // `filtered` by sortBy.
+// Set by findingsBodyHtml's table branch and consumed by render()
+// after report.innerHTML lands; passes the sorted dedup-group list
+// to the <finding-table> custom element via property assignment so
+// item identity survives the trip.
+let pendingTableItems = null
+
 function findingsBodyHtml(filtered) {
   let html = ''
   if (state.viewMode === 'table') {
     // Table view is always flat. For 'file' sort we still want
     // line-within-file ordering to match the file-grouped layout's
     // intra-file order; applySorting only handles file→line for
-    // severity / confidence sorts. All rows live inside a single
-    // .finding-table glass wrapper — rows themselves are transparent
-    // with just a border-bottom separator, so the whole list reads
-    // as one continuous panel rather than a strip of detached cards.
-    // Skip the wrapper entirely when nothing matched: an empty
-    // .finding-table still paints its border + glass surface, which
-    // shows up as a thin panel under the "no findings match" message.
+    // severity / confidence sorts. Rows are owned by the
+    // <finding-table> Lit component (see view/finding-table.js); we
+    // stash the sorted list in pendingTableItems so render() can
+    // assign it as a property after innerHTML lands.
     const items = state.sortBy === 'file'
       ? [...filtered].sort((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
@@ -370,22 +373,20 @@ function findingsBodyHtml(filtered) {
       })
       : filtered
     if (items.length === 0) return html
-    // Find the selected group, if any. Re-validate against the
-    // current filtered set so a stale gid (filter or sort changed,
-    // showDeleted flipped) doesn't open the details panel against
-    // a row no longer rendered.
+    // Re-validate against the current filtered set so a stale gid
+    // (filter or sort changed, showDeleted flipped) doesn't open the
+    // details panel against a row no longer rendered.
     const selectedGroup = state.tableSelectedGid
       ? items.find((g) => groupKey(g) === state.tableSelectedGid)
       : null
+    pendingTableItems = items
     // Two-column layout when a row is selected: list on the left
     // (3 fr, capped at 1200px), details panel on the right (2 fr,
-    // capped at 800px). When no row is selected, the list takes
-    // the full width by collapsing the wrapper to single-column.
+    // capped at 800px). Collapses to single-column when no row is
+    // selected.
     const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
     html += `<div class="${layoutClass}">`
-    html += '<div class="findings-table-list"><div class="finding-table">'
-    for (const g of items) html += renderTableRow(g)
-    html += '</div></div>'
+    html += '<div class="findings-table-list"><finding-table></finding-table></div>'
     if (selectedGroup) {
       html += '<aside class="findings-table-details" id="findings-table-details">'
       html += '<header class="findings-table-details-bar">'
@@ -621,10 +622,23 @@ export function render() {
     html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
   }
 
+  pendingTableItems = null
   html += findingsBodyHtml(filtered)
   html += '</div>'
 
   report.innerHTML = html
+  // Hand the sorted item list and current selection to the
+  // <finding-table> custom element after the DOM lands. Stashing the
+  // items via a property (rather than serialising through an
+  // attribute) keeps object identity and avoids a JSON round-trip on
+  // every re-render.
+  if (pendingTableItems) {
+    const ft = report.querySelector('finding-table')
+    if (ft) {
+      ft.items = pendingTableItems
+      ft.selectedGid = state.tableSelectedGid
+    }
+  }
   report.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
