@@ -3,7 +3,7 @@ import { dropZone, report } from './dom.js'
 import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
-import { renderGroup } from './render-finding.js'
+import { findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
@@ -365,6 +365,18 @@ let pendingTableItems = null
 // view renders with non-empty items.
 let persistentFindingTable = null
 
+// gid → {group, inGroup} for each <finding-card> placeholder emitted
+// during HTML build. After innerHTML lands, render() walks every
+// `<finding-card>` and assigns `.group` (and reads in-group from the
+// attribute set in HTML). Cleared at the top of each render.
+const pendingFindingCards = new Map()
+
+function findingCardPlaceholder(g, inGroup = false) {
+  const gid = findingCardGid(g)
+  pendingFindingCards.set(gid, { group: g, inGroup })
+  return `<finding-card data-gid="${esc(gid)}"${inGroup ? ' in-group' : ''}></finding-card>`
+}
+
 function findingsBodyHtml(filtered) {
   let html = ''
   if (state.viewMode === 'table') {
@@ -408,7 +420,7 @@ function findingsBodyHtml(filtered) {
       html += '<button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>'
       html += '</header>'
       html += '<div class="findings-table-details-body">'
-      html += renderGroup(selectedGroup)
+      html += findingCardPlaceholder(selectedGroup)
       html += '</div>'
       html += '</aside>'
     }
@@ -441,7 +453,7 @@ function findingsBodyHtml(filtered) {
       const githubRepo = primaryTab(items[0])?.repo?.github
       html += `<div class="file-header"><span>${fileLink(file, githubRepo)}</span><span class="count">${items.length}</span></div>`
       html += '<div class="file-body">'
-      for (const g of items) html += renderGroup(g)
+      for (const g of items) html += findingCardPlaceholder(g)
       html += '</div></div>'
     }
     return html
@@ -474,7 +486,7 @@ function findingsBodyHtml(filtered) {
     const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
     html += '<div class="flat-group">'
     html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github)}</span>${lineHtml}${exportHtml}${metaHtml}</div>`
-    html += renderGroup(g)
+    html += findingCardPlaceholder(g, true)
     html += '</div>'
   }
   return html
@@ -637,6 +649,7 @@ export function render() {
   }
 
   pendingTableItems = null
+  pendingFindingCards.clear()
   html += findingsBodyHtml(filtered)
   html += '</div>'
 
@@ -667,6 +680,18 @@ export function render() {
       persistentFindingTable.items = pendingTableItems
       persistentFindingTable.selectedGid = state.tableSelectedGid
       slot.replaceWith(persistentFindingTable)
+    }
+  }
+  // Pair each <finding-card> with its dedup group via the gid stamped
+  // on the placeholder. The component itself can't know which group
+  // it represents from HTML attributes alone (group is a structured
+  // object, not a string), so render.js wires it up by gid lookup
+  // here. `in-group` is already set as an attribute, so the
+  // component's reflective `inGroup` boolean comes from the HTML.
+  if (pendingFindingCards.size > 0) {
+    for (const card of report.querySelectorAll('finding-card')) {
+      const entry = pendingFindingCards.get(card.dataset.gid)
+      if (entry) card.group = entry.group
     }
   }
   report.classList.add('active')

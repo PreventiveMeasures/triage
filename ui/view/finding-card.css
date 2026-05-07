@@ -1,0 +1,244 @@
+/* `<finding-card>` shadow-DOM styles. The host element IS the
+   `.finding` card — host classes (`is-critical`, `mark-{red|blue|green|gray}`,
+   `has-conflict`, `deleted`, `multi-case`, `finding`) are stamped by
+   the component so external selectors like `.flat-group .finding`
+   still match. The interior — tab bodies, line row, body content,
+   marks row, action buttons — lives in here.
+
+   Layout-affecting external context: when the card sits inside a
+   `<flat-group>` style wrapper, the in-body `.line-row` is
+   redundant (the wrapper paints its own location header above the
+   card). External CSS can't reach across the shadow boundary, so
+   the parent passes the hint through the `in-group` attribute,
+   handled by the `:host([in-group]) .line-row { display: none }`
+   rule below. */
+
+:host {
+  display: block;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .875rem;
+}
+:host(:last-child) { border-bottom: none; }
+:host(.is-critical) { background: var(--critical-bg); }
+:host(.hidden) { display: none; }
+:host(.deleted) { opacity: 0.75; }
+:host(.mark-red)   { background: #6b1820; }
+:host(.mark-blue)  { background: #1a2f5a; }
+:host(.mark-green) { background: #1a4a2a; }
+:host(.mark-gray)  { background: #2a2f37; }
+:host(.has-conflict) { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+/* Suppressed in-body line row when the parent wrapper already
+   paints location info above the card (flat-group mode). */
+:host([in-group]) .line-row { display: none; }
+
+.tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
+
+.marks-left {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-right: auto;
+  flex-wrap: wrap;
+}
+
+.commit-ref {
+  color: var(--muted);
+  font-size: .8rem;
+
+  & a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  & a:hover { text-decoration: underline; }
+  & span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+
+.tab-body {
+  display: none;
+  grid-template-columns: auto 1fr;
+  gap: .25rem .75rem;
+  &.active { display: grid; }
+}
+
+.desc { grid-column: 2; white-space: pre-line; }
+.recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
+.conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
+
+.line-row {
+  display: flex; justify-content: space-between;
+  align-items: baseline; gap: .5rem; flex-wrap: wrap;
+}
+.run-meta { color: var(--muted); font-size: .65rem; }
+
+.marks {
+  display: flex; gap: .35rem; justify-content: flex-end;
+  margin-top: .4rem; align-items: center;
+  /* Indent the row by the badge column's width so .marks-left's
+     leading items (commit ref, multi-tab strip) align under the
+     description / recommendation text in column 2 of the .tab-body
+     grid. min-width of .finding-left is 4rem; gap is .75rem;
+     4.75rem matches that for typical badges. */
+  padding-left: 4.75rem;
+  user-select: none;
+}
+
+.finding-left {
+  align-self: start; text-align: center; min-width: 4rem;
+
+  & .value-label:last-child { margin-bottom: 0; }
+}
+
+.conf-score {
+  font-size: .75rem; color: var(--muted); margin-top: .3rem;
+  & strong { color: var(--text); font-size: .85rem; }
+}
+
+.value-label {
+  display: block;
+  font-size: .45rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-top: .1rem;
+  margin-bottom: .3rem;
+  font-weight: 500;
+}
+
+/* "N of M" duplicate-case subhead is print-only — on screen the tab
+   strip already conveys "this group has N tabs". */
+.print-case-label { display: none; }
+
+/* Duplicates of the row-internal building blocks. Source:
+   ui/styles/findings.css. The originals stay there because the
+   row-internal Lit components also need them; copying them into
+   each shadow root keeps the cards self-contained. */
+
+.badge {
+  display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
+  padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
+
+  &.critical      { background: var(--critical); color: #fff; }
+  &.high          { background: var(--high); color: #fff; }
+  &.medium        { background: var(--medium); color: #000; }
+  &.low           { background: var(--low); color: #000; }
+  &.high_bug      { background: var(--high-bug); color: #fff; }
+  &.bug           { background: var(--bug); color: #fff; }
+  &.informational { background: var(--info); color: #fff; }
+}
+
+.tab {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: .2rem .5rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; display: inline-flex; align-items: center; gap: .35rem;
+  font-family: inherit;
+
+  &:hover { border-color: var(--accent); }
+  &.active { border-color: var(--accent); background: var(--surface-active); }
+
+  &.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
+  &.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }
+  &.tab-mark-green { background: #1a4a2a; border-color: #1a4a2a; }
+  &.tab-mark-gray  { background: #2a2f37; border-color: #2a2f37; }
+
+  &.tab-mark-red.active,
+  &.tab-mark-blue.active,
+  &.tab-mark-green.active,
+  &.tab-mark-gray.active { border-color: var(--text); }
+
+  &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+
+  & .tab-conf { color: var(--muted); font-size: .7rem; }
+  &.tab-mark-red .tab-conf,
+  &.tab-mark-blue .tab-conf,
+  &.tab-mark-green .tab-conf,
+  &.tab-mark-gray .tab-conf { color: var(--text); }
+}
+
+.mark-dot {
+  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
+  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
+
+  &:hover { opacity: 1; transform: scale(1.15); }
+  &.active { opacity: 1; border-color: var(--text); }
+
+  &.mark-dot-red   { background: #6b1820; }
+  &.mark-dot-blue  { background: #1a2f5a; }
+  &.mark-dot-green { background: #1a4a2a; }
+  &.mark-dot-gray  { background: #2a2f37; }
+}
+
+.mark-x {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
+  cursor: pointer; margin-left: .25rem;
+  &:hover { color: var(--critical); border-color: var(--critical); }
+}
+
+.mark-restore {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .45rem; font-size: .75rem; line-height: 1.3;
+  cursor: pointer; margin-left: .25rem;
+  &:hover { color: var(--green); border-color: var(--green); }
+}
+
+.line-num { color: var(--muted); font-size: .8rem; }
+.line-num a { color: inherit; }
+.line-num a:hover { color: var(--accent); }
+
+/* Print rules — moved out of styles/print.css's `.finding {…}` block
+   because that selector would no longer reach across the shadow
+   boundary. The host-level `:host` rules let us preserve the
+   per-card print behaviours (break-inside, multi-case banner) while
+   the in-body rules (`.tab-body`, `.tabs`, etc.) only apply inside
+   the shadow root anyway. */
+@media print {
+  :host {
+    break-inside: avoid; page-break-inside: avoid;
+    padding: .45rem .25rem;
+  }
+  :host(.deleted) { opacity: 1; }
+  :host(.multi-case)::before {
+    content: "Multiple reports of one finding";
+    display: block;
+    font-size: .7rem; font-weight: 700; color: #555;
+    text-transform: uppercase; letter-spacing: .06em;
+    border-bottom: 1px solid #bbb;
+    padding-bottom: .2rem; margin-bottom: .35rem;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .marks { display: none !important; }
+  .tabs { display: none !important; }
+  .tab-body { display: grid !important; }
+  .tab-body + .tab-body {
+    margin-top: .5rem; padding-top: .5rem;
+    border-top: 1px dashed #999;
+  }
+  .print-case-label {
+    display: block;
+    grid-column: 1 / -1;
+    font-size: .65rem; font-weight: 600; color: #555;
+    background: #eee;
+    padding: .1rem .35rem;
+    border-radius: 3px;
+    margin-bottom: .25rem;
+    letter-spacing: .04em;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .value-label { color: #777; }
+  .badge {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    &.critical      { background: #a30b0f !important; color: #fff !important; }
+    &.high          { background: #b8400a !important; color: #fff !important; }
+    &.medium        { background: #855107 !important; color: #fff !important; }
+    &.low           { background: #374151 !important; color: #fff !important; }
+    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
+    &.bug           { background: #4d4538 !important; color: #fff !important; }
+    &.informational { background: #0550ae !important; color: #fff !important; }
+  }
+  /* Strip on-screen link colors so a linked filename reads
+     identically to the bare-text fallback. */
+  a, .line-num, .line-num a { color: inherit; }
+}

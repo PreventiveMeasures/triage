@@ -39,8 +39,13 @@
   background: var(--surface); backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);
 
+  /* `.finding` is a `<finding-card>` host: the light-DOM rule still
+     reaches the host element to drop its bottom border. The in-body
+     `.line-row` lives in the card's shadow DOM, so its hide rule
+     moved next door — see the `:host([in-group]) .line-row` rule in
+     view/finding-card.css, which the parent triggers by emitting
+     `<finding-card in-group>`. */
   & .finding { border-bottom: none; }
-  & .finding .line-row { display: none; }
 }
 
 .flat-group-loc {
@@ -59,202 +64,26 @@
   & .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
 }
 
-/* Per-finding card. Carries semantic flags via classes:
-   - `is-critical` if ANY tab is critical (auto background tint)
-   - `mark-<color>` when all annotated tabs share that color
-   - `has-conflict` when annotated tabs disagree on color OR deletion
-   - `deleted` when in trash view (opacity nudge)
-   See group.js → groupState() for the rules. */
-.finding {
-  padding: .5rem .75rem; border-bottom: 1px solid var(--border);
-  font-size: .875rem;
+/* The `.finding` card and its descendants — `.tab-body`, `.line-row`,
+   `.desc`, `.recommendation`, `.conf-reason`, `.run-meta`, `.marks`,
+   `.marks-left`, `.commit-ref`, `.tabs` (within .finding) — moved
+   into `<finding-card>`'s shadow DOM (see view/finding-card.css).
+   The host element keeps the `.finding` class so external selectors
+   like `.flat-group .finding` still match the card from this
+   stylesheet. The `.tab` / `.mark-*` / `.badge` rules below are
+   intentionally kept here too — both `<finding-row>` and
+   `<finding-card>` carry private duplicates in their own shadow
+   DOMs, but no third site renders these, so the originals stay
+   purely as a single source of truth. */
 
-  &:last-child { border-bottom: none; }
-  &.is-critical { background: var(--critical-bg); }
-  &.hidden { display: none; }
-  /* `.deleted` is a semantic label — matches the user-facing notion of
-     "marked as deleted". The opacity nudge keeps the list readable
-     while making clear these aren't active findings. */
-  &.deleted { opacity: 0.75; }
-
-  /* Manual marker colors — click a dot under a finding to tag it.
-     Ordered after .is-critical so manual marks override the critical
-     auto-bg. Red is deliberately hotter than --critical-bg so a
-     user-marked finding stays visually distinct from auto-highlighted
-     criticals. For dedup groups these apply ONLY when the group has a
-     well-defined common color — i.e. non-conflict AND at least one
-     annotated tab is colored, with every color-bearing annotated tab
-     agreeing. Conflicts use .has-conflict instead. */
-  &.mark-red   { background: #6b1820; }
-  &.mark-blue  { background: #1a2f5a; }
-  &.mark-green { background: #1a4a2a; }
-  &.mark-gray  { background: #2a2f37; }
-
-  /* Dedup groups whose annotated tabs disagree on color OR on deletion
-     state — highlight the whole entry and (per spec) ignore each tab's
-     `deleted` flag for rollup. Accent outline draws attention without
-     claiming one specific color. */
-  &.has-conflict { outline: 2px dashed var(--accent); outline-offset: -2px; }
-
-  /* Tab strip — shown only for multi-tab groups. The .tab button
-     styles themselves live at top level (below) so they work inside
-     both .finding (list view) and .finding-row (table view). The
-     left-side items in .marks (commit ref, tabs) live inside a
-     .marks-left wrapper that handles the push-away from the action
-     buttons; .tabs itself just lays its children out with a gap. */
-  & .tabs { display: flex; gap: .25rem; flex-wrap: wrap; }
-  /* Left side of the .marks row — holds the commit reference (codex
-     imports) + the multi-tab strip when present. margin-right: auto
-     pushes the action buttons to the right edge regardless of how
-     many or few left-side items appear; an empty .marks-left
-     collapses to 0 width but still anchors the actions on the right. */
-  & .marks-left {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    margin-right: auto;
-    flex-wrap: wrap;
-  }
-  /* Commit reference (codex imports carry one) — short SHA link,
-     monospace, accent colour. Sits inline at the left of the marks
-     row; `commit ` lead-in stays in the muted body colour for
-     readability. */
-  & .commit-ref {
-    color: var(--muted);
-    font-size: .8rem;
-
-    & a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    & a:hover { text-decoration: underline; }
-    & span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  }
-
-  /* Per-tab body. Only the active tab is shown on screen — print CSS
-     overrides to show ALL tab bodies so paper output preserves the
-     "multiple cases of one finding" framing. The 2-col grid here is
-     what was previously on `.finding` itself. */
-  & .tab-body {
-    display: none;
-    grid-template-columns: auto 1fr;
-    gap: .25rem .75rem;
-    &.active { display: grid; }
-  }
-
-  /* Body content */
-  /* white-space: pre-line preserves paragraph breaks (\n\n) and line
-     breaks within description text. JSON findings are usually a single
-     paragraph and look identical; markdown-format findings carry the
-     details / impact / reproduction sections joined by \n\n and rely
-     on this rule to render as visual paragraphs instead of one wall
-     of text. */
-  & .desc { grid-column: 2; white-space: pre-line; }
-  & .recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
-  & .conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
-
-  /* `line-num` is the `line N` / `(found analyzing X)` spans. Line
-     numbers are always shown — they're the minimum context needed to
-     act on a finding. */
-  & .line-num { color: var(--muted); font-size: .8rem; }
-
-  /* line-num + run-meta share one row: line-num on the left, run-meta
-     on the right (`analyzer · effort · exportsMode`). flex-wrap keeps
-     long meta strings from overflowing on narrow viewports. In the
-     file-grouped layout this row is suppressed inside the .finding card
-     and re-rendered above it as a `.flat-group-loc` header. */
-  & .line-row {
-    display: flex; justify-content: space-between;
-    align-items: baseline; gap: .5rem; flex-wrap: wrap;
-  }
-  & .run-meta { color: var(--muted); font-size: .65rem; }
-
-  /* Per-finding action row: tab strip (multi-tab groups only, on the
-     left) + color dots + delete. Sits under the finding content.
-     `justify-content: flex-end` right-aligns the dots when no tabs
-     are present; when tabs are present, `.tabs { margin-right: auto }`
-     above pushes them apart. Marks and deletions are persisted via
-     localStorage (see saveTriage). Hidden on print. */
-  /* Action row layout: tab strip on the left (multi-tab groups only),
-     mark-dots / × on the right. The button styles themselves live at
-     top level so they're shared with .finding-row's actions. */
-  & .marks {
-    display: flex; gap: .35rem; justify-content: flex-end;
-    margin-top: .4rem; align-items: center;
-    /* Indent the row by the badge column's width so .marks-left's
-       leading items (commit ref, multi-tab strip) align under the
-       description / recommendation text in column 2 of the .tab-body
-       grid. min-width of .finding-left is 4rem; gap is .75rem;
-       4.75rem matches that for typical badges. */
-    padding-left: 4.75rem;
-    /* Buttons in this row carry single-glyph labels (× / restore /
-       severity badge) — they're controls, not content, so prevent the
-       glyph from being caught by drag-selection. Also kills the
-       blue text-highlight flash on click. */
-    user-select: none;
-  }
-}
-
-/* ── Reusable button components ───────────────────────────────────────
-   Hoisted out of .finding scope so the same markup styles correctly
-   inside both the list-view .finding card and the table-view
-   .finding-row block. Layout (gap / justify-content / margin-top)
-   stays per-container; only the visual styling lives here. */
-
-.tab {
-  background: transparent; color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: .2rem .5rem; font-size: .75rem; line-height: 1.3;
-  cursor: pointer; display: inline-flex; align-items: center; gap: .35rem;
-  font-family: inherit;
-
-  &:hover { border-color: var(--accent); }
-  &.active { border-color: var(--accent); background: var(--surface-active); }
-
-  &.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
-  &.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }
-  &.tab-mark-green { background: #1a4a2a; border-color: #1a4a2a; }
-  &.tab-mark-gray  { background: #2a2f37; border-color: #2a2f37; }
-
-  &.tab-mark-red.active,
-  &.tab-mark-blue.active,
-  &.tab-mark-green.active,
-  &.tab-mark-gray.active { border-color: var(--text); }
-
-  &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
-
-  & .tab-conf { color: var(--muted); font-size: .7rem; }
-  &.tab-mark-red .tab-conf,
-  &.tab-mark-blue .tab-conf,
-  &.tab-mark-green .tab-conf,
-  &.tab-mark-gray .tab-conf { color: var(--text); }
-}
-
-.mark-dot {
-  width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid var(--border);
-  padding: 0; cursor: pointer; opacity: .55; transition: opacity .1s, transform .1s;
-
-  &:hover { opacity: 1; transform: scale(1.15); }
-  &.active { opacity: 1; border-color: var(--text); }
-
-  &.mark-dot-red   { background: #6b1820; }
-  &.mark-dot-blue  { background: #1a2f5a; }
-  &.mark-dot-green { background: #1a4a2a; }
-  &.mark-dot-gray  { background: #2a2f37; }
-}
-
-.mark-x {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
-  cursor: pointer; margin-left: .25rem;
-  &:hover { color: var(--critical); border-color: var(--critical); }
-}
-
-/* Restore button — rendered in place of `mark-x` while in trash view.
-   Green hover mirrors the semantic of "undo delete". */
-.mark-restore {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .45rem; font-size: .75rem; line-height: 1.3;
-  cursor: pointer; margin-left: .25rem;
-  &:hover { color: var(--green); border-color: var(--green); }
-}
+/* The reusable row/card building blocks (`.tab`, `.mark-dot`,
+   `.mark-x`, `.mark-restore`, `.badge`, `.conf-score`,
+   `.value-label`, `.print-case-label`, `.finding-left`) used to live
+   here so list-view `.finding` cards and table-view `.finding-row`
+   rows could share one source of truth. Both consumers are now Lit
+   components with their own shadow DOM (see view/finding-row.css
+   and view/finding-card.css), so the originals are gone — copies in
+   each component's stylesheet keep them self-contained. */
 
 /* ── Table view ─────────────────────────────────────────────────────
    When a row is selected, the table view splits into a list column
@@ -341,62 +170,3 @@
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
-/* `.finding-table`, `.finding-row` and its descendants
-   (`.row-score`, `.row-body`, `.title-row`, `.meta-row`, `.tabs-row`,
-   `.row-loc`, `.row-conf`, `.row-type`, `.title`, `.marks`) have moved
-   into `<finding-table>`'s shadow DOM (see view/finding-table.css).
-   Only the table view used those rules, so nothing in the global
-   stylesheet depends on them anymore. The `.tab` / `.mark-*` /
-   `.badge` rules below are intentionally kept here too — list /
-   grouped views are still light DOM and rely on them. */
-
-.finding-left {
-  align-self: start; text-align: center; min-width: 4rem;
-
-  & .value-label:last-child { margin-bottom: 0; }
-}
-
-.badge {
-  display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
-  padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
-
-  &.critical      { background: var(--critical); color: #fff; }
-  &.high          { background: var(--high); color: #fff; }
-  &.medium        { background: var(--medium); color: #000; }
-  &.low           { background: var(--low); color: #000; }
-  &.high_bug      { background: var(--high-bug); color: #fff; }
-  &.bug           { background: var(--bug); color: #fff; }
-  /* Informational uses white text in both themes — the dark-default
-     --info is a light blue (white reads cleanly on it via contrast),
-     and the light-mode --info is a saturated blue where black text
-     vanishes. theme.css doesn't need to flip this one. The visible
-     label is "INFO" (see badgeLabel in render-finding.js) — keeps
-     the badge the same size as the other tiers without needing a
-     font-size override. */
-  &.informational { background: var(--info); color: #fff; }
-}
-
-.conf-score {
-  font-size: .75rem; color: var(--muted); margin-top: .3rem;
-  & strong { color: var(--text); font-size: .85rem; }
-}
-
-/* "Severity" / "Confidence" sub-captions below the values in the
-   left column. Tiny by design — they're supporting metadata, not
-   headings, so the badge / score stay the visual anchor. Centered
-   to match `.finding-left { text-align: center }`. Print uses the
-   same size; only the ink color differs (paler grey on white). */
-.value-label {
-  display: block;
-  font-size: .45rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-top: .1rem;
-  margin-bottom: .3rem;
-  font-weight: 500;
-}
-
-/* "N of M" duplicate-case subhead is print-only — on screen the tab
-   strip already conveys "this group has N tabs". */
-.print-case-label { display: none; }

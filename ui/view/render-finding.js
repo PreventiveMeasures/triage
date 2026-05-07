@@ -140,43 +140,49 @@ export function renderTabBody(f, isActive, idx = 0, total = 1) {
 // Marks row at the bottom is group-level: color dots act on the active
 // tab; delete acts on the whole group when conflict-free, on the active
 // tab when conflicted. See click handler in events.js for the inverse.
-export function renderGroup(g) {
+// The three helpers below split what used to be a single
+// `renderGroup` builder so the <finding-card> Lit component can stamp
+// the card's gid + classes onto its host element and render the inner
+// DOM separately.
+
+export function findingCardGid(g) {
+  return groupKey(g)
+}
+
+// State-derived host classes for a `<finding-card>`. The literal
+// `finding` class is included so external selectors like
+// `.flat-group .finding` still match the host element. `multi-case`
+// is a print-only hook (drives the `Multiple reports of one finding`
+// banner via :host(.multi-case)::before in finding-card.css).
+export function findingCardClasses(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
-  const active = activeTabFor(g)
-  const activeKey = tabKey(active)
   const isCritical = g.some((f) => f.critical || f.severity === 'critical')
   const classes = ['finding']
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
   if (state.showDeleted) classes.push('deleted')
-  // `multi-case` is a print-only hook: when there's more than one tab in
-  // the group, the print stylesheet uses this class to draw a banner above
-  // the stacked cases so a paper reader can tell at a glance that the
-  // entries below are reports of one finding, not unrelated findings.
   if (sortedTabs.length > 1) classes.push('multi-case')
-  const gid = groupKey(g)
+  return classes
+}
 
-  let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
-  // Render every tab body so print mode can show them all stacked. Only
-  // the active one is display:grid on screen; others are display:none.
-  // Pass idx/total so each tab body can emit its own "Case N of M" banner
-  // in print (suppressed on single-tab groups via the default args).
+// Inner HTML for a card — every tab body (only the active is shown
+// on screen; print stacks them) plus the bottom marks row. The
+// wrapping `.finding` div is gone — the host element IS the card.
+export function findingCardInnerHTML(g) {
+  const groupSt = groupState(g)
+  const sortedTabs = sortTabs(g)
+  const active = activeTabFor(g)
+  const activeKey = tabKey(active)
+
+  let html = ''
+  // Render every tab body so print mode can show them all stacked.
+  // Only the active one is display:grid on screen; others display:none.
   sortedTabs.forEach((f, i) => {
     html += renderTabBody(f, tabKey(f) === activeKey, i, sortedTabs.length)
   })
-  // Marks row. Colors reflect the ACTIVE tab (since clicks apply there).
-  // Delete button's title changes to signal the per-tab vs. per-group
-  // behavior depending on conflict state. The tab strip lives here too
-  // (on the left, pushed apart from the dots by `margin-right: auto`
-  // in CSS) so multi-tab groups get their tab picker adjacent to the
-  // other per-group controls — one action row per finding.
   html += '<div class="marks">'
-  // Left side: optional commit reference (codex imports carry a
-  // commit_hash on the active tab) + multi-tab strip. Wrapped in
-  // a sub-flex so the action buttons stay anchored to the right
-  // regardless of how many left-side items appear.
   html += '<div class="marks-left">'
   if (active.commitHash) {
     html += `<div class="commit-ref">introduced in ${commitLink(active.repo?.github, active.commitHash)}</div>`
@@ -188,7 +194,6 @@ export function renderGroup(g) {
   }
   html += '</div>'
   html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
-  html += '</div>'
   html += '</div>'
   return html
 }
