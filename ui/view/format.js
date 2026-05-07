@@ -51,8 +51,14 @@ export function stripExportMarker(text, exportName) {
   return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
 }
 
+// Searchable text for `state.filterInclude`. Joins the user-visible
+// fields (file path, description, recommendation, confidence
+// reasoning, discovery context) plus the per-finding `repo.github`
+// slug — the latter so the search field can match findings by their
+// upstream repo (`lodash/lodash`), useful when a merged report mixes
+// findings from many node_modules dependencies.
 export function findingText(f) {
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
