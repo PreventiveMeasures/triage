@@ -166,7 +166,7 @@
        white and black sheets pick up a hairline border in the
        contrasting color so neither blends into the sidebar surface
        across themes. */
-    &.brand-deepview { & .bg { fill: #1e3a8a; } & .fg { fill: #fff; } }
+    &.brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
     &.brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
     &.brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
     &.brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
