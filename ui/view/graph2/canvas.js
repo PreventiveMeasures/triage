@@ -1,3 +1,5 @@
+import { html, render } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
@@ -822,14 +824,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     //   2. dot + package name — secondary context.
     //   3. per-severity chips when n.totalIssues > 0 — same
     //      block the selection card uses.
-    let html = `
-      <div class="g2-tt-path">${escapeHtml(relPath)}</div>
+    //
+    // `relPath` and `pkgLabel` are user-provided (file paths from
+    // a loaded report) — Lit's `html` interpolation auto-escapes
+    // those. `renderSevChips` returns a string (still consumed
+    // unchanged by render.js's selection card), so it gets piped
+    // through `unsafeHTML` here — its content is built from
+    // controlled-domain data (the canonical severity names + the
+    // numeric counts), with no user-controlled interpolation.
+    render(html`
+      <div class="g2-tt-path">${relPath}</div>
       <div class="g2-tt-head">
-        <span class="g2-tt-dot" style="background:${col}"></span>
-        <span class="g2-tt-pkg">${escapeHtml(pkgLabel)}</span>
-      </div>`
-    if (n.totalIssues > 0) html += renderSevChips(n.own)
-    tooltip.innerHTML = html
+        <span class="g2-tt-dot" style=${`background:${col}`}></span>
+        <span class="g2-tt-pkg">${pkgLabel}</span>
+      </div>
+      ${n.totalIssues > 0 ? unsafeHTML(renderSevChips(n.own)) : null}
+    `, tooltip)
     // Show first, THEN measure — the browser doesn't compute layout
     // for `display: none` / opacity: 0 elements and we need the real
     // width/height to do edge-flip correctly. Adding the .show class
@@ -859,10 +869,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     tooltip.style.top = `${ty}px`
   }
   function hideTooltip() { if (tooltip) tooltip.classList.remove('show') }
-
-  function escapeHtml(s) {
-    const el = document.createElement('span'); el.textContent = String(s ?? ''); return el.innerHTML
-  }
 
   // ── Pan / zoom / click ────────────────────────────────────────
   let dragging = false
