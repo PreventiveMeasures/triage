@@ -488,19 +488,17 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   // render() so it only appears on the findings tab with a report
   // loaded.
   html += '</div>'
-  // Severity chips on their own toolbar row — unlike the prototype's
-  // outer `.sev-row` block this lives inside the toolbar so the
-  // filter chrome stays cohesive. The "X shown / All / None"
-  // actions group from the prototype is dropped — the search row's
-  // `X of Y` and per-chip toggle handle those needs already.
-  html += `<div class="toolbar-row sev-row">${severityChipsHtml(counts)}</div>`
-  html += '<div class="toolbar-row">'
-  // Mark-color filter pill leads the row — a compact visual filter
-  // that pairs naturally with the text-search input beside it.
-  // (Used to live up in the stats row alongside the severity chips,
-  // but visually the chips and the pill compete for the same
-  // "filter chip" reading; pulling the pill down here lets the
-  // stats row stay severity-only.)
+  // Filter row: severity chips + mark-color triage pill + search
+  // field, all inline so they read as one composable filter strip.
+  // The "X shown / All / None" actions block from the prototype's
+  // outer `.sev-row` is intentionally left off — the result count at
+  // the row's right edge and the per-chip toggle cover those needs.
+  html += '<div class="toolbar-row sev-row">'
+  html += severityChipsHtml(counts)
+  // Mark-color filter pill — compact circle group sitting between
+  // severity chips and the search field. Same colored-circle
+  // vocabulary as `<color-marker>`, so the per-row pickers and the
+  // filter pill share one visual language.
   html += triageFilterHtml(colorCounts)
   // Search field — ported from the DeepView.0 prototype's `.field.grow`
   // (magnifier glyph + borderless input inside a pill that grows to
