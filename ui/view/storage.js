@@ -46,6 +46,21 @@ async function gunzipString(b64) {
 // OPFS once per call — caching is unnecessary because getDirectoryHandle
 // is cheap. localStorage paths read/write a key prefixed with
 // LS_REPORT_PREFIX; the file list is enumerated by scanning that prefix.
+// In-memory cache for report contents. Populated lazily on
+// `readFile`, kept in sync by `saveFile` (overwrite) and `deleteFile`
+// (evict). `inFlight` deduplicates concurrent reads of the same name
+// — `switchToWorkspace` fires every read in parallel, so multiple
+// callers asking for the same file (e.g. workspace + main view race)
+// share a single round-trip rather than each hitting OPFS.
+//
+// Cache is per-page-load. No size cap: the user has already chosen
+// to keep these reports around (they're persisted in OPFS), and the
+// JS-string overhead of the active set is small relative to the
+// rendered DOM. A failed read is NOT cached (the inFlight entry
+// clears in the finally block) so callers can retry.
+const cache = new Map()
+const inFlight = new Map()
+
 export async function listFiles() {
   const dir = await getOpfsDir()
   if (dir) {
@@ -70,11 +85,13 @@ export async function saveFile(name, content) {
     const writable = await fh.createWritable()
     await writable.write(content)
     await writable.close()
+    cache.set(name, content)
     return
   }
   const compressed = await gzipString(content)
   try {
     localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
+    cache.set(name, content)
   } catch (err) {
     // Most likely QuotaExceededError. Re-throw so the drop handler can
     // surface a useful message to the user instead of silently dropping.
@@ -83,18 +100,32 @@ export async function saveFile(name, content) {
 }
 
 export async function readFile(name) {
-  const dir = await getOpfsDir()
-  if (dir) {
-    const fh = await dir.getFileHandle(name)
-    const file = await fh.getFile()
-    return await file.text()
+  if (cache.has(name)) return cache.get(name)
+  if (inFlight.has(name)) return inFlight.get(name)
+  const promise = (async () => {
+    const dir = await getOpfsDir()
+    if (dir) {
+      const fh = await dir.getFileHandle(name)
+      const file = await fh.getFile()
+      return await file.text()
+    }
+    const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
+    if (compressed === null) throw new Error(`File not found: ${name}`)
+    return await gunzipString(compressed)
+  })()
+  inFlight.set(name, promise)
+  try {
+    const content = await promise
+    cache.set(name, content)
+    return content
+  } finally {
+    inFlight.delete(name)
   }
-  const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
-  if (compressed === null) throw new Error(`File not found: ${name}`)
-  return await gunzipString(compressed)
 }
 
 export async function deleteFile(name) {
+  cache.delete(name)
+  inFlight.delete(name)
   const dir = await getOpfsDir()
   if (dir) {
     try { await dir.removeEntry(name) } catch {}
