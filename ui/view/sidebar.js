@@ -75,10 +75,6 @@ function workspaceHeaderHtml(count) {
 }
 
 const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
-// Stacked-list glyph for the open-workspace button — three short
-// horizontal bars suggesting "merged list of findings". Distinct
-// from the download icon so the two affordances don't look alike.
-const WORKSPACE_OPEN_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>'
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
 // the section header.
@@ -87,14 +83,13 @@ function workspaceItemHtml(w, reportCount) {
   const isCurrent = state.currentWorkspace === w.id
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
   const countHtml = reportCount > 0 ? `<span class="file-count workspace-count">${reportCount}</span>` : ''
-  // Per-workspace action buttons: open (loads every report into a
-  // single merged view) on the left, download (export the workspace
-  // as a `.gz` bundle) on the right. Both hover-revealed; clicking
-  // the workspace name itself is intentionally a no-op so the user
-  // doesn't trip into a merged load by accident.
-  const openBtn = `<button type="button" class="workspace-open" data-action="open-workspace" title="Open workspace as merged list" aria-label="Open workspace">${WORKSPACE_OPEN_ICON}</button>`
+  // Clicking the workspace's main button loads every report in the
+  // workspace into a single merged view (handled by the `.file-item`
+  // click delegate against the dataset.workspaceId). The
+  // hover-revealed download exports the workspace as a `.gz`
+  // bundle.
   const exportBtn = `<button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>`
-  return `<li class="${cls}" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button>${openBtn}${exportBtn}${countHtml}</li>`
+  return `<li class="${cls}" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button>${exportBtn}${countHtml}</li>`
 }
 
 function matchesSearch(name) {
@@ -207,25 +202,26 @@ sidebar.addEventListener('click', (e) => {
     }
     return
   }
-  // Open-workspace icon — load every report in the workspace into a
-  // single merged view. Distinct from clicking the workspace name
-  // itself (which is intentionally inert): a stray click on the row
-  // shouldn't replace the user's current view.
-  const openEl = e.target.closest('[data-action="open-workspace"]')
-  if (openEl) {
-    const wsEl = openEl.closest('[data-workspace-id]')
-    if (wsEl) switchToWorkspace(wsEl.dataset.workspaceId)
-    return
-  }
   // Per-workspace export — find the enclosing workspace li, look the
   // workspace up, hand it to exportWorkspace. Listed before the
-  // file-item handler because the export button lives inside the
-  // workspace li and we don't want a stray click to fall through.
+  // workspace / file row handlers below because the export button
+  // lives inside the workspace li and we don't want a stray click to
+  // fall through to the workspace switcher.
   const exportEl = e.target.closest('[data-action="export-workspace"]')
   if (exportEl) {
     const wsEl = exportEl.closest('[data-workspace-id]')
     const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
     if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to export workspace: ${err.message}`))
+    return
+  }
+  // Workspace row — clicking the name button (or anywhere on the
+  // workspace row that isn't an action button) loads every report
+  // in the workspace as a merged view. The dblclick handler
+  // intercepts before this fires for inline rename.
+  const wsRow = e.target.closest('.file-item.workspace-item[data-workspace-id]')
+  if (wsRow) {
+    const id = wsRow.dataset.workspaceId
+    if (id && id !== state.currentWorkspace) switchToWorkspace(id)
     return
   }
   const fileEl = e.target.closest('.file-item[data-file]')

@@ -144,8 +144,7 @@
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .file-item.workspace-item .workspace-count { align-self: center; }
 
-.workspace-export,
-.workspace-open {
+.workspace-export {
   flex-shrink: 0;
   width: 22px; align-self: center;
   height: 22px;
@@ -160,9 +159,7 @@
   &:focus-visible { opacity: 1; }
 }
 .file-item.workspace-item:hover .workspace-export,
-.file-item.workspace-item:focus-within .workspace-export,
-.file-item.workspace-item:hover .workspace-open,
-.file-item.workspace-item:focus-within .workspace-open { opacity: 1; }
+.file-item.workspace-item:focus-within .workspace-export { opacity: 1; }
 
 /* Inline rename input — swapped in over the label span on dblclick.
    Inherits the label's monospace font so the row height doesn't
