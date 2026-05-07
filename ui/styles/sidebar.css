@@ -144,7 +144,8 @@
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .file-item.workspace-item .workspace-count { align-self: center; }
 
-.workspace-export {
+.workspace-export,
+.workspace-open {
   flex-shrink: 0;
   width: 22px; align-self: center;
   height: 22px;
@@ -159,7 +160,9 @@
   &:focus-visible { opacity: 1; }
 }
 .file-item.workspace-item:hover .workspace-export,
-.file-item.workspace-item:focus-within .workspace-export { opacity: 1; }
+.file-item.workspace-item:focus-within .workspace-export,
+.file-item.workspace-item:hover .workspace-open,
+.file-item.workspace-item:focus-within .workspace-open { opacity: 1; }
 
 /* File row. The clickable surface is the inner `<button>` so the
    focus ring + hover background hug the visible chip instead of

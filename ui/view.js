@@ -7,7 +7,8 @@
 import { sidebar } from './view/dom.js'
 import { listFiles } from './view/storage.js'
 import { renderSidebar } from './view/sidebar.js'
-import { switchToFile, LAST_FILE_KEY } from './view/ingest.js'
+import { switchToFile, switchToWorkspace, LAST_FILE_KEY } from './view/ingest.js'
+import { listWorkspaces } from './view/workspaces.js'
 import './view/events.js'
 import './view/theme.js'
 import './view/finding-table.js'
@@ -26,7 +27,12 @@ import './view/range-slider.js'
   let last = null
   try { last = localStorage.getItem(LAST_FILE_KEY) } catch {}
   if (last) {
-    const names = await listFiles()
-    if (names.includes(last)) await switchToFile(last)
+    if (last.startsWith('ws:')) {
+      const id = last.slice(3)
+      if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
+    } else {
+      const names = await listFiles()
+      if (names.includes(last)) await switchToFile(last)
+    }
   }
 })()

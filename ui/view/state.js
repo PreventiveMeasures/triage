@@ -63,6 +63,13 @@ export const state = store({
   // (drop zone visible). Tracked separately from `reports` so the
   // sidebar can highlight the active file even before render finishes.
   currentFile: null,
+  // Workspace id when the active view is a merged-workspace load
+  // (every report assigned to that workspace stacked into one list);
+  // null otherwise. Mutually exclusive with `currentFile`: switching
+  // to a workspace nulls the file, switching to a file nulls the
+  // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
+  // with `ws:` when set.
+  currentWorkspace: null,
   // Top-level tab — 'findings' (default), 'graph2' (canvas graph with
   // selection card sidebar), or 'files' (the per-file cards listing).
   // Graph / files tabs are only visible when the loaded report carries

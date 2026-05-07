@@ -96,19 +96,22 @@ function repoBaseUrl(s) {
 // `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
 // wins over the user-typed repo URL when available — it points at the
 // actual upstream of a node_modules dependency rather than at the project
-// repo, which doesn't carry node_modules sources. Falls back to the
-// user-typed repoUrl for own-source files (and when no per-finding repo
-// is known).
-export function fileUrl(file, githubRepo) {
+// repo, which doesn't carry node_modules sources. Falls back to
+// `repoFallback` (the per-report URL stamped on each finding at ingest)
+// when given, or `state.repoUrl` (the active single-file mode setting)
+// otherwise. Workspace mode passes per-finding fallbacks because each
+// report carries its own github setting; single-file mode leaves
+// `repoFallback` undefined and the global URL drives the chip.
+export function fileUrl(file, githubRepo, repoFallback) {
   if (githubRepo) return `https://github.com/${githubRepo}/blob/HEAD/${stripPackagePrefix(file)}`
   if (isModule(file)) return null
-  const base = repoBaseUrl(state.repoUrl)
+  const base = repoBaseUrl(repoFallback ?? state.repoUrl)
   if (!base) return null
   return `${base}/blob/HEAD/${file}`
 }
 
-export function fileLink(file, githubRepo) {
-  const url = fileUrl(file, githubRepo)
+export function fileLink(file, githubRepo, repoFallback) {
+  const url = fileUrl(file, githubRepo, repoFallback)
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}</a>` : esc(file)
 }
 
@@ -117,10 +120,10 @@ export function fileLink(file, githubRepo) {
 // don't carry line numbers and stub them as '?', and rendering a bare
 // "line ?" adds noise without information. Callers suppress the
 // wrapping `<span class="line-num">` when this returns ''.
-export function lineLink(file, line, githubRepo) {
+export function lineLink(file, line, githubRepo, repoFallback) {
   const lineNum = parseInt(line, 10)
   if (!Number.isFinite(lineNum)) return ''
-  const url = fileUrl(file, githubRepo)
+  const url = fileUrl(file, githubRepo, repoFallback)
   const text = `line ${lineNum}`
   if (!url) return text
   return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`

@@ -170,6 +170,17 @@ function prettyRepoLabel(s) {
 // When false, `knownRepo` (the single common per-finding repo, if
 // any) drives the read-only display.
 function repoChipHtml(repoInputUseful, knownRepo) {
+  // Workspace mode merges N reports, each with its own per-report
+  // URL stamped onto findings as `_repoFallback`. The single global
+  // `state.repoUrl` doesn't apply, so the editable input is omitted
+  // — the read-only chip still surfaces when every finding shares
+  // a single `repo.github`.
+  if (state.currentWorkspace) {
+    if (knownRepo) {
+      return `<span class="repo-chip readonly" title="Repo from findings (read-only)">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(knownRepo)}</span></span>`
+    }
+    return ''
+  }
   if (repoInputUseful) {
     if (state.repoEditing) {
       return `<input type="text" id="repo-url" class="repo-input" value="${esc(state.repoUrl)}" placeholder="user/repo or https://github.com/user/repo" autofocus>`
@@ -631,9 +642,13 @@ function findingsBodyHtml(filtered) {
       // All findings under one file share the same `repo.github` (it's
       // a property of the source file's package), so probe the first
       // group's primary tab — every other tab in this file would carry
-      // the same value or none at all.
-      const githubRepo = primaryTab(items[0])?.repo?.github
-      html += `<div class="file-header"><span>${fileLink(file, githubRepo)}</span><span class="count">${items.length}</span></div>`
+      // the same value or none at all. The per-report `_repoFallback`
+      // is also a per-file property (every finding from one report
+      // carries the same value), so the same probe gets its fallback.
+      const probe = primaryTab(items[0])
+      const githubRepo = probe?.repo?.github
+      const repoFallback = probe?._repoFallback
+      html += `<div class="file-header"><span>${fileLink(file, githubRepo, repoFallback)}</span><span class="count">${items.length}</span></div>`
       html += '<div class="file-body">'
       for (const g of items) html += findingCardPlaceholder(g)
       html += '</div></div>'
@@ -661,13 +676,13 @@ function findingsBodyHtml(filtered) {
     // Skip the line span entirely when there's no line number — a
     // bare "line ?" reads as broken metadata. lineLink returns '' in
     // that case (codex / claude-security imports don't carry lines).
-    const lineLinkHtml = lineLink(p.file, p.line, p.repo?.github)
+    const lineLinkHtml = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
     const lineHtml = lineLinkHtml ? `<span class="line-num">${lineLinkHtml}</span>` : ''
     const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
     const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
     const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
     html += '<div class="flat-group">'
-    html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github)}</span>${lineHtml}${exportHtml}${metaHtml}</div>`
+    html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>${lineHtml}${exportHtml}${metaHtml}</div>`
     html += findingCardPlaceholder(g, true)
     html += '</div>'
   }
@@ -718,7 +733,13 @@ export function render() {
    // a prior report can't keep findings hidden silently. Stats /
    // sorting / include-exclude always make sense, so no flags for
    // those.
-  const hasAnyConfidence = mergedGroups.some((g) => g.some((f) => f.confidence !== undefined))
+  // The slider only makes sense when EVERY finding carries a
+  // confidence value — a workspace-merged view that mixes one
+  // analyzer-native report (with confidence) and one DeepSec /
+  // Claude Security import (without) would otherwise filter the
+  // confidence-less findings out at min=1, hiding them silently. So
+  // the gate is an `every` rather than a `some`.
+  const hasAnyConfidence = mergedGroups.every((g) => g.every((f) => f.confidence !== undefined))
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // Repo URL input is useful only when at least one finding could

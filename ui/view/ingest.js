@@ -13,6 +13,7 @@ import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { setCount, removeCount, analyzeContent } from './counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
+import { listWorkspaces } from './workspaces.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -85,6 +86,7 @@ export async function addFiles(files) {
 export async function switchToFile(name, content) {
   state.reports = []
   state.currentFile = name
+  state.currentWorkspace = null
   // Per-report repo URL (see state.js / saveRepoUrlFor). The user's
   // last-typed URL for THIS file lights up the header repo chip; an
   // unseen file starts empty. Reset before ingest so a stale URL
@@ -114,6 +116,41 @@ export async function switchToFile(name, content) {
     }
   }
   await ingestReport(name, content)
+  await renderSidebar()
+}
+
+// Replace the active view with the merged contents of an entire
+// workspace — every report assigned to the workspace is loaded
+// sequentially via `ingestReport`, accumulating in `state.reports`.
+// `state.currentFile` is cleared (workspace mode is mutually
+// exclusive with single-file mode); `state.currentWorkspace` carries
+// the workspace id. Per-report repo URLs round-trip via the
+// `_repoFallback` stamp on each finding (see ingestReport above), so
+// the global `state.repoUrl` is empty in this mode and the editable
+// header chip is omitted. Reports the workspace references but that
+// no longer exist in OPFS are skipped silently — no need to disturb
+// the rest of the load.
+export async function switchToWorkspace(workspaceId) {
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  if (!ws) return
+  state.reports = []
+  state.currentFile = null
+  state.currentWorkspace = workspaceId
+  state.repoUrl = ''
+  state.repoEditing = false
+  graph2.selected = null
+  graph2.focusedPkg = null
+  graph2.layoutCache = null
+  graph2.solo = null
+  graph2.hidden.clear()
+  graph2.pathFilter = ''
+  cleanupGraph2()
+  try { localStorage.setItem(LAST_FILE_KEY, `ws:${workspaceId}`) } catch {}
+  for (const name of ws.reports) {
+    let content
+    try { content = await readFile(name) } catch { continue }
+    await ingestReport(name, content)
+  }
   await renderSidebar()
 }
 
@@ -203,6 +240,12 @@ export function ingestReport(name, content) {
         const computed = await Promise.all(idLess.map(deriveFindingId))
         idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
       }
+      // Per-report repo URL stamped on each finding so format.js's
+      // fileUrl / lineLink can resolve the right fallback in workspace
+      // mode (where state.repoUrl can't represent N reports' settings
+      // at once). Empty string for headless / print-flow ingests where
+      // the OPFS file isn't backing a saved URL.
+      const repoFallback = loadRepoUrlFor(name)
       const groups = []
       let dupeCount = 0
       for (const entry of rawEntries) {
@@ -226,7 +269,7 @@ export function ingestReport(name, content) {
         // source run had no effort flag).
         const stamped = members.map((f) => {
           if (f.id) seenIds.add(f.id)
-          const filled = { ...f, _id: state.nextFindingId++ }
+          const filled = { ...f, _id: state.nextFindingId++, _repoFallback: repoFallback }
           // Inherit run-level meta from the report header onto
           // findings that don't carry their own — but ONLY for native
           // analyzer JSON dumps (no `data.source` marker). For

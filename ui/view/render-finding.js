@@ -40,7 +40,7 @@ function firstLine(text) {
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f) {
-  const url = fileUrl(f.file, f.repo?.github)
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback)
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
@@ -52,10 +52,10 @@ function rowLocationTemplate(f) {
 // the line number isn't a finite integer (codex / claude-security
 // imports stub the line as '?'); callers compose the result inline,
 // so `nothing` collapses cleanly.
-function lineLinkTemplate(file, line, githubRepo) {
+function lineLinkTemplate(file, line, githubRepo, repoFallback) {
   const lineNum = parseInt(line, 10)
   if (!Number.isFinite(lineNum)) return nothing
-  const url = fileUrl(file, githubRepo)
+  const url = fileUrl(file, githubRepo, repoFallback)
   const text = `line ${lineNum}`
   if (!url) return text
   return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
@@ -113,7 +113,7 @@ function tabTemplate(f, isActive) {
 // suppressed for single-tab groups via the default args.
 function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
-  const lineLink = lineLinkTemplate(f.file, f.line, f.repo?.github)
+  const lineLink = lineLinkTemplate(f.file, f.line, f.repo?.github, f._repoFallback)
   // Line-num span composes the line link + (when present) the
   // exportName, comma-separated. Both pieces optional; the wrapping
   // span is suppressed when both are empty so the line-row collapses
