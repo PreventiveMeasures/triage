@@ -80,4 +80,13 @@
      `@media print` block in view/finding-card.css. */
 
   .file-header { break-after: avoid; page-break-after: avoid; font-size: .85rem; }
+
+  /* List view (flat, ungrouped) wraps each finding in a `.flat-group`
+     whose first child is `.flat-group-loc` — the filename + line +
+     meta row that names the source for the card below. Pin that row
+     to the card it belongs to so a page break never lands between
+     the filename and the finding body. The card itself can still
+     break across pages (long descriptions stay readable) — we only
+     guard the header-to-body seam. */
+  .flat-group-loc { break-after: avoid; page-break-after: avoid; }
 }
