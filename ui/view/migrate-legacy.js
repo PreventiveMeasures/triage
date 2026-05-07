@@ -67,15 +67,6 @@ async function run() {
       setCount(target, count, source)
     }
 
-    // Workspace membership keyed by filename — re-attach to the same
-    // workspace under the new name so the user's filing survives.
-    for (const w of listWorkspaces()) {
-      if (w.reports.includes(name)) {
-        setReportWorkspace(name, null)
-        setReportWorkspace(target, w.id)
-      }
-    }
-
     // Per-report repo URL is also keyed by filename.
     const repoUrl = loadRepoUrlFor(name)
     if (repoUrl) {
@@ -90,5 +81,23 @@ async function run() {
         localStorage.setItem(LAST_FILE_KEY, target)
       }
     } catch {}
+  }
+
+  // Workspace memberships keyed by filename — rewrite every
+  // `.deepseek`-suffixed entry to its `.md` counterpart, regardless
+  // of whether the corresponding OPFS file was renamed by the loop
+  // above. That catches orphan references the user can't otherwise
+  // shake (e.g. the `.deepseek` file is gone but the workspace JSON
+  // still pins the old name), and is a no-op when the workspace
+  // list is already clean. Done in one batch via the workspaces
+  // module's setReportWorkspace API so persistence stays in one
+  // code path.
+  for (const w of listWorkspaces()) {
+    for (const r of w.reports) {
+      if (!r.toLowerCase().endsWith('.deepseek')) continue
+      const renamed = r.slice(0, -'.deepseek'.length) + '.md'
+      setReportWorkspace(r, null)
+      setReportWorkspace(renamed, w.id)
+    }
   }
 }
