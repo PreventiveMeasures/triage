@@ -11,7 +11,21 @@
    (--surface, --border, --text, etc.) inherit through the shadow
    boundary so theme switching keeps working. */
 
-/* Two-column grid: fixed-width score column on the left, body column
+/* Visible chrome (grid layout, padding, border, backgrounds, hover /
+   selected outlines) lives on a shadow-DOM `.row` wrapper rather than
+   on `:host` directly. Per the CSS Scoping cascade, light-DOM rules
+   targeting the host beat shadow `:host` declarations regardless of
+   specificity, so the global `* { padding: 0; margin: 0 }` reset in
+   theme.css would otherwise wipe out the row's padding. Shadow-DOM
+   children aren't reachable from light DOM, so styling `.row`
+   instead is bulletproof.
+
+   The host stays a plain `display: block` container; host-state
+   selectors (`:host(.is-critical)`, `:host(:last-child)`,
+   `:host(.selected)`, etc.) project onto `.row` via combinator
+   selectors so the styled element is always the inner wrapper.
+
+   Two-column grid: fixed-width score column on the left, body column
    on the right. The body's three sub-rows (title / meta / tabs)
    participate in this same grid via `display: contents` on .row-body
    so the score column can `grid-row: 1 / 3` — i.e. center against
@@ -20,7 +34,9 @@
    actually a `.tabs-row` child, so single-tab findings stay at two
    rows tall with no trailing gap. The minmax(0, …) on the second
    column lets `.title` / `.row-loc` shrink for text-overflow ellipsis. */
-:host {
+:host { display: block; }
+
+.row {
   display: grid;
   grid-template-columns: 5.5rem minmax(0, 1fr);
   column-gap: .85rem;
@@ -31,16 +47,16 @@
   cursor: pointer;
   transition: background .12s;
 }
-:host(:last-child) { border-bottom: none; }
-:host(:hover) { background: rgb(from var(--text) r g b / .04); }
-:host(.is-critical) { background: var(--critical-bg); }
-:host(.mark-red)   { background: #6b1820; }
-:host(.mark-blue)  { background: #1a2f5a; }
-:host(.mark-green) { background: #1a4a2a; }
-:host(.mark-gray)  { background: #2a2f37; }
-:host(.has-conflict) { outline: 2px dashed var(--accent); outline-offset: -2px; }
+:host(:last-child) .row { border-bottom: none; }
+:host(:hover) .row { background: rgb(from var(--text) r g b / .04); }
+:host(.is-critical) .row { background: var(--critical-bg); }
+:host(.mark-red) .row   { background: #6b1820; }
+:host(.mark-blue) .row  { background: #1a2f5a; }
+:host(.mark-green) .row { background: #1a4a2a; }
+:host(.mark-gray) .row  { background: #2a2f37; }
+:host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
 :host(.deleted) { opacity: .75; }
-:host(.selected) { outline: 2px solid var(--accent); outline-offset: -2px; }
+:host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .row-score {
   grid-column: 1;

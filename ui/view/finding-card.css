@@ -1,33 +1,39 @@
-/* `<finding-card>` shadow-DOM styles. The host element IS the
-   `.finding` card — host classes (`is-critical`, `mark-{red|blue|green|gray}`,
-   `has-conflict`, `deleted`, `multi-case`, `finding`) are stamped by
-   the component so external selectors like `.flat-group .finding`
-   still match. The interior — tab bodies, line row, body content,
-   marks row, action buttons — lives in here.
+/* `<finding-card>` shadow-DOM styles. Host classes (`is-critical`,
+   `mark-{red|blue|green|gray}`, `has-conflict`, `deleted`,
+   `multi-case`, `finding`) are stamped by the component so external
+   selectors like `.flat-group .finding` still match the host.
 
-   Layout-affecting external context: when the card sits inside a
-   `<flat-group>` style wrapper, the in-body `.line-row` is
-   redundant (the wrapper paints its own location header above the
-   card). External CSS can't reach across the shadow boundary, so
-   the parent passes the hint through the `in-group` attribute,
-   handled by the `:host([in-group]) .line-row { display: none }`
-   rule below. */
+   Visible card chrome (padding, border, background, outline) lives
+   on a shadow-DOM `.card` wrapper rather than on `:host` directly.
+   Why: per the CSS Scoping cascade, light-DOM rules targeting the
+   host beat shadow-DOM `:host` declarations — and the global
+   `*, *::before, *::after { padding: 0; margin: 0 }` reset in
+   theme.css would otherwise wipe out the card's padding. Light-DOM
+   rules cannot reach elements inside the shadow tree, so styling
+   `.card` instead is bulletproof against future global resets too.
 
-:host {
-  display: block;
+   The host stays a plain `display: block` container (with
+   `:host(.hidden) { display: none }` honoured); host-state
+   selectors (`:host(.is-critical)`, `:host(:last-child)`,
+   `:host([in-group])`, etc.) project onto `.card` via combinator
+   selectors so the styled element is always the inner wrapper. */
+
+:host { display: block; }
+:host(.hidden) { display: none; }
+:host(.deleted) { opacity: 0.75; }
+
+.card {
   padding: .5rem .75rem;
   border-bottom: 1px solid var(--border);
   font-size: .875rem;
 }
-:host(:last-child) { border-bottom: none; }
-:host(.is-critical) { background: var(--critical-bg); }
-:host(.hidden) { display: none; }
-:host(.deleted) { opacity: 0.75; }
-:host(.mark-red)   { background: #6b1820; }
-:host(.mark-blue)  { background: #1a2f5a; }
-:host(.mark-green) { background: #1a4a2a; }
-:host(.mark-gray)  { background: #2a2f37; }
-:host(.has-conflict) { outline: 2px dashed var(--accent); outline-offset: -2px; }
+:host(:last-child) .card { border-bottom: none; }
+:host(.is-critical) .card { background: var(--critical-bg); }
+:host(.mark-red) .card   { background: #6b1820; }
+:host(.mark-blue) .card  { background: #1a2f5a; }
+:host(.mark-green) .card { background: #1a4a2a; }
+:host(.mark-gray) .card  { background: #2a2f37; }
+:host(.has-conflict) .card { outline: 2px dashed var(--accent); outline-offset: -2px; }
 
 /* Suppressed in-body line row when the parent wrapper already
    paints location info above the card (flat-group mode). */
@@ -192,12 +198,12 @@
    the in-body rules (`.tab-body`, `.tabs`, etc.) only apply inside
    the shadow root anyway. */
 @media print {
-  :host {
+  .card {
     break-inside: avoid; page-break-inside: avoid;
     padding: .45rem .25rem;
   }
   :host(.deleted) { opacity: 1; }
-  :host(.multi-case)::before {
+  :host(.multi-case) .card::before {
     content: "Multiple reports of one finding";
     display: block;
     font-size: .7rem; font-weight: 700; color: #555;

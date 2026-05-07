@@ -64,7 +64,11 @@ class FindingCard extends StateElement {
     this.dataset.gid = findingCardGid(this.group)
     const next = new Set(findingCardClasses(this.group))
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    return html`${unsafeHTML(findingCardInnerHTML(this.group))}`
+    // Visual chrome is on the inner `.card` wrapper rather than the
+    // host so the global `* { padding: 0 }` reset in theme.css can't
+    // override our padding/border via the shadow boundary's
+    // outer-wins-over-inner cascade rule. See finding-card.css.
+    return html`<div class="card">${unsafeHTML(findingCardInnerHTML(this.group))}</div>`
   }
 
   connectedCallback() {

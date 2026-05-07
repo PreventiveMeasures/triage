@@ -72,7 +72,11 @@ class FindingRow extends StateElement {
     const next = new Set(tableRowClasses(this.group))
     if (this.selected) next.add('selected')
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    return html`${unsafeHTML(tableRowInnerHTML(this.group))}`
+    // Visual chrome is on the inner `.row` wrapper rather than the
+    // host so the global `* { padding: 0 }` reset in theme.css can't
+    // override our padding/border via the shadow boundary's
+    // outer-wins-over-inner cascade rule. See finding-row.css.
+    return html`<div class="row">${unsafeHTML(tableRowInnerHTML(this.group))}</div>`
   }
 
   connectedCallback() {
