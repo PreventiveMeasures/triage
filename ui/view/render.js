@@ -343,28 +343,36 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
 // filter; multiple selections = union across the ticked chips (so
 // ticking every chip is equivalent to ticking none). A zero-count
 // chip is hidden so the row stays compact.
-function statsHtml(counts) {
-  let html = '<div class="stats">'
-  // Order matches the SEVERITIES iteration in format.js. Each chip
-  // auto-hides when its count is zero (the loop below skips !count),
-  // so the bug tiers only appear when a DeepSec report contains them
-  // and stay invisible for Claude / Codex / JSON dumps.
-  const statItems = [
-    ['critical', counts.critical, '--critical'],
-    ['high', counts.high, '--high'],
-    ['medium', counts.medium, '--medium'],
-    ['low', counts.low, '--low'],
-    ['high_bug', counts.high_bug, '--high-bug'],
-    ['bug', counts.bug, '--bug'],
-    ['informational', counts.informational, '--info'],
+// Severity-filter chips — ported from the DeepView.0 prototype's
+// `.sev-chip` design. Each chip pairs a small color square (the
+// severity's hue swatch) with the severity name and a count badge.
+// Active chips pick up a 50%-alpha border and a 10%-alpha
+// background tint of their own severity color, so the active state
+// reads as "this severity is highlighted" without overpowering the
+// chip's content. Hidden when count is zero — keeps the row tight
+// for Claude / Codex / JSON dumps that don't carry every tier.
+//
+// Unlike the prototype the chips live inside the toolbar block (see
+// `toolbarHtml`) rather than in their own outer row, and the
+// "X shown / All / None" actions group is intentionally left off:
+// the result count + filter-clearing affordances live elsewhere
+// (the search row's `X of Y` and the per-chip toggle), so the
+// extra summary just duplicates them.
+function severityChipsHtml(counts) {
+  const items = [
+    ['critical',      counts.critical,      'Critical'],
+    ['high',          counts.high,          'High'],
+    ['medium',        counts.medium,        'Medium'],
+    ['low',           counts.low,           'Low'],
+    ['high_bug',      counts.high_bug,      'High bug'],
+    ['bug',           counts.bug,           'Bug'],
+    ['informational', counts.informational, 'Info'],
   ]
-  for (const [sev, count, color] of statItems) {
+  let html = '<div class="sev-chips" role="group" aria-label="Filter by severity">'
+  for (const [sev, count, label] of items) {
     if (!count) continue
     const active = state.filterSeverities.has(sev) ? ' active' : ''
-    // `high_bug` → `high bug` for the human-readable label; data-sev
-    // keeps the raw token so click filtering still matches f.severity.
-    const label = sev.replace(/_/gu, ' ')
-    html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${label}</div>`
+    html += `<button type="button" class="sev-chip ${sev}${active}" data-sev="${sev}" aria-pressed="${state.filterSeverities.has(sev)}"><span class="sd"></span><span class="name">${esc(label)}</span><span class="n">${count}</span></button>`
   }
   html += '</div>'
   return html
@@ -401,7 +409,7 @@ function triageFilterHtml(colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) {
+function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
   const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
@@ -479,6 +487,12 @@ function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) 
   // render() so it only appears on the findings tab with a report
   // loaded.
   html += '</div>'
+  // Severity chips on their own toolbar row — unlike the prototype's
+  // outer `.sev-row` block this lives inside the toolbar so the
+  // filter chrome stays cohesive. The "X shown / All / None"
+  // actions group from the prototype is dropped — the search row's
+  // `X of Y` and per-chip toggle handle those needs already.
+  html += `<div class="toolbar-row sev-row">${severityChipsHtml(counts)}</div>`
   html += '<div class="toolbar-row">'
   // Mark-color filter pill leads the row — a compact visual filter
   // that pairs naturally with the text-search input beside it.
@@ -811,8 +825,7 @@ export function render() {
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
   html += `<div class="findings-content${tableWithDetails ? ' with-details' : ''}">`
-  html += statsHtml(counts)
-  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, colorCounts, {
+  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showPriority: hasAnyPriority,

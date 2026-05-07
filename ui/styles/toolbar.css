@@ -110,20 +110,69 @@
   }
 }
 
-.stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+/* Severity-filter chips — ported from the DeepView.0 prototype's
+   `.sev-chip` block. Pill-shaped chip with a colored swatch on the
+   left (the severity hue), the severity name, and a count badge.
+   Inactive: chip-bg `var(--bg)`, muted text. Hover lifts text /
+   border. Active: 50%-alpha border + 10%-alpha background tint of
+   the chip's own severity color, so the active state reads as
+   "this severity is highlighted". */
+.sev-chips {
+  display: inline-flex; align-items: center; flex-wrap: wrap;
+  gap: 6px;
+}
+.sev-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted);
+  font-size: .75rem; font-weight: 500;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
 
-.stat {
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: var(--shadow-glass);
-  padding: .6rem 1rem; font-size: .85rem; cursor: pointer; user-select: none;
-  transition: border-color .15s, background .12s;
+  &:hover { color: var(--text); border-color: var(--accent); }
 
-  &:hover, &.active { border-color: var(--accent); }
-  /* Active state uses the opaque --surface-active tint, deliberately
-     overriding the glass — selected chips need to read solid. */
-  &.active { background: var(--surface-active); }
-  & strong { display: block; font-size: 1.2rem; }
+  & .sd {
+    width: 8px; height: 8px; border-radius: 2px;
+    display: inline-block;
+    background: currentColor;  /* per-severity rule below sets the real color */
+  }
+  & .name { letter-spacing: -0.005em; }
+  & .n {
+    font-variant-numeric: tabular-nums;
+    font-size: .68rem; color: var(--muted); font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 0 6px; min-width: 18px;
+    text-align: center; line-height: 16px;
+  }
+
+  &.active {
+    color: var(--text);
+    & .n { color: var(--text); background: var(--bg); }
+  }
+
+  /* Per-severity color: swatch always shows the hue, active state
+     tints border + background. `rgb(from var(...) r g b / .5)` /
+     `... / .1` produce alpha variants of the existing severity
+     vars so the chips theme automatically when the severity
+     palette shifts (e.g. dark/light mode). */
+  &.critical .sd      { background: var(--critical); }
+  &.high .sd          { background: var(--high); }
+  &.medium .sd        { background: var(--medium); }
+  &.low .sd           { background: var(--low); }
+  &.high_bug .sd      { background: var(--high-bug); }
+  &.bug .sd           { background: var(--bug); }
+  &.informational .sd { background: var(--info); }
+
+  &.critical.active      { border-color: rgb(from var(--critical) r g b / .5); background: rgb(from var(--critical) r g b / .1); }
+  &.high.active          { border-color: rgb(from var(--high)     r g b / .5); background: rgb(from var(--high)     r g b / .1); }
+  &.medium.active        { border-color: rgb(from var(--medium)   r g b / .5); background: rgb(from var(--medium)   r g b / .1); }
+  &.low.active           { border-color: rgb(from var(--low)      r g b / .5); background: rgb(from var(--low)      r g b / .1); }
+  &.high_bug.active      { border-color: rgb(from var(--high-bug) r g b / .5); background: rgb(from var(--high-bug) r g b / .1); }
+  &.bug.active           { border-color: rgb(from var(--bug)      r g b / .5); background: rgb(from var(--bug)      r g b / .1); }
+  &.informational.active { border-color: rgb(from var(--info)     r g b / .5); background: rgb(from var(--info)     r g b / .1); }
 }
 
 /* Mark-color filter pill — ported from the DeepView.0 prototype's

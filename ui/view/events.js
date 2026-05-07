@@ -283,9 +283,12 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Severity / color stat toggle. Both are multi-select — click toggles
-  // membership in the matching Set, empty Set = no filter.
-  const sevStat = e.target.closest('.stat[data-sev]')
+  // Severity chip toggle — multi-select (`state.filterSeverities` is
+  // a Set; empty = no filter, non-empty = membership required).
+  // Selector matches the new toolbar chips (`.sev-chip[data-sev]`);
+  // the older `.stat[data-sev]` cards came out when severity moved
+  // into the toolbar block.
+  const sevStat = e.target.closest('.sev-chip[data-sev]')
   if (sevStat) {
     const sev = sevStat.dataset.sev
     if (state.filterSeverities.has(sev)) state.filterSeverities.delete(sev)
