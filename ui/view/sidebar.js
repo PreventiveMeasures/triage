@@ -4,6 +4,7 @@ import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, deleteCurrent } from './ingest.js'
 import { getCount, ensureCounts } from './counts.js'
+import { listWorkspaces, createWorkspace } from './workspaces.js'
 
 // Sidebar source-grouping. Each known finding-source format gets its
 // own bucket; the JSON bucket renders under "Reports" since that's
@@ -88,6 +89,21 @@ function groupHeaderHtml(label, count) {
   return `<li class="file-group-header"><span class="group-label">${esc(label)}</span><span class="group-count">${count}</span></li>`
 }
 
+// Workspaces section header — same chrome as a regular bucket header,
+// but the right slot carries a plus button instead of a count chip.
+// `data-action="new-workspace"` is what the sidebar click delegate
+// dispatches on; the chip's title gives the affordance a tooltip
+// mirroring the "Delete current" button below.
+const WORKSPACE_PLUS_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>'
+function workspaceHeaderHtml(count) {
+  return `<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><span class="group-count">${count}</span><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
+}
+
+const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
+function workspaceItemHtml(w) {
+  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button></li>`
+}
+
 function matchesSearch(name) {
   if (!searchQuery) return true
   return displayName(name).toLowerCase().includes(searchQuery)
@@ -103,7 +119,13 @@ function matchesSearch(name) {
 // current selection, or the search query.
 export async function renderSidebar() {
   const names = await listFiles()
-  sidebar.classList.toggle('empty', names.length === 0 && !state.currentFile)
+  const workspaces = listWorkspaces()
+  // The sidebar always shows now — Workspaces is a first-class feature
+  // and its "+" button must be reachable on first launch (before any
+  // report or workspace exists). The drop zone still owns the welcome
+  // copy in main; the sidebar just exposes the create-workspace
+  // affordance alongside.
+  sidebar.classList.remove('empty')
 
   // Bucket by group, applying the search filter as we go so empty
   // post-filter groups skip their header entirely.
@@ -117,6 +139,14 @@ export async function renderSidebar() {
   }
 
   let html = ''
+  // Workspaces above Reports. Filtered by the same search query as
+  // reports so a search narrows everything in lockstep; the section
+  // header still renders when filtered to empty so the "+" button
+  // stays reachable.
+  const visibleWorkspaces = workspaces.filter((w) => !searchQuery || w.name.toLowerCase().includes(searchQuery))
+  html += workspaceHeaderHtml(visibleWorkspaces.length)
+  for (const w of visibleWorkspaces) html += workspaceItemHtml(w)
+
   for (const g of GROUP_ORDER) {
     const list = buckets.get(g) ?? []
     if (list.length === 0) continue
@@ -139,8 +169,19 @@ export async function renderSidebar() {
 
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
-// input.
+// input. The workspace "+" button intercepts BEFORE the file-row
+// match because a workspace header is itself a `<li>` that contains
+// no `data-file` — but the add button still bubbles to the same
+// listener.
 sidebar.addEventListener('click', (e) => {
+  if (e.target.closest('[data-action="new-workspace"]')) {
+    const name = window.prompt('Workspace name')
+    if (name && name.trim()) {
+      createWorkspace(name)
+      renderSidebar()
+    }
+    return
+  }
   const fileEl = e.target.closest('.file-item[data-file]')
   if (fileEl) {
     const name = fileEl.dataset.file

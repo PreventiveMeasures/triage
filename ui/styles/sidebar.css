@@ -115,6 +115,24 @@
   }
 }
 
+/* Workspaces header — same chrome as a regular bucket header, but the
+   right slot bundles the count chip together with a "+" button. The
+   button uses the same hover treatment as #sidebar-toggle so the
+   chrome stays consistent. */
+.file-group-header.workspace-header .workspace-header-actions {
+  display: flex; align-items: center; gap: .35rem;
+}
+
+.workspace-add {
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; padding: 0;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
+}
+
 /* File row. The clickable surface is the inner `<button>` so the
    focus ring + hover background hug the visible chip instead of
    spilling to the row edge. Rounded corners + subtle background on
