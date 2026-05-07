@@ -8,6 +8,7 @@
 // just the glass-card wrapper + the row layout; the click delegate
 // lives in events.js.
 import { LitElement, html, unsafeCSS } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { tableRowGid } from './render-finding.js'
 import './finding-row.js'
 import tableCSS from './finding-table.css'
@@ -27,7 +28,16 @@ class FindingTable extends LitElement {
   }
 
   render() {
-    return html`${(this.items ?? []).map(
+    // Keyed by gid via lit's `repeat` directive: when the items list
+    // reorders (sort change, filter add/remove) Lit moves the existing
+    // <finding-row> elements to the new positions instead of swapping
+    // their `group` property — each row stays associated with its
+    // group, so unchanged rows skip re-rendering. Without the key,
+    // the default `.map()` matches by position and would dirty every
+    // row whose neighbour shifted.
+    return html`${repeat(
+      this.items ?? [],
+      (g) => tableRowGid(g),
       (g) => html`<finding-row
         .group=${g}
         ?selected=${tableRowGid(g) === this.selectedGid}
