@@ -89,18 +89,63 @@
   & strong { display: block; font-size: 1.2rem; }
 }
 
-/* Color-filter chips reuse `.stat` but carry a small swatch beside the
-   label so the row looks distinct from the severity chips at a glance.
-   Swatch colors mirror the mark-dot palette; `none` is an outlined
-   circle to read as "no fill = unmarked". */
-.stat-dot {
-  display: inline-block; width: .7rem; height: .7rem;
-  border-radius: 50%; margin-right: .3rem;
-  vertical-align: middle; border: 1px solid var(--border);
+/* Mark-color filter pill — ported from the DeepView.0 prototype's
+   `.triage-filter`. One pill with five compact circle buttons for
+   `none / red / blue / green / gray`; clicking toggles
+   `state.filterColors`. The active button gets a faint backdrop +
+   1px ring and the inner circle fills with the color (the inactive
+   state is just the colored ring). The unmarked button uses a
+   dashed ring to read as "no fill = no color". Per-button counts
+   sit as a small chip in the upper-right corner of the circle.
+   Colors match the per-row `<color-marker>` palette so the same
+   hue means the same thing across the chrome. */
+.triage-filter {
+  display: inline-flex; align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+  height: 30px;
+  gap: 1px;
 
-  &.stat-dot-red   { background: #6b1820; }
-  &.stat-dot-blue  { background: #1a2f5a; }
-  &.stat-dot-green { background: #1a4a2a; }
-  &.stat-dot-gray  { background: #2a2f37; }
-  &.stat-dot-none  { background: transparent; border-style: dashed; }
+  & button {
+    width: 22px; height: 22px;
+    background: transparent;
+    border: 0; border-radius: 4px;
+    padding: 0;
+    display: grid; place-items: center;
+    position: relative;
+    cursor: pointer;
+    transition: background .12s;
+
+    &:hover { background: rgb(from var(--text) r g b / .06); }
+    &.active {
+      background: rgb(from var(--text) r g b / .08);
+      box-shadow: 0 0 0 1px var(--border);
+    }
+  }
+
+  & .td {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    background: transparent;
+    transition: background .12s;
+  }
+  & button.active .td { background: currentColor; }
+  & .td.none { border-style: dashed; color: var(--muted); }
+  & .td.r { color: oklch(0.68 0.20 25); }
+  & .td.b { color: oklch(0.72 0.15 240); }
+  & .td.g { color: oklch(0.74 0.15 145); }
+  & .td.x { color: oklch(0.55 0.01 260); }
+
+  & .count {
+    position: absolute; top: -2px; right: -2px;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 8.5px; font-weight: 600;
+    border-radius: 999px; padding: 0 3px;
+    min-width: 11px; text-align: center; line-height: 11px;
+    font-variant-numeric: tabular-nums;
+  }
 }

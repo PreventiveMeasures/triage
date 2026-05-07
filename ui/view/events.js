@@ -293,12 +293,15 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Scoped to `.stat[data-color]` so mark-dot buttons (which also carry
-  // `data-color` but are `<button>`s, not `.stat` cards) don't match —
-  // they were already handled above.
-  const colorStat = e.target.closest('.stat[data-color]')
-  if (colorStat) {
-    const col = colorStat.dataset.color
+  // Triage-filter pill: each circle button toggles `state.filterColors`
+  // for one mark color (or `none` for unmarked). The buttons live in
+  // a single `<div class="triage-filter">` group, so the click
+  // delegate matches `button[data-color]` scoped to that container —
+  // mark-dot buttons inside finding rows have their own selector and
+  // were already handled above.
+  const colorBtn = e.target.closest('.triage-filter button[data-color]')
+  if (colorBtn) {
+    const col = colorBtn.dataset.color
     if (state.filterColors.has(col)) state.filterColors.delete(col)
     else state.filterColors.add(col)
     render()

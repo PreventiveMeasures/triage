@@ -131,17 +131,6 @@ body.theme-light {
   --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
   --badge-low-text: #fff;
 
-  /* Toolbar stat-dots (the small color swatches next to the stat
-     filter chips) — light-mode pastels would wash out at the dot
-     size, so they get vivid, mid-saturation fills. The mark-dot
-     fills moved into `<color-marker>` shadow DOM and theme themselves
-     via that component's stylesheet, so only `.stat-dot-*` is left
-     here. */
-  & .stat-dot-red   { background: #d73a49; }
-  & .stat-dot-blue  { background: #0969da; }
-  & .stat-dot-green { background: #2da44e; }
-  & .stat-dot-gray  { background: #6e7781; }
-
   /* Per-file count chip in the Files tab — flips to white text on
      the saturated slate `--low` fill. The in-shadow-DOM badge gets
      the same flip via `--badge-low-text` (defined above), so the

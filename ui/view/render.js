@@ -366,18 +366,27 @@ function statsHtml(counts, colorCounts) {
     const label = sev.replace(/_/gu, ' ')
     html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${label}</div>`
   }
-  const colorStatItems = [
-    ['red', colorCounts.red, 'red'],
-    ['blue', colorCounts.blue, 'blue'],
-    ['green', colorCounts.green, 'green'],
-    ['gray', colorCounts.gray, 'gray'],
-    ['none', colorCounts.none, 'unmarked'],
+  // Mark-color filter — ported from the DeepView.0 prototype's
+  // `.triage-filter` pill (a compact 5-button group with circle
+  // glyphs). One container for all five colors so the row stays
+  // tight; per-button counts sit as a small chip in the upper-right
+  // of each circle. Tooltips intentionally name the color only —
+  // these dots are user-assigned during triage and the meaning is
+  // whatever the user wants, so the chrome doesn't presume
+  // "confirmed", "needs review", etc.
+  const triageItems = [
+    ['none', colorCounts.none ?? 0, 'none', 'unmarked'],
+    ['red',  colorCounts.red  ?? 0, 'r',    'red'],
+    ['blue', colorCounts.blue ?? 0, 'b',    'blue'],
+    ['green', colorCounts.green ?? 0, 'g',  'green'],
+    ['gray', colorCounts.gray ?? 0, 'x',    'gray'],
   ]
-  for (const [col, count, label] of colorStatItems) {
-    if (!count) continue
+  html += '<div class="triage-filter" role="group" aria-label="Filter by mark color">'
+  for (const [col, count, tdClass, label] of triageItems) {
     const active = state.filterColors.has(col) ? ' active' : ''
-    html += `<div class="stat${active}" data-color="${col}"><strong>${count}</strong><span class="stat-dot stat-dot-${col}"></span>${label}</div>`
+    html += `<button type="button" class="${active.trim()}" data-color="${col}" title="${label} (${count})" aria-pressed="${state.filterColors.has(col)}"><span class="td ${tdClass}"></span><span class="count">${count}</span></button>`
   }
+  html += '</div>'
   html += '</div>'
   return html
 }
