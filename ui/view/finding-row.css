@@ -52,10 +52,10 @@
    color, and a row-wide red background collides visually with
    `.mark-red`'s identical-hue tint. The colored stripe / score
    pill / mark-red row tint stay distinct for triage by color. */
-:host(.mark-red) .row   { background: #6b1820; }
-:host(.mark-blue) .row  { background: #1a2f5a; }
-:host(.mark-green) .row { background: #1a4a2a; }
-:host(.mark-gray) .row  { background: #2a2f37; }
+:host(.mark-red) .row   { background: var(--mark-red-bg); }
+:host(.mark-blue) .row  { background: var(--mark-blue-bg); }
+:host(.mark-green) .row { background: var(--mark-green-bg); }
+:host(.mark-gray) .row  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
 :host(.deleted) { opacity: .75; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -130,7 +130,7 @@
   &.critical      { background: var(--critical); color: #fff; }
   &.high          { background: var(--high); color: #fff; }
   &.medium        { background: var(--medium); color: #000; }
-  &.low           { background: var(--low); color: #000; }
+  &.low           { background: var(--low); color: var(--badge-low-text); }
   &.high_bug      { background: var(--high-bug); color: #fff; }
   &.bug           { background: var(--bug); color: #fff; }
   &.informational { background: var(--info); color: #fff; }
@@ -146,10 +146,10 @@
   &:hover { border-color: var(--accent); }
   &.active { border-color: var(--accent); background: var(--surface-active); }
 
-  &.tab-mark-red   { background: #6b1820; border-color: #6b1820; }
-  &.tab-mark-blue  { background: #1a2f5a; border-color: #1a2f5a; }
-  &.tab-mark-green { background: #1a4a2a; border-color: #1a4a2a; }
-  &.tab-mark-gray  { background: #2a2f37; border-color: #2a2f37; }
+  &.tab-mark-red   { background: var(--mark-red-bg);   border-color: var(--mark-red-tab-border); }
+  &.tab-mark-blue  { background: var(--mark-blue-bg);  border-color: var(--mark-blue-tab-border); }
+  &.tab-mark-green { background: var(--mark-green-bg); border-color: var(--mark-green-tab-border); }
+  &.tab-mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
 
   &.tab-mark-red.active,
   &.tab-mark-blue.active,

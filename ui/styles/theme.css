@@ -25,8 +25,8 @@
   --bg: #121212;
   --surface: rgba(28, 28, 28, 0.78);
   --border: #2c2c2c; --text: #e6edf3;
-  --muted: #8b949e; --accent: #58a6ff; --critical: #f85149;
-  --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
+  --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
   /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
      Earthy tones distinguish them from the saturated red/orange/amber
      vuln palette: terracotta for high_bug (still draws attention),
@@ -60,6 +60,29 @@
   --graph-canvas-bg: #0c0c0c;
   --graph-hover-bg: rgba(255, 255, 255, 0.04);
   --graph-divider: rgba(60, 60, 60, 0.5);
+
+  /* User-applied marker backgrounds — consumed by `<finding-row>` /
+     `<finding-card>` / `<finding-table>` shadow DOMs. Custom
+     properties inherit through the shadow boundary, so a single
+     `:root` definition theme-tints every consumer; class-based
+     overrides on light DOM (`.finding-row.mark-red { background:
+     ... }`) couldn't reach inside the shadow trees and broke the
+     light-mode pastels after the table-view migration to a Lit
+     element. The `-tab-border` companion lets a tab's outline
+     differ from its fill in light mode (where the border picks up
+     a darker variant); in dark mode they match because the dark
+     pastels already read as outlined when the tab sits on the
+     surface. */
+  --mark-red-bg: #6b1820;   --mark-red-tab-border: #6b1820;
+  --mark-blue-bg: #1a2f5a;  --mark-blue-tab-border: #1a2f5a;
+  --mark-green-bg: #1a4a2a; --mark-green-tab-border: #1a4a2a;
+  --mark-gray-bg: #2a2f37;  --mark-gray-tab-border: #2a2f37;
+  /* Low-severity badge text — same shadow-DOM-piercing trick. The
+     dark-mode `--low` (#8b949e medium gray) is light enough for
+     black text; the light-mode `--low` (#6e7781 dark slate) needs
+     white. The base finding-row / finding-card rule reads this var
+     so the rule survives across the shadow boundary. */
+  --badge-low-text: #000;
 }
 
 body.theme-light {
@@ -71,7 +94,14 @@ body.theme-light {
   --accent: #0969da;
   --critical: #cf222e;
   --high: #bc4c00;
-  --medium: #9a6700;
+  /* Lighter yellow than GitHub's #9a6700 dark olive — the badge
+     paints `var(--medium)` as fill with `color: #000` (the base
+     finding-row.css rule), so the bg has to be light enough that
+     black text stays legible. The dark olive earlier needed white
+     text, but the light-mode override of medium → white-text was
+     also a regression: white-on-olive is fine, black-on-light-yellow
+     is more conventional and matches the dark-mode treatment. */
+  --medium: #f0c040;
   --low: #6e7781;
   --green: #1a7f37;
   --high-bug: #a85a14;
@@ -87,47 +117,37 @@ body.theme-light {
   --graph-divider: rgba(208, 215, 222, 0.7);
 
   /* Re-tint user-applied marker backgrounds for light mode. The dark
-     palette (#6b1820 etc) was sized for `var(--text)`-as-light to
-     remain readable; in light mode that text turns dark and would
-     vanish on those same backgrounds.
+     palette was sized for `var(--text)`-as-light to remain readable
+     on the row tint; in light mode the text turns dark and would
+     vanish on those same backgrounds, so we drop in pastel fills
+     that read with black text instead.
 
      The mark-dot / stat-dot fills (small color swatches, no text
      inside) keep their dark palette — they're indicators, not text
      containers, and the dark dots stay visible on a light surface. */
-  /* :is() so the same swatches apply to both .finding (list view)
-     and .finding-row (table view) — the visual semantic of "this
-     finding is marked X" is identical in both presentations. */
-  & :is(.finding, .finding-row).mark-red   { background: #ffc1bd; }
-  & :is(.finding, .finding-row).mark-blue  { background: #a5d6ff; }
-  & :is(.finding, .finding-row).mark-green { background: #aceebb; }
-  & :is(.finding, .finding-row).mark-gray  { background: #d0d7de; }
-  & .tab.tab-mark-red   { background: #ffc1bd; border-color: #ff8182; }
-  & .tab.tab-mark-blue  { background: #a5d6ff; border-color: #54aeff; }
-  & .tab.tab-mark-green { background: #aceebb; border-color: #4ac26b; }
-  & .tab.tab-mark-gray  { background: #d0d7de; border-color: #8c959f; }
+  --mark-red-bg: #ffc1bd;   --mark-red-tab-border: #ff8182;
+  --mark-blue-bg: #a5d6ff;  --mark-blue-tab-border: #54aeff;
+  --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
+  --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
+  --badge-low-text: #fff;
 
-  /* Color-dot indicators (.mark-dot under findings, .stat-dot in the
-     stats row). Originals (#6b1820 etc) are dark-on-dark — readable
-     against the dark UI but dim against a light surface. Use vivid,
-     mid-saturation swatches for light mode so the color names read
-     unambiguously at the small dot size. */
-  /* mark-dot is hoisted out of .finding scope (see findings.css) so
-     the same indicators light up the same way in either view. */
-  & .mark-dot-red,   & .stat-dot-red   { background: #d73a49; }
-  & .mark-dot-blue,  & .stat-dot-blue  { background: #0969da; }
-  & .mark-dot-green, & .stat-dot-green { background: #2da44e; }
-  & .mark-dot-gray,  & .stat-dot-gray  { background: #6e7781; }
+  /* Toolbar stat-dots (the small color swatches next to the stat
+     filter chips) — light-mode pastels would wash out at the dot
+     size, so they get vivid, mid-saturation fills. The mark-dot
+     fills moved into `<color-marker>` shadow DOM and theme themselves
+     via that component's stylesheet, so only `.stat-dot-*` is left
+     here. */
+  & .stat-dot-red   { background: #d73a49; }
+  & .stat-dot-blue  { background: #0969da; }
+  & .stat-dot-green { background: #2da44e; }
+  & .stat-dot-gray  { background: #6e7781; }
 
-  /* Badge text flips to white for medium / low in light mode. The
-     dark-mode rule sets `color: #000` because --medium (amber) and
-     --low (light gray) are pale enough that black reads cleanly; in
-     light mode those vars become dark golden / slate, so black text
-     vanishes. Critical + high already use white in both modes. Same
-     fix for the per-file count chip in the Files tab — the in-graph
-     tree-count-chip / tt-chip variants stay on the dark palette
-     (graph view doesn't follow the theme). */
-  & .badge.medium, & .badge.low { color: #fff; }
-  & .tree-view .tree-count-chip.medium,
+  /* Per-file count chip in the Files tab — flips to white text on
+     the saturated slate `--low` fill. The in-shadow-DOM badge gets
+     the same flip via `--badge-low-text` (defined above), so the
+     per-file chip and the row badge both read consistently. The
+     in-graph tree-count-chip / tt-chip variants stay on the dark
+     palette (graph view doesn't follow the theme). */
   & .tree-view .tree-count-chip.low { color: #fff; }
 }
 
