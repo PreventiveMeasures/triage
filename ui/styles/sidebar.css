@@ -133,6 +133,31 @@
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
 }
 
+/* Per-workspace export button — flex sibling of the workspace's main
+   button. Hidden by default, revealed on row hover / focus so the
+   chrome stays clean when the user isn't aiming at it. */
+.file-item.workspace-item {
+  display: flex; align-items: stretch; gap: .15rem;
+}
+.file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
+
+.workspace-export {
+  flex-shrink: 0;
+  width: 22px; align-self: center;
+  height: 22px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: 4px;
+  cursor: pointer; padding: 0;
+  opacity: 0;
+  transition: opacity .12s ease-out;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
+  &:focus-visible { opacity: 1; }
+}
+.file-item.workspace-item:hover .workspace-export,
+.file-item.workspace-item:focus-within .workspace-export { opacity: 1; }
+
 /* File row. The clickable surface is the inner `<button>` so the
    focus ring + hover background hug the visible chip instead of
    spilling to the row edge. Rounded corners + subtle background on

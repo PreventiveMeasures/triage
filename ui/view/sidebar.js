@@ -6,6 +6,7 @@ import { switchToFile, deleteCurrent } from './ingest.js'
 import { getCount, getKind, ensureCounts } from './counts.js'
 import { listWorkspaces, createWorkspace, setReportWorkspace } from './workspaces.js'
 import { migrateLegacyFilenames } from './migrate-legacy.js'
+import { exportWorkspace } from './workspace-export.js'
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
 // the report's filename. We carry both this private mime AND
@@ -128,9 +129,17 @@ function workspaceHeaderHtml(count) {
 }
 
 const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
+// Download glyph used by the per-workspace export button — a
+// downward arrow over a tray. Sized to match the "+" affordance in
+// the section header.
+const WORKSPACE_EXPORT_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>'
 function workspaceItemHtml(w, reportCount) {
   const countHtml = reportCount > 0 ? `<span class="file-count">${reportCount}</span>` : ''
-  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span>${countHtml}</button></li>`
+  // Per-workspace export button. `data-action="export-workspace"` is
+  // dispatched by the sidebar click delegate and reads the parent
+  // li's data-workspace-id to find which workspace to bundle.
+  const exportBtn = `<button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>`
+  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span>${countHtml}</button>${exportBtn}</li>`
 }
 
 function matchesSearch(name) {
@@ -241,6 +250,17 @@ sidebar.addEventListener('click', (e) => {
       createWorkspace(name)
       renderSidebar()
     }
+    return
+  }
+  // Per-workspace export — find the enclosing workspace li, look the
+  // workspace up, hand it to exportWorkspace. Listed before the
+  // file-item handler because the export button lives inside the
+  // workspace li and we don't want a stray click to fall through.
+  const exportEl = e.target.closest('[data-action="export-workspace"]')
+  if (exportEl) {
+    const wsEl = exportEl.closest('[data-workspace-id]')
+    const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
+    if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to export workspace: ${err.message}`))
     return
   }
   const fileEl = e.target.closest('.file-item[data-file]')
