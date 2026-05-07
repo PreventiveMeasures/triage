@@ -22,12 +22,15 @@ function groupOf(name) {
 // Section header label per group. The default JSON bucket renders
 // under "Reports" — broad enough to fit any analyzer-native dump
 // (deduplicate output, single-run output, etc.) without naming the
-// pipeline. Named buckets carry the upstream's product name.
+// pipeline. Named buckets carry the upstream's product name. The
+// `'deepseek'` group key is a legacy internal marker (the parser /
+// `.deepseek` extension predate the corrected name) — the upstream
+// product is Vercel's DeepSec (https://github.com/vercel-labs/deepsec).
 const GROUP_LABELS = {
   'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
-  'deepseek': 'DeepSeek',
+  'deepseek': 'DeepSec',
 }
 
 // Render order for buckets — default (analyzer dumps) first, then
@@ -48,10 +51,22 @@ function displayName(name) {
 }
 
 // Inline `<svg>` for the file-row icon. Outline file-page glyph at
-// 14px to match the chrome's other icon buttons. Re-baked into each
-// row's HTML rather than referenced by id so a single `innerHTML`
-// write paints the whole list.
-const FILE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2h6l4 4v8H3z"/><path d="M9 2v4h4"/></svg>'
+// 14px to match the chrome's other icon buttons. Source-marked
+// groups overlay a small brand badge (Anthropic sparkle for Claude
+// Security, OpenAI hex for Codex Security, Vercel triangle for
+// DeepSec) in the lower-right corner of the file outline; the badge
+// fills are themed via the `.brand-claude` / `.brand-codex` /
+// `.brand-vercel` classes in sidebar.css. The default JSON bucket
+// keeps the plain outline. Re-baked into each row's HTML rather
+// than referenced by id so a single `innerHTML` write paints the
+// whole list.
+const FILE_OUTLINE = '<g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2h6l4 4v8H3z"/><path d="M9 2v4h4"/></g>'
+const FILE_ICONS = {
+  'default': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}</svg>`,
+  'claude-security': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-claude" d="M11 9.8 L11.5 11 L12.7 11.5 L11.5 12 L11 13.2 L10.5 12 L9.3 11.5 L10.5 11 Z"/></svg>`,
+  'codex-security': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-codex" d="M11 9.8 L12.5 10.65 L12.5 12.35 L11 13.2 L9.5 12.35 L9.5 10.65 Z"/></svg>`,
+  'deepseek': `<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${FILE_OUTLINE}<path class="brand-vercel" d="M11 10 L12.7 13 L9.3 13 Z"/></svg>`,
+}
 
 // Live module state — the search-box query, applied as a
 // case-insensitive substring match on each file's display name.
@@ -65,7 +80,8 @@ function fileItemHtml(n) {
   const label = displayName(n)
   const count = getCount(n)
   const countHtml = count !== undefined ? `<span class="file-count">${count}</span>` : ''
-  return `<li class="${cls}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(label)}">${FILE_ICON_SVG}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
+  const icon = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
+  return `<li class="${cls}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(label)}">${icon}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
 }
 
 function groupHeaderHtml(label, count) {

@@ -138,6 +138,17 @@
 
   & .file-icon {
     flex-shrink: 0; color: var(--muted);
+
+    /* Brand-mark badges layered on top of the file outline. Each
+       fills with the upstream's signature color so the user can
+       spot a Claude / Codex / DeepSec entry at a glance without
+       reading the section header. The colors match the brand
+       palettes — Anthropic salmon, OpenAI teal — and Vercel's
+       triangle picks up `var(--text)` so it inverts cleanly between
+       dark and light themes. */
+    & .brand-claude { fill: #d97757; }
+    & .brand-codex  { fill: #10a37f; }
+    & .brand-vercel { fill: var(--text); }
   }
   & .file-label {
     flex: 1; min-width: 0;

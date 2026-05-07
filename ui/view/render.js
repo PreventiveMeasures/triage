@@ -127,10 +127,13 @@ export function refreshGraph2TopPkgs() {
 // the same `source` marker — those reports lack the analyzer
 // (model / effort / exportsMode) metadata that the analyzer-combo
 // breakdown builds from, so they get a fixed product name instead.
+// `'deepseek'` is a legacy internal marker kept for OPFS / parser
+// stability — the upstream product is Vercel's DeepSec
+// (https://github.com/vercel-labs/deepsec).
 const SOURCE_TITLES = {
   'claude-security': 'Claude Security findings',
   'codex-security': 'Codex Security findings',
-  'deepseek': 'DeepSeek findings',
+  'deepseek': 'DeepSec findings',
 }
 
 // Outline file glyph for the title's filename chip. Matches the icon
