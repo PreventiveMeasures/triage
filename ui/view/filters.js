@@ -9,7 +9,6 @@ export function resetFilters() {
   state.filterConfMin = 8
   state.filterConfMax = ''
   state.filterInclude = ''
-  state.filterExclude = ''
   state.sortBy = 'severity'
 }
 
@@ -18,7 +17,6 @@ export function resetFilters() {
 // one matching tab keeps the whole group visible.
 export function matchesFilters(f) {
   const inc = state.filterInclude.toLowerCase()
-  const exc = state.filterExclude.toLowerCase()
   // Severity + color filters are multi-select Sets: empty = no filter,
   // non-empty = membership required. Unmarked tabs are bucketed under
   // the literal `'none'` so the user can isolate unreviewed findings by
@@ -33,7 +31,6 @@ export function matchesFilters(f) {
   if (state.filterConfMin !== '' && (f.confidence === undefined || f.confidence < state.filterConfMin)) return false
   if (state.filterConfMax !== '' && (f.confidence === undefined || f.confidence > state.filterConfMax)) return false
   if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
-  if (exc) { const text = findingText(f); if (text.includes(exc)) return false }
   return true
 }
 

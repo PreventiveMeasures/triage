@@ -73,6 +73,36 @@
   display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
 }
 
+/* Search field — ported from the DeepView.0 prototype's `.field.grow`
+   pattern. Pill-shaped wrapper with a magnifier glyph on the left
+   and a borderless input that grows to fill the remaining row. The
+   `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so the
+   field expands when there's room and stays at a comfortable
+   minimum when the row gets cramped. Focus picks up an accent
+   border to match the other chrome inputs (see styles/theme.css). */
+.toolbar-search {
+  display: inline-flex; align-items: center; gap: .5rem;
+  flex: 1 1 14rem; min-width: 12rem;
+  height: 30px; box-sizing: border-box;
+  padding: 0 .65rem;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px;
+
+  &:focus-within { border-color: var(--accent); }
+
+  & svg { color: var(--muted); flex-shrink: 0; }
+
+  & input {
+    flex: 1; min-width: 0;
+    background: transparent; border: 0; outline: none;
+    color: var(--text); font: inherit; font-size: .8rem;
+    padding: 0;
+
+    &::placeholder { color: var(--muted); }
+    &::-webkit-search-cancel-button { display: none; }
+  }
+}
+
 .stats { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
 
 .stat {

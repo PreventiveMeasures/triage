@@ -387,8 +387,7 @@ report.addEventListener('change', (e) => {
 report.addEventListener('input', (e) => {
   const id = e.target.id
   const val = e.target.value
-  if (id === 'filter-include') { state.filterInclude = val; renderKeepFocus(id) }
-  else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
+  if (id === 'filter-search') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'repo-url') {
     // Live-save the repo URL — every keystroke updates `state.repoUrl`
     // and persists per-report so the value survives a reload even if

@@ -481,17 +481,26 @@ function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) 
   html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
-  // Mark-color filter pill leads the include/exclude row — a compact
-  // visual filter that pairs naturally with the text-match inputs
-  // beside it. (Used to live up in the stats row alongside the
-  // severity chips, but visually the chips and the pill compete for
-  // the same "filter chip" reading; pulling the pill down here lets
-  // the stats row stay severity-only.)
+  // Mark-color filter pill leads the row — a compact visual filter
+  // that pairs naturally with the text-search input beside it.
+  // (Used to live up in the stats row alongside the severity chips,
+  // but visually the chips and the pill compete for the same
+  // "filter chip" reading; pulling the pill down here lets the
+  // stats row stay severity-only.)
   html += triageFilterHtml(colorCounts)
-  html += `<label for="filter-include">Include:</label>`
-  html += `<input type="text" id="filter-include" value="${esc(state.filterInclude)}" placeholder="match text">`
-  html += `<label for="filter-exclude">Exclude:</label>`
-  html += `<input type="text" id="filter-exclude" value="${esc(state.filterExclude)}" placeholder="hide text">`
+  // Search field — ported from the DeepView.0 prototype's `.field.grow`
+  // (magnifier glyph + borderless input inside a pill that grows to
+  // fill the row). Drops the prior labeled `Include:` / `Exclude:`
+  // pair: a single search field that substring-matches finding text
+  // covers the common case, the `Exclude:` companion was rarely
+  // used, and a search-glyphed input is the more conventional UI.
+  // The input id is `filter-search` (the visible identity); state
+  // still lives on `state.filterInclude` (it's still semantically
+  // "include findings that match the substring").
+  html += '<div class="toolbar-search">'
+  html += '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
+  html += `<input type="text" id="filter-search" value="${esc(state.filterInclude)}" placeholder="Search findings…">`
+  html += '</div>'
   html += '</div>'
   // The Repo URL input lives in the page header now (see headerHtml /
   // repoChipHtml). When findings need it (`repoInputUseful` true) the

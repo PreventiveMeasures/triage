@@ -82,7 +82,6 @@ export const state = store({
   filterConfMin: 8,
   filterConfMax: '',
   filterInclude: '',
-  filterExclude: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on
