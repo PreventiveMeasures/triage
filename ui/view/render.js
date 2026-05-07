@@ -137,17 +137,82 @@ const SOURCE_TITLES = {
 // used in the sidebar's file-list rows for visual continuity.
 const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>'
 
+// Canonical order for analyzer-combo fields. Each finding contributes
+// one combo (a tuple of these four values lifted off the run-meta at
+// ingest); multiple combos arise when the user merges several
+// analyzer outputs into a single view.
+const COMBO_FIELDS = ['type', 'model', 'effort', 'exportsMode']
+
+// Project the loaded findings into a list of meta-row tag strings. The
+// fields aren't independent flags — they describe one analyzer run
+// each — so a naive `Set` per field would drop the cross-field
+// relationship. This routine instead:
+//
+//   1. Builds the list of unique combos across all findings.
+//   2. Marks each field "common" when every combo agrees on its value
+//      and "varying" otherwise.
+//   3. Walks the canonical slot order, emitting common fields as
+//      single-value tags at their natural slot. The first time a
+//      varying slot is hit, every combo is emitted as one tag joined
+//      by ` · ` over the varying fields only — preserving the
+//      cross-field tuple while hiding the common columns that would
+//      just repeat.
+//
+// Examples (combos as `type · model · effort · exportsMode`):
+//   `null · opus 4.7 · max · list` + `null · gpt 5.5 · xhigh · list`
+//     → `null` `opus 4.7 · max` `gpt 5.5 · xhigh` `list`
+//   `null · opus 4.7 · xhigh · isolate` + `null · opus 4.7 · max · list`
+//     → `null` `opus 4.7` `xhigh · isolate` `max · list`
+//
+// Missing values render as the literal string `null` so the header
+// never silently drops a column — a single-combo load with no
+// analyzer field still surfaces `null` in slot 1, matching the
+// DeepView.0 prototype's display of unset analyzer fields.
+function buildAnalyzerTags(findings) {
+  const comboMap = new Map()
+  for (const f of findings) {
+    const combo = {
+      type: f.type ?? null,
+      model: prettyModel(f.model) ?? null,
+      effort: f.effort ?? null,
+      exportsMode: f.exportsMode ?? null,
+    }
+    const key = COMBO_FIELDS.map((k) => combo[k] ?? '').join('|')
+    if (!comboMap.has(key)) comboMap.set(key, combo)
+  }
+  const combos = [...comboMap.values()]
+  if (combos.length === 0) return []
+
+  const isCommon = {}
+  for (const k of COMBO_FIELDS) {
+    isCommon[k] = new Set(combos.map((c) => c[k])).size === 1
+  }
+  const varyingSlots = COMBO_FIELDS.filter((k) => !isCommon[k])
+
+  const tags = []
+  let combosEmitted = false
+  for (const k of COMBO_FIELDS) {
+    if (isCommon[k]) {
+      tags.push(combos[0][k] ?? 'null')
+    } else if (!combosEmitted) {
+      for (const combo of combos) {
+        tags.push(varyingSlots.map((s) => combo[s] ?? 'null').join(' · '))
+      }
+      combosEmitted = true
+    }
+  }
+  return tags
+}
+
 // Page header — port of the prototype's `.page-head` block. The h1
 // carries the tool name plus a pill-shaped file chip naming the
-// active report; the meta-row underneath strings together the count,
-// the model / effort / exports tags, and an `analyzer X` segment.
+// active report; the meta-row underneath strings together the count
+// followed by the analyzer-combo tags from `buildAnalyzerTags`.
 //
 // Tool name comes from the source marker when every loaded report
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSeek findings`); otherwise it's `DeepView findings`,
-// matching the prior single-vs-mixed selection rule. The combo
-// breakdown that used to live in the title moved into the meta-row's
-// tag chips so the title stays a single short phrase.
+// matching the prior single-vs-mixed selection rule.
 function headerHtml(allGroupsLength, fileNames) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
@@ -164,50 +229,18 @@ function headerHtml(allGroupsLength, fileNames) {
     fileChip = `<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames.length} reports</span></span>`
   }
 
-  // Meta-row data — aggregated across all findings in the load.
-  // Per-finding `model` / `effort` / `exportsMode` deduplicate into
-  // small Sets so a single load with one combo shows one tag set,
-  // and a merged load shows whichever tags are common across runs.
-  // Empty fields contribute nothing (no blank tags).
   const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
-  const models = new Set()
-  const efforts = new Set()
-  const exportsModes = new Set()
-  const types = new Set()
-  for (const f of findings) {
-    const m = prettyModel(f.model)
-    if (m) models.add(m)
-    if (f.effort) efforts.add(f.effort)
-    if (f.exportsMode) exportsModes.add(f.exportsMode)
-    types.add(f.type ?? null)
-  }
-
   const findingNoun = `finding${allGroupsLength !== 1 ? 's' : ''}`
   const countLabel = state.showDeleted
     ? `Trash: ${allGroupsLength} deleted ${findingNoun}`
     : `${allGroupsLength} ${findingNoun}`
 
-  // Tags concatenate model + effort + exports in that order, matching
-  // the per-finding run-meta line so the header and per-row
-  // annotations read consistently.
-  const tags = []
-  for (const m of models) tags.push(`<span class="tag">${esc(m)}</span>`)
-  for (const e of efforts) tags.push(`<span class="tag">${esc(e)}</span>`)
-  for (const x of exportsModes) tags.push(`<span class="tag">${esc(x)}</span>`)
-
-  // Analyzer cell: one type → render `analyzer <code>name</code>`;
-  // multiple types → comma-list them so the header doesn't lie about
-  // a merged load. A null entry renders as `null` in code style,
-  // mirroring the prototype's display of unset analyzer fields.
-  const typeList = [...types]
-  const analyzerHtml = typeList.length > 0
-    ? `<span class="analyzer">analyzer <code>${typeList.map((t) => esc(t ?? 'null')).join(', ')}</code></span>`
-    : ''
+  const tags = buildAnalyzerTags(findings)
+  const tagHtml = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')
 
   const sep = '<span class="sep" aria-hidden="true"></span>'
   const metaParts = [`<span>${esc(countLabel)}</span>`]
-  if (tags.length > 0) metaParts.push(sep, tags.join(''))
-  if (analyzerHtml) metaParts.push(sep, analyzerHtml)
+  if (tagHtml) metaParts.push(sep, tagHtml)
 
   let html = '<header class="page-head">'
   html += '<div class="page-title">'
