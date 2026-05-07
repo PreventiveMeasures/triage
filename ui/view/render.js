@@ -325,8 +325,12 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   // it's omitted from the header tags here — the title already
   // conveys the product (`Claude Security findings`, etc.). The
   // analyzer-prefix label only makes sense for the DeepView native
-  // bucket and any mixed loads.
-  const tagFields = singleSource
+  // bucket and any mixed loads. Workspace mode also drops the
+  // `analyzer:` tag — a merged view of multiple reports tends to
+  // accumulate several combos and the prefix tag inflates the
+  // header into a visually crowded strip.
+  const dropAnalyzerType = singleSource || state.currentWorkspace
+  const tagFields = dropAnalyzerType
     ? COMBO_FIELDS.filter((f) => f !== 'type')
     : COMBO_FIELDS
   const tags = buildAnalyzerTags(findings, tagFields)
