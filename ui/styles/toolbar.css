@@ -137,6 +137,16 @@
   }
 }
 
+/* Below 1200px the severity-chips + triage-filter + search field
+   strip is too cramped to fit on one line — pushing the search to
+   `flex-basis: 100%` makes it claim a full row and wrap to a new
+   line in the existing flex-wrap layout. The result count's
+   `margin-left: auto` keeps it riding the right edge of whichever
+   line carries the search. Above 1200px the strip stays inline. */
+@media (max-width: 1200px) {
+  .toolbar-row.sev-row .toolbar-search { flex-basis: 100%; }
+}
+
 /* Severity-filter chips — ported from the DeepView.0 prototype's
    `.sev-chip` block. Pill-shaped chip with a colored swatch on the
    left (the severity hue), the severity name, and a count badge.
