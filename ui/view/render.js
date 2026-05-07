@@ -13,33 +13,10 @@ import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock, renderFocu
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 
-// Inline SVGs for the View-mode icon buttons. currentColor lets the
-// CSS .active rule recolor them to var(--accent) on selection without
-// re-rendering. Kept as raw strings so the toolbar HTML can compose
-// them directly; size is set via the SVG width/height (14px) and the
-// stroke widths are tuned to read clearly at that size.
-//   table   — four dense rows, like a spreadsheet
-//   list    — three taller items with a row-bullet on the left
-//   grouped — items under a section header band on top
-const VIEW_ICONS = {
-  table: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
-    + '<rect x="2" y="3" width="12" height="1.6"/><rect x="2" y="6" width="12" height="1.6"/>'
-    + '<rect x="2" y="9" width="12" height="1.6"/><rect x="2" y="12" width="12" height="1.6"/></svg>',
-  list: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
-    + '<rect x="2" y="3" width="2" height="2.2" rx=".4"/><rect x="6" y="3" width="9" height="2.2" rx=".4"/>'
-    + '<rect x="2" y="7" width="2" height="2.2" rx=".4"/><rect x="6" y="7" width="9" height="2.2" rx=".4"/>'
-    + '<rect x="2" y="11" width="2" height="2.2" rx=".4"/><rect x="6" y="11" width="9" height="2.2" rx=".4"/></svg>',
-  grouped: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">'
-    + '<rect x="2" y="2" width="12" height="2.4" rx=".5"/>'
-    + '<rect x="3" y="6" width="11" height="1.6"/><rect x="3" y="8.5" width="11" height="1.6"/>'
-    + '<rect x="3" y="11" width="11" height="1.6"/><rect x="3" y="13.5" width="11" height="1.6"/></svg>',
-}
-
-const VIEW_TITLES = {
-  table: 'Table view (compact rows, click a row to expand)',
-  list: 'List view (flat, one card per finding)',
-  grouped: 'List view, grouped by file',
-}
+// View-mode icons + titles + click handling all live in
+// `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
+// passes the current `state.viewMode` and listens for
+// `view-mode-change` events.
 
 // Build the v2 graph data from the currently-loaded report. Returns
 // null when no tree-bearing report is loaded — callers (the tab
@@ -406,17 +383,10 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
-  // View mode leads the row — three icon buttons (table / list /
-  // grouped) immediately followed by the Sort dropdown with no
-  // separator between them; the two together read as one
-  // "presentation" group at the left edge of the toolbar.
-  html += `<span class="view-mode-label">View:</span>`
-  html += '<div class="view-mode-group" role="group" aria-label="View mode">'
-  for (const mode of ['table', 'list', 'grouped']) {
-    const active = state.viewMode === mode ? ' active' : ''
-    html += `<button type="button" class="view-mode-btn${active}" data-view-mode="${mode}" title="${esc(VIEW_TITLES[mode])}" aria-label="${esc(VIEW_TITLES[mode])}" aria-pressed="${state.viewMode === mode}">${VIEW_ICONS[mode]}</button>`
-  }
-  html += '</div>'
+  // View mode leads the row — `<view-mode-buttons>` renders the
+  // table / list / grouped icon group; immediately followed by the
+  // Sort dropdown with no separator between them.
+  html += `<view-mode-buttons mode="${state.viewMode}"></view-mode-buttons>`
   // Sort dropdown — bare select (no `Sort:` label preceding it). The
   // selected option's text already advertises what it sorts by, plus
   // a `↓` / `↑` arrow showing direction, so the label was redundant

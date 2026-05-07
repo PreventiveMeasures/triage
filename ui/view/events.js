@@ -284,19 +284,11 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // View-mode icon buttons (table / list / grouped). Replaces the
-  // earlier select + checkbox combo; the same `state.viewMode` field
-  // drives findingsBodyHtml's branch.
-  const viewModeBtn = e.target.closest('[data-view-mode]')
-  if (viewModeBtn) {
-    state.viewMode = viewModeBtn.dataset.viewMode
-    // Persist so the user's preferred view sticks across reloads —
-    // state.js reads it back on boot.
-    try { localStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch {}
-    render()
-    return
-  }
-  // (severity-chips / triage-filter clicks are dispatched as
+  // (severity-chips / triage-filter / view-mode-buttons clicks are
+  // dispatched as `severity-toggle` / `color-toggle` /
+  // `view-mode-change` custom events from their respective Lit
+  // components — handled outside this click delegate by dedicated
+  // listeners below.)
   // `severity-toggle` / `color-toggle` custom events from their
   // respective Lit components — handled outside this click delegate
   // by dedicated listeners below.)
@@ -467,6 +459,13 @@ report.addEventListener('color-toggle', (e) => {
   const col = e.detail.color
   if (state.filterColors.has(col)) state.filterColors.delete(col)
   else state.filterColors.add(col)
+  render()
+})
+report.addEventListener('view-mode-change', (e) => {
+  state.viewMode = e.detail.mode
+  // Persist so the user's preferred view sticks across reloads —
+  // state.js reads it back on boot.
+  try { localStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch {}
   render()
 })
 

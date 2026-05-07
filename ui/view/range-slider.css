@@ -1,0 +1,77 @@
+:host {
+  display: inline-flex;
+  align-items: center;
+  width: 8.5rem;
+  height: 16px;
+  /* Color hooks — host can override via inline style or CSS vars
+     on an ancestor. Defaults inherit from the surrounding text
+     color (track) and pick up currentColor for the selected range
+     / thumbs (which the host typically tints to the page accent). */
+  --rs-thumb-size: 14px;
+  --rs-track-height: 3px;
+  --rs-rail: rgb(from currentColor r g b / .25);
+  --rs-fill: var(--accent, currentColor);
+}
+
+.track-wrap {
+  position: relative;
+  flex: 1;
+  height: var(--rs-thumb-size);
+}
+
+/* Single track with a gradient that paints the selected range in
+   --rs-fill between --low% and --high%, and the rail elsewhere.
+   var(--low) / var(--high) come from inline style on the wrapper
+   (set by render() each tick). */
+.track {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: var(--rs-track-height);
+  transform: translateY(-50%);
+  border-radius: 99px;
+  background:
+    linear-gradient(to right,
+      var(--rs-rail) 0,
+      var(--rs-rail) var(--low, 0%),
+      var(--rs-fill) var(--low, 0%),
+      var(--rs-fill) var(--high, 100%),
+      var(--rs-rail) var(--high, 100%));
+}
+
+/* Both inputs overlap the same area; pointer-events:none on the
+   input itself + pointer-events:auto on the thumb lets the user
+   grab whichever thumb is closer without the input's full-width
+   hitbox blocking the other. */
+input[type="range"] {
+  appearance: none; -webkit-appearance: none;
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  width: 100%; height: var(--rs-thumb-size);
+  background: transparent;
+  pointer-events: none;
+  margin: 0; padding: 0;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  pointer-events: auto;
+  width: var(--rs-thumb-size); height: var(--rs-thumb-size);
+  border-radius: 50%;
+  background: var(--rs-fill);
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: var(--rs-thumb-size); height: var(--rs-thumb-size);
+  border-radius: 50%;
+  background: var(--rs-fill);
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent; height: var(--rs-thumb-size);
+}

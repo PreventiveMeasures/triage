@@ -43,7 +43,8 @@
 //   * `repo-cancel(detail.url)` — Escape. `detail.url` is the
 //     pre-edit value (the one the input was opened with) — host
 //     should restore that and set `editing=false`.
-import { LitElement, html, css, nothing } from 'lit'
+import { LitElement, html, unsafeCSS, nothing } from 'lit'
+import chipCSS from './repo-chip.css'
 
 // Strip protocol + host so the chip reads as the bare `user/repo`
 // slug — that's the canonical form per-finding `repo.github` carries
@@ -67,51 +68,7 @@ class RepoChip extends LitElement {
     editing:  { type: Boolean, reflect: true },
   }
 
-  static styles = css`
-    :host { display: inline-block; vertical-align: middle; }
-
-    .chip {
-      display: inline-flex; align-items: center; gap: .375rem;
-      padding: .125rem .375rem .125rem .5rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .72rem;
-      font-weight: 500;
-    }
-    .chip svg { color: var(--muted); flex-shrink: 0; }
-    .chip.empty .label { color: var(--muted); font-style: italic; }
-    .chip.readonly { padding-right: .5rem; }
-
-    .edit-btn {
-      width: 18px; height: 18px;
-      display: grid; place-items: center;
-      padding: 0; margin-left: .125rem;
-      background: transparent;
-      border: 0; border-radius: 4px;
-      color: var(--muted);
-      cursor: pointer;
-    }
-    .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-
-    /* Editable form — matches the chip's overall footprint so
-       toggling between display and edit doesn't shift the row.
-       The width fits a typical github URL; on narrow viewports the
-       meta-row wraps and the input takes its own line. */
-    input {
-      width: 16rem; box-sizing: border-box;
-      padding: .15rem .55rem;
-      background: var(--surface);
-      border: 1px solid var(--accent); border-radius: 999px;
-      color: var(--text);
-      font: inherit;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .72rem;
-      outline: none;
-    }
-  `
+  static styles = unsafeCSS(chipCSS)
 
   constructor() {
     super()
