@@ -75,6 +75,24 @@ export function commonPrefix(strings) {
   return prefix
 }
 
+// Normalize a user-typed repo identifier into a base URL with no
+// trailing slash. Accepts three input shapes so the user doesn't
+// have to remember which one we want:
+//   * full URL — `https://github.com/user/repo`
+//   * host-prefixed slug without scheme — `github.com/user/repo`
+//   * bare slug — `user/repo`
+// Anything else falls through to the slug branch (treated as a path
+// under github.com); a malformed input there just produces a broken
+// link, which is the user's signal to fix what they typed.
+function repoBaseUrl(s) {
+  if (!s) return null
+  const trimmed = s.trim().replace(/\/$/u, '')
+  if (!trimmed) return null
+  if (/^https?:\/\//iu.test(trimmed)) return trimmed
+  if (/^github\.com\//iu.test(trimmed)) return `https://${trimmed}`
+  return `https://github.com/${trimmed}`
+}
+
 // `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
 // wins over the user-typed repo URL when available — it points at the
 // actual upstream of a node_modules dependency rather than at the project
@@ -83,8 +101,9 @@ export function commonPrefix(strings) {
 // is known).
 export function fileUrl(file, githubRepo) {
   if (githubRepo) return `https://github.com/${githubRepo}/blob/HEAD/${stripPackagePrefix(file)}`
-  if (!state.repoUrl || isModule(file)) return null
-  const base = state.repoUrl.replace(/\/$/u, '')
+  if (isModule(file)) return null
+  const base = repoBaseUrl(state.repoUrl)
+  if (!base) return null
   return `${base}/blob/HEAD/${file}`
 }
 

@@ -174,7 +174,7 @@ function prettyRepoLabel(s) {
 function repoChipHtml(repoInputUseful, knownRepo) {
   if (repoInputUseful) {
     if (state.repoEditing) {
-      return `<input type="text" id="repo-url" class="repo-input" value="${esc(state.repoUrl)}" placeholder="https://github.com/user/repo" autofocus>`
+      return `<input type="text" id="repo-url" class="repo-input" value="${esc(state.repoUrl)}" placeholder="user/repo or https://github.com/user/repo" autofocus>`
     }
     const label = state.repoUrl ? prettyRepoLabel(state.repoUrl) : 'Set repo'
     const cls = state.repoUrl ? 'repo-chip' : 'repo-chip empty'
