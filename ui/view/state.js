@@ -1,3 +1,5 @@
+import { store } from '../rray-modules/frontend/state-management.mjs'
+
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
 
@@ -14,15 +16,15 @@ function readSavedViewMode() {
 
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
-// `state.reports`, `state.currentView = 'graph2'`, etc. Keeping it as
-// a single object means we never have to chase scattered `let`
-// bindings across modules (ES module live bindings are read-only from
-// outside, so cross-module assignment would otherwise need setter
-// functions).
+// `state.reports`, `state.currentView = 'graph2'`, etc. Wrapped in
+// `store()` (see rray-modules/frontend/state-management.mjs) so
+// reads done from inside a `StateElement.render()` are tracked and
+// the element re-renders automatically when those properties (or
+// keys inside the Maps / Sets) mutate.
 //
 // Graph-tab state lives separately in `./graph2/state.js` because it
 // has its own teardown semantics tied to the canvas lifecycle.
-export const state = {
+export const state = store({
   // Exactly one OPFS-backed report is active at a time — the sidebar
   // switches between them; merging is gone. Headless callers
   // (`window.__loadFile` from src/print.js) bypass OPFS and may call
@@ -87,4 +89,4 @@ export const state = {
   // full width). Set by clicking a row in the table view; cleared by
   // re-clicking the same row.
   tableSelectedGid: null,
-}
+})

@@ -356,6 +356,15 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
 // item identity survives the trip.
 let pendingTableItems = null
 
+// Persistent <finding-table> instance, kept across render() calls so
+// the row list (and its StateElement reactivity) survives the
+// innerHTML reset. We detach this element BEFORE replacing
+// report.innerHTML — the bare `.remove()` is enough to keep it alive
+// in JS — and reinsert it into the new HTML's `.finding-table-slot`
+// placeholder afterwards. Stays null until the first time the table
+// view renders with non-empty items.
+let persistentFindingTable = null
+
 function findingsBodyHtml(filtered) {
   let html = ''
   if (state.viewMode === 'table') {
@@ -386,7 +395,12 @@ function findingsBodyHtml(filtered) {
     // selected.
     const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
     html += `<div class="${layoutClass}">`
-    html += '<div class="findings-table-list"><finding-table></finding-table></div>'
+    // Placeholder div — render() reattaches the persistent
+    // <finding-table> here after innerHTML lands. Keeping the table
+    // element across renders preserves its <finding-row> children
+    // (and StateElement-driven reactivity inside them), avoiding a
+    // full shadow-DOM rebuild on every state change.
+    html += '<div class="findings-table-list"><div class="finding-table-slot"></div></div>'
     if (selectedGroup) {
       html += '<aside class="findings-table-details" id="findings-table-details">'
       html += '<header class="findings-table-details-bar">'
@@ -626,17 +640,33 @@ export function render() {
   html += findingsBodyHtml(filtered)
   html += '</div>'
 
+  // Detach the persistent <finding-table> (if mounted) before the
+  // innerHTML wipe so the element + its <finding-row> children
+  // survive. `.remove()` fires disconnectedCallback on the subtree,
+  // but the JS reference keeps everything alive; the reattach below
+  // brings the same instances back into the document, where Lit's
+  // diff happily reuses the existing children when items / selection
+  // change.
+  if (persistentFindingTable && persistentFindingTable.isConnected) {
+    persistentFindingTable.remove()
+  }
+
   report.innerHTML = html
+
   // Hand the sorted item list and current selection to the
   // <finding-table> custom element after the DOM lands. Stashing the
   // items via a property (rather than serialising through an
   // attribute) keeps object identity and avoids a JSON round-trip on
   // every re-render.
   if (pendingTableItems) {
-    const ft = report.querySelector('finding-table')
-    if (ft) {
-      ft.items = pendingTableItems
-      ft.selectedGid = state.tableSelectedGid
+    const slot = report.querySelector('.finding-table-slot')
+    if (slot) {
+      if (!persistentFindingTable) {
+        persistentFindingTable = document.createElement('finding-table')
+      }
+      persistentFindingTable.items = pendingTableItems
+      persistentFindingTable.selectedGid = state.tableSelectedGid
+      slot.replaceWith(persistentFindingTable)
     }
   }
   report.classList.add('active')

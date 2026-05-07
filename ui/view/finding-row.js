@@ -10,6 +10,16 @@
 // + meta + optional tab strip, action buttons) is built by
 // render-finding.js as an HTML string and injected via unsafeHTML.
 //
+// Reactivity: extends StateElement, which wraps render() in an
+// observer-util reaction. Reads of `state.markers`, `state.deletedIds`,
+// `state.activeTabByGroup`, `state.showDeleted` performed during
+// render — via the helpers in render-finding.js + group.js — are
+// auto-tracked, and a mutation that invalidates the row triggers a
+// targeted re-render of just this element. The classList stamping
+// is intentionally done inside render so its `state.showDeleted`
+// read joins the same tracked set; otherwise toggling trash would
+// fail to update the host's `.deleted` class.
+//
 // Click semantics: a click anywhere on the row that didn't land on
 // an action button / link / label dispatches a composed-bubbling
 // `row-select` CustomEvent with the gid; events.js listens on
@@ -17,8 +27,9 @@
 // clicks (`.tab`, `.mark-dot`, `.mark-x`, `.mark-restore`) bubble
 // out composed:true and reach events.js's `pathClosest`-based
 // delegate without intervention from this component.
-import { LitElement, html, unsafeCSS } from 'lit'
+import { html, unsafeCSS } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { StateElement } from '../rray-modules/frontend/state-element.mjs'
 import { tableRowGid, tableRowClasses, tableRowInnerHTML } from './render-finding.js'
 import rowCSS from './finding-row.css'
 
@@ -35,7 +46,7 @@ const MANAGED_HOST_CLASSES = [
   'selected',
 ]
 
-class FindingRow extends LitElement {
+class FindingRow extends StateElement {
   static properties = {
     group: { attribute: false },
     selected: { type: Boolean },
@@ -49,22 +60,33 @@ class FindingRow extends LitElement {
     this.selected = false
   }
 
-  willUpdate() {
-    if (!this.group) return
+  render() {
+    if (!this.group) return html``
+    // Stamp host attributes/classes inside render() so the state
+    // reads (e.g. state.showDeleted via tableRowClasses,
+    // state.markers / state.deletedIds via tableRowInnerHTML) join
+    // StateElement's tracked set and trigger a re-render on
+    // mutation. Doing this in willUpdate would skip the autorun
+    // entirely, since StateElement only wraps render.
     this.dataset.gid = tableRowGid(this.group)
     const next = new Set(tableRowClasses(this.group))
     if (this.selected) next.add('selected')
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-  }
-
-  render() {
-    if (!this.group) return html``
     return html`${unsafeHTML(tableRowInnerHTML(this.group))}`
   }
 
   connectedCallback() {
     super.connectedCallback()
     this.addEventListener('click', this._onClick)
+    // Force a render after every (re)connect so StateElement's
+    // wrapped render() runs and a fresh autorun gets registered.
+    // Necessary because render.js detaches and re-inserts the
+    // persistent <finding-table> on each render() call: this
+    // element disconnects (StateElement disposes its autorun) then
+    // reconnects, but if neither `group` nor `selected` changed Lit
+    // wouldn't call render again on its own and reactivity would
+    // silently break.
+    if (this.hasUpdated) this.requestUpdate()
   }
 
   disconnectedCallback() {
