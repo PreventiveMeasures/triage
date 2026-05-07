@@ -163,11 +163,39 @@
   &.tab-mark-gray .tab-conf { color: var(--text); }
 }
 
+.mark-comment {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; margin-right: .25rem;
+  &:hover { color: var(--accent); border-color: var(--accent); }
+  &.has-comment { color: var(--accent); border-color: var(--accent); }
+  &.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
+}
+
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
   cursor: pointer; margin-left: .25rem;
   &:hover { color: var(--critical); border-color: var(--critical); }
+}
+
+/* Comment block in the tab body. Renders a quote-style note below the
+   description / recommendation / confidence reason when the active
+   tab carries a free-text annotation. */
+.comment-block {
+  margin-top: .5rem;
+  padding: .35rem .55rem;
+  border-left: 3px solid var(--accent);
+  background: rgb(from var(--accent) r g b / .08);
+  border-radius: 0 4px 4px 0;
+  font-size: .82rem; color: var(--text);
+  white-space: pre-wrap;
+
+  & .comment-label {
+    color: var(--muted); font-weight: 600;
+    margin-right: .35rem;
+  }
 }
 
 .mark-restore {

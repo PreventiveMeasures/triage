@@ -72,24 +72,35 @@ function commitLinkTemplate(githubRepo, hash) {
   return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
 }
 
-// Action buttons — `<color-marker>` (the 4-dot color picker) plus
-// either the delete `×` or the trash-mode `restore` button. The
-// dots themselves live in their own component (see view/color-marker.js)
-// so finding-row / finding-card don't carry duplicate `.mark-dot`
-// styling. Click on a dot bubbles up as a composed `mark-color`
-// event with `{ detail: { color } }` — events.js's delegate on
-// `report` resolves the gid via the same `[data-gid]` walk used for
-// the other buttons.
+// Speech-bubble glyph for the per-finding comment button. Outline
+// when there's no comment, filled when a comment exists — the
+// has-comment class flips `fill` via finding-card.css /
+// finding-row.css.
+const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+
+// Action buttons — comment button + `<color-marker>` (the 4-dot
+// color picker) plus either the delete `×` or the trash-mode
+// `restore` button. The dots themselves live in their own component
+// (see view/color-marker.js) so finding-row / finding-card don't
+// carry duplicate `.mark-dot` styling. Click on a dot bubbles up as
+// a composed `mark-color` event with `{ detail: { color } }` —
+// events.js's delegate on `report` resolves the gid via the same
+// `[data-gid]` walk used for the other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const activeColor = state.markers.get(activeKey) ?? null
+  const activeComment = state.comments.get(activeKey) ?? ''
+  const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
+  const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   if (state.showDeleted) {
-    return html`${picker}<button class="mark-restore" title="restore whole group">restore</button>`
+    return html`${commentBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
   }
   const xTitle = groupSt.hasConflict
     ? 'delete active tab (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-  return html`${picker}<button class="mark-x" title=${xTitle}>×</button>`
+  return html`${commentBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
 }
 
 // One tab button. Carries severity badge + (optional) confidence,
@@ -113,6 +124,7 @@ function tabTemplate(f, isActive) {
 // suppressed for single-tab groups via the default args.
 function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
+  const comment = state.comments.get(key) ?? ''
   const lineLink = lineLinkTemplate(f.file, f.line, f.repo?.github, f._repoFallback)
   // Line-num span composes the line link + (when present) the
   // exportName, comma-separated. Both pieces optional; the wrapping
@@ -141,6 +153,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
       <div class="desc">${stripExportMarker(f.description, f.exportName)}</div>
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${stripExportMarker(f.confidenceReason, f.exportName)}</div>` : nothing}
+      ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
     </div>
   </div>`
 }

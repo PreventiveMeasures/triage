@@ -330,7 +330,7 @@
   }
   & .conflict-row {
     display: grid;
-    grid-template-columns: minmax(0, 6.5rem) 1fr 1fr;
+    grid-template-columns: minmax(0, 8.5rem) 1fr 1fr;
     align-items: center; gap: .5rem;
     padding: .4rem .55rem;
     border-bottom: 1px solid var(--border);
@@ -343,6 +343,11 @@
     font-size: .72rem; color: var(--muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  & .conflict-prop {
+    font-family: inherit; font-size: .68rem;
+    text-transform: uppercase; letter-spacing: .08em;
+    color: var(--accent); margin-left: .25rem;
+  }
   & .conflict-choice {
     display: flex; align-items: center; gap: .35rem;
     cursor: pointer; min-width: 0;
@@ -352,6 +357,11 @@
   & .conflict-chip {
     width: 10px; height: 10px; border-radius: 50%;
     flex-shrink: 0; box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
+  }
+  & .conflict-comment {
+    font-style: italic; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
   }
 
   & .conflict-actions {

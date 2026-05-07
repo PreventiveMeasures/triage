@@ -119,6 +119,12 @@ export const state = store({
   // not. Both PER-TAB (per individual finding even within a dedup
   // group). Group-level rollup is computed on demand in groupState().
   markers: new Map(),
+  // Per-finding free-text annotation, keyed the same way as markers
+  // (uuid `f.id` when present, else session `String(f._id)`). Round-
+  // trips alongside color / deleted in the `deepview.triage` blob —
+  // see triage.js. Empty / cleared comments are removed from the map
+  // so saveTriage doesn't persist a stale `comment: ""`.
+  comments: new Map(),
   deletedIds: new Set(),
   showDeleted: false,
   nextFindingId: 0,

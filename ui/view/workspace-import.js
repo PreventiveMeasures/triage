@@ -46,52 +46,66 @@ function isWorkspaceExport(data) {
   )
 }
 
-// Merge the imported triage into state.markers / state.deletedIds.
-// Non-conflicting changes apply immediately:
-//   - new colors (local has none) adopt the imported color;
-//   - identical colors are no-ops;
+// Merge the imported triage into state.markers / state.deletedIds /
+// state.comments. Non-conflicting changes apply immediately:
+//   - new colors / comments (local has none) adopt the imported value;
+//   - identical values on both sides are no-ops;
 //   - imported `deleted: true` is added to state.deletedIds (additive
 //     — the export format never carries `deleted: false`, so an
 //     absence on either side just means "no opinion").
-// A color conflict (both sides have a color and they differ) is
-// collected and resolved via the modal dialog; the local value stays
-// in place until the user decides.
+// A conflict (both sides have a value and they differ) is collected
+// per (id, property) so color and comment can disagree independently
+// on the same finding. Each conflict row gets resolved in the modal
+// dialog; the local value stays in place until the user decides.
 async function mergeTriage(triage) {
   if (!triage || typeof triage !== 'object') return
+  // Conflicts are property-scoped — one finding id can disagree on
+  // both color and comment, so each gets its own row in the dialog
+  // and its own resolution. Non-conflicting changes apply
+  // immediately; the conflicting property stays unchanged locally
+  // until the user decides.
   const conflicts = []
   for (const [id, entry] of Object.entries(triage)) {
     if (!entry || typeof entry !== 'object') continue
+
     const localColor = state.markers.get(id)
     const importedColor = typeof entry.color === 'string' ? entry.color : undefined
     if (importedColor && localColor && localColor !== importedColor) {
-      conflicts.push({
-        id,
-        localColor,
-        importedColor,
-        localDeleted: state.deletedIds.has(id),
-        importedDeleted: Boolean(entry.deleted),
-      })
+      conflicts.push({ id, property: 'color', local: localColor, imported: importedColor })
     } else if (importedColor) {
       state.markers.set(id, importedColor)
     }
+
+    const localComment = state.comments.get(id) ?? ''
+    const importedComment = typeof entry.comment === 'string' ? entry.comment : ''
+    if (importedComment && localComment && localComment !== importedComment) {
+      conflicts.push({ id, property: 'comment', local: localComment, imported: importedComment })
+    } else if (importedComment) {
+      state.comments.set(id, importedComment)
+    }
+
     if (entry.deleted) state.deletedIds.add(id)
   }
   if (conflicts.length > 0) {
-    const decisions = await resolveColorConflicts(conflicts)
+    const decisions = await resolveTriageConflicts(conflicts)
     if (decisions) {
       for (const c of conflicts) {
-        if (decisions[c.id] === 'imported') state.markers.set(c.id, c.importedColor)
+        const key = `${c.id}:${c.property}`
+        if (decisions[key] !== 'imported') continue
+        if (c.property === 'color') state.markers.set(c.id, c.imported)
+        else if (c.property === 'comment') state.comments.set(c.id, c.imported)
       }
     }
   }
   await saveTriage()
 }
 
-// Modal dialog for color conflicts. Renders one row per conflicting
-// finding id with a "Keep local" / "Use imported" radio pair plus
-// bulk shortcuts. Returns a Map-like object keyed by finding id with
-// the user's choice, or null if the dialog was cancelled (in which
-// case all conflicts default to "Keep local"). Uses native <dialog>
+// Modal dialog for triage conflicts. One row per (finding id +
+// property) — the same id can show up twice (once for color, once
+// for comment) so the user can decide each property independently.
+// Returns a map keyed by `${id}:${property}` with `'local'` /
+// `'imported'`, or null if the dialog was cancelled (which is
+// equivalent to keeping local everywhere). Uses native <dialog>
 // for the focus-trap + Esc-to-cancel semantics — no extra JS.
 // Same `oklch` values color-marker.js uses, kept in sync so the
 // dialog's chip matches the in-app picker. Only the four marker
@@ -103,33 +117,61 @@ const COLOR_HEX = {
   gray: 'oklch(0.55 0.01 260)',
 }
 
-function colorChip(color) {
-  const value = COLOR_HEX[color] ?? 'transparent'
-  return `<span class="conflict-chip" style="background:${value}" title="${color}"></span>${color}`
+function escHtml(s) {
+  const el = document.createElement('span')
+  el.textContent = s
+  return el.innerHTML
 }
 
-function resolveColorConflicts(conflicts) {
+function colorChip(color) {
+  const value = COLOR_HEX[color] ?? 'transparent'
+  return `<span class="conflict-chip" style="background:${value}" title="${escHtml(color)}"></span>${escHtml(color)}`
+}
+
+function commentSnippet(text) {
+  const t = text.length > 80 ? text.slice(0, 77) + '…' : text
+  return `<span class="conflict-comment">${escHtml(t)}</span>`
+}
+
+function describeValue(c, side) {
+  const value = side === 'local' ? c.local : c.imported
+  if (c.property === 'color') return colorChip(value)
+  if (c.property === 'comment') return commentSnippet(value)
+  return escHtml(String(value))
+}
+
+function resolveTriageConflicts(conflicts) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog')
     dialog.className = 'workspace-conflict-dialog'
-    const rowsHtml = conflicts.map((c) => `
-      <li class="conflict-row" data-id="${c.id}">
-        <code class="conflict-id" title="${c.id}">${c.id.slice(0, 8)}…</code>
-        <label class="conflict-choice">
-          <input type="radio" name="conflict-${c.id}" value="local" checked>
-          <span>Keep local: ${colorChip(c.localColor)}${c.localDeleted ? ' <em>(in trash)</em>' : ''}</span>
-        </label>
-        <label class="conflict-choice">
-          <input type="radio" name="conflict-${c.id}" value="imported">
-          <span>Use imported: ${colorChip(c.importedColor)}${c.importedDeleted ? ' <em>(in trash)</em>' : ''}</span>
-        </label>
-      </li>
-    `).join('')
+    const rowsHtml = conflicts.map((c) => {
+      const key = `${c.id}:${c.property}`
+      const propLabel = c.property === 'color' ? 'color' : 'comment'
+      return `
+        <li class="conflict-row" data-key="${escHtml(key)}">
+          <code class="conflict-id" title="${escHtml(c.id)}">${escHtml(c.id.slice(0, 8))}… <span class="conflict-prop">${escHtml(propLabel)}</span></code>
+          <label class="conflict-choice">
+            <input type="radio" name="conflict-${escHtml(key)}" value="local" checked>
+            <span>Keep local: ${describeValue(c, 'local')}</span>
+          </label>
+          <label class="conflict-choice">
+            <input type="radio" name="conflict-${escHtml(key)}" value="imported">
+            <span>Use imported: ${describeValue(c, 'imported')}</span>
+          </label>
+        </li>
+      `
+    }).join('')
+    const colorN = conflicts.filter((c) => c.property === 'color').length
+    const commentN = conflicts.filter((c) => c.property === 'comment').length
+    const summary = [
+      colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
+      commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(' and ')
     dialog.innerHTML = `
       <h3>Workspace import: triage conflicts</h3>
-      <p>The imported workspace differs from your local triage on
-        ${conflicts.length} finding${conflicts.length === 1 ? '' : 's'}.
-        Pick which color to keep — trash status was already merged.</p>
+      <p>The imported workspace disagrees with your local triage on
+        ${escHtml(summary)}. Pick which side wins per row — trash
+        status was already merged.</p>
       <div class="conflict-bulk">
         <button type="button" data-bulk="local">Keep all local</button>
         <button type="button" data-bulk="imported">Use all imported</button>
@@ -159,8 +201,9 @@ function resolveColorConflicts(conflicts) {
       if (e.target.closest('[data-action="apply"]')) {
         const decisions = {}
         for (const c of conflicts) {
-          const checked = dialog.querySelector(`input[name="conflict-${c.id}"]:checked`)
-          decisions[c.id] = checked?.value ?? 'local'
+          const key = `${c.id}:${c.property}`
+          const checked = dialog.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
+          decisions[key] = checked?.value ?? 'local'
         }
         finish(decisions)
         return

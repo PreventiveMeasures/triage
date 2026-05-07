@@ -1,9 +1,10 @@
 import { state } from './state.js'
 
-// Markers + deletions survive page reload via `localStorage['deepview.triage']`.
-// Payload shape: `{ <id>: { color?, deleted? } }` — one entry per
-// triaged finding, color/deleted both optional (omitted when absent so
-// a clean finding leaves no trace). JSON-encoded, deflate-compressed,
+// Markers + deletions + comments survive page reload via
+// `localStorage['deepview.triage']`. Payload shape:
+// `{ <id>: { color?, deleted?, comment? } }` — one entry per
+// triaged finding, every field optional (omitted when absent so a
+// clean finding leaves no trace). JSON-encoded, deflate-compressed,
 // base64-encoded.
 //
 // Persisted keys are anything that ISN'T a session-local numeric `_id`
@@ -36,6 +37,10 @@ export async function saveTriage() {
       if (SESSION_ID_RE.test(k)) continue
       entries[k] = { ...(entries[k] || {}), deleted: true }
     }
+    for (const [k, comment] of state.comments) {
+      if (SESSION_ID_RE.test(k)) continue
+      if (comment) entries[k] = { ...(entries[k] || {}), comment }
+    }
     if (Object.keys(entries).length === 0) {
       localStorage.removeItem(TRIAGE_KEY)
       return
@@ -58,6 +63,7 @@ async function loadTriage() {
     for (const [k, v] of Object.entries(entries)) {
       if (v && v.color) state.markers.set(k, v.color)
       if (v && v.deleted) state.deletedIds.add(k)
+      if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
     }
   } catch (err) {
     console.warn('Failed to load triage:', err)

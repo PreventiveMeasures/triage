@@ -238,6 +238,30 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Comment button — open a prompt with the active tab's existing
+  // comment (empty when none). Whitespace-trimmed input; empty
+  // strings clear the entry from state.comments so saveTriage
+  // doesn't persist a "" placeholder. The comment is per-active-tab
+  // (matching mark-color semantics — a multi-tab group can hold
+  // distinct comments per member tab).
+  const commentBtn = pathClosest(e, '.mark-comment')
+  if (commentBtn) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    const gid = findingEl.dataset.gid
+    const group = findGroupById(gid)
+    if (!group) return
+    const activeKey = tabKey(activeTabFor(group))
+    const current = state.comments.get(activeKey) ?? ''
+    const next = window.prompt('Comment for this finding (leave blank to clear):', current)
+    if (next === null) return
+    const trimmed = next.trim()
+    if (trimmed === current) return
+    if (trimmed) state.comments.set(activeKey, trimmed)
+    else state.comments.delete(activeKey)
+    saveTriage()
+    render()
+    return
+  }
   // Restore: per spec rule 5, applies to EVERY tab in the group — a
   // user in trash view clicking restore expects the whole entry back,
   // not just one member left behind.

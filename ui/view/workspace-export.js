@@ -79,8 +79,8 @@ export async function exportWorkspace(workspace) {
   }
 
   // Triage filter — only keep entries whose id appears in this
-  // workspace's reports. A single id may carry both color and
-  // deleted; merge into one entry.
+  // workspace's reports. A single id may carry color, deleted,
+  // and/or comment; merge into one entry per id.
   const triage = {}
   for (const [id, color] of state.markers) {
     if (!claimedIds.has(id)) continue
@@ -89,6 +89,10 @@ export async function exportWorkspace(workspace) {
   for (const id of state.deletedIds) {
     if (!claimedIds.has(id)) continue
     triage[id] = { ...(triage[id] ?? {}), deleted: true }
+  }
+  for (const [id, comment] of state.comments) {
+    if (!claimedIds.has(id)) continue
+    if (comment) triage[id] = { ...(triage[id] ?? {}), comment }
   }
 
   // Per-report repo URLs — each report carries its own user-typed URL

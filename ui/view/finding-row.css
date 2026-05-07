@@ -165,6 +165,16 @@
   &.tab-mark-gray .tab-conf { color: var(--text); }
 }
 
+.mark-comment {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; margin-right: .25rem;
+  &:hover { color: var(--accent); border-color: var(--accent); }
+  &.has-comment { color: var(--accent); border-color: var(--accent); }
+  &.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
+}
+
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .35rem; font-size: .85rem; line-height: 1.1;
