@@ -30,7 +30,13 @@ function writeRaw(list) {
 }
 
 export function listWorkspaces() {
-  return readRaw()
+  const list = readRaw()
+  // Backfill `reports` for entries persisted before report-membership
+  // existed — keeps the rest of the renderer free of `?? []` checks.
+  for (const w of list) {
+    if (!Array.isArray(w.reports)) w.reports = []
+  }
+  return list
 }
 
 export function createWorkspace(name) {
@@ -42,6 +48,7 @@ export function createWorkspace(name) {
     id: crypto.randomUUID(),
     name: trimmed,
     privateKey: keyBytes.toBase64(),
+    reports: [],
     createdAt: Date.now(),
   }
   const list = readRaw()
@@ -52,5 +59,22 @@ export function createWorkspace(name) {
 
 export function deleteWorkspace(id) {
   const list = readRaw().filter((w) => w.id !== id)
+  writeRaw(list)
+}
+
+// Move a report to `workspaceId` (or detach it back to the unfiled
+// list when `workspaceId` is null). A report belongs to at most one
+// workspace at a time; the prior assignment, if any, is dropped first.
+// No-ops cleanly when the target workspace doesn't exist.
+export function setReportWorkspace(filename, workspaceId) {
+  const list = readRaw()
+  for (const w of list) {
+    if (!Array.isArray(w.reports)) w.reports = []
+    w.reports = w.reports.filter((r) => r !== filename)
+  }
+  if (workspaceId) {
+    const target = list.find((w) => w.id === workspaceId)
+    if (target && !target.reports.includes(filename)) target.reports.push(filename)
+  }
   writeRaw(list)
 }

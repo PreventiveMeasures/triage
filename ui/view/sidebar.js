@@ -4,7 +4,15 @@ import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, deleteCurrent } from './ingest.js'
 import { getCount, ensureCounts } from './counts.js'
-import { listWorkspaces, createWorkspace } from './workspaces.js'
+import { listWorkspaces, createWorkspace, setReportWorkspace } from './workspaces.js'
+
+// dataTransfer mime used by intra-sidebar drag-and-drop. The value is
+// the report's filename. We carry both this private mime AND
+// text/plain so browsers that drop the private mime in cross-frame
+// scenarios still have a fallback payload — the type-check below
+// uses the private mime so OS file drags (which only carry Files)
+// don't accidentally match.
+const REPORT_DT = 'application/x-deepview-report'
 
 // Sidebar source-grouping. Each known finding-source format gets its
 // own bucket; the JSON bucket renders under "Reports" since that's
@@ -76,17 +84,27 @@ const FILE_ICONS = {
 // losing their search.
 let searchQuery = ''
 
-function fileItemHtml(n) {
-  const cls = `file-item${n === state.currentFile ? ' current' : ''}`
+function fileItemHtml(n, opts = {}) {
+  const indented = opts.indented ? ' indented' : ''
+  const cls = `file-item${n === state.currentFile ? ' current' : ''}${indented}`
   const label = displayName(n)
   const count = getCount(n)
   const countHtml = count !== undefined ? `<span class="file-count">${count}</span>` : ''
   const icon = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
-  return `<li class="${cls}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(label)}">${icon}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
+  // Indented rows live inside a workspace; carry the workspace id so a
+  // drop onto one of these is treated as "assign to this workspace"
+  // (which is idempotent if it's the report's current home, and a
+  // move when it isn't). Top-level rows have no workspace attribute,
+  // so dropping onto them is treated as "outside any workspace" and
+  // falls through to the unfiled-section drop target.
+  const wsAttr = opts.workspaceId ? ` data-workspace-id="${esc(opts.workspaceId)}"` : ''
+  return `<li class="${cls}" data-file="${esc(n)}"${wsAttr} draggable="true"><button type="button" class="file-name" title="${esc(label)}">${icon}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
 }
 
-function groupHeaderHtml(label, count) {
-  return `<li class="file-group-header"><span class="group-label">${esc(label)}</span><span class="group-count">${count}</span></li>`
+function groupHeaderHtml(label, count, opts = {}) {
+  const extraClass = opts.dropTarget ? ' default-reports' : ''
+  const dataAttr = opts.dropTarget ? ' data-default-reports="true"' : ''
+  return `<li class="file-group-header${extraClass}"${dataAttr}><span class="group-label">${esc(label)}</span><span class="group-count">${count}</span></li>`
 }
 
 // Workspaces section header — same chrome as a regular bucket header,
@@ -100,8 +118,9 @@ function workspaceHeaderHtml(count) {
 }
 
 const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
-function workspaceItemHtml(w) {
-  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button></li>`
+function workspaceItemHtml(w, reportCount) {
+  const countHtml = reportCount > 0 ? `<span class="file-count">${reportCount}</span>` : ''
+  return `<li class="file-item workspace-item" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span>${countHtml}</button></li>`
 }
 
 function matchesSearch(name) {
@@ -127,11 +146,23 @@ export async function renderSidebar() {
   // affordance alongside.
   sidebar.classList.remove('empty')
 
+  // Reports already claimed by a workspace render INSIDE that workspace
+  // and are dropped from the default buckets. Stale entries (a workspace
+  // referencing a report that no longer exists in OPFS) are ignored at
+  // render time — they round-trip in the JSON until a setReportWorkspace
+  // call rewrites the list and prunes them.
+  const nameSet = new Set(names)
+  const claimed = new Set()
+  for (const w of workspaces) {
+    for (const r of w.reports) if (nameSet.has(r)) claimed.add(r)
+  }
+
   // Bucket by group, applying the search filter as we go so empty
   // post-filter groups skip their header entirely.
   const buckets = new Map()
   for (const g of GROUP_ORDER) buckets.set(g, [])
   for (const n of names) {
+    if (claimed.has(n)) continue
     if (!matchesSearch(n)) continue
     const g = groupOf(n)
     if (!buckets.has(g)) buckets.set(g, [])
@@ -139,18 +170,33 @@ export async function renderSidebar() {
   }
 
   let html = ''
-  // Workspaces above Reports. Filtered by the same search query as
-  // reports so a search narrows everything in lockstep; the section
-  // header still renders when filtered to empty so the "+" button
-  // stays reachable.
-  const visibleWorkspaces = workspaces.filter((w) => !searchQuery || w.name.toLowerCase().includes(searchQuery))
+  // Workspaces above Reports. The header itself is filtered by name;
+  // each workspace's own reports are filtered too so a name search
+  // surfaces matches inside workspaces without the parent disappearing.
+  const visibleWorkspaces = workspaces.filter((w) => {
+    if (!searchQuery) return true
+    if (w.name.toLowerCase().includes(searchQuery)) return true
+    return w.reports.some((r) => nameSet.has(r) && matchesSearch(r))
+  })
   html += workspaceHeaderHtml(visibleWorkspaces.length)
-  for (const w of visibleWorkspaces) html += workspaceItemHtml(w)
+  for (const w of visibleWorkspaces) {
+    const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
+    html += workspaceItemHtml(w, visibleReports.length)
+    for (const r of visibleReports) html += fileItemHtml(r, { indented: true, workspaceId: w.id })
+  }
 
+  // Default buckets — render unfiled reports under their format header.
+  // The Reports (default JSON) header is also a drop target for "remove
+  // from workspace": dropping a workspace-internal report there detaches
+  // it back to the unfiled list. When no unfiled JSON reports exist but
+  // some workspace has reports, we still render the Reports header (with
+  // count 0) so the unassign affordance stays reachable.
+  const anyWorkspaceHasReports = workspaces.some((w) => w.reports.some((r) => nameSet.has(r)))
   for (const g of GROUP_ORDER) {
     const list = buckets.get(g) ?? []
-    if (list.length === 0) continue
-    html += groupHeaderHtml(GROUP_LABELS[g] ?? g, list.length)
+    const isDefault = g === 'default'
+    if (list.length === 0 && !(isDefault && anyWorkspaceHasReports)) continue
+    html += groupHeaderHtml(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })
     for (const n of list) html += fileItemHtml(n)
   }
   fileList.innerHTML = html
@@ -205,3 +251,76 @@ if (searchInput) {
     renderSidebar()
   })
 }
+
+// Intra-sidebar drag-and-drop — move reports into / between / out of
+// workspaces. Drop targets:
+//   - any element with `[data-workspace-id]` (workspace row OR an
+//     indented report inside a workspace) → assign to that workspace
+//   - the Reports group header marked `[data-default-reports]` →
+//     detach from any workspace
+// OS file drops are NOT mistaken for this: the type check below looks
+// for our private mime, which only the dragstart below sets. The
+// document-level drop handler in ingest.js still handles OS files
+// (its `e.dataTransfer.files` check no-ops on internal drags).
+function clearDragOver() {
+  for (const el of sidebar.querySelectorAll('.drag-over')) el.classList.remove('drag-over')
+}
+
+sidebar.addEventListener('dragstart', (e) => {
+  const fileEl = e.target.closest('.file-item[data-file]')
+  if (!fileEl) return
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData(REPORT_DT, fileEl.dataset.file)
+  e.dataTransfer.setData('text/plain', fileEl.dataset.file)
+  fileEl.classList.add('dragging')
+})
+
+sidebar.addEventListener('dragend', () => {
+  for (const el of sidebar.querySelectorAll('.dragging')) el.classList.remove('dragging')
+  clearDragOver()
+})
+
+sidebar.addEventListener('dragover', (e) => {
+  if (!e.dataTransfer.types.includes(REPORT_DT)) return
+  const wsTarget = e.target.closest('[data-workspace-id]')
+  const unfileTarget = e.target.closest('[data-default-reports]')
+  if (!wsTarget && !unfileTarget) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  clearDragOver()
+  if (wsTarget) {
+    // Highlight at the workspace level so dropping on either the
+    // workspace row or any of its indented children reads as the
+    // same target.
+    const wsId = wsTarget.dataset.workspaceId
+    for (const el of sidebar.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]`)) {
+      el.classList.add('drag-over')
+    }
+  } else {
+    unfileTarget.classList.add('drag-over')
+  }
+})
+
+sidebar.addEventListener('dragleave', (e) => {
+  // Only clear if we've left the sidebar entirely — internal moves
+  // between target / non-target elements re-trigger dragover and
+  // re-paint the highlight.
+  if (!sidebar.contains(e.relatedTarget)) clearDragOver()
+})
+
+sidebar.addEventListener('drop', (e) => {
+  if (!e.dataTransfer.types.includes(REPORT_DT)) return
+  const filename = e.dataTransfer.getData(REPORT_DT)
+  const wsTarget = e.target.closest('[data-workspace-id]')
+  const unfileTarget = e.target.closest('[data-default-reports]')
+  if (!filename || (!wsTarget && !unfileTarget)) {
+    clearDragOver()
+    return
+  }
+  e.preventDefault()
+  e.stopPropagation()
+  clearDragOver()
+  const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
+  setReportWorkspace(filename, targetId)
+  renderSidebar()
+})

@@ -193,6 +193,39 @@
   & .file-icon, & .file-count { color: var(--text); }
 }
 
+/* Indented reports — those that live inside a workspace. The extra
+   left padding visually nests them under their workspace row; the
+   subtle left border is a tree-line hint that survives across both
+   themes. */
+.file-item.indented button.file-name {
+  padding-left: 1.4rem;
+}
+.file-item.indented {
+  position: relative;
+}
+.file-item.indented::before {
+  content: ''; position: absolute;
+  left: .85rem; top: 0; bottom: 0;
+  width: 1px; background: var(--border);
+}
+
+/* Drag-and-drop visuals — assigning a report to a workspace by
+   dragging it onto the workspace row (or one of its children).
+   `.dragging` dims the source so the user knows what's in flight;
+   `.drag-over` paints the target with the accent color so the drop
+   zone reads as receptive. */
+.file-item.dragging button.file-name { opacity: .4; }
+
+.file-item.workspace-item.drag-over button.file-name,
+.file-item.indented.drag-over button.file-name {
+  background: rgb(from var(--accent) r g b / .12);
+  border-color: var(--accent);
+}
+.file-group-header.drag-over {
+  background: rgb(from var(--accent) r g b / .12);
+  border-radius: 4px;
+}
+
 .sidebar-actions {
   padding: .35rem .55rem .45rem;
   border-top: 1px solid var(--border);
