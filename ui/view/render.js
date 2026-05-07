@@ -478,7 +478,6 @@ function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) 
   // view.html. Visibility is gated by `body.show-print-btn` toggled in
   // render() so it only appears on the findings tab with a report
   // loaded.
-  html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
   // Mark-color filter pill leads the row — a compact visual filter
@@ -501,6 +500,10 @@ function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) 
   html += '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
   html += `<input type="text" id="filter-search" value="${esc(state.filterInclude)}" placeholder="Search findings…">`
   html += '</div>'
+  // Result count rides on the search row's right edge — `margin-left:
+  // auto` (see toolbar.css) pushes it past the search field, so the
+  // row reads `[colors] [search…………]                X of Y`.
+  html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
   html += '</div>'
   // The Repo URL input lives in the page header now (see headerHtml /
   // repoChipHtml). When findings need it (`repoInputUseful` true) the

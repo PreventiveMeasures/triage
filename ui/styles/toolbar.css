@@ -74,30 +74,37 @@
 }
 
 /* Search field — ported from the DeepView.0 prototype's `.field.grow`
-   pattern. Pill-shaped wrapper with a magnifier glyph on the left
-   and a borderless input that grows to fill the remaining row. The
-   `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so the
-   field expands when there's room and stays at a comfortable
-   minimum when the row gets cramped. Focus picks up an accent
-   border to match the other chrome inputs (see styles/theme.css). */
+   pattern. The wrapper paints `var(--bg)` (a notch darker than the
+   toolbar's `var(--surface)`) so the field reads as a sunken pill;
+   the input inside is borderless + transparent so it sits on the
+   wrapper's bg without stacking a second background.
+   `input[type="text"]` is needed because the generic
+   `.toolbar input[type="text"]` rule above paints `var(--bg)` +
+   border on every text input and beats the lower-specificity
+   `.toolbar-search input` selector — matching its specificity here
+   plus coming later in the file lets these rules win.
+   `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so
+   the field expands when there's room and stays at a comfortable
+   minimum when the row gets cramped. */
 .toolbar-search {
   display: inline-flex; align-items: center; gap: .5rem;
   flex: 1 1 14rem; min-width: 12rem;
   height: 30px; box-sizing: border-box;
   padding: 0 .65rem;
-  background: var(--surface);
+  background: var(--bg);
   border: 1px solid var(--border); border-radius: 6px;
 
   &:focus-within { border-color: var(--accent); }
 
   & svg { color: var(--muted); flex-shrink: 0; }
 
-  & input {
+  & input[type="text"] {
     flex: 1; min-width: 0;
     background: transparent; border: 0; outline: none;
     color: var(--text); font: inherit; font-size: .8rem;
     padding: 0;
 
+    &:focus { border: 0; }
     &::placeholder { color: var(--muted); }
     &::-webkit-search-cancel-button { display: none; }
   }
