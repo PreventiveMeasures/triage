@@ -143,60 +143,83 @@ const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="
 // analyzer outputs into a single view.
 const COMBO_FIELDS = ['type', 'model', 'effort', 'exportsMode']
 
+// Format a single combo-field value as a tag-display string. The
+// type field carries the `analyzer: ` label and always renders
+// (even when null) so the slot is never silently dropped — `analyzer:
+// null` reads as "this run had no analyzer subtype" the same way the
+// DeepView.0 prototype's `<code>null</code>` did. Non-type fields
+// return `null` from this function when the value is missing so the
+// caller can drop them entirely; rendering a bare `null` for a
+// missing model / effort / exports just clutters the header.
+function formatComboField(field, value) {
+  if (field === 'type') return `analyzer: ${value ?? 'null'}`
+  if (value == null) return null
+  return value
+}
+
 // Project the loaded findings into a list of meta-row tag strings. The
 // fields aren't independent flags — they describe one analyzer run
 // each — so a naive `Set` per field would drop the cross-field
 // relationship. This routine instead:
 //
-//   1. Builds the list of unique combos across all findings.
+//   1. Builds the list of unique combos across all findings, over
+//      whichever subset of `COMBO_FIELDS` the caller requested.
 //   2. Marks each field "common" when every combo agrees on its value
 //      and "varying" otherwise.
-//   3. Walks the canonical slot order, emitting common fields as
-//      single-value tags at their natural slot. The first time a
-//      varying slot is hit, every combo is emitted as one tag joined
-//      by ` · ` over the varying fields only — preserving the
-//      cross-field tuple while hiding the common columns that would
-//      just repeat.
+//   3. Walks the slot order, emitting common fields as single-value
+//      tags at their natural slot. The first time a varying slot is
+//      hit, every combo is emitted as one tag joined by ` · ` over
+//      the varying fields only — preserving the cross-field tuple
+//      while hiding the common columns that would just repeat.
+//
+// `formatComboField` runs at every emission point: the type field
+// gets the `analyzer: ` prefix, and missing non-type values are
+// dropped. A combo whose entire varying-field projection is empty
+// (after null filtering) is skipped entirely so a single all-empty
+// combo doesn't render an empty tag.
+//
+// `fields` defaults to all four slots; pass a narrower list (e.g.
+// without `type`) to suppress a slot — used for source-marked
+// reports where the per-finding `type` is a category, not an
+// analyzer name, and the title already conveys the product.
 //
 // Examples (combos as `type · model · effort · exportsMode`):
 //   `null · opus 4.7 · max · list` + `null · gpt 5.5 · xhigh · list`
-//     → `null` `opus 4.7 · max` `gpt 5.5 · xhigh` `list`
+//     → `analyzer: null` `opus 4.7 · max` `gpt 5.5 · xhigh` `list`
 //   `null · opus 4.7 · xhigh · isolate` + `null · opus 4.7 · max · list`
-//     → `null` `opus 4.7` `xhigh · isolate` `max · list`
-//
-// Missing values render as the literal string `null` so the header
-// never silently drops a column — a single-combo load with no
-// analyzer field still surfaces `null` in slot 1, matching the
-// DeepView.0 prototype's display of unset analyzer fields.
-function buildAnalyzerTags(findings) {
+//     → `analyzer: null` `opus 4.7` `xhigh · isolate` `max · list`
+//   `correctness · null · null · null`  →  `analyzer: correctness`
+function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   const comboMap = new Map()
   for (const f of findings) {
-    const combo = {
-      type: f.type ?? null,
-      model: prettyModel(f.model) ?? null,
-      effort: f.effort ?? null,
-      exportsMode: f.exportsMode ?? null,
+    const combo = {}
+    for (const k of fields) {
+      combo[k] = k === 'model' ? (prettyModel(f.model) ?? null) : (f[k] ?? null)
     }
-    const key = COMBO_FIELDS.map((k) => combo[k] ?? '').join('|')
+    const key = fields.map((k) => combo[k] ?? '').join('|')
     if (!comboMap.has(key)) comboMap.set(key, combo)
   }
   const combos = [...comboMap.values()]
   if (combos.length === 0) return []
 
   const isCommon = {}
-  for (const k of COMBO_FIELDS) {
+  for (const k of fields) {
     isCommon[k] = new Set(combos.map((c) => c[k])).size === 1
   }
-  const varyingSlots = COMBO_FIELDS.filter((k) => !isCommon[k])
+  const varyingSlots = fields.filter((k) => !isCommon[k])
 
   const tags = []
   let combosEmitted = false
-  for (const k of COMBO_FIELDS) {
+  for (const k of fields) {
     if (isCommon[k]) {
-      tags.push(combos[0][k] ?? 'null')
+      const t = formatComboField(k, combos[0][k])
+      if (t != null) tags.push(t)
     } else if (!combosEmitted) {
       for (const combo of combos) {
-        tags.push(varyingSlots.map((s) => combo[s] ?? 'null').join(' · '))
+        const parts = varyingSlots
+          .map((s) => formatComboField(s, combo[s]))
+          .filter((p) => p != null)
+        if (parts.length > 0) tags.push(parts.join(' · '))
       }
       combosEmitted = true
     }
@@ -213,7 +236,7 @@ function buildAnalyzerTags(findings) {
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSeek findings`); otherwise it's `DeepView findings`,
 // matching the prior single-vs-mixed selection rule.
-function headerHtml(allGroupsLength, fileNames) {
+function headerHtml(totalCount, deletedCount, fileNames) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
   const titleText = singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings'
@@ -230,12 +253,28 @@ function headerHtml(allGroupsLength, fileNames) {
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
-  const findingNoun = `finding${allGroupsLength !== 1 ? 's' : ''}`
-  const countLabel = state.showDeleted
-    ? `Trash: ${allGroupsLength} deleted ${findingNoun}`
-    : `${allGroupsLength} ${findingNoun}`
 
-  const tags = buildAnalyzerTags(findings)
+  // Header count covers EVERY loaded finding (live + trashed) — the
+  // trashed entries are still part of the report, just hidden from
+  // the active list, so a user merging reports with different
+  // delete states wants the load total here. Trash view still shows
+  // a trash-specific label so the user knows which subset they're
+  // looking at.
+  const findingNoun = `finding${totalCount !== 1 ? 's' : ''}`
+  const countLabel = state.showDeleted
+    ? `Trash: ${deletedCount} deleted finding${deletedCount !== 1 ? 's' : ''}`
+    : `${totalCount} ${findingNoun}`
+
+  // Source-marked reports (claude-security, codex-security, deepseek)
+  // carry per-finding `type` as a category, not an analyzer name, so
+  // it's omitted from the header tags here — the title already
+  // conveys the product (`Claude Security findings`, etc.). The
+  // analyzer-prefix label only makes sense for the DeepView native
+  // bucket and any mixed loads.
+  const tagFields = singleSource
+    ? COMBO_FIELDS.filter((f) => f !== 'type')
+    : COMBO_FIELDS
+  const tags = buildAnalyzerTags(findings, tagFields)
   const tagHtml = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')
 
   const sep = '<span class="sep" aria-hidden="true"></span>'
@@ -622,7 +661,7 @@ export function render() {
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  let html = headerHtml(allGroups.length, fileNames)
+  let html = headerHtml(mergedGroups.length, deletedCount, fileNames)
 
   // Top-level view switcher. Tree tab only appears for tree-bearing
   // reports with >1 file — a single-file tree adds no navigation value.
