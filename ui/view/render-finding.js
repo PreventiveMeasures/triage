@@ -1,7 +1,9 @@
 import { html, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from './state.js'
 import { prettyModel, stripExportMarker, fileUrl, commitUrl } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
+import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results so the components can render
@@ -80,27 +82,41 @@ const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-h
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// Action buttons — comment button + `<color-marker>` (the 4-dot
-// color picker) plus either the delete `×` or the trash-mode
-// `restore` button. The dots themselves live in their own component
-// (see view/color-marker.js) so finding-row / finding-card don't
-// carry duplicate `.mark-dot` styling. Click on a dot bubbles up as
-// a composed `mark-color` event with `{ detail: { color } }` —
-// events.js's delegate on `report` resolves the gid via the same
-// `[data-gid]` walk used for the other buttons.
+// Workspace-merged views show which report a finding came from.
+// The chip mirrors the sidebar's file row (brand sticker + display
+// name) and lives at the start of the action row. Single-file
+// loads omit it (the title bar already shows the filename).
+function reportChipTemplate(group) {
+  if (!state.currentWorkspace) return nothing
+  const reportName = group[0]?._reportName
+  if (!reportName) return nothing
+  const iconHtml = FILE_ICONS[groupOf(reportName)] ?? FILE_ICONS.default
+  return html`<span class="report-chip" title=${reportName}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(reportName)}</span></span>`
+}
+
+// Action buttons — workspace-only report chip + comment button +
+// `<color-marker>` (the 4-dot color picker) plus either the delete
+// `×` or the trash-mode `restore` button. The dots themselves live
+// in their own component (see view/color-marker.js) so finding-row /
+// finding-card don't carry duplicate `.mark-dot` styling. Click on
+// a dot bubbles up as a composed `mark-color` event with
+// `{ detail: { color } }` — events.js's delegate on `report`
+// resolves the gid via the same `[data-gid]` walk used for the
+// other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
+  const reportChip = reportChipTemplate(group)
   const activeColor = state.markers.get(activeKey) ?? null
   const activeComment = state.comments.get(activeKey) ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   if (state.showDeleted) {
-    return html`${commentBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
+    return html`${reportChip}${commentBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
   }
   const xTitle = groupSt.hasConflict
     ? 'delete active tab (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-  return html`${commentBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
+  return html`${reportChip}${commentBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
 }
 
 // One tab button. Carries severity badge + (optional) confidence,

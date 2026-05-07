@@ -269,7 +269,7 @@ export function ingestReport(name, content) {
         // source run had no effort flag).
         const stamped = members.map((f) => {
           if (f.id) seenIds.add(f.id)
-          const filled = { ...f, _id: state.nextFindingId++, _repoFallback: repoFallback }
+          const filled = { ...f, _id: state.nextFindingId++, _repoFallback: repoFallback, _reportName: name }
           // Inherit run-level meta from the report header onto
           // findings that don't carry their own — but ONLY for native
           // analyzer JSON dumps (no `data.source` marker). For

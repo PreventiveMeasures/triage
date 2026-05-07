@@ -163,6 +163,28 @@
   &.tab-mark-gray .tab-conf { color: var(--text); }
 }
 
+.report-chip {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: 0 .35rem; height: 1.4rem;
+  border: 1px solid var(--border); border-radius: 3px;
+  color: var(--muted); font-size: .72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-right: .65rem;
+  max-width: 16rem;
+
+  & .report-chip-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  /* Brand-sticker colors — shared with the sidebar via file-display.js's
+     FILE_ICONS. Keep these in sync with sidebar.css's .file-icon block. */
+  & .file-icon { flex-shrink: 0; }
+  & .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+  & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+  & .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+  & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+}
+
 .mark-comment {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
