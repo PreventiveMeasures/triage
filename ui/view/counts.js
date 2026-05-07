@@ -1,19 +1,21 @@
-// localStorage-backed cache of per-file finding counts. The sidebar
-// renders a count pill on each file row; computing the count means
-// reading + parsing the report, which is too expensive to do on
-// every sidebar render. Counts are populated when a file is ingested
-// (so the active file always has a fresh number) and lazy-filled
-// for any pre-existing OPFS entries the first time the sidebar
-// surfaces them. Cleared when a file is deleted.
+// localStorage-backed cache of per-file finding counts and detected
+// source kind. The sidebar renders a count pill on each file row and
+// buckets files by source (DeepSec / Claude Security / …); both
+// require parsing the report, which is too expensive to do on every
+// sidebar render. Entries are populated when a file is ingested (so
+// the active file is always fresh) and lazy-filled for any
+// pre-existing OPFS entries the first time the sidebar surfaces
+// them. Cleared when a file is deleted.
 //
-// Stored as a single JSON blob under `deepview.fileCounts` so the
-// whole map round-trips in one localStorage call. Misses return
-// `undefined`, which the sidebar treats as "no badge yet" — the
-// lazy fetch then runs in the background and re-renders when each
-// count lands.
+// Stored as a single JSON blob under `deepview.fileCounts`. Each entry
+// is `{ count, source }`; legacy entries written before the source
+// field existed were bare numbers, and `getCount` / `getKind` handle
+// that shape transparently. Misses return `undefined`, which the
+// sidebar treats as "no badge / unknown bucket yet" — the lazy fetch
+// runs in the background and re-renders when each entry lands.
 import { readFile } from './storage.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
-import { parseDeepseekFindings } from '../../common/parse-deepseek.js'
+import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
 
@@ -27,13 +29,30 @@ function persist() {
   try { localStorage.setItem(COUNTS_KEY, JSON.stringify(cache)) } catch {}
 }
 
-export function getCount(name) {
-  return load()[name]
+// Normalize a cache entry to the `{ count, source }` shape. Legacy
+// entries were bare numbers — accept those and treat the source as
+// unknown. Returns `undefined` for unknown entries.
+function entryOf(name) {
+  const v = load()[name]
+  if (v === undefined) return undefined
+  if (typeof v === 'number') return { count: v }
+  return v
 }
 
-export function setCount(name, n) {
+export function getCount(name) {
+  return entryOf(name)?.count
+}
+
+// Returns the cached source marker for a file, e.g. `'deepsec'` or
+// `'claude-security'`. `undefined` means "not yet known" — the
+// sidebar falls back to extension-based bucketing in that case.
+export function getKind(name) {
+  return entryOf(name)?.source
+}
+
+export function setCount(name, count, source) {
   const c = load()
-  c[name] = n
+  c[name] = source ? { count, source } : { count }
   persist()
 }
 
@@ -43,20 +62,27 @@ export function removeCount(name) {
   persist()
 }
 
-// Count entries in raw report content. Each `findings[]` entry may be
-// a single Finding or a Finding[] (a pre-deduped group from an upstream
-// pass) — the sidebar count reflects entries (matching what the user
-// sees as rows in the table view), not flattened member findings. The
-// markdown / deepseek parsers each return the standard
-// `{ findings: [...] }` shape, so the same indexing applies after
-// they run.
-export function countFindings(content) {
+// Count entries in raw report content and identify the source format.
+// Each `findings[]` entry may be a single Finding or a Finding[] (a
+// pre-deduped group from an upstream pass) — the sidebar count
+// reflects entries (matching what the user sees as rows in the table
+// view), not flattened member findings. The markdown / deepsec
+// parsers each return the standard `{ findings: [...] }` shape, so
+// the same indexing applies after they run. `source` mirrors the
+// parser's `data.source` ('deepsec' / 'claude-security') and is
+// `undefined` for analyzer-native JSON dumps.
+export function analyzeContent(content) {
   try {
     const data = JSON.parse(content)
-    if (data && Array.isArray(data.findings)) return data.findings.length
+    if (data && Array.isArray(data.findings)) {
+      return { count: data.findings.length, source: data.source }
+    }
   } catch {}
-  const md = parseDeepseekFindings(content) ?? parseMarkdownFindings(content)
-  return md?.findings?.length ?? 0
+  const ds = parseDeepsecFindings(content)
+  if (ds) return { count: ds.findings.length, source: ds.source }
+  const md = parseMarkdownFindings(content)
+  if (md) return { count: md.findings.length, source: md.source }
+  return { count: 0 }
 }
 
 // Walk a list of names and populate the cache for any not yet known.
@@ -82,8 +108,8 @@ export async function ensureCounts(names, onUpdate) {
       if (c[n] !== undefined) continue
       try {
         const content = await readFile(n)
-        const count = countFindings(content)
-        c[n] = count
+        const { count, source } = analyzeContent(content)
+        c[n] = source ? { count, source } : { count }
         persist()
         if (onUpdate) onUpdate(n, count)
       } catch {

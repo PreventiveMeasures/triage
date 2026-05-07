@@ -3,7 +3,7 @@ import { sidebar, fileList } from './dom.js'
 import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, deleteCurrent } from './ingest.js'
-import { getCount, ensureCounts } from './counts.js'
+import { getCount, getKind, ensureCounts } from './counts.js'
 import { listWorkspaces, createWorkspace, setReportWorkspace } from './workspaces.js'
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
@@ -16,13 +16,18 @@ const REPORT_DT = 'application/x-deepview-report'
 
 // Sidebar source-grouping. Each known finding-source format gets its
 // own bucket; the JSON bucket renders under "Reports" since that's
-// the analyzer's native dump format. Files are grouped by extension
-// as a cheap, sync proxy for format detection — `listFiles` only
-// returns names, and reading every file just to peek at the format
-// on each sidebar render would be wasteful.
+// the analyzer's native dump format. The counts cache stores a
+// detected `source` alongside each file's count, so the bucket
+// follows what the parser identified rather than the filename — both
+// DeepSec and Claude Security ship as `.md`, so an extension check
+// alone can't tell them apart. When the cache hasn't filled yet
+// (pre-existing OPFS entries on first sidebar render) we fall back
+// to extension; ensureCounts repopulates and re-renders shortly.
 function groupOf(name) {
+  const kind = getKind(name)
+  if (kind === 'deepsec') return 'deepsec'
+  if (kind === 'claude-security') return 'claude-security'
   const lower = name.toLowerCase()
-  if (lower.endsWith('.deepseek')) return 'deepseek'
   if (lower.endsWith('.codex')) return 'codex-security'
   if (lower.endsWith('.md')) return 'claude-security'
   return 'default'
@@ -31,31 +36,28 @@ function groupOf(name) {
 // Section header label per group. The default JSON bucket renders
 // under "Reports" — broad enough to fit any analyzer-native dump
 // (deduplicate output, single-run output, etc.) without naming the
-// pipeline. Named buckets carry the upstream's product name. The
-// `'deepseek'` group key is a legacy internal marker (the parser /
-// `.deepseek` extension predate the corrected name) — the upstream
-// product is Vercel's DeepSec (https://github.com/vercel-labs/deepsec).
+// pipeline. Named buckets carry the upstream's product name —
+// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec).
 const GROUP_LABELS = {
   'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
-  'deepseek': 'DeepSec',
+  'deepsec': 'DeepSec',
 }
 
 // Render order for buckets — default (analyzer dumps) first, then
 // named sources in alphabetical-ish reading order.
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepseek']
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
 
 // Filename-to-label transform for the bucket-marker suffixes ingest
 // stamps on at drop time. `.codex` filenames are derived (e.g.
 // `org__repo:scan-suffix.codex`) — un-sanitize the slashes and strip
 // the suffix for the visible label so the sidebar reads as the
-// original `org/repo:scan-suffix`. `.deepseek` is a renamed `.md`
-// drop — strip the marker so the user sees the natural filename.
+// original `org/repo:scan-suffix`. DeepSec drops keep their original
+// `.md` extension and need no transform.
 function displayName(name) {
   const lower = name.toLowerCase()
   if (lower.endsWith('.codex')) return name.slice(0, -'.codex'.length).replace(/__/gu, '/')
-  if (lower.endsWith('.deepseek')) return name.slice(0, -'.deepseek'.length)
   return name
 }
 
@@ -79,7 +81,7 @@ const FILE_ICONS = {
   'default': `<svg class="file-icon brand-deepview" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" fill-rule="evenodd" d="M4.5 8.5q3.5-3 7 0-3.5 3-7 0m2.2 0a1.3 1.3 0 1 0 2.6 0 1.3 1.3 0 1 0-2.6 0"/><path class="fg" d="M7.084 7.77c-.218.272-.316.566-.272.991l.85.065zm1.178-.339c-.338-.065-.763 0-1.047.262l.37.698zm.152.055-.436.643 1.134.13c-.066-.315-.37-.664-.698-.773m-.141.85.523 1.046c.24-.24.403-.555.36-.959zm-1.407.578c.11.327.327.577.654.708l.458-.632zm.818.763c.36.087.73.01.97-.186l-.338-.708z"/></svg>`,
   'claude-security': `<svg class="file-icon brand-claude" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m5.875 10.154 1.376-.772.023-.067-.023-.037h-.067l-.23-.015-.787-.02-.681-.03-.661-.035-.166-.035-.156-.205.016-.103.14-.094.2.018.442.03.665.046.481.028.714.075h.113l.016-.047-.039-.028-.03-.028-.687-.466-.744-.492-.39-.284-.21-.143-.106-.135-.046-.294.19-.21.258.017.065.018.26.2.557.43.726.535.106.089.042-.03.006-.022-.048-.08-.395-.713-.422-.726-.187-.301-.05-.18a1 1 0 0 1-.03-.213l.218-.296.12-.039.29.039.123.106.18.413.293.65.453.884.133.262.07.242.027.075h.046v-.043l.038-.497.069-.611.067-.787.023-.221.11-.266.218-.143.17.081.14.2-.02.13-.083.54-.163.846-.106.567h.062l.07-.07.287-.382.482-.602.213-.239.248-.264.159-.125h.301l.221.329-.099.34-.31.393-.256.333-.369.496-.23.397.021.032.055-.006.832-.177.45-.081.537-.092.243.113.026.115-.096.236-.573.141-.673.135-1.003.237-.012.01.014.017.452.042.193.01h.473l.88.066.23.153.138.186-.023.141-.354.181-.478-.113-1.116-.266-.383-.096h-.053v.032l.32.312.584.528.731.68.037.168-.094.133-.099-.014-.643-.484-.248-.218-.561-.472H9.08v.05l.129.189.684 1.027.035.315-.05.103-.177.062-.194-.036-.4-.561-.413-.632-.333-.567-.041.023-.197 2.116-.092.108-.212.082-.177-.135-.094-.218.094-.43.113-.561.092-.447.083-.554.05-.184-.004-.013-.04.006-.418.574-.636.858-.503.539-.12.048-.21-.108.02-.193.117-.172.696-.886.42-.549.27-.317-.001-.046h-.016l-1.85 1.201-.328.042-.142-.132.018-.218.067-.071.556-.383Z"/></svg>`,
   'codex-security': `<svg class="file-icon brand-codex" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="M11.04 8.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V8.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0L5.63 9.587a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125L8.327 7.94l.596-.34a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436V9.122a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zM6.908 9.252l-.597-.34a.02.02 0 0 1-.012-.016V7.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z"/></svg>`,
-  'deepseek': `<svg class="file-icon brand-vercel" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m8 5.97 3.5 6.062h-7Z"/></svg>`,
+  'deepsec': `<svg class="file-icon brand-vercel" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${STICKER_BASE}<path class="fg" d="m8 5.97 3.5 6.062h-7Z"/></svg>`,
 }
 
 // Live module state — the search-box query, applied as a

@@ -9,9 +9,9 @@ import { renderSidebar } from './sidebar.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
-import { parseDeepseekFindings } from '../../common/parse-deepseek.js'
+import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
-import { setCount, removeCount, countFindings } from './counts.js'
+import { setCount, removeCount, analyzeContent } from './counts.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -47,22 +47,19 @@ export async function addFiles(files) {
           const codexName = displayName.replace(/\//gu, '__') + '.codex'
           const json = JSON.stringify(data)
           await saveFile(codexName, json)
-          setCount(codexName, countFindings(json))
+          const { count, source } = analyzeContent(json)
+          setCount(codexName, count, source)
           last = { name: codexName, content: json }
         }
-      } else if (file.name.toLowerCase().endsWith('.md') && /^## [A-Z][A-Z_]*\s*\(\d+\)/mu.test(content)) {
-        // DeepSec (.md with `## SEVERITY (n)` per-tier headers) is
-        // saved with a `.deepseek` extension so the sidebar can
-        // separate it from the Claude Security MD bucket. The detection
-        // regex is the same one parseDeepseekFindings uses as its
-        // format guard, so the two stay in sync.
-        const targetName = file.name.replace(/\.md$/iu, '') + '.deepseek'
-        await saveFile(targetName, content)
-        setCount(targetName, countFindings(content))
-        last = { name: targetName, content }
       } else {
+        // The original drop name (and its extension) is preserved.
+        // Source detection — DeepSec vs Claude Security vs analyzer-
+        // native JSON — is content-based via analyzeContent, and the
+        // detected source is stamped into the counts cache so the
+        // sidebar can bucket the file without re-parsing.
         await saveFile(file.name, content)
-        setCount(file.name, countFindings(content))
+        const { count, source } = analyzeContent(content)
+        setCount(file.name, count, source)
         last = { name: file.name, content }
       }
     } catch (err) {
@@ -159,7 +156,7 @@ export function ingestReport(name, content) {
       try {
         data = JSON.parse(content)
       } catch (jsonErr) {
-        data = parseDeepseekFindings(content)
+        data = parseDeepsecFindings(content)
           ?? parseMarkdownFindings(content)
         if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`)
       }

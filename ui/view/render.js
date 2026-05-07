@@ -127,13 +127,11 @@ export function refreshGraph2TopPkgs() {
 // the same `source` marker — those reports lack the analyzer
 // (model / effort / exportsMode) metadata that the analyzer-combo
 // breakdown builds from, so they get a fixed product name instead.
-// `'deepseek'` is a legacy internal marker kept for OPFS / parser
-// stability — the upstream product is Vercel's DeepSec
-// (https://github.com/vercel-labs/deepsec).
+// DeepSec is Vercel's tool (https://github.com/vercel-labs/deepsec).
 const SOURCE_TITLES = {
   'claude-security': 'Claude Security findings',
   'codex-security': 'Codex Security findings',
-  'deepseek': 'DeepSec findings',
+  'deepsec': 'DeepSec findings',
 }
 
 // Outline file glyph for the title's filename chip. Matches the icon
@@ -283,7 +281,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 //
 // Tool name comes from the source marker when every loaded report
 // agrees on one (`Claude Security findings`, `Codex Security
-// findings`, `DeepSeek findings`); otherwise it's `DeepView findings`,
+// findings`, `DeepSec findings`); otherwise it's `DeepView findings`,
 // matching the prior single-vs-mixed selection rule.
 function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   const sources = new Set(state.reports.map((r) => r.source))
@@ -311,7 +309,7 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   const findingNoun = `finding${totalCount !== 1 ? 's' : ''}`
   const countLabel = `${totalCount} ${findingNoun}`
 
-  // Source-marked reports (claude-security, codex-security, deepseek)
+  // Source-marked reports (claude-security, codex-security, deepsec)
   // carry per-finding `type` as a category, not an analyzer name, so
   // it's omitted from the header tags here — the title already
   // conveys the product (`Claude Security findings`, etc.). The

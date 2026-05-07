@@ -31,7 +31,7 @@
 //   …
 //
 // Returned shape matches the rest of the parser chain:
-//   { type, source: 'deepseek', findings: [...] }
+//   { type, source: 'deepsec', findings: [...] }
 // or null when the input doesn't look like the format (no
 // `## SEVERITY (n)` headers anywhere) — caller falls through to the
 // next parser.
@@ -75,7 +75,7 @@ function stripBackticks(s) {
   return typeof s === 'string' ? s.replace(/^`(.*)`$/u, '$1') : s
 }
 
-export function parseDeepseekFindings(content) {
+export function parseDeepsecFindings(content) {
   const text = content.replace(/\r\n?/gu, '\n').trim()
   // Format guard — the distinctive shape is `## SEVERITY (n)`. Without
   // any of those, this isn't a DeepSec doc; bail out so the chain
@@ -105,7 +105,7 @@ export function parseDeepseekFindings(content) {
   // per-finding analyzer category beyond severity, same situation as
   // codex). ingest.js's `data.source` gate keeps the report-level
   // type from leaking onto each finding.
-  return { type: 'security', source: 'deepseek', findings }
+  return { type: 'security', source: 'deepsec', findings }
 }
 
 function parseBlock(block, severity) {
