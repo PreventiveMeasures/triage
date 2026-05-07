@@ -205,16 +205,21 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .76rem;
   }
-  & .file-count {
-    flex-shrink: 0;
-    min-width: 1.4rem; padding: 0 .35rem; height: 1rem;
-    display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 999px;
-    background: rgb(from var(--text) r g b / .06);
-    color: var(--muted);
-    font-size: .68rem; font-weight: 500;
-    font-variant-numeric: tabular-nums;
-  }
+}
+
+/* Pill-shaped count chip. Top-level so it styles consistently whether
+   it sits inside the file-name button (per-report rows) or as a
+   sibling on the row (workspace rows, where the rightmost slot is
+   the count). */
+.file-item .file-count {
+  flex-shrink: 0;
+  min-width: 1.4rem; padding: 0 .35rem; height: 1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: rgb(from var(--text) r g b / .06);
+  color: var(--muted);
+  font-size: .68rem; font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-item.current button.file-name {
