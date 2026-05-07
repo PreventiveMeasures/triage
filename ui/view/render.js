@@ -525,6 +525,14 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   // vocabulary as `<color-marker>`, so the per-row pickers and the
   // filter pill share one visual language.
   html += triageFilterHtml(colorCounts)
+  // Search field + result count grouped into a single flex item so
+  // they wrap as a unit — when the row is too narrow to keep the
+  // strip inline, the search and `X of Y` move to a new line
+  // together rather than the count clinging to the right of the
+  // chips while the search drops below alone. See toolbar.css's
+  // `.search-row` rule + the wrapping breakpoints under
+  // `@media (max-width: 1200px)` and `.findings-content.with-details`.
+  html += '<div class="search-row">'
   // Search field — ported from the DeepView.0 prototype's `.field.grow`
   // (magnifier glyph + borderless input inside a pill that grows to
   // fill the row). Drops the prior labeled `Include:` / `Exclude:`
@@ -538,10 +546,8 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   html += '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
   html += `<input type="text" id="filter-search" value="${esc(state.filterInclude)}" placeholder="Search findings…">`
   html += '</div>'
-  // Result count rides on the search row's right edge — `margin-left:
-  // auto` (see toolbar.css) pushes it past the search field, so the
-  // row reads `[colors] [search…………]                X of Y`.
   html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
+  html += '</div>'
   html += '</div>'
   // The Repo URL input lives in the page header now (see headerHtml /
   // repoChipHtml). When findings need it (`repoInputUseful` true) the
