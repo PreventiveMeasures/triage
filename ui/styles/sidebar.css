@@ -1,12 +1,12 @@
-/* sidebar — collapsible file list rooted in OPFS, persists across reloads.
-   Pinned to the viewport (height: 100%; body is height: 100vh + overflow
-   hidden, main scrolls instead). When OPFS has no entries AND nothing's
-   currently loaded, the whole sidebar is hidden so the empty-state drop
-   zone reads as a clean welcome screen. Collapsed state shrinks to a
-   thin strip with just the toggle button so the user can always re-open
-   it. Hidden in print. */
+/* Sidebar — collapsible report picker rooted in OPFS, persists across
+   reloads. Pinned to the viewport (height: 100%; body is 100vh +
+   overflow:hidden, main scrolls instead). When OPFS has no entries
+   AND nothing is currently loaded, the whole sidebar is hidden so
+   the empty-state drop zone reads as a clean welcome screen. The
+   collapsed state shrinks to a thin strip with just the toggle
+   button so the user can always re-open it. Hidden in print. */
 #sidebar {
-  width: 240px; flex-shrink: 0; height: 100%;
+  width: 260px; flex-shrink: 0; height: 100%;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
@@ -16,79 +16,156 @@
   &.collapsed { width: 32px; }
   &.empty { display: none; }
 
-  &.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
-  &.collapsed .sidebar-header h2,
+  &.collapsed .brand,
+  &.collapsed .sidebar-search,
   &.collapsed #file-list,
   &.collapsed .sidebar-actions { display: none; }
+  &.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
 }
 
 .sidebar-header {
   display: flex; align-items: center; gap: .5rem;
-  padding: .5rem .75rem; border-bottom: 1px solid var(--border);
+  padding: .9rem 1rem .75rem;
 
-  & h2 {
-    font-size: .85rem; font-weight: 600; flex: 1;
+  & .brand {
+    flex: 1; display: flex; align-items: baseline; gap: .5rem;
+    font-size: 1rem; font-weight: 700; letter-spacing: -0.01em;
     white-space: nowrap; overflow: hidden;
+  }
+  & .brand-tag {
+    font-size: .65rem; font-weight: 500;
+    color: var(--muted); text-transform: lowercase;
+    letter-spacing: .02em;
   }
 }
 
 #sidebar-toggle {
-  background: transparent; color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: .15rem .4rem; cursor: pointer; font-size: .85rem; font-family: inherit;
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 4px;
+  cursor: pointer; padding: 0;
 
-  &:hover { border-color: var(--accent); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 }
 
-#file-list { list-style: none; flex: 1; overflow-y: auto; padding: 0; margin: 0; }
+.sidebar-search {
+  position: relative;
+  margin: 0 .75rem .85rem;
+
+  & .sidebar-search-icon {
+    position: absolute;
+    left: .65rem; top: 50%; transform: translateY(-50%);
+    color: var(--muted); pointer-events: none;
+  }
+  & input {
+    width: 100%; box-sizing: border-box;
+    padding: .45rem .6rem .45rem 2rem;
+    background: rgb(from var(--text) r g b / .04);
+    color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font: inherit; font-size: .8rem;
+    outline: none;
+
+    &::placeholder { color: var(--muted); }
+    &:focus { border-color: var(--accent); background: rgb(from var(--text) r g b / .06); }
+    /* Hide the native search-clear ✕ — the user can clear by selecting
+       all + delete; the WebKit clear is visually inconsistent with the
+       rest of the chrome. */
+    &::-webkit-search-cancel-button { display: none; }
+  }
+}
+
+#file-list {
+  list-style: none; flex: 1; overflow-y: auto;
+  padding: 0 .55rem .5rem; margin: 0;
+  /* Thin scrollbar that doesn't fight the glass surface. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* Section header (REPORTS, CLAUDE SECURITY, …). The `.group-count`
+   on the right mirrors the per-file count chip but with a transparent
+   background — same shape, less visual weight. user-select: none so
+   the label doesn't catch drag-selection. */
+.file-group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .85rem .55rem .35rem;
+  font-size: .65rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .12em;
+  color: var(--muted);
+  user-select: none;
+
+  & .group-count {
+    font-weight: 500; letter-spacing: .04em;
+    color: var(--muted); font-size: .7rem;
+  }
+}
+
+/* File row. The clickable surface is the inner `<button>` so the
+   focus ring + hover background hug the visible chip instead of
+   spilling to the row edge. Rounded corners + subtle background on
+   hover / current to read as a card-like pill. */
+.file-item {
+  list-style: none;
+
+  &.hidden { display: none; }
+}
 
 .file-item button.file-name {
-  display: block; width: 100%; text-align: left;
-  padding: .4rem .75rem;
+  display: flex; align-items: center; gap: .55rem;
+  width: 100%; box-sizing: border-box;
+  padding: .42rem .55rem;
   background: transparent; color: var(--text);
-  border: none; border-bottom: 1px solid var(--border);
-  cursor: pointer; font-size: .8rem; font-family: inherit;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid transparent; border-radius: 6px;
+  cursor: pointer; font-family: inherit; font-size: .8rem;
+  text-align: left;
 
-  &:hover { background: var(--surface-active); }
+  &:hover { background: rgb(from var(--text) r g b / .04); }
+
+  & .file-icon {
+    flex-shrink: 0; color: var(--muted);
+  }
+  & .file-label {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .78rem;
+  }
+  & .file-count {
+    flex-shrink: 0;
+    min-width: 1.5rem; padding: 0 .4rem; height: 1.1rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    background: rgb(from var(--text) r g b / .06);
+    color: var(--muted);
+    font-size: .7rem; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
 }
 
-.file-item.current button.file-name { background: var(--surface-active); color: var(--accent); }
+.file-item.current button.file-name {
+  background: rgb(from var(--text) r g b / .05);
+  border-color: var(--border);
 
-/* Section header for grouped files in the sidebar (e.g. "Claude
-   Security" above .md entries when both default + named groups are
-   present). Same .65rem uppercase tone used by the graph-tab section
-   labels (.tree-legend-title etc.) so the sidebar reads consistent
-   with that vocabulary. user-select: none + non-clickable styling so
-   it's clearly a label, not a list item.
-
-   Background uses an opaque tint of --text so it auto-adapts per
-   theme (subtle white wash in dark, subtle dark wash in light) and
-   reads as a band that's distinct from both file items and the
-   sidebar surface. Only border-bottom: the previous file-item
-   already has its own border-bottom, so a border-top here would
-   stack to a 2px line. */
-.file-group-header {
-  padding: .45rem .75rem .35rem;
-  font-size: .62rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .08em;
-  color: var(--muted);
-  background: rgb(from var(--text) r g b / 0.06);
-  border-bottom: 1px solid var(--border);
-  user-select: none;
+  & .file-icon, & .file-count { color: var(--text); }
 }
 
 .sidebar-actions {
-  padding: .5rem .75rem; border-top: 1px solid var(--border);
+  padding: .55rem .75rem .75rem;
+  border-top: 1px solid var(--border);
   display: flex; gap: .35rem; flex-wrap: wrap;
 
   & button {
-    background: transparent; border: 1px solid var(--border); color: var(--text);
-    border-radius: 4px; padding: .25rem .55rem; cursor: pointer;
-    font-size: .8rem; font-family: inherit;
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 4px; padding: .3rem .55rem; cursor: pointer;
+    font-size: .75rem; font-family: inherit;
 
-    &:hover { border-color: var(--accent); }
-    &.danger:hover { border-color: var(--critical); color: var(--critical); }
+    &:hover { color: var(--text); border-color: var(--accent); }
+    &.danger:hover { color: var(--critical); border-color: var(--critical); }
     &[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
   }
 }

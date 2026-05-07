@@ -3,18 +3,14 @@ import { sidebar, fileList } from './dom.js'
 import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, deleteCurrent } from './ingest.js'
+import { getCount, ensureCounts } from './counts.js'
 
-// Sidebar source-grouping. The default (JSON) bucket renders flush at
-// the top with no header — that's the analyzer's native dump format
-// and doesn't need a label. Named buckets get headers; today there
-// are two:
-//   .md     — "Claude Security" (the only producer for the supported
-//             markdown findings layout)
-//   .codex  — "Codex Security" (per-scan slices saved by ingest.js
-//             when a .csv is dropped; one file = one scan)
-// Files are grouped by extension as a cheap, sync proxy for format
-// detection — `listFiles` only returns names, and reading every file
-// just to peek at the format on each sidebar render would be wasteful.
+// Sidebar source-grouping. Each known finding-source format gets its
+// own bucket; the JSON bucket renders under "Reports" since that's
+// the analyzer's native dump format. Files are grouped by extension
+// as a cheap, sync proxy for format detection — `listFiles` only
+// returns names, and reading every file just to peek at the format
+// on each sidebar render would be wasteful.
 function groupOf(name) {
   const lower = name.toLowerCase()
   if (lower.endsWith('.deepseek')) return 'deepseek'
@@ -23,14 +19,20 @@ function groupOf(name) {
   return 'default'
 }
 
+// Section header label per group. The default JSON bucket renders
+// under "Reports" — broad enough to fit any analyzer-native dump
+// (deduplicate output, single-run output, etc.) without naming the
+// pipeline. Named buckets carry the upstream's product name.
 const GROUP_LABELS = {
+  'default': 'Reports',
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
   'deepseek': 'DeepSeek',
 }
 
-// Render order for named groups: Claude → Codex → DeepSeek.
-const NAMED_GROUP_ORDER = ['claude-security', 'codex-security', 'deepseek']
+// Render order for buckets — default (analyzer dumps) first, then
+// named sources in alphabetical-ish reading order.
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepseek']
 
 // Filename-to-label transform for the bucket-marker suffixes ingest
 // stamps on at drop time. `.codex` filenames are derived (e.g.
@@ -40,68 +42,88 @@ const NAMED_GROUP_ORDER = ['claude-security', 'codex-security', 'deepseek']
 // drop — strip the marker so the user sees the natural filename.
 function displayName(name) {
   const lower = name.toLowerCase()
-  if (lower.endsWith('.codex')) {
-    return name.slice(0, -'.codex'.length).replace(/__/gu, '/')
-  }
-  if (lower.endsWith('.deepseek')) {
-    return name.slice(0, -'.deepseek'.length)
-  }
+  if (lower.endsWith('.codex')) return name.slice(0, -'.codex'.length).replace(/__/gu, '/')
+  if (lower.endsWith('.deepseek')) return name.slice(0, -'.deepseek'.length)
   return name
 }
+
+// Inline `<svg>` for the file-row icon. Outline file-page glyph at
+// 14px to match the chrome's other icon buttons. Re-baked into each
+// row's HTML rather than referenced by id so a single `innerHTML`
+// write paints the whole list.
+const FILE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2h6l4 4v8H3z"/><path d="M9 2v4h4"/></svg>'
+
+// Live module state — the search-box query, applied as a
+// case-insensitive substring match on each file's display name.
+// Cleared by switchToFile / deleteCurrent indirectly (a fresh render
+// starts from this same value), so users can switch files without
+// losing their search.
+let searchQuery = ''
 
 function fileItemHtml(n) {
   const cls = `file-item${n === state.currentFile ? ' current' : ''}`
   const label = displayName(n)
-  return `<li class="${cls}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(label)}">${esc(label)}</button></li>`
+  const count = getCount(n)
+  const countHtml = count !== undefined ? `<span class="file-count">${count}</span>` : ''
+  return `<li class="${cls}" data-file="${esc(n)}"><button type="button" class="file-name" title="${esc(label)}">${FILE_ICON_SVG}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
+}
+
+function groupHeaderHtml(label, count) {
+  return `<li class="file-group-header"><span class="group-label">${esc(label)}</span><span class="group-count">${count}</span></li>`
+}
+
+function matchesSearch(name) {
+  if (!searchQuery) return true
+  return displayName(name).toLowerCase().includes(searchQuery)
 }
 
 // Render the OPFS file list into the sidebar. Highlights the active
 // file. Disables Delete when nothing's open. Hides the whole sidebar
 // when there are no files AND nothing's currently loaded — keeps the
-// empty-state drop zone uncluttered. Called after every state
-// transition that could change the file list or current selection.
+// empty-state drop zone uncluttered. Section headers render for every
+// non-empty bucket (including the default Reports group) so the
+// vocabulary stays consistent across mixed-format collections. Called
+// after every state transition that could change the file list, the
+// current selection, or the search query.
 export async function renderSidebar() {
   const names = await listFiles()
   sidebar.classList.toggle('empty', names.length === 0 && !state.currentFile)
 
-  // Bucket by group, preserving the alphabetical order listFiles already
-  // returned within each group.
-  const buckets = new Map([['default', []]])
+  // Bucket by group, applying the search filter as we go so empty
+  // post-filter groups skip their header entirely.
+  const buckets = new Map()
+  for (const g of GROUP_ORDER) buckets.set(g, [])
   for (const n of names) {
+    if (!matchesSearch(n)) continue
     const g = groupOf(n)
     if (!buckets.has(g)) buckets.set(g, [])
     buckets.get(g).push(n)
   }
-  // Only add a group header when more than one group has content —
-  // a sidebar of nothing-but-md files reads cleanest as a flat list,
-  // same as a sidebar of nothing-but-json. Once the user mixes
-  // formats, the headers are what tell them which bucket they're in.
-  // Named groups render in NAMED_GROUP_ORDER (Claude above Codex).
-  const namedGroups = NAMED_GROUP_ORDER
-    .map((g) => [g, buckets.get(g) ?? []])
-    .filter(([, list]) => list.length > 0)
-  // Show headers as soon as there are 2+ buckets in play (default
-  // counts as one). A single-bucket sidebar — only JSON, only Claude,
-  // only Codex — reads cleanest flat. With Claude AND Codex but no
-  // JSON we still want the section labels so the two named groups
-  // are visually separated.
-  const groupCount = (buckets.get('default').length > 0 ? 1 : 0) + namedGroups.length
-  const showHeaders = groupCount > 1
 
   let html = ''
-  for (const n of buckets.get('default')) html += fileItemHtml(n)
-  for (const [g, list] of namedGroups) {
-    if (showHeaders) html += `<li class="file-group-header">${esc(GROUP_LABELS[g] ?? g)}</li>`
+  for (const g of GROUP_ORDER) {
+    const list = buckets.get(g) ?? []
+    if (list.length === 0) continue
+    html += groupHeaderHtml(GROUP_LABELS[g] ?? g, list.length)
     for (const n of list) html += fileItemHtml(n)
   }
   fileList.innerHTML = html
 
   const deleteBtn = document.getElementById('delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
+
+  // Lazy-fill counts for any pre-existing OPFS entries that don't
+  // have one cached yet. Re-renders incrementally as each lands so
+  // the user sees badges populate progressively rather than waiting
+  // for the whole batch. Fire-and-forget — the awaited path here
+  // would block initial render for as long as the slowest file's
+  // parse takes.
+  ensureCounts(names, () => { renderSidebar() })
 }
 
 // Sidebar event delegation: file-list click switches; Delete removes
-// the current file; toggle collapses / expands.
+// the current file; toggle collapses / expands; search filters on
+// input.
 sidebar.addEventListener('click', (e) => {
   const fileEl = e.target.closest('.file-item[data-file]')
   if (fileEl) {
@@ -118,3 +140,11 @@ sidebar.addEventListener('click', (e) => {
     try { localStorage.setItem('deepview.sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
 })
+
+const searchInput = document.getElementById('sidebar-search-input')
+if (searchInput) {
+  searchInput.addEventListener('input', (e) => {
+    searchQuery = e.target.value.trim().toLowerCase()
+    renderSidebar()
+  })
+}

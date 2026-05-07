@@ -11,6 +11,7 @@ import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepseekFindings } from '../../common/parse-deepseek.js'
 import { deriveFindingId } from './finding-id.js'
+import { setCount, removeCount, countFindings } from './counts.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -46,6 +47,7 @@ export async function addFiles(files) {
           const codexName = displayName.replace(/\//gu, '__') + '.codex'
           const json = JSON.stringify(data)
           await saveFile(codexName, json)
+          setCount(codexName, countFindings(json))
           last = { name: codexName, content: json }
         }
       } else if (file.name.toLowerCase().endsWith('.md') && /^## [A-Z][A-Z_]*\s*\(\d+\)/mu.test(content)) {
@@ -56,9 +58,11 @@ export async function addFiles(files) {
         // format guard, so the two stay in sync.
         const targetName = file.name.replace(/\.md$/iu, '') + '.deepseek'
         await saveFile(targetName, content)
+        setCount(targetName, countFindings(content))
         last = { name: targetName, content }
       } else {
         await saveFile(file.name, content)
+        setCount(file.name, countFindings(content))
         last = { name: file.name, content }
       }
     } catch (err) {
@@ -105,6 +109,7 @@ export async function deleteCurrent() {
   if (!state.currentFile) return
   const name = state.currentFile
   await deleteFile(name)
+  removeCount(name)
   state.currentFile = null
   state.reports = []
   graph2.selected = null

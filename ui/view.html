@@ -21,12 +21,26 @@
 
 <aside id="sidebar">
   <div class="sidebar-header">
-    <button id="sidebar-toggle" type="button" title="toggle sidebar">≡</button>
-    <h2>Reports</h2>
+    <h2 class="brand">
+      <span class="brand-name">DeepView</span>
+      <span class="brand-tag">dev</span>
+    </h2>
+    <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+        <path d="M2 4h12v1.5H2zM2 7.25h12v1.5H2zM2 10.5h12V12H2z"/>
+      </svg>
+    </button>
+  </div>
+  <div class="sidebar-search">
+    <svg class="sidebar-search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <circle cx="6.5" cy="6.5" r="4.5"/>
+      <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
+    </svg>
+    <input id="sidebar-search-input" type="search" placeholder="Search reports..." autocomplete="off">
   </div>
   <ul id="file-list"></ul>
   <div class="sidebar-actions">
-    <button id="delete-current" type="button" class="danger" title="delete the current report from storage">Delete</button>
+    <button id="delete-current" type="button" class="danger" title="delete the current report from storage">Delete current</button>
   </div>
 </aside>
 
