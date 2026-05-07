@@ -79,8 +79,14 @@ export const state = store({
   filterSeverities: new Set(),
   filterColors: new Set(),
   filterSource: 'all',
-  filterConfMin: 8,
-  filterConfMax: '',
+  // Confidence range — both bounds always set (the new
+  // `<range-slider>` has no "unset" concept). 0 / 10 means "no
+  // filter": findings with `f.confidence === undefined` pass when
+  // the lower bound is at 0, and findings with `f.confidence > 10`
+  // (rare but possible) pass when the upper bound is at 10. See
+  // filters.js / matchesFilters for the membership semantics.
+  filterConfMin: 0,
+  filterConfMax: 10,
   filterInclude: '',
   repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded

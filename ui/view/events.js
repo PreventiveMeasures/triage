@@ -108,7 +108,7 @@ report.addEventListener('click', (e) => {
   const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')
   if (g2JumpFindings) {
     resetFilters()
-    state.filterConfMin = ''
+    state.filterConfMin = 0
     state.filterInclude = g2JumpFindings.dataset.g2JumpFindings
     state.currentView = 'findings'
     cleanupGraph2()
@@ -383,8 +383,29 @@ report.addEventListener('change', (e) => {
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
   else if (id === 'source-select') { state.filterSource = val; render() }
-  else if (id === 'conf-min') { state.filterConfMin = val === '' ? '' : parseInt(val, 10); render() }
-  else if (id === 'conf-max') { state.filterConfMax = val === '' ? '' : parseInt(val, 10); render() }
+})
+
+// Confidence range slider. `range-input` fires continuously during
+// drag and only updates the labelled values + the row-visibility
+// (no full re-render — that would tear the slider out from under
+// the user's mouse). `range-change` fires on release and triggers
+// the full render so any chrome that keys off the live counts
+// (severity-chip badges, the search row's `X of Y`) catches up.
+report.addEventListener('range-input', (e) => {
+  if (e.target.id !== 'conf-range') return
+  state.filterConfMin = e.detail.low
+  state.filterConfMax = e.detail.high
+  // Update only the live label so the user can read the range
+  // they're dragging through; defer the heavy filter render to
+  // `range-change`.
+  const label = document.getElementById('conf-range-vals')
+  if (label) label.textContent = `${state.filterConfMin}–${state.filterConfMax}`
+})
+report.addEventListener('range-change', (e) => {
+  if (e.target.id !== 'conf-range') return
+  state.filterConfMin = e.detail.low
+  state.filterConfMax = e.detail.high
+  render()
 })
 
 report.addEventListener('input', (e) => {

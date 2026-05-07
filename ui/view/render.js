@@ -449,16 +449,18 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   }
   if (showConfidence) {
     html += `<div class="sep"></div>`
-    html += `<label for="conf-min">Confidence:</label>`
-    html += `<select id="conf-min">`
-    html += `<option value="">min</option>`
-    for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMin === i ? ' selected' : ''}>${i}</option>`
-    html += `</select>`
-    html += ` &ndash; `
-    html += `<select id="conf-max">`
-    html += `<option value="">max</option>`
-    for (let i = 0; i <= 10; i++) html += `<option value="${i}"${state.filterConfMax === i ? ' selected' : ''}>${i}</option>`
-    html += `</select>`
+    html += `<label for="conf-range">Confidence</label>`
+    // Dual-thumb slider replaces the prior `min` / `max` select pair.
+    // Lower bound at 0 means "include findings without a confidence
+    // rating"; upper bound at 10 means "no upper cap (allow >10
+    // outliers)" — both edges are how the user opts out of that
+    // half of the filter (see filters.js / matchesFilters). The
+    // `<span id="conf-range-vals">` mirrors the live value during
+    // drag (events.js patches its textContent on `range-input`); on
+    // release a `range-change` event triggers a full re-render and
+    // the span gets re-baked here.
+    html += `<range-slider id="conf-range" min="0" max="10" step="1" low="${state.filterConfMin}" high="${state.filterConfMax}" aria-label="Confidence range"></range-slider>`
+    html += `<span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>`
   }
   html += `<div class="sep"></div>`
   // View mode — three icon buttons replacing the previous
@@ -744,7 +746,7 @@ export function render() {
   // in ingest.js, so guard here too.
   if (!hasAnyModulesPath && state.filterSource !== 'all') state.filterSource = 'all'
   if (!hasAnyConfidence) {
-    state.filterConfMin = ''; state.filterConfMax = ''
+    state.filterConfMin = 0; state.filterConfMax = 10
     // Sort options for confidence drop out alongside the filter, so a
     // user-set confidence sort would stay selected against an absent
     // option in the dropdown and applySorting would fall through to

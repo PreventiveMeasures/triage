@@ -26,6 +26,21 @@
     font-weight: 500;
   }
 
+  /* Confidence slider track tint + thumb fill flow off the toolbar's
+     accent. Live value label uses tabular nums so the dash stays
+     centered as the bounds change width (e.g. `0–10` vs `10–10`). */
+  & range-slider {
+    color: var(--accent);
+    margin: 0 .25rem;
+  }
+  & .conf-vals {
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .75rem;
+    font-variant-numeric: tabular-nums;
+    min-width: 2.75rem;
+  }
+
   & input[type="text"] {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;

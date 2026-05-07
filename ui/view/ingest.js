@@ -274,7 +274,7 @@ export function ingestReport(name, content) {
           else if (countAtMin(7) <= 25) state.filterConfMin = 7
           else state.filterConfMin = 8
         } else {
-          state.filterConfMin = ''
+          state.filterConfMin = 0
         }
       }
       render()

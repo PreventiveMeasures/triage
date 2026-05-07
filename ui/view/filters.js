@@ -6,8 +6,8 @@ export function resetFilters() {
   state.filterSeverities = new Set()
   state.filterColors = new Set()
   state.filterSource = 'all'
-  state.filterConfMin = 8
-  state.filterConfMax = ''
+  state.filterConfMin = 0
+  state.filterConfMax = 10
   state.filterInclude = ''
   state.sortBy = 'severity'
 }
@@ -28,8 +28,18 @@ export function matchesFilters(f) {
   }
   if (state.filterSource === 'own' && isModule(f.file)) return false
   if (state.filterSource === 'modules' && !isModule(f.file)) return false
-  if (state.filterConfMin !== '' && (f.confidence === undefined || f.confidence < state.filterConfMin)) return false
-  if (state.filterConfMax !== '' && (f.confidence === undefined || f.confidence > state.filterConfMax)) return false
+  // Confidence range. The slider's bounds (0..10) always have a
+  // value; the special positions are 0 (lower) and 10 (upper):
+  //   * lower at 0 → undefined-confidence findings pass through;
+  //     anything above 0 means "must have a known confidence"
+  //   * upper at 10 → no upper cap; allows the rare confidence > 10
+  //     entries through. Anything below 10 caps strictly.
+  if (f.confidence === undefined) {
+    if (state.filterConfMin > 0) return false
+  } else {
+    if (f.confidence < state.filterConfMin) return false
+    if (state.filterConfMax < 10 && f.confidence > state.filterConfMax) return false
+  }
   if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
   return true
 }
