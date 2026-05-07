@@ -19,6 +19,7 @@ import './view/repo-chip.js'
 import './view/severity-chips.js'
 import './view/triage-filter.js'
 import './view/view-mode-buttons.js'
+import './view/api.js'
 
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
