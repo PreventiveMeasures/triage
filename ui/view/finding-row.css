@@ -182,3 +182,49 @@
 .line-num { color: var(--muted); font-size: .75rem; }
 .line-num a { color: inherit; }
 .line-num a:hover { color: var(--accent); }
+
+/* Print rules. Light-DOM `@media print` in styles/print.css can't
+   reach inside this shadow root, so the badge / mark-host /
+   interactive-control overrides have to live here. Mirrors the
+   shape of the `<finding-card>` shadow's print block — the badge
+   palette is theme-independent (paper-friendly fixed swatches
+   with `print-color-adjust: exact` so backgrounds aren't stripped
+   by the browser's economy default). The mark-* row tints are
+   dropped entirely (colored row backgrounds add visual noise on
+   paper without any of the screen mode's triage value), the
+   mark-x / mark-restore action buttons hide, and the host
+   selection / deletion outlines get neutralized so a paper dump
+   reads as a uniform list. */
+@media print {
+  :host(:hover) .row,
+  :host(.mark-red) .row,
+  :host(.mark-blue) .row,
+  :host(.mark-green) .row,
+  :host(.mark-gray) .row {
+    background: transparent !important;
+  }
+  :host(.deleted) { opacity: 1; }
+  :host(.selected) .row,
+  :host(.has-conflict) .row { outline: none !important; }
+
+  .row { break-inside: avoid; page-break-inside: avoid; }
+
+  .marks { display: none !important; }
+  .mark-x, .mark-restore { display: none !important; }
+
+  .badge {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    &.critical      { background: #a30b0f !important; color: #fff !important; }
+    &.high          { background: #b8400a !important; color: #fff !important; }
+    &.medium        { background: #855107 !important; color: #fff !important; }
+    &.low           { background: #374151 !important; color: #fff !important; }
+    &.high_bug      { background: #7a3e0c !important; color: #fff !important; }
+    &.bug           { background: #4d4538 !important; color: #fff !important; }
+    &.informational { background: #0550ae !important; color: #fff !important; }
+  }
+
+  /* Strip on-screen link colors so a linked filename reads
+     identically to the bare-text fallback. */
+  a, .line-num, .line-num a { color: inherit; }
+}

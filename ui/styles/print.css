@@ -47,23 +47,28 @@
 
   /* Page-head: strip the screen pill chrome (chip backgrounds /
      borders / interactive controls) so the title row reads as
-     plain printed type. Dark-theme users would otherwise get dark
-     surface tints on white paper with light-on-white text inside;
-     clearing the boxes lets the `body { color: #000 }` rule above
-     own the foreground. The pencil button, the editable URL input,
-     and the empty repo CTA chip are all on-screen-only affordances
-     and get dropped entirely. */
+     plain printed type, theme-independent. The screen rules in
+     report.css are nested under `#report > header.page-head` —
+     specificity 1,1,1 and up — so plain `.page-head .file-chip`
+     would lose the cascade and the chips would still pull
+     `var(--text)` / `var(--muted)` from whichever theme the user
+     was looking at. `!important` is the right hammer here: the
+     print sheet's job is to be the authoritative override.
+     Dark-theme users would otherwise get dark surface tints on
+     white paper with light-on-white text inside the chips. The
+     pencil button, the editable URL input, and the empty-repo
+     CTA chip are pure on-screen affordances and get dropped. */
   .page-head .file-chip,
   .page-head .meta-row .tag,
   .page-head .meta-row .repo-chip {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    color: inherit;
+    background: transparent !important;
+    border: 0 !important;
+    padding: 0 !important;
+    color: #000 !important;
   }
   .page-head .file-chip svg,
-  .page-head .meta-row .repo-chip svg { color: inherit; }
-  .page-head .meta-row { color: inherit; }
+  .page-head .meta-row .repo-chip svg { color: #000 !important; }
+  .page-head .meta-row { color: #000 !important; }
   .page-head .repo-edit-btn,
   .page-head .repo-input,
   .page-head .meta-row .repo-chip.empty { display: none !important; }
