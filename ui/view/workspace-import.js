@@ -1,3 +1,4 @@
+import { html, render as litRender } from 'lit'
 import { state, loadRepoUrlFor, saveRepoUrlFor } from './state.js'
 import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
@@ -106,7 +107,11 @@ async function mergeTriage(triage) {
 // Returns a map keyed by `${id}:${property}` with `'local'` /
 // `'imported'`, or null if the dialog was cancelled (which is
 // equivalent to keeping local everywhere). Uses native <dialog>
-// for the focus-trap + Esc-to-cancel semantics — no extra JS.
+// for the focus-trap + Esc-to-cancel semantics — no extra JS — and
+// Lit's `render(html\`…\`, dialog)` to fill it, so interpolated
+// values (the user's id / chosen color / comment text) escape
+// automatically without a hand-rolled `escHtml`.
+//
 // Same `oklch` values color-marker.js uses, kept in sync so the
 // dialog's chip matches the in-app picker. Only the four marker
 // colors round-trip in triage.
@@ -117,71 +122,70 @@ const COLOR_HEX = {
   gray: 'oklch(0.55 0.01 260)',
 }
 
-function escHtml(s) {
-  const el = document.createElement('span')
-  el.textContent = s
-  return el.innerHTML
-}
-
-function colorChip(color) {
+function colorChipTemplate(color) {
   const value = COLOR_HEX[color] ?? 'transparent'
-  return `<span class="conflict-chip" style="background:${value}" title="${escHtml(color)}"></span>${escHtml(color)}`
+  return html`<span class="conflict-chip" style=${`background:${value}`} title=${color}></span>${color}`
 }
 
-function commentSnippet(text) {
+function commentSnippetTemplate(text) {
   const t = text.length > 80 ? text.slice(0, 77) + '…' : text
-  return `<span class="conflict-comment">${escHtml(t)}</span>`
+  return html`<span class="conflict-comment">${t}</span>`
 }
 
-function describeValue(c, side) {
+function describeValueTemplate(c, side) {
   const value = side === 'local' ? c.local : c.imported
-  if (c.property === 'color') return colorChip(value)
-  if (c.property === 'comment') return commentSnippet(value)
-  return escHtml(String(value))
+  if (c.property === 'color') return colorChipTemplate(value)
+  if (c.property === 'comment') return commentSnippetTemplate(value)
+  return html`${String(value)}`
 }
 
 function resolveTriageConflicts(conflicts) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog')
     dialog.className = 'workspace-conflict-dialog'
-    const rowsHtml = conflicts.map((c) => {
-      const key = `${c.id}:${c.property}`
-      const propLabel = c.property === 'color' ? 'color' : 'comment'
-      return `
-        <li class="conflict-row" data-key="${escHtml(key)}">
-          <code class="conflict-id" title="${escHtml(c.id)}">${escHtml(c.id.slice(0, 8))}… <span class="conflict-prop">${escHtml(propLabel)}</span></code>
-          <label class="conflict-choice">
-            <input type="radio" name="conflict-${escHtml(key)}" value="local" checked>
-            <span>Keep local: ${describeValue(c, 'local')}</span>
-          </label>
-          <label class="conflict-choice">
-            <input type="radio" name="conflict-${escHtml(key)}" value="imported">
-            <span>Use imported: ${describeValue(c, 'imported')}</span>
-          </label>
-        </li>
-      `
-    }).join('')
+
     const colorN = conflicts.filter((c) => c.property === 'color').length
     const commentN = conflicts.filter((c) => c.property === 'comment').length
     const summary = [
       colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
       commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
     ].filter(Boolean).join(' and ')
-    dialog.innerHTML = `
+
+    litRender(html`
       <h3>Workspace import: triage conflicts</h3>
       <p>The imported workspace disagrees with your local triage on
-        ${escHtml(summary)}. Pick which side wins per row — trash
-        status was already merged.</p>
+        ${summary}. Pick which side wins per row — trash status was
+        already merged.</p>
       <div class="conflict-bulk">
         <button type="button" data-bulk="local">Keep all local</button>
         <button type="button" data-bulk="imported">Use all imported</button>
       </div>
-      <ul class="conflict-list">${rowsHtml}</ul>
+      <ul class="conflict-list">
+        ${conflicts.map((c) => {
+          const key = `${c.id}:${c.property}`
+          const propLabel = c.property === 'color' ? 'color' : 'comment'
+          const radioName = `conflict-${key}`
+          return html`<li class="conflict-row" data-key=${key}>
+            <code class="conflict-id" title=${c.id}>${c.id.slice(0, 8)}…
+              <span class="conflict-prop">${propLabel}</span>
+            </code>
+            <label class="conflict-choice">
+              <input type="radio" name=${radioName} value="local" checked>
+              <span>Keep local: ${describeValueTemplate(c, 'local')}</span>
+            </label>
+            <label class="conflict-choice">
+              <input type="radio" name=${radioName} value="imported">
+              <span>Use imported: ${describeValueTemplate(c, 'imported')}</span>
+            </label>
+          </li>`
+        })}
+      </ul>
       <div class="conflict-actions">
         <button type="button" data-action="cancel">Cancel</button>
         <button type="button" data-action="apply" class="primary">Apply</button>
       </div>
-    `
+    `, dialog)
+
     document.body.appendChild(dialog)
     let settled = false
     const finish = (decisions) => {
