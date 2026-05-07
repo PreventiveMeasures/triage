@@ -74,6 +74,12 @@
      icons inherit currentColor so theme + state recolor automatically.
      The "View:" label sits to the left as a sibling, not inside the
      group, so the bordered shell only wraps the buttons. */
+  /* `<view-mode-buttons>` wraps the View: label + the icon group.
+     `display: contents` flattens the host out of the layout so the
+     two children become direct flex items of the toolbar-row,
+     picking up its `gap` between them (the label's slight negative
+     margin tightens that gap to a comfortable label↔group spacing). */
+  & view-mode-buttons { display: contents; }
   & .view-mode-label { color: var(--muted); margin-right: -.4rem; }
 
   & .view-mode-group {
