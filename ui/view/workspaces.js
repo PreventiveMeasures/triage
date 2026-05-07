@@ -62,6 +62,25 @@ export function deleteWorkspace(id) {
   writeRaw(list)
 }
 
+// Insert or replace a workspace by id. Used by the import path so a
+// re-import of the same workspace (same id) updates in place rather
+// than producing a duplicate entry.
+export function upsertWorkspace(workspace) {
+  const list = readRaw()
+  const idx = list.findIndex((w) => w.id === workspace.id)
+  const next = {
+    id: workspace.id,
+    name: workspace.name,
+    privateKey: workspace.privateKey,
+    reports: Array.isArray(workspace.reports) ? workspace.reports : [],
+    createdAt: workspace.createdAt ?? Date.now(),
+  }
+  if (idx >= 0) list[idx] = next
+  else list.push(next)
+  writeRaw(list)
+  return next
+}
+
 // Move a report to `workspaceId` (or detach it back to the unfiled
 // list when `workspaceId` is null). A report belongs to at most one
 // workspace at a time; the prior assignment, if any, is dropped first.
