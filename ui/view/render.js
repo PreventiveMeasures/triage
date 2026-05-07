@@ -123,73 +123,97 @@ export function refreshGraph2TopPkgs() {
   block.innerHTML = renderTopPkgsBlock(data.graph)
 }
 
-// Build the analyzer-breakdown header line. One entry per unique
-// `<analyzer> (<model>, <effort>, <exportsMode>)` combo seen across all
-// findings. The parenthetical lists whichever modifiers are set on
-// that combo, in the same order as the per-finding run-meta line so
-// the title and the per-finding annotations read consistently. Source
-// data comes from the run-meta lifted onto each finding at ingest, so
-// a single load can contain several combos when the user merges
-// multiple analyzer outputs. Model name is prettified the same way
-// (provider prefix + `claude-` stripped, dashes → spaces).
 // Source-specific header titles. Used when every loaded report shares
 // the same `source` marker — those reports lack the analyzer
-// (model / effort / exportsMode) metadata that `combos` builds from,
-// and the regular "DeepView results, analyzers: security,
-// performance, …" line would read as if multiple analyzer runs were
-// merged when really they're per-finding category tags within one
-// product's report.
+// (model / effort / exportsMode) metadata that the analyzer-combo
+// breakdown builds from, so they get a fixed product name instead.
 const SOURCE_TITLES = {
-  'claude-security': 'Claude Security results',
-  'codex-security': 'Codex Security results',
-  'deepseek': 'DeepSeek results',
+  'claude-security': 'Claude Security findings',
+  'codex-security': 'Codex Security findings',
+  'deepseek': 'DeepSeek findings',
 }
 
+// Outline file glyph for the title's filename chip. Matches the icon
+// used in the sidebar's file-list rows for visual continuity.
+const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>'
+
+// Page header — port of the prototype's `.page-head` block. The h1
+// carries the tool name plus a pill-shaped file chip naming the
+// active report; the meta-row underneath strings together the count,
+// the model / effort / exports tags, and an `analyzer X` segment.
+//
+// Tool name comes from the source marker when every loaded report
+// agrees on one (`Claude Security findings`, `Codex Security
+// findings`, `DeepSeek findings`); otherwise it's `DeepView findings`,
+// matching the prior single-vs-mixed selection rule. The combo
+// breakdown that used to live in the title moved into the meta-row's
+// tag chips so the title stays a single short phrase.
 function headerHtml(allGroupsLength, fileNames) {
-  // Single-source title only fires when EVERY loaded report carries
-  // the same source marker. Mixing a Claude / Codex report with a
-  // JSON dump (or with each other) falls back to the analyzer
-  // breakdown so neither product's info gets hidden.
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
-  const sourceTitle = singleSource ? SOURCE_TITLES[singleSource] : null
+  const titleText = singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings'
 
-  let headerText
-  if (sourceTitle) {
-    headerText = sourceTitle
-  } else {
-    const combos = [...new Set(state.reports.flatMap((r) =>
-      r.groups.flatMap((g) => g.map((f) => {
-        const type = f.type ?? 'unknown'
-        const parts = []
-        const model = prettyModel(f.model)
-        if (model) parts.push(model)
-        if (f.effort) parts.push(f.effort)
-        if (f.exportsMode) parts.push(f.exportsMode)
-        return parts.length > 0 ? `${type} (${parts.join(', ')})` : type
-      }))
-    ))]
-    // Singular/plural keyed off the number of distinct combos shown —
-    // one combo says "analyzer", any more says "analyzers". Two runs
-    // of the same analyzer with different effort/exportsMode count as
-    // two combos and pluralize accordingly.
-    const analyzerLabel = combos.length === 1 ? 'analyzer' : 'analyzers'
-    // headerText is pre-escaped (combo strings esc'd here) so it can
-    // include mixed safe + interpolated content without re-escaping.
-    headerText = combos.length > 0
-      ? `DeepView results, ${analyzerLabel}: ${combos.map(esc).join(', ')}`
-      : 'DeepView results'
+  // File chip: single-file reports get the filename verbatim; merged
+  // loads collapse to a count to keep the chip compact. The chip is
+  // omitted entirely when no files are loaded (shouldn't happen at
+  // this code path, but defensive).
+  let fileChip = ''
+  if (fileNames.length === 1) {
+    fileChip = `<span class="file-chip">${HEADER_FILE_ICON}<span>${esc(fileNames[0])}</span></span>`
+  } else if (fileNames.length > 1) {
+    fileChip = `<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames.length} reports</span></span>`
   }
-  const reportLabel = state.reports.length === 1
-    ? esc(fileNames[0])
-    : `${state.reports.length} reports: ${esc(fileNames.join(', '))}`
+
+  // Meta-row data — aggregated across all findings in the load.
+  // Per-finding `model` / `effort` / `exportsMode` deduplicate into
+  // small Sets so a single load with one combo shows one tag set,
+  // and a merged load shows whichever tags are common across runs.
+  // Empty fields contribute nothing (no blank tags).
+  const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
+  const models = new Set()
+  const efforts = new Set()
+  const exportsModes = new Set()
+  const types = new Set()
+  for (const f of findings) {
+    const m = prettyModel(f.model)
+    if (m) models.add(m)
+    if (f.effort) efforts.add(f.effort)
+    if (f.exportsMode) exportsModes.add(f.exportsMode)
+    types.add(f.type ?? null)
+  }
+
   const findingNoun = `finding${allGroupsLength !== 1 ? 's' : ''}`
   const countLabel = state.showDeleted
     ? `Trash: ${allGroupsLength} deleted ${findingNoun}`
     : `${allGroupsLength} ${findingNoun}`
-  let html = '<header>'
-  html += `<h1>${headerText}</h1>`
-  html += `<div class="meta">${reportLabel} &mdash; ${countLabel}</div>`
+
+  // Tags concatenate model + effort + exports in that order, matching
+  // the per-finding run-meta line so the header and per-row
+  // annotations read consistently.
+  const tags = []
+  for (const m of models) tags.push(`<span class="tag">${esc(m)}</span>`)
+  for (const e of efforts) tags.push(`<span class="tag">${esc(e)}</span>`)
+  for (const x of exportsModes) tags.push(`<span class="tag">${esc(x)}</span>`)
+
+  // Analyzer cell: one type → render `analyzer <code>name</code>`;
+  // multiple types → comma-list them so the header doesn't lie about
+  // a merged load. A null entry renders as `null` in code style,
+  // mirroring the prototype's display of unset analyzer fields.
+  const typeList = [...types]
+  const analyzerHtml = typeList.length > 0
+    ? `<span class="analyzer">analyzer <code>${typeList.map((t) => esc(t ?? 'null')).join(', ')}</code></span>`
+    : ''
+
+  const sep = '<span class="sep" aria-hidden="true"></span>'
+  const metaParts = [`<span>${esc(countLabel)}</span>`]
+  if (tags.length > 0) metaParts.push(sep, tags.join(''))
+  if (analyzerHtml) metaParts.push(sep, analyzerHtml)
+
+  let html = '<header class="page-head">'
+  html += '<div class="page-title">'
+  html += `<h1>${esc(titleText)}${fileChip}</h1>`
+  html += `<div class="meta-row">${metaParts.join('')}</div>`
+  html += '</div>'
   html += '</header>'
   return html
 }

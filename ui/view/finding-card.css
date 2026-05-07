@@ -28,7 +28,10 @@
   font-size: .875rem;
 }
 :host(:last-child) .card { border-bottom: none; }
-:host(.is-critical) .card { background: var(--critical-bg); }
+/* No `.is-critical` card tint — the severity badge already carries the
+   color, and a card-wide red background collides visually with
+   `.mark-red`'s identical-hue tint. Mirrors the same removal in
+   finding-row.css. */
 :host(.mark-red) .card   { background: #6b1820; }
 :host(.mark-blue) .card  { background: #1a2f5a; }
 :host(.mark-green) .card { background: #1a4a2a; }

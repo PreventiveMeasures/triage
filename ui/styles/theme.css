@@ -25,7 +25,7 @@
   --bg: #121212;
   --surface: rgba(28, 28, 28, 0.78);
   --border: #2c2c2c; --text: #e6edf3;
-  --muted: #8b949e; --accent: #58a6ff; --critical-bg: #3d1217; --critical: #f85149;
+  --muted: #8b949e; --accent: #58a6ff; --critical: #f85149;
   --high: #f0883e; --medium: #d29922; --low: #8b949e; --green: #3fb950;
   /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
      Earthy tones distinguish them from the saturated red/orange/amber
@@ -69,7 +69,6 @@ body.theme-light {
   --text: #1f2328;
   --muted: #59636e;
   --accent: #0969da;
-  --critical-bg: #ffebe9;
   --critical: #cf222e;
   --high: #bc4c00;
   --medium: #9a6700;
@@ -91,13 +90,6 @@ body.theme-light {
      palette (#6b1820 etc) was sized for `var(--text)`-as-light to
      remain readable; in light mode that text turns dark and would
      vanish on those same backgrounds.
-
-     Hierarchy mirrors dark mode: auto-applied tints (--critical-bg,
-     --surface-active) stay subtle, user-applied marks are deliberately
-     hotter so they outrank the auto wash. Earlier draft made
-     mark-red == --critical-bg and mark-blue == --surface-active —
-     a manually-marked-red critical finding looked the same as any
-     other critical, and a marked-blue finding's active tab vanished.
 
      The mark-dot / stat-dot fills (small color swatches, no text
      inside) keep their dark palette — they're indicators, not text

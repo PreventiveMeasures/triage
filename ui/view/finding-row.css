@@ -48,7 +48,10 @@
 }
 :host(:last-child) .row { border-bottom: none; }
 :host(:hover) .row { background: rgb(from var(--text) r g b / .04); }
-:host(.is-critical) .row { background: var(--critical-bg); }
+/* No `.is-critical` row tint — the severity badge already carries the
+   color, and a row-wide red background collides visually with
+   `.mark-red`'s identical-hue tint. The colored stripe / score
+   pill / mark-red row tint stay distinct for triage by color. */
 :host(.mark-red) .row   { background: #6b1820; }
 :host(.mark-blue) .row  { background: #1a2f5a; }
 :host(.mark-green) .row { background: #1a4a2a; }
