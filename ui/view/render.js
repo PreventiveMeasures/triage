@@ -306,7 +306,7 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
     ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
     : null
   const titleText = ws
-    ? `Workspace ${ws.name}`
+    ? `Workspace: ${ws.name}`
     : (singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings')
 
   // File chip: single-file reports get the filename verbatim; merged
