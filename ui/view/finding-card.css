@@ -61,6 +61,15 @@
   & span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
 
+/* Workspace-mode lift: when the action row carries the wide report
+   chip, the "introduced in" span is moved out of `.marks-left` into
+   its own row above. Indent matches `.marks` so it aligns with the
+   description column under the badge. */
+.marks-commit-row {
+  margin-top: .4rem;
+  padding-left: 4.75rem;
+}
+
 .tab-body {
   display: none;
   grid-template-columns: auto 1fr;

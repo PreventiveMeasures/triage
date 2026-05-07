@@ -203,16 +203,26 @@ export function findingCardClasses(g) {
 // is shown on screen; print stacks them) plus the bottom marks row
 // (commit ref, multi-tab strip, action buttons). The wrapping
 // `.finding` div is gone — the host element IS the card.
+//
+// Workspace mode lifts the "introduced in" line above the marks row.
+// The action row in workspace mode carries a wide report-name chip
+// at its left, which would otherwise squeeze the commit-ref span on
+// the same row and force the hash to wrap mid-line.
 export function findingCardInnerTemplate(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
   const active = activeTabFor(g)
   const activeKey = tabKey(active)
+  const commitRef = active.commitHash
+    ? html`<div class="commit-ref">introduced in ${commitLinkTemplate(active.repo?.github, active.commitHash)}</div>`
+    : nothing
+  const liftCommit = state.currentWorkspace && commitRef !== nothing
   return html`
     ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length))}
+    ${liftCommit ? html`<div class="marks-commit-row">${commitRef}</div>` : nothing}
     <div class="marks">
       <div class="marks-left">
-        ${active.commitHash ? html`<div class="commit-ref">introduced in ${commitLinkTemplate(active.repo?.github, active.commitHash)}</div>` : nothing}
+        ${liftCommit ? nothing : commitRef}
         ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey))}</div>` : nothing}
       </div>
       ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey)}
