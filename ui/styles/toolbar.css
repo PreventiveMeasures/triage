@@ -58,10 +58,13 @@
 
   /* Trash toggle — flips the render path from "non-deleted" to
      "deleted only". Active state uses the critical color to signal
-     "not your normal view". */
+     "not your normal view". `margin-left: auto` pushes the button
+     to the right edge of its toolbar row, so the row reads
+     `View [□☰▤] [Severity ↓] [Source] [Confidence……] ⋯ Trash`. */
   & .trash-btn {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+    margin-left: auto;
     &:hover { border-color: var(--accent); }
     &.active { border-color: var(--critical); color: var(--critical); }
   }
