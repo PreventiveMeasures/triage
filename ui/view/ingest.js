@@ -10,7 +10,7 @@ import { graph2, cleanupGraph2 } from './graph2/state.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepseekFindings } from '../../common/parse-deepseek.js'
-import { deriveFindingId } from './finding-id.js'
+import { deriveFindingId } from '../../common/finding-id.js'
 import { setCount, removeCount, countFindings } from './counts.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
