@@ -146,10 +146,21 @@ export async function switchToWorkspace(workspaceId) {
   graph2.pathFilter = ''
   cleanupGraph2()
   try { localStorage.setItem(LAST_FILE_KEY, `ws:${workspaceId}`) } catch {}
-  for (const name of ws.reports) {
-    let content
-    try { content = await readFile(name) } catch { continue }
-    await ingestReport(name, content)
+  // Kick off every readFile concurrently up front, then ingest the
+  // results in workspace order. The await inside the loop only blocks
+  // until each report's bytes land — slower reads carry on in the
+  // background while the earlier ones get parsed + rendered, so the
+  // first report's findings show up as soon as its read finishes
+  // rather than waiting for the slowest read in the batch. ingest
+  // ordering is preserved because the awaits walk the promise array
+  // in workspace.reports order. Per-read failures resolve to `null`
+  // (caught at the promise) so a single bad file doesn't reject the
+  // whole batch.
+  const reads = ws.reports.map((name) => readFile(name).catch(() => null))
+  for (let i = 0; i < ws.reports.length; i++) {
+    const content = await reads[i]
+    if (content === null) continue
+    await ingestReport(ws.reports[i], content)
   }
   await renderSidebar()
 }
