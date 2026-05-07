@@ -1,4 +1,4 @@
-import { state, VIEW_MODE_KEY } from './state.js'
+import { state, VIEW_MODE_KEY, REPO_URL_KEY } from './state.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
@@ -260,6 +260,14 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Pencil button on the header repo chip: expand the chip into its
+  // `<input>` form. The expanded input gets `autofocus` in HTML so
+  // the cursor lands there immediately after the re-render.
+  if (e.target.closest('[data-edit-repo]')) {
+    state.repoEditing = true
+    render()
+    return
+  }
   // View-mode icon buttons (table / list / grouped). Replaces the
   // earlier select + checkbox combo; the same `state.viewMode` field
   // drives findingsBodyHtml's branch.
@@ -375,9 +383,51 @@ report.addEventListener('input', (e) => {
   const val = e.target.value
   if (id === 'filter-include') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
-  else if (id === 'repo-url') { state.repoUrl = val; renderKeepFocus(id) }
+  else if (id === 'repo-url') {
+    // Live-save the repo URL — every keystroke updates `state.repoUrl`
+    // and persists to localStorage so the value survives a reload
+    // even if the user never explicitly commits via Enter / blur.
+    // No re-render here: the input is in the header and the value
+    // doesn't influence anything visible until commit.
+    state.repoUrl = val
+    try { localStorage.setItem(REPO_URL_KEY, val) } catch {}
+  }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
   }
+})
+
+// Header repo input: collapse the chip back to its display form on
+// Enter (commit) / Escape (cancel) / blur. Live `state.repoUrl` is
+// already kept in sync by the `input` listener above; this handler
+// only flips `repoEditing` and re-renders so any `fileUrl()` /
+// `commitUrl()` -driven row links update with the new URL.
+//
+// Escape restores the value the input was opened with — captured on
+// focusin so a multi-edit session keeps working.
+let repoUrlEditOpener = ''
+report.addEventListener('focusin', (e) => {
+  if (e.target.id === 'repo-url') repoUrlEditOpener = state.repoUrl
+})
+function closeRepoEdit() {
+  state.repoEditing = false
+  render()
+}
+report.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'repo-url') return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    closeRepoEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    state.repoUrl = repoUrlEditOpener
+    try { localStorage.setItem(REPO_URL_KEY, repoUrlEditOpener) } catch {}
+    closeRepoEdit()
+  }
+})
+// `focusout` bubbles (`blur` doesn't), so the report-level delegate
+// catches it for the in-shadow-DOM input as well.
+report.addEventListener('focusout', (e) => {
+  if (e.target.id === 'repo-url' && state.repoEditing) closeRepoEdit()
 })

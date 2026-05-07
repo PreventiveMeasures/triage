@@ -60,6 +60,56 @@
       font-size: .68rem;
       white-space: nowrap;
     }
+
+    /* Repo chip — pill-shaped like `.file-chip` but with the github
+       glyph and (when editable) a trailing pencil button that swaps
+       the chip's display form for an input. The `.empty` variant
+       (no URL set yet) styles the prompt as muted so it reads as a
+       call-to-action rather than a value. The readonly variant lives
+       on its own — no pencil, no hover affordance — because the
+       value comes from the loaded findings and changing it on this
+       page wouldn't propagate. */
+    & .meta-row .repo-chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      padding: .125rem .375rem .125rem .5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .72rem;
+      font-weight: 500;
+    }
+    & .meta-row .repo-chip svg { color: var(--muted); flex-shrink: 0; }
+    & .meta-row .repo-chip.empty .repo-label { color: var(--muted); font-style: italic; }
+    & .meta-row .repo-chip.readonly { padding-right: .5rem; }
+
+    & .meta-row .repo-edit-btn {
+      width: 18px; height: 18px;
+      display: grid; place-items: center;
+      padding: 0; margin-left: .125rem;
+      background: transparent;
+      border: 0; border-radius: 4px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    & .meta-row .repo-edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+
+    /* Editable form — matches the chip's overall footprint so
+       toggling between display and edit doesn't shift the row. The
+       width is set to fit a typical github URL; on narrow viewports
+       the meta-row wraps so the input takes its own line. */
+    & .meta-row .repo-input {
+      width: 16rem; box-sizing: border-box;
+      padding: .15rem .55rem;
+      background: var(--surface);
+      border: 1px solid var(--accent); border-radius: 999px;
+      color: var(--text);
+      font: inherit;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .72rem;
+      outline: none;
+    }
   }
 }
 

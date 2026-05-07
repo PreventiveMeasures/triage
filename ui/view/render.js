@@ -140,6 +140,52 @@ const SOURCE_TITLES = {
 // used in the sidebar's file-list rows for visual continuity.
 const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>'
 
+// Octocat for the repo chip. Same currentColor + 12px sizing as the
+// other inline glyphs, scaled to read at the title-row weight.
+const HEADER_GITHUB_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
+
+// Pencil glyph for the "edit repo" button on the editable chip.
+const HEADER_PENCIL_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.082-.286.235-.547.445-.758l8.61-8.61z"/></svg>'
+
+// Strip protocol + host so the chip reads as the bare `user/repo`
+// slug — that's the canonical form per-finding `repo.github` carries
+// (e.g. `lodash/lodash`), so the same value renders consistently
+// whether it came from a finding or the user's typed URL. Falls back
+// to the raw input when the URL isn't a github.com one.
+function prettyRepoLabel(s) {
+  if (!s) return ''
+  const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
+  return m ? m[1] : s
+}
+
+// Build the repo chip HTML for the page header. Three modes:
+//   * Editable + collapsed: `<github> repo-or-prompt <pencil>` button
+//     that toggles `state.repoEditing` on click.
+//   * Editable + expanded: bare `<input>` autofocused so the user can
+//     type immediately; saves on blur / Enter, cancels on Escape.
+//   * Read-only: `<github> repo` span when every non-module finding
+//     carries the same `repo.github` (no user input needed at all).
+//
+// `repoInputUseful` is the existing flag computed in the main render
+// path — true when at least one non-module finding lacks per-finding
+// repo info, so user-typed `state.repoUrl` is needed to build links.
+// When false, `knownRepo` (the single common per-finding repo, if
+// any) drives the read-only display.
+function repoChipHtml(repoInputUseful, knownRepo) {
+  if (repoInputUseful) {
+    if (state.repoEditing) {
+      return `<input type="text" id="repo-url" class="repo-input" value="${esc(state.repoUrl)}" placeholder="https://github.com/user/repo" autofocus>`
+    }
+    const label = state.repoUrl ? prettyRepoLabel(state.repoUrl) : 'Set repo'
+    const cls = state.repoUrl ? 'repo-chip' : 'repo-chip empty'
+    return `<span class="${cls}">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(label)}</span><button type="button" class="repo-edit-btn" title="Edit repo URL" data-edit-repo aria-label="Edit repo URL">${HEADER_PENCIL_ICON}</button></span>`
+  }
+  if (knownRepo) {
+    return `<span class="repo-chip readonly" title="Repo from findings (read-only)">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(knownRepo)}</span></span>`
+  }
+  return ''
+}
+
 // Canonical order for analyzer-combo fields. Each finding contributes
 // one combo (a tuple of these four values lifted off the run-meta at
 // ingest); multiple combos arise when the user merges several
@@ -239,7 +285,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSeek findings`); otherwise it's `DeepView findings`,
 // matching the prior single-vs-mixed selection rule.
-function headerHtml(totalCount, deletedCount, fileNames) {
+function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
   const titleText = singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings'
@@ -257,16 +303,13 @@ function headerHtml(totalCount, deletedCount, fileNames) {
 
   const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
 
-  // Header count covers EVERY loaded finding (live + trashed) — the
-  // trashed entries are still part of the report, just hidden from
-  // the active list, so a user merging reports with different
-  // delete states wants the load total here. Trash view still shows
-  // a trash-specific label so the user knows which subset they're
-  // looking at.
+  // Count covers EVERY loaded finding (live + trashed) — the trashed
+  // entries are still part of the report, just hidden from the active
+  // list. The trash mode toggle button (in the toolbar) is the user's
+  // signal that they're in the deleted view; the header stays steady
+  // so the load total doesn't visually shift when the toggle flips.
   const findingNoun = `finding${totalCount !== 1 ? 's' : ''}`
-  const countLabel = state.showDeleted
-    ? `Trash: ${deletedCount} deleted finding${deletedCount !== 1 ? 's' : ''}`
-    : `${totalCount} ${findingNoun}`
+  const countLabel = `${totalCount} ${findingNoun}`
 
   // Source-marked reports (claude-security, codex-security, deepseek)
   // carry per-finding `type` as a category, not an analyzer name, so
@@ -283,6 +326,8 @@ function headerHtml(totalCount, deletedCount, fileNames) {
   const sep = '<span class="sep" aria-hidden="true"></span>'
   const metaParts = [`<span>${esc(countLabel)}</span>`]
   if (tagHtml) metaParts.push(sep, tagHtml)
+  const repoHtml = repoChipHtml(repoInputUseful, knownRepo)
+  if (repoHtml) metaParts.push(sep, repoHtml)
 
   let html = '<header class="page-head">'
   html += '<div class="page-title">'
@@ -344,7 +389,7 @@ function statsHtml(counts, colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
-  const { showSource, showConfidence, showPriority, showRepoInput } = flags
+  const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
   html += `<label for="sort-select">Sort:</label>`
@@ -428,19 +473,12 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   html += `<label for="filter-exclude">Exclude:</label>`
   html += `<input type="text" id="filter-exclude" value="${esc(state.filterExclude)}" placeholder="hide text">`
   html += '</div>'
-  // The Repo URL input only contributes to fileUrl() for findings
-  // that are non-node_modules AND lack a per-finding `repo.github`
-  // (see format.js fileUrl). When every finding either carries its
-  // own repo.github or sits in node_modules, the typed URL has
-  // nothing to apply to — hide the row entirely. State is preserved
-  // so a later report that needs it inherits any URL the user
-  // previously typed.
-  if (showRepoInput) {
-    html += '<div class="toolbar-row">'
-    html += `<label for="repo-url">Repo:</label>`
-    html += `<input type="text" id="repo-url" value="${esc(state.repoUrl)}" placeholder="https://github.com/user/repo">`
-    html += '</div>'
-  }
+  // The Repo URL input lives in the page header now (see headerHtml /
+  // repoChipHtml). When findings need it (`repoInputUseful` true) the
+  // header chip expands into an `<input>` on click; when every
+  // finding carries its own `repo.github` and they all match, the
+  // header shows a read-only chip instead. The toolbar previously
+  // carried a labeled `Repo:` row here.
   html += '</div>'
   return html
 }
@@ -641,6 +679,16 @@ export function render() {
   // Repo URL input is useful only when at least one finding could
   // benefit from it: non-node_modules AND no per-finding repo.github.
   const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
+  // Single common per-finding `repo.github` across every non-module
+  // finding — drives the read-only repo chip in the header when the
+  // user doesn't need to type anything. `null` for mixed-repo loads
+  // (different findings carry different `repo.github`) so we don't
+  // mislead by showing one of several.
+  const perFindingRepos = new Set()
+  for (const g of mergedGroups) for (const f of g) {
+    if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
+  }
+  const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -664,7 +712,7 @@ export function render() {
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  let html = headerHtml(mergedGroups.length, deletedCount, fileNames)
+  let html = headerHtml(mergedGroups.length, fileNames, repoInputUseful, knownRepo)
 
   // Top-level view switcher. Tree tab only appears for tree-bearing
   // reports with >1 file — a single-file tree adds no navigation value.
@@ -736,7 +784,6 @@ export function render() {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showPriority: hasAnyPriority,
-    showRepoInput: repoInputUseful,
   })
 
   if (state.showDeleted && allGroups.length === 0) {

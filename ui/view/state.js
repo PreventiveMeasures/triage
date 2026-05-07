@@ -1,6 +1,7 @@
 import { store } from '../rray-modules/frontend/state-management.mjs'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
+export const REPO_URL_KEY = 'deepview.repoUrl'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
 
 // Hoisted so the `state` object literal below can call it during its
@@ -12,6 +13,14 @@ function readSavedViewMode() {
     const v = localStorage.getItem(VIEW_MODE_KEY)
     return VALID_VIEW_MODES.has(v) ? v : null
   } catch { return null }
+}
+
+// User-typed GitHub repo URL persists across reloads — links built
+// off it (`fileUrl` / `commitUrl` in format.js) only resolve when
+// the URL is set, and re-typing it on every page load would defeat
+// the convenience. Empty string when the user hasn't typed one.
+function readSavedRepoUrl() {
+  try { return localStorage.getItem(REPO_URL_KEY) ?? '' } catch { return '' }
 }
 
 // Centralised mutable view state. Every module that reads or writes
@@ -56,7 +65,12 @@ export const state = store({
   filterConfMax: '',
   filterInclude: '',
   filterExclude: '',
-  repoUrl: '',
+  repoUrl: readSavedRepoUrl(),
+  // Transient flag — true while the header's repo chip has expanded
+  // into its `<input>` form (user clicked the pencil). Cleared on
+  // save / blur. Not persisted: the chip default-collapses on every
+  // load.
+  repoEditing: false,
   sortBy: 'severity',
   // 'table' (default) renders one compact block per finding, never
   // grouped — the most scannable layout for triage. 'list' renders
