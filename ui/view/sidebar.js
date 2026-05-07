@@ -252,12 +252,17 @@ if (searchInput) {
   })
 }
 
-// Intra-sidebar drag-and-drop — move reports into / between / out of
-// workspaces. Drop targets:
-//   - any element with `[data-workspace-id]` (workspace row OR an
-//     indented report inside a workspace) → assign to that workspace
-//   - the Reports group header marked `[data-default-reports]` →
-//     detach from any workspace
+// Intra-sidebar drag-and-drop — move reports between workspaces and
+// the unfiled list. The whole sidebar is a drop zone:
+//   - drop on any element with `[data-workspace-id]` (workspace row
+//     OR one of its indented children) → assign to that workspace
+//   - drop anywhere else in the sidebar → detach (back to the unfiled
+//     list, where the report's filename extension routes it to the
+//     correct format bucket)
+// The Reports header lights up as the visual affordance for the
+// detach drop (when it's rendered), but the drop works regardless of
+// what the cursor is over so "drag back" is forgiving.
+//
 // OS file drops are NOT mistaken for this: the type check below looks
 // for our private mime, which only the dragstart below sets. The
 // document-level drop handler in ingest.js still handles OS files
@@ -282,12 +287,10 @@ sidebar.addEventListener('dragend', () => {
 
 sidebar.addEventListener('dragover', (e) => {
   if (!e.dataTransfer.types.includes(REPORT_DT)) return
-  const wsTarget = e.target.closest('[data-workspace-id]')
-  const unfileTarget = e.target.closest('[data-default-reports]')
-  if (!wsTarget && !unfileTarget) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
   clearDragOver()
+  const wsTarget = e.target.closest('[data-workspace-id]')
   if (wsTarget) {
     // Highlight at the workspace level so dropping on either the
     // workspace row or any of its indented children reads as the
@@ -297,7 +300,10 @@ sidebar.addEventListener('dragover', (e) => {
       el.classList.add('drag-over')
     }
   } else {
-    unfileTarget.classList.add('drag-over')
+    // Anywhere outside a workspace block detaches; mark the Reports
+    // header as the visible affordance when it's rendered.
+    const indicator = sidebar.querySelector('[data-default-reports]')
+    if (indicator) indicator.classList.add('drag-over')
   }
 })
 
@@ -311,15 +317,14 @@ sidebar.addEventListener('dragleave', (e) => {
 sidebar.addEventListener('drop', (e) => {
   if (!e.dataTransfer.types.includes(REPORT_DT)) return
   const filename = e.dataTransfer.getData(REPORT_DT)
-  const wsTarget = e.target.closest('[data-workspace-id]')
-  const unfileTarget = e.target.closest('[data-default-reports]')
-  if (!filename || (!wsTarget && !unfileTarget)) {
+  if (!filename) {
     clearDragOver()
     return
   }
   e.preventDefault()
   e.stopPropagation()
   clearDragOver()
+  const wsTarget = e.target.closest('[data-workspace-id]')
   const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
   setReportWorkspace(filename, targetId)
   renderSidebar()
