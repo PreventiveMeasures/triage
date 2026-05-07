@@ -1,4 +1,4 @@
-import { state, VIEW_MODE_KEY, REPO_URL_KEY } from './state.js'
+import { state, VIEW_MODE_KEY, saveRepoUrlFor } from './state.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
@@ -261,11 +261,14 @@ report.addEventListener('click', (e) => {
     return
   }
   // Pencil button on the header repo chip: expand the chip into its
-  // `<input>` form. The expanded input gets `autofocus` in HTML so
-  // the cursor lands there immediately after the re-render.
+  // `<input>` form. The input renders with the `autofocus` attribute,
+  // but autofocus on innerHTML-injected nodes is unreliable (Chrome
+  // only honors it on the initial page load), so we follow up with
+  // an explicit `.focus()` after the synchronous render.
   if (e.target.closest('[data-edit-repo]')) {
     state.repoEditing = true
     render()
+    document.getElementById('repo-url')?.focus()
     return
   }
   // View-mode icon buttons (table / list / grouped). Replaces the
@@ -385,12 +388,15 @@ report.addEventListener('input', (e) => {
   else if (id === 'filter-exclude') { state.filterExclude = val; renderKeepFocus(id) }
   else if (id === 'repo-url') {
     // Live-save the repo URL — every keystroke updates `state.repoUrl`
-    // and persists to localStorage so the value survives a reload
-    // even if the user never explicitly commits via Enter / blur.
-    // No re-render here: the input is in the header and the value
-    // doesn't influence anything visible until commit.
+    // and persists per-report so the value survives a reload even if
+    // the user never explicitly commits via Enter / blur. The
+    // localStorage entry is keyed by `state.currentFile` (see
+    // state.js / saveRepoUrlFor), so different reports can carry
+    // different URLs without overwriting each other. No re-render
+    // here: the input is in the header and the value doesn't
+    // influence anything visible until commit.
     state.repoUrl = val
-    try { localStorage.setItem(REPO_URL_KEY, val) } catch {}
+    saveRepoUrlFor(state.currentFile, val)
   }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
@@ -422,7 +428,7 @@ report.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') {
     e.preventDefault()
     state.repoUrl = repoUrlEditOpener
-    try { localStorage.setItem(REPO_URL_KEY, repoUrlEditOpener) } catch {}
+    saveRepoUrlFor(state.currentFile, repoUrlEditOpener)
     closeRepoEdit()
   }
 })

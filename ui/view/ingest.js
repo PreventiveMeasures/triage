@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state, loadRepoUrlFor, saveRepoUrlFor } from './state.js'
 import { dropZone, report } from './dom.js'
 import { saveFile, readFile, deleteFile } from './storage.js'
 import { toGroup } from './group.js'
@@ -78,6 +78,13 @@ export async function addFiles(files) {
 export async function switchToFile(name, content) {
   state.reports = []
   state.currentFile = name
+  // Per-report repo URL (see state.js / saveRepoUrlFor). The user's
+  // last-typed URL for THIS file lights up the header repo chip; an
+  // unseen file starts empty. Reset before ingest so a stale URL
+  // from the previous file doesn't briefly drive the header chip
+  // until the new report's findings determine it isn't needed.
+  state.repoUrl = loadRepoUrlFor(name)
+  state.repoEditing = false
   // Reset graph v2 state so a new report doesn't open with stale
   // selection / hidden packages / a soloed pkg from the previous
   // file. The layout cache also invalidates (a new tree → re-layout).
@@ -110,8 +117,10 @@ export async function deleteCurrent() {
   const name = state.currentFile
   await deleteFile(name)
   removeCount(name)
+  saveRepoUrlFor(name, '')
   state.currentFile = null
   state.reports = []
+  state.repoUrl = ''
   graph2.selected = null
   graph2.focusedPkg = null
   graph2.layoutCache = null

@@ -1,7 +1,7 @@
 import { store } from '../rray-modules/frontend/state-management.mjs'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
-export const REPO_URL_KEY = 'deepview.repoUrl'
+export const REPO_URLS_KEY = 'deepview.repoUrls'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
 
 // Hoisted so the `state` object literal below can call it during its
@@ -15,12 +15,30 @@ function readSavedViewMode() {
   } catch { return null }
 }
 
-// User-typed GitHub repo URL persists across reloads — links built
-// off it (`fileUrl` / `commitUrl` in format.js) only resolve when
-// the URL is set, and re-typing it on every page load would defeat
-// the convenience. Empty string when the user hasn't typed one.
-function readSavedRepoUrl() {
-  try { return localStorage.getItem(REPO_URL_KEY) ?? '' } catch { return '' }
+// Per-report repo URLs. The user's typed URL is meaningful in the
+// context of one specific report (different reports can analyze
+// different projects), so we key it on the OPFS filename rather
+// than store a single global value. JSON object so the whole map
+// round-trips in one localStorage call; missing entries default
+// to empty string. Exported so `switchToFile` can populate
+// `state.repoUrl` on every file switch and the events.js input
+// handler can write back without re-deriving the key.
+function readRepoUrlMap() {
+  try { return JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch { return {} }
+}
+function writeRepoUrlMap(map) {
+  try { localStorage.setItem(REPO_URLS_KEY, JSON.stringify(map)) } catch {}
+}
+export function loadRepoUrlFor(name) {
+  if (!name) return ''
+  return readRepoUrlMap()[name] ?? ''
+}
+export function saveRepoUrlFor(name, url) {
+  if (!name) return
+  const map = readRepoUrlMap()
+  if (url) map[name] = url
+  else delete map[name]
+  writeRepoUrlMap(map)
 }
 
 // Centralised mutable view state. Every module that reads or writes
@@ -65,7 +83,7 @@ export const state = store({
   filterConfMax: '',
   filterInclude: '',
   filterExclude: '',
-  repoUrl: readSavedRepoUrl(),
+  repoUrl: '',
   // Transient flag — true while the header's repo chip has expanded
   // into its `<input>` form (user clicked the pencil). Cleared on
   // save / blur. Not persisted: the chip default-collapses on every
