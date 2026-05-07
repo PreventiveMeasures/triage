@@ -50,19 +50,6 @@ function rowLocationTemplate(f) {
   return html`<a href=${target} target="_blank" rel="noopener">${text}</a>`
 }
 
-// "line N" link for the tab-body line row. Returns `nothing` when
-// the line number isn't a finite integer (codex / claude-security
-// imports stub the line as '?'); callers compose the result inline,
-// so `nothing` collapses cleanly.
-function lineLinkTemplate(file, line, githubRepo, repoFallback) {
-  const lineNum = parseInt(line, 10)
-  if (!Number.isFinite(lineNum)) return nothing
-  const url = fileUrl(file, githubRepo, repoFallback)
-  const text = `line ${lineNum}`
-  if (!url) return text
-  return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
-}
-
 // Commit-hash link for the codex `commit_hash` reference. Short SHA
 // (first 7 chars) on display, full hash in the title. Falls back to a
 // `<span>` (no link) when we don't have a repo to link against.
@@ -141,17 +128,23 @@ function tabTemplate(f, isActive) {
 function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
   const comment = state.comments.get(key) ?? ''
-  const lineLink = lineLinkTemplate(f.file, f.line, f.repo?.github, f._repoFallback)
-  // Line-num span composes the line link + (when present) the
-  // exportName, comma-separated. Both pieces optional; the wrapping
-  // span is suppressed when both are empty so the line-row collapses
-  // to nothing instead of leaving a stray "line ?".
-  const hasLineLink = lineLink !== nothing
+  // Location is rendered as `file:line` (linkified when we have a
+  // repo URL). Standalone cards (the table view's detail panel) need
+  // the file here because there's no surrounding header above; list /
+  // grouped modes hide the `.line-row` via `:host([in-group])` since
+  // `.flat-group-loc` / `.file-header` already paint the same info
+  // above the card. exportName joins with a comma when present.
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback)
+  const lineNum = parseInt(f.line, 10)
+  const hasLine = Number.isFinite(lineNum)
+  const locText = hasLine ? `${f.file}:${f.line}` : f.file
+  const locLink = url
+    ? html`<a href=${hasLine ? `${url}#L${lineNum}` : url} target="_blank" rel="noopener">${locText}</a>`
+    : locText
   const exportName = f.exportName ?? ''
-  let lineRowMain = nothing
-  if (hasLineLink && exportName) lineRowMain = html`<span class="line-num">${lineLink}, ${exportName}</span>`
-  else if (hasLineLink) lineRowMain = html`<span class="line-num">${lineLink}</span>`
-  else if (exportName) lineRowMain = html`<span class="line-num">${exportName}</span>`
+  const lineRowMain = exportName
+    ? html`<span class="line-num">${locLink}, ${exportName}</span>`
+    : html`<span class="line-num">${locLink}</span>`
   const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
   return html`<div class=${`tab-body${isActive ? ' active' : ''}`} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
