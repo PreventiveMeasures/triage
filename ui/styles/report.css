@@ -49,6 +49,31 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
+    /* Severity status bar — flex-row of segments whose flex-grow is
+       set to each severity's group count (so widths divide
+       proportionally). Painted only in workspace-merged views; gives
+       a one-glance shape of how bad the workspace is at the same
+       resolution as the toolbar chips below. */
+    & .meta-row .status-bar {
+      display: inline-flex;
+      width: 200px; height: 8px;
+      border-radius: 3px;
+      overflow: hidden;
+      background: var(--border);
+      vertical-align: middle;
+    }
+    & .meta-row .status-seg {
+      display: block; height: 100%;
+      flex-basis: 0;
+      &.sev-critical      { background: var(--critical); }
+      &.sev-high          { background: var(--high); }
+      &.sev-medium        { background: var(--medium); }
+      &.sev-low           { background: var(--low); }
+      &.sev-high_bug      { background: var(--high-bug); }
+      &.sev-bug           { background: var(--bug); }
+      &.sev-informational { background: var(--info); }
+    }
+
     & .meta-row .tag {
       display: inline-flex; align-items: center;
       padding: 1px .375rem;

@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
-import { esc, prettyModel, fileLink, lineLink, isModule } from './format.js'
+import { esc, prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -348,6 +348,29 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
 
   const sep = '<span class="sep" aria-hidden="true"></span>'
   const metaParts = [`<span>${esc(countLabel)}</span>`]
+  // Severity status bar — workspace-merged views show a stacked bar
+  // sized proportionally to each severity's group count (using the
+  // primary tab's severity, so each group contributes once and the
+  // segments sum to totalCount). Gives a quick "how bad is this
+  // workspace overall" signal without scanning the toolbar chips.
+  if (state.currentWorkspace && totalCount > 0) {
+    const sevCounts = {}
+    for (const r of state.reports) {
+      for (const g of r.groups) {
+        const sev = primaryTab(g).severity
+        if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
+      }
+    }
+    const segments = SEVERITIES
+      .filter((s) => sevCounts[s] > 0)
+      .map((s) => {
+        const pct = (sevCounts[s] / totalCount) * 100
+        const tip = `${sevCounts[s]} ${s.replace(/_/gu, ' ')}`
+        return `<span class="status-seg sev-${s}" style="flex-grow: ${sevCounts[s]}" title="${esc(tip)}"></span>`
+      })
+      .join('')
+    if (segments) metaParts.push(`<span class="status-bar" aria-hidden="true">${segments}</span>`)
+  }
   if (tagHtml) metaParts.push(sep, tagHtml)
   const repoHtml = repoChipHtml(repoInputUseful, knownRepo)
   if (repoHtml) metaParts.push(sep, repoHtml)
