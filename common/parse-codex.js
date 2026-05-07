@@ -39,17 +39,15 @@ function parseCsvRows(text) {
       } else {
         field += c
       }
+    } else if (c === '"') {
+      inQuote = true
+    } else if (c === ',') {
+      row.push(field); field = ''
+    } else if (c === '\n' || c === '\r') {
+      row.push(field); rows.push(row); row = []; field = ''
+      if (c === '\r' && text[i + 1] === '\n') i++
     } else {
-      if (c === '"') {
-        inQuote = true
-      } else if (c === ',') {
-        row.push(field); field = ''
-      } else if (c === '\n' || c === '\r') {
-        row.push(field); rows.push(row); row = []; field = ''
-        if (c === '\r' && text[i + 1] === '\n') i++
-      } else {
-        field += c
-      }
+      field += c
     }
   }
   // Trailing field / row (no final newline).

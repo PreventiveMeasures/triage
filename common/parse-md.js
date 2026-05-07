@@ -85,84 +85,17 @@ function parseBlock(block) {
   if (!title) return null
   const body = newlineIdx === -1 ? '' : block.slice(newlineIdx + 1)
 
-  // Each finding is body content followed by a `---` separator and
-  // a metadata block. The metadata block is itself terminated by
-  // either another `---` (between findings) or end of input.
-  const dashRe = /^---\s*$/m
-  const dashMatch = dashRe.exec(body)
-  let sectionsText, metaText
-  if (!dashMatch) {
-    sectionsText = body
-    metaText = ''
-  } else {
-    sectionsText = body.slice(0, dashMatch.index).trim()
-    const rest = body.slice(dashMatch.index + dashMatch[0].length).replace(/^\n/, '')
-    const next = dashRe.exec(rest)
-    metaText = next ? rest.slice(0, next.index) : rest
-  }
-
-  // Split sectionsText into named sections by `## Header`. parts[0]
-  // is whatever preceded the first ## (usually a blank line).
-  const sections = {}
-  const parts = sectionsText.split(/^## /m)
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i]
-    const nl = part.indexOf('\n')
-    const header = (nl === -1 ? part : part.slice(0, nl)).trim().toLowerCase()
-    const content = (nl === -1 ? '' : part.slice(nl + 1)).trim()
-    if (header) sections[header] = content
-  }
-
-  // Metadata: each line is `**Label:** value`. Field names are
-  // case-folded so consumers don't have to mind the source casing.
-  const meta = {}
-  for (const m of metaText.matchAll(/\*\*([^:]+):\*\*\s*(.+)/g)) {
-    meta[m[1].trim().toLowerCase()] = m[2].trim()
-  }
-
-  // Location: prefer a markdown link `[name](url)`. The line number
-  // can come from a `#L<n>` anchor in the URL, a `:<n>` suffix on the
-  // name, or absent altogether (rendered as `?`). The original link
-  // (URL when present, raw text otherwise) is preserved on the
-  // finding as `location` — the deterministic id derivation in
-  // finding-id.js uses it as the discriminator when no fileHash is
-  // available, so two MD imports of the same finding produce the
-  // same UUID and dedupe / share triage.
-  let file = '', line = '?', locationLink = ''
-  const loc = sections.location || ''
-  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/)
-  if (linkMatch) {
-    file = linkMatch[1].trim()
-    locationLink = linkMatch[2]
-    const lineFromUrl = linkMatch[2].match(/#L(\d+)/)
-    if (lineFromUrl) line = lineFromUrl[1]
-  } else {
-    file = loc.trim()
-    locationLink = loc.trim()
-  }
-  // `:42` suffix on the file path — common shorthand. Only consume
-  // if we don't already have a line from a `#L<n>` anchor.
-  const colonMatch = file.match(/^(.+):(\d+)$/)
-  if (colonMatch) {
-    file = colonMatch[1]
-    if (line === '?') line = colonMatch[2]
-  }
+  const { sectionsText, metaText } = splitBody(body)
+  const sections = parseSections(sectionsText)
+  const meta = parseMeta(metaText)
+  const { file, line, locationLink } = parseLocation(sections.location || '')
 
   // Severity defaults to medium when missing or unrecognized — keeps
   // an unparsable finding visible rather than dropping it silently.
   const sevRaw = (meta.severity || '').toLowerCase()
   const severity = VALID_SEVERITIES.has(sevRaw) ? sevRaw : 'medium'
 
-  // Build the description from the title + body sections. Strip the
-  // simple `**bold**` markdown so the renderer's esc() doesn't print
-  // the asterisks literally; everything else (line breaks, list
-  // bullets, plain text) survives. white-space: pre-line on the
-  // .desc CSS rule keeps the paragraph breaks visible.
-  const bodyParts = [title]
-  if (sections.details) bodyParts.push(sections.details)
-  if (sections.impact) bodyParts.push(`Impact: ${sections.impact}`)
-  if (sections['reproduction steps']) bodyParts.push(`Reproduction: ${sections['reproduction steps']}`)
-  const description = stripBold(bodyParts.join('\n\n'))
+  const description = buildDescription(title, sections)
   const recommendation = sections['recommended fix']
     ? stripBold(sections['recommended fix']) : undefined
 
@@ -186,6 +119,87 @@ function parseBlock(block) {
   if (meta.category) finding.type = meta.category.toLowerCase()
 
   return finding
+}
+
+// Split a finding body into its sections half (everything before the
+// first `---` separator) and its metadata half (the block between that
+// separator and either the next `---` or end of input).
+function splitBody(body) {
+  const dashRe = /^---\s*$/m
+  const dashMatch = dashRe.exec(body)
+  if (!dashMatch) return { sectionsText: body, metaText: '' }
+  const sectionsText = body.slice(0, dashMatch.index).trim()
+  const rest = body.slice(dashMatch.index + dashMatch[0].length).replace(/^\n/, '')
+  const next = dashRe.exec(rest)
+  const metaText = next ? rest.slice(0, next.index) : rest
+  return { sectionsText, metaText }
+}
+
+// Split sectionsText into named sections by `## Header`. parts[0] is
+// whatever preceded the first ## (usually a blank line).
+function parseSections(sectionsText) {
+  const sections = {}
+  const parts = sectionsText.split(/^## /m)
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i]
+    const nl = part.indexOf('\n')
+    const header = (nl === -1 ? part : part.slice(0, nl)).trim().toLowerCase()
+    const content = (nl === -1 ? '' : part.slice(nl + 1)).trim()
+    if (header) sections[header] = content
+  }
+  return sections
+}
+
+// Metadata: each line is `**Label:** value`. Field names are case-
+// folded so consumers don't have to mind the source casing.
+function parseMeta(metaText) {
+  const meta = {}
+  for (const m of metaText.matchAll(/\*\*([^:]+):\*\*\s*(.+)/g)) {
+    meta[m[1].trim().toLowerCase()] = m[2].trim()
+  }
+  return meta
+}
+
+// Location: prefer a markdown link `[name](url)`. The line number can
+// come from a `#L<n>` anchor in the URL, a `:<n>` suffix on the name,
+// or absent altogether (rendered as `?`). The original link (URL when
+// present, raw text otherwise) is preserved as `locationLink` — the
+// deterministic id derivation in finding-id.js uses it as the
+// discriminator when no fileHash is available, so two MD imports of
+// the same finding produce the same UUID and dedupe / share triage.
+function parseLocation(loc) {
+  let file = '', line = '?', locationLink = ''
+  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/)
+  if (linkMatch) {
+    file = linkMatch[1].trim()
+    locationLink = linkMatch[2]
+    const lineFromUrl = linkMatch[2].match(/#L(\d+)/)
+    if (lineFromUrl) line = lineFromUrl[1]
+  } else {
+    file = loc.trim()
+    locationLink = loc.trim()
+  }
+  // `:42` suffix on the file path — common shorthand. Only consume
+  // if we don't already have a line from a `#L<n>` anchor.
+  const colonMatch = file.match(/^(.+):(\d+)$/)
+  if (colonMatch) {
+    file = colonMatch[1]
+    if (line === '?') line = colonMatch[2]
+  }
+  return { file, line, locationLink }
+}
+
+// Build the description from the title + body sections. Strip the
+// simple `**bold**` markdown so the renderer's esc() doesn't print the
+// asterisks literally; everything else (line breaks, list bullets,
+// plain text) survives. white-space: pre-line on the .desc CSS rule
+// keeps the paragraph breaks visible.
+function buildDescription(title, sections) {
+  const bodyParts = [title]
+  if (sections.details) bodyParts.push(sections.details)
+  if (sections.impact) bodyParts.push(`Impact: ${sections.impact}`)
+  if (sections['reproduction steps']) bodyParts.push(`Reproduction: ${sections['reproduction steps']}`)
+  return stripBold(bodyParts.join('\n\n'))
 }
 
 function stripBold(text) { return text.replace(/\*\*/g, '') }
