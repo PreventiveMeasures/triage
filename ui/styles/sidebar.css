@@ -164,6 +164,19 @@
 .file-item.workspace-item:hover .workspace-open,
 .file-item.workspace-item:focus-within .workspace-open { opacity: 1; }
 
+/* Inline rename input — swapped in over the label span on dblclick.
+   Inherits the label's monospace font so the row height doesn't
+   shift; the accent border is the visible "you're editing" cue. */
+.workspace-rename-input {
+  width: 100%; box-sizing: border-box;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 3px;
+  padding: 0 .25rem; margin: -1px 0;
+  font: inherit; font-size: .76rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  outline: none;
+}
+
 /* File row. The clickable surface is the inner `<button>` so the
    focus ring + hover background hug the visible chip instead of
    spilling to the row edge. Rounded corners + subtle background on

@@ -62,6 +62,21 @@ export function deleteWorkspace(id) {
   writeRaw(list)
 }
 
+// Rename a workspace in place. Empty / whitespace-only names are
+// rejected (returns false) so the sidebar caller can revert the
+// inline edit; otherwise the trimmed value replaces the existing
+// name and the helper returns true.
+export function renameWorkspace(id, name) {
+  const trimmed = (name ?? '').trim()
+  if (!trimmed) return false
+  const list = readRaw()
+  const ws = list.find((w) => w.id === id)
+  if (!ws || ws.name === trimmed) return false
+  ws.name = trimmed
+  writeRaw(list)
+  return true
+}
+
 // Insert or replace a workspace by id. Used by the import path so a
 // re-import of the same workspace (same id) updates in place rather
 // than producing a duplicate entry.

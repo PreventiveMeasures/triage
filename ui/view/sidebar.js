@@ -4,7 +4,7 @@ import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, switchToWorkspace, deleteCurrent } from './ingest.js'
 import { getCount, getKind, ensureCounts } from './counts.js'
-import { listWorkspaces, createWorkspace, setReportWorkspace } from './workspaces.js'
+import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } from './workspaces.js'
 import { migrateLegacyFilenames } from './migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 
@@ -305,6 +305,48 @@ if (searchInput) {
     renderSidebar()
   })
 }
+
+// Double-click a workspace row → inline rename. Replaces the label
+// span with an <input> on the fly; Enter or blur commits, Escape
+// reverts. The row's other affordances (open / export / drop
+// targets) stay live but a re-render after commit/revert paints
+// fresh chrome anyway. Imperative DOM swap rather than a state flag
+// because the edit is a one-off, scoped to a single row.
+sidebar.addEventListener('dblclick', (e) => {
+  const wsRow = e.target.closest('.file-item.workspace-item')
+  if (!wsRow) return
+  const labelSpan = wsRow.querySelector('.file-label')
+  if (!labelSpan || labelSpan.querySelector('input')) return
+  const id = wsRow.dataset.workspaceId
+  const ws = listWorkspaces().find((w) => w.id === id)
+  if (!ws) return
+  e.preventDefault()
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.value = ws.name
+  input.className = 'workspace-rename-input'
+  labelSpan.textContent = ''
+  labelSpan.appendChild(input)
+  input.focus()
+  input.select()
+  let done = false
+  const finish = (commit) => {
+    if (done) return
+    done = true
+    if (commit) renameWorkspace(id, input.value)
+    renderSidebar()
+  }
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); finish(true) }
+    else if (ev.key === 'Escape') { ev.preventDefault(); finish(false) }
+  })
+  input.addEventListener('blur', () => finish(true))
+  // Stop bubbling so the row's click delegate doesn't fire while the
+  // user clicks inside the input (focusing / selecting text shouldn't
+  // open the workspace).
+  input.addEventListener('click', (ev) => ev.stopPropagation())
+  input.addEventListener('dblclick', (ev) => ev.stopPropagation())
+})
 
 // Intra-sidebar drag-and-drop — move reports between workspaces and
 // the unfiled list. The whole sidebar is a drop zone:
