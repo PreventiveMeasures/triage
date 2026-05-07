@@ -269,3 +269,69 @@
     &[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
   }
 }
+
+/* Workspace import: triage conflict dialog. The native <dialog>
+   handles focus trap + Esc-to-close; this is just the visual shell.
+   Each row exposes a Keep-local / Use-imported radio pair plus a tiny
+   color chip so the user can compare at a glance. Lives in the
+   sidebar stylesheet because the import is a sidebar-rooted action. */
+.workspace-conflict-dialog {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text);
+  padding: 1rem 1.1rem; max-width: 560px; width: min(92vw, 560px);
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
+
+  & h3 { margin: 0 0 .35rem; font-size: 1rem; }
+  & p { margin: 0 0 .8rem; color: var(--muted); font-size: .82rem; }
+
+  & .conflict-bulk { display: flex; gap: .35rem; margin-bottom: .55rem; }
+  & .conflict-bulk button,
+  & .conflict-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px;
+    padding: .25rem .65rem; cursor: pointer;
+    font: inherit; font-size: .78rem;
+
+    &:hover { border-color: var(--accent); color: var(--accent); }
+    &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    &.primary:hover { filter: brightness(1.08); }
+  }
+
+  & .conflict-list {
+    list-style: none; margin: 0; padding: 0;
+    max-height: 50vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 5px;
+  }
+  & .conflict-row {
+    display: grid;
+    grid-template-columns: minmax(0, 6.5rem) 1fr 1fr;
+    align-items: center; gap: .5rem;
+    padding: .4rem .55rem;
+    border-bottom: 1px solid var(--border);
+    font-size: .8rem;
+
+    &:last-child { border-bottom: 0; }
+  }
+  & .conflict-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .72rem; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & .conflict-choice {
+    display: flex; align-items: center; gap: .35rem;
+    cursor: pointer; min-width: 0;
+
+    & em { color: var(--muted); font-style: normal; font-size: .72rem; }
+  }
+  & .conflict-chip {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0; box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
+  }
+
+  & .conflict-actions {
+    display: flex; justify-content: flex-end; gap: .4rem;
+    margin-top: .8rem;
+  }
+}
