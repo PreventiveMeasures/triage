@@ -147,13 +147,13 @@
   .toolbar-row.sev-row .toolbar-search { flex-basis: 100%; }
 }
 
-/* Same wrap behaviour when the table-view details panel is open
-   (`.findings-content.with-details`) — that mode splits the page
-   horizontally with the right side carrying the details aside, so
-   the toolbar's effective width is roughly half the viewport
-   regardless of how wide the actual viewport is. The strip would
-   crowd badly without forcing the search onto its own line. */
-.findings-content.with-details .toolbar-row.sev-row .toolbar-search { flex-basis: 100%; }
+/* When the table-view details panel is open, `.findings-content`
+   expands its max-width to 2000px to host the list + details
+   side-by-side; capping the toolbar back at 1200px keeps the
+   filter strip from stretching across into the details column.
+   The list / details split below stays at its full expanded
+   width — only the filter chrome is constrained. */
+.findings-content.with-details > .toolbar { max-width: 1200px; }
 
 /* Severity-filter chips — ported from the DeepView.0 prototype's
    `.sev-chip` block. Pill-shaped chip with a colored swatch on the
