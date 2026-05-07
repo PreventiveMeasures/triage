@@ -10,7 +10,16 @@ import * as esbuild from 'esbuild'
 import { readFile } from 'node:fs/promises'
 import { resolve as resolvePath, dirname } from 'node:path'
 
-const litCssAsText = {
+// `minify` is set in prod builds. esbuild's top-level `minify` flag
+// doesn't reach text-loaded contents, so we run a one-shot
+// `esbuild.transform` with `loader: 'css'` on each shadow-DOM
+// stylesheet here. That collapses whitespace, drops comments, and
+// shortens hex colors before the bytes get baked into the JS bundle
+// as a string literal — meaningful since some component sheets are
+// several KB. Dev (serve) skips it: minified CSS is harder to
+// inspect via the devtools, and the bundle size doesn't matter when
+// it's served from memory on localhost.
+const litCssAsText = ({ minify } = {}) => ({
   name: 'lit-css-as-text',
   setup(build) {
     build.onResolve({ filter: /\.css$/ }, (args) => {
@@ -22,22 +31,22 @@ const litCssAsText = {
         namespace: 'lit-css',
       }
     })
-    build.onLoad({ filter: /.*/, namespace: 'lit-css' }, async (args) => ({
-      contents: await readFile(args.path, 'utf8'),
-      loader: 'text',
-    }))
+    build.onLoad({ filter: /.*/, namespace: 'lit-css' }, async (args) => {
+      let contents = await readFile(args.path, 'utf8')
+      if (minify) {
+        const result = await esbuild.transform(contents, { loader: 'css', minify: true })
+        contents = result.code
+      }
+      return { contents, loader: 'text' }
+    })
   },
-}
-
-const baseOptions = {
-  bundle: true,
-  plugins: [litCssAsText],
-}
+})
 
 const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
   await esbuild.build({
-    ...baseOptions,
+    bundle: true,
+    plugins: [litCssAsText({ minify: true })],
     entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html'],
     loader: { '.html': 'copy' },
     outdir: 'out',
@@ -51,7 +60,8 @@ if (mode === 'build') {
   // servedir, and routing them through esbuild with `outdir=ui`
   // would try to write over the source.
   const ctx = await esbuild.context({
-    ...baseOptions,
+    bundle: true,
+    plugins: [litCssAsText()],
     entryPoints: ['ui/*.js', 'ui/*.css'],
     outdir: 'ui',
     // The CLI's --serve flag implies both write:false and tolerating
