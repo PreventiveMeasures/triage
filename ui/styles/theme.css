@@ -163,14 +163,19 @@ a { color: var(--accent); text-decoration: none; }
    only push this column, not the sidebar's file list. */
 #main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
 
-/* Theme toggle — fixed top-right, always visible (across drop zone,
-   findings, graph, fullscreen). Hidden in print (toolbar widgets are
-   noise on paper). The icon glyph itself is set by view/theme.js so
-   the button can swap between sun/moon without a re-render. */
-/* Fixed-position chrome controls in the top-right corner. Same glass
-   shell as the toolbar / sidebar so they read as part of the
-   matte-glass UI, not floating widgets. */
-#theme-toggle, #print-btn {
+/* Hide every not-yet-upgraded custom element. Without this, hosts of
+   Lit components (e.g. `<theme-toggle>`) paint as unstyled inline
+   boxes for a frame between DOM parse and the `defer`red module
+   defining them. `:not(:defined)` only matches custom elements —
+   built-ins are always defined — so this is safe to apply globally. */
+:not(:defined) { display: none; }
+
+/* Print button — fixed-position chrome control in the top-right
+   corner. Same glass shell as the toolbar / sidebar so it reads as
+   part of the matte-glass UI, not a floating widget. The sibling
+   `<theme-toggle>` Lit component carries an equivalent rule in its
+   shadow DOM (see view/theme.js). */
+#print-btn {
   position: fixed; right: .5rem;
   z-index: 1000;
   width: 30px; height: 30px;
@@ -187,7 +192,6 @@ a { color: var(--accent); text-decoration: none; }
   & svg { display: block; }
 }
 
-#theme-toggle { top: .5rem; }
 /* Print button sits directly under the theme toggle. Hidden by
    default; render() in view/render.js toggles `body.show-print-btn`
    based on (state.reports.length > 0 && state.currentView ===
@@ -197,4 +201,4 @@ a { color: var(--accent); text-decoration: none; }
 #print-btn { top: calc(.5rem + 30px + .35rem); display: none; }
 body.show-print-btn #print-btn { display: flex; }
 
-@media print { #theme-toggle, #print-btn { display: none !important; } }
+@media print { #print-btn { display: none !important; } }

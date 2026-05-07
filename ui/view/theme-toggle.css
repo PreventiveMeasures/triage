@@ -1,0 +1,24 @@
+/* `<theme-toggle>` shadow-DOM styles. Imported as text by theme.js
+   and wrapped with unsafeCSS() so the bytes ship inside the
+   component's shadow root. `:host` is the element itself — it acts
+   as the clickable button surface. Mirrors what was previously the
+   global #theme-toggle rule in styles/theme.css; #print-btn still
+   carries its own copy there. */
+
+:host {
+  position: fixed; top: .5rem; right: .5rem;
+  z-index: 1000;
+  width: 30px; height: 30px;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  cursor: pointer; font-size: 1rem; line-height: 1;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, color .12s, background .12s;
+  user-select: none;
+}
+:host(:hover) { border-color: var(--accent); color: var(--accent); }
+:host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media print { :host { display: none !important; } }
