@@ -377,49 +377,23 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
 // the result count + filter-clearing affordances live elsewhere
 // (the search row's `X of Y` and the per-chip toggle), so the
 // extra summary just duplicates them.
+// Severity / mark-color filter strips — these used to be string-
+// concatenated blocks here that interpolated counts + active state.
+// Both moved to Lit components (`<severity-chips>`,
+// `<triage-filter>`) which take the data as JSON-encoded attributes
+// and dispatch `severity-toggle` / `color-toggle` events; events.js
+// has the matching handlers. The CSS still lives in toolbar.css
+// (the components render to light DOM so those rules apply).
 function severityChipsHtml(counts) {
-  const items = [
-    ['critical',      counts.critical,      'Critical'],
-    ['high',          counts.high,          'High'],
-    ['medium',        counts.medium,        'Medium'],
-    ['low',           counts.low,           'Low'],
-    ['high_bug',      counts.high_bug,      'High bug'],
-    ['bug',           counts.bug,           'Bug'],
-    ['informational', counts.informational, 'Info'],
-  ]
-  let html = '<div class="sev-chips" role="group" aria-label="Filter by severity">'
-  for (const [sev, count, label] of items) {
-    if (!count) continue
-    const active = state.filterSeverities.has(sev) ? ' active' : ''
-    html += `<button type="button" class="sev-chip ${sev}${active}" data-sev="${sev}" aria-pressed="${state.filterSeverities.has(sev)}"><span class="sd"></span><span class="name">${esc(label)}</span><span class="n">${count}</span></button>`
-  }
-  html += '</div>'
-  return html
+  const c = JSON.stringify(counts)
+  const sel = JSON.stringify([...state.filterSeverities])
+  return `<severity-chips counts='${c}' selected='${sel}'></severity-chips>`
 }
 
-// Mark-color filter — ported from the DeepView.0 prototype's
-// `.triage-filter` pill (a compact 5-button group with circle
-// glyphs). One container for all five colors so the row stays
-// tight; per-button counts sit as a small chip in the upper-right
-// of each circle. Tooltips intentionally name the color only —
-// these dots are user-assigned during triage and the meaning is
-// whatever the user wants, so the chrome doesn't presume
-// "confirmed", "needs review", etc.
 function triageFilterHtml(colorCounts) {
-  const items = [
-    ['none', colorCounts.none ?? 0, 'none', 'unmarked'],
-    ['red',  colorCounts.red  ?? 0, 'r',    'red'],
-    ['blue', colorCounts.blue ?? 0, 'b',    'blue'],
-    ['green', colorCounts.green ?? 0, 'g',  'green'],
-    ['gray', colorCounts.gray ?? 0, 'x',    'gray'],
-  ]
-  let html = '<div class="triage-filter" role="group" aria-label="Filter by mark color">'
-  for (const [col, count, tdClass, label] of items) {
-    const active = state.filterColors.has(col) ? ' active' : ''
-    html += `<button type="button" class="${active.trim()}" data-color="${col}" title="${label} (${count})" aria-pressed="${state.filterColors.has(col)}"><span class="td ${tdClass}"></span><span class="count">${count}</span></button>`
-  }
-  html += '</div>'
-  return html
+  const c = JSON.stringify(colorCounts)
+  const sel = JSON.stringify([...state.filterColors])
+  return `<triage-filter counts='${c}' selected='${sel}'></triage-filter>`
 }
 
 // `flags` carries per-render applicability: when no finding in the

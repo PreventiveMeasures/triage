@@ -296,33 +296,11 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Severity chip toggle — multi-select (`state.filterSeverities` is
-  // a Set; empty = no filter, non-empty = membership required).
-  // Selector matches the new toolbar chips (`.sev-chip[data-sev]`);
-  // the older `.stat[data-sev]` cards came out when severity moved
-  // into the toolbar block.
-  const sevStat = e.target.closest('.sev-chip[data-sev]')
-  if (sevStat) {
-    const sev = sevStat.dataset.sev
-    if (state.filterSeverities.has(sev)) state.filterSeverities.delete(sev)
-    else state.filterSeverities.add(sev)
-    render()
-    return
-  }
-  // Triage-filter pill: each circle button toggles `state.filterColors`
-  // for one mark color (or `none` for unmarked). The buttons live in
-  // a single `<div class="triage-filter">` group, so the click
-  // delegate matches `button[data-color]` scoped to that container —
-  // mark-dot buttons inside finding rows have their own selector and
-  // were already handled above.
-  const colorBtn = e.target.closest('.triage-filter button[data-color]')
-  if (colorBtn) {
-    const col = colorBtn.dataset.color
-    if (state.filterColors.has(col)) state.filterColors.delete(col)
-    else state.filterColors.add(col)
-    render()
-    return
-  }
+  // (severity-chips / triage-filter clicks are dispatched as
+  // `severity-toggle` / `color-toggle` custom events from their
+  // respective Lit components — handled outside this click delegate
+  // by dedicated listeners below.)
+
   // Table-view details panel close button — clears selection and
   // re-renders so the list expands back to full width.
   if (e.target.closest('[data-table-deselect]')) {
@@ -472,6 +450,24 @@ report.addEventListener('input', (e) => {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
   }
+})
+
+// `<severity-chips>` / `<triage-filter>` events. Each component
+// dispatches a `*-toggle` event with the value to flip; the host
+// adds / removes it from the matching state Set and re-renders so
+// the rest of the chrome (counts on the chips, the filtered row
+// count) catches up.
+report.addEventListener('severity-toggle', (e) => {
+  const sev = e.detail.severity
+  if (state.filterSeverities.has(sev)) state.filterSeverities.delete(sev)
+  else state.filterSeverities.add(sev)
+  render()
+})
+report.addEventListener('color-toggle', (e) => {
+  const col = e.detail.color
+  if (state.filterColors.has(col)) state.filterColors.delete(col)
+  else state.filterColors.add(col)
+  render()
 })
 
 // `<repo-chip>` events (see view/repo-chip.js). The component owns
