@@ -319,13 +319,25 @@ export function ingestReport(name, content) {
         // undefined for all). Clear the floor instead so the filter
         // becomes a no-op; the toolbar hides the control too (see
         // toolbarHtml in render.js).
+        //
+        // After picking the base, walk DOWN while each lower step
+        // would not surface any new groups — i.e. there's a "gap"
+        // in the confidence distribution between the chosen floor
+        // and the next observed bucket below it. Lowering the floor
+        // for free puts the slider at the natural break in the
+        // data: e.g. picked 8, no findings at 7 or 6 but some at
+        // 5 → settle at 6 (the lowest step that doesn't reveal
+        // anything new). Same idea applies down to 0 (= no floor).
         const hasAnyConfidence = groups.some((g) => g.some((f) => f.confidence !== undefined))
         if (hasAnyConfidence) {
           const countAtMin = (min) => groups.reduce((n, g) =>
             n + (g.some((f) => f.confidence !== undefined && f.confidence >= min) ? 1 : 0), 0)
-          if (countAtMin(6) <= 25) state.filterConfMin = 6
-          else if (countAtMin(7) <= 25) state.filterConfMin = 7
-          else state.filterConfMin = 8
+          let base
+          if (countAtMin(6) <= 25) base = 6
+          else if (countAtMin(7) <= 25) base = 7
+          else base = 8
+          while (base > 0 && countAtMin(base - 1) === countAtMin(base)) base--
+          state.filterConfMin = base
         } else {
           state.filterConfMin = 0
         }
