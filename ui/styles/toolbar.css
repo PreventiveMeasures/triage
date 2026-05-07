@@ -14,6 +14,18 @@
     &:focus { border-color: var(--accent); outline: none; }
   }
 
+  /* Sort dropdown reads as a button rather than a tight form
+     control — the bare select replaces the prior `Sort: [select]`
+     pair, so the selected option carries the role label and
+     deserves the visual weight a button would get. Slightly wider
+     padding + a `min-width` so changing direction (`Severity ↓` →
+     `Confidence ↑`) doesn't shift its neighbour. */
+  & select.sort-select {
+    padding: .3rem .55rem;
+    min-width: 8.5rem;
+    font-weight: 500;
+  }
+
   & input[type="text"] {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;

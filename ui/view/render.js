@@ -411,10 +411,14 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
-  html += `<label for="sort-select">Sort:</label>`
-  html += `<select id="sort-select">`
-  html += `<option value="file"${state.sortBy === 'file' ? ' selected' : ''}>By file</option>`
-  html += `<option value="severity"${state.sortBy === 'severity' ? ' selected' : ''}>By severity</option>`
+  // Sort dropdown — bare select (no `Sort:` label preceding it). The
+  // selected option's text already advertises what it sorts by, plus
+  // a `↓` / `↑` arrow showing direction, so the label was redundant
+  // chrome. Class `sort-select` lets toolbar.css give the button a
+  // touch more padding than the generic toolbar select.
+  html += `<select id="sort-select" class="sort-select" aria-label="Sort findings">`
+  html += `<option value="severity"${state.sortBy === 'severity' ? ' selected' : ''}>Severity ↓</option>`
+  html += `<option value="file"${state.sortBy === 'file' ? ' selected' : ''}>File ↑</option>`
   // Confidence sort options drop out alongside the Confidence
   // min/max filter when no finding carries a confidence value
   // (codex / claude security imports). Without this guard the
@@ -422,16 +426,16 @@ function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts,
   // every confidence is undefined and end up with applySorting's
   // ?? -1 fallback shuffling the list arbitrarily.
   if (showConfidence) {
-    html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence (high first)</option>`
-    html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence (low first)</option>`
+    html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence ↓</option>`
+    html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence ↑</option>`
   }
   // Priority — same pattern as Confidence: only renders when at
   // least one finding carries a numeric `priority` (0.0–10.0). State
   // is forced back to 'file' upstream if a previously-set priority
   // sort no longer applies.
   if (showPriority) {
-    html += `<option value="priority-desc"${state.sortBy === 'priority-desc' ? ' selected' : ''}>Priority (high first)</option>`
-    html += `<option value="priority-asc"${state.sortBy === 'priority-asc' ? ' selected' : ''}>Priority (low first)</option>`
+    html += `<option value="priority-desc"${state.sortBy === 'priority-desc' ? ' selected' : ''}>Priority ↓</option>`
+    html += `<option value="priority-asc"${state.sortBy === 'priority-asc' ? ' selected' : ''}>Priority ↑</option>`
   }
   html += `</select>`
   if (showSource) {
