@@ -28,9 +28,8 @@
 // out composed:true and reach events.js's `pathClosest`-based
 // delegate without intervention from this component.
 import { html, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { StateElement } from '../rray-modules/frontend/state-element.mjs'
-import { tableRowGid, tableRowClasses, tableRowInnerHTML } from './render-finding.js'
+import { tableRowGid, tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 
 // Every class this component might apply to the host. Listed
@@ -76,7 +75,7 @@ class FindingRow extends StateElement {
     // host so the global `* { padding: 0 }` reset in theme.css can't
     // override our padding/border via the shadow boundary's
     // outer-wins-over-inner cascade rule. See finding-row.css.
-    return html`<div class="row">${unsafeHTML(tableRowInnerHTML(this.group))}</div>`
+    return html`<div class="row">${tableRowInnerTemplate(this.group)}</div>`
   }
 
   connectedCallback() {

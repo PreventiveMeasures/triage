@@ -27,9 +27,8 @@
 // `pathClosest`-based delegate. No row-select equivalent — cards
 // don't drive a side-details panel.
 import { html, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { StateElement } from '../rray-modules/frontend/state-element.mjs'
-import { findingCardGid, findingCardClasses, findingCardInnerHTML } from './render-finding.js'
+import { findingCardGid, findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import cardCSS from './finding-card.css'
 
 const MANAGED_HOST_CLASSES = [
@@ -68,7 +67,7 @@ class FindingCard extends StateElement {
     // host so the global `* { padding: 0 }` reset in theme.css can't
     // override our padding/border via the shadow boundary's
     // outer-wins-over-inner cascade rule. See finding-card.css.
-    return html`<div class="card">${unsafeHTML(findingCardInnerHTML(this.group))}</div>`
+    return html`<div class="card">${findingCardInnerTemplate(this.group)}</div>`
   }
 
   connectedCallback() {

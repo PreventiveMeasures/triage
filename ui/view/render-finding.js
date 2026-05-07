@@ -1,19 +1,16 @@
+import { html, nothing } from 'lit'
 import { state } from './state.js'
-import { esc, prettyModel, stripExportMarker, lineLink, fileUrl, commitLink } from './format.js'
+import { prettyModel, stripExportMarker, fileUrl, commitUrl } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
 
-// Combined `file:line` link for the table-view location cell. lineLink
-// only emits "line N" since the list view shows the filename in a
-// separate file-header / flat-group-loc; the table view has no such
-// header, so we need both pieces in one slot.
-function rowLocationHtml(f) {
-  const url = fileUrl(f.file, f.repo?.github)
-  const lineNum = parseInt(f.line, 10)
-  const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
-  if (!url) return esc(text)
-  const target = Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
-  return `<a href="${esc(target)}" target="_blank" rel="noopener">${esc(text)}</a>`
-}
+// All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
+// here as Lit `html` template results so the components can render
+// directly without `unsafeHTML`. Lit auto-escapes interpolated text
+// and attribute values, so the previous string builders' manual
+// `esc()` calls are gone — only structural HTML lives in the
+// templates. Light-DOM-targeting helpers in render.js (e.g. flat
+// list location headers) keep using the string-returning siblings
+// in format.js.
 
 // Display label for the .badge tier text. The class still gets the
 // canonical severity string ('informational' / 'high_bug') so CSS
@@ -38,35 +35,69 @@ function firstLine(text) {
   return ''
 }
 
+// Combined `file:line` link for the table-view row's location cell —
+// the row has no file header above it (unlike the list / grouped
+// views) so file + line live together in one slot. Returns a
+// TemplateResult when we have a source URL, plain text otherwise.
+function rowLocationTemplate(f) {
+  const url = fileUrl(f.file, f.repo?.github)
+  const lineNum = parseInt(f.line, 10)
+  const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
+  if (!url) return text
+  const target = Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
+  return html`<a href=${target} target="_blank" rel="noopener">${text}</a>`
+}
+
+// "line N" link for the tab-body line row. Returns `nothing` when
+// the line number isn't a finite integer (codex / claude-security
+// imports stub the line as '?'); callers compose the result inline,
+// so `nothing` collapses cleanly.
+function lineLinkTemplate(file, line, githubRepo) {
+  const lineNum = parseInt(line, 10)
+  if (!Number.isFinite(lineNum)) return nothing
+  const url = fileUrl(file, githubRepo)
+  const text = `line ${lineNum}`
+  if (!url) return text
+  return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
+}
+
+// Commit-hash link for the codex `commit_hash` reference. Short SHA
+// (first 7 chars) on display, full hash in the title. Falls back to a
+// `<span>` (no link) when we don't have a repo to link against.
+function commitLinkTemplate(githubRepo, hash) {
+  if (!hash) return nothing
+  const short = hash.slice(0, 7)
+  const url = commitUrl(githubRepo, hash)
+  if (!url) return html`<span title=${hash}>${short}</span>`
+  return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
+}
+
 // Action buttons (color dots + ×/restore) shared by both the list-view
 // .finding card and the table-view .finding-row. The styling is
-// hoisted out of .finding scope (see findings.css) so the same
-// markup works inside both containers.
-function actionButtonsHtml(group, sortedTabs, groupSt, activeKey) {
-  let html = ''
+// hoisted out of any container scope so the same markup works inside
+// both finding-row.css and finding-card.css.
+function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const activeColor = state.markers.get(activeKey)
-  for (const color of ['red', 'blue', 'green', 'gray']) {
-    const activeCls = activeColor === color ? ' active' : ''
+  const dots = ['red', 'blue', 'green', 'gray'].map((color) => {
+    const cls = `mark-dot mark-dot-${color}${activeColor === color ? ' active' : ''}`
     const dotTitle = sortedTabs.length > 1
       ? `mark ${color} (applies to active tab)`
       : `mark ${color} (click again to clear)`
-    html += `<button class="mark-dot mark-dot-${color}${activeCls}" data-color="${color}" title="${dotTitle}"></button>`
-  }
+    return html`<button class=${cls} data-color=${color} title=${dotTitle}></button>`
+  })
   if (state.showDeleted) {
-    html += `<button class="mark-restore" title="restore whole group">restore</button>`
-  } else {
-    const xTitle = groupSt.hasConflict
-      ? 'delete active tab (colors mismatch — acts per-tab)'
-      : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-    html += `<button class="mark-x" title="${xTitle}">×</button>`
+    return html`${dots}<button class="mark-restore" title="restore whole group">restore</button>`
   }
-  return html
+  const xTitle = groupSt.hasConflict
+    ? 'delete active tab (colors mismatch — acts per-tab)'
+    : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
+  return html`${dots}<button class="mark-x" title=${xTitle}>×</button>`
 }
 
-// Render a single tab button. Shows the tab's severity badge + conf, and
-// carries its own color / deleted classes so per-tab triage is visible
-// from the group header.
-export function renderTab(f, isActive) {
+// One tab button. Carries severity badge + (optional) confidence,
+// plus per-tab color/deleted classes so multi-tab triage state is
+// visible from the group header.
+function tabTemplate(f, isActive) {
   const key = tabKey(f)
   const color = state.markers.get(key)
   const deleted = state.deletedIds.has(key)
@@ -74,77 +105,51 @@ export function renderTab(f, isActive) {
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
   if (deleted) classes.push('tab-deleted')
-  const confPart = f.confidence !== undefined ? `<span class="tab-conf">${f.confidence}/10</span>` : ''
-  return `<button type="button" class="${classes.join(' ')}" data-tid="${esc(key)}"><span class="tab-label"><span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span> ${confPart}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence !== undefined ? html`<span class="tab-conf">${f.confidence}/10</span>` : nothing}</span></button>`
 }
 
-// Render one tab's body (finding-left + content). Only the active tab
-// body is shown on screen (CSS `.tab-body.active { display: grid }`);
-// on print the CSS overrides to show every body stacked so paper output
-// keeps all cases visible.
-// `idx` / `total` feed the print-only "N of M" banner; on screen the tab
-// strip already conveys group size, so `.print-case-label { display: none }`
-// hides it. `.value-label` rows emit "Severity" / "Confidence" sub-captions
-// below the badge / score on BOTH screen and paper — small enough to read
-// as supporting metadata, big enough that someone unfamiliar with the UI
-// conventions doesn't have to guess what a colored chip and a "5/10" mean.
-export function renderTabBody(f, isActive, idx = 0, total = 1) {
+// One tab body — finding-left (badge column) + the right-side stack
+// (line row, description, recommendation, conf reason). Only the
+// active body is `display: grid` on screen; print mode shows them
+// all stacked. `idx` / `total` feed the print-only "N of M" subhead;
+// suppressed for single-tab groups via the default args.
+function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
-  let html = `<div class="tab-body${isActive ? ' active' : ''}" data-tid="${esc(key)}">`
-  if (total > 1) html += `<div class="print-case-label">${idx + 1} of ${total}</div>`
-  html += '<div class="finding-left">'
-  // Sub-captions sit AFTER their values (below them visually).
-  html += `<span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span>`
-  html += '<div class="value-label">Severity</div>'
-  if (f.confidence !== undefined) {
-    html += `<div class="conf-score"><strong>${f.confidence}</strong>/10</div>`
-    html += '<div class="value-label">Confidence</div>'
-  }
-  html += '</div>'
-  html += '<div>'
-  // `.line-row` flexes line numbers (left) against run-meta (right).
-  // Empty `.run-meta` collapses so the line-num still sits flush left.
-  // In file-grouped mode this row is hidden in favor of the per-finding
-  // `.finding-loc` header above the card (CSS rule under .file-group).
-  html += '<div class="line-row">'
-  // Line number anchor + (when present) the export name the finding
-  // lives in, comma-separated. The exportName is plain text — only the
-  // line number gets linkified by `lineLink`. Pass `f.repo?.github` so
-  // a node_modules finding links to the package's upstream repo rather
-  // than the user-typed project URL. Codex / Claude Security imports
-  // don't carry line numbers (lineLink returns ''); skip the wrapping
-  // span and the comma-separator entirely when both pieces are empty
-  // so the line-row collapses to nothing instead of leaving "line ?".
-  const lineHtml = lineLink(f.file, f.line, f.repo?.github)
-  const exportName = f.exportName ? esc(f.exportName) : ''
-  const lineRowText = lineHtml && exportName
-    ? `${lineHtml}, ${exportName}`
-    : (lineHtml || exportName)
-  if (lineRowText) html += `<span class="line-num">${lineRowText}</span>`
-  if (f.discoveredIn) html += ` <span class="line-num">(found analyzing ${esc(f.discoveredIn)})</span>`
+  const lineLink = lineLinkTemplate(f.file, f.line, f.repo?.github)
+  // Line-num span composes the line link + (when present) the
+  // exportName, comma-separated. Both pieces optional; the wrapping
+  // span is suppressed when both are empty so the line-row collapses
+  // to nothing instead of leaving a stray "line ?".
+  const hasLineLink = lineLink !== nothing
+  const exportName = f.exportName ?? ''
+  let lineRowMain = nothing
+  if (hasLineLink && exportName) lineRowMain = html`<span class="line-num">${lineLink}, ${exportName}</span>`
+  else if (hasLineLink) lineRowMain = html`<span class="line-num">${lineLink}</span>`
+  else if (exportName) lineRowMain = html`<span class="line-num">${exportName}</span>`
   const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
-  if (meta) html += `<span class="run-meta">${esc(meta)}</span>`
-  html += '</div>'
-  html += `<div class="desc">${esc(stripExportMarker(f.description, f.exportName))}</div>`
-  if (f.recommendation) html += `<div class="recommendation">Recommendation: ${esc(stripExportMarker(f.recommendation, f.exportName))}</div>`
-  if (f.confidenceReason) html += `<div class="conf-reason">${esc(stripExportMarker(f.confidenceReason, f.exportName))}</div>`
-  html += '</div></div>'
-  return html
+  return html`<div class=${`tab-body${isActive ? ' active' : ''}`} data-tid=${key}>
+    ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
+    <div class="finding-left">
+      <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
+      <div class="value-label">Severity</div>
+      ${f.confidence !== undefined ? html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div><div class="value-label">Confidence</div>` : nothing}
+    </div>
+    <div>
+      <div class="line-row">
+        ${lineRowMain}
+        ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
+        ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
+      </div>
+      <div class="desc">${stripExportMarker(f.description, f.exportName)}</div>
+      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}
+      ${f.confidenceReason ? html`<div class="conf-reason">${stripExportMarker(f.confidenceReason, f.exportName)}</div>` : nothing}
+    </div>
+  </div>`
 }
 
-// Render one group as a `.finding` card. Group-level wrapper carries:
-//   - `is-critical` if ANY tab is critical (matches filter semantics)
-//   - `has-conflict` if tab colors disagree (accent outline, ignore deleted)
-//   - `mark-<color>` if tabs share a common color (no conflict)
-//   - `deleted` when in trash view (opacity nudge)
-// Marks row at the bottom is group-level: color dots act on the active
-// tab; delete acts on the whole group when conflict-free, on the active
-// tab when conflicted. See click handler in events.js for the inverse.
-// The three helpers below split what used to be a single
-// `renderGroup` builder so the <finding-card> Lit component can stamp
-// the card's gid + classes onto its host element and render the inner
-// DOM separately.
-
+// Group identifier — exposed so the <finding-card> / <finding-row>
+// components can stamp it onto their host as `data-gid` (events.js's
+// pathClosest('[data-gid]') resolves a row from action-button clicks).
 export function findingCardGid(g) {
   return groupKey(g)
 }
@@ -153,7 +158,7 @@ export function findingCardGid(g) {
 // `finding` class is included so external selectors like
 // `.flat-group .finding` still match the host element. `multi-case`
 // is a print-only hook (drives the `Multiple reports of one finding`
-// banner via :host(.multi-case)::before in finding-card.css).
+// banner via :host(.multi-case) .card::before in finding-card.css).
 export function findingCardClasses(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
@@ -167,35 +172,25 @@ export function findingCardClasses(g) {
   return classes
 }
 
-// Inner HTML for a card — every tab body (only the active is shown
-// on screen; print stacks them) plus the bottom marks row. The
-// wrapping `.finding` div is gone — the host element IS the card.
-export function findingCardInnerHTML(g) {
+// Inner template for a `.finding` card — every tab body (only active
+// is shown on screen; print stacks them) plus the bottom marks row
+// (commit ref, multi-tab strip, action buttons). The wrapping
+// `.finding` div is gone — the host element IS the card.
+export function findingCardInnerTemplate(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
   const active = activeTabFor(g)
   const activeKey = tabKey(active)
-
-  let html = ''
-  // Render every tab body so print mode can show them all stacked.
-  // Only the active one is display:grid on screen; others display:none.
-  sortedTabs.forEach((f, i) => {
-    html += renderTabBody(f, tabKey(f) === activeKey, i, sortedTabs.length)
-  })
-  html += '<div class="marks">'
-  html += '<div class="marks-left">'
-  if (active.commitHash) {
-    html += `<div class="commit-ref">introduced in ${commitLink(active.repo?.github, active.commitHash)}</div>`
-  }
-  if (sortedTabs.length > 1) {
-    html += '<div class="tabs">'
-    for (const f of sortedTabs) html += renderTab(f, tabKey(f) === activeKey)
-    html += '</div>'
-  }
-  html += '</div>'
-  html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
-  html += '</div>'
-  return html
+  return html`
+    ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length))}
+    <div class="marks">
+      <div class="marks-left">
+        ${active.commitHash ? html`<div class="commit-ref">introduced in ${commitLinkTemplate(active.repo?.github, active.commitHash)}</div>` : nothing}
+        ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey))}</div>` : nothing}
+      </div>
+      ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey)}
+    </div>
+  `
 }
 
 // Compact block per finding for the table view. Layout:
@@ -207,25 +202,14 @@ export function findingCardInnerHTML(g) {
 // The left column is fixed-width so badges line up across rows; the
 // badge centers vertically against the title + meta rows (not the
 // optional tab strip below) — see finding-row.css.
-// The three helpers below split what used to be a single
-// `renderTableRow` builder so the <finding-row> Lit component can
-// stamp the row's gid + classes onto its host element and render the
-// inner DOM separately. Click anywhere outside a button / link
-// selects the row; the full description / recommendation /
-// conf-reason render in the side-by-side details panel.
-// Group identifier — exposed so the <finding-row> component can stamp
-// it onto its host as `data-gid` (events.js's pathClosest('[data-gid]')
-// uses it to resolve the row when an action button bubbles up).
 export function tableRowGid(g) {
   return groupKey(g)
 }
 
 // State-derived class list for a row's host element. Mirrors what the
-// old renderTableRow baked into the `<div class="finding-row …">`
-// wrapper, minus the `selected` class — that's owned by the host's
-// `selected` property since the parent <finding-table> tracks
-// selection there. Shape stays an array so the caller can decide
-// what to do with it (the component reflects it onto host classes).
+// old renderTableRow baked into the wrapper, minus the `selected`
+// class — that's owned by the host's `selected` property since the
+// parent <finding-table> tracks selection there.
 export function tableRowClasses(g) {
   const groupSt = groupState(g)
   const isCritical = g.some((f) => f.critical || f.severity === 'critical')
@@ -237,11 +221,11 @@ export function tableRowClasses(g) {
   return classes
 }
 
-// Inner HTML for a row — score column on the left, body column
+// Inner template for a row — score column on the left, body column
 // (title / meta / optional tab strip) on the right. The wrapping
 // `.finding-row` div is no longer here: it's the <finding-row> host
 // element. Layout/grid placement is handled by finding-row.css.
-export function tableRowInnerHTML(g) {
+export function tableRowInnerTemplate(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
   const active = activeTabFor(g)
@@ -249,41 +233,26 @@ export function tableRowInnerHTML(g) {
   const f = active
 
   const title = firstLine(stripExportMarker(f.description, f.exportName))
-  // Compact type chip — same `analyzer · model · effort · exportsMode`
-  // composition the list view's run-meta uses, just rendered as a
-  // single muted suffix to the title row.
   const typeLabel = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
-  const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
+  const exportPart = f.exportName ? `, ${f.exportName}` : ''
 
-  let html = ''
-  // Left column — badge + optional confidence. Vertical centering
-  // against the title + meta rows is handled by the grid in
-  // finding-row.css (grid-row: 1 / 3 on .row-score).
-  html += '<div class="row-score">'
-  html += `<span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span>`
-  if (f.confidence !== undefined) {
-    html += `<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`
-  }
-  html += '</div>'
-
-  // Right column wrapper — `display: contents` in CSS flattens it so
-  // its children participate in the row's grid directly.
-  html += '<div class="row-body">'
-  html += '<div class="title-row">'
-  html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
-  if (typeLabel) html += `<span class="row-type">${esc(typeLabel)}</span>`
-  html += '</div>'
-  html += '<div class="meta-row">'
-  html += `<span class="row-loc">${rowLocationHtml(f)}${exportPart}</span>`
-  html += '<div class="marks">'
-  html += actionButtonsHtml(g, sortedTabs, groupSt, activeKey)
-  html += '</div>'
-  html += '</div>'
-  if (sortedTabs.length > 1) {
-    html += '<div class="tabs-row"><div class="tabs">'
-    for (const tabF of sortedTabs) html += renderTab(tabF, tabKey(tabF) === activeKey)
-    html += '</div></div>'
-  }
-  html += '</div>'  // /row-body
-  return html
+  return html`
+    <div class="row-score">
+      <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
+      ${f.confidence !== undefined ? html`<span class="row-conf"><strong>${f.confidence}</strong>/10</span>` : nothing}
+    </div>
+    <div class="row-body">
+      <div class="title-row">
+        <span class="title" title=${title}>${title}</span>
+        ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
+      </div>
+      <div class="meta-row">
+        <span class="row-loc">${rowLocationTemplate(f)}${exportPart}</span>
+        <div class="marks">
+          ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey)}
+        </div>
+      </div>
+      ${sortedTabs.length > 1 ? html`<div class="tabs-row"><div class="tabs">${sortedTabs.map((tabF) => tabTemplate(tabF, tabKey(tabF) === activeKey))}</div></div>` : nothing}
+    </div>
+  `
 }
