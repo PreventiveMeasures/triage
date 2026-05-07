@@ -357,11 +357,21 @@ report.addEventListener('mark-color', (e) => {
 // view.html / styles/theme.css), so the report-level click delegate
 // can't see it. Attach directly. Sets document.title to the filename
 // (or longest common prefix when multiple files are loaded) so the
-// OS print dialog and any saved PDF default to a meaningful name,
-// then calls window.print() and restores the original title.
-// window.print() is synchronous in current browsers (blocks until the
-// dialog is dismissed), so the restore lands before anything else
-// can read the title.
+// OS print dialog and any saved PDF default to a meaningful name.
+// Also swaps a `table` view-mode for `list` for the duration of the
+// print: the table layout is interaction-driven (compact rows, side
+// details panel, hover state), and printing it dumps a stub of the
+// row chrome with no useful detail. List mode renders the full
+// finding bodies — that's what paper actually wants — and the
+// originals (title + viewMode) are restored after `window.print()`
+// returns.
+//
+// `window.print()` is synchronous in current browsers (blocks until
+// the dialog is dismissed), so the restore lands before anything
+// else can read either piece of state. Triggers an extra render()
+// pair on print: cheap relative to the dialog modal time, and the
+// user never sees the intermediate list-mode paint because the
+// browser captures the print snapshot before yielding to compositor.
 document.getElementById('print-btn').addEventListener('click', () => {
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
@@ -374,8 +384,17 @@ document.getElementById('print-btn').addEventListener('click', () => {
   target = target.replace(/\.json$/u, '')
   const oldTitle = document.title
   if (target) document.title = target
+  const oldMode = state.viewMode
+  if (oldMode === 'table') {
+    state.viewMode = 'list'
+    render()
+  }
   window.print()
   document.title = oldTitle
+  if (state.viewMode !== oldMode) {
+    state.viewMode = oldMode
+    render()
+  }
 })
 
 report.addEventListener('change', (e) => {
