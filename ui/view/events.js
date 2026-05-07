@@ -353,45 +353,54 @@ report.addEventListener('mark-color', (e) => {
   render()
 })
 
-// Print plumbing. Two pieces:
+// Print button — fixed top-right icon, lives OUTSIDE #report (see
+// view.html / styles/theme.css), so the report-level click delegate
+// can't see it. Attach directly. Two pieces of state get swapped
+// for the duration of the print and restored after the dialog
+// dismisses:
 //
-//  1. The fixed top-right print button (lives OUTSIDE `#report`, see
-//     view.html / styles/theme.css) just calls `window.print()` —
-//     the actual swap-and-restore work is wired to the browser's
-//     beforeprint / afterprint events so Ctrl+P picks it up too.
+//   - document.title → filename (or longest common prefix across
+//     loaded reports) so the OS print dialog and any saved PDF
+//     default to a meaningful name. Set AFTER the viewMode swap
+//     because `render()` ends by writing the document title.
 //
-//  2. `beforeprint` / `afterprint` swap two pieces of state for the
-//     print snapshot and restore them after the dialog dismisses:
+//   - state.viewMode `table` → `list`. The table layout is
+//     interaction-driven (compact rows, side details panel, hover
+//     state) and prints as a stub of the row chrome with none of
+//     the finding body the reader needs on paper. List mode paints
+//     the full card per entry, which is what paper actually wants.
+//     `tableSelectedGid` isn't bound to viewMode so the row
+//     selection survives the round trip.
 //
-//     - document.title → filename (or the longest common prefix
-//       across loaded reports) so the OS print dialog and any saved
-//       PDF default to a meaningful name. Set AFTER the viewMode
-//       swap because `render()` ends by writing the document title.
+// Critical timing detail: `<finding-card>` is a Lit element whose
+// render is scheduled in a microtask, so a naive
+// `render(); window.print()` snapshots empty card shells (Lit
+// hasn't painted yet — only the file / location headers, which
+// land synchronously through innerHTML, show up). Awaiting every
+// card's `updateComplete` promise after the swap is what makes
+// the swap actually visible in the printed output. Microtasks
+// drain through the await chain in user-gesture context, so
+// `window.print()` still pops a dialog without the browser
+// suppressing it as automation.
 //
-//     - state.viewMode `table` → `list`. The table layout is
-//       interaction-driven (compact rows, side details panel,
-//       hover state) and prints as a stub of the row chrome with
-//       none of the finding body the reader needs on paper. List
-//       mode paints the full card per entry, which is what paper
-//       actually wants. `tableSelectedGid` isn't bound to viewMode
-//       so the row selection survives the round trip.
-//
-//     The earlier button-click implementation broke for two
-//     reasons: render() resets document.title at the end of its
-//     run (clobbering a pre-set title), and `<finding-card>` is a
-//     Lit element that batches its render into a microtask — so
-//     calling window.print() synchronously right after render()
-//     captured empty card shells. beforeprint runs before the
-//     browser composes the snapshot, and microtasks drain in
-//     between, so Lit's updates land in the printed output.
-let printSnapshot = null
-
-window.addEventListener('beforeprint', () => {
-  if (state.reports.length === 0 || printSnapshot) return
-  printSnapshot = { title: document.title, viewMode: state.viewMode }
-  if (state.viewMode === 'table') {
+// Tried earlier and didn't help: a beforeprint/afterprint hook
+// pair, on the theory that the browser drains microtasks between
+// event-handler return and snapshot. It didn't, at least not
+// reliably; the explicit await is the deterministic fix.
+document.getElementById('print-btn').addEventListener('click', async () => {
+  if (state.reports.length === 0) return
+  const oldMode = state.viewMode
+  if (oldMode === 'table') {
     state.viewMode = 'list'
     render()
+    // Wait for Lit's batched per-card update to land before
+    // letting the browser snapshot. `updateComplete` resolves
+    // after the element's render() has applied its template;
+    // doing this on every card is overkill in steady-state but
+    // cheap enough relative to dialog-modal time.
+    await Promise.all(
+      [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
+    )
   }
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
@@ -402,22 +411,14 @@ window.addEventListener('beforeprint', () => {
   // partial common prefix like `security-foo.j` — only `.json` exactly
   // at the end gets removed.
   target = target.replace(/\.json$/u, '')
+  const oldTitle = document.title
   if (target) document.title = target
-})
-
-window.addEventListener('afterprint', () => {
-  if (!printSnapshot) return
-  const snap = printSnapshot
-  printSnapshot = null
-  document.title = snap.title
-  if (state.viewMode !== snap.viewMode) {
-    state.viewMode = snap.viewMode
+  window.print()
+  document.title = oldTitle
+  if (state.viewMode !== oldMode) {
+    state.viewMode = oldMode
     render()
   }
-})
-
-document.getElementById('print-btn').addEventListener('click', () => {
-  window.print()
 })
 
 report.addEventListener('change', (e) => {
