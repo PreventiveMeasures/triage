@@ -199,30 +199,48 @@ export function renderGroup(g) {
 //   │  conf?   │  file:line               actions     │
 //   │          │  tab strip (multi-tab only)          │
 //   └──────────┴──────────────────────────────────────┘
-// The left column is fixed-width so badges line up across rows; when
-// confidence is absent the badge centers vertically against the body.
-// Click anywhere outside a button / link selects the row; the full
-// description / recommendation / conf-reason render in the
-// side-by-side details panel (see findingsBodyHtml in render.js).
-// Never grouped by file — the file:line lives in the row's meta
-// line.
-export function renderTableRow(g, opts = {}) {
-  // selectedGid is passed in (rather than read from state) so the
-  // <finding-table> Lit component can drive selection through its
-  // own property instead of leaning on global state.
-  const selectedGid = opts.selectedGid ?? state.tableSelectedGid
+// The left column is fixed-width so badges line up across rows; the
+// badge centers vertically against the title + meta rows (not the
+// optional tab strip below) — see finding-row.css.
+// The three helpers below split what used to be a single
+// `renderTableRow` builder so the <finding-row> Lit component can
+// stamp the row's gid + classes onto its host element and render the
+// inner DOM separately. Click anywhere outside a button / link
+// selects the row; the full description / recommendation /
+// conf-reason render in the side-by-side details panel.
+// Group identifier — exposed so the <finding-row> component can stamp
+// it onto its host as `data-gid` (events.js's pathClosest('[data-gid]')
+// uses it to resolve the row when an action button bubbles up).
+export function tableRowGid(g) {
+  return groupKey(g)
+}
+
+// State-derived class list for a row's host element. Mirrors what the
+// old renderTableRow baked into the `<div class="finding-row …">`
+// wrapper, minus the `selected` class — that's owned by the host's
+// `selected` property since the parent <finding-table> tracks
+// selection there. Shape stays an array so the caller can decide
+// what to do with it (the component reflects it onto host classes).
+export function tableRowClasses(g) {
   const groupSt = groupState(g)
-  const sortedTabs = sortTabs(g)
-  const active = activeTabFor(g)
-  const activeKey = tabKey(active)
   const isCritical = g.some((f) => f.critical || f.severity === 'critical')
-  const classes = ['finding-row']
+  const classes = []
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
   if (state.showDeleted) classes.push('deleted')
-  const gid = groupKey(g)
-  if (selectedGid === gid) classes.push('selected')
+  return classes
+}
+
+// Inner HTML for a row — score column on the left, body column
+// (title / meta / optional tab strip) on the right. The wrapping
+// `.finding-row` div is no longer here: it's the <finding-row> host
+// element. Layout/grid placement is handled by finding-row.css.
+export function tableRowInnerHTML(g) {
+  const groupSt = groupState(g)
+  const sortedTabs = sortTabs(g)
+  const active = activeTabFor(g)
+  const activeKey = tabKey(active)
   const f = active
 
   const title = firstLine(stripExportMarker(f.description, f.exportName))
@@ -232,12 +250,10 @@ export function renderTableRow(g, opts = {}) {
   const typeLabel = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
   const exportPart = f.exportName ? `, ${esc(f.exportName)}` : ''
 
-  let html = `<div class="${classes.join(' ')}" data-gid="${esc(gid)}">`
-
-  // Left column: badge + (optional) confidence. Centered vertically
-  // within the row by the parent's grid `align-items: center`, so when
-  // conf is absent the badge ends up centered across the available
-  // height instead of stuck at the top.
+  let html = ''
+  // Left column — badge + optional confidence. Vertical centering
+  // against the title + meta rows is handled by the grid in
+  // finding-row.css (grid-row: 1 / 3 on .row-score).
   html += '<div class="row-score">'
   html += `<span class="badge ${esc(f.severity)}">${esc(badgeLabel(f.severity))}</span>`
   if (f.confidence !== undefined) {
@@ -245,9 +261,8 @@ export function renderTableRow(g, opts = {}) {
   }
   html += '</div>'
 
-  // Right column: title row, meta row, optional tab strip. All
-  // rendered inside a flex column so they stack with consistent
-  // gaps regardless of which optional sections appear.
+  // Right column wrapper — `display: contents` in CSS flattens it so
+  // its children participate in the row's grid directly.
   html += '<div class="row-body">'
   html += '<div class="title-row">'
   html += `<span class="title" title="${esc(title)}">${esc(title)}</span>`
@@ -265,6 +280,5 @@ export function renderTableRow(g, opts = {}) {
     html += '</div></div>'
   }
   html += '</div>'  // /row-body
-  html += '</div>'  // /finding-row
   return html
 }
