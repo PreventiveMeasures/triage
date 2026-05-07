@@ -1,6 +1,7 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
+import { triageSync } from './triage-sync.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups
@@ -91,6 +92,12 @@ window.DeepView = {
   get currentWorkspace() { return state.currentWorkspace },
 
   triage,
+
+  // WebSocket sync for triage data — disabled until a server URL is
+  // set. Sends/receives `{ type: 'triage-update', changes: [{ id,
+  // before, after }, …] }`. See ui/view/triage-sync.js for details.
+  // Console: `DeepView.triageSync.setServerUrl('wss://your-host')`.
+  triageSync,
 
   // Force a re-render — useful after external code mutates other
   // state (filters, sort, etc.) without going through the

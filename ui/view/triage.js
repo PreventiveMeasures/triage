@@ -1,4 +1,5 @@
 import { state } from './state.js'
+import { triageSync } from './triage-sync.js'
 
 // Markers + deletions + comments survive page reload via
 // `localStorage['deepview.triage']`. Payload shape:
@@ -51,6 +52,11 @@ export async function saveTriage() {
   } catch (err) {
     console.warn('Failed to save triage:', err)
   }
+  // Notify the WS sync client (no-op when disabled / not yet
+  // configured). Outside the try/catch above so a sync send error
+  // doesn't suppress the localStorage warning, and a localStorage
+  // failure doesn't suppress the network notification.
+  triageSync.notify()
 }
 
 async function loadTriage() {
