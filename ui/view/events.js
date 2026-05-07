@@ -353,26 +353,46 @@ report.addEventListener('mark-color', (e) => {
   render()
 })
 
-// Print button — fixed top-right icon, lives OUTSIDE #report (see
-// view.html / styles/theme.css), so the report-level click delegate
-// can't see it. Attach directly. Sets document.title to the filename
-// (or longest common prefix when multiple files are loaded) so the
-// OS print dialog and any saved PDF default to a meaningful name.
-// Also swaps a `table` view-mode for `list` for the duration of the
-// print: the table layout is interaction-driven (compact rows, side
-// details panel, hover state), and printing it dumps a stub of the
-// row chrome with no useful detail. List mode renders the full
-// finding bodies — that's what paper actually wants — and the
-// originals (title + viewMode) are restored after `window.print()`
-// returns.
+// Print plumbing. Two pieces:
 //
-// `window.print()` is synchronous in current browsers (blocks until
-// the dialog is dismissed), so the restore lands before anything
-// else can read either piece of state. Triggers an extra render()
-// pair on print: cheap relative to the dialog modal time, and the
-// user never sees the intermediate list-mode paint because the
-// browser captures the print snapshot before yielding to compositor.
-document.getElementById('print-btn').addEventListener('click', () => {
+//  1. The fixed top-right print button (lives OUTSIDE `#report`, see
+//     view.html / styles/theme.css) just calls `window.print()` —
+//     the actual swap-and-restore work is wired to the browser's
+//     beforeprint / afterprint events so Ctrl+P picks it up too.
+//
+//  2. `beforeprint` / `afterprint` swap two pieces of state for the
+//     print snapshot and restore them after the dialog dismisses:
+//
+//     - document.title → filename (or the longest common prefix
+//       across loaded reports) so the OS print dialog and any saved
+//       PDF default to a meaningful name. Set AFTER the viewMode
+//       swap because `render()` ends by writing the document title.
+//
+//     - state.viewMode `table` → `list`. The table layout is
+//       interaction-driven (compact rows, side details panel,
+//       hover state) and prints as a stub of the row chrome with
+//       none of the finding body the reader needs on paper. List
+//       mode paints the full card per entry, which is what paper
+//       actually wants. `tableSelectedGid` isn't bound to viewMode
+//       so the row selection survives the round trip.
+//
+//     The earlier button-click implementation broke for two
+//     reasons: render() resets document.title at the end of its
+//     run (clobbering a pre-set title), and `<finding-card>` is a
+//     Lit element that batches its render into a microtask — so
+//     calling window.print() synchronously right after render()
+//     captured empty card shells. beforeprint runs before the
+//     browser composes the snapshot, and microtasks drain in
+//     between, so Lit's updates land in the printed output.
+let printSnapshot = null
+
+window.addEventListener('beforeprint', () => {
+  if (state.reports.length === 0 || printSnapshot) return
+  printSnapshot = { title: document.title, viewMode: state.viewMode }
+  if (state.viewMode === 'table') {
+    state.viewMode = 'list'
+    render()
+  }
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
   if (fileNames.length === 1) target = fileNames[0]
@@ -382,19 +402,22 @@ document.getElementById('print-btn').addEventListener('click', () => {
   // partial common prefix like `security-foo.j` — only `.json` exactly
   // at the end gets removed.
   target = target.replace(/\.json$/u, '')
-  const oldTitle = document.title
   if (target) document.title = target
-  const oldMode = state.viewMode
-  if (oldMode === 'table') {
-    state.viewMode = 'list'
+})
+
+window.addEventListener('afterprint', () => {
+  if (!printSnapshot) return
+  const snap = printSnapshot
+  printSnapshot = null
+  document.title = snap.title
+  if (state.viewMode !== snap.viewMode) {
+    state.viewMode = snap.viewMode
     render()
   }
+})
+
+document.getElementById('print-btn').addEventListener('click', () => {
   window.print()
-  document.title = oldTitle
-  if (state.viewMode !== oldMode) {
-    state.viewMode = oldMode
-    render()
-  }
 })
 
 report.addEventListener('change', (e) => {
