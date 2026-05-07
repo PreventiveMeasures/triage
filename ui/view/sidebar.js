@@ -5,6 +5,7 @@ import { listFiles } from './storage.js'
 import { switchToFile, deleteCurrent } from './ingest.js'
 import { getCount, getKind, ensureCounts } from './counts.js'
 import { listWorkspaces, createWorkspace, setReportWorkspace } from './workspaces.js'
+import { migrateLegacyFilenames } from './migrate-legacy.js'
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
 // the report's filename. We carry both this private mime AND
@@ -144,6 +145,11 @@ function matchesSearch(name) {
 // after every state transition that could change the file list, the
 // current selection, or the search query.
 export async function renderSidebar() {
+  // One-shot migration of `.deepseek` OPFS entries back to `.md`
+  // (relic of an earlier build). Cached after the first call so
+  // subsequent renders are a no-op; awaiting before listFiles makes
+  // sure the listing reflects the post-rename state.
+  await migrateLegacyFilenames()
   const names = await listFiles()
   const workspaces = listWorkspaces()
   // The sidebar always shows now — Workspaces is a first-class feature

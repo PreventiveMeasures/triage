@@ -1,0 +1,94 @@
+// One-time migration of OPFS entries left behind by an earlier build.
+// That build briefly renamed DeepSec markdown drops to `.deepseek` so
+// the sidebar could bucket them by extension; the file itself is
+// still plain `.md` content. We now keep the original extension and
+// detect the source from content via the counts cache, which leaves
+// pre-existing `.deepseek` entries stuck in the wrong bucket (and
+// without their DeepSec icon, since `groupOf` no longer special-cases
+// the extension). Walk OPFS once at sidebar boot and rename each
+// such file back to `.md`, carrying the count cache, workspace
+// membership, repo URL, and last-viewed-file pointer along with it.
+//
+// Idempotent: a second pass finds no `.deepseek` entries and does
+// nothing. Wrapped in a module-level promise so concurrent
+// `renderSidebar` calls share a single migration and downstream code
+// only sees the post-migration filesystem.
+import { listFiles, readFile, saveFile, deleteFile } from './storage.js'
+import { getCount, setCount, removeCount, analyzeContent } from './counts.js'
+import { listWorkspaces, setReportWorkspace } from './workspaces.js'
+import { loadRepoUrlFor, saveRepoUrlFor } from './state.js'
+
+// Inlined to avoid the circular import sidebar.js → migrate-legacy.js
+// → ingest.js → sidebar.js. The constant is also exported from
+// ingest.js for the rest of the codebase; the two MUST stay in sync.
+const LAST_FILE_KEY = 'deepview.lastFile'
+
+let migrationPromise = null
+
+export function migrateLegacyFilenames() {
+  if (!migrationPromise) migrationPromise = run()
+  return migrationPromise
+}
+
+async function run() {
+  let names
+  try { names = await listFiles() } catch { return }
+  const nameSet = new Set(names)
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.deepseek')) continue
+    const target = name.slice(0, -'.deepseek'.length) + '.md'
+    // Collision: a `.md` already exists at the target name. Leave the
+    // legacy entry alone rather than overwriting user data; the
+    // sidebar will show it in the default bucket until the user
+    // resolves the conflict by deleting one side.
+    if (nameSet.has(target)) continue
+    try {
+      const content = await readFile(name)
+      await saveFile(target, content)
+      await deleteFile(name)
+    } catch (err) {
+      console.warn(`migrate: failed to rename ${name} -> ${target}`, err)
+      continue
+    }
+    nameSet.delete(name)
+    nameSet.add(target)
+
+    // Carry over the count cache. If nothing was cached, populate
+    // the new entry from the file content so the sidebar bucket and
+    // badge land immediately rather than waiting for the lazy
+    // backfill.
+    const oldCount = getCount(name)
+    removeCount(name)
+    if (oldCount !== undefined) {
+      const { source } = analyzeContent(content)
+      setCount(target, oldCount, source)
+    } else {
+      const { count, source } = analyzeContent(content)
+      setCount(target, count, source)
+    }
+
+    // Workspace membership keyed by filename — re-attach to the same
+    // workspace under the new name so the user's filing survives.
+    for (const w of listWorkspaces()) {
+      if (w.reports.includes(name)) {
+        setReportWorkspace(name, null)
+        setReportWorkspace(target, w.id)
+      }
+    }
+
+    // Per-report repo URL is also keyed by filename.
+    const repoUrl = loadRepoUrlFor(name)
+    if (repoUrl) {
+      saveRepoUrlFor(name, '')
+      saveRepoUrlFor(target, repoUrl)
+    }
+
+    // Last-viewed-file pointer — update so the next reload restores
+    // the renamed entry rather than failing to find it.
+    try {
+      if (localStorage.getItem(LAST_FILE_KEY) === name) {
+        localStorage.setItem(LAST_FILE_KEY, target)
+      }
+    } catch {}
+  }
+}
