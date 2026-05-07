@@ -343,7 +343,7 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
 // filter; multiple selections = union across the ticked chips (so
 // ticking every chip is equivalent to ticking none). A zero-count
 // chip is hidden so the row stays compact.
-function statsHtml(counts, colorCounts) {
+function statsHtml(counts) {
   let html = '<div class="stats">'
   // Order matches the SEVERITIES iteration in format.js. Each chip
   // auto-hides when its count is zero (the loop below skips !count),
@@ -366,27 +366,31 @@ function statsHtml(counts, colorCounts) {
     const label = sev.replace(/_/gu, ' ')
     html += `<div class="stat${active}" data-sev="${sev}"><strong style="color:var(${color})">${count}</strong>${label}</div>`
   }
-  // Mark-color filter — ported from the DeepView.0 prototype's
-  // `.triage-filter` pill (a compact 5-button group with circle
-  // glyphs). One container for all five colors so the row stays
-  // tight; per-button counts sit as a small chip in the upper-right
-  // of each circle. Tooltips intentionally name the color only —
-  // these dots are user-assigned during triage and the meaning is
-  // whatever the user wants, so the chrome doesn't presume
-  // "confirmed", "needs review", etc.
-  const triageItems = [
+  html += '</div>'
+  return html
+}
+
+// Mark-color filter — ported from the DeepView.0 prototype's
+// `.triage-filter` pill (a compact 5-button group with circle
+// glyphs). One container for all five colors so the row stays
+// tight; per-button counts sit as a small chip in the upper-right
+// of each circle. Tooltips intentionally name the color only —
+// these dots are user-assigned during triage and the meaning is
+// whatever the user wants, so the chrome doesn't presume
+// "confirmed", "needs review", etc.
+function triageFilterHtml(colorCounts) {
+  const items = [
     ['none', colorCounts.none ?? 0, 'none', 'unmarked'],
     ['red',  colorCounts.red  ?? 0, 'r',    'red'],
     ['blue', colorCounts.blue ?? 0, 'b',    'blue'],
     ['green', colorCounts.green ?? 0, 'g',  'green'],
     ['gray', colorCounts.gray ?? 0, 'x',    'gray'],
   ]
-  html += '<div class="triage-filter" role="group" aria-label="Filter by mark color">'
-  for (const [col, count, tdClass, label] of triageItems) {
+  let html = '<div class="triage-filter" role="group" aria-label="Filter by mark color">'
+  for (const [col, count, tdClass, label] of items) {
     const active = state.filterColors.has(col) ? ' active' : ''
     html += `<button type="button" class="${active.trim()}" data-color="${col}" title="${label} (${count})" aria-pressed="${state.filterColors.has(col)}"><span class="td ${tdClass}"></span><span class="count">${count}</span></button>`
   }
-  html += '</div>'
   html += '</div>'
   return html
 }
@@ -397,7 +401,7 @@ function statsHtml(counts, colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
+function toolbarHtml(filteredCount, allCount, deletedCount, colorCounts, flags) {
   const { showSource, showConfidence, showPriority } = flags
   let html = '<div class="toolbar">'
   html += '<div class="toolbar-row">'
@@ -477,6 +481,13 @@ function toolbarHtml(filteredCount, allCount, deletedCount, flags) {
   html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
   html += '</div>'
   html += '<div class="toolbar-row">'
+  // Mark-color filter pill leads the include/exclude row — a compact
+  // visual filter that pairs naturally with the text-match inputs
+  // beside it. (Used to live up in the stats row alongside the
+  // severity chips, but visually the chips and the pill compete for
+  // the same "filter chip" reading; pulling the pill down here lets
+  // the stats row stay severity-only.)
+  html += triageFilterHtml(colorCounts)
   html += `<label for="filter-include">Include:</label>`
   html += `<input type="text" id="filter-include" value="${esc(state.filterInclude)}" placeholder="match text">`
   html += `<label for="filter-exclude">Exclude:</label>`
@@ -788,8 +799,8 @@ export function render() {
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
   html += `<div class="findings-content${tableWithDetails ? ' with-details' : ''}">`
-  html += statsHtml(counts, colorCounts)
-  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, {
+  html += statsHtml(counts)
+  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, colorCounts, {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showPriority: hasAnyPriority,
