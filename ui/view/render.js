@@ -693,13 +693,17 @@ export function render() {
    // a prior report can't keep findings hidden silently. Stats /
    // sorting / include-exclude always make sense, so no flags for
    // those.
-  // The slider only makes sense when EVERY finding carries a
-  // confidence value — a workspace-merged view that mixes one
-  // analyzer-native report (with confidence) and one DeepSec /
-  // Claude Security import (without) would otherwise filter the
-  // confidence-less findings out at min=1, hiding them silently. So
-  // the gate is an `every` rather than a `some`.
-  const hasAnyConfidence = mergedGroups.every((g) => g.every((f) => f.confidence !== undefined))
+  // The slider only makes sense when every loaded report has
+  // confidence-bearing findings. A single-file load reduces to "any
+  // finding has confidence" (one report → its own contribution
+  // gates the slider). Workspace-merged views with mixed analyzers
+  // (one analyzer-native report with confidence + one DeepSec /
+  // Claude Security import without) still hide the slider, because
+  // a min>0 would silently drop the no-confidence half — the gate
+  // applies per-report so a single confidence-less report blocks
+  // the whole workspace.
+  const hasAnyConfidence = state.reports.length > 0
+    && state.reports.every((r) => r.groups.some((g) => g.some((f) => f.confidence !== undefined)))
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // Repo URL input is useful only when at least one finding could
