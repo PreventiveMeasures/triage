@@ -139,60 +139,33 @@ const SOURCE_TITLES = {
 // used in the sidebar's file-list rows for visual continuity.
 const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>'
 
-// Octocat for the repo chip. Same currentColor + 12px sizing as the
-// other inline glyphs, scaled to read at the title-row weight.
-const HEADER_GITHUB_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
-
-// Pencil glyph for the "edit repo" button on the editable chip.
-const HEADER_PENCIL_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.082-.286.235-.547.445-.758l8.61-8.61z"/></svg>'
-
-// Strip protocol + host so the chip reads as the bare `user/repo`
-// slug — that's the canonical form per-finding `repo.github` carries
-// (e.g. `lodash/lodash`), so the same value renders consistently
-// whether it came from a finding or the user's typed URL. Falls back
-// to the raw input when the URL isn't a github.com one.
-function prettyRepoLabel(s) {
-  if (!s) return ''
-  const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
-  return m ? m[1] : s
-}
-
-// Build the repo chip HTML for the page header. Three modes:
-//   * Editable + collapsed: `<github> repo-or-prompt <pencil>` button
-//     that toggles `state.repoEditing` on click.
-//   * Editable + expanded: bare `<input>` autofocused so the user can
-//     type immediately; saves on blur / Enter, cancels on Escape.
-//   * Read-only: `<github> repo` span when every non-module finding
-//     carries the same `repo.github` (no user input needed at all).
+// Build the repo-chip element for the page header. The actual visual
+// (three modes — editable+collapsed, editable+expanded, read-only)
+// lives in the `<repo-chip>` Lit component (see view/repo-chip.js);
+// this function picks which props to set based on the load state:
+//
+//   * Workspace merge (`state.currentWorkspace`) — only the
+//     read-only chip when every finding shares a `repo.github`;
+//     the per-report URL is stamped on findings as
+//     `_repoFallback` so the global `state.repoUrl` doesn't apply.
+//   * Single report with `repoInputUseful` true — editable chip
+//     fed by `state.repoUrl` / `state.repoEditing`.
+//   * Single report with all per-finding `repo.github` known —
+//     read-only chip showing the common slug.
 //
 // `repoInputUseful` is the existing flag computed in the main render
 // path — true when at least one non-module finding lacks per-finding
 // repo info, so user-typed `state.repoUrl` is needed to build links.
-// When false, `knownRepo` (the single common per-finding repo, if
-// any) drives the read-only display.
 function repoChipHtml(repoInputUseful, knownRepo) {
-  // Workspace mode merges N reports, each with its own per-report
-  // URL stamped onto findings as `_repoFallback`. The single global
-  // `state.repoUrl` doesn't apply, so the editable input is omitted
-  // — the read-only chip still surfaces when every finding shares
-  // a single `repo.github`.
   if (state.currentWorkspace) {
-    if (knownRepo) {
-      return `<span class="repo-chip readonly" title="Repo from findings (read-only)">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(knownRepo)}</span></span>`
-    }
+    if (knownRepo) return `<repo-chip url="${esc(knownRepo)}"></repo-chip>`
     return ''
   }
   if (repoInputUseful) {
-    if (state.repoEditing) {
-      return `<input type="text" id="repo-url" class="repo-input" value="${esc(state.repoUrl)}" placeholder="user/repo or https://github.com/user/repo" autofocus>`
-    }
-    const label = state.repoUrl ? prettyRepoLabel(state.repoUrl) : 'Set repo'
-    const cls = state.repoUrl ? 'repo-chip' : 'repo-chip empty'
-    return `<span class="${cls}">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(label)}</span><button type="button" class="repo-edit-btn" title="Edit repo URL" data-edit-repo aria-label="Edit repo URL">${HEADER_PENCIL_ICON}</button></span>`
+    const editing = state.repoEditing ? ' editing' : ''
+    return `<repo-chip url="${esc(state.repoUrl)}" editable${editing}></repo-chip>`
   }
-  if (knownRepo) {
-    return `<span class="repo-chip readonly" title="Repo from findings (read-only)">${HEADER_GITHUB_ICON}<span class="repo-label">${esc(knownRepo)}</span></span>`
-  }
+  if (knownRepo) return `<repo-chip url="${esc(knownRepo)}"></repo-chip>`
   return ''
 }
 

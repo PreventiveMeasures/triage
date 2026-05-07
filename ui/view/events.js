@@ -284,17 +284,6 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Pencil button on the header repo chip: expand the chip into its
-  // `<input>` form. The input renders with the `autofocus` attribute,
-  // but autofocus on innerHTML-injected nodes is unreliable (Chrome
-  // only honors it on the initial page load), so we follow up with
-  // an explicit `.focus()` after the synchronous render.
-  if (e.target.closest('[data-edit-repo]')) {
-    state.repoEditing = true
-    render()
-    document.getElementById('repo-url')?.focus()
-    return
-  }
   // View-mode icon buttons (table / list / grouped). Replaces the
   // earlier select + checkbox combo; the same `state.viewMode` field
   // drives findingsBodyHtml's branch.
@@ -479,54 +468,40 @@ report.addEventListener('input', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'filter-search') { state.filterInclude = val; renderKeepFocus(id) }
-  else if (id === 'repo-url') {
-    // Live-save the repo URL — every keystroke updates `state.repoUrl`
-    // and persists per-report so the value survives a reload even if
-    // the user never explicitly commits via Enter / blur. The
-    // localStorage entry is keyed by `state.currentFile` (see
-    // state.js / saveRepoUrlFor), so different reports can carry
-    // different URLs without overwriting each other. No re-render
-    // here: the input is in the header and the value doesn't
-    // influence anything visible until commit.
-    state.repoUrl = val
-    saveRepoUrlFor(state.currentFile, val)
-  }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
   }
 })
 
-// Header repo input: collapse the chip back to its display form on
-// Enter (commit) / Escape (cancel) / blur. Live `state.repoUrl` is
-// already kept in sync by the `input` listener above; this handler
-// only flips `repoEditing` and re-renders so any `fileUrl()` /
-// `commitUrl()` -driven row links update with the new URL.
-//
-// Escape restores the value the input was opened with — captured on
-// focusin so a multi-edit session keeps working.
-let repoUrlEditOpener = ''
-report.addEventListener('focusin', (e) => {
-  if (e.target.id === 'repo-url') repoUrlEditOpener = state.repoUrl
+// `<repo-chip>` events (see view/repo-chip.js). The component owns
+// the editing UI and the focus management; we only need to mirror
+// the events to `state` and trigger the re-render that catches up
+// the rest of the chrome (`fileUrl()` / `commitUrl()` -driven row
+// links, the `prettyRepoLabel` shown on the chip face).
+report.addEventListener('repo-edit-start', () => {
+  state.repoEditing = true
+  render()
 })
-function closeRepoEdit() {
+report.addEventListener('repo-input', (e) => {
+  // Live-save: every keystroke updates `state.repoUrl` and persists
+  // to localStorage per-report, so the value survives a reload even
+  // if the user never explicitly commits via Enter / blur.
+  state.repoUrl = e.detail.url
+  saveRepoUrlFor(state.currentFile, state.repoUrl)
+})
+report.addEventListener('repo-commit', (e) => {
+  state.repoUrl = e.detail.url
+  saveRepoUrlFor(state.currentFile, state.repoUrl)
   state.repoEditing = false
   render()
-}
-report.addEventListener('keydown', (e) => {
-  if (e.target.id !== 'repo-url') return
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    closeRepoEdit()
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
-    state.repoUrl = repoUrlEditOpener
-    saveRepoUrlFor(state.currentFile, repoUrlEditOpener)
-    closeRepoEdit()
-  }
 })
-// `focusout` bubbles (`blur` doesn't), so the report-level delegate
-// catches it for the in-shadow-DOM input as well.
-report.addEventListener('focusout', (e) => {
-  if (e.target.id === 'repo-url' && state.repoEditing) closeRepoEdit()
+report.addEventListener('repo-cancel', (e) => {
+  // The component sends back the value the input was opened with;
+  // restore it so the rolled-back URL drives the chip's display
+  // and the per-report persistence both flip back in step.
+  state.repoUrl = e.detail.url
+  saveRepoUrlFor(state.currentFile, state.repoUrl)
+  state.repoEditing = false
+  render()
 })
