@@ -3,6 +3,7 @@ import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { setCount, analyzeContent } from './counts.js'
+import { render } from './render.js'
 
 // Workspace import — the inverse of workspace-export.js. The dropped
 // `.gz` blob is gunzipped, parsed as JSON, validated against the
@@ -213,6 +214,12 @@ export async function importWorkspaceFromGzip(file) {
   })
 
   await mergeTriage(data.triage)
+  // Mutating state.markers / state.deletedIds outside a render
+  // context doesn't auto-trigger a repaint of the loaded report —
+  // re-run render() so adopted colors and trash assignments show up
+  // immediately. No-op when nothing's loaded (render bails on an
+  // empty state.reports). Sidebar refresh is owned by addFiles.
+  if (state.currentFile) render()
 
   // Per-report repo URLs round-trip in `data.repoUrls` (keyed by the
   // OPFS filename). Only adopt entries that map to reports we actually
