@@ -349,16 +349,27 @@ function renderRightPanel() {
 // in place when the user flips the Issues/Files tab without
 // rebuilding the whole canvas. The caller wraps the returned
 // template in #g2-top-pkgs-block.
+//
+// The Size mini-tab only shows when (a) the user has flipped the
+// "All files" toggle on (so the file set isn't pre-filtered to
+// issue-bearing files only — a bundle's Size view is most useful
+// against the unfiltered set) AND (b) every node carries a `size`.
+// Without a size on every node, the tab's percentages would be
+// meaningless. If the user is on `size` when those conditions
+// stop holding, the renderer falls back to `files`.
 export function renderTopPkgsBlock(graph) {
-  const tab = graph2.topPkgsTab
+  const showSize = graph2.showAll && graph.nodes.length > 0
+    && graph.nodes.every((n) => typeof n.size === 'number')
+  const tab = (graph2.topPkgsTab === 'size' && !showSize) ? 'files' : graph2.topPkgsTab
   return html`<div class="g2-panel-title g2-panel-title-row">
     <span>Packages</span>
     <div class="g2-mini-tabs">
       <button type="button" class=${`g2-mini-tab${tab === 'issues' ? ' on' : ''}`} data-g2-top-pkgs="issues">Issues</button>
       <button type="button" class=${`g2-mini-tab${tab === 'files' ? ' on' : ''}`} data-g2-top-pkgs="files">Files</button>
+      ${showSize ? html`<button type="button" class=${`g2-mini-tab${tab === 'size' ? ' on' : ''}`} data-g2-top-pkgs="size">Size</button>` : null}
     </div>
   </div>
-  ${renderDistribution(graph)}`
+  ${renderDistribution(graph, tab)}`
 }
 
 // Selection card — extracted so it can be re-rendered in place when
@@ -523,9 +534,9 @@ function renderPackageCard(graph, pkg) {
   </div>`
 }
 
-function renderDistribution(graph) {
+function renderDistribution(graph, activeTab) {
   const totalFiles = graph.nodes.length || 1
-  const tab = graph2.topPkgsTab
+  const tab = activeTab ?? graph2.topPkgsTab
   // Aggregate own-issue counts per package. The topbar's severity
   // and triage filters narrow what's counted — empty filters = full
   // count, otherwise count only findings whose severity AND color
@@ -540,7 +551,9 @@ function renderDistribution(graph) {
   const useColor = colorFilter.size > 0
   const useFilter = useSev || useColor
   const issueByPkg = new Map()
+  const sizeByPkg = new Map()
   let totalIssues = 0
+  let totalSize = 0
   for (const n of graph.nodes) {
     let count
     if (useFilter) {
@@ -555,11 +568,18 @@ function renderDistribution(graph) {
     }
     issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + count)
     totalIssues += count
+    if (typeof n.size === 'number') {
+      sizeByPkg.set(n.pkg, (sizeByPkg.get(n.pkg) ?? 0) + n.size)
+      totalSize += n.size
+    }
   }
   // Ranked list reorders + filters per tab. On Issues, drop
   // packages with no issues — they're noise in an issues-first
-  // ranking (matches graph v1's hubs filter). Tie-break by the
-  // other axis so equal-issue packages don't shuffle alpha.
+  // ranking (matches graph v1's hubs filter). On Size, drop
+  // packages with zero / unknown bytes for the same reason. Files
+  // shows everything so the user gets the full pkg.count breakdown.
+  // Each axis tie-breaks by the next-most-stable axis so equal
+  // primary-axis packages don't shuffle alpha.
   let sorted
   if (tab === 'issues') {
     sorted = graph.packages
@@ -567,6 +587,14 @@ function renderDistribution(graph) {
       .sort((a, b) => {
         const ia = issueByPkg.get(a) ?? 0, ib = issueByPkg.get(b) ?? 0
         if (ib !== ia) return ib - ia
+        return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
+      })
+  } else if (tab === 'size') {
+    sorted = graph.packages
+      .filter((p) => (sizeByPkg.get(p) ?? 0) > 0)
+      .sort((a, b) => {
+        const sa = sizeByPkg.get(a) ?? 0, sb = sizeByPkg.get(b) ?? 0
+        if (sb !== sa) return sb - sa
         return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
       })
   } else {
@@ -577,38 +605,47 @@ function renderDistribution(graph) {
     })
   }
 
-  return html`<!-- The dist BAR follows the active tab so the segment widths
-       line up with the percentages in the list rows below. On
-       Files: width = pkg's file share. On Issues (with the
-       severity filter applied if any): width = pkg's share of
-       the visible issue total. Packages with 0 in the chosen
-       axis collapse to zero-width segments. -->
-  <div class="g2-dist-bar">
+  // The dist BAR follows the active tab so the segment widths
+  // line up with the percentages in the list rows below. On
+  // Files: width = pkg's file share. On Issues: pkg's share of
+  // the (filter-narrowed) issue total. On Size: pkg's share of
+  // the bundle's total source bytes. Packages with 0 in the
+  // chosen axis collapse to zero-width segments.
+  const widthFor = (pkg) => {
+    if (tab === 'issues') return totalIssues > 0 ? ((issueByPkg.get(pkg) ?? 0) / totalIssues * 100).toFixed(2) : '0'
+    if (tab === 'size')   return totalSize   > 0 ? ((sizeByPkg.get(pkg)  ?? 0) / totalSize   * 100).toFixed(2) : '0'
+    return (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
+  }
+  const emptyMsg = tab === 'issues' ? 'No packages with issues'
+                : tab === 'size'   ? 'No packages with size'
+                : 'No packages'
+  return html`<div class="g2-dist-bar">
     ${graph.packages.map((pkg) => {
       const c = pkgColor(pkg)
-      const w = tab === 'issues'
-        ? (totalIssues > 0 ? ((issueByPkg.get(pkg) ?? 0) / totalIssues * 100).toFixed(2) : '0')
-        : (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
-      return html`<span style=${`background:${c}; width:${w}%`}></span>`
+      return html`<span style=${`background:${c}; width:${widthFor(pkg)}%`}></span>`
     })}
   </div>
   <!-- Show every package — the wrapping section flexes to fill
        the available sidebar height and scrolls past that, so the
        top-N cap that lived here previously is no longer needed. -->
   <div class="g2-dist-list">
-    ${sorted.length === 0 ? html`<div class="g2-dist-empty">No packages with issues</div>` : null}
+    ${sorted.length === 0 ? html`<div class="g2-dist-empty">${emptyMsg}</div>` : null}
     ${sorted.map((pkg) => {
       const c = pkgColor(pkg)
       const fileCnt = graph.pkgCount.get(pkg) ?? 0
       const issueCnt = issueByPkg.get(pkg) ?? 0
+      const sizeBytes = sizeByPkg.get(pkg) ?? 0
       // Count + percentage both follow the active tab — reading
       // "30 88.2%" on Issues makes the row monotonically decrease
       // with the sort; mixing issue counts with file percentages
-      // (the previous behavior) read as a sorting bug.
-      const cnt = tab === 'issues' ? issueCnt : fileCnt
-      const pct = tab === 'issues'
-        ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
-        : (fileCnt / totalFiles * 100).toFixed(1)
+      // (the previous behavior) read as a sorting bug. On Size
+      // the count slot becomes a byte readout via formatBytes.
+      const cnt = tab === 'issues' ? issueCnt
+               : tab === 'size'   ? formatBytes(sizeBytes)
+               : fileCnt
+      const pct = tab === 'issues' ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
+                : tab === 'size'   ? (totalSize   > 0 ? (sizeBytes / totalSize   * 100).toFixed(1) : '0.0')
+                : (fileCnt / totalFiles * 100).toFixed(1)
       const label = pkg === '__own__' ? 'own source' : pkg
       // Each row is a button with data-g2-pkg so the existing
       // package-click handler in events.js (used by the palette
