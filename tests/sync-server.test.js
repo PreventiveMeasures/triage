@@ -57,63 +57,67 @@ async function buildSave(sk, tag, base, plaintext) {
   }
 }
 
-function openWs(url) {
+// One persistent WS message listener per connection + a queue.
+// Tests pull matches via `recv(predicate)`; messages that arrive
+// before the matching call lands in the queue rather than being
+// dropped (the duplicate-save ack on a fast CI server, for
+// instance, can come in between two recv calls — under the old
+// per-call-listener helper that message would vanish).
+function connect(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url)
-    ws.once('open', () => resolve(ws))
+    const queue = []
+    const waiters = []
+    ws.on('message', (buf) => {
+      let msg
+      try { msg = JSON.parse(buf.toString()) } catch { return }
+      for (let i = 0; i < waiters.length; i++) {
+        if (waiters[i].predicate(msg)) {
+          const w = waiters[i]
+          waiters.splice(i, 1)
+          w.resolve(msg)
+          return
+        }
+      }
+      queue.push(msg)
+    })
+    function recv(predicate, timeoutMs = 5_000) {
+      for (let i = 0; i < queue.length; i++) {
+        if (predicate(queue[i])) return Promise.resolve(queue.splice(i, 1)[0])
+      }
+      return new Promise((res, rej) => {
+        const waiter = { predicate, resolve: null }
+        const t = setTimeout(() => {
+          const idx = waiters.indexOf(waiter)
+          if (idx >= 0) waiters.splice(idx, 1)
+          rej(new Error(`recv: timeout (queue=${queue.length})`))
+        }, timeoutMs)
+        waiter.resolve = (msg) => { clearTimeout(t); res(msg) }
+        waiters.push(waiter)
+      })
+    }
+    function expectSilent(ms = 200) {
+      const start = queue.length
+      return new Promise((res, rej) => {
+        setTimeout(() => {
+          if (queue.length === start) res()
+          else rej(new Error(`expectSilent: got ${JSON.stringify(queue.slice(start)).slice(0, 200)}`))
+        }, ms)
+      })
+    }
+    ws.once('open', () => resolve({ ws, recv, expectSilent }))
     ws.once('error', reject)
   })
 }
 
-// Wait for a message satisfying `predicate`. Listener attaches
-// immediately; messages that arrive before the predicate matches
-// are skipped (not buffered for the next call). Time out fast so a
-// missing reply doesn't hang the suite.
-function recv(ws, predicate, timeoutMs = 2_000) {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      ws.off('message', onMessage)
-      reject(new Error('recv: timeout'))
-    }, timeoutMs)
-    function onMessage(buf) {
-      let msg
-      try { msg = JSON.parse(buf.toString()) } catch { return }
-      if (!predicate(msg)) return
-      clearTimeout(t)
-      ws.off('message', onMessage)
-      resolve(msg)
-    }
-    ws.on('message', onMessage)
-  })
-}
-
-// Assert no message arrives within `ms`. Used after sending a
-// malformed / bad-sig message — protocol drops silently, which is
-// observable only as the absence of a reply.
-function expectSilent(ws, ms = 200) {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      ws.off('message', onMessage)
-      resolve()
-    }, ms)
-    function onMessage(buf) {
-      clearTimeout(t)
-      ws.off('message', onMessage)
-      reject(new Error(`expectSilent: got ${buf.toString().slice(0, 200)}`))
-    }
-    ws.on('message', onMessage)
-  })
-}
-
-// Subscribe + drain the initial workspace-subscribed + workspace-state
-// pair so subsequent `recv` calls don't accidentally match them. `from`
-// is the last revision id the client claims to have applied (null on
-// first connect).
-async function subscribe(ws, sk, tag, from = null) {
+// Subscribe + drain the initial workspace-subscribed +
+// workspace-state pair. `from` is the last revision id the client
+// claims to have applied (null on first connect).
+async function subscribe(c, sk, tag, from = null) {
   const sig = await signSubscribe(sk, tag, from)
-  ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from, signature: sig }))
-  const ack = await recv(ws, (m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
-  const chain = await recv(ws, (m) => m.type === 'workspace-state' && m.workspaceTag === tag)
+  c.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from, signature: sig }))
+  const ack = await c.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
+  const chain = await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
   return { ack, chain }
 }
 
@@ -146,117 +150,114 @@ describe('triage-sync server', () => {
 
   it('subscribe responds with workspace-subscribed + empty chain for a fresh tag', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    const { ack, chain } = await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    const { ack, chain } = await subscribe(c, sk, tag)
     assert.equal(ack.workspaceTag, tag)
     assert.deepEqual(chain.revisions, [])
-    ws.close()
+    c.ws.close()
   })
 
   it('save returns a content-addressed id and grows the chain', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
     const { msg, id } = await buildSave(sk, tag, null, 'hello-1')
-    ws.send(JSON.stringify(msg))
-    const ack = await recv(ws, (m) => m.type === 'workspace-save-ack')
+    c.ws.send(JSON.stringify(msg))
+    const ack = await c.recv((m) => m.type === 'workspace-save-ack')
     assert.equal(ack.workspaceTag, tag)
     assert.equal(ack.base, null)
     assert.equal(ack.id, id, 'server-derived id matches client SHA-256(canonical bytes)')
-    ws.close()
+    c.ws.close()
   })
 
   it('broadcasts a save to other subscribers without echoing to the sender', async () => {
     const { sk, tag } = await makeKp()
-    const ws1 = await openWs(serverUrl)
-    const ws2 = await openWs(serverUrl)
-    await subscribe(ws1, sk, tag)
-    await subscribe(ws2, sk, tag)
+    const c1 = await connect(serverUrl)
+    const c2 = await connect(serverUrl)
+    await subscribe(c1, sk, tag)
+    await subscribe(c2, sk, tag)
     const { msg, id } = await buildSave(sk, tag, null, 'broadcast-payload')
-    // Attach broadcast listener BEFORE sending — the server can ack
-    // and broadcast in either order on the wire.
-    const broadcast = recv(ws2, (m) => m.type === 'workspace-state' && m.revisions.length > 0)
-    ws1.send(JSON.stringify(msg))
+    c1.ws.send(JSON.stringify(msg))
     const [ack, state] = await Promise.all([
-      recv(ws1, (m) => m.type === 'workspace-save-ack'),
-      broadcast,
+      c1.recv((m) => m.type === 'workspace-save-ack'),
+      c2.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0),
     ])
     assert.equal(ack.id, id)
     assert.equal(state.revisions.length, 1)
     assert.equal(state.revisions[0].id, id)
     assert.equal(state.revisions[0].base, null)
     // Sender doesn't see its own save echoed back.
-    await expectSilent(ws1, 150)
-    ws1.close(); ws2.close()
+    await c1.expectSilent(150)
+    c1.ws.close(); c2.ws.close()
   })
 
   it('stale base triggers a catch-up chain instead of an ack', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
     const first = await buildSave(sk, tag, null, 'first')
-    ws.send(JSON.stringify(first.msg))
-    await recv(ws, (m) => m.type === 'workspace-save-ack')
+    c.ws.send(JSON.stringify(first.msg))
+    await c.recv((m) => m.type === 'workspace-save-ack')
     // Now send a save built on the WRONG base (null instead of first.id).
     const stale = await buildSave(sk, tag, null, 'second-stale')
-    ws.send(JSON.stringify(stale.msg))
-    const catchup = await recv(ws, (m) => m.type === 'workspace-state')
+    c.ws.send(JSON.stringify(stale.msg))
+    const catchup = await c.recv((m) => m.type === 'workspace-state')
     assert.equal(catchup.revisions.length, 1)
     assert.equal(catchup.revisions[0].id, first.id)
     // No ack should follow.
-    await expectSilent(ws, 150)
-    ws.close()
+    await c.expectSilent(150)
+    c.ws.close()
   })
 
   it('idempotent retransmit returns the same id without an extra chain entry', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
     const save = await buildSave(sk, tag, null, 'idempotent')
-    ws.send(JSON.stringify(save.msg))
-    const ack1 = await recv(ws, (m) => m.type === 'workspace-save-ack')
-    ws.send(JSON.stringify(save.msg))
-    const ack2 = await recv(ws, (m) => m.type === 'workspace-save-ack')
+    c.ws.send(JSON.stringify(save.msg))
+    const ack1 = await c.recv((m) => m.type === 'workspace-save-ack')
+    c.ws.send(JSON.stringify(save.msg))
+    const ack2 = await c.recv((m) => m.type === 'workspace-save-ack')
     assert.equal(ack1.id, save.id)
     assert.equal(ack2.id, save.id)
     // Verify chain has exactly one entry by re-subscribing on a
     // fresh socket with `from = null`.
-    const ws2 = await openWs(serverUrl)
-    const { chain } = await subscribe(ws2, sk, tag)
+    const c2 = await connect(serverUrl)
+    const { chain } = await subscribe(c2, sk, tag)
     assert.equal(chain.revisions.length, 1)
     assert.equal(chain.revisions[0].id, save.id)
-    ws.close(); ws2.close()
+    c.ws.close(); c2.ws.close()
   })
 
   it('subscribe with `from = previous-id` returns only newer revisions', async () => {
     const { sk, tag } = await makeKp()
-    const writer = await openWs(serverUrl)
+    const writer = await connect(serverUrl)
     await subscribe(writer, sk, tag)
     const a = await buildSave(sk, tag, null, 'A')
-    writer.send(JSON.stringify(a.msg))
-    await recv(writer, (m) => m.type === 'workspace-save-ack')
+    writer.ws.send(JSON.stringify(a.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
     const b = await buildSave(sk, tag, a.id, 'B')
-    writer.send(JSON.stringify(b.msg))
-    await recv(writer, (m) => m.type === 'workspace-save-ack')
+    writer.ws.send(JSON.stringify(b.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
 
-    const reader = await openWs(serverUrl)
+    const reader = await connect(serverUrl)
     const { chain } = await subscribe(reader, sk, tag, a.id)
     assert.equal(chain.revisions.length, 1, 'only the post-A revision is sent')
     assert.equal(chain.revisions[0].id, b.id)
-    writer.close(); reader.close()
+    writer.ws.close(); reader.ws.close()
   })
 
   it('drops a save with a bad signature silently', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
     const save = await buildSave(sk, tag, null, 'will-fail')
     // Valid length but garbage bytes — passes the length precheck
     // but Ed25519 verify rejects.
     save.msg.signature = b64url(new Uint8Array(64))
-    ws.send(JSON.stringify(save.msg))
-    await expectSilent(ws, 200)
-    ws.close()
+    c.ws.send(JSON.stringify(save.msg))
+    await c.expectSilent(200)
+    c.ws.close()
   })
 
   it('drops a save signed by the wrong keypair (foreign tag in the save)', async () => {
@@ -266,61 +267,61 @@ describe('triage-sync server', () => {
     // fails.
     const victim = await makeKp()
     const attacker = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, victim.sk, victim.tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, victim.sk, victim.tag)
     const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
     const ciphertext = b64url(new TextEncoder().encode('forged'))
     // Sign with the attacker's key but claim the victim's tag.
     const { signature } = await signSave(attacker.sk, { tag: victim.tag, base: null, nonce, ciphertext })
-    ws.send(JSON.stringify({
+    c.ws.send(JSON.stringify({
       type: 'workspace-save', workspaceTag: victim.tag, base: null, nonce, ciphertext, signature,
     }))
-    await expectSilent(ws, 200)
-    ws.close()
+    await c.expectSilent(200)
+    c.ws.close()
   })
 
   it('drops a save with a non-string nonce / ciphertext silently', async () => {
     const { sk, tag } = await makeKp()
-    const ws = await openWs(serverUrl)
-    await subscribe(ws, sk, tag)
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
     // Bad shape: ciphertext is a number. encodeUtf8 inside the
     // server's canonical-payload path throws, which the verify
     // wrapper turns into "bad sig" → silent drop.
-    ws.send(JSON.stringify({
+    c.ws.send(JSON.stringify({
       type: 'workspace-save', workspaceTag: tag, base: null,
       nonce: b64url(new Uint8Array(12)), ciphertext: 42, signature: b64url(new Uint8Array(64)),
     }))
-    await expectSilent(ws, 200)
-    ws.close()
+    await c.expectSilent(200)
+    c.ws.close()
   })
 
   it('drops a subscribe with a bad signature silently', async () => {
     const { tag } = await makeKp()
-    const ws = await openWs(serverUrl)
+    const c = await connect(serverUrl)
     // Right length, garbage bytes — verify rejects.
     const signature = b64url(new Uint8Array(64))
-    ws.send(JSON.stringify({
+    c.ws.send(JSON.stringify({
       type: 'workspace-subscribe', workspaceTag: tag, from: null, signature,
     }))
-    await expectSilent(ws, 200)
-    ws.close()
+    await c.expectSilent(200)
+    c.ws.close()
   })
 
   it('persists revisions across reconnects (same DB, same tag, fresh socket)', async () => {
     const { sk, tag } = await makeKp()
-    const writer = await openWs(serverUrl)
+    const writer = await connect(serverUrl)
     await subscribe(writer, sk, tag)
     const save = await buildSave(sk, tag, null, 'persisted')
-    writer.send(JSON.stringify(save.msg))
-    await recv(writer, (m) => m.type === 'workspace-save-ack')
-    writer.close()
+    writer.ws.send(JSON.stringify(save.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+    writer.ws.close()
 
     // Brand-new socket; same DB. Subscribe with from=null → the
     // previously-acked revision must reappear in the chain.
-    const reader = await openWs(serverUrl)
+    const reader = await connect(serverUrl)
     const { chain } = await subscribe(reader, sk, tag)
     assert.equal(chain.revisions.length, 1)
     assert.equal(chain.revisions[0].id, save.id)
-    reader.close()
+    reader.ws.close()
   })
 })
