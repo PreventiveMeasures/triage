@@ -81,6 +81,15 @@ if (mode === 'build') {
     loader: { '.html': 'copy' },
     outdir: 'out',
     minify: true,
+    // ESM output so the brotli-fallback entry's `export
+    // brotliDecompress` survives the bundle and the runtime
+    // `await import('./brotli-fallback.js')` from view.js gets a
+    // real module namespace. With the IIFE default, exports were
+    // silently dropped and the dynamic import resolved to an empty
+    // namespace ("brotliDecompress is not a function"). view.html
+    // already loads view.js with `type="module"`, so ESM is
+    // expected on the page side too.
+    format: 'esm',
   })
 } else if (mode === 'serve') {
   // Mirror the previous `--servedir=ui --outdir=ui` setup: esbuild
@@ -101,6 +110,7 @@ if (mode === 'build') {
     // check (which fires before write would happen).
     write: false,
     allowOverwrite: true,
+    format: 'esm',
   })
   await ctx.serve({ host: '127.0.0.1', port: 8000, servedir: 'ui' })
 } else {
