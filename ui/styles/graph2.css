@@ -107,52 +107,22 @@
   & svg { display: block; }
 }
 
-/* Path / package substring filter — soft-dim filter, same
-   dim-don't-hide treatment as severity / solo. Wrapper anchors
-   a clear button at the right edge of the input. Padding /
-   font / border numbers mirror .g2-topbar-toggle exactly so
-   the natural box height matches: 5+11+5 padding+font+padding
-   plus 2 border = 23px on both. The UA-stylesheet `min-height`
-   reset is the missing piece — without it WebKit/Blink force
-   the input ~3-5px taller than the matching <button>. */
+/* Path / package substring filter — uses the `.toolbar-search`
+   shell from styles/toolbar.css (same as the findings tab's
+   "Search findings" field), so the look + height + focus state
+   match. Local additions here are just (a) cap the field to a
+   compact 14rem so the topbar's other controls keep their
+   inline rhythm, (b) anchor the clear button on the right inside
+   the wrapper. */
 .g2-path-filter-wrap {
   position: relative;
-  display: inline-flex;
-  align-items: center;
+  flex: 0 0 14rem;
+  /* Reserve space on the right for the absolutely-positioned
+     clear button so the input text can't slide under it. */
+  padding-right: 22px;
 }
 
-/* Total height pinned to 26px to match the .g2-sev-pill /
-   .g2-topbar-toggle buttons next to it. The buttons compute
-   to 26px naturally (4px padding + 16px content row + 4px
-   padding + 1px border × 2); the input was sitting at 24.5px
-   with the same explicit padding because the flex children
-   inside the buttons stretch the row to ~16px while the
-   input's content height tracks line-height directly.
-   Forcing height + line-height equal to the inner content box
-   keeps the typed text vertically centered. */
-.g2-path-filter {
-  width: 200px;
-  height: 26px;
-  box-sizing: border-box;
-  margin: 0;
-  background: var(--graph-hover-bg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 0 26px 0 9px;
-  color: var(--text);
-  font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  line-height: 24px;
-  outline: none;
-
-  &:focus { border-color: var(--accent); }
-  &::placeholder { color: var(--muted); opacity: 0.55; }
-}
-
-/* Inline clear ✕ — sits inside the input's right padding
-   slot. Hidden via CSS when the input is empty (placeholder
-   visible) so the slot reads as clean until the user types.
-   Round target larger than the glyph for easier clicking. */
-.g2-path-filter-clear {
+.g2-path-filter-wrap .g2-path-filter-clear {
   position: absolute;
   right: 4px;
   top: 50%;
@@ -173,9 +143,10 @@
 }
 
 /* Hide the clear button when the input is empty (placeholder
-   showing). Live-checks the input's actual value, so it works
-   without re-rendering the topbar on every keystroke. */
-.g2-path-filter:placeholder-shown + .g2-path-filter-clear { display: none; }
+   showing). Live-checks the input's actual value so the clear
+   button appears/disappears as the user types, without re-
+   rendering the topbar on every keystroke. */
+.g2-path-filter:placeholder-shown ~ .g2-path-filter-clear { display: none; }
 
 /* Severity-highlight pills in the graph topbar are rendered by
    the shared `<severity-chips kind="graph">` component now (see

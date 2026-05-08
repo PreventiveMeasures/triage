@@ -86,11 +86,11 @@ function renderTopBar(graph, extraTopRow) {
 
   const trashBtn = showTrash ? html`<button
     type="button"
-    class=${`g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}`}
+    class=${`trash-btn${state.showDeleted ? ' active' : ''}`}
     id="g2-toggle-trash"
     title=${trashTitle}
     aria-pressed=${String(state.showDeleted)}
-  ><span>${trashLabel}</span></button>` : null
+  >${trashLabel}</button>` : null
 
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
@@ -126,17 +126,19 @@ function renderTopBar(graph, extraTopRow) {
       selected=${JSON.stringify([...graph2.selectedColors])}
       kind="graph"
     ></triage-filter>` : null}
-    <!-- Path / package substring filter — case-insensitive match
-         against each node's file path AND its package name. Same
-         soft-dim treatment as the severity / solo filters: non-
-         matching nodes drop to 0.1 opacity, no hard hide.
-
-         Clear button is always rendered, hidden via CSS when the
-         input is empty (using :placeholder-shown sibling). Doing
-         it that way keeps the button live across user typing
-         without needing to re-render the topbar on every keystroke
-         — the canvas redraws on input but the chrome doesn't. -->
-    <div class="g2-path-filter-wrap">
+    <!-- Path / package substring filter — same .toolbar-search shell
+         the findings tab uses for "Search findings", just wired to
+         the canvas dim predicate instead of the row filter. Clear
+         button is always rendered, hidden via CSS when the input is
+         empty (using :placeholder-shown sibling). Keeps the button
+         live across user typing without re-rendering the topbar on
+         every keystroke — the canvas redraws on input but the chrome
+         doesn't. -->
+    <div class="toolbar-search g2-path-filter-wrap">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/>
+        <path d="m20 20-3.5-3.5"/>
+      </svg>
       <input
         type="text"
         class="g2-path-filter"

@@ -60,14 +60,9 @@
      "deleted only". Active state uses the critical color to signal
      "not your normal view". `margin-left: auto` pushes the button
      to the right edge of its toolbar row, so the row reads
-     `View [□☰▤] [Severity ↓] [Source] [Confidence……] ⋯ Trash`. */
-  & .trash-btn {
-    background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
-    margin-left: auto;
-    &:hover { border-color: var(--accent); }
-    &.active { border-color: var(--critical); color: var(--critical); }
-  }
+     `View [□☰▤] [Severity ↓] [Source] [Confidence……] ⋯ Trash`.
+     Hoisted to top-level (below) so the graph topbar's Trash uses
+     the same shell without re-declaring the rules. */
 
   /* View-mode icon button group — three flush buttons inside a
      bordered shell. Active button glows with the accent color; SVG
@@ -75,6 +70,21 @@
      The "View:" label sits to the left as a sibling, not inside the
      group, so the bordered shell only wraps the buttons. */
 }
+
+/* Trash toggle — used in the findings .toolbar AND the graph
+   topbar's extra row, so the rule lives outside `.toolbar` to apply
+   in both contexts. `margin-left: auto` is intentionally NOT here:
+   the graph topbar uses an explicit `.g2-spacer` to push the button
+   to the right, and inheriting margin-left would interfere with
+   that intentional layout. */
+.trash-btn {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+  font-family: inherit;
+  &:hover { border-color: var(--accent); }
+  &.active { border-color: var(--critical); color: var(--critical); }
+}
+.toolbar .trash-btn { margin-left: auto; }
 
 /* `<view-mode-buttons>` styles live outside `.toolbar` so the same
    chrome lands wherever the component is mounted — the findings
