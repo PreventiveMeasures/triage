@@ -2,51 +2,58 @@ import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
 
-// Triage sync — per-workspace WebSocket protocol that round-trips
-// the workspace's color / deleted / comment state through a server
-// using monotonically-increasing changeset revisions.
+// Triage sync — per-workspace WebSocket protocol with revision-tracked
+// changesets. Disabled by default. `setServerUrl(url)` enables; the
+// saved URL also persists in localStorage for next page-load. With
+// no URL the session machinery still tracks state internally but no
+// message is ever sent — flipping the URL on later resumes from the
+// live local state.
 //
-// Disabled by default. `setServerUrl(url)` enables; the saved URL
-// also persists in localStorage for next page-load. With no URL the
-// session machinery still tracks state internally but no message is
-// ever sent — flipping the URL on later resumes from the live local
-// state.
+// Layered design
+// --------------
+// `notify()` is the only public mutation hook. It's called at the
+// tail of `saveTriage()` (so every UI / API mutation routes through
+// it) and reads the current `state.markers` / `.deletedIds` /
+// `.comments` for the workspace's id scope to derive `localState`.
 //
-// Messages
-// --------
-//   client → server  workspace-load  { workspaceId, state, baseRevision }
-//                    workspace-save  { workspaceId, state, baseRevision }
-//   server → client  workspace-state { workspaceId, state, revision }
+// The session keeps three triage objects (each a plain
+// `{ id: { color?, deleted?, comment? } }` map):
+//   baseState     last server-acknowledged state.
+//   localState    user's current view (= baseState + their edits
+//                 since the last ack).
+// A changeset between two states is `{ id: entry | null }` where
+// `null` means "drop this id". `applyChangeset` and `computeChangeset`
+// are pure helpers that translate between state form and changeset
+// form; the wire layer never sees a full state, only changesets.
 //
-// A `workspace-state` reply covers both load responses, save acks,
-// and broadcasts triggered by other clients — the client treats them
-// uniformly: rebase on top, apply local diff, persist, re-render.
+// Wire shape
+// ----------
+//   client → server  workspace-save { workspaceId, base, changeset }
+//   server → client  workspace-save-ack { workspaceId, base, id }
+//   server → client  workspace-state { workspaceId, revisions:
+//                      [{ base, id, changeset }, ...] }
 //
-// Session state
-// -------------
-//   baseState     Last server-acknowledged state for the workspace.
-//   baseRevision  Revision number that goes with baseState.
-//   localState    The user's current state (= baseState + their
-//                 edits since the last ack).
-//   inFlight      A workspace-load or workspace-save is awaiting a
-//                 reply. While set, no new request is sent.
-//   pendingSave   Local change happened during inFlight — once the
-//                 reply lands, send a fresh save.
+// `workspace-save-ack` confirms that the client's pending save with
+// `base` was accepted as revision `id`. The client already holds the
+// changeset (it's `pending.changeset`), so the ack only carries
+// metadata.
+//
+// `workspace-state` is a chain the client applies in order — used for
+// initial sync (the first server response when client base=null),
+// broadcasts of other clients' changes, and stale-base catch-ups
+// after a rejected save. Each revision carries `base` so the client
+// can verify continuity. If the client has a `pending` save when a
+// chain arrives, that save is treated as rejected: pending.changeset
+// is recomputed against the new baseState (preserving the user's
+// intent) and re-sent.
 //
 // Race protocol
 // -------------
-// One in-flight request per session at a time. Local edits during
-// in-flight raise `pendingSave`. A new `workspace-state` arriving
-// from any source rebases: compute overlay = localState - baseState,
-// replace baseState with the server's, replay the overlay on top so
-// any unsynced edits survive the rebase. Stale revisions (≤ the
-// baseRevision we already applied) are dropped — that handles the
-// echo case where the server broadcasts our own ack to us.
-//
-// On reconnect after a drop the client sends a fresh workspace-load
-// with the current localState + baseRevision so the server can
-// either accept the snapshot (handing back a new revision) or
-// merge it in.
+// One in-flight request per session. Local edits during inFlight
+// raise `pendingSave` and flush on the next reply. Every chain /
+// ack rebases: the user's overlay (= localState - baseState) is
+// captured before swapping baseState, and re-applied after, so
+// unsynced edits survive any server push.
 
 const STORAGE_KEY = 'deepview.triageSyncUrl'
 const SESSION_ID_RE = /^\d+$/u
@@ -56,14 +63,15 @@ let socket = null
 let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
-// Re-entrancy guard. Bumped while we're applying a remote state so
+// Re-entrancy guard. Bumped while we're applying remote state so
 // the saveTriage at the tail doesn't trigger a notify and bounce
 // the same change back at the server.
 let suppressNotify = 0
 // Active per-workspace session (or null when no workspace is
-// loaded). Mutually exclusive with single-file mode — sync is a
-// workspace concept here.
+// loaded). Mutually exclusive with single-file mode.
 let session = null
+
+// ─────────── pure state / changeset helpers ───────────
 
 function snapshotEntry(id) {
   const entry = {}
@@ -75,9 +83,6 @@ function snapshotEntry(id) {
   return entry
 }
 
-// Workspace's set of triageable finding ids — every finding loaded
-// into state.reports right now, minus the session-only numeric `_id`
-// keys that don't round-trip through localStorage either.
 function buildWorkspaceIds() {
   const ids = new Set()
   for (const r of state.reports) {
@@ -91,9 +96,6 @@ function buildWorkspaceIds() {
   return ids
 }
 
-// Subset of state.markers / .deletedIds / .comments restricted to
-// `ids`. Empty entries are omitted so the wire shape only carries
-// findings the user has actually triaged.
 function buildLocalState(ids) {
   const out = {}
   for (const id of ids) {
@@ -117,33 +119,38 @@ function statesEqual(a, b) {
   return true
 }
 
-// Per-id changes that turn `base` into `local`. `null` represents
-// an explicit deletion of an entry that existed in `base`. Used to
-// preserve the user's unsynced edits across a rebase.
-function computeOverlay(base, local) {
-  const overlay = {}
-  const ids = new Set([...Object.keys(base), ...Object.keys(local)])
-  for (const id of ids) {
-    const b = base[id] ?? {}
-    const l = local[id] ?? {}
-    if (!entriesEqual(b, l)) overlay[id] = local[id] ?? null
-  }
-  return overlay
-}
-
-function mergeStates(base, overlay) {
-  const out = { ...base }
-  for (const [id, entry] of Object.entries(overlay)) {
+// Walk a state through a changeset, producing a new state. `null`
+// in the changeset means "delete this id from the state".
+function applyChangeset(baseState, changeset) {
+  const out = { ...baseState }
+  for (const [id, entry] of Object.entries(changeset)) {
     if (entry === null) delete out[id]
     else out[id] = entry
   }
   return out
 }
 
+// Compute the changeset that turns `base` into `target`. Mirrors
+// `applyChangeset` — `null` entries clear, present entries overwrite.
+function computeChangeset(base, target) {
+  const changeset = {}
+  const ids = new Set([...Object.keys(base), ...Object.keys(target)])
+  for (const id of ids) {
+    const b = base[id] ?? {}
+    const t = target[id] ?? {}
+    if (!entriesEqual(b, t)) changeset[id] = target[id] ?? null
+  }
+  return changeset
+}
+
+function changesetEmpty(cs) {
+  for (const _ in cs) return false
+  return true
+}
+
 // Reflect `targetState` into the in-memory state.* containers,
-// scoped to `ids` — entries outside the workspace's scope are left
-// alone so single-file triage doesn't get clobbered when a
-// workspace is open.
+// scoped to `ids`. Entries outside the workspace's scope are left
+// alone so single-file triage isn't clobbered.
 function applyToReactiveState(targetState, ids) {
   for (const id of ids) {
     const entry = targetState[id] ?? {}
@@ -156,6 +163,8 @@ function applyToReactiveState(targetState, ids) {
   }
 }
 
+// ─────────── transport / wire ───────────
+
 function send(msg) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return false
   try {
@@ -167,53 +176,67 @@ function send(msg) {
   }
 }
 
-function trySendInit() {
-  if (!session || session.inFlight) return
-  if (!send({
-    type: 'workspace-load',
-    workspaceId: session.workspaceId,
-    state: session.localState,
-    baseRevision: session.baseRevision,
-  })) return
-  session.inFlight = true
-}
-
 function trySendSave() {
   if (!session) return
-  if (session.inFlight) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  if (session.pending) {
     session.pendingSave = true
     return
   }
-  // Refresh localState from current state.* in case it drifted
-  // since we last touched it (e.g. saveTriage just persisted a
-  // change that landed via the user's UI clicks).
+  // Refresh localState from the live state.* containers in case
+  // saveTriage just persisted edits we haven't snapshotted yet.
   session.localState = buildLocalState(session.ids)
-  if (statesEqual(session.localState, session.baseState)) return
-  if (!send({
+  const changeset = computeChangeset(session.baseState, session.localState)
+  if (changesetEmpty(changeset)) return
+  session.pending = { base: session.baseRevision, changeset }
+  session.pendingSave = false
+  send({
     type: 'workspace-save',
     workspaceId: session.workspaceId,
-    state: session.localState,
-    baseRevision: session.baseRevision,
-  })) return
-  session.inFlight = true
-  session.pendingSave = false
+    base: session.baseRevision,
+    changeset,
+  })
 }
 
-async function applyServerState(remoteState, remoteRevision) {
-  if (!session) return
-  // Drop stale broadcasts (e.g. the server echoing our own ack
-  // back at us after we've already applied it).
-  if (
-    session.baseRevision != null
-    && remoteRevision != null
-    && remoteRevision <= session.baseRevision
-  ) return
-  // Capture the user's unsaved edits before swapping the base.
-  const overlay = computeOverlay(session.baseState, session.localState)
-  session.baseState = remoteState
-  session.baseRevision = remoteRevision
-  session.localState = mergeStates(remoteState, overlay)
+// Apply a chain of revisions (each `{ base, id, changeset }`) to
+// baseState. Verifies continuity — every revision's `base` must
+// equal the current baseRevision before its changeset applies, so
+// out-of-order or gappy chains don't silently corrupt state.
+// Returns true on success. On failure, baseState is left untouched
+// from the failure point onward and we resync (clear baseRevision
+// to force the next save to send everything again).
+function applyChainToBase(revisions) {
+  for (const rev of revisions) {
+    if (!rev || typeof rev !== 'object') continue
+    // First-revision allowance: the very first chain we receive
+    // (after init) may start from `null` or `0` — accept either.
+    const expected = session.baseRevision
+    const ok = expected == null
+      ? (rev.base == null || rev.base === 0)
+      : rev.base === expected
+    if (!ok) {
+      console.warn(`Triage sync: chain base mismatch (expected ${expected}, got ${rev.base}); resync requested`)
+      session.baseRevision = null
+      session.baseState = {}
+      return false
+    }
+    session.baseState = applyChangeset(session.baseState, rev.changeset ?? {})
+    session.baseRevision = rev.id
+  }
+  return true
+}
 
+async function rebaseAndPersist() {
+  // Capture overlay BEFORE any persistence — any unsynced local
+  // edits the user has made on top of the previous baseState need
+  // to survive the rebase. localState may already match the new
+  // baseState (e.g. ack flow where pending.changeset has been
+  // folded into baseState), in which case the overlay is empty.
+  const overlay = computeChangeset(session.baseState, session.localState)
+  // baseState was already updated by the caller (applyChainToBase
+  // or the ack path). Re-apply the user's overlay on top so their
+  // unsynced edits remain visible.
+  session.localState = applyChangeset(session.baseState, overlay)
   suppressNotify++
   try {
     applyToReactiveState(session.localState, session.ids)
@@ -224,23 +247,67 @@ async function applyServerState(remoteState, remoteRevision) {
   render()
 }
 
-async function handleMessage(data) {
-  let msg
-  try { msg = JSON.parse(data) } catch { return }
-  if (!msg || typeof msg !== 'object') return
-  if (!session || msg.workspaceId !== session.workspaceId) return
-  if (msg.type !== 'workspace-state') return
-  await applyServerState(msg.state ?? {}, msg.revision)
-  // Reply consumed — request slot is free again.
-  session.inFlight = false
-  // If the user kept editing during the round-trip OR the rebase
-  // left an overlay (we had unsaved changes that the server hasn't
-  // seen), follow up with another save.
+async function handleAck(msg) {
+  // The pending save was accepted as revision `msg.id`, built on
+  // `msg.base`. Verify the base matches what we sent and fold the
+  // pending changeset into baseState so it becomes the new agreed
+  // floor.
+  if (!session?.pending) return
+  if (msg.base !== session.pending.base) {
+    console.warn(`Triage sync: ack base mismatch (pending ${session.pending.base}, ack ${msg.base})`)
+    return
+  }
+  session.baseState = applyChangeset(session.baseState, session.pending.changeset)
+  session.baseRevision = msg.id
+  session.pending = null
+  await rebaseAndPersist()
+  // The user may have edited during the round-trip; if there's a
+  // residual overlay (or pendingSave was raised), flush it.
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false
     trySendSave()
   }
 }
+
+async function handleChain(revisions) {
+  if (!Array.isArray(revisions) || revisions.length === 0) return
+  if (!applyChainToBase(revisions)) {
+    // Chain didn't apply cleanly. Fall back: pretend our base is
+    // empty and resend full state. Next save will rebuild from 0.
+    session.pending = null
+    session.pendingSave = false
+    await rebaseAndPersist()
+    trySendSave()
+    return
+  }
+  // If a save was in flight when the chain arrived, the server is
+  // implicitly rejecting it (it brought us forward without acking).
+  // Clear pending so the next save recomputes the changeset against
+  // the freshly-rebased baseState.
+  if (session.pending) {
+    session.pending = null
+    session.pendingSave = true
+  }
+  await rebaseAndPersist()
+  if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
+    session.pendingSave = false
+    trySendSave()
+  }
+}
+
+async function handleMessage(data) {
+  let msg
+  try { msg = JSON.parse(data) } catch { return }
+  if (!msg || typeof msg !== 'object') return
+  if (!session || msg.workspaceId !== session.workspaceId) return
+  if (msg.type === 'workspace-save-ack') {
+    await handleAck(msg)
+  } else if (msg.type === 'workspace-state') {
+    await handleChain(msg.revisions)
+  }
+}
+
+// ─────────── connection lifecycle ───────────
 
 function clearReconnect() {
   if (reconnectTimer) {
@@ -273,13 +340,13 @@ function openSocket() {
   ws.addEventListener('open', () => {
     reconnectDelayMs = 1_000
     if (session) {
-      // Re-establish the session against the freshly opened socket.
-      // baseState / baseRevision survive the disconnect; the load
-      // request lets the server merge any updates we missed while
-      // offline.
-      session.inFlight = false
+      // Re-establish against the freshly opened socket. baseState /
+      // baseRevision survived the disconnect; if there's an overlay
+      // (or we hadn't sent the initial state yet), trySendSave
+      // pushes it.
+      session.pending = null
       session.pendingSave = false
-      trySendInit()
+      trySendSave()
     }
   })
   ws.addEventListener('message', (e) => handleMessage(e.data))
@@ -287,8 +354,8 @@ function openSocket() {
     if (socket === ws) socket = null
     if (session) {
       // The pending request is gone with the socket. Mark the slot
-      // free and remember to save once we reconnect.
-      session.inFlight = false
+      // free; reconnect handler will resend.
+      session.pending = null
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
     if (serverUrl) scheduleReconnect()
@@ -308,6 +375,8 @@ function closeSocket() {
   }
 }
 
+// ─────────── public API ───────────
+
 export const triageSync = {
   setServerUrl(url) {
     const next = (url ?? '').trim()
@@ -325,11 +394,10 @@ export const triageSync = {
 
   get connected() { return socket?.readyState === WebSocket.OPEN },
 
-  // Called by triage.js at the tail of saveTriage(). When inside an
-  // applyServerState (suppressNotify > 0), bail — that path already
-  // owns the persistence side. Otherwise schedule a save against
-  // the active session; the helper handles the inFlight / queue
-  // gating.
+  // Called by triage.js at the tail of saveTriage(). When inside
+  // applyChainToBase / handleAck (suppressNotify > 0), bail — that
+  // path already owns persistence. Otherwise schedule a save against
+  // the active session; the helper handles the inFlight gating.
   notify() {
     if (suppressNotify > 0) return
     if (!session) return
@@ -349,17 +417,17 @@ export const triageSync = {
     session = {
       workspaceId,
       ids,
-      // Until the first server response lands, we have no idea what
-      // the server's revision is. localState is whatever we're
-      // currently looking at; baseState is empty so the first load
-      // sends the full snapshot up.
+      // Until the server tells us its current revision, we have no
+      // base. localState is whatever's in state.* right now;
+      // baseState is empty so the first save's changeset is the
+      // user's full local snapshot vs. nothing.
       baseRevision: null,
       baseState: {},
       localState: buildLocalState(ids),
-      inFlight: false,
+      pending: null,
       pendingSave: false,
     }
-    if (socket?.readyState === WebSocket.OPEN) trySendInit()
+    if (socket?.readyState === WebSocket.OPEN) trySendSave()
   },
 
   closeSession() {
@@ -375,7 +443,7 @@ export const triageSync = {
     return {
       workspaceId: session.workspaceId,
       baseRevision: session.baseRevision,
-      inFlight: session.inFlight,
+      pending: session.pending && { base: session.pending.base },
       pendingSave: session.pendingSave,
       tracked: session.ids.size,
     }
