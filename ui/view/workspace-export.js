@@ -103,6 +103,10 @@ export async function exportWorkspace(workspace) {
     if (!claimedIds.has(id)) continue
     if (comment) triage[id] = { ...(triage[id] ?? {}), comment }
   }
+  for (const [id, fix] of state.fixes) {
+    if (!claimedIds.has(id)) continue
+    if (fix) triage[id] = { ...(triage[id] ?? {}), fix }
+  }
 
   // Per-report repo URLs — each report carries its own user-typed URL
   // (see state.js / loadRepoUrlFor). Only the URLs for THIS workspace's

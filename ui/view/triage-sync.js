@@ -100,6 +100,8 @@ function snapshotEntry(id) {
   if (state.deletedIds.has(id)) entry.deleted = true
   const comment = state.comments.get(id)
   if (comment) entry.comment = comment
+  const fix = state.fixes.get(id)
+  if (fix) entry.fix = fix
   return entry
 }
 
@@ -129,6 +131,7 @@ function entriesEqual(a, b) {
   return a.color === b.color
     && Boolean(a.deleted) === Boolean(b.deleted)
     && (a.comment ?? '') === (b.comment ?? '')
+    && (a.fix ?? '') === (b.fix ?? '')
 }
 
 function statesEqual(a, b) {
@@ -180,6 +183,8 @@ function applyToReactiveState(targetState, ids) {
     else state.deletedIds.delete(id)
     if (entry.comment) state.comments.set(id, entry.comment)
     else state.comments.delete(id)
+    if (entry.fix) state.fixes.set(id, entry.fix)
+    else state.fixes.delete(id)
   }
 }
 

@@ -91,6 +91,14 @@ async function mergeTriage(triage, findingLookup) {
       state.comments.set(id, importedComment)
     }
 
+    const localFix = state.fixes.get(id) ?? ''
+    const importedFix = typeof entry.fix === 'string' ? entry.fix : ''
+    if (importedFix && localFix && localFix !== importedFix) {
+      conflicts.push({ id, property: 'fix', local: localFix, imported: importedFix })
+    } else if (importedFix) {
+      state.fixes.set(id, importedFix)
+    }
+
     if (entry.deleted) state.deletedIds.add(id)
   }
   if (conflicts.length > 0) {
@@ -101,6 +109,7 @@ async function mergeTriage(triage, findingLookup) {
         if (decisions[key] !== 'imported') continue
         if (c.property === 'color') state.markers.set(c.id, c.imported)
         else if (c.property === 'comment') state.comments.set(c.id, c.imported)
+        else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
       }
     }
   }
@@ -174,9 +183,15 @@ function commentBlockTemplate(text) {
   return html`<span class="conflict-comment-text">${text || html`<em>empty</em>`}</span>`
 }
 
+function fixBlockTemplate(text) {
+  if (!text) return html`<span class="conflict-comment-text"><em>empty</em></span>`
+  return html`<span class="conflict-fix-text"><a href=${text} target="_blank" rel="noopener">${text}</a></span>`
+}
+
 function valueTemplate(property, value) {
   if (property === 'color') return colorSwatchTemplate(value)
   if (property === 'comment') return commentBlockTemplate(value)
+  if (property === 'fix') return fixBlockTemplate(value)
   return html`${String(value)}`
 }
 
@@ -224,18 +239,22 @@ function resolveTriageConflicts(conflicts, findingLookup) {
       if (!byId.has(c.id)) byId.set(c.id, [])
       byId.get(c.id).push(c)
     }
-    // Sort properties within a card so order is stable: color first,
-    // then comment.
+    // Sort properties within a card so order is stable: color
+    // first, then comment, then fix — matches the action-row
+    // ordering in the finding card.
+    const PROP_ORDER = { color: 0, comment: 1, fix: 2 }
     for (const list of byId.values()) {
-      list.sort((a, b) => (a.property === 'color' ? -1 : 1))
+      list.sort((a, b) => (PROP_ORDER[a.property] ?? 99) - (PROP_ORDER[b.property] ?? 99))
     }
 
     const colorN = conflicts.filter((c) => c.property === 'color').length
     const commentN = conflicts.filter((c) => c.property === 'comment').length
+    const fixN = conflicts.filter((c) => c.property === 'fix').length
     const summary = [
       colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
       commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
-    ].filter(Boolean).join(' and ')
+      fixN ? `${fixN} fix${fixN === 1 ? '' : 'es'}` : '',
+    ].filter(Boolean).join(', ')
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
     litRender(html`
@@ -257,7 +276,10 @@ function resolveTriageConflicts(conflicts, findingLookup) {
               ${items.map((c) => {
                 const key = `${c.id}:${c.property}`
                 const radioName = `conflict-${key}`
-                const propLabel = c.property === 'color' ? 'Color' : 'Comment'
+                const propLabel = c.property === 'color' ? 'Color'
+                  : c.property === 'comment' ? 'Comment'
+                  : c.property === 'fix' ? 'Fix'
+                  : c.property
                 return html`<div class="conflict-row" data-key=${key}>
                   <span class="conflict-row-label">${propLabel}</span>
                   <label class="conflict-choice">

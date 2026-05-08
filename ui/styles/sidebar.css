@@ -446,6 +446,15 @@
 
     & em { color: var(--muted); font-style: italic; }
   }
+  & .conflict-fix-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+
+    & a { color: var(--accent); text-decoration: none; }
+    & a:hover { text-decoration: underline; }
+  }
 
   & .conflict-actions {
     display: flex; justify-content: flex-end; gap: .4rem;

@@ -69,6 +69,13 @@ const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-h
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Wrench glyph for the per-finding fix-link button. Same has-x /
+// outline-vs-fill pattern as the comment icon: empty button = no
+// fix recorded; filled accent = a URL is set.
+const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+
 // Workspace-merged views show which report a finding came from.
 // The chip mirrors the sidebar's file row (brand sticker + display
 // name) and lives at the start of the action row. Single-file
@@ -94,16 +101,19 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const reportChip = reportChipTemplate(group)
   const activeColor = state.markers.get(activeKey) ?? null
   const activeComment = state.comments.get(activeKey) ?? ''
+  const activeFix = state.fixes.get(activeKey) ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
+  const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
   const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
+  const fixBtn = html`<button type="button" class=${`mark-fix${activeFix ? ' has-fix' : ''}`} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   if (state.showDeleted) {
-    return html`${reportChip}${commentBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
+    return html`${reportChip}${commentBtn}${fixBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
   }
   const xTitle = groupSt.hasConflict
     ? 'delete active tab (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-  return html`${reportChip}${commentBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
+  return html`${reportChip}${commentBtn}${fixBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
 }
 
 // One tab button. Carries severity badge + (optional) confidence,
@@ -128,6 +138,7 @@ function tabTemplate(f, isActive) {
 function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const key = tabKey(f)
   const comment = state.comments.get(key) ?? ''
+  const fix = state.fixes.get(key) ?? ''
   // Location is rendered as `file:line` (linkified when we have a
   // repo URL). Standalone cards (the table view's detail panel) need
   // the file here because there's no surrounding header above; list /
@@ -163,6 +174,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${stripExportMarker(f.confidenceReason, f.exportName)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
+      ${fix ? html`<div class="fix-block"><span class="fix-label">Fix:</span> <a href=${fix} target="_blank" rel="noopener">${fix}</a></div>` : nothing}
     </div>
   </div>`
 }

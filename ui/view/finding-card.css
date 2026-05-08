@@ -194,15 +194,18 @@
   & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
 }
 
-.mark-comment {
+.mark-comment,
+.mark-fix {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; margin-right: .25rem;
   &:hover { color: var(--accent); border-color: var(--accent); }
-  &.has-comment { color: var(--accent); border-color: var(--accent); }
-  &.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 }
+.mark-comment.has-comment,
+.mark-fix.has-fix { color: var(--accent); border-color: var(--accent); }
+.mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
+.mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
 
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
@@ -211,22 +214,28 @@
   &:hover { color: var(--critical); border-color: var(--critical); }
 }
 
-/* Comment block in the tab body. Renders a quote-style note below the
-   description / recommendation / confidence reason when the active
-   tab carries a free-text annotation. */
-.comment-block {
+/* Comment + fix-link blocks in the tab body. Quote-style notes
+   below the description / recommendation / confidence reason when
+   the active tab carries a free-text annotation or a fix URL. */
+.comment-block,
+.fix-block {
   margin-top: .5rem;
   padding: .35rem .55rem;
   border-left: 3px solid var(--accent);
   background: rgb(from var(--accent) r g b / .08);
   border-radius: 0 4px 4px 0;
   font-size: .82rem; color: var(--text);
-  white-space: pre-wrap;
-
-  & .comment-label {
-    color: var(--muted); font-weight: 600;
-    margin-right: .35rem;
-  }
+}
+.comment-block { white-space: pre-wrap; }
+.fix-block {
+  word-break: break-all;
+  & a { color: var(--accent); text-decoration: none; }
+  & a:hover { text-decoration: underline; }
+}
+.comment-label,
+.fix-label {
+  color: var(--muted); font-weight: 600;
+  margin-right: .35rem;
 }
 
 .mark-restore {

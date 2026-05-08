@@ -186,15 +186,18 @@
   & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
 }
 
-.mark-comment {
+.mark-comment,
+.mark-fix {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; margin-right: .25rem;
   &:hover { color: var(--accent); border-color: var(--accent); }
-  &.has-comment { color: var(--accent); border-color: var(--accent); }
-  &.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 }
+.mark-comment.has-comment,
+.mark-fix.has-fix { color: var(--accent); border-color: var(--accent); }
+.mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
+.mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
 
 .mark-x {
   background: transparent; border: 1px solid var(--border); color: var(--muted);

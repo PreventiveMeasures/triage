@@ -23,6 +23,7 @@ const triage = {
   get markers() { return new Map(state.markers) },
   get deletedIds() { return new Set(state.deletedIds) },
   get comments() { return new Map(state.comments) },
+  get fixes() { return new Map(state.fixes) },
 
   // Bundle every triage field for one finding into a single object,
   // omitting absent properties — matches the persisted shape so a
@@ -34,6 +35,8 @@ const triage = {
     if (state.deletedIds.has(id)) out.deleted = true
     const comment = state.comments.get(id)
     if (comment) out.comment = comment
+    const fix = state.fixes.get(id)
+    if (fix) out.fix = fix
     return out
   },
 
@@ -41,7 +44,7 @@ const triage = {
   // an `undefined` field is left alone. Returns the boolean "did
   // anything change" so callers can short-circuit. Async because the
   // saveTriage write is async; the UI render fires after persistence.
-  async set(id, { color, deleted, comment } = {}) {
+  async set(id, { color, deleted, comment, fix } = {}) {
     let changed = false
     if (color !== undefined) {
       if (color === null || color === '') {
@@ -66,6 +69,17 @@ const triage = {
           changed = true
         }
       } else if (state.comments.delete(id)) {
+        changed = true
+      }
+    }
+    if (fix !== undefined) {
+      const text = fix ? String(fix) : ''
+      if (text) {
+        if (state.fixes.get(id) !== text) {
+          state.fixes.set(id, text)
+          changed = true
+        }
+      } else if (state.fixes.delete(id)) {
         changed = true
       }
     }

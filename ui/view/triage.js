@@ -1,9 +1,9 @@
 import { state } from './state.js'
 import { triageSync } from './triage-sync.js'
 
-// Markers + deletions + comments survive page reload via
-// `localStorage['deepview.triage']`. Payload shape:
-// `{ <id>: { color?, deleted?, comment? } }` — one entry per
+// Markers + deletions + comments + fix-links survive page reload
+// via `localStorage['deepview.triage']`. Payload shape:
+// `{ <id>: { color?, deleted?, comment?, fix? } }` — one entry per
 // triaged finding, every field optional (omitted when absent so a
 // clean finding leaves no trace). JSON-encoded, deflate-compressed,
 // base64-encoded.
@@ -42,6 +42,10 @@ export async function saveTriage() {
       if (SESSION_ID_RE.test(k)) continue
       if (comment) entries[k] = { ...(entries[k] || {}), comment }
     }
+    for (const [k, fix] of state.fixes) {
+      if (SESSION_ID_RE.test(k)) continue
+      if (fix) entries[k] = { ...(entries[k] || {}), fix }
+    }
     if (Object.keys(entries).length === 0) {
       localStorage.removeItem(TRIAGE_KEY)
       return
@@ -70,6 +74,7 @@ async function loadTriage() {
       if (v && v.color) state.markers.set(k, v.color)
       if (v && v.deleted) state.deletedIds.add(k)
       if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
+      if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)
     }
   } catch (err) {
     console.warn('Failed to load triage:', err)

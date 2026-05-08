@@ -125,6 +125,11 @@ export const state = store({
   // see triage.js. Empty / cleared comments are removed from the map
   // so saveTriage doesn't persist a stale `comment: ""`.
   comments: new Map(),
+  // Per-finding "fix" reference — typically a PR URL, but anything
+  // string-shaped works (commit hash, ticket link, etc.). Same key
+  // and persistence rules as `comments`; rendered as a clickable
+  // link in the tab body when present.
+  fixes: new Map(),
   deletedIds: new Set(),
   showDeleted: false,
   nextFindingId: 0,
