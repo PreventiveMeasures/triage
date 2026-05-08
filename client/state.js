@@ -90,6 +90,11 @@ export const state = store({
   // .map) and stay cached on this slot until selection changes.
   selectedBundle: null,
   bundleDetails: null,
+  // Active tab in the bundle details panel — only used when the
+  // open bundle has > 5 packages and the panel splits the per-
+  // package size visualization from the flat file list across two
+  // tabs. Reset to 'packages' when selectedBundle changes.
+  bundleDetailsTab: 'packages',
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

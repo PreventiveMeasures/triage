@@ -157,34 +157,47 @@
    `.with-details` is added by render.js when the table view's
    details panel is open: the wrapper grows to fit the 3 fr +
    2 fr split (1200 list + 800 panel = 2000 max). */
+/* The slot wrapper render() emits around the bundles view —
+   `display: contents` flattens it so the flex chain from #report
+   reaches .bundles-view directly, the same pattern the graph view
+   uses for #findings-graph-slot. */
+#bundles-slot { display: contents; }
+
 /* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
    Default layout caps at 1200px (single column); when a bundle is
    open, `.with-details` widens the wrapper to fit the list + the
    right-side panel side by side, mirroring the findings-table
-   details pattern. */
+   details pattern. Flex column with flex: 1 so the layout fills
+   the viewport's remaining height below the page-head; the inner
+   list and details columns each scroll independently rather than
+   pushing #report past 100vh. Mirrors how the graph view fits to
+   screen. */
 .bundles-view {
   max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   &.with-details { max-width: 2000px; }
 
   /* Single-column when nothing's open; two-column grid when the
      details panel is up. Same 3fr / 2fr split + max-widths the
      findings-table-layout uses, so the visual rhythm carries
-     across views. */
+     across views. flex: 1 + min-height: 0 so the grid takes the
+     available vertical space and the columns can scroll. */
   & .bundles-layout {
     display: grid;
     grid-template-columns: 1fr;
     gap: 1rem;
     margin-top: 1rem;
-    /* Each column sizes to its own content — without this, grid's
-       default `align-items: stretch` made the left list grow to
-       match the (often taller) right details panel, painting the
-       list's bordered shell over empty space below the last row. */
-    align-items: start;
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
 
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
-    & .bundles-list { margin-top: 0; max-width: 1200px; }
+    & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; min-height: 0; }
     &.open .bundles-details { max-width: 800px; }
   }
 
@@ -198,11 +211,35 @@
     box-shadow: var(--shadow-glass);
     display: flex; flex-direction: column;
     min-height: 0;
+    overflow: hidden;
   }
   & .bundles-details-bar {
     display: flex; align-items: center; justify-content: space-between;
     padding: .55rem .75rem;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  /* Tab strip when a bundle's package count exceeds the
+     BUNDLE_TABS_THRESHOLD (5 in render.js). Same shape as the
+     prior report-tabs strip, scaled to the panel's font size. */
+  & .bundles-tabs {
+    display: flex; gap: .25rem;
+    padding: 0 .25rem;
+    margin: -.25rem 0 .5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  & .bundles-tab {
+    background: transparent; border: none;
+    color: var(--muted);
+    padding: .35rem .65rem;
+    font: inherit; font-size: .72rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color .12s, border-color .12s;
+
+    &:hover { color: var(--text); }
+    &.active { color: var(--accent); border-bottom-color: var(--accent); }
   }
   & .bundles-details-label {
     color: var(--muted);
@@ -223,6 +260,8 @@
   & .bundles-details-body {
     padding: .75rem;
     overflow-y: auto;
+    flex: 1;
+    min-height: 0;
     font-size: .78rem;
   }
 

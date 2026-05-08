@@ -67,6 +67,19 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Bundle details — Packages / Files tab switch (only rendered
+  // when the open bundle has > 5 packages). State is purely UI;
+  // the parsed bundleDetails stays cached so flipping tabs is
+  // a paint-only operation.
+  const bundleTab = e.target.closest('[data-bundle-tab]')
+  if (bundleTab) {
+    const tab = bundleTab.dataset.bundleTab
+    if (tab === 'packages' || tab === 'files') {
+      state.bundleDetailsTab = tab
+      render()
+    }
+    return
+  }
   // Bundles list — row select. Opens the right-side details panel,
   // then asynchronously reads + parses the bundle (.map gets
   // sourcemap fields surfaced; .stasis falls back to metadata-only).
@@ -80,6 +93,11 @@ report.addEventListener('click', (e) => {
     if (state.selectedBundle === integrity) return
     state.selectedBundle = integrity
     state.bundleDetails = null
+    // Reset to the Packages tab when a different bundle opens —
+    // the user shouldn't carry the prior bundle's tab choice into
+    // the new one (especially when one had >5 packages and the
+    // other doesn't, so tabs aren't even rendered).
+    state.bundleDetailsTab = 'packages'
     render()
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     if (!entry) return

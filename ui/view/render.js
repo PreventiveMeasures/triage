@@ -683,14 +683,23 @@ function findingsBodyTemplate(filtered) {
 // `dependencies/` simultaneously. Unlike the report-driven
 // `packageOf` in graph/utils.js (which picks ONE active deps dir
 // per render based on the loaded report), bundle paths might use
-// either or both depending on the build that produced them. For
-// own-source paths, falls back to the top-level dir.
+// either or both depending on the build that produced them.
+//
+// Designed to be called on STRIPPED paths (after
+// stripCommonPathPrefix has trimmed the shared directory prefix)
+// — that way packages reflect what's actually different between
+// files. A path like `dist/src/foo/a.js` would otherwise bucket
+// under `dist`, hiding the meaningful `foo`. After stripping
+// `dist/`, the same path becomes `src/foo/a.js` → bucket `src`.
+//
+// Paths with no remaining directory bucket under the synthetic
+// `__own__` so the chart still has somewhere to put them.
 function bundlePkgOf(path) {
   const m = path.match(/(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/u)
   if (m) return m[1]
   const slash = path.indexOf('/')
   if (slash > 0) return path.slice(0, slash)
-  return path || '/'
+  return '__own__'
 }
 
 // Per-package size visualization for the bundles details panel.
@@ -737,6 +746,76 @@ function renderBundleSizeDistribution(items) {
       })}
     </ul>
   </div>`
+}
+
+// Sources panel for the bundles details view — shared between the
+// sourcemap and stasis branches of `renderBundleDetails`. Wraps
+// the metadata block + per-package size visualization + flat file
+// list, splitting the viz and the list across Packages / Files
+// tabs when the bundle has more than 5 packages (a flat layout is
+// readable up to that count; beyond it the two views compete for
+// vertical space).
+//
+// `sources` and `sizes` are parallel arrays — same indices, same
+// length. Sizes may be null when content wasn't shipped in the
+// bundle (uncommon for sourcemaps).
+const BUNDLE_TABS_THRESHOLD = 5
+
+function renderBundleSourcesPanel(meta, extras, sources, sizes) {
+  const { prefix, stripped } = stripCommonPathPrefix(sources)
+  // Compute packages from the STRIPPED paths so the visualization
+  // reflects what differs between files (a shared `dist/src/...`
+  // prefix would otherwise bucket everything under `dist`). Paths
+  // without a remaining directory map to `__own__`.
+  const packages = new Set()
+  for (const p of stripped) packages.add(bundlePkgOf(p))
+  const useTabs = packages.size > BUNDLE_TABS_THRESHOLD
+  const activeTab = useTabs ? (state.bundleDetailsTab ?? 'packages') : null
+
+  // Stable alphabetical order — size signal is in the dist viz.
+  const order = stripped
+    .map((_, i) => i)
+    .sort((a, b) => stripped[a].localeCompare(stripped[b]))
+
+  const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i] }))
+  const distTpl = renderBundleSizeDistribution(distItems)
+  const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
+    ${order.map((i) => {
+      const src = sources[i]
+      const bareSrc = stripped[i]
+      const size = sizes[i]
+      return html`<li>
+        <span class="bundles-source-path" title=${src}>${bareSrc}</span>
+        ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+      </li>`
+    })}
+  </ul>` : nothing
+
+  return html`${meta}
+    <dl class="bundles-detail-meta">
+      ${extras}
+      <dt>Sources</dt><dd>${sources.length}</dd>
+      ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
+    </dl>
+    ${useTabs ? html`<div class="bundles-tabs" role="tablist">
+      <button
+        type="button"
+        class=${`bundles-tab${activeTab === 'packages' ? ' active' : ''}`}
+        data-bundle-tab="packages"
+        aria-selected=${String(activeTab === 'packages')}
+        role="tab"
+      >Packages (${packages.size})</button>
+      <button
+        type="button"
+        class=${`bundles-tab${activeTab === 'files' ? ' active' : ''}`}
+        data-bundle-tab="files"
+        aria-selected=${String(activeTab === 'files')}
+        role="tab"
+      >Files (${sources.length})</button>
+    </div>` : nothing}
+    ${useTabs
+      ? (activeTab === 'packages' ? distTpl : filesTpl)
+      : html`${distTpl}${filesTpl}`}`
 }
 
 // Bundles view body — flat list of `{integrity, name}` entries.
@@ -818,79 +897,29 @@ function renderBundleDetails(entry, details) {
     const json = details.json
     const sources = json.sources ?? []
     const contents = json.sourcesContent ?? []
-    // Collapse a shared directory prefix into a single "Prefix" row;
-    // each listed source then renders relative to it. Mirrors the
-    // analyzer's stripCommonPrefix (src/paths.js) — `node_modules/`
-    // and `@scope/` segments are preserved in the stripped paths so
-    // the package boundaries stay readable. `bareSrc` is the
-    // displayed path; `src` is the original (used for the title /
-    // hover tooltip).
-    const { prefix, stripped } = stripCommonPathPrefix(sources)
     const sizes = sources.map((_, i) => typeof contents[i] === 'string'
       ? new TextEncoder().encode(contents[i]).byteLength
       : null)
-    const distItems = sources.map((s, i) => ({ path: s, size: sizes[i] }))
-    // Sort the displayed list alphabetically by stripped path —
-    // the dist bar / per-package rows above already convey size
-    // ordering, so the flat list reads better as a stable
-    // path-sorted catalog of what's inside the bundle.
-    const order = sources.map((_, i) => i)
-      .sort((a, b) => stripped[a].localeCompare(stripped[b]))
-    return html`${meta}
-      <dl class="bundles-detail-meta">
-        <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
-        ${json.file ? html`<dt>Output</dt><dd class="mono">${json.file}</dd>` : nothing}
-        ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
-        ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
-        <dt>Sources</dt><dd>${sources.length}</dd>
-        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
-      </dl>
-      ${renderBundleSizeDistribution(distItems)}
-      ${sources.length > 0 ? html`<ul class="bundles-sources-list">
-        ${order.map((i) => {
-          const src = sources[i]
-          const bareSrc = stripped[i]
-          const size = sizes[i]
-          return html`<li>
-            <span class="bundles-source-path" title=${src}>${bareSrc}</span>
-            ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
-          </li>`
-        })}
-      </ul>` : nothing}`
+    const extras = html`
+      <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
+      ${json.file ? html`<dt>Output</dt><dd class="mono">${json.file}</dd>` : nothing}
+      ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
+      ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
+    `
+    return renderBundleSourcesPanel(meta, extras, sources, sizes)
   }
   if (details.kind === 'stasis' && details.json) {
     const json = details.json
     const sourceMap = json.sources ?? {}
     const sourceNames = Object.keys(sourceMap)
     const importTypes = json.imports ? Object.keys(json.imports) : []
-    const { prefix, stripped } = stripCommonPathPrefix(sourceNames)
     const sizes = sourceNames.map((s) => typeof sourceMap[s] === 'string'
       ? new TextEncoder().encode(sourceMap[s]).byteLength
       : null)
-    const distItems = sourceNames.map((s, i) => ({ path: s, size: sizes[i] }))
-    // Same alphabetical-by-stripped-path order as the sourcemap
-    // branch — size signal lives in the dist bar above, so the
-    // flat list reads as a stable path-sorted catalog.
-    const order = sourceNames.map((_, i) => i)
-      .sort((a, b) => stripped[a].localeCompare(stripped[b]))
-    return html`${meta}
-      <dl class="bundles-detail-meta">
-        <dt>Sources</dt><dd>${sourceNames.length}</dd>
-        ${importTypes.length > 0 ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>` : nothing}
-        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
-      </dl>
-      ${renderBundleSizeDistribution(distItems)}
-      ${sourceNames.length > 0 ? html`<ul class="bundles-sources-list">
-        ${order.map((i) => {
-          const src = sourceNames[i]
-          const bareSrc = stripped[i]
-          const size = sizes[i]
-          return html`<li>
-            <span class="bundles-source-path" title=${src}>${bareSrc}</span>
-            ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
-          </li>`
-        })}
-      </ul>` : nothing}`
+    const extras = importTypes.length > 0
+      ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>`
+      : nothing
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes)
   }
   // Stasis without parsed JSON — likely a brotli decompression that
   // failed silently (no error path filled in). Fall back to the
