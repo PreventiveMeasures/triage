@@ -1,10 +1,14 @@
-import { html, render as litRender } from 'lit'
+import { html, render as litRender, nothing } from 'lit'
 import { state, loadRepoUrlFor, saveRepoUrlFor } from './state.js'
 import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { setCount, analyzeContent } from './counts.js'
 import { render } from './render.js'
+import { toGroup } from './group.js'
+import { deriveFindingId } from '../../common/finding-id.js'
+import { parseMarkdownFindings } from '../../common/parse-md.js'
+import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 
 // Workspace import — the inverse of workspace-export.js. The dropped
 // `.gz` blob is gunzipped, parsed as JSON, validated against the
@@ -58,13 +62,15 @@ function isWorkspaceExport(data) {
 // per (id, property) so color and comment can disagree independently
 // on the same finding. Each conflict row gets resolved in the modal
 // dialog; the local value stays in place until the user decides.
-async function mergeTriage(triage) {
+async function mergeTriage(triage, findingLookup) {
   if (!triage || typeof triage !== 'object') return
   // Conflicts are property-scoped — one finding id can disagree on
-  // both color and comment, so each gets its own row in the dialog
-  // and its own resolution. Non-conflicting changes apply
+  // both color and comment, so each gets its own decision in the
+  // dialog and its own resolution. Non-conflicting changes apply
   // immediately; the conflicting property stays unchanged locally
-  // until the user decides.
+  // until the user decides. We collect by `id` and group on the
+  // dialog side so each finding only appears once with both
+  // conflicts shown together.
   const conflicts = []
   for (const [id, entry] of Object.entries(triage)) {
     if (!entry || typeof entry !== 'object') continue
@@ -88,7 +94,7 @@ async function mergeTriage(triage) {
     if (entry.deleted) state.deletedIds.add(id)
   }
   if (conflicts.length > 0) {
-    const decisions = await resolveTriageConflicts(conflicts)
+    const decisions = await resolveTriageConflicts(conflicts, findingLookup ?? new Map())
     if (decisions) {
       for (const c of conflicts) {
         const key = `${c.id}:${c.property}`
@@ -101,17 +107,51 @@ async function mergeTriage(triage) {
   await saveTriage()
 }
 
-// Modal dialog for triage conflicts. One row per (finding id +
-// property) — the same id can show up twice (once for color, once
-// for comment) so the user can decide each property independently.
-// Returns a map keyed by `${id}:${property}` with `'local'` /
-// `'imported'`, or null if the dialog was cancelled (which is
-// equivalent to keeping local everywhere). Uses native <dialog>
-// for the focus-trap + Esc-to-cancel semantics — no extra JS — and
-// Lit's `render(html\`…\`, dialog)` to fill it, so interpolated
-// values (the user's id / chosen color / comment text) escape
-// automatically without a hand-rolled `escHtml`.
-//
+// Parse the imported reports once to build an `id → { severity,
+// file, line, description }` map for the conflict dialog. Same id
+// derivation as ingest.js / workspace-export.js so MD-imported
+// findings line up with the persisted triage keys. Skipped when
+// there's no triage in the import (no conflicts possible). Each
+// finding's description gets the first non-empty line trimmed for
+// dialog display — full text would blow the modal vertically.
+function firstDescriptionLine(text) {
+  if (!text) return ''
+  for (const line of text.split('\n')) {
+    if (line.trim()) return line.trim()
+  }
+  return ''
+}
+
+async function buildFindingLookup(reportEntries) {
+  const lookup = new Map()
+  for (const r of reportEntries ?? []) {
+    if (typeof r?.content !== 'string') continue
+    let data
+    try {
+      data = JSON.parse(r.content)
+    } catch {
+      data = parseDeepsecFindings(r.content) ?? parseMarkdownFindings(r.content)
+    }
+    if (!data?.findings) continue
+    const all = data.findings.flatMap(toGroup)
+    const idLess = all.filter((f) => !f.id)
+    if (idLess.length > 0) {
+      const computed = await Promise.all(idLess.map(deriveFindingId))
+      idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
+    }
+    for (const f of all) {
+      if (!f.id || lookup.has(f.id)) continue
+      lookup.set(f.id, {
+        severity: f.severity,
+        file: f.file,
+        line: f.line,
+        description: firstDescriptionLine(f.description),
+      })
+    }
+  }
+  return lookup
+}
+
 // Same `oklch` values color-marker.js uses, kept in sync so the
 // dialog's chip matches the in-app picker. Only the four marker
 // colors round-trip in triage.
@@ -122,27 +162,73 @@ const COLOR_HEX = {
   gray: 'oklch(0.55 0.01 260)',
 }
 
-function colorChipTemplate(color) {
+function colorSwatchTemplate(color) {
   const value = COLOR_HEX[color] ?? 'transparent'
-  return html`<span class="conflict-chip" style=${`background:${value}`} title=${color}></span>${color}`
+  return html`<span class="conflict-color">
+    <span class="conflict-color-dot" style=${`background:${value}`}></span>
+    <span class="conflict-color-name">${color}</span>
+  </span>`
 }
 
-function commentSnippetTemplate(text) {
-  const t = text.length > 80 ? text.slice(0, 77) + '…' : text
-  return html`<span class="conflict-comment">${t}</span>`
+function commentBlockTemplate(text) {
+  return html`<span class="conflict-comment-text">${text || html`<em>empty</em>`}</span>`
 }
 
-function describeValueTemplate(c, side) {
-  const value = side === 'local' ? c.local : c.imported
-  if (c.property === 'color') return colorChipTemplate(value)
-  if (c.property === 'comment') return commentSnippetTemplate(value)
+function valueTemplate(property, value) {
+  if (property === 'color') return colorSwatchTemplate(value)
+  if (property === 'comment') return commentBlockTemplate(value)
   return html`${String(value)}`
 }
 
-function resolveTriageConflicts(conflicts) {
+function severityBadgeTemplate(sev) {
+  if (!sev) return nothing
+  const label = sev.replace(/_/gu, ' ')
+  return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
+}
+
+function findingHeaderTemplate(meta, id) {
+  const loc = meta?.file
+    ? (meta.line ? `${meta.file}:${meta.line}` : meta.file)
+    : ''
+  return html`
+    <div class="conflict-card-head">
+      ${severityBadgeTemplate(meta?.severity)}
+      ${loc ? html`<span class="conflict-loc" title=${loc}>${loc}</span>` : nothing}
+      <code class="conflict-id" title=${id}>${id.slice(0, 8)}…</code>
+    </div>
+    ${meta?.description
+      ? html`<div class="conflict-desc" title=${meta.description}>${meta.description}</div>`
+      : nothing}
+  `
+}
+
+// Modal dialog for triage conflicts. Conflicts are grouped by
+// finding id so each card shows the finding's context (severity
+// badge, file:line, first line of description) once and lists the
+// per-property choices (color, comment) inside it. Returns a map
+// keyed by `${id}:${property}` with `'local'` / `'imported'`, or
+// null if the dialog was cancelled (which is equivalent to keeping
+// local everywhere). Uses native <dialog> for focus-trap +
+// Esc-to-cancel — no extra JS — and Lit `render` so all
+// interpolated text escapes automatically.
+function resolveTriageConflicts(conflicts, findingLookup) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog')
     dialog.className = 'workspace-conflict-dialog'
+
+    // Group by finding id so a finding with both a color AND a
+    // comment conflict shows up as a single card with two
+    // decisions, instead of two unrelated rows.
+    const byId = new Map()
+    for (const c of conflicts) {
+      if (!byId.has(c.id)) byId.set(c.id, [])
+      byId.get(c.id).push(c)
+    }
+    // Sort properties within a card so order is stable: color first,
+    // then comment.
+    for (const list of byId.values()) {
+      list.sort((a, b) => (a.property === 'color' ? -1 : 1))
+    }
 
     const colorN = conflicts.filter((c) => c.property === 'color').length
     const commentN = conflicts.filter((c) => c.property === 'comment').length
@@ -150,40 +236,50 @@ function resolveTriageConflicts(conflicts) {
       colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
       commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
     ].filter(Boolean).join(' and ')
+    const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
     litRender(html`
-      <h3>Workspace import: triage conflicts</h3>
-      <p>The imported workspace disagrees with your local triage on
-        ${summary}. Pick which side wins per row — trash status was
-        already merged.</p>
-      <div class="conflict-bulk">
-        <button type="button" data-bulk="local">Keep all local</button>
-        <button type="button" data-bulk="imported">Use all imported</button>
-      </div>
+      <header class="conflict-head">
+        <h3>Triage conflicts on import</h3>
+        <p>${findingsLabel} disagree with your local triage on
+          ${summary}. Pick which side to keep — trash status was
+          already merged.</p>
+        <div class="conflict-bulk">
+          <button type="button" data-bulk="local">Keep all current</button>
+          <button type="button" data-bulk="imported">Apply all imported</button>
+        </div>
+      </header>
       <ul class="conflict-list">
-        ${conflicts.map((c) => {
-          const key = `${c.id}:${c.property}`
-          const propLabel = c.property === 'color' ? 'color' : 'comment'
-          const radioName = `conflict-${key}`
-          return html`<li class="conflict-row" data-key=${key}>
-            <code class="conflict-id" title=${c.id}>${c.id.slice(0, 8)}…
-              <span class="conflict-prop">${propLabel}</span>
-            </code>
-            <label class="conflict-choice">
-              <input type="radio" name=${radioName} value="local" checked>
-              <span>Keep local: ${describeValueTemplate(c, 'local')}</span>
-            </label>
-            <label class="conflict-choice">
-              <input type="radio" name=${radioName} value="imported">
-              <span>Use imported: ${describeValueTemplate(c, 'imported')}</span>
-            </label>
-          </li>`
-        })}
+        ${[...byId.entries()].map(([id, items]) => html`
+          <li class="conflict-card" data-id=${id}>
+            ${findingHeaderTemplate(findingLookup.get(id), id)}
+            <div class="conflict-rows">
+              ${items.map((c) => {
+                const key = `${c.id}:${c.property}`
+                const radioName = `conflict-${key}`
+                const propLabel = c.property === 'color' ? 'Color' : 'Comment'
+                return html`<div class="conflict-row" data-key=${key}>
+                  <span class="conflict-row-label">${propLabel}</span>
+                  <label class="conflict-choice">
+                    <input type="radio" name=${radioName} value="local" checked>
+                    <span class="conflict-choice-label">Keep current</span>
+                    <span class="conflict-choice-value">${valueTemplate(c.property, c.local)}</span>
+                  </label>
+                  <label class="conflict-choice">
+                    <input type="radio" name=${radioName} value="imported">
+                    <span class="conflict-choice-label">Apply imported</span>
+                    <span class="conflict-choice-value">${valueTemplate(c.property, c.imported)}</span>
+                  </label>
+                </div>`
+              })}
+            </div>
+          </li>
+        `)}
       </ul>
-      <div class="conflict-actions">
+      <footer class="conflict-actions">
         <button type="button" data-action="cancel">Cancel</button>
         <button type="button" data-action="apply" class="primary">Apply</button>
-      </div>
+      </footer>
     `, dialog)
 
     document.body.appendChild(dialog)
@@ -214,7 +310,7 @@ function resolveTriageConflicts(conflicts) {
       }
       if (e.target.closest('[data-action="cancel"]')) finish(null)
     })
-    // Esc / backdrop close → cancel = keep all local.
+    // Esc / backdrop close → cancel = keep all current.
     dialog.addEventListener('close', () => finish(null))
     dialog.showModal()
   })
@@ -260,7 +356,16 @@ export async function importWorkspaceFromGzip(file) {
     createdAt: data.workspace.createdAt,
   })
 
-  await mergeTriage(data.triage)
+  // Build a finding metadata lookup up front (once) so the
+  // conflict dialog — if any conflicts surface — can show
+  // severity badges + file:line + a description preview per
+  // conflicting finding instead of a bare uuid prefix. Skipped
+  // when there's no triage to merge: no conflicts are possible.
+  const hasIncomingTriage = data.triage && Object.keys(data.triage).length > 0
+  const lookup = hasIncomingTriage
+    ? await buildFindingLookup(data.reports)
+    : new Map()
+  await mergeTriage(data.triage, lookup)
   // Mutating state.markers / state.deletedIds outside a render
   // context doesn't auto-trigger a repaint of the loaded report —
   // re-run render() so adopted colors and trash assignments show up

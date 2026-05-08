@@ -293,26 +293,35 @@
 
 /* Workspace import: triage conflict dialog. The native <dialog>
    handles focus trap + Esc-to-close; this is just the visual shell.
-   Each row exposes a Keep-local / Use-imported radio pair plus a tiny
-   color chip so the user can compare at a glance. Lives in the
-   sidebar stylesheet because the import is a sidebar-rooted action. */
+   Conflicts are grouped by finding id — each card carries a
+   severity badge + file:line + description preview, then per-
+   property choice rows (color, comment) inside. Lives here because
+   the import is a sidebar-rooted action. */
 .workspace-conflict-dialog {
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); color: var(--text);
-  padding: 1rem 1.1rem; max-width: 560px; width: min(92vw, 560px);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 720px; width: min(94vw, 720px);
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
 
-  & h3 { margin: 0 0 .35rem; font-size: 1rem; }
-  & p { margin: 0 0 .8rem; color: var(--muted); font-size: .82rem; }
-
-  & .conflict-bulk { display: flex; gap: .35rem; margin-bottom: .55rem; }
+  & .conflict-head h3 {
+    margin: 0 0 .25rem; font-size: 1rem; font-weight: 600;
+  }
+  & .conflict-head p {
+    margin: 0 0 .75rem; color: var(--muted); font-size: .82rem;
+  }
+  & .conflict-bulk {
+    display: flex; gap: .4rem; margin-bottom: .7rem;
+    padding-bottom: .7rem;
+    border-bottom: 1px solid var(--border);
+  }
   & .conflict-bulk button,
   & .conflict-actions button {
     background: transparent; border: 1px solid var(--border);
-    color: var(--text); border-radius: 4px;
-    padding: .25rem .65rem; cursor: pointer;
+    color: var(--text); border-radius: 5px;
+    padding: .3rem .8rem; cursor: pointer;
     font: inherit; font-size: .78rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -322,47 +331,127 @@
 
   & .conflict-list {
     list-style: none; margin: 0; padding: 0;
-    max-height: 50vh; overflow-y: auto;
-    border: 1px solid var(--border); border-radius: 5px;
+    max-height: 60vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: .5rem;
   }
-  & .conflict-row {
-    display: grid;
-    grid-template-columns: minmax(0, 8.5rem) 1fr 1fr;
-    align-items: center; gap: .5rem;
-    padding: .4rem .55rem;
-    border-bottom: 1px solid var(--border);
-    font-size: .8rem;
 
-    &:last-child { border-bottom: 0; }
+  /* One card per finding id. Header row carries the severity badge,
+     file:line, and a truncated id chip; description preview sits
+     below; per-property decision rows fill the rest. */
+  & .conflict-card {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: .55rem .7rem .6rem;
+    background: rgb(from var(--text) r g b / .02);
+  }
+  & .conflict-card-head {
+    display: flex; align-items: center; gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: .35rem;
+  }
+  & .conflict-loc {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .76rem; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; flex: 1;
   }
   & .conflict-id {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: .72rem; color: var(--muted);
+    font-size: .68rem; color: var(--muted);
+    padding: 1px .3rem;
+    background: rgb(from var(--text) r g b / .05);
+    border-radius: 3px;
+  }
+  & .conflict-desc {
+    font-size: .78rem; color: var(--muted);
+    margin-bottom: .55rem;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  & .conflict-prop {
-    font-family: inherit; font-size: .68rem;
+
+  /* Severity badge — same palette as the toolbar / card badges
+     (themed via theme.css's per-severity custom properties). */
+  & .conflict-sev {
+    display: inline-block;
+    padding: 1px .4rem;
+    border-radius: 3px;
+    font-size: .62rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: .08em;
-    color: var(--accent); margin-left: .25rem;
+    color: #fff; flex-shrink: 0;
+
+    &.sev-critical      { background: var(--critical); }
+    &.sev-high          { background: var(--high); }
+    &.sev-medium        { background: var(--medium); }
+    &.sev-low           { background: var(--low); }
+    &.sev-high_bug      { background: var(--high-bug); }
+    &.sev-bug           { background: var(--bug); }
+    &.sev-informational { background: var(--info); }
+  }
+
+  & .conflict-rows { display: flex; flex-direction: column; gap: .35rem; }
+
+  /* One row per property (color, comment) inside a card. Three
+     columns: property label, "current" choice, "imported" choice.
+     Each choice is a clickable label wrapping its radio so the
+     whole side is a hit target. */
+  & .conflict-row {
+    display: grid;
+    grid-template-columns: 5rem 1fr 1fr;
+    align-items: stretch; gap: .4rem;
+  }
+  & .conflict-row-label {
+    color: var(--muted); font-size: .72rem;
+    text-transform: uppercase; letter-spacing: .08em;
+    align-self: center;
   }
   & .conflict-choice {
-    display: flex; align-items: center; gap: .35rem;
+    display: flex; flex-direction: column; gap: .15rem;
+    padding: .35rem .5rem;
+    border: 1px solid var(--border); border-radius: 5px;
     cursor: pointer; min-width: 0;
 
-    & em { color: var(--muted); font-style: normal; font-size: .72rem; }
+    &:has(input:checked) {
+      border-color: var(--accent);
+      background: rgb(from var(--accent) r g b / .07);
+    }
   }
-  & .conflict-chip {
-    width: 10px; height: 10px; border-radius: 50%;
-    flex-shrink: 0; box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
+  & .conflict-choice input[type="radio"] {
+    position: absolute;
+    opacity: 0; pointer-events: none;
   }
-  & .conflict-comment {
-    font-style: italic; color: var(--text);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    min-width: 0;
+  & .conflict-choice-label {
+    font-size: .68rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  & .conflict-choice:has(input:checked) .conflict-choice-label {
+    color: var(--accent);
+  }
+  & .conflict-choice-value { font-size: .82rem; min-width: 0; }
+
+  & .conflict-color {
+    display: inline-flex; align-items: center; gap: .35rem;
+  }
+  & .conflict-color-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
+    flex-shrink: 0;
+  }
+  & .conflict-color-name {
+    text-transform: capitalize;
+  }
+  & .conflict-comment-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    & em { color: var(--muted); font-style: italic; }
   }
 
   & .conflict-actions {
     display: flex; justify-content: flex-end; gap: .4rem;
     margin-top: .8rem;
+    padding-top: .7rem;
+    border-top: 1px solid var(--border);
   }
 }
