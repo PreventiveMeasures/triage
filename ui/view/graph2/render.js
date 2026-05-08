@@ -6,13 +6,6 @@ import { pkgColor } from '../graph/utils.js'
 import { pkgRelative } from './data.js'
 import { isGroupDeleted } from '../group.js'
 
-const SEV_COLORS = {
-  critical: '#ff5470',
-  high: '#ff9d4a',
-  medium: '#f4d35e',
-  low: '#67c2ff',
-}
-
 // Build the entire v2 layout as a Lit template — three columns:
 // left panel (palette / stats / issues / display / options), stage
 // (canvas + corner readouts + zoom controls + tooltip), right
@@ -66,21 +59,11 @@ function renderTopBar(graph) {
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
 
   return html`<div class="graph2-topbar">
-    ${hasAnyVisible ? html`<div class="g2-sev-filters">
-      ${SEVERITIES.map((sev) => {
-        const count = issueCounts[sev]
-        const isSelected = graph2.selectedSeverities.has(sev)
-        if (count === 0 && !isSelected) return null
-        const label = sev.replace(/_/gu, ' ')
-        return html`<button
-          type="button"
-          class=${`g2-sev-pill${isSelected ? ' on' : ''}`}
-          data-g2-sev=${sev}
-          style=${`--sev:${SEV_COLORS[sev]}`}
-          aria-pressed=${String(isSelected)}
-        ><span class="g2-sev-mark"></span><span class="g2-sev-pill-label">${label}</span><span class="g2-sev-pill-count">${count}</span></button>`
-      })}
-    </div>` : null}
+    ${hasAnyVisible ? html`<severity-chips
+      counts=${JSON.stringify(issueCounts)}
+      selected=${JSON.stringify([...graph2.selectedSeverities])}
+      kind="graph"
+    ></severity-chips>` : null}
     <!-- Path / package substring filter — case-insensitive match
          against each node's file path AND its package name. Same
          soft-dim treatment as the severity / solo filters: non-

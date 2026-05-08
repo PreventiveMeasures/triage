@@ -72,25 +72,12 @@ report.addEventListener('click', (e) => {
     graph2.graphState?.requestDraw?.()
     return
   }
-  const g2Sev = e.target.closest('[data-g2-sev]')
-  if (g2Sev) {
-    // Toggle membership in the highlight-filter set. Empty set
-    // = no filter (all nodes full opacity); non-empty = matching
-    // nodes full, others dim to 0.1. The class swap keeps the
-    // pill's active appearance in sync without a full re-render.
-    const sev = g2Sev.dataset.g2Sev
-    if (graph2.selectedSeverities.has(sev)) graph2.selectedSeverities.delete(sev)
-    else graph2.selectedSeverities.add(sev)
-    g2Sev.classList.toggle('on', graph2.selectedSeverities.has(sev))
-    g2Sev.setAttribute('aria-pressed', String(graph2.selectedSeverities.has(sev)))
-    graph2.graphState?.requestDraw?.()
-    // Refresh the Top-packages block — its Issues counts now
-    // factor the selected severities in, so flipping a pill
-    // should re-rank the list. Selection card untouched (file
-    // / package selection isn't filter-derived).
-    refreshGraph2TopPkgs()
-    return
-  }
+  // (graph2 severity filter is now a `<severity-chips kind="graph">`
+  // — the click dispatches a `severity-toggle` CustomEvent that the
+  // dedicated listener at the bottom of this file handles, doing
+  // the same canvas redraw + Top-packages refresh as the old
+  // `[data-g2-sev]` click delegate did.)
+
   const g2Select = e.target.closest('[data-g2-select]')
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
@@ -468,6 +455,22 @@ report.addEventListener('input', (e) => {
 // count) catches up.
 report.addEventListener('severity-toggle', (e) => {
   const sev = e.detail.severity
+  if (e.detail.kind === 'graph') {
+    // Graph topbar usage — flip `graph2.selectedSeverities` (the
+    // canvas highlight set, separate from the findings-tab filter)
+    // and trigger a surgical canvas redraw + Top-packages refresh.
+    // A full render() would tear down the canvas's rAF loop / hover
+    // state, so we update the chip's `selected` property in place
+    // instead of re-rendering through render.js.
+    if (graph2.selectedSeverities.has(sev)) graph2.selectedSeverities.delete(sev)
+    else graph2.selectedSeverities.add(sev)
+    e.target.selected = [...graph2.selectedSeverities]
+    graph2.graphState?.requestDraw?.()
+    refreshGraph2TopPkgs()
+    return
+  }
+  // Findings-tab usage (default) — flips `state.filterSeverities`
+  // and full-renders so the toolbar count + visible row set catch up.
   if (state.filterSeverities.has(sev)) state.filterSeverities.delete(sev)
   else state.filterSeverities.add(sev)
   render()

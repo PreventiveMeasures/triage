@@ -21,10 +21,13 @@
 //     Empty array = no filter (all chips read as inactive).
 //
 // Events (bubble + composed:true):
-//   * `severity-toggle(detail.severity)` — fired when a chip is
-//     clicked. The host adds/removes the value from
-//     `state.filterSeverities` and re-renders.
-import { LitElement, html, css } from 'lit'
+//   * `severity-toggle(detail.severity, detail.kind)` — fired when a
+//     chip is clicked. `kind` rides along so events.js routes to
+//     `state.filterSeverities` (kind="findings", default — full
+//     re-render) vs. `graph2.selectedSeverities` (kind="graph" —
+//     surgical canvas redraw + chip property update only, no full
+//     re-render).
+import { LitElement, html } from 'lit'
 
 const TIERS = [
   ['critical',      'Critical'],
@@ -40,6 +43,9 @@ class SeverityChips extends LitElement {
   static properties = {
     counts:   { type: Object },
     selected: { type: Array },
+    // Identifies which state slot the host is wiring up — see the
+    // `severity-toggle` description above. Default 'findings'.
+    kind:     { type: String },
   }
 
   // CSS lives in styles/toolbar.css under the `.sev-chips` /
@@ -54,6 +60,7 @@ class SeverityChips extends LitElement {
     super()
     this.counts = {}
     this.selected = []
+    this.kind = 'findings'
   }
 
   render() {
@@ -61,7 +68,12 @@ class SeverityChips extends LitElement {
     return html`<div class="sev-chips" role="group" aria-label="Filter by severity">
       ${TIERS.map(([sev, label]) => {
         const count = this.counts[sev] ?? 0
-        if (!count) return null
+        // Keep selected zero-count chips visible so the user can
+        // always untoggle them — useful in the graph-tab usage where
+        // a severity filter can outlive its data (toggling a
+        // severity off in the canvas, then having the underlying
+        // graph data change).
+        if (!count && !selected.has(sev)) return null
         const active = selected.has(sev)
         return html`<button
           type="button"
@@ -75,7 +87,7 @@ class SeverityChips extends LitElement {
 
   _toggle(severity) {
     this.dispatchEvent(new CustomEvent('severity-toggle', {
-      detail: { severity },
+      detail: { severity, kind: this.kind },
       bubbles: true,
       composed: true,
     }))
