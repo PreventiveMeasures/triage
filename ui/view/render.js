@@ -990,8 +990,6 @@ function renderBundleSizeDistribution(items) {
 // `sources` and `sizes` are parallel arrays — same indices, same
 // length. Sizes may be null when content wasn't shipped in the
 // bundle (uncommon for sourcemaps).
-const BUNDLE_TABS_THRESHOLD = 5
-
 function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
@@ -1000,15 +998,15 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // without a remaining directory map to `__own__`.
   const packages = new Set()
   for (const p of stripped) packages.add(bundlePkgOf(p))
-  const splitPkgFiles = packages.size > BUNDLE_TABS_THRESHOLD
-  // The Graph and Issues tabs no longer live in the details panel
-  // — they open a full-width slide instead (see renderBundleSlide
-  // below). The panel is for Sources only; treat any non-files tab
-  // value as the Packages tab so old state doesn't leave the
-  // panel blank.
-  const activeTab = state.bundleDetailsTab === 'files' && splitPkgFiles
-    ? 'files'
-    : 'packages'
+  // The Graph and Issues tabs open a full-width slide (see
+  // renderBundleSlide below) — they don't live in the details
+  // panel. Inside the panel we always show the Packages / Files
+  // pair so users can flip between the per-package size view and
+  // the flat file list regardless of how many packages the bundle
+  // has. Default to Packages; treat anything other than 'files'
+  // as 'packages' so older state slots don't leave the panel
+  // blank.
+  const activeTab = state.bundleDetailsTab === 'files' ? 'files' : 'packages'
 
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
@@ -1058,7 +1056,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
     </dl>
     ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     <div class="bundles-tabs" role="tablist">
-      ${splitPkgFiles ? html`<button
+      <button
         type="button"
         class=${`bundles-tab${activeTab === 'packages' ? ' active' : ''}`}
         data-bundle-tab="packages"
@@ -1071,7 +1069,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         data-bundle-tab="files"
         aria-selected=${String(activeTab === 'files')}
         role="tab"
-      >Files (${sources.length})</button>` : nothing}
+      >Files (${sources.length})</button>
       <span class="bundles-tabs-spacer"></span>
       <button
         type="button"
@@ -1086,9 +1084,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         title="Open the bundle's matched issues"
       >Issues →</button>` : nothing}
     </div>
-    ${splitPkgFiles
-      ? (activeTab === 'files' ? filesTpl : distTpl)
-      : html`${distTpl}${filesTpl}`}`
+    ${activeTab === 'files' ? filesTpl : distTpl}`
 }
 
 // Full-width "slide" view for the Graph and Issues tabs. The
