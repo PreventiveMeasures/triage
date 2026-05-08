@@ -175,6 +175,11 @@
     grid-template-columns: 1fr;
     gap: 1rem;
     margin-top: 1rem;
+    /* Each column sizes to its own content — without this, grid's
+       default `align-items: stretch` made the left list grow to
+       match the (often taller) right details panel, painting the
+       list's bordered shell over empty space below the last row. */
+    align-items: start;
 
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
