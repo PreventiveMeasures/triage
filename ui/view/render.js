@@ -8,6 +8,7 @@ import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './gr
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
+import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
@@ -678,6 +679,66 @@ function findingsBodyTemplate(filtered) {
   })}`
 }
 
+// Bundle-side packageOf — recognizes BOTH `node_modules/` and
+// `dependencies/` simultaneously. Unlike the report-driven
+// `packageOf` in graph/utils.js (which picks ONE active deps dir
+// per render based on the loaded report), bundle paths might use
+// either or both depending on the build that produced them. For
+// own-source paths, falls back to the top-level dir.
+function bundlePkgOf(path) {
+  const m = path.match(/(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/u)
+  if (m) return m[1]
+  const slash = path.indexOf('/')
+  if (slash > 0) return path.slice(0, slash)
+  return path || '/'
+}
+
+// Per-package size visualization for the bundles details panel.
+// Builds a horizontal stacked bar (segments proportional to each
+// package's total source-byte size) plus a sorted breakdown row
+// per package. Mirrors the graph2 distribution chrome on the right
+// panel — same `pkgColor` palette so the colors carry meaning
+// across both views (a `@noble/hashes` package shows the same hue
+// in the bundle-size chart and the canvas).
+function renderBundleSizeDistribution(items) {
+  // items: Array<{path, size}>; size may be 0 / null when the
+  // bundle didn't carry per-source content (rare for sourcemaps).
+  const totalByPkg = new Map()
+  let total = 0
+  for (const { path, size } of items) {
+    if (typeof size !== 'number' || size <= 0) continue
+    const pkg = bundlePkgOf(path)
+    totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
+    total += size
+  }
+  if (total === 0) return nothing
+  const sorted = [...totalByPkg.entries()].sort((a, b) => b[1] - a[1])
+  return html`<div class="bundles-dist">
+    <div class="bundles-dist-bar" aria-hidden="true">
+      ${sorted.map(([pkg, size]) => html`<span
+        class="bundles-dist-seg"
+        style=${`flex-grow: ${size}; background: ${pkgColor(pkg)}`}
+        title=${`${pkg}: ${formatBytes(size)}`}
+      ></span>`)}
+    </div>
+    <ul class="bundles-dist-list">
+      ${sorted.map(([pkg, size]) => {
+        const pct = (size / total * 100).toFixed(1)
+        const label = pkg === '__own__' ? 'own source' : pkg
+        return html`<li>
+          <span class="bundles-dist-dot" style=${`background: ${pkgColor(pkg)}`}></span>
+          <span class="bundles-dist-pkg" title=${pkg}>${label}</span>
+          <span class="bundles-dist-bar-row" aria-hidden="true">
+            <span class="bundles-dist-bar-fill" style=${`width: ${pct}%; background: ${pkgColor(pkg)}`}></span>
+          </span>
+          <span class="bundles-dist-size">${formatBytes(size)}</span>
+          <span class="bundles-dist-percent">${pct}%</span>
+        </li>`
+      })}
+    </ul>
+  </div>`
+}
+
 // Bundles view body — flat list of `{integrity, name}` entries.
 // Bundle blobs are stored as-is in OPFS keyed by `sha512-${base64}`
 // integrity; the catalog row shows the dropped filename first,
@@ -765,6 +826,19 @@ function renderBundleDetails(entry, details) {
     // displayed path; `src` is the original (used for the title /
     // hover tooltip).
     const { prefix, stripped } = stripCommonPathPrefix(sources)
+    const sizes = sources.map((_, i) => typeof contents[i] === 'string'
+      ? new TextEncoder().encode(contents[i]).byteLength
+      : null)
+    const distItems = sources.map((s, i) => ({ path: s, size: sizes[i] }))
+    // Sort the displayed list by size desc (biggest contributors
+    // first, matching the dist bar above), tie-break alphabetically
+    // on the stripped path. Files without a size bucket to the end.
+    const order = sources.map((_, i) => i).sort((a, b) => {
+      const sa = sizes[a] ?? -1
+      const sb = sizes[b] ?? -1
+      if (sb !== sa) return sb - sa
+      return stripped[a].localeCompare(stripped[b])
+    })
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
@@ -774,13 +848,12 @@ function renderBundleDetails(entry, details) {
         <dt>Sources</dt><dd>${sources.length}</dd>
         ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
       </dl>
+      ${renderBundleSizeDistribution(distItems)}
       ${sources.length > 0 ? html`<ul class="bundles-sources-list">
-        ${stripped.map((bareSrc, i) => {
+        ${order.map((i) => {
           const src = sources[i]
-          const content = contents[i]
-          const size = typeof content === 'string'
-            ? new TextEncoder().encode(content).byteLength
-            : null
+          const bareSrc = stripped[i]
+          const size = sizes[i]
           return html`<li>
             <span class="bundles-source-path" title=${src}>${bareSrc}</span>
             ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
@@ -791,22 +864,34 @@ function renderBundleDetails(entry, details) {
   if (details.kind === 'stasis' && details.json) {
     const json = details.json
     const sourceMap = json.sources ?? {}
-    const sourceNames = Object.keys(sourceMap).sort()
+    const sourceNames = Object.keys(sourceMap)
     const importTypes = json.imports ? Object.keys(json.imports) : []
     const { prefix, stripped } = stripCommonPathPrefix(sourceNames)
+    const sizes = sourceNames.map((s) => typeof sourceMap[s] === 'string'
+      ? new TextEncoder().encode(sourceMap[s]).byteLength
+      : null)
+    const distItems = sourceNames.map((s, i) => ({ path: s, size: sizes[i] }))
+    // Same size-desc / alpha tie-break as the sourcemap branch
+    // above. Stasis was previously sorted alphabetically by source
+    // name; size-desc reads more useful next to the size dist bar.
+    const order = sourceNames.map((_, i) => i).sort((a, b) => {
+      const sa = sizes[a] ?? -1
+      const sb = sizes[b] ?? -1
+      if (sb !== sa) return sb - sa
+      return stripped[a].localeCompare(stripped[b])
+    })
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Sources</dt><dd>${sourceNames.length}</dd>
         ${importTypes.length > 0 ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>` : nothing}
         ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
       </dl>
+      ${renderBundleSizeDistribution(distItems)}
       ${sourceNames.length > 0 ? html`<ul class="bundles-sources-list">
-        ${stripped.map((bareSrc, i) => {
+        ${order.map((i) => {
           const src = sourceNames[i]
-          const content = sourceMap[src]
-          const size = typeof content === 'string'
-            ? new TextEncoder().encode(content).byteLength
-            : null
+          const bareSrc = stripped[i]
+          const size = sizes[i]
           return html`<li>
             <span class="bundles-source-path" title=${src}>${bareSrc}</span>
             ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}

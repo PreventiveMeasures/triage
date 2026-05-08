@@ -244,6 +244,67 @@
   & .bundles-detail-stasis { color: var(--muted); font-size: .78rem; padding: .5rem 0; }
   & .bundles-detail-error { color: var(--critical); font-size: .78rem; padding: .5rem 0; }
 
+  /* Per-package size distribution chart — stacked bar at the top
+     showing each package's share of the total bundle, then a
+     sorted breakdown row per package (color dot + name + per-row
+     bar fill + bytes + percent). Mirrors the graph2 right-panel
+     dist chrome so the colors and shape carry meaning across the
+     two views. */
+  & .bundles-dist {
+    margin: .5rem 0 .75rem;
+  }
+  & .bundles-dist-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--border);
+  }
+  & .bundles-dist-seg { flex-basis: 0; height: 100%; }
+
+  & .bundles-dist-list {
+    list-style: none; padding: 0;
+    margin: .5rem 0 0;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1.5fr) max-content max-content;
+    column-gap: .5rem;
+    row-gap: .25rem;
+    align-items: center;
+    font-size: .72rem;
+
+    & li {
+      display: contents;
+    }
+  }
+  & .bundles-dist-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  & .bundles-dist-pkg {
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & .bundles-dist-bar-row {
+    display: block;
+    height: 6px;
+    border-radius: 2px;
+    background: rgb(from var(--text) r g b / .06);
+    overflow: hidden;
+  }
+  & .bundles-dist-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+  }
+  & .bundles-dist-size,
+  & .bundles-dist-percent {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
   /* Sources list (parsed from .map sourcesContent). Each row is
      path on the left, byte size on the right; ellipsis-clipped
      paths so the row doesn't grow horizontally. */
