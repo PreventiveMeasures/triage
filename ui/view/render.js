@@ -680,8 +680,9 @@ function findingsBodyTemplate(filtered) {
 
 // Bundles view body — flat list of names. Bundle blobs are stored
 // as-is in OPFS (sourcemap JSON or brotli-compressed stasis); the
-// list is just the catalog. No per-row affordance yet — the
-// analyzer pipeline reads from OPFS directly when wired up later.
+// list is just the catalog. Each row carries a Delete button that
+// drops the file from OPFS via events.js's data-delete-bundle
+// click handler, refreshing both the list and the sidebar count.
 function renderBundlesList(bundles) {
   return html`<div class="bundles-view">
     <header class="page-head">
@@ -691,7 +692,16 @@ function renderBundlesList(bundles) {
       </div>
     </header>
     <ul class="bundles-list">
-      ${bundles.map((name) => html`<li>${name}</li>`)}
+      ${bundles.map((name) => html`<li>
+        <span class="bundles-name">${name}</span>
+        <button
+          type="button"
+          class="bundles-delete"
+          data-delete-bundle=${name}
+          title=${`Delete ${name}`}
+          aria-label=${`Delete ${name}`}
+        >Delete</button>
+      </li>`)}
     </ul>
   </div>`
 }

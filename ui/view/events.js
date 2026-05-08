@@ -5,6 +5,8 @@ import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
 import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
+import { deleteBundle, listBundles } from './storage.js'
+import { renderSidebar } from './sidebar.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -29,6 +31,24 @@ function pathClosest(e, selector) {
 // selectors come first so a more specific match short-circuits before a
 // generic one (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  // Bundles list — per-row delete button (`data-delete-bundle=<name>`).
+  // Drops the OPFS entry, refreshes state.bundles from OPFS, and
+  // re-renders both the main view (so the row disappears) and the
+  // sidebar (so the count drops or the header hides when the last
+  // bundle goes). Confirm before deleting since OPFS removes are
+  // not recoverable from the in-app UI.
+  const delBundle = e.target.closest('[data-delete-bundle]')
+  if (delBundle) {
+    const name = delBundle.dataset.deleteBundle
+    if (!confirm(`Delete bundle "${name}"?`)) return
+    ;(async () => {
+      await deleteBundle(name)
+      state.bundles = await listBundles()
+      render()
+      await renderSidebar()
+    })()
+    return
+  }
   // Files toggle (page header, right of the repo chip). On/off
   // shape — clicking flips state.currentView between 'files' and
   // 'findings', mirroring the Trash button's state.showDeleted.

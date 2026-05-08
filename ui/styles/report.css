@@ -175,12 +175,31 @@
     overflow: hidden;
 
     & li {
-      padding: .55rem .75rem;
+      display: flex; align-items: center; gap: .75rem;
+      padding: .4rem .75rem;
       border-bottom: 1px solid var(--border);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .78rem;
       color: var(--text);
       &:last-child { border-bottom: none; }
+    }
+    & .bundles-name {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* Per-row delete — hairline outline matches the sidebar's
+       "Delete current" button. Active state recolors on hover so
+       the action surface reads as destructive without dominating
+       the row. */
+    & .bundles-delete {
+      flex-shrink: 0;
+      background: var(--bg); color: var(--muted);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: .2rem .55rem;
+      font-family: inherit; font-size: .72rem;
+      cursor: pointer;
+      transition: border-color .12s, color .12s;
+      &:hover { border-color: var(--critical); color: var(--critical); }
     }
   }
 }
