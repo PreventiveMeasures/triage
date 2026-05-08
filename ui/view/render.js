@@ -830,15 +830,12 @@ function renderBundleDetails(entry, details) {
       ? new TextEncoder().encode(contents[i]).byteLength
       : null)
     const distItems = sources.map((s, i) => ({ path: s, size: sizes[i] }))
-    // Sort the displayed list by size desc (biggest contributors
-    // first, matching the dist bar above), tie-break alphabetically
-    // on the stripped path. Files without a size bucket to the end.
-    const order = sources.map((_, i) => i).sort((a, b) => {
-      const sa = sizes[a] ?? -1
-      const sb = sizes[b] ?? -1
-      if (sb !== sa) return sb - sa
-      return stripped[a].localeCompare(stripped[b])
-    })
+    // Sort the displayed list alphabetically by stripped path —
+    // the dist bar / per-package rows above already convey size
+    // ordering, so the flat list reads better as a stable
+    // path-sorted catalog of what's inside the bundle.
+    const order = sources.map((_, i) => i)
+      .sort((a, b) => stripped[a].localeCompare(stripped[b]))
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
@@ -871,15 +868,11 @@ function renderBundleDetails(entry, details) {
       ? new TextEncoder().encode(sourceMap[s]).byteLength
       : null)
     const distItems = sourceNames.map((s, i) => ({ path: s, size: sizes[i] }))
-    // Same size-desc / alpha tie-break as the sourcemap branch
-    // above. Stasis was previously sorted alphabetically by source
-    // name; size-desc reads more useful next to the size dist bar.
-    const order = sourceNames.map((_, i) => i).sort((a, b) => {
-      const sa = sizes[a] ?? -1
-      const sb = sizes[b] ?? -1
-      if (sb !== sa) return sb - sa
-      return stripped[a].localeCompare(stripped[b])
-    })
+    // Same alphabetical-by-stripped-path order as the sourcemap
+    // branch — size signal lives in the dist bar above, so the
+    // flat list reads as a stable path-sorted catalog.
+    const order = sourceNames.map((_, i) => i)
+      .sort((a, b) => stripped[a].localeCompare(stripped[b]))
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Sources</dt><dd>${sourceNames.length}</dd>
