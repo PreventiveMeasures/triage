@@ -289,7 +289,6 @@
     display: grid;
     grid-template-columns: 1fr;
     gap: 1rem;
-    margin-top: 1rem;
     flex: 1;
     min-height: 0;
     /* Items default to start so the LEFT list column sizes to its
