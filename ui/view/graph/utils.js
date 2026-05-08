@@ -32,13 +32,14 @@ export function computeFindingCountsByFile(allGroups) {
 }
 
 // Group key for clustering + coloring nodes in the graph. npm packages
-// stay grouped by package name. Own source (anything outside
-// node_modules) groups by top-level directory — so `src/...` files all
-// share a color, `playground/...` files share another. Files at the
-// repo root cluster under '/' (rare).
+// stay grouped by package name (matches `node_modules/<pkg>/` and the
+// alternative `dependencies/<pkg>/` layout). Own source (anything
+// outside those deps dirs) groups by top-level directory — so
+// `src/...` files all share a color, `playground/...` files share
+// another. Files at the repo root cluster under '/' (rare).
 export function packageOf(file) {
   if (!file) return null
-  const npm = file.match(/^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u)
+  const npm = file.match(/^(?:.*\/)?(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/u)
   if (npm) return npm[1]
   const slash = file.indexOf('/')
   return slash > 0 ? file.slice(0, slash) : '/'

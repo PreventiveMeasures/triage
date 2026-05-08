@@ -19,17 +19,23 @@ export const SEVERITY_ORDER = {
 // recognizable color hint without competing with vuln tiers in the
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
-export const NODE_MODULES_RE = /(^|\/)node_modules\//
+// "Module" = third-party dependency. Recognises both the canonical
+// `node_modules/` layout and the alternative `dependencies/` layout
+// some build systems use; treats them as interchangeable for the
+// Sources / Dependencies filter, the Repo-link rewrite, and the
+// graph's package grouping. Constant name kept (NODE_MODULES_RE)
+// since renaming would touch every importer for minimal gain.
+export const NODE_MODULES_RE = /(^|\/)(?:node_modules|dependencies)\//
 
 export function isModule(file) { return NODE_MODULES_RE.test(file) }
 
-// Strip the `node_modules/<pkg>/` prefix so the path is rooted at the
+// Strip the `<deps-dir>/<pkg>/` prefix so the path is rooted at the
 // package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
-// `node_modules/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
-// the LAST `/node_modules/` so nested layouts strip the innermost
+// `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
+// the LAST `/<deps-dir>/` so nested layouts strip the innermost
 // package, matching the package-name extraction at export time.
 export function stripPackagePrefix(file) {
-  return file.match(/^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
+  return file.match(/^(?:.*\/)?(?:node_modules|dependencies)\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
 }
 
 // Strip `[export: <name>]` markers from prose when they match the
