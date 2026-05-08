@@ -5,6 +5,16 @@ import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
 import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render.js'
+import { ensureBundleFindingsIndexed, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
+
+// Subscribe once to the bundle-finding index. Any time another
+// OPFS report finishes parsing, re-render IF the user is currently
+// looking at a bundle — the Issues tab and Graph view both pull
+// from the index, so newly-indexed findings need to land in the
+// view without waiting for a tab flip / re-open.
+subscribeToBundleFindingIndex(() => {
+  if (state.currentView === 'bundles' && state.selectedBundle) render()
+})
 
 // The findings-tab graph view and the bundles-tab graph view share
 // the same renderGraph2Layout chrome but draw from different graph
@@ -160,25 +170,27 @@ report.addEventListener('click', (e) => {
       state.bundleDetails = details
       render()
       // Kick off SHA-512 hashing of every source so the bundle
-      // graph's nodes can match findings from the loaded reports
-      // (state.reports' findings carry a `fileHash`). The digest
-      // is async and (depending on bundle size) can take a moment;
-      // the panel renders immediately with no findings, then a
-      // re-render once the hashes land paints any matches.
+      // graph's nodes + Issues tab can match findings by fileHash.
+      // The digest is async (large bundles take a moment); the
+      // panel renders immediately with no findings, then a re-
+      // render once the hashes land paints any matches.
       if (details.json) {
         ;(async () => {
           try {
             const fileHashes = await computeBundleFileHashes(details)
-            // Bail if the user clicked a different bundle while we
-            // were hashing — stamping these onto a stale details
-            // object is harmless, but the re-render only matters
-            // when the user is still looking at this bundle.
             if (state.selectedBundle !== integrity) return
             details.fileHashes = fileHashes
             render()
           } catch {}
         })()
       }
+      // Index every OPFS report's findings (background) so the
+      // bundle's hash-match join sees findings from reports the
+      // user hasn't currently loaded too. Idempotent — subsequent
+      // bundle opens just walk the listFiles delta. Subscribe (at
+      // module load above) keeps re-rendering the bundle view as
+      // new entries land in the index.
+      ensureBundleFindingsIndexed().catch(() => {})
     })()
     return
   }

@@ -8,6 +8,7 @@ import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './gr
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
+import { findingsForFileHash } from '../../client/bundle-finding-index.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -236,33 +237,27 @@ export async function computeBundleFileHashes(details) {
   return result
 }
 
-// Match every finding across all loaded reports against the
-// bundle's per-file hashes. Returns Map<file, Finding[]>. Multiple
-// findings can share a fileHash (a single source dropped in one
-// scan may emit several), and a single hash may map to multiple
-// bundle files (rare — duplicate sources). Trash-deleted groups
-// are skipped so the graph reflects the live finding set.
+// Match every indexed finding against the bundle's per-file
+// hashes. Returns Map<file, Finding[]>. Pulls from the OPFS-wide
+// `bundle-finding-index` (client/bundle-finding-index.js) rather
+// than `state.reports` so a bundle is matched against EVERY report
+// the user has ever dropped — not only the one they happen to have
+// open right now. The index is populated in the background by
+// `ensureBundleFindingsIndexed`; this lookup is purely synchronous,
+// reading whatever is currently cached.
+//
+// Multiple findings can share a fileHash (a single source dropped
+// in one scan may emit several), and a single hash may map to
+// multiple bundle files (rare — duplicate sources).
 function bundleFindingsByFile(fileHashes) {
   if (!fileHashes || fileHashes.size === 0) return new Map()
-  const hashToFiles = new Map()
-  for (const [file, hash] of fileHashes) {
-    if (!hashToFiles.has(hash)) hashToFiles.set(hash, [])
-    hashToFiles.get(hash).push(file)
-  }
   const result = new Map()
-  for (const r of state.reports) {
-    for (const g of r.groups) {
-      if (isGroupDeleted(g)) continue
-      for (const f of g) {
-        if (!f.fileHash) continue
-        const matched = hashToFiles.get(f.fileHash)
-        if (!matched) continue
-        for (const file of matched) {
-          if (!result.has(file)) result.set(file, [])
-          result.get(file).push(f)
-        }
-      }
-    }
+  for (const [file, hash] of fileHashes) {
+    const found = findingsForFileHash(hash)
+    if (found.length === 0) continue
+    if (!result.has(file)) result.set(file, [])
+    const arr = result.get(file)
+    for (const f of found) arr.push(f)
   }
   return result
 }
