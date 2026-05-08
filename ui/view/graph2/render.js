@@ -358,16 +358,21 @@ function renderRightPanel() {
 // issue-bearing files only — a bundle's Size view is most useful
 // against the unfiltered set) AND (b) every node carries a `size`.
 // Without a size on every node, the tab's percentages would be
-// meaningless. If the user is on `size` when those conditions
-// stop holding, the renderer falls back to `files`.
+// meaningless. The Issues tab hides when no node carries any
+// findings (a clean bundle / report — there's nothing to rank).
+// If the active tab is gated off, the renderer falls back to
+// Files.
 export function renderTopPkgsBlock(graph) {
   const showSize = graph2.showAll && graph.nodes.length > 0
     && graph.nodes.every((n) => typeof n.size === 'number')
-  const tab = (graph2.topPkgsTab === 'size' && !showSize) ? 'files' : graph2.topPkgsTab
+  const showIssues = graph.nodes.some((n) => n.totalIssues > 0)
+  let tab = graph2.topPkgsTab
+  if (tab === 'size' && !showSize) tab = 'files'
+  if (tab === 'issues' && !showIssues) tab = 'files'
   return html`<div class="g2-panel-title g2-panel-title-row">
     <span>Packages</span>
     <div class="g2-mini-tabs">
-      <button type="button" class=${`g2-mini-tab${tab === 'issues' ? ' on' : ''}`} data-g2-top-pkgs="issues">Issues</button>
+      ${showIssues ? html`<button type="button" class=${`g2-mini-tab${tab === 'issues' ? ' on' : ''}`} data-g2-top-pkgs="issues">Issues</button>` : null}
       <button type="button" class=${`g2-mini-tab${tab === 'files' ? ' on' : ''}`} data-g2-top-pkgs="files">Files</button>
       ${showSize ? html`<button type="button" class=${`g2-mini-tab${tab === 'size' ? ' on' : ''}`} data-g2-top-pkgs="size">Size</button>` : null}
     </div>
