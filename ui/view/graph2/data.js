@@ -207,19 +207,22 @@ export function nodeColor(n) {
 // Strip a file path's package anchor so callers can show
 // "index.js" instead of "node_modules/foo/index.js" (npm) or
 // "foo/bar.js" instead of "src/foo/bar.js" (own source).
-// Mirrors packageOf in graph/utils.js: packages anchor on the
-// active deps dir (`node_modules/<pkg>/` by default, or
-// `dependencies/<pkg>/` when the project's vendor dir is the
-// alternative — see configureDepsDir in format.js); own source
-// anchors on the top-level dir. For root files (pkg === '/') and
-// the synthetic '__own__' bucket the file is returned as-is —
-// there's no meaningful prefix to strip and consumers should fall
-// back to the full path.
+// Mirrors packageOf / bundlePkgOf: packages anchor on either
+// `node_modules/<pkg>/` or `dependencies/<pkg>/` — try both
+// regardless of the report-driven depsDirName, since the bundle
+// graph runs without a report (depsDirName falls back to
+// 'dependencies' even when the bundle paths use node_modules).
+// own source anchors on the top-level dir. For root files
+// (pkg === '/') and the synthetic '__own__' bucket the file is
+// returned as-is — there's no meaningful prefix to strip and
+// consumers should fall back to the full path.
 export function pkgRelative(file, pkg) {
   if (!pkg || pkg === '/' || pkg === '__own__') return file
-  const anchor = depsDirName() + '/' + pkg + '/'
-  const idx = file.indexOf(anchor)
-  if (idx >= 0) return file.slice(idx + anchor.length)
+  for (const dep of ['node_modules', 'dependencies', depsDirName()]) {
+    const anchor = dep + '/' + pkg + '/'
+    const idx = file.indexOf(anchor)
+    if (idx >= 0) return file.slice(idx + anchor.length)
+  }
   if (file.startsWith(pkg + '/')) return file.slice(pkg.length + 1)
   return file
 }
