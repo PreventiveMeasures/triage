@@ -678,11 +678,13 @@ function findingsBodyTemplate(filtered) {
   })}`
 }
 
-// Bundles view body — flat list of names. Bundle blobs are stored
-// as-is in OPFS (sourcemap JSON or brotli-compressed stasis); the
-// list is just the catalog. Each row carries a Delete button that
-// drops the file from OPFS via events.js's data-delete-bundle
-// click handler, refreshing both the list and the sidebar count.
+// Bundles view body — flat list of `{integrity, name}` entries.
+// Bundle blobs are stored as-is in OPFS keyed by `sha512-${base64}`
+// integrity; the catalog row shows the dropped filename first,
+// then the integrity in small monospace below so the user can
+// distinguish two drops with the same name. Each row carries a
+// Delete button — events.js's data-delete-bundle handler keys
+// off the integrity (the canonical id in storage.js).
 function renderBundlesList(bundles) {
   return html`<div class="bundles-view">
     <header class="page-head">
@@ -692,12 +694,15 @@ function renderBundlesList(bundles) {
       </div>
     </header>
     <ul class="bundles-list">
-      ${bundles.map((name) => html`<li>
-        <span class="bundles-name">${name}</span>
+      ${bundles.map(({ integrity, name }) => html`<li>
+        <div class="bundles-row-text">
+          <span class="bundles-name">${name}</span>
+          <span class="bundles-integrity" title=${integrity}>${integrity}</span>
+        </div>
         <button
           type="button"
           class="bundles-delete"
-          data-delete-bundle=${name}
+          data-delete-bundle=${integrity}
           title=${`Delete ${name}`}
           aria-label=${`Delete ${name}`}
         >Delete</button>

@@ -31,18 +31,20 @@ function pathClosest(e, selector) {
 // selectors come first so a more specific match short-circuits before a
 // generic one (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // Bundles list — per-row delete button (`data-delete-bundle=<name>`).
-  // Drops the OPFS entry, refreshes state.bundles from OPFS, and
-  // re-renders both the main view (so the row disappears) and the
-  // sidebar (so the count drops or the header hides when the last
-  // bundle goes). Confirm before deleting since OPFS removes are
-  // not recoverable from the in-app UI.
+  // Bundles list — per-row delete button (`data-delete-bundle=<integrity>`).
+  // The dataset value is the SHA-512 integrity (the canonical id);
+  // `state.bundles` carries the user-friendly name for the confirm
+  // prompt. Drops the OPFS entry + meta record, refreshes
+  // state.bundles, and re-renders both the main view (row goes) and
+  // the sidebar (count drops, header hides at zero). Confirm because
+  // OPFS removes are not recoverable from the in-app UI.
   const delBundle = e.target.closest('[data-delete-bundle]')
   if (delBundle) {
-    const name = delBundle.dataset.deleteBundle
-    if (!confirm(`Delete bundle "${name}"?`)) return
+    const integrity = delBundle.dataset.deleteBundle
+    const friendly = (state.bundles ?? []).find((b) => b.integrity === integrity)?.name ?? integrity
+    if (!confirm(`Delete bundle "${friendly}"?`)) return
     ;(async () => {
-      await deleteBundle(name)
+      await deleteBundle(integrity)
       state.bundles = await listBundles()
       render()
       await renderSidebar()

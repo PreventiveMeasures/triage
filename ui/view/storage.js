@@ -137,13 +137,19 @@ export async function deleteFile(name) {
   localStorage.removeItem(LS_REPORT_PREFIX + name)
 }
 
-// Bundles — sourcemap (.map) and stasis (.br) source-of-truth blobs
-// for the analyzer pipeline. Stored in a separate OPFS dir so they
-// don't show up in the report list, and accept binary content (stasis
-// is brotli-compressed). Localstorage fallback isn't supported here:
-// these can be large, gzip-base64ing them through localStorage's
-// ~5MB cap rarely makes sense, and the sidebar's drop affordance is
-// a non-essential side feature.
+// Bundles — sourcemap (.map) and stasis (.stasis.code.br)
+// source-of-truth blobs for the analyzer pipeline. Stored in a
+// separate OPFS dir, keyed by `sha512-${base64}` integrity rather
+// than the dropped filename: two drops with the same name but
+// different content would otherwise collide, and identical content
+// dropped twice would write twice. The original name is kept on
+// the side in `_meta.json` (an array of `{integrity, name}`)
+// purely for display. Binary content is supported (stasis is
+// brotli). Localstorage fallback isn't supported here: bundles can
+// be large; gzip-base64ing them through localStorage's ~5MB cap
+// rarely makes sense, and this is a non-essential side feature.
+const BUNDLE_META_FILE = '_meta.json'
+
 async function getOpfsBundlesDir() {
   try {
     const root = await navigator.storage.getDirectory()
@@ -151,26 +157,80 @@ async function getOpfsBundlesDir() {
   } catch { return null }
 }
 
+// SRI uses standard base64 (with `/` and `+`); OPFS rejects `/` in
+// filenames, so the on-disk key swaps `/` for `_`. The displayed
+// integrity keeps the canonical form so users can paste it into
+// SRI-aware tools verbatim.
+function integrityToOpfsKey(integrity) {
+  return integrity.replaceAll('/', '_')
+}
+
+async function readBundleMeta(dir) {
+  try {
+    const fh = await dir.getFileHandle(BUNDLE_META_FILE)
+    const file = await fh.getFile()
+    const data = JSON.parse(await file.text())
+    if (Array.isArray(data)) return data
+    return []
+  } catch { return [] }
+}
+
+async function writeBundleMeta(dir, meta) {
+  try { await dir.removeEntry(BUNDLE_META_FILE) } catch {}
+  const fh = await dir.getFileHandle(BUNDLE_META_FILE, { create: true })
+  const w = await fh.createWritable()
+  await w.write(JSON.stringify(meta))
+  await w.close()
+}
+
 export async function listBundles() {
   const dir = await getOpfsBundlesDir()
   if (!dir) return []
-  const names = []
-  for await (const [name] of dir.entries()) names.push(name)
-  return names.sort()
+  const meta = await readBundleMeta(dir)
+  return [...meta].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+// Persists a dropped bundle. Computes SHA-512 of the content and
+// stores the bytes under the SRI-style key; updates the metadata
+// with the dropped filename so the bundles list can show "name
+// (sha512-…)". Identical content dropped twice updates the name
+// without rewriting the content; different content with the same
+// name sits as a separate entry.
 export async function saveBundle(name, content) {
   const dir = await getOpfsBundlesDir()
   if (!dir) throw new Error(`Cannot save bundle ${name}: OPFS unavailable`)
-  try { await dir.removeEntry(name) } catch {}
-  const fh = await dir.getFileHandle(name, { create: true })
-  const writable = await fh.createWritable()
-  await writable.write(content)
-  await writable.close()
+  const bytes = content instanceof Uint8Array
+    ? content
+    : new TextEncoder().encode(content)
+  const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
+  const integrity = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const opfsKey = integrityToOpfsKey(integrity)
+  try { await dir.removeEntry(opfsKey) } catch {}
+  const fh = await dir.getFileHandle(opfsKey, { create: true })
+  const w = await fh.createWritable()
+  await w.write(bytes)
+  await w.close()
+  const meta = await readBundleMeta(dir)
+  const idx = meta.findIndex((e) => e.integrity === integrity)
+  if (idx >= 0) meta[idx] = { integrity, name }
+  else meta.push({ integrity, name })
+  await writeBundleMeta(dir, meta)
+  return { integrity, name }
 }
 
-export async function deleteBundle(name) {
+export async function deleteBundle(integrity) {
   const dir = await getOpfsBundlesDir()
   if (!dir) return
-  try { await dir.removeEntry(name) } catch {}
+  try { await dir.removeEntry(integrityToOpfsKey(integrity)) } catch {}
+  const meta = await readBundleMeta(dir)
+  const filtered = meta.filter((e) => e.integrity !== integrity)
+  await writeBundleMeta(dir, filtered)
+}
+
+export async function readBundle(integrity) {
+  const dir = await getOpfsBundlesDir()
+  if (!dir) throw new Error('OPFS unavailable')
+  const fh = await dir.getFileHandle(integrityToOpfsKey(integrity))
+  const file = await fh.getFile()
+  return new Uint8Array(await file.arrayBuffer())
 }

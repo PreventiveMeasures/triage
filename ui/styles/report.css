@@ -178,13 +178,26 @@
       display: flex; align-items: center; gap: .75rem;
       padding: .4rem .75rem;
       border-bottom: 1px solid var(--border);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .78rem;
       color: var(--text);
       &:last-child { border-bottom: none; }
     }
-    & .bundles-name {
+    /* Two-line text block: name (primary, monospace .78rem) on top,
+       sha512 integrity (secondary, smaller, muted) below. The
+       integrity line is ellipsis-clipped — full string sits in the
+       title attribute for hover discoverability. */
+    & .bundles-row-text {
       flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+    }
+    & .bundles-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    & .bundles-integrity {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .65rem;
+      color: var(--muted);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     /* Per-row delete — hairline outline matches the sidebar's
