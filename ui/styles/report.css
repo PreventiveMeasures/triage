@@ -192,13 +192,25 @@
     margin-top: 1rem;
     flex: 1;
     min-height: 0;
-    align-items: stretch;
+    /* Items default to start so the LEFT list column sizes to its
+       content (not a tall, mostly-empty bordered shell). The
+       details column overrides via `align-self: stretch` below so
+       it can fill the available height and scroll internally. */
+    align-items: start;
 
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
     & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; min-height: 0; }
-    &.open .bundles-details { max-width: 800px; }
+    &.open .bundles-details {
+      max-width: 800px;
+      /* Stretch only the details column so the panel fills the
+         viewport's remaining height; the body's own overflow-y
+         handles internal scroll. The list stays at its content
+         height per the grid's `align-items: start` above. */
+      align-self: stretch;
+      max-height: 100%;
+    }
   }
 
   /* Right-side details panel — surface card with a header bar
