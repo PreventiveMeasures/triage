@@ -1,8 +1,11 @@
 // Brotli decompression hack via service worker — for browsers
 // without DecompressionStream('br'). The fetch handler intercepts
-// POST requests to `/__deepview_brotli__`, echoes the posted body
-// back as the response, and stamps `Content-Encoding: br` on the
-// reply. The browser's HTTP layer then auto-decompresses brotli
+// POST requests whose path ends with `/__deepview_brotli__` (the
+// suffix is unique enough to be a reliable marker, and matching by
+// suffix rather than absolute path means the worker still works
+// when DeepView is installed at a subdirectory). Echoes the posted
+// body back as the response and stamps `Content-Encoding: br` on
+// the reply. The browser's HTTP layer then auto-decompresses brotli
 // inside the response stream — so the page-side fetch resolves with
 // the decompressed bytes even when the JS-level DecompressionStream
 // API can't handle the format.
@@ -15,7 +18,7 @@ self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
-  if (url.pathname !== '/__deepview_brotli__') return
+  if (!url.pathname.endsWith('/__deepview_brotli__')) return
   event.respondWith((async () => {
     const buf = await event.request.arrayBuffer()
     return new Response(buf, {

@@ -57,12 +57,20 @@ async function init() {
   }
   if ('serviceWorker' in navigator) {
     try {
-      await navigator.serviceWorker.register('/brotli-sw.js', { scope: '/' })
+      // Relative URL — the SW file lives next to the loaded page,
+      // so a subdirectory install (e.g. /foo/view.html) registers
+      // /foo/brotli-sw.js with scope /foo/. Hard-coding `/brotli-
+      // sw.js` would only work at the origin root.
+      const reg = await navigator.serviceWorker.register('brotli-sw.js')
       // `ready` resolves once the active SW for this scope is
       // controlling — we need that before the first fetch hits the
       // intercept path, otherwise the request misses the worker.
       await navigator.serviceWorker.ready
-      mode = { kind: 'sw' }
+      // Build the intercept URL from the SW's scope so the fetch
+      // lands inside it. `reg.scope` is an absolute URL ending in
+      // `/` (e.g. `https://app.example.com/foo/`).
+      const fetchUrl = new URL('__deepview_brotli__', reg.scope).toString()
+      mode = { kind: 'sw', fetchUrl }
       return mode
     } catch (err) {
       console.warn('Brotli SW failed to register:', err)
@@ -85,7 +93,10 @@ export async function brotliDecompress(bytes) {
     return new Uint8Array(await new Response(stream).arrayBuffer())
   }
   if (m.kind === 'sw') {
-    const response = await fetch('/__deepview_brotli__', {
+    // `m.fetchUrl` is anchored at the SW's scope, which tracks the
+    // install path — so subdirectory deployments hit the right
+    // intercept URL without further config.
+    const response = await fetch(m.fetchUrl, {
       method: 'POST',
       body: bytes,
     })
