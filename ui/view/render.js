@@ -964,15 +964,14 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   const packages = new Set()
   for (const p of stripped) packages.add(bundlePkgOf(p))
   const splitPkgFiles = packages.size > BUNDLE_TABS_THRESHOLD
-  const activeTab = state.bundleDetailsTab ?? 'packages'
-  // Graph is always available as a separate tab; the Packages /
-  // Files tabs only split out when there are more than 5 packages
-  // (otherwise the inline Packages + Files reads fine on one
-  // page). When the split is off, treat 'packages' / 'files' as
-  // the same single "sources" tab.
-  const onSourcesTab = !splitPkgFiles
-    ? activeTab !== 'graph'
-    : (activeTab === 'packages' || activeTab === 'files')
+  // The Graph and Issues tabs no longer live in the details panel
+  // — they open a full-width slide instead (see renderBundleSlide
+  // below). The panel is for Sources only; treat any non-files tab
+  // value as the Packages tab so old state doesn't leave the
+  // panel blank.
+  const activeTab = state.bundleDetailsTab === 'files' && splitPkgFiles
+    ? 'files'
+    : 'packages'
 
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
@@ -992,16 +991,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       </li>`
     })}
   </ul>` : nothing
-
-  // Graph slot — render() picks this up after litRender lands and
-  // populates it with renderGraph2Layout + canvas wiring against
-  // the bundle's synthesised graph data.
-  const graphTpl = html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
-  // Issues tab — flat sorted list of every finding from the
-  // loaded reports that matched a bundle file by SHA-512 hash.
-  // No matches (or hashes still computing) shows the appropriate
-  // placeholder.
-  const issuesTpl = renderBundleIssuesList(state.bundleDetails)
 
   return html`${meta}
     <dl class="bundles-detail-meta">
@@ -1023,35 +1012,69 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         data-bundle-tab="files"
         aria-selected=${String(activeTab === 'files')}
         role="tab"
-      >Files (${sources.length})</button>` : html`<button
-        type="button"
-        class=${`bundles-tab${onSourcesTab ? ' active' : ''}`}
-        data-bundle-tab="packages"
-        aria-selected=${String(onSourcesTab)}
-        role="tab"
-      >Sources (${sources.length})</button>`}
+      >Files (${sources.length})</button>` : nothing}
+      <span class="bundles-tabs-spacer"></span>
       <button
         type="button"
-        class=${`bundles-tab${activeTab === 'graph' ? ' active' : ''}`}
+        class="bundles-tab bundles-tab-action"
         data-bundle-tab="graph"
-        aria-selected=${String(activeTab === 'graph')}
-        role="tab"
-      >Graph</button>
+        title="Open the bundle's import graph"
+      >Graph →</button>
       <button
         type="button"
-        class=${`bundles-tab${activeTab === 'issues' ? ' active' : ''}`}
+        class="bundles-tab bundles-tab-action"
         data-bundle-tab="issues"
-        aria-selected=${String(activeTab === 'issues')}
-        role="tab"
-      >Issues</button>
+        title="Open the bundle's matched issues"
+      >Issues →</button>
     </div>
-    ${activeTab === 'graph'
-      ? graphTpl
-      : activeTab === 'issues'
-        ? issuesTpl
-        : (splitPkgFiles
-            ? (activeTab === 'files' ? filesTpl : distTpl)
-            : html`${distTpl}${filesTpl}`)}`
+    ${splitPkgFiles
+      ? (activeTab === 'files' ? filesTpl : distTpl)
+      : html`${distTpl}${filesTpl}`}`
+}
+
+// Full-width "slide" view for the Graph and Issues tabs. The
+// bundles list and the regular details panel both step aside; a
+// header bar across the top carries the back button + bundle name
+// + integrity, plus a Graph / Issues sub-tab switcher. Body
+// renders the active sub-tab's content edge to edge.
+function renderBundleSlide(entry) {
+  const tab = state.bundleDetailsTab
+  return html`<div class="bundles-view bundles-slide-view">
+    <header class="bundles-slide-bar">
+      <button
+        type="button"
+        class="bundles-slide-back"
+        data-action="bundle-slide-back"
+        title="Back to bundles"
+        aria-label="Back to bundles"
+      >← Back</button>
+      <div class="bundles-slide-title">
+        <div class="bundles-slide-name">${entry.name}</div>
+        <div class="bundles-slide-integrity" title=${entry.integrity}>${entry.integrity}</div>
+      </div>
+      <div class="bundles-slide-tabs" role="tablist">
+        <button
+          type="button"
+          class=${`bundles-tab${tab === 'graph' ? ' active' : ''}`}
+          data-bundle-tab="graph"
+          aria-selected=${String(tab === 'graph')}
+          role="tab"
+        >Graph</button>
+        <button
+          type="button"
+          class=${`bundles-tab${tab === 'issues' ? ' active' : ''}`}
+          data-bundle-tab="issues"
+          aria-selected=${String(tab === 'issues')}
+          role="tab"
+        >Issues</button>
+      </div>
+    </header>
+    <div class="bundles-slide-body">
+      ${tab === 'graph'
+        ? html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
+        : renderBundleIssuesList(state.bundleDetails)}
+    </div>
+  </div>`
 }
 
 // Issues tab — flat list of findings matched to the open bundle's
@@ -1119,15 +1142,16 @@ function renderBundleIssuesList(details) {
 function renderBundlesList(bundles) {
   const selected = state.selectedBundle
   const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
-  // When the open bundle's details panel is on the Graph tab, the
-  // layout drops the bundle list column entirely so the graph can
-  // use the full width — its 1fr stage + 300px sidebar grid would
-  // otherwise be cramped inside the 2fr / max 800px details slot.
-  const onGraph = selectedEntry && state.bundleDetailsTab === 'graph'
-  const layoutClass = selectedEntry
-    ? `bundles-layout open${onGraph ? ' graph-mode' : ''}`
-    : 'bundles-layout'
-  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}${onGraph ? ' graph-mode' : ''}`}>
+  // Graph and Issues open as a full-width "slide" — the bundles
+  // list and details panel both step aside, replaced by a header
+  // bar (back button + bundle name) and the active sub-tab's
+  // content edge to edge. Anything else (no bundle open, or
+  // Packages / Files tab) renders the regular list + details.
+  const inSlide = selectedEntry
+    && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues')
+  if (inSlide) return renderBundleSlide(selectedEntry)
+  const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
+  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>
     <header class="page-head">
       <div class="page-title">
         <h1>Bundles</h1>

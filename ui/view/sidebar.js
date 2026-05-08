@@ -58,7 +58,13 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
 let searchQuery = ''
 
 function fileItemTemplate(n, opts = {}) {
-  const cls = `file-item${n === state.currentFile ? ' current' : ''}${opts.indented ? ' indented' : ''}`
+  // Suppress the `current` highlight when the user is browsing the
+  // bundles view — there's no active report in that mode, so
+  // leaving the previously-loaded report visually selected reads
+  // as a stale state. The same suppression applies to the
+  // workspace-row template below.
+  const isCurrent = n === state.currentFile && state.currentView !== 'bundles'
+  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
   const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
@@ -114,7 +120,7 @@ const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14
 // the section header.
 const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>`
 function workspaceItemTemplate(w, reportCount) {
-  const isCurrent = state.currentWorkspace === w.id
+  const isCurrent = state.currentWorkspace === w.id && state.currentView !== 'bundles'
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
   // Clicking the workspace's main button loads every report in the
   // workspace into a single merged view (handled by the `.file-item`

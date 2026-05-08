@@ -163,6 +163,102 @@
    uses for #findings-graph-slot. */
 #bundles-slot { display: contents; }
 
+/* Bundle slide — the full-width view for Graph / Issues. Replaces
+   the bundles list + details panel with a header bar (back button
+   + bundle name + sub-tab switcher) on top and the active sub-
+   tab's content edge to edge below. Same flex chain as the
+   regular .bundles-view so the body fills the viewport. */
+.bundles-slide-view {
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.bundles-slide-bar {
+  display: flex; align-items: center;
+  gap: 1rem;
+  padding: .6rem .75rem;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  flex-shrink: 0;
+}
+
+.bundles-slide-back {
+  flex-shrink: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .25rem .55rem;
+  font-family: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}
+
+.bundles-slide-title {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.bundles-slide-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundles-slide-integrity {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .65rem;
+  color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.bundles-slide-tabs {
+  display: flex; gap: .25rem;
+  flex-shrink: 0;
+}
+
+.bundles-slide-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+}
+
+.bundles-slide-body > .bundle-graph-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.bundles-slide-body > .bundle-graph-slot > .graph2-layout {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  margin-bottom: 0;
+  background: transparent;
+}
+/* Issues list inside the slide gets the same padded scroll
+   container the regular details body uses, plus inherits the
+   issues styles below. */
+.bundles-slide-body > .bundle-issues {
+  padding: .75rem;
+  overflow-y: auto;
+}
+
 /* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
    Default layout caps at 1200px (single column); when a bundle is
    open, `.with-details` widens the wrapper to fit the list + the
@@ -239,15 +335,20 @@
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  /* Tab strip when a bundle's package count exceeds the
-     BUNDLE_TABS_THRESHOLD (5 in render.js). Same shape as the
-     prior report-tabs strip, scaled to the panel's font size. */
+  /* Tab strip in the details panel — Packages / Files split when
+     the bundle has > 5 packages, and "Graph →" / "Issues →"
+     trailing-arrow action buttons that open the full-width slide.
+     The spacer between the data tabs and the actions pushes the
+     actions to the right edge so the visual reads as "panel
+     content tabs on the left, drill-in actions on the right". */
   & .bundles-tabs {
     display: flex; gap: .25rem;
     padding: 0 .25rem;
     margin: -.25rem 0 .5rem;
     border-bottom: 1px solid var(--border);
+    align-items: center;
   }
+  & .bundles-tabs-spacer { flex: 1; }
   & .bundles-tab {
     background: transparent; border: none;
     color: var(--muted);
@@ -260,6 +361,10 @@
 
     &:hover { color: var(--text); }
     &.active { color: var(--accent); border-bottom-color: var(--accent); }
+    &.bundles-tab-action {
+      color: var(--accent);
+      &:hover { color: var(--text); }
+    }
   }
   & .bundles-details-label {
     color: var(--muted);

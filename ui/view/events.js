@@ -98,10 +98,12 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Bundle details — tab switch (Packages / Files / Graph / Issues
-  // — `Sources` collapses to `Packages` when the bundle has ≤5
-  // packages, see render.js). State is purely UI; the parsed
-  // bundleDetails stays cached so flipping tabs is paint-only.
+  // Bundle details — tab switch (Packages / Files / Graph /
+  // Issues). Packages/Files render in the regular details panel;
+  // Graph and Issues open the full-width slide layout (bundles
+  // list + details both step aside). State is purely UI; the
+  // parsed bundleDetails stays cached so flipping tabs is
+  // paint-only.
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
@@ -113,6 +115,15 @@ report.addEventListener('click', (e) => {
       state.bundleDetailsTab = tab
       render()
     }
+    return
+  }
+  // Slide back button — drops out of the Graph / Issues slide
+  // back to the bundles list + details. Defaults to the Packages
+  // sub-tab so the panel paints meaningfully on the way out.
+  if (e.target.closest('[data-action="bundle-slide-back"]')) {
+    if (state.bundleDetailsTab === 'graph') cleanupGraph2()
+    state.bundleDetailsTab = 'packages'
+    render()
     return
   }
   // Bundles list — row select. Opens the right-side details panel,
