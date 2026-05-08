@@ -4,6 +4,7 @@ import { saveFile, readFile, deleteFile } from './storage.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from './triage.js'
+import { triageSync } from './triage-sync.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
@@ -84,6 +85,11 @@ export async function addFiles(files) {
 // Replace the active view with the named OPFS file. Pre-fetched
 // `content` skips a redundant OPFS read (drop path passes it through).
 export async function switchToFile(name, content) {
+  // Single-file mode is workspace-sync's off-state; close any open
+  // session before we drop the workspace selection so a stale
+  // session doesn't try to push edits the user makes against the
+  // single-file view.
+  triageSync.closeSession()
   state.reports = []
   state.currentFile = name
   state.currentWorkspace = null
@@ -133,6 +139,10 @@ export async function switchToFile(name, content) {
 export async function switchToWorkspace(workspaceId) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
+  // Tear the previous session down before we touch state.reports —
+  // its workspace-id set is keyed off the old set of loaded reports
+  // and would mis-attribute edits otherwise.
+  triageSync.closeSession()
   state.reports = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
@@ -162,6 +172,11 @@ export async function switchToWorkspace(workspaceId) {
     if (content === null) continue
     await ingestReport(ws.reports[i], content)
   }
+  // Open the per-workspace sync session AFTER every report has been
+  // ingested — the session needs a complete view of state.reports to
+  // build its workspace-id set. No-op when sync is disabled (no
+  // server URL).
+  triageSync.openSession(workspaceId)
   await renderSidebar()
 }
 

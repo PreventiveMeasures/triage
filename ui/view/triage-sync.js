@@ -2,40 +2,68 @@ import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
 
-// Triage sync — pushes local color / deleted / comment edits over a
-// WebSocket and applies remote edits back into `state.*`. Disabled by
-// default: `setServerUrl(url)` is the entry point. Each message
-// (sent and received) carries an array of per-id `{ before, after }`
-// pairs so a server (or peer) can detect conflicts and other clients
-// can apply only the parts of an update they don't already have.
+// Triage sync — per-workspace WebSocket protocol that round-trips
+// the workspace's color / deleted / comment state through a server
+// using monotonically-increasing changeset revisions.
 //
-// Wire-up: triage.js calls `triageSync.notify()` at the tail of
-// `saveTriage()`. That keeps every local mutation site (events.js,
-// workspace-import.js, api.js) covered without each one having to
-// remember to send. The cyclic import between triage.js and this
-// module resolves cleanly: triage.js's `saveTriage` is read as a
-// live binding, only invoked after both modules have finished
-// loading (i.e. when a remote message arrives).
+// Disabled by default. `setServerUrl(url)` enables; the saved URL
+// also persists in localStorage for next page-load. With no URL the
+// session machinery still tracks state internally but no message is
+// ever sent — flipping the URL on later resumes from the live local
+// state.
 //
-// Conflict policy is last-write-wins on receive — the `before` field
-// in incoming messages is informational. A peer/server that wants to
-// reject conflicting writes can use it to compare against its own
-// authoritative state and reply with a corrective message.
+// Messages
+// --------
+//   client → server  workspace-load  { workspaceId, state, baseRevision }
+//                    workspace-save  { workspaceId, state, baseRevision }
+//   server → client  workspace-state { workspaceId, state, revision }
+//
+// A `workspace-state` reply covers both load responses, save acks,
+// and broadcasts triggered by other clients — the client treats them
+// uniformly: rebase on top, apply local diff, persist, re-render.
+//
+// Session state
+// -------------
+//   baseState     Last server-acknowledged state for the workspace.
+//   baseRevision  Revision number that goes with baseState.
+//   localState    The user's current state (= baseState + their
+//                 edits since the last ack).
+//   inFlight      A workspace-load or workspace-save is awaiting a
+//                 reply. While set, no new request is sent.
+//   pendingSave   Local change happened during inFlight — once the
+//                 reply lands, send a fresh save.
+//
+// Race protocol
+// -------------
+// One in-flight request per session at a time. Local edits during
+// in-flight raise `pendingSave`. A new `workspace-state` arriving
+// from any source rebases: compute overlay = localState - baseState,
+// replace baseState with the server's, replay the overlay on top so
+// any unsynced edits survive the rebase. Stale revisions (≤ the
+// baseRevision we already applied) are dropped — that handles the
+// echo case where the server broadcasts our own ack to us.
+//
+// On reconnect after a drop the client sends a fresh workspace-load
+// with the current localState + baseRevision so the server can
+// either accept the snapshot (handing back a new revision) or
+// merge it in.
 
 const STORAGE_KEY = 'deepview.triageSyncUrl'
+const SESSION_ID_RE = /^\d+$/u
 
 let serverUrl = ''
 let socket = null
 let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
-// Re-entrancy guard. Bumped while we're applying a remote change so
-// the saveTriage at the tail doesn't bounce the same change back.
+// Re-entrancy guard. Bumped while we're applying a remote state so
+// the saveTriage at the tail doesn't trigger a notify and bounce
+// the same change back at the server.
 let suppressNotify = 0
-// Last sent / received state snapshot keyed by finding id; used as
-// the `before` baseline for outgoing diffs and re-baselined after
-// applying remote messages so we don't echo them.
-let lastSnapshot = new Map()
+// Active per-workspace session (or null when no workspace is
+// loaded). Mutually exclusive with single-file mode — sync is a
+// workspace concept here.
+let session = null
 
 function snapshotEntry(id) {
   const entry = {}
@@ -47,13 +75,31 @@ function snapshotEntry(id) {
   return entry
 }
 
-function buildSnapshot() {
+// Workspace's set of triageable finding ids — every finding loaded
+// into state.reports right now, minus the session-only numeric `_id`
+// keys that don't round-trip through localStorage either.
+function buildWorkspaceIds() {
   const ids = new Set()
-  for (const k of state.markers.keys()) ids.add(k)
-  for (const k of state.deletedIds) ids.add(k)
-  for (const k of state.comments.keys()) ids.add(k)
-  const out = new Map()
-  for (const id of ids) out.set(id, snapshotEntry(id))
+  for (const r of state.reports) {
+    for (const g of r.groups) {
+      for (const f of g) {
+        const k = f.id ?? String(f._id)
+        if (!SESSION_ID_RE.test(k)) ids.add(k)
+      }
+    }
+  }
+  return ids
+}
+
+// Subset of state.markers / .deletedIds / .comments restricted to
+// `ids`. Empty entries are omitted so the wire shape only carries
+// findings the user has actually triaged.
+function buildLocalState(ids) {
+  const out = {}
+  for (const id of ids) {
+    const entry = snapshotEntry(id)
+    if (Object.keys(entry).length > 0) out[id] = entry
+  }
   return out
 }
 
@@ -63,51 +109,136 @@ function entriesEqual(a, b) {
     && (a.comment ?? '') === (b.comment ?? '')
 }
 
-function diffSnapshots(before, after) {
-  const ids = new Set([...before.keys(), ...after.keys()])
-  const changes = []
+function statesEqual(a, b) {
+  const ids = new Set([...Object.keys(a), ...Object.keys(b)])
   for (const id of ids) {
-    const b = before.get(id) ?? {}
-    const a = after.get(id) ?? {}
-    if (!entriesEqual(a, b)) changes.push({ id, before: b, after: a })
+    if (!entriesEqual(a[id] ?? {}, b[id] ?? {})) return false
   }
-  return changes
+  return true
 }
 
-function applyEntry(id, entry) {
-  if (entry.color) state.markers.set(id, entry.color)
-  else state.markers.delete(id)
-  if (entry.deleted) state.deletedIds.add(id)
-  else state.deletedIds.delete(id)
-  if (entry.comment) state.comments.set(id, entry.comment)
-  else state.comments.delete(id)
+// Per-id changes that turn `base` into `local`. `null` represents
+// an explicit deletion of an entry that existed in `base`. Used to
+// preserve the user's unsynced edits across a rebase.
+function computeOverlay(base, local) {
+  const overlay = {}
+  const ids = new Set([...Object.keys(base), ...Object.keys(local)])
+  for (const id of ids) {
+    const b = base[id] ?? {}
+    const l = local[id] ?? {}
+    if (!entriesEqual(b, l)) overlay[id] = local[id] ?? null
+  }
+  return overlay
 }
 
-async function handleRemoteMessage(data) {
-  let msg
-  try { msg = JSON.parse(data) } catch { return }
-  if (msg?.type !== 'triage-update' || !Array.isArray(msg.changes)) return
-  let touched = false
+function mergeStates(base, overlay) {
+  const out = { ...base }
+  for (const [id, entry] of Object.entries(overlay)) {
+    if (entry === null) delete out[id]
+    else out[id] = entry
+  }
+  return out
+}
+
+// Reflect `targetState` into the in-memory state.* containers,
+// scoped to `ids` — entries outside the workspace's scope are left
+// alone so single-file triage doesn't get clobbered when a
+// workspace is open.
+function applyToReactiveState(targetState, ids) {
+  for (const id of ids) {
+    const entry = targetState[id] ?? {}
+    if (entry.color) state.markers.set(id, entry.color)
+    else state.markers.delete(id)
+    if (entry.deleted) state.deletedIds.add(id)
+    else state.deletedIds.delete(id)
+    if (entry.comment) state.comments.set(id, entry.comment)
+    else state.comments.delete(id)
+  }
+}
+
+function send(msg) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false
+  try {
+    socket.send(JSON.stringify(msg))
+    return true
+  } catch (err) {
+    console.warn('Triage sync send failed:', err)
+    return false
+  }
+}
+
+function trySendInit() {
+  if (!session || session.inFlight) return
+  if (!send({
+    type: 'workspace-load',
+    workspaceId: session.workspaceId,
+    state: session.localState,
+    baseRevision: session.baseRevision,
+  })) return
+  session.inFlight = true
+}
+
+function trySendSave() {
+  if (!session) return
+  if (session.inFlight) {
+    session.pendingSave = true
+    return
+  }
+  // Refresh localState from current state.* in case it drifted
+  // since we last touched it (e.g. saveTriage just persisted a
+  // change that landed via the user's UI clicks).
+  session.localState = buildLocalState(session.ids)
+  if (statesEqual(session.localState, session.baseState)) return
+  if (!send({
+    type: 'workspace-save',
+    workspaceId: session.workspaceId,
+    state: session.localState,
+    baseRevision: session.baseRevision,
+  })) return
+  session.inFlight = true
+  session.pendingSave = false
+}
+
+async function applyServerState(remoteState, remoteRevision) {
+  if (!session) return
+  // Drop stale broadcasts (e.g. the server echoing our own ack
+  // back at us after we've already applied it).
+  if (
+    session.baseRevision != null
+    && remoteRevision != null
+    && remoteRevision <= session.baseRevision
+  ) return
+  // Capture the user's unsaved edits before swapping the base.
+  const overlay = computeOverlay(session.baseState, session.localState)
+  session.baseState = remoteState
+  session.baseRevision = remoteRevision
+  session.localState = mergeStates(remoteState, overlay)
+
   suppressNotify++
   try {
-    for (const change of msg.changes) {
-      if (!change || typeof change.id !== 'string') continue
-      const after = change.after ?? {}
-      const local = snapshotEntry(change.id)
-      if (entriesEqual(local, after)) continue
-      applyEntry(change.id, after)
-      touched = true
-    }
-    if (touched) {
-      // Re-baseline BEFORE saveTriage so the embedded notify() is a no-op
-      // (the diff against `lastSnapshot` would otherwise show our just-
-      // -applied remote change as a local change to ship back).
-      lastSnapshot = buildSnapshot()
-      await saveTriage()
-      render()
-    }
+    applyToReactiveState(session.localState, session.ids)
+    await saveTriage()
   } finally {
     suppressNotify--
+  }
+  render()
+}
+
+async function handleMessage(data) {
+  let msg
+  try { msg = JSON.parse(data) } catch { return }
+  if (!msg || typeof msg !== 'object') return
+  if (!session || msg.workspaceId !== session.workspaceId) return
+  if (msg.type !== 'workspace-state') return
+  await applyServerState(msg.state ?? {}, msg.revision)
+  // Reply consumed — request slot is free again.
+  session.inFlight = false
+  // If the user kept editing during the round-trip OR the rebase
+  // left an overlay (we had unsaved changes that the server hasn't
+  // seen), follow up with another save.
+  if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
+    session.pendingSave = false
+    trySendSave()
   }
 }
 
@@ -141,21 +272,29 @@ function openSocket() {
   socket = ws
   ws.addEventListener('open', () => {
     reconnectDelayMs = 1_000
-    // Re-baseline on (re)connect — the server may have authoritative
-    // state we don't yet know about, but until we get a message
-    // about it we trust local and won't ship anything that hasn't
-    // changed since now.
-    lastSnapshot = buildSnapshot()
+    if (session) {
+      // Re-establish the session against the freshly opened socket.
+      // baseState / baseRevision survive the disconnect; the load
+      // request lets the server merge any updates we missed while
+      // offline.
+      session.inFlight = false
+      session.pendingSave = false
+      trySendInit()
+    }
   })
-  ws.addEventListener('message', (e) => handleRemoteMessage(e.data))
+  ws.addEventListener('message', (e) => handleMessage(e.data))
   ws.addEventListener('close', () => {
     if (socket === ws) socket = null
+    if (session) {
+      // The pending request is gone with the socket. Mark the slot
+      // free and remember to save once we reconnect.
+      session.inFlight = false
+      session.pendingSave = !statesEqual(session.localState, session.baseState)
+    }
     if (serverUrl) scheduleReconnect()
   })
   ws.addEventListener('error', () => {
-    // The 'close' handler will fire right after — let it own the
-    // reconnect schedule. Logging here is mostly noise for transient
-    // disconnects.
+    // Close fires right after — let it own the reconnect schedule.
   })
 }
 
@@ -170,10 +309,6 @@ function closeSocket() {
 }
 
 export const triageSync = {
-  // Configure (or clear) the WebSocket endpoint. Empty / falsy URL
-  // disables sync and closes any open connection. The URL is also
-  // persisted to localStorage so it survives reloads — pass '' to
-  // both disable and forget.
   setServerUrl(url) {
     const next = (url ?? '').trim()
     if (next === serverUrl) return
@@ -188,26 +323,61 @@ export const triageSync = {
 
   getServerUrl() { return serverUrl },
 
-  // Connection state for callers / debugging.
   get connected() { return socket?.readyState === WebSocket.OPEN },
 
-  // Called by triage.js at the tail of saveTriage(). Computes the
-  // diff against the last shipped/received baseline and pushes a
-  // single message with all per-id changes. No-ops when sync is
-  // disabled, the socket isn't open, or we're inside an
-  // applyRemoteMessage block (suppressNotify>0).
+  // Called by triage.js at the tail of saveTriage(). When inside an
+  // applyServerState (suppressNotify > 0), bail — that path already
+  // owns the persistence side. Otherwise schedule a save against
+  // the active session; the helper handles the inFlight / queue
+  // gating.
   notify() {
     if (suppressNotify > 0) return
-    const next = buildSnapshot()
-    const changes = diffSnapshots(lastSnapshot, next)
-    if (changes.length === 0) return
-    lastSnapshot = next
-    const ws = socket
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    try {
-      ws.send(JSON.stringify({ type: 'triage-update', changes }))
-    } catch (err) {
-      console.warn('Triage sync send failed:', err)
+    if (!session) return
+    trySendSave()
+  },
+
+  // Open a per-workspace session. Called by ingest.js after every
+  // report in the workspace is loaded into state.reports — so the
+  // workspace-id set built here matches the actual content. A
+  // second call with the same id is idempotent; a different id
+  // closes the previous session first.
+  openSession(workspaceId) {
+    if (!workspaceId) return
+    if (session?.workspaceId === workspaceId) return
+    this.closeSession()
+    const ids = buildWorkspaceIds()
+    session = {
+      workspaceId,
+      ids,
+      // Until the first server response lands, we have no idea what
+      // the server's revision is. localState is whatever we're
+      // currently looking at; baseState is empty so the first load
+      // sends the full snapshot up.
+      baseRevision: null,
+      baseState: {},
+      localState: buildLocalState(ids),
+      inFlight: false,
+      pendingSave: false,
+    }
+    if (socket?.readyState === WebSocket.OPEN) trySendInit()
+  },
+
+  closeSession() {
+    if (!session) return
+    session = null
+  },
+
+  // Read-only handle for callers that want to inspect session state
+  // (debugging, tests). Not for mutation — that goes through notify
+  // / openSession / closeSession above.
+  get sessionInfo() {
+    if (!session) return null
+    return {
+      workspaceId: session.workspaceId,
+      baseRevision: session.baseRevision,
+      inFlight: session.inFlight,
+      pendingSave: session.pendingSave,
+      tracked: session.ids.size,
     }
   },
 }
@@ -222,10 +392,3 @@ try {
     openSocket()
   }
 } catch {}
-
-// Initial baseline — captured after module load so the first
-// post-loadTriage notify() doesn't ship the entire persisted set as
-// a "change". triage.js's loadTriage promise has fired by the time
-// any saveTriage call runs, so this is good enough as a starting
-// point.
-lastSnapshot = buildSnapshot()
