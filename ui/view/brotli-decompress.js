@@ -49,10 +49,15 @@ async function decompressNative(format, bytes) {
 }
 
 async function decompressViaCache(bytes) {
-  const cache = await caches.open('deepview-brotli-decode')
-  // Random URL so concurrent decodes don't collide on the same
-  // cache key. Origin-relative so it stays within scope.
-  const url = `${location.origin}/__brotli_${crypto.randomUUID()}__`
+  // Unique cache name per call so concurrent decodes can't collide,
+  // AND we can drop the whole named cache from CacheStorage on
+  // success — leaving no `deepview-brotli-*` entries behind in
+  // DevTools / quota usage. `cache.delete(req)` would only remove
+  // the request inside the cache; the cache object itself would
+  // persist until the storage manager evicts it.
+  const cacheName = `deepview-brotli-${crypto.randomUUID()}`
+  const cache = await caches.open(cacheName)
+  const url = `${location.origin}/__brotli__`
   const req = new Request(url)
   try {
     await cache.put(req, new Response(bytes, {
@@ -62,7 +67,7 @@ async function decompressViaCache(bytes) {
     if (!cached) throw new Error('cache miss after put')
     return new Uint8Array(await cached.arrayBuffer())
   } finally {
-    try { await cache.delete(req) } catch {}
+    try { await caches.delete(cacheName) } catch {}
   }
 }
 
@@ -127,8 +132,7 @@ async function unregisterSW() {
 }
 
 async function init() {
-  // Native first — when available, we don't need either echo trick,
-  // so any leftover SW from a prior session gets cleaned up.
+  // Native first — when available, we don't need either echo trick.
   const nativeFormat = await nativeAvailable()
   if (nativeFormat && await selfTest((b) => decompressNative(nativeFormat, b))) {
     unregisterSW()
@@ -143,12 +147,16 @@ async function init() {
       return mode
     }
   }
-  // SW echo trick — last resort for older browsers.
+  // SW echo trick — last resort. setupSW() registers the worker; if
+  // the self-test fails we drop it again so a non-functional SW
+  // doesn't stay registered (would leak into DevTools and intercept
+  // future fetches uselessly).
   const swUrl = await setupSW()
   if (swUrl && await selfTest((b) => decompressViaSW(swUrl, b))) {
     mode = { kind: 'sw', fetchUrl: swUrl }
     return mode
   }
+  unregisterSW()
   // None of the native paths can actually decompress brotli on this
   // browser. Stasis bundles will show "contents not parsed" — the
   // user can still inspect the metadata + integrity.
