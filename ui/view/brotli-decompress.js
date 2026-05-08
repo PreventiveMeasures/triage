@@ -62,10 +62,24 @@ async function init() {
       // /foo/brotli-sw.js with scope /foo/. Hard-coding `/brotli-
       // sw.js` would only work at the origin root.
       const reg = await navigator.serviceWorker.register('brotli-sw.js')
-      // `ready` resolves once the active SW for this scope is
-      // controlling — we need that before the first fetch hits the
-      // intercept path, otherwise the request misses the worker.
+      // `ready` resolves once an active SW exists for this scope,
+      // but on FIRST registration the page that registered the
+      // worker isn't yet controlled by it — the worker has to take
+      // over via `clients.claim()` (fires `controllerchange` on the
+      // page). Until then, fetches don't hit the SW's fetch handler
+      // and POSTs to the intercept URL come back as 404. Wait
+      // explicitly for `controller` to be non-null so the first
+      // brotliDecompress call lands inside the worker.
       await navigator.serviceWorker.ready
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+          // Defensive cap — a misbehaving SW that never claims
+          // shouldn't hang the boot. The fetch will still fail
+          // loudly later with a clear error.
+          setTimeout(resolve, 3000)
+        })
+      }
       // Build the intercept URL from the SW's scope so the fetch
       // lands inside it. `reg.scope` is an absolute URL ending in
       // `/` (e.g. `https://app.example.com/foo/`).
