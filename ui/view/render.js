@@ -324,13 +324,15 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
     : COMBO_FIELDS
   const tags = buildAnalyzerTags(findings, tagFields)
 
-  // Severity status bar — workspace-merged views show a stacked bar
-  // sized proportionally to each severity's group count (using the
-  // primary tab's severity, so each group contributes once and the
-  // segments sum to totalCount). Gives a quick "how bad is this
-  // workspace overall" signal without scanning the toolbar chips.
+  // Severity status bar — stacked bar sized proportionally to each
+  // severity's group count (using the primary tab's severity, so
+  // each group contributes once and the segments sum to totalCount).
+  // Gives a quick "how bad is this report overall" signal without
+  // scanning the toolbar chips. Rendered for any non-empty load —
+  // single reports, merged loads, AND workspace views all benefit
+  // from the same one-glance summary.
   let statusBarTpl = nothing
-  if (state.currentWorkspace && totalCount > 0) {
+  if (totalCount > 0) {
     const sevCounts = {}
     for (const r of state.reports) {
       for (const g of r.groups) {
