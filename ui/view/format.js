@@ -19,15 +19,41 @@ export const SEVERITY_ORDER = {
 // recognizable color hint without competing with vuln tiers in the
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
-// "Module" = third-party dependency. Recognises both the canonical
-// `node_modules/` layout and the alternative `dependencies/` layout
-// some build systems use; treats them as interchangeable for the
-// Sources / Dependencies filter, the Repo-link rewrite, and the
-// graph's package grouping. Constant name kept (NODE_MODULES_RE)
-// since renaming would touch every importer for minimal gain.
-export const NODE_MODULES_RE = /(^|\/)(?:node_modules|dependencies)\//
+// "Module" = third-party dependency. The canonical layout is
+// `node_modules/`; some build systems (Rust crates, etc.) vendor
+// under `dependencies/` instead. Both can occur side-by-side in the
+// same project — `dependencies/` may be a regular source dir when
+// `node_modules/` is also present — so the active deps dir is
+// chosen contextually: prefer `node_modules` when ANY path in the
+// loaded reports has it, fall back to `dependencies` otherwise.
+//
+// `configureDepsDir(reports)` is called from render.js at the start
+// of every render; the helpers below (isModule / stripPackagePrefix
+// / packageOf via depsDirName) consult `depsDir` so reclassifying
+// happens once per render, not per call.
+let depsDir = 'node_modules'
 
-export function isModule(file) { return NODE_MODULES_RE.test(file) }
+export function configureDepsDir(reports) {
+  const has = (s) => /(^|\/)node_modules\//.test(s)
+  let hasNodeModules = false
+  outer: for (const r of reports) {
+    for (const g of r.groups ?? []) {
+      for (const f of g) if (has(f.file)) { hasNodeModules = true; break outer }
+    }
+    if (r.tree) {
+      for (const p of Object.keys(r.tree)) if (has(p)) { hasNodeModules = true; break outer }
+    }
+  }
+  depsDir = hasNodeModules ? 'node_modules' : 'dependencies'
+}
+
+export function depsDirName() { return depsDir }
+
+export function isModule(file) {
+  return depsDir === 'node_modules'
+    ? /(^|\/)node_modules\//.test(file)
+    : /(^|\/)dependencies\//.test(file)
+}
 
 // File size formatter — bytes with thousand-separators and a `B`
 // suffix (`12,345 B`). Used by the file table/list and the graph's
@@ -44,8 +70,13 @@ export function formatBytes(n) {
 // `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
 // the LAST `/<deps-dir>/` so nested layouts strip the innermost
 // package, matching the package-name extraction at export time.
+// Uses the active `depsDir` so a `dependencies/` path is only
+// stripped when that's what the project's vendor dir actually is.
 export function stripPackagePrefix(file) {
-  return file.match(/^(?:.*\/)?(?:node_modules|dependencies)\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u)?.[1] ?? file
+  const re = depsDir === 'node_modules'
+    ? /^(?:.*\/)?node_modules\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u
+    : /^(?:.*\/)?dependencies\/(?:@[^/]+\/[^/]+|[^/]+)\/(.*)$/u
+  return file.match(re)?.[1] ?? file
 }
 
 // Strip `[export: <name>]` markers from prose when they match the

@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
-import { prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
+import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, configureDepsDir } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -679,6 +679,13 @@ function findingsBodyTemplate(filtered) {
 }
 
 export function render() {
+  // Recompute the active deps dir before any helper consults it
+  // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
+  // detection scans paths in the loaded reports + tree blobs to
+  // pick `node_modules` (preferred when present) vs `dependencies`
+  // (fallback). Once per render is enough — every helper call below
+  // sees the freshly chosen dir.
+  configureDepsDir(state.reports)
   // Fixed top-right print icon visibility — only show on the
   // findings view with a report loaded AND a printable view-mode
   // (table / list / grouped). The graph view-mode and the Files

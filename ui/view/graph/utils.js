@@ -1,3 +1,5 @@
+import { depsDirName } from '../format.js'
+
 // Highest-to-lowest iteration order — see SEVERITIES in ../format.js
 // for the same list (kept duplicated here to avoid a circular import
 // from a graph-only utility back up into format.js).
@@ -31,16 +33,20 @@ export function computeFindingCountsByFile(allGroups) {
   return counts
 }
 
-// Group key for clustering + coloring nodes in the graph. npm packages
-// stay grouped by package name (matches `node_modules/<pkg>/` and the
-// alternative `dependencies/<pkg>/` layout). Own source (anything
-// outside those deps dirs) groups by top-level directory — so
-// `src/...` files all share a color, `playground/...` files share
+// Group key for clustering + coloring nodes in the graph. Files
+// inside the active deps dir (`node_modules/<pkg>/` by default;
+// `dependencies/<pkg>/` when the project doesn't ship a node_modules
+// — see `configureDepsDir` in format.js) group by package name. Own
+// source (anything outside that dir) groups by top-level directory —
+// so `src/...` files all share a color, `playground/...` files share
 // another. Files at the repo root cluster under '/' (rare).
 export function packageOf(file) {
   if (!file) return null
-  const npm = file.match(/^(?:.*\/)?(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/u)
-  if (npm) return npm[1]
+  const re = depsDirName() === 'node_modules'
+    ? /^(?:.*\/)?node_modules\/(@[^/]+\/[^/]+|[^/]+)/u
+    : /^(?:.*\/)?dependencies\/(@[^/]+\/[^/]+|[^/]+)/u
+  const m = file.match(re)
+  if (m) return m[1]
   const slash = file.indexOf('/')
   return slash > 0 ? file.slice(0, slash) : '/'
 }
