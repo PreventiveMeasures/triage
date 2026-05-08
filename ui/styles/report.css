@@ -158,16 +158,117 @@
    details panel is open: the wrapper grows to fit the 3 fr +
    2 fr split (1200 list + 800 panel = 2000 max). */
 /* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
-   Same text scale as a regular report body (.78rem monospace) so
-   names line up with the pill-row chrome above. The list itself is
-   plain — bundle blobs don't carry findings, so the row gets just
-   the name with a hairline separator below. */
+   Default layout caps at 1200px (single column); when a bundle is
+   open, `.with-details` widens the wrapper to fit the list + the
+   right-side panel side by side, mirroring the findings-table
+   details pattern. */
 .bundles-view {
   max-width: 1200px;
+  &.with-details { max-width: 2000px; }
+
+  /* Single-column when nothing's open; two-column grid when the
+     details panel is up. Same 3fr / 2fr split + max-widths the
+     findings-table-layout uses, so the visual rhythm carries
+     across views. */
+  & .bundles-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+
+    &.open {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    }
+    & .bundles-list { margin-top: 0; max-width: 1200px; }
+    &.open .bundles-details { max-width: 800px; }
+  }
+
+  /* Right-side details panel — surface card with a header bar
+     (label + close ✕) and a scrollable body. Same chrome as the
+     findings-table details, scaled to bundle metadata. */
+  & .bundles-details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-glass);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  & .bundles-details-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .55rem .75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  & .bundles-details-label {
+    color: var(--muted);
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+  }
+  & .bundles-details-close {
+    background: transparent; color: var(--muted);
+    border: 0; border-radius: 4px;
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    cursor: pointer; padding: 0;
+    font-size: 1rem; line-height: 1;
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  }
+  & .bundles-details-body {
+    padding: .75rem;
+    overflow-y: auto;
+    font-size: .78rem;
+  }
+
+  /* Definition list for the metadata block — labels left, values
+     right, two-column grid so name/integrity/size rows line up.
+     Mono values ride a smaller font so the long integrity hash
+     doesn't dominate the column. */
+  & .bundles-detail-meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: .25rem .65rem;
+    margin: 0 0 .75rem;
+
+    & dt { color: var(--muted); font-size: .72rem; font-weight: 600; align-self: center; }
+    & dd { margin: 0; font-size: .78rem; word-break: break-all; }
+    & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+  }
+  & .bundles-detail-loading,
+  & .bundles-detail-stasis { color: var(--muted); font-size: .78rem; padding: .5rem 0; }
+  & .bundles-detail-error { color: var(--critical); font-size: .78rem; padding: .5rem 0; }
+
+  /* Sources list (parsed from .map sourcesContent). Each row is
+     path on the left, byte size on the right; ellipsis-clipped
+     paths so the row doesn't grow horizontally. */
+  & .bundles-sources-list {
+    list-style: none; margin: .25rem 0 0; padding: 0;
+    border-top: 1px solid var(--border);
+
+    & li {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .25rem .25rem;
+      border-bottom: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .72rem;
+      &:last-child { border-bottom: none; }
+    }
+    & .bundles-source-path {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    & .bundles-source-size {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+  }
+
 
   & .bundles-list {
     list-style: none;
-    margin: 1rem 0 0;
+    margin: 0;
     padding: 0;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -179,7 +280,16 @@
       padding: .4rem .75rem;
       border-bottom: 1px solid var(--border);
       color: var(--text);
+      cursor: pointer;
+      transition: background .12s;
+
       &:last-child { border-bottom: none; }
+      &:hover { background: rgb(from var(--text) r g b / .04); }
+      &.selected {
+        background: rgb(from var(--text) r g b / .06);
+        outline: 1px solid var(--accent);
+        outline-offset: -1px;
+      }
     }
     /* Two-line text block: name (primary, monospace .78rem) on top,
        sha512 integrity (secondary, smaller, muted) below. The

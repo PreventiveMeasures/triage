@@ -5,7 +5,7 @@ import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
 import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
-import { deleteBundle, listBundles } from './storage.js'
+import { deleteBundle, listBundles, readBundle } from './storage.js'
 import { renderSidebar } from './sidebar.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
@@ -37,7 +37,9 @@ report.addEventListener('click', (e) => {
   // prompt. Drops the OPFS entry + meta record, refreshes
   // state.bundles, and re-renders both the main view (row goes) and
   // the sidebar (count drops, header hides at zero). Confirm because
-  // OPFS removes are not recoverable from the in-app UI.
+  // OPFS removes are not recoverable from the in-app UI. Listed
+  // BEFORE the row-select handler so a click on Delete doesn't
+  // also open the details panel for the row about to disappear.
   const delBundle = e.target.closest('[data-delete-bundle]')
   if (delBundle) {
     const integrity = delBundle.dataset.deleteBundle
@@ -45,9 +47,63 @@ report.addEventListener('click', (e) => {
     if (!confirm(`Delete bundle "${friendly}"?`)) return
     ;(async () => {
       await deleteBundle(integrity)
+      // Drop the open panel if it was pointing at the deleted row.
+      if (state.selectedBundle === integrity) {
+        state.selectedBundle = null
+        state.bundleDetails = null
+      }
       state.bundles = await listBundles()
       render()
       await renderSidebar()
+    })()
+    return
+  }
+  // Bundles list — close-details button on the right panel. Same
+  // shape as the findings table's data-table-deselect hook.
+  if (e.target.closest('[data-deselect-bundle]')) {
+    state.selectedBundle = null
+    state.bundleDetails = null
+    render()
+    return
+  }
+  // Bundles list — row select. Opens the right-side details panel,
+  // then asynchronously reads + parses the bundle (.map gets
+  // sourcemap fields surfaced; .stasis falls back to metadata-only).
+  // The first render() shows a Loading… placeholder; once the
+  // async load resolves, render() repaints with the parsed data.
+  // Stale resolves (the user clicked another row in the meantime)
+  // are dropped via the `state.selectedBundle === integrity` check.
+  const selBundle = e.target.closest('[data-select-bundle]')
+  if (selBundle) {
+    const integrity = selBundle.dataset.selectBundle
+    if (state.selectedBundle === integrity) return
+    state.selectedBundle = integrity
+    state.bundleDetails = null
+    render()
+    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+    if (!entry) return
+    ;(async () => {
+      let details
+      try {
+        const bytes = await readBundle(integrity)
+        const isMap = entry.name.toLowerCase().endsWith('.map')
+        if (isMap) {
+          try {
+            const json = JSON.parse(new TextDecoder().decode(bytes))
+            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, json }
+          } catch (err) {
+            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
+          }
+        } else {
+          details = { integrity, kind: 'stasis', size: bytes.byteLength }
+        }
+      } catch (err) {
+        details = { integrity, error: err.message, size: 0 }
+      }
+      // Drop the result if the user moved on while we loaded.
+      if (state.selectedBundle !== integrity) return
+      state.bundleDetails = details
+      render()
     })()
     return
   }

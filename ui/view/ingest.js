@@ -108,12 +108,16 @@ export async function addFiles(files) {
     }
   }
   if (last) await switchToFile(last.name, last.content)
+  // renderSidebar refreshes state.bundles from OPFS, so it has to
+  // run BEFORE the bundles view re-render below — otherwise the
+  // freshly-saved bundle wouldn't show up in the list (render()
+  // would paint with the stale snapshot from before the drop).
+  await renderSidebar()
   // If the drop was bundles-only AND the user is on the bundles
   // view, re-render so the new entries land in the list. switchToFile
-  // re-renders for regular drops; the bundles view doesn't get one
-  // for free since `last` stays null.
+  // already re-renders for regular drops; the bundles view doesn't
+  // get one for free since `last` stays null.
   if (!last && savedBundles && state.currentView === 'bundles') render()
-  await renderSidebar()
 }
 
 // Replace the active view with the named OPFS file. Pre-fetched

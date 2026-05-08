@@ -682,33 +682,106 @@ function findingsBodyTemplate(filtered) {
 // Bundle blobs are stored as-is in OPFS keyed by `sha512-${base64}`
 // integrity; the catalog row shows the dropped filename first,
 // then the integrity in small monospace below so the user can
-// distinguish two drops with the same name. Each row carries a
-// Delete button — events.js's data-delete-bundle handler keys
+// distinguish two drops with the same name. Clicking a row opens
+// a right-side details panel (parsed for .map sourcemaps; basic
+// meta for .stasis bundles); each row also carries a Delete button.
+// events.js's data-select-bundle / data-delete-bundle handlers key
 // off the integrity (the canonical id in storage.js).
 function renderBundlesList(bundles) {
-  return html`<div class="bundles-view">
+  const selected = state.selectedBundle
+  const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
+  const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
+  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>
     <header class="page-head">
       <div class="page-title">
         <h1>Bundles</h1>
         <div class="meta-row"><span>${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</span></div>
       </div>
     </header>
-    <ul class="bundles-list">
-      ${bundles.map(({ integrity, name }) => html`<li>
-        <div class="bundles-row-text">
-          <span class="bundles-name">${name}</span>
-          <span class="bundles-integrity" title=${integrity}>${integrity}</span>
+    <div class=${layoutClass}>
+      <ul class="bundles-list">
+        ${bundles.map(({ integrity, name }) => {
+          const isSel = integrity === selected
+          return html`<li
+            class=${isSel ? 'selected' : ''}
+            data-select-bundle=${integrity}
+          >
+            <div class="bundles-row-text">
+              <span class="bundles-name">${name}</span>
+              <span class="bundles-integrity" title=${integrity}>${integrity}</span>
+            </div>
+            <button
+              type="button"
+              class="bundles-delete"
+              data-delete-bundle=${integrity}
+              title=${`Delete ${name}`}
+              aria-label=${`Delete ${name}`}
+            >Delete</button>
+          </li>`
+        })}
+      </ul>
+      ${selectedEntry ? html`<aside class="bundles-details" id="bundles-details">
+        <header class="bundles-details-bar">
+          <span class="bundles-details-label">Details</span>
+          <button type="button" class="bundles-details-close" data-deselect-bundle title="Close details" aria-label="Close details">×</button>
+        </header>
+        <div class="bundles-details-body">
+          ${renderBundleDetails(selectedEntry, state.bundleDetails)}
         </div>
-        <button
-          type="button"
-          class="bundles-delete"
-          data-delete-bundle=${integrity}
-          title=${`Delete ${name}`}
-          aria-label=${`Delete ${name}`}
-        >Delete</button>
-      </li>`)}
-    </ul>
+      </aside>` : nothing}
+    </div>
   </div>`
+}
+
+// Right-panel content for the open bundle. Until events.js finishes
+// the readBundle + parse, `state.bundleDetails` is null (or stale
+// for a previous selection); show a Loading… placeholder. For .map
+// files we render parsed sourcemap fields (version, output, sources
+// list with per-source content sizes). Anything else (stasis
+// bundle, unparseable .map) gets the metadata-only fallback.
+function renderBundleDetails(entry, details) {
+  const meta = html`<dl class="bundles-detail-meta">
+    <dt>Name</dt><dd>${entry.name}</dd>
+    <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
+    ${details && details.integrity === entry.integrity
+      ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
+      : nothing}
+  </dl>`
+  if (!details || details.integrity !== entry.integrity) {
+    return html`${meta}<div class="bundles-detail-loading">Loading…</div>`
+  }
+  if (details.error) {
+    return html`${meta}<div class="bundles-detail-error">Failed to parse: ${details.error}</div>`
+  }
+  if (details.kind === 'sourcemap' && details.json) {
+    const json = details.json
+    const sources = json.sources ?? []
+    const contents = json.sourcesContent ?? []
+    return html`${meta}
+      <dl class="bundles-detail-meta">
+        <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
+        ${json.file ? html`<dt>Output</dt><dd class="mono">${json.file}</dd>` : nothing}
+        ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
+        ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
+        <dt>Sources</dt><dd>${sources.length}</dd>
+      </dl>
+      ${sources.length > 0 ? html`<ul class="bundles-sources-list">
+        ${sources.map((src, i) => {
+          const content = contents[i]
+          const size = typeof content === 'string'
+            ? new TextEncoder().encode(content).byteLength
+            : null
+          return html`<li>
+            <span class="bundles-source-path" title=${src}>${src}</span>
+            ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+          </li>`
+        })}
+      </ul>` : nothing}`
+  }
+  // Stasis (.stasis.code.br) — brotli-decoding in browser isn't
+  // universally available, so we don't try to peek inside; the
+  // metadata block above already answers "is this the right bundle".
+  return html`${meta}<div class="bundles-detail-stasis">Stasis bundle (compressed; contents not parsed in-browser).</div>`
 }
 
 export function render() {

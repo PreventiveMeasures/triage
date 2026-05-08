@@ -83,6 +83,13 @@ export const state = store({
   // branch can paint without an async round-trip. Empty array when
   // no bundles are stored.
   bundles: [],
+  // Bundles view selection (integrity of the open row, null = none),
+  // and the parsed details cache for the open bundle. Selection
+  // opens a right-side panel mirroring the findings-table details
+  // pattern; details load asynchronously (readBundle + parse for
+  // .map) and stay cached on this slot until selection changes.
+  selectedBundle: null,
+  bundleDetails: null,
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).
