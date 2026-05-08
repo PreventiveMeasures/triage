@@ -1,6 +1,8 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
+import { listWorkspaces } from './workspaces.js'
+import { deriveSessionKey, buildAad, encryptJson, decryptJson } from './sync-crypto.js'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
 // changesets. Disabled by default. `setServerUrl(url)` enables; the
@@ -176,10 +178,22 @@ function send(msg) {
   }
 }
 
+// Encryption inserts an `await` between "decided to send" and
+// "actually sent", so a re-entrancy flag (`encrypting`) keeps a
+// second trySendSave from ALSO building a save while the first is
+// still cooking its ciphertext. Subsequent calls during that
+// window raise pendingSave just like in-flight; the first call's
+// completion drains the queue.
 function trySendSave() {
   if (!session) return
   if (!socket || socket.readyState !== WebSocket.OPEN) return
-  if (session.pending) {
+  if (session.pending || session.encrypting) {
+    session.pendingSave = true
+    return
+  }
+  if (!session.key) {
+    // Key derivation hasn't finished yet (or it failed). Mark the
+    // intent so when key arrives we send.
     session.pendingSave = true
     return
   }
@@ -188,24 +202,58 @@ function trySendSave() {
   session.localState = buildLocalState(session.ids)
   const changeset = computeChangeset(session.baseState, session.localState)
   if (changesetEmpty(changeset)) return
-  session.pending = { base: session.baseRevision, changeset }
-  session.pendingSave = false
-  send({
-    type: 'workspace-save',
-    workspaceId: session.workspaceId,
-    base: session.baseRevision,
-    changeset,
-  })
+  const sentBase = session.baseRevision
+  const owner = session
+  session.encrypting = true
+  ;(async () => {
+    try {
+      const aad = buildAad(owner.workspaceId, sentBase)
+      const { nonce, ciphertext } = await encryptJson(owner.key, changeset, aad)
+      // Session may have been closed (or replaced) during the
+      // await — drop the result if so. baseRevision may have
+      // moved if a chain landed during encryption; in that case
+      // the ciphertext is bound to a stale base, so requeue.
+      if (session !== owner) return
+      if (session.baseRevision !== sentBase) {
+        session.pendingSave = true
+        return
+      }
+      session.pending = { base: sentBase, changeset }
+      session.pendingSave = false
+      send({
+        type: 'workspace-save',
+        workspaceId: session.workspaceId,
+        base: sentBase,
+        nonce,
+        ciphertext,
+      })
+    } catch (err) {
+      console.warn('Triage sync: encrypt failed:', err)
+    } finally {
+      if (session === owner) {
+        session.encrypting = false
+        // If something queued during encrypt (or our own logic
+        // bumped pendingSave because base moved), kick it.
+        if (session.pendingSave && !session.pending) {
+          session.pendingSave = false
+          trySendSave()
+        }
+      }
+    }
+  })()
 }
 
-// Apply a chain of revisions (each `{ base, id, changeset }`) to
-// baseState. Verifies continuity — every revision's `base` must
-// equal the current baseRevision before its changeset applies, so
-// out-of-order or gappy chains don't silently corrupt state.
-// Returns true on success. On failure, baseState is left untouched
-// from the failure point onward and we resync (clear baseRevision
-// to force the next save to send everything again).
-function applyChainToBase(revisions) {
+// Apply a chain of revisions (each `{ base, id, nonce,
+// ciphertext }`) to baseState. Verifies continuity — every
+// revision's `base` must equal the current baseRevision before its
+// changeset applies, so out-of-order or gappy chains don't silently
+// corrupt state. Decrypts each revision's ciphertext along the way
+// using the AAD derived from the (workspaceId, base) pair the
+// sender bound it to. Returns true on success. On failure
+// (continuity break or decrypt error) baseState is left untouched
+// from the failure point onward; the caller resyncs by clearing
+// baseRevision so the next save resends the full state.
+async function applyChainToBase(revisions) {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
     // First-revision allowance: the very first chain we receive
@@ -220,7 +268,17 @@ function applyChainToBase(revisions) {
       session.baseState = {}
       return false
     }
-    session.baseState = applyChangeset(session.baseState, rev.changeset ?? {})
+    let changeset
+    try {
+      const aad = buildAad(session.workspaceId, rev.base)
+      changeset = await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)
+    } catch (err) {
+      console.warn('Triage sync: decrypt failed; resync requested', err)
+      session.baseRevision = null
+      session.baseState = {}
+      return false
+    }
+    session.baseState = applyChangeset(session.baseState, changeset ?? {})
     session.baseRevision = rev.id
   }
   return true
@@ -271,7 +329,8 @@ async function handleAck(msg) {
 
 async function handleChain(revisions) {
   if (!Array.isArray(revisions) || revisions.length === 0) return
-  if (!applyChainToBase(revisions)) {
+  if (!session?.key) return  // key not derived yet; bail (a future open will retry)
+  if (!await applyChainToBase(revisions)) {
     // Chain didn't apply cleanly. Fall back: pretend our base is
     // empty and resend full state. Next save will rebuild from 0.
     session.pending = null
@@ -413,8 +472,10 @@ export const triageSync = {
     if (!workspaceId) return
     if (session?.workspaceId === workspaceId) return
     this.closeSession()
+    const ws = listWorkspaces().find((w) => w.id === workspaceId)
+    if (!ws) return
     const ids = buildWorkspaceIds()
-    session = {
+    const newSession = {
       workspaceId,
       ids,
       // Until the server tells us its current revision, we have no
@@ -426,8 +487,24 @@ export const triageSync = {
       localState: buildLocalState(ids),
       pending: null,
       pendingSave: false,
+      key: null,
+      encrypting: false,
     }
-    if (socket?.readyState === WebSocket.OPEN) trySendSave()
+    session = newSession
+    // Derive the per-workspace content-encryption key off the
+    // workspace's private key, then prime the first send. Async
+    // because HKDF + noble both run via Promises; if the session
+    // gets replaced or closed before key derivation finishes, the
+    // identity check drops the result.
+    deriveSessionKey(ws.privateKey).then((key) => {
+      if (session !== newSession) return
+      session.key = key
+      // pendingSave was raised every time we hit trySendSave
+      // before the key landed; flush now.
+      if (socket?.readyState === WebSocket.OPEN) trySendSave()
+    }).catch((err) => {
+      console.warn('Triage sync: key derivation failed:', err)
+    })
   },
 
   closeSession() {
@@ -445,6 +522,8 @@ export const triageSync = {
       baseRevision: session.baseRevision,
       pending: session.pending && { base: session.pending.base },
       pendingSave: session.pendingSave,
+      keyReady: session.key !== null,
+      encrypting: session.encrypting,
       tracked: session.ids.size,
     }
   },
