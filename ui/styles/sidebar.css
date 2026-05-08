@@ -325,6 +325,13 @@
   &[data-status="online"]  .sync-dot { background: var(--green); }
   &[data-status="offline"] .sync-dot { background: var(--critical); }
 }
+/* The bare `#sync-status` rule above carries (1,0,0) specificity
+   which beats the user-agent's `[hidden] { display: none }`
+   (0,1,0). Match the id + attribute (1,1,0) here so `btn.hidden =
+   true` actually hides the button — without this the renderer's
+   visibility gate is a no-op and "Sync off" stays painted on
+   workspaces / origins where the button shouldn't be reachable. */
+#sync-status[hidden] { display: none; }
 
 /* Workspace import: triage conflict dialog. The native <dialog>
    handles focus trap + Esc-to-close; this is just the visual shell.
