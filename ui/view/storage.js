@@ -95,11 +95,15 @@ export async function listFiles() {
 export async function saveFile(name, content) {
   const dir = await getOpfsDir()
   if (dir) {
-    // Remove first so a shorter overwrite shrinks the underlying file.
+    // OPFS reports are gzipped at rest — JSON dumps compress well
+    // and OPFS quota is shared with bundles + workspaces. readFile
+    // sniffs the gzip magic on read so legacy uncompressed entries
+    // keep working until they're rewritten through here.
+    const bytes = await gzipBytes(new TextEncoder().encode(content))
     try { await dir.removeEntry(name) } catch {}
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
-    await writable.write(content)
+    await writable.write(bytes)
     await writable.close()
     cache.set(name, content)
     return
@@ -123,7 +127,24 @@ export async function readFile(name) {
     if (dir) {
       const fh = await dir.getFileHandle(name)
       const file = await fh.getFile()
-      return await file.text()
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      // Gzipped payload (saveFile compresses since v…) — decompress
+      // and return the JSON text. Stale uncompressed entries from
+      // before the on-disk-gzip flip fall through to the legacy
+      // branch below; once read, they get rewritten compressed by
+      // the saveFile call so subsequent loads hit the fast path.
+      if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        const out = await gunzipBytes(bytes)
+        return new TextDecoder().decode(out)
+      }
+      const text = new TextDecoder().decode(bytes)
+      // Migrate the legacy uncompressed entry by writing it back
+      // through saveFile (which gzips). Fire-and-forget — the read
+      // result is already decided, and a write failure is harmless
+      // (next read will retry the migration). Skipping the await
+      // also keeps the read path fast on the migration pass.
+      saveFile(name, text).catch(() => {})
+      return text
     }
     const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
     if (compressed === null) throw new Error(`File not found: ${name}`)
