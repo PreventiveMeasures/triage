@@ -4,7 +4,6 @@ import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
 import { pkgRelative } from './data.js'
 import { forceLayout, pkgColor } from '../graph/utils.js'
-import { formatBytes } from '../format.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones
@@ -866,13 +865,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // `pkgLabel` (both user-provided — file paths from a loaded
     // report). `renderSevChips` now returns a Lit template too,
     // so it slots in directly with no `unsafeHTML` round-trip.
-    const sizeLabel = formatBytes(n.size)
     render(html`
       <div class="g2-tt-path">${relPath}</div>
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style=${`background:${col}`}></span>
         <span class="g2-tt-pkg">${pkgLabel}</span>
-        ${sizeLabel ? html`<span class="g2-tt-size">${sizeLabel}</span>` : null}
       </div>
       ${n.totalIssues > 0 ? renderSevChips(n.own) : null}
     `, tooltip)

@@ -573,14 +573,6 @@
   color: var(--muted);
   word-break: break-all;
 }
-.g2-tt-size {
-  margin-left: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: 10px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
 
 .g2-tt-badge {
   display: inline-block;
