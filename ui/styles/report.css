@@ -168,7 +168,11 @@
    + bundle name + sub-tab switcher) on top and the active sub-
    tab's content edge to edge below. Same flex chain as the
    regular .bundles-view so the body fills the viewport. */
-.bundles-slide-view {
+/* Two-class compound so this beats `.bundles-view`'s
+   `max-width: 1200px` (defined later in the stylesheet — without the
+   extra specificity the cap leaks back into the slide and the graph
+   sits cramped at 1200px regardless of viewport width). */
+.bundles-view.bundles-slide-view {
   max-width: none;
   display: flex;
   flex-direction: column;
