@@ -13,8 +13,8 @@
 // nothing. Wrapped in a module-level promise so concurrent
 // `renderSidebar` calls share a single migration and downstream code
 // only sees the post-migration filesystem.
-import { listFiles, readFile, saveFile, deleteFile } from './storage.js'
-import { getCount, setCount, removeCount, analyzeContent } from './counts.js'
+import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
+import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor } from './state.js'
 
@@ -59,12 +59,12 @@ async function run() {
     // backfill.
     const oldCount = getCount(name)
     removeCount(name)
-    if (oldCount !== undefined) {
-      const { source } = analyzeContent(content)
-      setCount(target, oldCount, source)
-    } else {
+    if (oldCount === undefined) {
       const { count, source } = analyzeContent(content)
       setCount(target, count, source)
+    } else {
+      const { source } = analyzeContent(content)
+      setCount(target, oldCount, source)
     }
 
     // Per-report repo URL is also keyed by filename.

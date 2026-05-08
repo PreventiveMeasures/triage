@@ -2,15 +2,15 @@ import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { listWorkspaces } from './workspaces.js'
 import {
+  buildAad,
+  computeRevisionId,
+  decryptJson,
   deriveSessionKey,
   deriveSigningKeypair,
-  buildAad,
   encryptJson,
-  decryptJson,
   signSavePayload,
   signSubscribePayload,
   verifySavePayload,
-  computeRevisionId,
 } from './sync-crypto.js'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
@@ -635,7 +635,9 @@ async function handleAck(msg) {
 
 async function handleChain(revisions) {
   if (!Array.isArray(revisions) || revisions.length === 0) return
-  if (!session?.key) return  // key not derived yet; bail (a future open will retry)
+  // Key not derived yet — bail; a future open will retry once
+  // deriveSessionKey lands and trySendSave re-runs.
+  if (!session?.key) return
   if (!await applyChainToBase(revisions)) {
     // Chain didn't apply cleanly. Fall back: pretend our base is
     // empty and resend full state. Next save will rebuild from 0.
@@ -963,25 +965,27 @@ export const triageSync = {
     // different domain-separating info strings. If the session
     // gets replaced or closed before derivation finishes, the
     // identity check drops the result.
-    Promise.all([
-      deriveSessionKey(ws.privateKey),
-      deriveSigningKeypair(ws.privateKey, workspaceId),
-    ]).then(([key, kp]) => {
-      if (session !== newSession) return
-      session.key = key
-      session.signingKey = kp.privateKey
-      session.verifyingKey = kp.publicKey
-      session.workspaceTag = kp.publicKeyB64
-      // Subscribe + flush any pending save now that we have keys.
-      // Subscribe gets us broadcast-eligibility regardless of
-      // whether there's anything to push.
-      if (socket?.readyState === WebSocket.OPEN) {
+    ;(async () => {
+      try {
+        const [key, kp] = await Promise.all([
+          deriveSessionKey(ws.privateKey),
+          deriveSigningKeypair(ws.privateKey, workspaceId),
+        ])
+        if (session !== newSession) return
+        session.key = key
+        session.signingKey = kp.privateKey
+        session.verifyingKey = kp.publicKey
+        session.workspaceTag = kp.publicKeyB64
+        // Subscribe + flush any pending save now that we have keys.
+        // Subscribe gets us broadcast-eligibility regardless of
+        // whether there's anything to push.
+        if (socket?.readyState !== WebSocket.OPEN) return
         trySendSubscribe()
         trySendSave()
+      } catch (err) {
+        console.warn('Triage sync: key derivation failed:', err)
       }
-    }).catch((err) => {
-      console.warn('Triage sync: key derivation failed:', err)
-    })
+    })()
   },
 
   closeSession() {

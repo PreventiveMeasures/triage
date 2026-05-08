@@ -123,7 +123,7 @@ export async function saveFile(name, content) {
   } catch (err) {
     // Most likely QuotaExceededError. Re-throw so the drop handler can
     // surface a useful message to the user instead of silently dropping.
-    throw new Error(`localStorage write failed for ${name}: ${err.message}`)
+    throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
   }
 }
 

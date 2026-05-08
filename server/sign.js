@@ -59,7 +59,7 @@ async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
 // non-string or lone-surrogate input (any of which on the wire is
 // already a hostile / malformed message), so we treat any error
 // in the canonical-payload path as a verification failure.
-export async function verifySaveSig(msg) {
+export function verifySaveSig(msg) {
   if (typeof msg.signature !== 'string') return false
   let payload
   try { payload = canonicalSave(msg) } catch { return false }
@@ -78,7 +78,7 @@ export async function computeRevisionId(msg) {
   return Buffer.from(new Uint8Array(digest)).toString('base64url')
 }
 
-export async function verifySubscribeSig(msg) {
+export function verifySubscribeSig(msg) {
   if (typeof msg.signature !== 'string') return false
   let payload
   try { payload = canonicalSubscribe(msg) } catch { return false }

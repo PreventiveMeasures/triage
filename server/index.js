@@ -27,8 +27,8 @@
 
 import { WebSocketServer } from 'ws'
 import { argv, env } from 'node:process'
-import { openDb, headFor, chainFrom, insertRevision, revisionExists } from './db.js'
-import { verifySaveSig, verifySubscribeSig, computeRevisionId } from './sign.js'
+import { chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.js'
+import { computeRevisionId, verifySaveSig, verifySubscribeSig } from './sign.js'
 
 const PORT = Number(env.PORT ?? 8765)
 const HOST = env.HOST ?? '127.0.0.1'
