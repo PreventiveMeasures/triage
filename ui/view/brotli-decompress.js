@@ -62,23 +62,51 @@ async function init() {
       // /foo/brotli-sw.js with scope /foo/. Hard-coding `/brotli-
       // sw.js` would only work at the origin root.
       const reg = await navigator.serviceWorker.register('brotli-sw.js')
+      await navigator.serviceWorker.ready
       // `ready` resolves once an active SW exists for this scope,
       // but on FIRST registration the page that registered the
-      // worker isn't yet controlled by it — the worker has to take
-      // over via `clients.claim()` (fires `controllerchange` on the
-      // page). Until then, fetches don't hit the SW's fetch handler
-      // and POSTs to the intercept URL come back as 404. Wait
-      // explicitly for `controller` to be non-null so the first
-      // brotliDecompress call lands inside the worker.
-      await navigator.serviceWorker.ready
+      // worker often isn't actually CONTROLLED by it — clients.claim()
+      // is meant to take over existing clients but doesn't always
+      // fire `controllerchange` on the page that registered the
+      // worker (browser quirk; reproducible on GitHub Pages).
+      // Until controller is set, fetches bypass the SW and the
+      // server's static handler answers — which on GH Pages means a
+      // 405 for POST.
+      //
+      // Strategy: wait briefly for `controllerchange`; if we time
+      // out without a controller, reload the page ONCE — after the
+      // reload the SW is already active for the scope and the new
+      // page document loads as controlled from the very start. A
+      // sessionStorage flag prevents a reload-loop in the case
+      // where the SW never manages to control (e.g. an unsupported
+      // browser environment); the second pass falls through to
+      // 'unsupported' rather than reloading again.
       if (!navigator.serviceWorker.controller) {
         await new Promise((resolve) => {
           navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
-          // Defensive cap — a misbehaving SW that never claims
-          // shouldn't hang the boot. The fetch will still fail
-          // loudly later with a clear error.
-          setTimeout(resolve, 3000)
+          setTimeout(resolve, 1500)
         })
+        if (!navigator.serviceWorker.controller) {
+          const RELOAD_FLAG = 'deepview.brotli-sw-reloaded'
+          if (!sessionStorage.getItem(RELOAD_FLAG)) {
+            sessionStorage.setItem(RELOAD_FLAG, '1')
+            location.reload()
+            // Park forever — the reload is in flight.
+            await new Promise(() => {})
+          }
+          // Already reloaded once and still no controller — give up
+          // gracefully so callers (stasis details parsing) fall back
+          // to "contents not parsed" rather than hanging on a SW
+          // that's not actually intercepting. Clear the flag so a
+          // future visit can retry the bootstrap.
+          sessionStorage.removeItem(RELOAD_FLAG)
+          mode = { kind: 'unsupported' }
+          return mode
+        }
+        // Successful claim — clear the flag so it doesn't carry
+        // forward into other browsing sessions if the user happens
+        // to share a tab.
+        sessionStorage.removeItem('deepview.brotli-sw-reloaded')
       }
       // Build the intercept URL from the SW's scope so the fetch
       // lands inside it. `reg.scope` is an absolute URL ending in
