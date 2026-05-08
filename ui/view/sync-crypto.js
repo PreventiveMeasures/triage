@@ -279,11 +279,68 @@ export async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
   return cipher.decrypt(ciphertext)
 }
 
-// JSON-friendly conveniences — encrypt a JSON-able value to
-// `{ nonce, ciphertext }` (both base64) and decrypt back. Tag is
-// appended to the ciphertext by the AEAD; we ship it as one blob.
+// Compress + pad before encrypting so the wire ciphertext size
+// reveals only the bucket the changeset falls into, not its real
+// length. Plaintext layout is:
+//   <4-byte BE compressed-length><gzip bytes><zero pad>
+// — the length prefix lets the decoder strip the trailing zero-pad
+// before gunzip (gzip's footer is fine, but a deflate stream
+// followed by trailing zeros isn't portably tolerated by every
+// decompressor). Ciphertext length = padded plaintext length + 16
+// (Poly1305 tag), so a single-color toggle and a 600-byte comment
+// edit collapse to the same wire size as long as both fit the same
+// power-of-two bucket. Floor at 64 bytes so the smallest bucket
+// doesn't itself reveal "this is an empty / tiny update".
+const PAD_FLOOR = 64
+
+function nextPow2AtLeast(n, floor) {
+  if (n <= floor) return floor
+  return 1 << (32 - Math.clz32(n - 1))
+}
+
+async function gzip(bytes) {
+  const cs = new CompressionStream('gzip')
+  const writer = cs.writable.getWriter()
+  writer.write(bytes)
+  writer.close()
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer())
+}
+
+async function gunzip(bytes) {
+  const ds = new DecompressionStream('gzip')
+  const writer = ds.writable.getWriter()
+  writer.write(bytes)
+  writer.close()
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer())
+}
+
+async function frameAndPad(value) {
+  const json = encodeUtf8(JSON.stringify(value))
+  const compressed = await gzip(json)
+  if (compressed.length > 0xFFFFFFFF) throw new Error('payload too large')
+  const target = nextPow2AtLeast(4 + compressed.length, PAD_FLOOR)
+  const out = new Uint8Array(target)
+  new DataView(out.buffer, out.byteOffset, out.byteLength).setUint32(0, compressed.length, false)
+  out.set(compressed, 4)
+  return out
+}
+
+async function unframeAndUngzip(plaintext) {
+  if (plaintext.length < 4) throw new Error('plaintext too short')
+  const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
+  const len = view.getUint32(0, false)
+  if (len + 4 > plaintext.length) throw new Error('length prefix exceeds buffer')
+  const compressed = plaintext.subarray(4, 4 + len)
+  const json = await gunzip(compressed)
+  return JSON.parse(new TextDecoder().decode(json))
+}
+
+// JSON-friendly conveniences — gzip + pad + encrypt a JSON-able
+// value to `{ nonce, ciphertext }` (both base64) and reverse on the
+// way back. Tag is appended to the ciphertext by the AEAD; we ship
+// it as one blob.
 export async function encryptJson(keyBytes, value, aad) {
-  const plaintext = encodeUtf8(JSON.stringify(value))
+  const plaintext = await frameAndPad(value)
   const { nonce, ciphertext } = await encryptBytes(keyBytes, plaintext, aad)
   return { nonce: nonce.toBase64(), ciphertext: ciphertext.toBase64() }
 }
@@ -292,5 +349,5 @@ export async function decryptJson(keyBytes, nonceB64, ciphertextB64, aad) {
   const nonce = Uint8Array.fromBase64(nonceB64)
   const ciphertext = Uint8Array.fromBase64(ciphertextB64)
   const plaintext = await decryptBytes(keyBytes, nonce, ciphertext, aad)
-  return JSON.parse(new TextDecoder().decode(plaintext))
+  return unframeAndUngzip(plaintext)
 }
