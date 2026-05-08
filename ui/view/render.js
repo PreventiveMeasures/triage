@@ -446,7 +446,12 @@ function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCou
   // — see the findings-graph slot in render() below.
   const viewModes = showGraphMode ? 'table,list,grouped,graph' : 'table,list,grouped'
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
-  const sourceOpt = (value, label) => html`<option value=${value} ?selected=${state.filterSource === value}>${label}</option>`
+  const srcChip = (value, label) => html`<button
+    type="button"
+    class=${`source-chip${state.filterSources.has(value) ? ' active' : ''}`}
+    data-source-toggle=${value}
+    aria-pressed=${String(state.filterSources.has(value))}
+  >${label}</button>`
 
   return html`<div class="toolbar">
     <div class="toolbar-row">
@@ -466,12 +471,10 @@ function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCou
         ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
       </select>
       ${showSource ? html`<div class="sep"></div>
-        <label for="source-select">Source:</label>
-        <select id="source-select">
-          ${sourceOpt('all', 'All files')}
-          ${sourceOpt('own', 'Own source')}
-          ${sourceOpt('modules', 'node_modules')}
-        </select>` : nothing}
+        <div class="source-toggle" role="group" aria-label="Source filter">
+          ${srcChip('own', 'Sources')}
+          ${srcChip('modules', 'Dependencies')}
+        </div>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
         <label for="conf-range">Confidence</label>
         <!-- Dual-thumb slider replaces the prior min / max select
@@ -753,7 +756,7 @@ export function render() {
   // node_modules paths would leave the filter at 'own' or 'modules'
   // and silently empty the list. resetFilters() runs only on isFirst
   // in ingest.js, so guard here too.
-  if (!hasAnyModulesPath && state.filterSource !== 'all') state.filterSource = 'all'
+  if (!hasAnyModulesPath && state.filterSources.size > 0) state.filterSources.clear()
   if (!hasAnyConfidence) {
     state.filterConfMin = 0; state.filterConfMax = 10
     // Sort options for confidence drop out alongside the filter, so a

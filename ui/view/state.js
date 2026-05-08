@@ -85,7 +85,14 @@ export const state = store({
   // findings.
   filterSeverities: new Set(),
   filterColors: new Set(),
-  filterSource: 'all',
+  // Source filter — Set<'own' | 'modules'>. Empty (default) OR
+  // both members = no filter; one member = restrict to that side.
+  // Renders as two toggle buttons in the toolbar ("Sources" /
+  // "Dependencies"); the empty-or-full-set semantics mean clicking
+  // a chip off when both are on (or neither) leaves the user in
+  // the same effective filter state, which reads as "checking
+  // either or both has the same filtered-in result".
+  filterSources: new Set(),
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

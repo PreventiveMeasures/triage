@@ -296,6 +296,20 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Source filter chips — `data-source-toggle="own|modules"`. Each
+  // click flips the chip's membership in `state.filterSources`;
+  // empty set OR full set both mean "no filter". When the user
+  // clicks the only-active chip OFF, that empties the set, which
+  // also reads as no filter — same effective result as having both
+  // checked, matching the spec.
+  const srcChip = e.target.closest('[data-source-toggle]')
+  if (srcChip) {
+    const v = srcChip.dataset.sourceToggle
+    if (state.filterSources.has(v)) state.filterSources.delete(v)
+    else state.filterSources.add(v)
+    render()
+    return
+  }
   // (severity-chips / triage-filter / view-mode-buttons clicks are
   // dispatched as `severity-toggle` / `color-toggle` /
   // `view-mode-change` custom events from their respective Lit
@@ -436,7 +450,6 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
-  else if (id === 'source-select') { state.filterSource = val; render() }
 })
 
 // Confidence range slider. `range-input` fires continuously during

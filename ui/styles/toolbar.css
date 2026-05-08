@@ -126,6 +126,31 @@ view-mode-buttons { display: contents; }
   }
 }
 
+/* Source filter — two flush toggle chips ("Sources" / "Dependencies")
+   in a bordered shell, same shape as the view-mode group above so
+   the two segmented controls in the toolbar read as siblings.
+   Either / both / neither can be active; empty AND full both mean
+   "no filter" (see filters.js — the predicate goes inert when both
+   are set). Active chip carries the accent recolor. */
+.source-toggle {
+  display: inline-flex;
+  height: 30px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
+
+  & .source-chip {
+    background: transparent; border: none; color: var(--muted);
+    padding: 0 .55rem; cursor: pointer;
+    display: inline-flex; align-items: center;
+    transition: background .12s, color .12s;
+    font-family: inherit; font-size: .8rem;
+
+    &:not(:last-child) { border-right: 1px solid var(--border); }
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    &.active { color: var(--accent); background: var(--surface-active); }
+  }
+}
+
 .toolbar-row {
   display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
 }

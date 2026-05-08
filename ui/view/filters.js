@@ -5,7 +5,7 @@ import { tabKey, primaryTab } from './group.js'
 export function resetFilters() {
   state.filterSeverities = new Set()
   state.filterColors = new Set()
-  state.filterSource = 'all'
+  state.filterSources = new Set()
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
@@ -26,8 +26,15 @@ export function matchesFilters(f) {
     const col = state.markers.get(tabKey(f)) ?? 'none'
     if (!state.filterColors.has(col)) return false
   }
-  if (state.filterSource === 'own' && isModule(f.file)) return false
-  if (state.filterSource === 'modules' && !isModule(f.file)) return false
+  // Source filter — empty OR full (both 'own' and 'modules' set) =
+  // no filter; otherwise restrict to the picked side. The Set goes
+  // inert when both halves are checked because including everything
+  // is what "no filter" already means.
+  if (state.filterSources.size === 1) {
+    const allowOwn = state.filterSources.has('own')
+    if (allowOwn && isModule(f.file)) return false
+    if (!allowOwn && !isModule(f.file)) return false
+  }
   // Confidence range. The slider's bounds (0..10) always have a
   // value; the special positions are 0 (lower) and 10 (upper):
   //   * lower at 0 → undefined-confidence findings pass through;
