@@ -1,38 +1,24 @@
-// Brotli decompressor — no third-party dependencies. Tries each
-// browser-native path, self-testing each one against a known
-// brotli payload before declaring it usable:
+// Brotli decompressor — native browsers only, no third-party
+// dependencies. Modern Chromium (138+) ships brotli on the streams
+// API as `DecompressionStream('br')` / `'brotli'`. Earlier browsers
+// have no native path: the SW Content-Encoding echo trick and the
+// Cache API echo trick BOTH return the bytes unchanged (the
+// browser's response-decoder pipeline only runs on real network
+// responses, not on SW- or Cache-constructed ones), and we don't
+// ship a JS/WASM brotli decoder. Stasis bundles on those browsers
+// show "contents not parsed" via the unsupported branch — the
+// user can still inspect the bundle's metadata + integrity.
 //
-//   1. `DecompressionStream('br')` / `'brotli'` — modern Chromium
-//      ships native brotli on the streams API.
-//   2. Cache API echo trick — `cache.put(req, new Response(bytes,
-//      { headers: { 'Content-Encoding': 'br' } }))` followed by
-//      `cache.match(req)`. Some browser versions run the
-//      Content-Encoding decoder when the response is read out of
-//      the Cache.
-//   3. Service worker echo trick — POST the brotli bytes to the SW,
-//      which echoes the body back with `Content-Encoding: br`. The
-//      browser's HTTP-layer decoder runs on the response IF the
-//      browser honors Content-Encoding from SW-constructed
-//      responses (Chrome historically did; behavior has varied).
-//
-// Each path is verified with `selfTest`: a 1-byte brotli stream
-// (0x06) that decodes to the empty string. If the path returns the
-// input unchanged (echo without decoding), it gets dropped from
-// the candidates. The first verified path wins.
-//
-// All three trigger the page's decoder pipeline through native
-// browser APIs only — no JS or WASM brotli library is bundled.
+// Older revisions of this module experimented with both echo tricks
+// and registered a service worker (`/brotli-sw.js`) for the SW
+// path. The SW is no longer used; `unregisterSW()` runs on every
+// init so any leftover registration from those revisions is
+// cleaned up regardless of which mode this load lands in.
 
 let mode = null
 let initPromise = null
 
-// brotli-encoded empty string: WBITS=16 (`0`), ISLAST=1 (`1`),
-// ISLASTEMPTY=1 (`1`), padded LSB-first → byte 0x06. Decodes to a
-// zero-length Uint8Array on a working brotli pipeline; an echoing
-// "decoder" returns the same 1 byte back.
-const TEST_INPUT = new Uint8Array([0x06])
-
-async function nativeAvailable() {
+function nativeAvailable() {
   for (const fmt of ['br', 'brotli']) {
     try {
       // eslint-disable-next-line no-new
@@ -48,78 +34,10 @@ async function decompressNative(format, bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-async function decompressViaCache(bytes) {
-  // Unique cache name per call so concurrent decodes can't collide,
-  // AND we can drop the whole named cache from CacheStorage on
-  // success — leaving no `deepview-brotli-*` entries behind in
-  // DevTools / quota usage. `cache.delete(req)` would only remove
-  // the request inside the cache; the cache object itself would
-  // persist until the storage manager evicts it.
-  const cacheName = `deepview-brotli-${crypto.randomUUID()}`
-  const cache = await caches.open(cacheName)
-  const url = `${location.origin}/__brotli__`
-  const req = new Request(url)
-  try {
-    await cache.put(req, new Response(bytes, {
-      headers: { 'Content-Encoding': 'br', 'Content-Type': 'application/octet-stream' },
-    }))
-    const cached = await cache.match(req)
-    if (!cached) throw new Error('cache miss after put')
-    return new Uint8Array(await cached.arrayBuffer())
-  } finally {
-    try { await caches.delete(cacheName) } catch {}
-  }
-}
-
-async function decompressViaSW(fetchUrl, bytes) {
-  const response = await fetch(fetchUrl, { method: 'POST', body: bytes })
-  if (!response.ok) throw new Error(`SW returned ${response.status}`)
-  return new Uint8Array(await response.arrayBuffer())
-}
-
-async function selfTest(decompress) {
-  try {
-    const out = await decompress(TEST_INPUT)
-    // A working decoder produces an empty result for the test input;
-    // an echoing pipeline returns the 1-byte input verbatim.
-    return out.byteLength === 0
-  } catch {
-    return false
-  }
-}
-
-async function setupSW() {
-  if (!('serviceWorker' in navigator)) return null
-  try {
-    const reg = await navigator.serviceWorker.register('brotli-sw.js')
-    await navigator.serviceWorker.ready
-    if (!navigator.serviceWorker.controller) {
-      await new Promise((resolve) => {
-        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
-        setTimeout(resolve, 1500)
-      })
-      if (!navigator.serviceWorker.controller) {
-        // First-load registrations sometimes don't claim the page that
-        // registered them; reload once so the SW controls from the
-        // start. Session-flagged so a misbehaving SW can't reload-loop.
-        const RELOAD_FLAG = 'deepview.brotli-sw-reloaded'
-        if (!sessionStorage.getItem(RELOAD_FLAG)) {
-          sessionStorage.setItem(RELOAD_FLAG, '1')
-          location.reload()
-          await new Promise(() => {})
-        }
-        sessionStorage.removeItem(RELOAD_FLAG)
-        return null
-      }
-      sessionStorage.removeItem('deepview.brotli-sw-reloaded')
-    }
-    return new URL('__deepview_brotli__', reg.scope).toString()
-  } catch (err) {
-    console.warn('Brotli SW failed to register:', err)
-    return null
-  }
-}
-
+// Drop any leftover `/brotli-sw.js` registration from a prior
+// revision that tried the echo-trick fallback. Idempotent — does
+// nothing when no such SW is registered. Always awaited from init
+// so callers don't observe the SW lingering in DevTools.
 async function unregisterSW() {
   if (!('serviceWorker' in navigator)) return
   try {
@@ -132,38 +50,15 @@ async function unregisterSW() {
 }
 
 async function init() {
-  // Native first — when available, we don't need either echo trick.
-  // `await unregisterSW()` so init doesn't resolve until any leftover
-  // worker from a previous session is actually gone (otherwise the
-  // SW could keep intercepting fetches between init's resolve and
-  // the browser finishing the unregister).
-  const nativeFormat = await nativeAvailable()
-  if (nativeFormat && await selfTest((b) => decompressNative(nativeFormat, b))) {
-    await unregisterSW()
-    mode = { kind: 'native', format: nativeFormat }
-    return mode
-  }
-  // Cache API — works in some browsers, no SW needed.
-  if ('caches' in window) {
-    if (await selfTest(decompressViaCache)) {
-      await unregisterSW()
-      mode = { kind: 'cache' }
-      return mode
-    }
-  }
-  // SW echo trick — last resort. setupSW() registers the worker; if
-  // the self-test fails we drop it again so a non-functional SW
-  // doesn't stay registered (would leak into DevTools and intercept
-  // future fetches uselessly).
-  const swUrl = await setupSW()
-  if (swUrl && await selfTest((b) => decompressViaSW(swUrl, b))) {
-    mode = { kind: 'sw', fetchUrl: swUrl }
-    return mode
-  }
+  // Always cleanup leftover SW first so a non-functional registration
+  // from an earlier deploy is dropped regardless of which mode this
+  // load picks. Cheap when there's nothing to unregister.
   await unregisterSW()
-  // None of the native paths can actually decompress brotli on this
-  // browser. Stasis bundles will show "contents not parsed" — the
-  // user can still inspect the metadata + integrity.
+  const format = nativeAvailable()
+  if (format) {
+    mode = { kind: 'native', format }
+    return mode
+  }
   mode = { kind: 'unsupported' }
   return mode
 }
@@ -177,13 +72,11 @@ function ensure() {
 export async function brotliDecompress(bytes) {
   const m = await ensure()
   if (m.kind === 'native') return decompressNative(m.format, bytes)
-  if (m.kind === 'cache') return decompressViaCache(bytes)
-  if (m.kind === 'sw') return decompressViaSW(m.fetchUrl, bytes)
   throw new Error('Brotli decompression unavailable in this browser')
 }
 
-// Eager init at module-load — kicks off detection + cleanup +
-// (lazy) SW registration without waiting for the first stasis
-// bundle open. Errors are swallowed: callers handle "unsupported"
-// via the throw above.
+// Eager init at module-load — runs the SW cleanup + native
+// detection without waiting for the first stasis bundle open.
+// Errors are swallowed: callers handle "unsupported" via the throw
+// above.
 ensure().catch(() => {})
