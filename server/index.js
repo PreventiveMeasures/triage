@@ -154,8 +154,14 @@ async function handleSubscribe(socket, msg) {
   }
   const tag = msg.workspaceTag
   subscribe(socket, tag)
-  const revisions = chainFrom(handle, tag, null)
-  if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… → chain ${revisions.length}`)
+  // `from` is the last revision id the client claims to have
+  // applied; we send only revisions newer than that. Client lying
+  // about `from` just means they get a smaller catch-up — their
+  // subsequent saves will reveal stale state on the usual
+  // base-mismatch path. Null / missing → send the full chain.
+  const fromBase = typeof msg.from === 'number' ? msg.from : null
+  const revisions = chainFrom(handle, tag, fromBase)
+  if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… from=${fromBase} → chain ${revisions.length}`)
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
 

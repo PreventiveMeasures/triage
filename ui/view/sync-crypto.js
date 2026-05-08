@@ -169,15 +169,18 @@ export async function signSavePayload(privateKey, payload) {
 }
 
 // Same idea as the save signature, but the canonical bytes are
-// `<subscribe-domain>\n<pubkey>` — no base/nonce/ciphertext to
-// bind. Different domain prefix from save so a save signature
-// can't be replayed as a subscribe and vice versa.
-function canonicalSubscribePayload(publicKeyB64) {
-  return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64].join('\n'))
+// `<subscribe-domain>\n<pubkey>\n<from>` — `from` is the last
+// revision the client knows it has applied (so the server can skip
+// straight to revisions newer than that). Different domain prefix
+// from save so a save signature can't be replayed as a subscribe
+// and vice versa.
+function canonicalSubscribePayload(publicKeyB64, fromBase) {
+  const fromStr = fromBase == null ? '' : String(fromBase)
+  return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64, fromStr].join('\n'))
 }
 
-export async function signSubscribePayload(privateKey, publicKeyB64) {
-  const message = canonicalSubscribePayload(publicKeyB64)
+export async function signSubscribePayload(privateKey, publicKeyB64, fromBase) {
+  const message = canonicalSubscribePayload(publicKeyB64, fromBase)
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
 }

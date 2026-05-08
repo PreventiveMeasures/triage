@@ -31,8 +31,9 @@ function canonicalSave({ workspaceTag, base, nonce, ciphertext }) {
   ].join('\n'))
 }
 
-function canonicalSubscribe({ workspaceTag }) {
-  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag].join('\n'))
+function canonicalSubscribe({ workspaceTag, from }) {
+  const fromStr = from == null ? '' : String(from)
+  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, fromStr].join('\n'))
 }
 
 async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {

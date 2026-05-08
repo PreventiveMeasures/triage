@@ -77,6 +77,13 @@ import {
 // unsynced edits survive any server push.
 
 const STORAGE_KEY = 'deepview.triageSyncUrl'
+// Per-workspace sync state — `{ [workspaceId]: { serverUrl,
+// baseRevision, baseState } }`. Scoped by `serverUrl` because
+// revision IDs are per-server: switching to a different relay
+// invalidates whatever revision history the previous one assigned.
+// Stored as one JSON blob (single localStorage key) for simplicity;
+// per-workspace keys would scale better at the cost of enumeration.
+const SESSION_STATE_KEY = 'deepview.sync.sessions'
 const SESSION_ID_RE = /^\d+$/u
 
 let serverUrl = ''
@@ -190,6 +197,71 @@ function changesetEmpty(cs) {
   return true
 }
 
+// ─────────── per-workspace session persistence ───────────
+
+function loadAllSessions() {
+  try {
+    const raw = localStorage.getItem(SESSION_STATE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return (parsed && typeof parsed === 'object') ? parsed : {}
+  } catch { return {} }
+}
+
+function saveAllSessions(map) {
+  try {
+    localStorage.setItem(SESSION_STATE_KEY, JSON.stringify(map))
+  } catch (err) {
+    // Likely QuotaExceededError — sync just falls back to the
+    // "always start from null base" path on next reload.
+    console.warn('Triage sync: could not persist session state:', err)
+  }
+}
+
+// Try to restore previously-persisted base for `workspaceId` against
+// the current `serverUrl`. Returns null when nothing's stored OR the
+// stored serverUrl differs (revision IDs are per-server, so a stored
+// base from another server is meaningless).
+function loadPersistedSession(workspaceId, currentServerUrl) {
+  if (!currentServerUrl) return null
+  const all = loadAllSessions()
+  const entry = all[workspaceId]
+  if (!entry || entry.serverUrl !== currentServerUrl) return null
+  return {
+    baseRevision: entry.baseRevision ?? null,
+    baseState: (entry.baseState && typeof entry.baseState === 'object') ? entry.baseState : {},
+  }
+}
+
+function persistSession(target) {
+  if (!target || !serverUrl) return
+  const all = loadAllSessions()
+  all[target.workspaceId] = {
+    serverUrl,
+    baseRevision: target.baseRevision,
+    baseState: target.baseState,
+  }
+  saveAllSessions(all)
+}
+
+// One-shot prune at module load — drop persisted entries for
+// workspaces that no longer exist (deleted but their session state
+// stayed). Cheap; runs once per page load.
+function prunePersistedSessions() {
+  const all = loadAllSessions()
+  const ids = Object.keys(all)
+  if (ids.length === 0) return
+  const live = new Set(listWorkspaces().map((w) => w.id))
+  let changed = false
+  for (const id of ids) {
+    if (!live.has(id)) {
+      delete all[id]
+      changed = true
+    }
+  }
+  if (changed) saveAllSessions(all)
+}
+
 // Reflect `targetState` into the in-memory state.* containers,
 // scoped to `ids`. Entries outside the workspace's scope are left
 // alone so single-file triage isn't clobbered.
@@ -233,9 +305,13 @@ function trySendSubscribe() {
   if (session.subscribed) return
   if (!session.signingKey || !session.workspaceTag) return
   const owner = session
+  // Capture `from` BEFORE the await — chain handlers running
+  // during the sign promise could otherwise advance baseRevision
+  // out from under us.
+  const fromBase = owner.baseRevision
   ;(async () => {
     try {
-      const signature = await signSubscribePayload(owner.signingKey, owner.workspaceTag)
+      const signature = await signSubscribePayload(owner.signingKey, owner.workspaceTag, fromBase)
       if (session !== owner) return
       // Mark subscribed BEFORE sending so re-entrant calls (the
       // ws 'open' handler firing twice during a flaky reconnect,
@@ -244,6 +320,7 @@ function trySendSubscribe() {
       send({
         type: 'workspace-subscribe',
         workspaceTag: session.workspaceTag,
+        from: fromBase,
         signature,
       })
     } catch (err) {
@@ -421,6 +498,10 @@ async function rebaseAndPersist() {
   } finally {
     suppressNotify--
   }
+  // Persist the rebased base + revision so a reload (or workspace
+  // switch back) skips the full-chain replay. Scoped by serverUrl
+  // — see `loadPersistedSession`.
+  persistSession(session)
   render()
 }
 
@@ -576,6 +657,21 @@ export const triageSync = {
       else localStorage.removeItem(STORAGE_KEY)
     } catch {}
     closeSocket()
+    // Server changed — revision IDs are per-server, so the active
+    // session's tracking is stale. Reset; if there's persisted
+    // state for the NEW server (or null if turning sync off),
+    // fold that in. localState rebuilds from state.* so unsynced
+    // edits survive the reset and replay onto the new base via
+    // the rebase path.
+    if (session) {
+      session.pending = null
+      session.pendingSave = false
+      session.subscribed = false
+      const restored = next ? loadPersistedSession(session.workspaceId, next) : null
+      session.baseRevision = restored?.baseRevision ?? null
+      session.baseState = restored?.baseState ?? {}
+      session.localState = buildLocalState(session.ids)
+    }
     if (next) openSocket()
     emitStatusIfChanged()
   },
@@ -621,6 +717,13 @@ export const triageSync = {
     const ws = listWorkspaces().find((w) => w.id === workspaceId)
     if (!ws) return
     const ids = buildWorkspaceIds()
+    // Persisted state-per-server scope: if we synced this
+    // workspace against the current `serverUrl` before, restore
+    // the last `baseRevision` + `baseState` so the first
+    // round-trip is a delta, not a full replay. Mismatched
+    // serverUrl returns null (revision IDs don't carry across
+    // servers).
+    const restored = loadPersistedSession(workspaceId, serverUrl)
     const newSession = {
       // `workspaceId` is the local UUID — used inside the app
       // (state.currentWorkspace, etc.). `workspaceTag` is the
@@ -637,12 +740,11 @@ export const triageSync = {
       signingKey: null,
       verifyingKey: null,
       ids,
-      // Until the server tells us its current revision, we have no
-      // base. localState is whatever's in state.* right now;
-      // baseState is empty so the first save's changeset is the
-      // user's full local snapshot vs. nothing.
-      baseRevision: null,
-      baseState: {},
+      // baseRevision / baseState come from per-server persistence
+      // when present; otherwise null / empty and the first save
+      // sends the full local snapshot.
+      baseRevision: restored?.baseRevision ?? null,
+      baseState: restored?.baseState ?? {},
       localState: buildLocalState(ids),
       pending: null,
       pendingSave: false,
@@ -714,3 +816,9 @@ try {
     openSocket()
   }
 } catch {}
+
+// Drop persisted session entries whose workspace was deleted
+// while we were away. One-time pass on module load — workspaces
+// are loaded synchronously from localStorage so `listWorkspaces()`
+// is ready by now.
+prunePersistedSessions()
