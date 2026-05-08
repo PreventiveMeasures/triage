@@ -190,22 +190,35 @@ function bundleImportsAsMap(details) {
 
 // Synthesise a treeData blob shaped like the analyzer's tree dump,
 // so buildGraph (in graph2/data.js) can chew on it without
-// modification. Sizes come from the source content (UTF-8 byte
-// length). Imports are filtered to those that resolve to a file
-// within the bundle — out-of-bundle resolutions would otherwise
-// inflate node count with phantom files and break adjacency.
+// modification. The shared directory prefix (a common build-output
+// root) is stripped from every file path BEFORE the tree is built
+// so the graph's nodes — and the package buckets the canvas
+// derives from them — use compact, prefix-free keys. Imports get
+// remapped through the same stripping table so adjacency stays
+// intact, and out-of-bundle resolutions are dropped.
+//
+// Sizes come from the source content (UTF-8 byte length). Returns
+// `{ tree, origToStripped }`; callers that also need to translate
+// other per-file metadata (e.g. SHA-512 hashes for finding match)
+// onto the stripped keys reuse the mapping.
 function buildBundleTree(details) {
   const sources = bundleSourcesAsMap(details)
   const imports = bundleImportsAsMap(details)
+  const origFiles = [...sources.keys()]
+  const { stripped } = stripCommonPathPrefix(origFiles)
+  const origToStripped = new Map(origFiles.map((f, i) => [f, stripped[i]]))
   const tree = {}
-  for (const [file, content] of sources) {
-    const imps = imports.get(file)
+  for (const [origFile, content] of sources) {
+    const file = origToStripped.get(origFile)
+    const imps = imports.get(origFile)
     tree[file] = {
-      imports: imps ? [...imps].filter((i) => sources.has(i)) : [],
+      imports: imps
+        ? [...imps].map((i) => origToStripped.get(i)).filter(Boolean)
+        : [],
       size: new TextEncoder().encode(content).byteLength,
     }
   }
-  return tree
+  return { tree, origToStripped }
 }
 
 // SHA-512 of each bundle source's content, hex-encoded — matches
@@ -265,11 +278,26 @@ function bundleFindingsByFile(fileHashes) {
 // `findings` shape buildGraph expects. Without hashes, every node
 // is "clean" — the topbar chip counts collapse to zero, but the
 // canvas still renders the bundle's import graph.
+//
+// The tree is keyed by stripped paths (see buildBundleTree); the
+// `origToStripped` translation table also re-keys `details.
+// fileHashes` so finding match keys line up with the graph's
+// node ids (otherwise the graph would never light up findings —
+// findings would be looked up under original paths but nodes live
+// under stripped ones).
 export function buildBundleGraphData(details) {
-  const tree = buildBundleTree(details)
+  const { tree, origToStripped } = buildBundleTree(details)
   const files = Object.keys(tree)
   if (files.length === 0) return null
-  const findingsByFile = bundleFindingsByFile(details.fileHashes)
+  let strippedHashes = null
+  if (details.fileHashes && details.fileHashes.size > 0) {
+    strippedHashes = new Map()
+    for (const [orig, hash] of details.fileHashes) {
+      const stripped = origToStripped.get(orig)
+      if (stripped !== undefined) strippedHashes.set(stripped, hash)
+    }
+  }
+  const findingsByFile = bundleFindingsByFile(strippedHashes)
   const ownCounts = new Map()
   const severitySets = new Map()
   const colorSets = new Map()
