@@ -157,6 +157,34 @@
    `.with-details` is added by render.js when the table view's
    details panel is open: the wrapper grows to fit the 3 fr +
    2 fr split (1200 list + 800 panel = 2000 max). */
+/* Bundles view — flat list of OPFS-stored sourcemap / stasis blobs.
+   Same text scale as a regular report body (.78rem monospace) so
+   names line up with the pill-row chrome above. The list itself is
+   plain — bundle blobs don't carry findings, so the row gets just
+   the name with a hairline separator below. */
+.bundles-view {
+  max-width: 1200px;
+
+  & .bundles-list {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    overflow: hidden;
+
+    & li {
+      padding: .55rem .75rem;
+      border-bottom: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem;
+      color: var(--text);
+      &:last-child { border-bottom: none; }
+    }
+  }
+}
+
 .findings-content { max-width: 1200px; }
 .findings-content.with-details { max-width: 2000px; }
 /* Graph view-mode (Findings tab) embeds the same canvas layout as

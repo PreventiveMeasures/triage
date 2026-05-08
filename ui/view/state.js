@@ -71,11 +71,18 @@ export const state = store({
   // with `ws:` when set.
   currentWorkspace: null,
   // Top-level view — 'findings' (default; table / list / grouped /
-  // graph view-modes inside) or 'files' (per-file cards listing,
-  // reached via the page-header Files toggle). Files is gated on a
-  // tree-bearing report with >1 file; loading a tree-less report
-  // auto-falls back to 'findings' inside render().
+  // graph view-modes inside), 'files' (per-file cards listing,
+  // reached via the page-header Files toggle), or 'bundles' (list
+  // of OPFS-stored sourcemap / stasis blobs, reached via the
+  // sidebar's BUNDLES header). Files is gated on a tree-bearing
+  // report with >1 file; bundles is gated on at least one bundle in
+  // OPFS; both auto-fall back to 'findings' if their gate fails.
   currentView: 'findings',
+  // Bundles list cached for synchronous render. Populated on every
+  // renderSidebar() (which lists OPFS) so render.js's `bundles`
+  // branch can paint without an async round-trip. Empty array when
+  // no bundles are stored.
+  bundles: [],
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

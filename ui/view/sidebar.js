@@ -2,7 +2,8 @@ import { html, render as litRender, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from './state.js'
 import { sidebar, fileList } from './dom.js'
-import { listFiles } from './storage.js'
+import { listFiles, listBundles } from './storage.js'
+import { render } from './render.js'
 import { switchToFile, switchToWorkspace, deleteCurrent } from './ingest.js'
 import { getCount, ensureCounts } from './counts.js'
 import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } from './workspaces.js'
@@ -96,6 +97,17 @@ function workspaceHeaderTemplate(count) {
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><span class="group-count">${count}</span><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
 }
 
+// Bundles section header — collapsed to a single "BUNDLES (N)"
+// strip; clicking it switches the main view to a list of every
+// bundle stored in OPFS. Hidden entirely when no bundles have been
+// dropped (the user otherwise has nothing to navigate to). The
+// `data-action="show-bundles"` is the click delegate's hook.
+function bundlesHeaderTemplate(count) {
+  return html`<li class="file-group-header bundles-header" data-action="show-bundles" role="button" tabindex="0" title="Show bundles">
+    <span class="group-label">Bundles</span><span class="group-count">${count}</span>
+  </li>`
+}
+
 const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>`
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
@@ -132,6 +144,12 @@ export async function renderSidebar() {
   await migrateLegacyFilenames()
   const names = await listFiles()
   const workspaces = listWorkspaces()
+  const bundleNames = await listBundles()
+  // Stash the bundles list on state so the main view's bundles
+  // branch (in render.js) can paint synchronously without redoing
+  // the OPFS scan. Updated on every sidebar render — drops, deletes,
+  // and switchToFile all refresh through here.
+  state.bundles = bundleNames
   // The sidebar always shows now — Workspaces is a first-class feature
   // and its "+" button must be reachable on first launch (before any
   // report or workspace exists). The drop zone still owns the welcome
@@ -180,6 +198,7 @@ export async function renderSidebar() {
   const anyWorkspaceHasReports = workspaces.some((w) => w.reports.some((r) => nameSet.has(r)))
 
   litRender(html`
+    ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
     ${visibleWorkspaces.map((w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
@@ -224,6 +243,16 @@ export async function renderSidebar() {
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 sidebar.addEventListener('click', (e) => {
+  // BUNDLES header → switch the main view to the bundles list. Only
+  // fires when bundles exist (the header is suppressed otherwise).
+  // The bundles list lives off `state.bundles`, freshly populated by
+  // the renderSidebar pass above; render() reads from it so the
+  // main view paints synchronously.
+  if (e.target.closest('[data-action="show-bundles"]')) {
+    state.currentView = 'bundles'
+    render()
+    return
+  }
   if (e.target.closest('[data-action="new-workspace"]')) {
     const name = window.prompt('Workspace name')
     if (name && name.trim()) {

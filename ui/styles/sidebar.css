@@ -141,6 +141,19 @@
   }
 }
 
+/* Bundles header — clickable strip; opens the bundles list view in
+   the main pane. Hover affordance + accent recolor mirror the
+   sidebar's other clickable rows. Hidden entirely when no bundles
+   exist (controlled by sidebar.js, not CSS). */
+.file-group-header.bundles-header {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background .12s, color .12s;
+
+  &:hover, &:focus-visible { color: var(--accent); background: rgb(from var(--text) r g b / .04); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+
 /* Workspaces header — same chrome as a regular bucket header, but the
    right slot bundles the count chip together with a "+" button. The
    button uses the same hover treatment as #sidebar-toggle so the

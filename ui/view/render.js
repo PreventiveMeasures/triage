@@ -678,6 +678,24 @@ function findingsBodyTemplate(filtered) {
   })}`
 }
 
+// Bundles view body — flat list of names. Bundle blobs are stored
+// as-is in OPFS (sourcemap JSON or brotli-compressed stasis); the
+// list is just the catalog. No per-row affordance yet — the
+// analyzer pipeline reads from OPFS directly when wired up later.
+function renderBundlesList(bundles) {
+  return html`<div class="bundles-view">
+    <header class="page-head">
+      <div class="page-title">
+        <h1>Bundles</h1>
+        <div class="meta-row"><span>${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}</span></div>
+      </div>
+    </header>
+    <ul class="bundles-list">
+      ${bundles.map((name) => html`<li>${name}</li>`)}
+    </ul>
+  </div>`
+}
+
 export function render() {
   // Recompute the active deps dir before any helper consults it
   // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
@@ -696,6 +714,28 @@ export function render() {
     state.reports.length > 0 &&
     state.currentView === 'findings' &&
     state.viewMode !== 'graph')
+  // Bundles view — paints from `state.bundles` (cached by
+  // renderSidebar's listBundles call), so it stays paint-only here.
+  // Lives before the reports-gate below because the bundles list is
+  // independent of any loaded report; the user can browse OPFS
+  // bundles even without a finding-bearing JSON open.
+  if (state.currentView === 'bundles') {
+    if ((state.bundles ?? []).length === 0) {
+      // Defensive fallback — the sidebar header that drove the user
+      // into this view is suppressed when no bundles exist, but the
+      // last bundle could've been deleted between renders. Drop back
+      // to findings rather than render an empty list.
+      state.currentView = 'findings'
+    } else {
+      report.innerHTML = '<div id="bundles-slot"></div>'
+      const slot = document.getElementById('bundles-slot')
+      if (slot) litRender(renderBundlesList(state.bundles), slot)
+      report.classList.add('active')
+      dropZone.classList.add('hidden')
+      document.title = 'DeepView results — bundles'
+      return
+    }
+  }
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code

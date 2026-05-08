@@ -1,6 +1,6 @@
 import { state, loadRepoUrlFor, saveRepoUrlFor } from './state.js'
 import { dropZone, report } from './dom.js'
-import { saveFile, readFile, deleteFile } from './storage.js'
+import { saveFile, readFile, deleteFile, saveBundle } from './storage.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from './triage.js'
@@ -39,8 +39,20 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // sidebar.js converts the substitution back for display. Each scan is
 // stored as its derived JSON (the exact shape ingestReport expects),
 // so loading later goes through the regular JSON.parse path.
+// Bundle classifier — sourcemap (.map) or stasis (.br). Returns the
+// kind, or null when the file isn't a bundle. Both extensions are
+// loose markers; ingest doesn't validate the shape — bundles are
+// archived as-is so the analyzer pipeline can consume them later.
+function bundleKind(name) {
+  const lower = name.toLowerCase()
+  if (lower.endsWith('.map')) return 'sourcemap'
+  if (lower.endsWith('.br')) return 'stasis'
+  return null
+}
+
 export async function addFiles(files) {
   let last = null
+  let savedBundles = false
   for (const file of files) {
     try {
       // .gz drops are routed to the workspace-import pipeline. Reading
@@ -50,6 +62,18 @@ export async function addFiles(files) {
       // look like our export shape — surface that to the user.
       if (file.name.toLowerCase().endsWith('.gz')) {
         await importWorkspaceFromGzip(file)
+        continue
+      }
+      // Bundle drops (sourcemap / stasis) — archive in the bundles
+      // OPFS dir and skip the report-ingest pipeline. The dropped name
+      // is preserved verbatim so the bundles list shows what the user
+      // dropped. Binary content (stasis is brotli-compressed); read
+      // as ArrayBuffer rather than text.
+      const kind = bundleKind(file.name)
+      if (kind) {
+        const buf = new Uint8Array(await file.arrayBuffer())
+        await saveBundle(file.name, buf)
+        savedBundles = true
         continue
       }
       const content = await file.text()
@@ -79,6 +103,11 @@ export async function addFiles(files) {
     }
   }
   if (last) await switchToFile(last.name, last.content)
+  // If the drop was bundles-only AND the user is on the bundles
+  // view, re-render so the new entries land in the list. switchToFile
+  // re-renders for regular drops; the bundles view doesn't get one
+  // for free since `last` stays null.
+  if (!last && savedBundles && state.currentView === 'bundles') render()
   await renderSidebar()
 }
 
@@ -93,6 +122,9 @@ export async function switchToFile(name, content) {
   state.reports = []
   state.currentFile = name
   state.currentWorkspace = null
+  // Switching to a regular report drops out of the bundles view —
+  // the user clicked a file row, they want to see its findings.
+  if (state.currentView === 'bundles') state.currentView = 'findings'
   // Per-report repo URL (see state.js / saveRepoUrlFor). The user's
   // last-typed URL for THIS file lights up the header repo chip; an
   // unseen file starts empty. Reset before ingest so a stale URL
@@ -143,6 +175,9 @@ export async function switchToWorkspace(workspaceId) {
   // its workspace-id set is keyed off the old set of loaded reports
   // and would mis-attribute edits otherwise.
   triageSync.closeSession()
+  // Same drop-out as switchToFile — opening a workspace lands in
+  // findings, not the bundles list.
+  if (state.currentView === 'bundles') state.currentView = 'findings'
   state.reports = []
   state.currentFile = null
   state.currentWorkspace = workspaceId

@@ -7,6 +7,7 @@ import { encodeUtf8 } from '../../common/utf8.js'
 // gzipped + base64 under a fixed prefix. Both layers key by basename;
 // filename collisions overwrite.
 const OPFS_DIR = 'deepview-reports'
+const OPFS_BUNDLES_DIR = 'deepview-bundles'
 const LS_REPORT_PREFIX = 'deepview.report:'
 
 let opfsWarned = false
@@ -134,4 +135,42 @@ export async function deleteFile(name) {
     return
   }
   localStorage.removeItem(LS_REPORT_PREFIX + name)
+}
+
+// Bundles — sourcemap (.map) and stasis (.br) source-of-truth blobs
+// for the analyzer pipeline. Stored in a separate OPFS dir so they
+// don't show up in the report list, and accept binary content (stasis
+// is brotli-compressed). Localstorage fallback isn't supported here:
+// these can be large, gzip-base64ing them through localStorage's
+// ~5MB cap rarely makes sense, and the sidebar's drop affordance is
+// a non-essential side feature.
+async function getOpfsBundlesDir() {
+  try {
+    const root = await navigator.storage.getDirectory()
+    return await root.getDirectoryHandle(OPFS_BUNDLES_DIR, { create: true })
+  } catch { return null }
+}
+
+export async function listBundles() {
+  const dir = await getOpfsBundlesDir()
+  if (!dir) return []
+  const names = []
+  for await (const [name] of dir.entries()) names.push(name)
+  return names.sort()
+}
+
+export async function saveBundle(name, content) {
+  const dir = await getOpfsBundlesDir()
+  if (!dir) throw new Error(`Cannot save bundle ${name}: OPFS unavailable`)
+  try { await dir.removeEntry(name) } catch {}
+  const fh = await dir.getFileHandle(name, { create: true })
+  const writable = await fh.createWritable()
+  await writable.write(content)
+  await writable.close()
+}
+
+export async function deleteBundle(name) {
+  const dir = await getOpfsBundlesDir()
+  if (!dir) return
+  try { await dir.removeEntry(name) } catch {}
 }
