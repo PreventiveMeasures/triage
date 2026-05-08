@@ -152,6 +152,15 @@
 
   &:hover, &:focus-visible { color: var(--accent); background: rgb(from var(--text) r g b / .04); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* "You're here" highlight — mirrors how a file row picks up the
+     accent recolor + outline while its file is loaded. */
+  &.current {
+    color: var(--accent);
+    background: rgb(from var(--text) r g b / .06);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
 }
 
 /* Workspaces header — same chrome as a regular bucket header, but the

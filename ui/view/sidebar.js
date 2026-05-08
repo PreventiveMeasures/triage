@@ -109,7 +109,11 @@ function workspaceHeaderTemplate(count) {
 // dropped (the user otherwise has nothing to navigate to). The
 // `data-action="show-bundles"` is the click delegate's hook.
 function bundlesHeaderTemplate(count) {
-  return html`<li class="file-group-header bundles-header" data-action="show-bundles" role="button" tabindex="0" title="Show bundles">
+  // Mark the row "current" while the bundles view is up so the
+  // sidebar reads as "you're here" — mirrors how a file row picks
+  // up the .current class while its file is loaded.
+  const cls = `file-group-header bundles-header${state.currentView === 'bundles' ? ' current' : ''}`
+  return html`<li class=${cls} data-action="show-bundles" role="button" tabindex="0" title="Show bundles">
     <span class="group-label">Bundles</span><span class="group-count">${count}</span>
   </li>`
 }
@@ -257,6 +261,10 @@ sidebar.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="show-bundles"]')) {
     state.currentView = 'bundles'
     render()
+    // Re-render the sidebar too so the BUNDLES header picks up
+    // its `.current` highlight (and any previously-highlighted
+    // file/workspace row drops back to the muted state).
+    renderSidebar()
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
