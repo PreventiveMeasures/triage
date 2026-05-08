@@ -40,9 +40,11 @@ function notify() {
 // Synchronous lookup for the open bundle's hash → findings join.
 // Returns the same Finding objects we cached during indexing — id /
 // severity / description / file / line / repo all preserved so the
-// Issues tab and graph dim logic can read them as-is.
+// Issues tab and graph dim logic can read them as-is. The bucket's
+// internal Set is hidden from callers; just the deduped list is
+// exposed.
 export function findingsForFileHash(hash) {
-  return byHash.get(hash) ?? []
+  return byHash.get(hash)?.list ?? []
 }
 
 function extractFindings(data) {
@@ -67,6 +69,16 @@ function extractFindings(data) {
   return out
 }
 
+// Dedupe key — preferred form is the analyzer's stable `id`; falls
+// back to a (severity, description, file, line, fileHash) tuple
+// when the report doesn't carry ids (older / hand-rolled inputs).
+// Same hash bucket: same source content; same key = same finding,
+// so we drop the second copy.
+function findingDedupeKey(f) {
+  if (f.id) return `id:${f.id}`
+  return `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
+}
+
 async function indexOne(name) {
   if (indexed.has(name)) return false
   // Mark up front so concurrent ensureBundleFindingsIndexed calls
@@ -77,11 +89,25 @@ async function indexOne(name) {
     const data = JSON.parse(content)
     const findings = extractFindings(data)
     if (findings.length === 0) return false
+    let added = false
     for (const f of findings) {
-      if (!byHash.has(f.fileHash)) byHash.set(f.fileHash, [])
-      byHash.get(f.fileHash).push(f)
+      let bucket = byHash.get(f.fileHash)
+      if (!bucket) {
+        bucket = { keys: new Set(), list: [] }
+        byHash.set(f.fileHash, bucket)
+      }
+      // Dedupe: the same finding can land here multiple times when
+      // the user has both the original report AND a workspace
+      // export covering it (or two analyzer runs producing the
+      // same id). The bundle Issues tab should still list each
+      // finding once.
+      const key = findingDedupeKey(f)
+      if (bucket.keys.has(key)) continue
+      bucket.keys.add(key)
+      bucket.list.push(f)
+      added = true
     }
-    return true
+    return added
   } catch {
     return false
   }
