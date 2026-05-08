@@ -740,6 +740,12 @@ export function render() {
     // the string-built HTML, then litRender into it post-flush.
     html += '<div id="tree-view-slot"></div>'
     report.innerHTML = html
+    // Same header on every tab — landed in the html string above
+    // (`<div id="header-slot">`). Without this litRender the slot
+    // would just stay empty on Files / Graph (the bottom-of-render
+    // litRender only runs on the Findings path).
+    const fHeader = document.getElementById('header-slot')
+    if (fHeader) litRender(headerTpl, fHeader)
     const treeSlot = document.getElementById('tree-view-slot')
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
     report.classList.add('active')
@@ -765,6 +771,12 @@ export function render() {
       // doesn't care about (the layout class targets descendants).
       html += '<div id="g2-layout-slot"></div>'
       report.innerHTML = html
+      // Mirror the Files-tab path: the header-slot lives in the
+      // shared html prefix, but only the Findings branch reaches
+      // the bottom-of-render litRender, so we have to fill the
+      // slot here too.
+      const gHeader = document.getElementById('header-slot')
+      if (gHeader) litRender(headerTpl, gHeader)
       const slot = document.getElementById('g2-layout-slot')
       if (slot) litRender(renderGraph2Layout(data.graph), slot)
       report.classList.add('active')
