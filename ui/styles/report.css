@@ -113,6 +113,11 @@
    2 fr split (1200 list + 800 panel = 2000 max). */
 .findings-content { max-width: 1200px; }
 .findings-content.with-details { max-width: 2000px; }
+/* Graph view-mode (Findings tab) embeds the same canvas layout as
+   the standalone Graph tab. Drop the readability cap so the
+   1fr stage + 300px sidebar grid can use the full viewport,
+   matching how the Graph tab renders. */
+.findings-content.with-graph { max-width: none; }
 
 /* Top-level view switcher — Findings / Tree / Files. Only rendered
    when the report has a tree block with more than one file (single-file

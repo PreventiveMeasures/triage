@@ -386,7 +386,24 @@ function triageFilterTemplate(colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
-  const { showSource, showConfidence, showPriority } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, graphMode } = flags
+  // The findings tab gains a 4th "graph" view-mode option when a
+  // tree-bearing report is loaded (showGraphMode). Switching to it
+  // replaces the table / list / grouped body with the graph2 canvas
+  // — see the findings-graph slot in render() below.
+  const viewModes = showGraphMode ? 'table,list,grouped,graph' : 'table,list,grouped'
+  // When the body is the graph2 canvas, the findings filters / sort
+  // / search don't apply (the graph has its own topbar with severity
+  // chips + trash). Render a minimal toolbar with just the view-mode
+  // chooser so the user can switch back without crowding the chrome
+  // with controls that wouldn't affect the visible canvas.
+  if (graphMode) {
+    return html`<div class="toolbar">
+      <div class="toolbar-row">
+        <view-mode-buttons mode=${state.viewMode} modes=${viewModes}></view-mode-buttons>
+      </div>
+    </div>`
+  }
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
   const sourceOpt = (value, label) => html`<option value=${value} ?selected=${state.filterSource === value}>${label}</option>`
 
@@ -395,7 +412,7 @@ function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCou
       <!-- View mode leads the row — <view-mode-buttons> renders the
            table / list / grouped icon group; immediately followed by
            the Sort dropdown with no separator between them. -->
-      <view-mode-buttons mode=${state.viewMode}></view-mode-buttons>
+      <view-mode-buttons mode=${state.viewMode} modes=${viewModes}></view-mode-buttons>
       <!-- Sort dropdown — bare select (no Sort: label preceding it).
            The selected option's text already advertises what it sorts
            by, plus a ↓ / ↑ arrow showing direction. Class
@@ -726,6 +743,12 @@ export function render() {
   if (!showTreeTab && (state.currentView === 'files' || state.currentView === 'graph2')) {
     state.currentView = 'findings'
   }
+  // Same shape as the sort-priority drop above — `graph` is only a
+  // valid view-mode while a tree-bearing report is loaded; if the
+  // user previously picked it and the underlying data went away
+  // (workspace switch, report unload), fall back to the default
+  // table layout so a stale selection can't render an empty body.
+  if (!showTreeTab && state.viewMode === 'graph') state.viewMode = 'table'
   if (showTreeTab) {
     html += '<div class="report-tabs">'
     html += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
@@ -804,7 +827,16 @@ export function render() {
     state.viewMode === 'table' &&
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
-  html += `<div class="findings-content${tableWithDetails ? ' with-details' : ''}">`
+  // Graph view-mode within the Findings tab swaps the table/list/grouped
+  // body for the same canvas the dedicated Graph tab uses. The
+  // wrapper drops its max-width cap so the graph layout (a CSS grid
+  // with 1fr stage + 300px sidebar) can spread across the full
+  // viewport like the standalone Graph tab does.
+  const showGraphInFindings = state.viewMode === 'graph' && treeData
+  let wrapperClass = 'findings-content'
+  if (tableWithDetails) wrapperClass += ' with-details'
+  if (showGraphInFindings) wrapperClass += ' with-graph'
+  html += `<div class="${wrapperClass}">`
   // `toolbarTemplate` returns a Lit template — drop a slot here, then
   // litRender into it after innerHTML lands.
   html += '<div id="toolbar-slot"></div>'
@@ -812,6 +844,8 @@ export function render() {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showPriority: hasAnyPriority,
+    showGraphMode: showTreeTab,
+    graphMode: showGraphInFindings,
   })
 
   // Empty-state line — slot-based so the typeLabel (which can carry
@@ -835,8 +869,30 @@ export function render() {
   // The outer findings-content wrapper closes BEFORE the slot
   // because the slot wraps the body content the template expects to
   // sit inside it.
-  html += '<div id="findings-body-slot"></div>'
-  const bodyTemplate = findingsBodyTemplate(filtered)
+  //
+  // Graph view-mode (Findings tab) takes a different slot —
+  // findings-graph-slot — and renders the same graph2 layout the
+  // dedicated Graph tab uses. We still build `bodyTemplate` so the
+  // empty-state computations etc. behave consistently, but skip
+  // emitting the findings-body slot when graph mode is active.
+  let bodyTemplate = nothing
+  let g2DataForBody = null
+  if (showGraphInFindings) {
+    g2DataForBody = buildGraph2Data()
+    if (!g2DataForBody) {
+      // Tree disappeared between the showTreeTab gate and now;
+      // fall back to the default table view so we don't render an
+      // empty graph slot.
+      state.viewMode = 'table'
+      bodyTemplate = findingsBodyTemplate(filtered)
+      html += '<div id="findings-body-slot"></div>'
+    } else {
+      html += '<div id="findings-graph-slot"></div>'
+    }
+  } else {
+    html += '<div id="findings-body-slot"></div>'
+    bodyTemplate = findingsBodyTemplate(filtered)
+  }
   html += '</div>'
 
   // Detach the persistent <finding-table> (if mounted) before the
@@ -866,6 +922,18 @@ export function render() {
   // the `<finding-table>` reattach below targets.
   const bodySlot = document.getElementById('findings-body-slot')
   if (bodySlot && bodyTemplate !== nothing) litRender(bodyTemplate, bodySlot)
+
+  // Graph view-mode (Findings tab): render the same graph2 layout
+  // used by the dedicated Graph tab into the findings-graph slot,
+  // and wire the canvas interaction. Mirrors the `state.currentView
+  // === 'graph2'` early-return path above.
+  if (g2DataForBody) {
+    const graphSlot = document.getElementById('findings-graph-slot')
+    if (graphSlot) {
+      litRender(renderGraph2Layout(g2DataForBody.graph), graphSlot)
+      attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
+    }
+  }
 
   // Hand the sorted item list and current selection to the
   // <finding-table> custom element after the DOM lands. Stashing the

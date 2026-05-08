@@ -39,15 +39,25 @@ const VIEW_ICONS = {
     <rect x="3" y="6" width="11" height="1.6"/><rect x="3" y="8.5" width="11" height="1.6"/>
     <rect x="3" y="11" width="11" height="1.6"/><rect x="3" y="13.5" width="11" height="1.6"/>
   </svg>`,
+  // graph   — three nodes connected by edges
+  graph: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+    <line x1="4.5" y1="4.5" x2="11.5" y2="6.5"/>
+    <line x1="4.5" y1="4.5" x2="6.5" y2="11.5"/>
+    <line x1="11.5" y1="6.5" x2="6.5" y2="11.5"/>
+    <circle cx="4.5" cy="4.5" r="2" fill="currentColor"/>
+    <circle cx="11.5" cy="6.5" r="2" fill="currentColor"/>
+    <circle cx="6.5" cy="11.5" r="2" fill="currentColor"/>
+  </svg>`,
 }
 
 const VIEW_TITLES = {
   table:   'Table view (compact rows, click a row to expand)',
   list:    'List view (flat, one card per finding)',
   grouped: 'List view, grouped by file',
+  graph:   'Graph view (canvas with imports / exports)',
 }
 
-const MODES = ['table', 'list', 'grouped']
+const MODES = ['table', 'list', 'grouped', 'graph']
 
 class ViewModeButtons extends LitElement {
   static properties = {
