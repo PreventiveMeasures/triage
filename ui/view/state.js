@@ -139,4 +139,18 @@ export const state = store({
   // full width). Set by clicking a row in the table view; cleared by
   // re-clicking the same row.
   tableSelectedGid: null,
+  // Files tab view mode — 'table' (one compact row per file with
+  // finding chips on the right + a click-driven details panel for
+  // imports / imported by / exports / hashes) or 'list' (the
+  // original card layout where every file inlines all of those
+  // sections). Session-only — re-renders track the toggle but it
+  // doesn't persist across reloads.
+  filesViewMode: 'table',
+  // Free-text search query on the Files tab — case-insensitive
+  // substring match against file paths, applied in both view modes
+  // before render.
+  filesSearch: '',
+  // Currently-selected file in the Files-tab table view (null = no
+  // selection, details panel hidden). Re-clicking the row clears it.
+  filesSelectedFile: null,
 })

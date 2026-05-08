@@ -300,6 +300,22 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Files-tab table view: row click toggles the file selection
+  // (re-clicking the active row deselects, just like the findings
+  // table). The details panel on the right follows
+  // state.filesSelectedFile.
+  const treeRow = e.target.closest('[data-tree-select]')
+  if (treeRow) {
+    const file = treeRow.dataset.treeSelect
+    state.filesSelectedFile = state.filesSelectedFile === file ? null : file
+    render()
+    return
+  }
+  if (e.target.closest('[data-tree-deselect]')) {
+    state.filesSelectedFile = null
+    render()
+    return
+  }
   // Table-view row click is no longer a delegate here; <finding-table>
   // owns row selection and dispatches a `row-select` CustomEvent
   // (handled below) on clicks that aren't on a button / link / label.
@@ -438,6 +454,7 @@ report.addEventListener('input', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'filter-search') { state.filterInclude = val; renderKeepFocus(id) }
+  else if (id === 'filter-files-search') { state.filesSearch = val; renderKeepFocus(id) }
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
@@ -462,6 +479,15 @@ report.addEventListener('color-toggle', (e) => {
   render()
 })
 report.addEventListener('view-mode-change', (e) => {
+  if (e.detail.kind === 'files') {
+    // Files-tab toggle — flips state.filesViewMode (table | list).
+    // Not persisted to localStorage; only the findings tab's mode
+    // round-trips since that's what the user sees first on a
+    // typical load. Re-render is enough for the Files tab.
+    state.filesViewMode = e.detail.mode
+    render()
+    return
+  }
   state.viewMode = e.detail.mode
   // Persist so the user's preferred view sticks across reloads —
   // state.js reads it back on boot.

@@ -52,6 +52,16 @@ const MODES = ['table', 'list', 'grouped']
 class ViewModeButtons extends LitElement {
   static properties = {
     mode: { type: String },
+    // Comma-separated subset of MODES to expose. Default = all
+    // three (table / list / grouped) for the findings tab; the
+    // Files tab passes "table,list" since the grouped layout
+    // doesn't apply there.
+    modes: { type: String },
+    // Identifies which state slot the host is wiring up. The
+    // `view-mode-change` event carries this in its detail so the
+    // events.js delegate routes to `state.viewMode` (default,
+    // findings) vs. `state.filesViewMode` (kind="files").
+    kind: { type: String },
   }
 
   // Light DOM so the existing `.view-mode-label` / `.view-mode-group`
@@ -62,12 +72,16 @@ class ViewModeButtons extends LitElement {
   constructor() {
     super()
     this.mode = 'table'
+    this.modes = MODES.join(',')
+    this.kind = 'findings'
   }
 
   render() {
+    const allowed = this.modes.split(',').map((s) => s.trim()).filter((s) => MODES.includes(s))
+    const list = allowed.length > 0 ? allowed : MODES
     return html`<span class="view-mode-label">View:</span>
       <div class="view-mode-group" role="group" aria-label="View mode">
-        ${MODES.map((m) => html`<button
+        ${list.map((m) => html`<button
           type="button"
           class=${`view-mode-btn${this.mode === m ? ' active' : ''}`}
           title=${VIEW_TITLES[m]}
@@ -81,7 +95,7 @@ class ViewModeButtons extends LitElement {
   _select(mode) {
     if (mode === this.mode) return
     this.dispatchEvent(new CustomEvent('view-mode-change', {
-      detail: { mode },
+      detail: { mode, kind: this.kind },
       bubbles: true,
       composed: true,
     }))
