@@ -39,14 +39,18 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // sidebar.js converts the substitution back for display. Each scan is
 // stored as its derived JSON (the exact shape ingestReport expects),
 // so loading later goes through the regular JSON.parse path.
-// Bundle classifier — sourcemap (.map) or stasis (.br). Returns the
-// kind, or null when the file isn't a bundle. Both extensions are
-// loose markers; ingest doesn't validate the shape — bundles are
-// archived as-is so the analyzer pipeline can consume them later.
+// Bundle classifier — sourcemap (.map) or stasis (.stasis.code.br).
+// Returns the kind, or null when the file isn't a bundle. The stasis
+// extension is the full `.stasis.code.br` suffix (brotli-compressed
+// JSON snapshot, see src/loaders/stasis.js); a plain `.br` could be
+// any brotli-compressed payload, so we don't accept that. Both
+// markers are filename-based; ingest doesn't validate the shape —
+// bundles are archived as-is so the analyzer pipeline can consume
+// them later.
 function bundleKind(name) {
   const lower = name.toLowerCase()
   if (lower.endsWith('.map')) return 'sourcemap'
-  if (lower.endsWith('.br')) return 'stasis'
+  if (lower.endsWith('.stasis.code.br')) return 'stasis'
   return null
 }
 
