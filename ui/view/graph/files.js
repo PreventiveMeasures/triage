@@ -90,8 +90,16 @@ export function renderTreeView(treeData, findingCounts) {
       && files.includes(state.filesSelectedFile)
       ? state.filesSelectedFile
       : null
+    // `.with-details` on the outer wrapper mirrors the findings tab's
+    // pattern (see `.findings-content.with-details` in styles/report.css):
+    // the wrapper relaxes its max-width to fit the list + details
+    // split, while the toolbar inside stays capped at the single-
+    // panel width via a separate CSS rule.
+    const wrapperClass = selected
+      ? 'tree-view tree-view-table with-details'
+      : 'tree-view tree-view-table'
     const layoutClass = selected ? 'tree-table-layout open' : 'tree-table-layout'
-    return html`<div class="tree-view tree-view-table">
+    return html`<div class=${wrapperClass}>
       ${toolbar}
       <div class=${layoutClass}>
         <div class="tree-table-list">

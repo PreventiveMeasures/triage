@@ -96,6 +96,18 @@
   }
 }
 
+/* The Files-tab wrapper caps at the same widths as the findings
+   tab: 1200px in single-panel layouts (list mode AND table mode
+   without a selection), expanding to 2000px when the details
+   panel is open so the 3fr / 2fr split below has the same
+   1200 + 800 footprint as `.findings-table-layout.open`. The
+   toolbar stays capped at 1200px in details mode (separate rule
+   below) so the filter chrome keeps the same visual width
+   across selection states. */
+.tree-view, .tree-view-table { max-width: 1200px; }
+.tree-view-table.with-details { max-width: 2000px; }
+.tree-view-table.with-details > .tree-toolbar { max-width: 1200px; }
+
 /* Table mode — two-column layout (3fr list / 2fr details when a
    file is selected, single-column otherwise). Mirrors
    `.findings-table-layout`'s structure so users moving between
