@@ -66,6 +66,18 @@ export async function verifySaveSig(msg) {
   return verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
 
+// Content-addressed revision id — SHA-256 of the canonical save
+// bytes (same input the signature covers), base64url no padding.
+// Server doesn't get to assign ids: it derives the id from received
+// content and stores under that. Mirrors the client's
+// `computeRevisionId` so two ends always land on the same string.
+export async function computeRevisionId(msg) {
+  let payload
+  try { payload = canonicalSave(msg) } catch { return null }
+  const digest = await crypto.subtle.digest('SHA-256', payload)
+  return Buffer.from(new Uint8Array(digest)).toString('base64url')
+}
+
 export async function verifySubscribeSig(msg) {
   if (typeof msg.signature !== 'string') return false
   let payload

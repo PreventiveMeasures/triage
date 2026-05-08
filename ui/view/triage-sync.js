@@ -11,6 +11,7 @@ import {
   signSavePayload,
   signSubscribePayload,
   verifySavePayload,
+  computeRevisionId,
 } from './sync-crypto.js'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
@@ -97,7 +98,15 @@ const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 // invalidates whatever revision history the previous one assigned.
 // Stored as one JSON blob (single localStorage key) for simplicity;
 // per-workspace keys would scale better at the cost of enumeration.
-const SESSION_STATE_KEY = 'deepview.sync.sessions'
+//
+// Bumped from `deepview.sync.sessions` when revision IDs switched
+// from server-assigned integers to client-derived content hashes —
+// old persisted entries' integer `baseRevision` is meaningless to
+// the new chain check, so a clean key drops them. The `init` block
+// at the bottom of this file removes the old key on load to free
+// the space.
+const SESSION_STATE_KEY = 'deepview.sync.sessions.v2'
+const SESSION_STATE_KEY_LEGACY = 'deepview.sync.sessions'
 const SESSION_ID_RE = /^\d+$/u
 
 let serverUrl = ''
@@ -406,12 +415,19 @@ function trySendSave() {
       // will reconstruct from the wire fields. Holding the
       // signature proves the sender derived the workspace's
       // signing key, i.e. they know the workspace's private key.
-      const signature = await signSavePayload(owner.signingKey, {
+      const payload = {
         publicKeyB64: owner.workspaceTag,
         base: sentBase,
         nonceB64: nonce,
         ciphertextB64: ciphertext,
-      })
+      }
+      const signature = await signSavePayload(owner.signingKey, payload)
+      // Pre-compute the content-addressed revision id (SHA-256 of
+      // the canonical bytes). The server derives the same id from
+      // received content; the ack carries it back, and we use it
+      // to a) match this pending save against its ack, and b)
+      // verify the server didn't relabel the revision.
+      const revisionId = await computeRevisionId(payload)
       // Session may have been closed (or replaced) during the
       // await chain — drop the result if so. baseRevision may
       // have moved if a chain landed during encryption; in that
@@ -421,7 +437,7 @@ function trySendSave() {
         session.pendingSave = true
         return
       }
-      session.pending = { base: sentBase, changeset }
+      session.pending = { base: sentBase, id: revisionId, changeset }
       session.pendingSave = false
       send({
         type: 'workspace-save',
@@ -468,11 +484,18 @@ function trySendSave() {
 async function applyChainToBase(revisions) {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
-    // First-revision allowance: the very first chain we receive
-    // (after init) may start from `null` or `0` — accept either.
+    // Idempotent skip — the chain from a re-subscribe might begin
+    // with a revision we already applied (e.g. our reconnect's
+    // `from` was the predecessor, so the first rev returned IS our
+    // current baseRevision). Without this we'd fail the continuity
+    // check below and trigger an unnecessary resync.
+    if (typeof rev.id === 'string' && rev.id === session.baseRevision) continue
+    // Continuity check: each revision's `base` must equal our
+    // current baseRevision. The very first chain we receive (after
+    // init, baseRevision === null) accepts a `null` base.
     const expected = session.baseRevision
     const ok = expected == null
-      ? (rev.base == null || rev.base === 0)
+      ? rev.base == null
       : rev.base === expected
     if (!ok) {
       console.warn(`Triage sync: chain base mismatch (expected ${expected}, got ${rev.base}); resync requested`)
@@ -486,19 +509,30 @@ async function applyChainToBase(revisions) {
     // previous baseState intact (the malicious / broken entry
     // doesn't get to decide our future). Continuity for subsequent
     // revisions still has to hold.
-    if (!rev.signature || !rev.nonce || !rev.ciphertext) {
-      console.warn('Triage sync: revision missing signature/nonce/ciphertext; skipping')
+    if (!rev.signature || !rev.nonce || !rev.ciphertext || typeof rev.id !== 'string') {
+      console.warn('Triage sync: revision missing signature/nonce/ciphertext/id; skipping')
+      if (typeof rev.id === 'string') session.baseRevision = rev.id
+      continue
+    }
+    const payload = {
+      publicKeyB64: session.workspaceTag,
+      base: rev.base,
+      nonceB64: rev.nonce,
+      ciphertextB64: rev.ciphertext,
+    }
+    // Recompute the content-addressed id from the same canonical
+    // bytes. A server-claimed id that doesn't match the content
+    // hash is the protocol's signal that the server is trying to
+    // relabel / re-attribute a revision — drop the rev.
+    const expectedId = await computeRevisionId(payload)
+    if (rev.id !== expectedId) {
+      console.warn('Triage sync: revision id does not match content hash; skipping')
       session.baseRevision = rev.id
       continue
     }
     const ok2 = await verifySavePayload(
       session.verifyingKey,
-      {
-        publicKeyB64: session.workspaceTag,
-        base: rev.base,
-        nonceB64: rev.nonce,
-        ciphertextB64: rev.ciphertext,
-      },
+      payload,
       rev.signature,
     )
     if (!ok2) {
@@ -552,7 +586,15 @@ async function handleAck(msg) {
   // pending changeset into baseState so it becomes the new agreed
   // floor.
   if (!session) return
-  if (session.pending && msg.base === session.pending.base) {
+  // Match both `base` and `id`: the server can't relabel a
+  // revision (id is content-derived), but a stray /
+  // out-of-protocol message claiming an id we didn't compute
+  // shouldn't fold a phantom changeset into baseState.
+  if (
+    session.pending
+    && msg.base === session.pending.base
+    && msg.id === session.pending.id
+  ) {
     session.baseState = applyChangeset(session.baseState, session.pending.changeset)
     session.baseRevision = msg.id
     session.pending = null
@@ -565,6 +607,10 @@ async function handleAck(msg) {
     }
     return
   }
+  if (session.pending) {
+    console.warn(`Triage sync: ack mismatch (pending ${session.pending.base}/${session.pending.id?.slice(0, 8)}, ack ${msg.base}/${msg.id?.slice(0, 8)})`)
+    return
+  }
   // Late ack — pending was already cleared by something else
   // (a chain that advanced baseRevision past us, a reconnect that
   // wiped pending, or an out-of-order delivery the queued
@@ -573,16 +619,9 @@ async function handleAck(msg) {
   // `pending`, so we can't fold it in. Trigger a fresh save —
   // the server's stale-base path returns the catch-up chain
   // including our committed revision, and we end up at the same
-  // place via rebase. Mismatched-base acks log + bail; this only
-  // schedules a retry when the ack referred to something newer
-  // than what we already track.
-  if (session.pending) {
-    console.warn(`Triage sync: ack base mismatch (pending ${session.pending.base}, ack ${msg.base})`)
-    return
-  }
-  if (session.baseRevision == null
-      || (typeof msg.id === 'number' && msg.id > session.baseRevision)) {
-    console.warn(`Triage sync: late ack for base=${msg.base} id=${msg.id}; pending was already cleared`)
+  // place via rebase.
+  if (msg.id !== session.baseRevision) {
+    console.warn(`Triage sync: late ack for base=${msg.base} id=${msg.id?.slice(0, 8)}…; pending was already cleared`)
     session.pendingSave = true
     trySendSave()
   }
@@ -970,3 +1009,8 @@ try {
 // are loaded synchronously from localStorage so `listWorkspaces()`
 // is ready by now.
 prunePersistedSessions()
+
+// Discard the pre-content-addressed-id session blob. Its integer
+// baseRevisions don't match the new string-id chain check, so we
+// drop the legacy key instead of letting orphaned bytes sit.
+try { localStorage.removeItem(SESSION_STATE_KEY_LEGACY) } catch {}

@@ -168,6 +168,19 @@ export async function signSavePayload(privateKey, payload) {
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
 }
 
+// Content-addressed revision id — SHA-256 of the same canonical
+// bytes the signature covers, base64url-encoded with no padding.
+// Both ends derive the same id from the same content; the server
+// can validate but can't assign or alter, so it can't re-attribute
+// a revision under a different id without mismatching the hash
+// (or breaking the upstream signature). Used as the wire `id` for
+// `workspace-save-ack` and chain entries.
+export async function computeRevisionId(payload) {
+  const message = canonicalSavePayload(payload)
+  const digest = await crypto.subtle.digest('SHA-256', message)
+  return new Uint8Array(digest).toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
 // Same idea as the save signature, but the canonical bytes are
 // `<subscribe-domain>\n<pubkey>\n<from>` — `from` is the last
 // revision the client knows it has applied (so the server can skip

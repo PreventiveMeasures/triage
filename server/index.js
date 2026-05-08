@@ -27,8 +27,8 @@
 
 import { WebSocketServer } from 'ws'
 import { argv, env } from 'node:process'
-import { openDb, headFor, chainFrom, insertRevision } from './db.js'
-import { verifySaveSig, verifySubscribeSig } from './sign.js'
+import { openDb, headFor, chainFrom, insertRevision, revisionExists } from './db.js'
+import { verifySaveSig, verifySubscribeSig, computeRevisionId } from './sign.js'
 
 const PORT = Number(env.PORT ?? 8765)
 const HOST = env.HOST ?? '127.0.0.1'
@@ -101,9 +101,24 @@ async function handleSave(socket, msg) {
     if (DEBUG) console.warn('reject save: bad signature', msg.workspaceTag.slice(0, 12) + '…')
     return
   }
+  // Content-addressed id derived from the same canonical bytes the
+  // signature covers. Server doesn't get to assign it — both ends
+  // produce the same string from the same content, so swapping ids
+  // around or duplicating revisions under different ids is
+  // detectable client-side.
+  const id = await computeRevisionId(msg)
+  if (!id) return
   const tag = msg.workspaceTag
   // Sender is now an authenticated subscriber for this tag.
   subscribe(socket, tag)
+  // Idempotent retransmit: a save with the same content (same id)
+  // arriving more than once gets a fresh ack but doesn't grow the
+  // chain. Useful when a client times out mid-ack and re-sends.
+  if (revisionExists(handle, tag, id)) {
+    if (DEBUG) console.log(`save (duplicate id ${id.slice(0, 8)}…) → ack-only`)
+    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
+    return
+  }
   const head = headFor(handle, tag)
   const baseNorm = msg.base ?? null
   const matches = baseNorm == null ? head == null : baseNorm === head
@@ -115,29 +130,27 @@ async function handleSave(socket, msg) {
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
     return
   }
-  // Append a new revision. id is monotonic per tag.
-  const newId = (head ?? 0) + 1
   insertRevision(handle, {
     tag,
-    id: newId,
+    id,
     base: baseNorm,
     nonce: msg.nonce,
     ciphertext: msg.ciphertext,
     signature: msg.signature,
   })
-  if (DEBUG) console.log(`save → revision ${newId} for ${tag.slice(0, 12)}…`)
+  if (DEBUG) console.log(`save → revision ${id.slice(0, 8)}… for ${tag.slice(0, 12)}…`)
   send(socket, {
     type: 'workspace-save-ack',
     workspaceTag: tag,
     base: baseNorm,
-    id: newId,
+    id,
   })
   broadcast(tag, {
     type: 'workspace-state',
     workspaceTag: tag,
     revisions: [{
       base: baseNorm,
-      id: newId,
+      id,
       nonce: msg.nonce,
       ciphertext: msg.ciphertext,
       signature: msg.signature,
@@ -163,13 +176,14 @@ async function handleSubscribe(socket, msg) {
   // socket state.
   send(socket, { type: 'workspace-subscribed', workspaceTag: tag })
   // `from` is the last revision id the client claims to have
-  // applied; we send only revisions newer than that. Client lying
-  // about `from` just means they get a smaller catch-up — their
-  // subsequent saves will reveal stale state on the usual
-  // base-mismatch path. Null / missing → send the full chain.
-  const fromBase = typeof msg.from === 'number' ? msg.from : null
-  const revisions = chainFrom(handle, tag, fromBase)
-  if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… from=${fromBase} → chain ${revisions.length}`)
+  // applied — now a base64url string, not an integer. We send
+  // only revisions after that. Client lying about `from` just
+  // means they get a smaller catch-up — their subsequent saves
+  // will reveal stale state on the usual base-mismatch path.
+  // Null / missing → send the full chain.
+  const fromId = typeof msg.from === 'string' ? msg.from : null
+  const revisions = chainFrom(handle, tag, fromId)
+  if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
 
