@@ -645,6 +645,43 @@
       flex-shrink: 0;
     }
   }
+  /* Reports tab — flat list of OPFS reports the bundle's matched
+     findings came from. Each row hosts a single brand-sticker chip
+     (same `.report-chip` shell the Issues tab uses on each finding),
+     sized up so it reads as a list affordance rather than a row
+     ornament. The button is full-row width so the click target
+     spans the whole row. */
+  & .bundles-reports-list {
+    list-style: none; margin: .25rem 0 0; padding: 0;
+    display: flex; flex-direction: column; gap: .25rem;
+
+    & li { padding: 0; }
+    & .bundles-report-chip {
+      display: flex; align-items: center; gap: .4rem;
+      width: 100%;
+      padding: .35rem .5rem; height: auto;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: transparent;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem;
+      max-width: none;
+      cursor: pointer;
+      text-align: left;
+    }
+    & .bundles-report-chip:hover {
+      border-color: var(--accent, #2563eb);
+    }
+    & .bundles-report-chip .report-chip-label {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0; flex: 1;
+    }
+    & .bundles-report-chip .file-icon { flex-shrink: 0; }
+    & .bundles-report-chip .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+    & .bundles-report-chip .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+    & .bundles-report-chip .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+    & .bundles-report-chip .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+  }
 
 
   & .bundles-list {

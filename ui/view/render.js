@@ -1031,16 +1031,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // without a remaining directory map to `__own__`.
   const packages = new Set()
   for (const p of stripped) packages.add(bundlePkgOf(p))
-  // The Graph and Issues tabs open a full-width slide (see
-  // renderBundleSlide below) — they don't live in the details
-  // panel. Inside the panel we always show the Packages / Files
-  // pair so users can flip between the per-package size view and
-  // the flat file list regardless of how many packages the bundle
-  // has. Default to Packages; treat anything other than 'files'
-  // as 'packages' so older state slots don't leave the panel
-  // blank.
-  const activeTab = state.bundleDetailsTab === 'files' ? 'files' : 'packages'
-
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
     .map((_, i) => i)
@@ -1055,17 +1045,36 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // match yet (hashes still computing, no relevant reports
   // indexed). Drives whether the "Issues →" trailing button gets
   // rendered too.
+  // Reports — distinct OPFS reports any matched finding came from
+  // (preserves walk order via reportsForFinding's Set iteration).
+  // Drives the conditional Reports tab below.
   const issueSummary = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   let issueTotal = 0
+  const reportSet = new Set()
   if (state.bundleDetails?.fileHashes) {
     const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
     for (const findings of matches.values()) {
       for (const f of findings) {
         if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
         issueTotal++
+        for (const name of reportsForFinding(f.fileHash, f)) reportSet.add(name)
       }
     }
   }
+  const reports = [...reportSet].sort()
+
+  // The Graph and Issues tabs open a full-width slide (see
+  // renderBundleSlide below) — they don't live in the details
+  // panel. Inside the panel we always show the Packages / Files
+  // pair so users can flip between the per-package size view and
+  // the flat file list regardless of how many packages the bundle
+  // has. Reports joins them when at least one OPFS report has
+  // findings matching the bundle. Default to Packages; treat
+  // anything else as 'packages' so older state slots don't leave
+  // the panel blank.
+  let activeTab = 'packages'
+  if (state.bundleDetailsTab === 'files') activeTab = 'files'
+  else if (state.bundleDetailsTab === 'reports' && reports.length > 0) activeTab = 'reports'
   const issueChips = SEVERITIES
     .filter((s) => issueSummary[s] > 0)
     .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replace(/_/gu, ' ')}</span>`)
@@ -1077,6 +1086,20 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       return html`<li>
         <span class="bundles-source-path" title=${src}>${bareSrc}</span>
         ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+      </li>`
+    })}
+  </ul>` : nothing
+  // Reports list — same brand-sticker chip the Issues tab uses on
+  // each row, sized up so it reads as a list rather than a row
+  // affordance. data-bundle-issue-report wires into the existing
+  // events.js delegate that calls switchToFile.
+  const reportsTpl = reports.length > 0 ? html`<ul class="bundles-reports-list">
+    ${reports.map((name) => {
+      const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+      return html`<li>
+        <button type="button" class="report-chip bundles-report-chip" title=${name} data-bundle-issue-report=${name}>
+          ${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span>
+        </button>
       </li>`
     })}
   </ul>` : nothing
@@ -1103,6 +1126,13 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         aria-selected=${String(activeTab === 'files')}
         role="tab"
       >Files (${sources.length})</button>
+      ${reports.length > 0 ? html`<button
+        type="button"
+        class=${`bundles-tab${activeTab === 'reports' ? ' active' : ''}`}
+        data-bundle-tab="reports"
+        aria-selected=${String(activeTab === 'reports')}
+        role="tab"
+      >Reports (${reports.length})</button>` : nothing}
       <span class="bundles-tabs-spacer"></span>
       <button
         type="button"
@@ -1117,7 +1147,9 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         title="Open the bundle's matched issues"
       >Issues →</button>` : nothing}
     </div>
-    ${activeTab === 'files' ? filesTpl : distTpl}`
+    ${activeTab === 'files' ? filesTpl
+      : activeTab === 'reports' ? reportsTpl
+      : distTpl}`
 }
 
 // Full-width "slide" view for the Graph and Issues tabs. The
