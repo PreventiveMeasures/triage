@@ -8,7 +8,16 @@
 #report {
   display: none; padding: 1rem 1.5rem; width: 100%; box-sizing: border-box;
 
-  &.active { display: block; }
+  /* Active state runs flex-column so the graph view-mode can hang a
+     `flex: 1` chain off of it (.findings-content.with-graph →
+     .graph2-layout) to fill the viewport's remaining height below
+     the page header. `min-height: 100%` makes #report span its
+     scroll container (#main-content is 100vh-bound by body's flex
+     layout), which the chain then divides between the header and
+     the graph panel. Non-graph views (table / list / grouped /
+     files) are content-sized and behave like block layout under
+     flex-column with default align-stretch. */
+  &.active { display: flex; flex-direction: column; min-height: 100%; }
 
   /* Was `& > header.page-head` (direct child of #report) before
      render.js's Lit refactor. The header is now Lit-rendered into a
@@ -158,10 +167,13 @@
 
 /* Fullscreen — graph topbar's ⛶ button toggles
    `body.report-fullscreen`. Hides the chrome and lets the graph2
-   layout grow into the viewport. */
+   layout grow into the viewport. The layout's height is driven by
+   the flex chain (#main-content → #report → .findings-content.with-
+   graph → .graph2-layout), so once the page-head is hidden the
+   panel naturally takes the full available space minus #report's
+   .5rem padding. */
 body.report-fullscreen {
   & #sidebar { display: none; }
   & #report header.page-head { display: none; }
   & #report { max-width: none; padding: .5rem; }
-  & .graph2-layout { height: calc(100vh - 64px); }
 }

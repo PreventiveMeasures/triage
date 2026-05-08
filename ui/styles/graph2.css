@@ -13,10 +13,11 @@
 .graph2-layout {
   display: grid;
   grid-template-columns: 1fr 300px;
-  /* Topbar row sized `auto` so it can grow when it carries extra
-     rows (e.g. the Findings-tab embed adds a view-mode chooser
-     above the main topbar row). Standalone Graph tab still hits
-     ~44px from the single `.graph2-topbar-row`'s min-height. */
+  /* Topbar row sized `auto`; stage row takes the rest. The layout's
+     height comes from the flex chain in the .with-graph wrapper
+     (#main-content → #report → .findings-content.with-graph →
+     .graph2-layout), which fills the viewport's remaining space
+     below the page header. */
   grid-template-rows: auto 1fr;
   /* `right` spans both rows so the sidebar starts at the very
      top of the layout, alongside the topbar — its first row
@@ -27,8 +28,6 @@
   grid-template-areas:
     "topbar right"
     "stage  right";
-  height: 82vh;
-  margin-bottom: 1rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
@@ -38,22 +37,36 @@
   font-size: 12px;
 }
 
-/* Findings-tab embed — panel chrome matches `.toolbar` (6px radius
-   + glass shadow) so toggling between table/list/grouped and graph
-   view-modes re-renders without a visible chrome jump. The topbar
-   already owns its `--surface` background + `.6rem .75rem` padding;
-   what's left is the outer panel's radius and shadow.
+/* Findings view's graph view-mode — panel chrome matches `.toolbar`
+   (6px radius + glass shadow) so toggling between table/list/grouped
+   and graph view-modes re-renders without a visible chrome jump.
+   The topbar already owns its `--surface` background + `.6rem .75rem`
+   padding; what's left is the outer panel's radius and shadow.
 
    `background: transparent` is critical: `--surface` is rgba (≈0.78
-   alpha), so what's underneath shows through. The standalone Graph
-   tab puts `--graph-canvas-bg` (opaque #0c0c0c) behind it, tinting
-   the topbar darker than the findings `.toolbar`'s see-through-to-
-   page-bg look. Dropping the layout's bg here lets the page bg show
-   through the topbar's alpha channel exactly the way findings does. */
+   alpha), so what's underneath shows through. With opaque
+   `--graph-canvas-bg` (#0c0c0c) behind it the topbar would tint
+   darker than the findings `.toolbar`'s see-through-to-page-bg look.
+   Dropping the layout's bg here lets the page bg show through the
+   topbar's alpha channel exactly the way findings does.
+
+   Flex chain: the wrapper is flex-column + flex: 1 (filling #report's
+   remaining space below the header), and .graph2-layout flex: 1
+   inside that takes whatever's left. `min-height: 0` on both is
+   required so the chain can shrink below the children's intrinsic
+   sizes; without it the inner grid would push out and break the
+   chain. */
+.findings-content.with-graph {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+}
+
 .findings-content.with-graph .graph2-layout {
+  flex: 1; min-height: 0;
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
   background: transparent;
+  margin-bottom: 0;
 }
 
 /* ── Top bar ───────────────────────────────────────────────── */

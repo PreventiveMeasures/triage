@@ -666,11 +666,15 @@ function findingsBodyTemplate(filtered) {
 
 export function render() {
   // Fixed top-right print icon visibility — only show on the
-  // findings tab with a report loaded (graph / files tabs would
-  // print useless content). Toggled via a body class so the
+  // findings view with a report loaded AND a printable view-mode
+  // (table / list / grouped). The graph view-mode and the Files
+  // view both have non-printable bodies (canvas + per-file tree),
+  // so the button hides for those. Toggled via a body class so the
   // button itself doesn't need to re-render.
   document.body.classList.toggle('show-print-btn',
-    state.reports.length > 0 && state.currentView === 'findings')
+    state.reports.length > 0 &&
+    state.currentView === 'findings' &&
+    state.viewMode !== 'graph')
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
