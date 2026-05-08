@@ -85,13 +85,11 @@ export const state = store({
   // findings.
   filterSeverities: new Set(),
   filterColors: new Set(),
-  // Source filter — Set<'own' | 'modules'>. Empty (default) OR
-  // both members = no filter; one member = restrict to that side.
-  // Renders as two toggle buttons in the toolbar ("Sources" /
-  // "Dependencies"); the empty-or-full-set semantics mean clicking
-  // a chip off when both are on (or neither) leaves the user in
-  // the same effective filter state, which reads as "checking
-  // either or both has the same filtered-in result".
+  // Source filter — Set<'own' | 'modules'>. Empty (default) = no
+  // filter; single member = restrict to that side. The toolbar
+  // chips behave as a single-select with toggle-off: clicking a
+  // chip switches to it (clearing the other), clicking the active
+  // chip again clears the set entirely.
   filterSources: new Set(),
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no

@@ -296,17 +296,19 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Source filter chips — `data-source-toggle="own|modules"`. Each
-  // click flips the chip's membership in `state.filterSources`;
-  // empty set OR full set both mean "no filter". When the user
-  // clicks the only-active chip OFF, that empties the set, which
-  // also reads as no filter — same effective result as having both
-  // checked, matching the spec.
+  // Source filter chips — `data-source-toggle="own|modules"`.
+  // Single-select with toggle-off:
+  //   * click while nothing's active → switch to that chip
+  //   * click on a different chip → switch (the other goes off)
+  //   * click on the active chip again → clear (no filter, show all)
+  // Set-based state (rather than a single string) keeps the filter
+  // predicate in filters.js stable as `size === 1` checks.
   const srcChip = e.target.closest('[data-source-toggle]')
   if (srcChip) {
     const v = srcChip.dataset.sourceToggle
-    if (state.filterSources.has(v)) state.filterSources.delete(v)
-    else state.filterSources.add(v)
+    const wasActive = state.filterSources.has(v)
+    state.filterSources.clear()
+    if (!wasActive) state.filterSources.add(v)
     render()
     return
   }
