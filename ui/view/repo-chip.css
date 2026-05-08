@@ -2,6 +2,12 @@
 
 .chip {
   display: inline-flex; align-items: center; gap: .375rem;
+  /* Pin to 24px so readonly mode (no pencil button) stays the same
+     height as editable mode (which hits 24px naturally from its 18px
+     button + .125rem padding + 1px border × 2). The page-header's
+     sibling .file-chip and .files-toggle-btn use the same 24px so
+     the three pills in the title row read as one row. */
+  min-height: 24px; box-sizing: border-box;
   padding: .125rem .375rem .125rem .5rem;
   background: var(--surface);
   border: 1px solid var(--border);

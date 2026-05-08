@@ -38,7 +38,7 @@
        row share the same height. */
     & .file-chip {
       display: inline-flex; align-items: center; gap: .375rem;
-      min-height: 22px; box-sizing: border-box;
+      min-height: 24px; box-sizing: border-box;
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -117,7 +117,7 @@
        because Files isn't a destructive view. */
     & .files-toggle-btn {
       display: inline-flex; align-items: center;
-      min-height: 22px; box-sizing: border-box;
+      min-height: 24px; box-sizing: border-box;
       padding: .125rem .5rem;
       background: var(--surface);
       color: var(--muted);
