@@ -9,7 +9,14 @@ export function resetFilters() {
   state.filterConfMin = 0
   state.filterConfMax = 10
   state.filterInclude = ''
-  state.sortBy = 'severity'
+  // Default sort tracks the dataset: when the loaded report has any
+  // finding carrying a `priority`, sort by priority (descending —
+  // most important first); otherwise fall back to severity. Called
+  // on first-ingest only (subsequent loads keep the user's choice),
+  // so this fires once per report-set boot.
+  const hasPriority = state.reports.some((r) =>
+    r.groups.some((g) => g.some((f) => f.priority !== undefined)))
+  state.sortBy = hasPriority ? 'priority-desc' : 'severity'
 }
 
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
