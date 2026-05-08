@@ -4,7 +4,7 @@ import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
-import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
+import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes } from './render.js'
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
@@ -134,6 +134,26 @@ report.addEventListener('click', (e) => {
       if (state.selectedBundle !== integrity) return
       state.bundleDetails = details
       render()
+      // Kick off SHA-512 hashing of every source so the bundle
+      // graph's nodes can match findings from the loaded reports
+      // (state.reports' findings carry a `fileHash`). The digest
+      // is async and (depending on bundle size) can take a moment;
+      // the panel renders immediately with no findings, then a
+      // re-render once the hashes land paints any matches.
+      if (details.json) {
+        ;(async () => {
+          try {
+            const fileHashes = await computeBundleFileHashes(details)
+            // Bail if the user clicked a different bundle while we
+            // were hashing — stamping these onto a stale details
+            // object is harmless, but the re-render only matters
+            // when the user is still looking at this bundle.
+            if (state.selectedBundle !== integrity) return
+            details.fileHashes = fileHashes
+            render()
+          } catch {}
+        })()
+      }
     })()
     return
   }

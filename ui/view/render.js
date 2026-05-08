@@ -208,18 +208,91 @@ function buildBundleTree(details) {
   return tree
 }
 
-// Build a graph2-shaped graph from the open bundle. No findings
-// yet — ownCounts is empty so every node is "clean" from the
-// canvas's perspective. A follow-up pass will populate counts /
-// severity / color sets by matching state.reports findings against
-// per-file SHA-512 hashes.
+// SHA-512 of each bundle source's content, hex-encoded — matches
+// the fileHash format the analyzer stamps on findings (see
+// src/deduplicate-command.js's bundle-source hashing). Async
+// because `crypto.subtle.digest` is. Returns Map<file, hex-hash>.
+export async function computeBundleFileHashes(details) {
+  const sources = bundleSourcesAsMap(details)
+  const result = new Map()
+  for (const [file, content] of sources) {
+    const bytes = new TextEncoder().encode(content)
+    const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
+    const hex = [...new Uint8Array(hashBuf)]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    result.set(file, hex)
+  }
+  return result
+}
+
+// Match every finding across all loaded reports against the
+// bundle's per-file hashes. Returns Map<file, Finding[]>. Multiple
+// findings can share a fileHash (a single source dropped in one
+// scan may emit several), and a single hash may map to multiple
+// bundle files (rare — duplicate sources). Trash-deleted groups
+// are skipped so the graph reflects the live finding set.
+function bundleFindingsByFile(fileHashes) {
+  if (!fileHashes || fileHashes.size === 0) return new Map()
+  const hashToFiles = new Map()
+  for (const [file, hash] of fileHashes) {
+    if (!hashToFiles.has(hash)) hashToFiles.set(hash, [])
+    hashToFiles.get(hash).push(file)
+  }
+  const result = new Map()
+  for (const r of state.reports) {
+    for (const g of r.groups) {
+      if (isGroupDeleted(g)) continue
+      for (const f of g) {
+        if (!f.fileHash) continue
+        const matched = hashToFiles.get(f.fileHash)
+        if (!matched) continue
+        for (const file of matched) {
+          if (!result.has(file)) result.set(file, [])
+          result.get(file).push(f)
+        }
+      }
+    }
+  }
+  return result
+}
+
+// Build a graph2-shaped graph from the open bundle. When the
+// bundle's per-file hashes have been computed (events.js kicks
+// the async digest after parse), findings from the loaded reports
+// are matched onto bundle files via fileHash equality and rolled
+// up into the same `ownCounts` / `severitySet` / `colorSet` /
+// `findings` shape buildGraph expects. Without hashes, every node
+// is "clean" — the topbar chip counts collapse to zero, but the
+// canvas still renders the bundle's import graph.
 export function buildBundleGraphData(details) {
   const tree = buildBundleTree(details)
   const files = Object.keys(tree)
   if (files.length === 0) return null
+  const findingsByFile = bundleFindingsByFile(details.fileHashes)
   const ownCounts = new Map()
+  const severitySets = new Map()
+  const colorSets = new Map()
+  const fileFindings = new Map()
+  for (const [file, findings] of findingsByFile) {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
+    const sevs = new Set()
+    const cols = new Set()
+    const ff = []
+    for (const f of findings) {
+      counts[f.severity] = (counts[f.severity] || 0) + 1
+      sevs.add(f.severity)
+      const color = state.markers.get(tabKey(f)) ?? 'none'
+      cols.add(color)
+      ff.push({ severity: f.severity, color })
+    }
+    ownCounts.set(file, counts)
+    severitySets.set(file, sevs)
+    colorSets.set(file, cols)
+    fileFindings.set(file, ff)
+  }
   const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
-  return buildGraph(tree, files, ownCounts, transitiveCounts, null, null, null)
+  return buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings)
 }
 
 export function refreshBundleGraphSidebar() {
