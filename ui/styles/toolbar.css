@@ -200,7 +200,14 @@ view-mode-buttons { display: contents; }
    labels stood out against everything around them. */
 .sev-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 8px 3px 7px;
+  /* `height: 30px; box-sizing: border-box` aligns the chip with
+     the toolbar-search pill and the triage-filter group on the
+     same row — they're both fixed at 30px. Without this the chip
+     measured ~25px from content + padding alone, and the
+     `align-items: center` in `.toolbar-row` exposed the height
+     mismatch as a visible step. */
+  height: 30px; box-sizing: border-box;
+  padding: 0 8px 0 7px;
   background: var(--bg);
   border: 1px solid var(--border); border-radius: 4px;
   color: var(--muted);
