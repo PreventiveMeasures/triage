@@ -38,7 +38,19 @@ export function topIssueOf(counts) {
 // axes since a file with high+blue and low+red findings has BOTH
 // severities in its set and BOTH colors in its set, but only some
 // findings match a "high AND blue" filter.
-export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings) {
+//
+// `opts.pkgOf(file)`: optional override for the per-file package
+// classifier. Default is `packageOf` from ../graph/utils.js, which
+// reads the global `depsDir` configured at the top of render() —
+// that's correct for the findings-tab graph but wrong for the
+// bundle graph in bundle-only sessions where state.reports doesn't
+// carry node_modules paths and depsDir falls back to
+// 'dependencies'. The bundle path passes its own `bundlePkgOf`
+// (recognizes both `node_modules/` and `dependencies/`) so its
+// `node_modules/foo/...` files bucket under `foo` instead of all
+// piling under the literal `node_modules` top-level dir.
+export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, opts = {}) {
+  const pkgOf = opts.pkgOf ?? packageOf
   const fileSet = new Set(files)
   const importsOf = new Map()
   const importedBy = new Map()
@@ -63,7 +75,7 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
     const own = ownCounts.get(file)
     const subtree = transitiveCounts?.get(file) ?? null
     const totalIssues = totalFindings(own)
-    const pkg = packageOf(file) ?? '__own__'
+    const pkg = pkgOf(file) ?? '__own__'
     const issue = topIssueOf(own)
     return {
       id: file,

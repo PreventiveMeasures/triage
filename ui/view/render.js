@@ -349,7 +349,14 @@ export function buildBundleGraphData(details) {
   const files = graph2.showAll
     ? allFiles
     : [...bundleReachableFromIssueFiles(tree, ownCounts)]
-  return buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings)
+  // Pass `bundlePkgOf` so node packaging recognizes both
+  // `node_modules/` and `dependencies/` regardless of what the
+  // global depsDir picked from state.reports — the report-driven
+  // depsDir would otherwise miss bundle paths under whichever
+  // dir the loaded reports don't use.
+  return buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, {
+    pkgOf: bundlePkgOf,
+  })
 }
 
 export function refreshBundleGraphSidebar() {
