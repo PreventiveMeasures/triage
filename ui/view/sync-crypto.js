@@ -15,7 +15,8 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 // cipher, so future protocols can derive other keys (signing,
 // MAC, future versions) from the same secret without collision.
 
-const KEY_INFO = 'deepview-triage-sync.v1'
+const KEY_INFO = 'deepview-triage-sync.v1.content-key'
+const TAG_INFO = 'deepview-triage-sync.v1.workspace-tag'
 const NONCE_LEN = 12
 
 let webCryptoChaChaCheck = null
@@ -71,6 +72,43 @@ export async function deriveSessionKey(privateKeyBase64) {
   return new Uint8Array(bits)
 }
 
+// Derive an opaque server-facing identifier for the workspace.
+// Hides the workspaceId UUID from the relay server: clients with
+// the same private key + workspaceId converge on the same tag, but
+// the server can't reverse-engineer the underlying UUID from the
+// tag (without the private key it can't distinguish a tag from
+// random bytes). Domain-separated from the content key — the same
+// IKM passes through HKDF with a different `info`, so leaking the
+// tag tells you nothing about the encryption key and vice versa.
+// 128 bits is plenty for collision-resistance across a sane number
+// of workspaces; output is base64url so the tag is safe to use as
+// a URL path / WebSocket header value if the server protocol grows
+// to want that.
+export async function deriveWorkspaceTag(privateKeyBase64, workspaceId) {
+  const secret = Uint8Array.fromBase64(privateKeyBase64)
+  if (secret.length !== 32) {
+    throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
+  }
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    secret,
+    'HKDF',
+    false,
+    ['deriveBits'],
+  )
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array(),
+      info: new TextEncoder().encode(`${TAG_INFO}|${workspaceId}`),
+    },
+    baseKey,
+    128,
+  )
+  return new Uint8Array(bits).toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
 function randomNonce() {
   const nonce = new Uint8Array(NONCE_LEN)
   crypto.getRandomValues(nonce)
@@ -79,14 +117,15 @@ function randomNonce() {
 
 // Bind ciphertext to its workspace + base-revision context so a
 // malicious server can't replay a changeset under a different
-// workspace or graft it onto a different revision history.
-// Format: ASCII bytes of `<workspaceId>|<base>` (base = '' when
-// the session has no base yet, e.g. the very first save). The
-// sender chooses the AAD; the receiver reconstructs it from the
-// revision header it just parsed.
-export function buildAad(workspaceId, base) {
+// workspace or graft it onto a different revision history. The
+// workspace half is the derived tag (not the UUID) — that's what
+// travels on the wire, and the receiver reconstructs the AAD
+// straight from the message header without needing to look the
+// local workspace up. Format: ASCII bytes of `<tag>|<base>` (base
+// = '' when the session has no base yet, e.g. the very first save).
+export function buildAad(workspaceTag, base) {
   const baseStr = base == null ? '' : String(base)
-  return new TextEncoder().encode(`${workspaceId}|${baseStr}`)
+  return new TextEncoder().encode(`${workspaceTag}|${baseStr}`)
 }
 
 export async function encryptBytes(keyBytes, plaintext, aad) {

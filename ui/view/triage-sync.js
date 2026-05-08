@@ -2,7 +2,7 @@ import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
 import { listWorkspaces } from './workspaces.js'
-import { deriveSessionKey, buildAad, encryptJson, decryptJson } from './sync-crypto.js'
+import { deriveSessionKey, deriveWorkspaceTag, buildAad, encryptJson, decryptJson } from './sync-crypto.js'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
 // changesets. Disabled by default. `setServerUrl(url)` enables; the
@@ -30,10 +30,16 @@ import { deriveSessionKey, buildAad, encryptJson, decryptJson } from './sync-cry
 //
 // Wire shape
 // ----------
-//   client → server  workspace-save { workspaceId, base, changeset }
-//   server → client  workspace-save-ack { workspaceId, base, id }
-//   server → client  workspace-state { workspaceId, revisions:
-//                      [{ base, id, changeset }, ...] }
+//   client → server  workspace-save { workspaceTag, base, nonce, ciphertext }
+//   server → client  workspace-save-ack { workspaceTag, base, id }
+//   server → client  workspace-state { workspaceTag, revisions:
+//                      [{ base, id, nonce, ciphertext }, ...] }
+//
+// `workspaceTag` is an opaque, deterministic identifier derived from
+// the workspace's private key + UUID — see sync-crypto.js's
+// `deriveWorkspaceTag`. The server uses it to route messages between
+// peers but learns nothing about the underlying workspace UUID
+// (which doesn't leave the client).
 //
 // `workspace-save-ack` confirms that the client's pending save with
 // `base` was accepted as revision `id`. The client already holds the
@@ -207,7 +213,7 @@ function trySendSave() {
   session.encrypting = true
   ;(async () => {
     try {
-      const aad = buildAad(owner.workspaceId, sentBase)
+      const aad = buildAad(owner.workspaceTag, sentBase)
       const { nonce, ciphertext } = await encryptJson(owner.key, changeset, aad)
       // Session may have been closed (or replaced) during the
       // await — drop the result if so. baseRevision may have
@@ -222,7 +228,7 @@ function trySendSave() {
       session.pendingSave = false
       send({
         type: 'workspace-save',
-        workspaceId: session.workspaceId,
+        workspaceTag: session.workspaceTag,
         base: sentBase,
         nonce,
         ciphertext,
@@ -248,7 +254,7 @@ function trySendSave() {
 // revision's `base` must equal the current baseRevision before its
 // changeset applies, so out-of-order or gappy chains don't silently
 // corrupt state. Decrypts each revision's ciphertext along the way
-// using the AAD derived from the (workspaceId, base) pair the
+// using the AAD derived from the (workspaceTag, base) pair the
 // sender bound it to. Returns true on success. On failure
 // (continuity break or decrypt error) baseState is left untouched
 // from the failure point onward; the caller resyncs by clearing
@@ -270,7 +276,7 @@ async function applyChainToBase(revisions) {
     }
     let changeset
     try {
-      const aad = buildAad(session.workspaceId, rev.base)
+      const aad = buildAad(session.workspaceTag, rev.base)
       changeset = await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)
     } catch (err) {
       console.warn('Triage sync: decrypt failed; resync requested', err)
@@ -358,7 +364,11 @@ async function handleMessage(data) {
   let msg
   try { msg = JSON.parse(data) } catch { return }
   if (!msg || typeof msg !== 'object') return
-  if (!session || msg.workspaceId !== session.workspaceId) return
+  // Match the message to our active session by tag, not UUID —
+  // the wire never sees the UUID. A null tag (key derivation
+  // hasn't finished) means we can't match anything yet; drop.
+  if (!session || !session.workspaceTag) return
+  if (msg.workspaceTag !== session.workspaceTag) return
   if (msg.type === 'workspace-save-ack') {
     await handleAck(msg)
   } else if (msg.type === 'workspace-state') {
@@ -476,7 +486,14 @@ export const triageSync = {
     if (!ws) return
     const ids = buildWorkspaceIds()
     const newSession = {
+      // `workspaceId` is the local UUID — used for AAD-equivalent
+      // contexts inside the app (state.currentWorkspace, etc.).
+      // `workspaceTag` is the opaque server-facing identifier
+      // derived from the workspace's private key; it's what
+      // travels on the wire and what the AEAD's AAD is bound to.
+      // The server never sees the UUID.
       workspaceId,
+      workspaceTag: null,
       ids,
       // Until the server tells us its current revision, we have no
       // base. localState is whatever's in state.* right now;
@@ -491,14 +508,19 @@ export const triageSync = {
       encrypting: false,
     }
     session = newSession
-    // Derive the per-workspace content-encryption key off the
-    // workspace's private key, then prime the first send. Async
-    // because HKDF + noble both run via Promises; if the session
-    // gets replaced or closed before key derivation finishes, the
-    // identity check drops the result.
-    deriveSessionKey(ws.privateKey).then((key) => {
+    // Derive the per-workspace content-encryption key + the
+    // server-facing tag in parallel — both come off the same
+    // private key via HKDF with different domain-separating info
+    // strings, so there's no work-saving from sequencing them.
+    // If the session gets replaced or closed before derivation
+    // finishes, the identity check drops the result.
+    Promise.all([
+      deriveSessionKey(ws.privateKey),
+      deriveWorkspaceTag(ws.privateKey, workspaceId),
+    ]).then(([key, tag]) => {
       if (session !== newSession) return
       session.key = key
+      session.workspaceTag = tag
       // pendingSave was raised every time we hit trySendSave
       // before the key landed; flush now.
       if (socket?.readyState === WebSocket.OPEN) trySendSave()
@@ -519,6 +541,7 @@ export const triageSync = {
     if (!session) return null
     return {
       workspaceId: session.workspaceId,
+      workspaceTag: session.workspaceTag,
       baseRevision: session.baseRevision,
       pending: session.pending && { base: session.pending.base },
       pendingSave: session.pendingSave,
