@@ -7,6 +7,7 @@ import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, 
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
+import { computeFileHash } from '../../common/finding-id.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -221,20 +222,16 @@ function buildBundleTree(details) {
   return { tree, origToStripped }
 }
 
-// SHA-512 of each bundle source's content, hex-encoded — matches
-// the fileHash format the analyzer stamps on findings (see
-// src/deduplicate-command.js's bundle-source hashing). Async
-// because `crypto.subtle.digest` is. Returns Map<file, hex-hash>.
+// SHA-512 of each bundle source's content, in the canonical
+// `sha512-${base64}` SRI-style form that `computeFileHash`
+// (common/finding-id.js) produces — same hashing the analyzer
+// stamps on findings, so the two strings compare equal. Async
+// because crypto.subtle.digest is. Returns Map<file, integrity>.
 export async function computeBundleFileHashes(details) {
   const sources = bundleSourcesAsMap(details)
   const result = new Map()
   for (const [file, content] of sources) {
-    const bytes = new TextEncoder().encode(content)
-    const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
-    const hex = [...new Uint8Array(hashBuf)]
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-    result.set(file, hex)
+    result.set(file, await computeFileHash(content))
   }
   return result
 }
