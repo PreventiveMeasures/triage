@@ -265,11 +265,20 @@ sidebar.addEventListener('click', (e) => {
     return
   }
   if (e.target.closest('#sync-status')) {
-    // Toggle sync between off and the default localhost endpoint.
-    // The triageSync module persists the last URL, so a re-toggle
-    // on later loads picks up whatever was set most recently.
-    if (triageSync.status === 'off') triageSync.setServerUrl(DEFAULT_SYNC_URL)
-    else triageSync.setServerUrl('')
+    // Click toggles the persisted user-enabled flag rather than
+    // the URL itself — disable then re-enable should resume against
+    // the same endpoint, not lose a console-set URL. If no URL is
+    // configured yet, prime it with the per-origin default
+    // (currently only set for 127.0.0.1; production defaults to
+    // empty and the button stays hidden until something sets one).
+    if (triageSync.status === 'off') {
+      if (!triageSync.getServerUrl() && DEFAULT_SYNC_URL) {
+        triageSync.setServerUrl(DEFAULT_SYNC_URL)
+      }
+      triageSync.setEnabled(true)
+    } else {
+      triageSync.setEnabled(false)
+    }
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
@@ -322,16 +331,17 @@ function syncButtonVisible() {
 function renderSyncStatus(status) {
   const btn = document.getElementById('sync-status')
   if (!btn) return
-  if (!syncButtonVisible()) {
+  const visible = syncButtonVisible()
+  // Visibility doubles as an active gate: when the button can't
+  // be seen, the sync layer should be paused (no socket, no
+  // reconnect attempts) so a configured-but-unreachable session
+  // doesn't keep ticking invisibly. Drives a runtime-only flag
+  // — `setForcedOff` does NOT touch the saved URL or the
+  // persisted user-enabled toggle, so the next time the button
+  // becomes visible everything resumes against the same endpoint.
+  triageSync.setForcedOff(!visible)
+  if (!visible) {
     btn.hidden = true
-    // The displayed "no button" state has to mean sync IS off — a
-    // configured-but-unreachable session would otherwise keep
-    // ticking invisibly. setServerUrl('') here also drops the
-    // saved URL; the next time the button becomes visible it
-    // starts from the per-origin default. Skip the call when
-    // status is already 'off' to avoid a no-op write that the
-    // status listener would echo back into us.
-    if (triageSync.status !== 'off') triageSync.setServerUrl('')
     return
   }
   btn.hidden = false

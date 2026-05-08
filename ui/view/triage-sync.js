@@ -85,6 +85,12 @@ import {
 // unsynced edits survive any server push.
 
 const STORAGE_KEY = 'deepview.triageSyncUrl'
+// Persisted user toggle — flips between true / false when the user
+// clicks the sidebar status button (or via the public API). Stored
+// separately from the URL so toggling sync off doesn't forget the
+// configured endpoint. Default true: an unconfigured user starts
+// "ready to sync the moment a URL exists".
+const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 // Per-workspace sync state — `{ [workspaceId]: { serverUrl,
 // baseRevision, baseState } }`. Scoped by `serverUrl` because
 // revision IDs are per-server: switching to a different relay
@@ -95,10 +101,28 @@ const SESSION_STATE_KEY = 'deepview.sync.sessions'
 const SESSION_ID_RE = /^\d+$/u
 
 let serverUrl = ''
+// User-driven enable/disable, persisted. The sidebar status button
+// flips this on click. Distinct from `serverUrl` so toggling doesn't
+// drop the configured endpoint; the user can turn sync off and back
+// on without re-typing.
+let userEnabled = true
+// Runtime gate driven by the sidebar's visibility logic — when the
+// status button can't be seen (no usable URL or no non-empty
+// workspace), the sidebar sets this so the underlying socket stops
+// without touching `serverUrl` or `userEnabled`. Re-shown button
+// flips it back. Not persisted: visibility recomputes on every
+// load, so the runtime state can rebuild itself from scratch.
+let forcedOff = false
 let socket = null
 let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
+
+// True only when all gates align: a URL exists, the user hasn't
+// flipped off, and the sidebar isn't suppressing.
+function isActive() {
+  return userEnabled && !forcedOff && Boolean(serverUrl)
+}
 
 // `off` | `offline` | `connecting` | `online`. Public via the API
 // for status-bar indicators; emitted via `onStatusChange` whenever
@@ -112,7 +136,7 @@ const MAX_RECONNECT_DELAY = 30_000
 // (the empty state, where there's nothing to subscribe to).
 const statusListeners = new Set()
 function currentStatus() {
-  if (!serverUrl) return 'off'
+  if (!isActive()) return 'off'
   if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
   if (session && !session.subscribeAcked) return 'connecting'
   return 'online'
@@ -656,7 +680,10 @@ function openSocket() {
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
     emitStatusIfChanged()
-    if (serverUrl) scheduleReconnect()
+    // Only auto-reconnect when sync is actively wanted — a
+    // user-disabled or sidebar-forced-off socket should stay
+    // closed once it's down.
+    if (isActive()) scheduleReconnect()
   })
   ws.addEventListener('error', () => {
     // Close fires right after — let it own the reconnect schedule.
@@ -701,7 +728,56 @@ export const triageSync = {
       session.baseState = restored?.baseState ?? {}
       session.localState = buildLocalState(session.ids)
     }
-    if (next) openSocket()
+    if (isActive()) openSocket()
+    emitStatusIfChanged()
+  },
+
+  // Persisted user-driven toggle. URL stays put — re-enabling
+  // resumes against the same endpoint. closeSocket() bypasses
+  // reconnect because `isActive()` is now false.
+  setEnabled(value) {
+    const next = Boolean(value)
+    if (next === userEnabled) return
+    userEnabled = next
+    try {
+      localStorage.setItem(USER_ENABLED_KEY, next ? '1' : '0')
+    } catch {}
+    if (isActive()) {
+      if (!socket) openSocket()
+    } else {
+      closeSocket()
+      if (session) {
+        session.pending = null
+        session.pendingSave = false
+        session.subscribed = false
+        session.subscribeAcked = false
+      }
+    }
+    emitStatusIfChanged()
+  },
+
+  isEnabled() { return userEnabled },
+
+  // Runtime gate driven by the sidebar's visibility logic. Same
+  // close-without-touching-URL semantics as setEnabled, but isn't
+  // persisted — the sidebar re-derives visibility on every render
+  // from workspace state, so on next load this resets to false
+  // and `setForcedOff(true/false)` runs again as appropriate.
+  setForcedOff(value) {
+    const next = Boolean(value)
+    if (next === forcedOff) return
+    forcedOff = next
+    if (isActive()) {
+      if (!socket) openSocket()
+    } else {
+      closeSocket()
+      if (session) {
+        session.pending = null
+        session.pendingSave = false
+        session.subscribed = false
+        session.subscribeAcked = false
+      }
+    }
     emitStatusIfChanged()
   },
 
@@ -842,15 +918,15 @@ export const triageSync = {
   },
 }
 
-// Restore a saved server URL on module load. Does NOT auto-enable
-// sync when no URL has ever been set — the feature stays opt-in
-// until the user calls `setServerUrl`.
+// Restore the user's persisted enable flag + saved server URL on
+// module load. Sync only auto-starts when both gates open: the URL
+// is set AND the user hasn't toggled off.
 try {
+  const savedEnabled = localStorage.getItem(USER_ENABLED_KEY)
+  if (savedEnabled === '0') userEnabled = false
   const saved = localStorage.getItem(STORAGE_KEY) ?? ''
-  if (saved) {
-    serverUrl = saved
-    openSocket()
-  }
+  if (saved) serverUrl = saved
+  if (isActive()) openSocket()
 } catch {}
 
 // Drop persisted session entries whose workspace was deleted
