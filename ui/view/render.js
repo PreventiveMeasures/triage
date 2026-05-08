@@ -1050,18 +1050,27 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // Drives the conditional Reports tab below.
   const issueSummary = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   let issueTotal = 0
-  const reportSet = new Set()
+  // Per-report match count — how many of the bundle's matched
+  // findings came from each indexed OPFS report. Used by the
+  // Reports tab to caption each chip with its contribution. A
+  // single finding can show up under multiple reports (the same
+  // entry indexed from both a workspace export and the original
+  // dump), so each finding counts toward every report it appears
+  // in.
+  const reportCounts = new Map()
   if (state.bundleDetails?.fileHashes) {
     const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
     for (const findings of matches.values()) {
       for (const f of findings) {
         if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
         issueTotal++
-        for (const name of reportsForFinding(f.fileHash, f)) reportSet.add(name)
+        for (const name of reportsForFinding(f.fileHash, f)) {
+          reportCounts.set(name, (reportCounts.get(name) ?? 0) + 1)
+        }
       }
     }
   }
-  const reports = [...reportSet].sort()
+  const reports = [...reportCounts.keys()].sort()
 
   // The Graph and Issues tabs open a full-width slide (see
   // renderBundleSlide below) — they don't live in the details
@@ -1096,9 +1105,11 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   const reportsTpl = reports.length > 0 ? html`<ul class="bundles-reports-list">
     ${reports.map((name) => {
       const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+      const count = reportCounts.get(name) ?? 0
       return html`<li>
         <button type="button" class="report-chip bundles-report-chip" title=${name} data-bundle-issue-report=${name}>
           ${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span>
+          <span class="bundles-report-count">${count} ${count === 1 ? 'issue' : 'issues'}</span>
         </button>
       </li>`
     })}

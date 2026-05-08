@@ -676,6 +676,12 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       min-width: 0; flex: 1;
     }
+    & .bundles-report-count {
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: .68rem;
+      font-variant-numeric: tabular-nums;
+    }
     & .bundles-report-chip .file-icon { flex-shrink: 0; }
     & .bundles-report-chip .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
     & .bundles-report-chip .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
