@@ -483,6 +483,24 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         ctx.textBaseline = 'middle'
         const lineH = 11
         const pad = 2
+        // Nodes whose centre is more than `LABEL_MARGIN` pixels
+        // outside the canvas viewport can't contribute to either
+        // the label-placement candidates (their text would render
+        // offscreen) or the collision-target boxes (their circles
+        // aren't drawn, so a label can't visually collide with
+        // them). Skipping them is a big speedup on large graphs —
+        // the candidates loop calls `ctx.measureText` per node
+        // (expensive canvas API), and the collision pass is
+        // O(candidates × nodeBoxes), so trimming both lists by
+        // the viewport cuts the cost super-linearly.
+        // Margin is generous enough to cover the longest label
+        // (~200px) plus a node-radius's worth of slack so labels
+        // for nodes JUST offscreen can still place against
+        // on-screen neighbours.
+        const LABEL_MARGIN = 250
+        const inLabelBounds = (sx, sy) =>
+          sx > -LABEL_MARGIN && sx < W + LABEL_MARGIN &&
+          sy > -LABEL_MARGIN && sy < H + LABEL_MARGIN
         // Pre-build AABBs for every visible node circle. The label
         // collision pass checks against these so a label can't
         // straddle a neighbour's dot — the prior version only
@@ -492,6 +510,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         for (const n of graph.nodes) {
           if (!nodeVisible(n)) continue
           const [sx, sy] = worldToScreen(n.x, n.y)
+          if (!inLabelBounds(sx, sy)) continue
           const r = nodeRadius(n)
           nodeBoxes.push({
             file: n.file,
@@ -505,6 +524,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
           // Hubs-only filter for the 1.4 < zoom < 2.4 bracket.
           if (!n.isHub && viewport.k < 2.4) continue
           const [sx, sy] = worldToScreen(n.x, n.y)
+          if (!inLabelBounds(sx, sy)) continue
           const r = nodeRadius(n)
           const tx = sx + r + 4
           const ty = sy + 1
