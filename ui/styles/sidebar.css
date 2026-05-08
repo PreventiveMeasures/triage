@@ -1,3 +1,18 @@
+/* Branded "sticker" file icons — the sheet body fills with the
+   upstream's brand color and the mark sits on top in a contrasting
+   foreground. The default Reports bucket carries DeepView's own
+   house mark (a minimalist eye on dark blue); source-marked
+   buckets paint upstream palettes (Claude salmon on white, OpenAI
+   white on black, Vercel black on white). The white and black
+   sheets pick up a hairline border in the contrasting color so
+   neither blends into surrounding surfaces across themes.
+   Hoisted to top level (was scoped under .file-item) so the page
+   header's file-chip can use the same icons via the same classes. */
+.file-icon.brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+.file-icon.brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+.file-icon.brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+.file-icon.brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+
 /* Sidebar — collapsible report picker rooted in OPFS, persists across
    reloads. Pinned to the viewport (height: 100%; body is 100vh +
    overflow:hidden, main scrolls instead). When OPFS has no entries
@@ -195,23 +210,7 @@
 
   &:hover { background: rgb(from var(--text) r g b / .04); }
 
-  & .file-icon {
-    flex-shrink: 0; color: var(--muted);
-
-    /* Branded "sticker" file icons — the sheet body fills with the
-       upstream's brand color and the mark sits on top in a
-       contrasting foreground. The default Reports bucket carries
-       DeepView's own house mark (a minimalist eye on dark blue);
-       source-marked buckets paint upstream palettes (Claude salmon
-       on white, OpenAI white on black, Vercel black on white). The
-       white and black sheets pick up a hairline border in the
-       contrasting color so neither blends into the sidebar surface
-       across themes. */
-    &.brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
-    &.brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
-    &.brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
-    &.brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
-  }
+  & .file-icon { flex-shrink: 0; color: var(--muted); }
   & .file-label {
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

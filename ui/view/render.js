@@ -1,4 +1,6 @@
 import { html, render as litRender, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { FILE_ICONS } from './file-display.js'
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
 import { prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
@@ -137,9 +139,6 @@ const SOURCE_TITLES = {
   'deepsec': 'DeepSec findings',
 }
 
-// Outline file glyph for the title's filename chip. Matches the icon
-// used in the sidebar's file-list rows for visual continuity.
-const HEADER_FILE_ICON = html`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
 
 // Build the repo-chip element for the page header. The actual visual
 // (three modes — editable+collapsed, editable+expanded, read-only)
@@ -286,12 +285,18 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   // File chip: single-file reports get the filename verbatim; merged
   // loads collapse to a count to keep the chip compact. The chip is
   // omitted entirely when no files are loaded (shouldn't happen at
-  // this code path, but defensive).
+  // this code path, but defensive). Icon mirrors the sidebar's
+  // bucket sticker — DeepView house mark by default, brand sticker
+  // for the source-marked buckets — so the chip reads as "this is
+  // a Claude / Codex / DeepSec report" at a glance. Mixed-source
+  // workspace loads fall back to the default sticker.
+  const stickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
+  const stickerSvg = unsafeHTML(FILE_ICONS[stickerKey])
   let fileChip = nothing
   if (fileNames.length === 1) {
-    fileChip = html`<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames[0]}</span></span>`
+    fileChip = html`<span class="file-chip">${stickerSvg}<span>${fileNames[0]}</span></span>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<span class="file-chip">${stickerSvg}<span>${fileNames.length} reports</span></span>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
