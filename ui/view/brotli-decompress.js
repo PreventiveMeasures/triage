@@ -133,16 +133,20 @@ async function unregisterSW() {
 
 async function init() {
   // Native first — when available, we don't need either echo trick.
+  // `await unregisterSW()` so init doesn't resolve until any leftover
+  // worker from a previous session is actually gone (otherwise the
+  // SW could keep intercepting fetches between init's resolve and
+  // the browser finishing the unregister).
   const nativeFormat = await nativeAvailable()
   if (nativeFormat && await selfTest((b) => decompressNative(nativeFormat, b))) {
-    unregisterSW()
+    await unregisterSW()
     mode = { kind: 'native', format: nativeFormat }
     return mode
   }
   // Cache API — works in some browsers, no SW needed.
   if ('caches' in window) {
     if (await selfTest(decompressViaCache)) {
-      unregisterSW()
+      await unregisterSW()
       mode = { kind: 'cache' }
       return mode
     }
@@ -156,7 +160,7 @@ async function init() {
     mode = { kind: 'sw', fetchUrl: swUrl }
     return mode
   }
-  unregisterSW()
+  await unregisterSW()
   // None of the native paths can actually decompress brotli on this
   // browser. Stasis bundles will show "contents not parsed" — the
   // user can still inspect the metadata + integrity.
