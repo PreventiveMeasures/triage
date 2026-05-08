@@ -42,10 +42,18 @@
    + glass shadow) so toggling between table/list/grouped and graph
    view-modes re-renders without a visible chrome jump. The topbar
    already owns its `--surface` background + `.6rem .75rem` padding;
-   what's left is the outer panel's radius and shadow. */
+   what's left is the outer panel's radius and shadow.
+
+   `background: transparent` is critical: `--surface` is rgba (≈0.78
+   alpha), so what's underneath shows through. The standalone Graph
+   tab puts `--graph-canvas-bg` (opaque #0c0c0c) behind it, tinting
+   the topbar darker than the findings `.toolbar`'s see-through-to-
+   page-bg look. Dropping the layout's bg here lets the page bg show
+   through the topbar's alpha channel exactly the way findings does. */
 .findings-content.with-graph .graph2-layout {
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
+  background: transparent;
 }
 
 /* ── Top bar ───────────────────────────────────────────────── */
@@ -70,16 +78,17 @@
   border-bottom: 1px solid var(--graph-divider);
 }
 
+/* Mirrors `.toolbar-row` (gap .75rem, flex-wrap on, content-driven
+   height). The graph rows DO get the `.toolbar-row` class applied
+   too so any future changes to the findings filter row carry over,
+   but these declarations stay local in case the standalone Graph
+   tab ever drifts from the findings-toolbar shape. */
 .graph2-topbar-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: .75rem;
   padding: 0;
-  /* No min-height — content drives row height (matching the
-     findings `.toolbar-row` shape). Forcing a floor here added
-     ~2.4px to the View row vs its findings-toolbar counterpart
-     (which is content-driven), breaking the seamless transition
-     between view-modes. */
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }

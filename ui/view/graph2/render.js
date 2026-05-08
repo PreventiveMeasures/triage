@@ -109,13 +109,13 @@ function renderTopBar(graph, extraTopRow) {
   // triage / path / fullscreen). Standalone Graph tab keeps
   // everything on a single row exactly as before.
   return html`<div class="graph2-topbar">
-    ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra">
+    ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra toolbar-row">
       ${extraTopRow}
       ${allFilesBtn}
       <div class="g2-spacer"></div>
       ${trashBtn}
     </div>` : null}
-    <div class="graph2-topbar-row graph2-topbar-row-main">
+    <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${hasAnyVisible ? html`<severity-chips
       counts=${JSON.stringify(issueCounts)}
       selected=${JSON.stringify([...graph2.selectedSeverities])}
