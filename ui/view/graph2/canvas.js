@@ -1,5 +1,4 @@
 import { html, render } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
@@ -825,20 +824,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     //   3. per-severity chips when n.totalIssues > 0 — same
     //      block the selection card uses.
     //
-    // `relPath` and `pkgLabel` are user-provided (file paths from
-    // a loaded report) — Lit's `html` interpolation auto-escapes
-    // those. `renderSevChips` returns a string (still consumed
-    // unchanged by render.js's selection card), so it gets piped
-    // through `unsafeHTML` here — its content is built from
-    // controlled-domain data (the canonical severity names + the
-    // numeric counts), with no user-controlled interpolation.
+    // Lit's `html` interpolation auto-escapes `relPath` and
+    // `pkgLabel` (both user-provided — file paths from a loaded
+    // report). `renderSevChips` now returns a Lit template too,
+    // so it slots in directly with no `unsafeHTML` round-trip.
     render(html`
       <div class="g2-tt-path">${relPath}</div>
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style=${`background:${col}`}></span>
         <span class="g2-tt-pkg">${pkgLabel}</span>
       </div>
-      ${n.totalIssues > 0 ? unsafeHTML(renderSevChips(n.own)) : null}
+      ${n.totalIssues > 0 ? renderSevChips(n.own) : null}
     `, tooltip)
     // Show first, THEN measure — the browser doesn't compute layout
     // for `display: none` / opacity: 0 elements and we need the real

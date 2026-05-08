@@ -1,4 +1,5 @@
-import { SEVERITIES, esc } from '../format.js'
+import { html } from 'lit'
+import { SEVERITIES } from '../format.js'
 import { state } from '../state.js'
 import { graph2 } from './state.js'
 import { pkgColor } from '../graph/utils.js'
@@ -12,30 +13,30 @@ const SEV_COLORS = {
   low: '#67c2ff',
 }
 
-// Build the entire v2 layout HTML in one pass. Three columns —
+// Build the entire v2 layout as a Lit template — three columns:
 // left panel (palette / stats / issues / display / options), stage
 // (canvas + corner readouts + zoom controls + tooltip), right
-// panel (selection + top groups). The stage canvas needs
-// real dimensions before its layout can run, so all ancestor
-// elements ship with a flex / grid sizing rule that's set by CSS
-// (.graph2-layout / .graph2-stage). attachGraph2Interaction wires
-// up everything below.
+// panel (selection + top groups). All sub-fragments are Lit
+// templates too (returns from the per-section helpers below), so
+// interpolated user-derived values (file paths, package names,
+// the path-filter input) auto-escape through Lit's `${…}` slot.
+//
+// attachGraph2Interaction (in canvas.js) wires up the canvas
+// rAF / hover / click / pan / zoom on top of the rendered DOM.
 //
 // Tab-state inputs:
 //   graph     — buildGraph(...) result; nodes/edges/packages/etc.
 //   ownCounts — file → severity-count map; drives the "Top groups"
 //               distribution and the per-package issue counts
 export function renderGraph2Layout(graph) {
-  let html = '<div class="graph2-layout">'
-  html += renderTopBar(graph)
-  html += renderStage(graph)
-  html += renderRightPanel(graph)
-  html += '</div>'
-  return html
+  return html`<div class="graph2-layout">
+    ${renderTopBar(graph)}
+    ${renderStage(graph)}
+    ${renderRightPanel(graph)}
+  </div>`
 }
 
 function renderTopBar(graph) {
-  let html = '<div class="graph2-topbar">'
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -49,43 +50,7 @@ function renderTopBar(graph) {
   for (const sev of SEVERITIES) issueCounts[sev] = 0
   for (const n of graph.nodes) if (n.issue && issueCounts[n.issue] !== undefined) issueCounts[n.issue]++
   const hasAnyVisible = SEVERITIES.some((sev) => issueCounts[sev] > 0 || graph2.selectedSeverities.has(sev))
-  if (hasAnyVisible) {
-    html += '<div class="g2-sev-filters">'
-    for (const sev of SEVERITIES) {
-      const count = issueCounts[sev]
-      const isSelected = graph2.selectedSeverities.has(sev)
-      if (count === 0 && !isSelected) continue
-      const on = isSelected ? ' on' : ''
-      const label = sev.replace(/_/gu, ' ')
-      html += `<button type="button" class="g2-sev-pill${on}" data-g2-sev="${sev}" style="--sev:${SEV_COLORS[sev]}" aria-pressed="${isSelected}">`
-      html += '<span class="g2-sev-mark"></span>'
-      html += `<span class="g2-sev-pill-label">${esc(label)}</span>`
-      html += `<span class="g2-sev-pill-count">${count}</span>`
-      html += '</button>'
-    }
-    html += '</div>'
-  }
-  // Path / package substring filter — case-insensitive match
-  // against each node's file path AND its package name. Same
-  // soft-dim treatment as the severity / solo filters: non-
-  // matching nodes drop to 0.1 opacity, no hard hide.
-  //
-  // Clear button is always rendered, hidden via CSS when the
-  // input is empty (using :placeholder-shown sibling). Doing
-  // it that way keeps the button live across user typing
-  // without needing to re-render the topbar on every keystroke
-  // — the canvas redraws on input but the chrome doesn't.
-  html += '<div class="g2-path-filter-wrap">'
-  html += `<input type="text" class="g2-path-filter" id="g2-path-filter" placeholder="filter path/package…" value="${esc(graph2.pathFilter)}">`
-  html += '<button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>'
-  html += '</div>'
-  // "All files" controls the FILE SET, not just rendering —
-  // flipping it rebuilds the graph (different nodes, different
-  // edges, different layout). Defaults to off → only files
-  // with own or subtree findings are kept.
-  html += `<button type="button" class="g2-topbar-toggle${graph2.showAll ? ' on' : ''}" data-g2-show-all aria-pressed="${graph2.showAll}">`
-  html += '<span>All files</span><span class="g2-switch"></span>'
-  html += '</button>'
+
   // Trash toggle — same role as the findings tab's trash button.
   // Visible when there are deleted findings to show OR when the
   // user is already in trash view (so they can exit without
@@ -96,21 +61,69 @@ function renderTopBar(graph) {
   // visual overlay.
   const allGroups = state.reports.flatMap((r) => r.groups)
   const deletedCount = allGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
-  if (deletedCount > 0 || state.showDeleted) {
-    const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
-    const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
-    html += `<button type="button" class="g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}" id="g2-toggle-trash" title="${trashTitle}" aria-pressed="${state.showDeleted}">`
-    html += `<span>${esc(trashLabel)}</span>`
-    html += '</button>'
-  }
-  html += '<div class="g2-spacer"></div>'
-  // Fullscreen — toggles `body.report-fullscreen`. With the
-  // sidebar now spanning both grid rows, the topbar covers only
-  // the stage column, so the button's right-edge position here
-  // sits right at the stage / sidebar boundary.
-  html += '<button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>'
-  html += '</div>'
-  return html
+  const showTrash = deletedCount > 0 || state.showDeleted
+  const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
+  const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
+
+  return html`<div class="graph2-topbar">
+    ${hasAnyVisible ? html`<div class="g2-sev-filters">
+      ${SEVERITIES.map((sev) => {
+        const count = issueCounts[sev]
+        const isSelected = graph2.selectedSeverities.has(sev)
+        if (count === 0 && !isSelected) return null
+        const label = sev.replace(/_/gu, ' ')
+        return html`<button
+          type="button"
+          class=${`g2-sev-pill${isSelected ? ' on' : ''}`}
+          data-g2-sev=${sev}
+          style=${`--sev:${SEV_COLORS[sev]}`}
+          aria-pressed=${String(isSelected)}
+        ><span class="g2-sev-mark"></span><span class="g2-sev-pill-label">${label}</span><span class="g2-sev-pill-count">${count}</span></button>`
+      })}
+    </div>` : null}
+    <!-- Path / package substring filter — case-insensitive match
+         against each node's file path AND its package name. Same
+         soft-dim treatment as the severity / solo filters: non-
+         matching nodes drop to 0.1 opacity, no hard hide.
+
+         Clear button is always rendered, hidden via CSS when the
+         input is empty (using :placeholder-shown sibling). Doing
+         it that way keeps the button live across user typing
+         without needing to re-render the topbar on every keystroke
+         — the canvas redraws on input but the chrome doesn't. -->
+    <div class="g2-path-filter-wrap">
+      <input
+        type="text"
+        class="g2-path-filter"
+        id="g2-path-filter"
+        placeholder="filter path/package…"
+        .value=${graph2.pathFilter}>
+      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
+    </div>
+    <!-- "All files" controls the FILE SET, not just rendering —
+         flipping it rebuilds the graph (different nodes, different
+         edges, different layout). Defaults to off → only files
+         with own or subtree findings are kept. -->
+    <button
+      type="button"
+      class=${`g2-topbar-toggle${graph2.showAll ? ' on' : ''}`}
+      data-g2-show-all
+      aria-pressed=${String(graph2.showAll)}
+    ><span>All files</span><span class="g2-switch"></span></button>
+    ${showTrash ? html`<button
+      type="button"
+      class=${`g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}`}
+      id="g2-toggle-trash"
+      title=${trashTitle}
+      aria-pressed=${String(state.showDeleted)}
+    ><span>${trashLabel}</span></button>` : null}
+    <div class="g2-spacer"></div>
+    <!-- Fullscreen — toggles body.report-fullscreen. With the
+         sidebar now spanning both grid rows, the topbar covers only
+         the stage column, so the button's right-edge position here
+         sits right at the stage / sidebar boundary. -->
+    <button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>
+  </div>`
 }
 
 // Compute a path relative to a directory. Both inputs are
@@ -158,29 +171,31 @@ function shorterPath(file, referenceDir) {
 // regardless of how the visible text reads.
 function renderFileList(graph, label, files, referenceDir) {
   const count = files.length
-  let html = `<div class="g2-sel-section"><div class="g2-sel-section-label">${label} (${count})</div>`
   if (count === 0) {
-    html += '<div class="g2-sel-section-empty">none</div>'
-  } else {
-    // Sort by the displayed string so the list reads in the
-    // order it visually shows. Computing display once per file
-    // (vs. inside the comparator) keeps it O(n + n log n)
-    // rather than recomputing relativePath on every compare.
-    const items = files.map((f) => ({ file: f, display: shorterPath(f, referenceDir) }))
-    items.sort((a, b) => a.display.localeCompare(b.display))
-    html += '<ul class="g2-sel-file-list">'
-    for (const { file: f, display } of items) {
-      const node = graph.nodeByFile.get(f)
-      const c = node ? pkgColor(node.pkg) : '#666'
-      html += `<li><button type="button" class="g2-sel-file-link" data-g2-select="${esc(f)}" title="${esc(f)}">`
-      html += `<span class="g2-sel-file-dot" style="background:${c}"></span>`
-      html += `<span class="g2-sel-file-path">${esc(display)}</span>`
-      html += '</button></li>'
-    }
-    html += '</ul>'
+    return html`<div class="g2-sel-section">
+      <div class="g2-sel-section-label">${label} (${count})</div>
+      <div class="g2-sel-section-empty">none</div>
+    </div>`
   }
-  html += '</div>'
-  return html
+  // Sort by the displayed string so the list reads in the
+  // order it visually shows. Computing display once per file
+  // (vs. inside the comparator) keeps it O(n + n log n)
+  // rather than recomputing relativePath on every compare.
+  const items = files.map((f) => ({ file: f, display: shorterPath(f, referenceDir) }))
+  items.sort((a, b) => a.display.localeCompare(b.display))
+  return html`<div class="g2-sel-section">
+    <div class="g2-sel-section-label">${label} (${count})</div>
+    <ul class="g2-sel-file-list">
+      ${items.map(({ file: f, display }) => {
+        const node = graph.nodeByFile.get(f)
+        const c = node ? pkgColor(node.pkg) : '#666'
+        return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f} title=${f}>
+          <span class="g2-sel-file-dot" style=${`background:${c}`}></span>
+          <span class="g2-sel-file-path">${display}</span>
+        </button></li>`
+      })}
+    </ul>
+  </div>`
 }
 
 // Severity-count chip block — used by the selection card's
@@ -190,61 +205,60 @@ function renderFileList(graph, label, files, referenceDir) {
 // both graph tabs. Returns "none" placeholder when the counts
 // object is null or all-zero, matching v1's "none"-on-empty.
 export function renderSevChips(counts) {
-  if (!counts) return '<div class="g2-sel-section-empty">none</div>'
+  if (!counts) return html`<div class="g2-sel-section-empty">none</div>`
   const tiers = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
   const present = tiers.filter((s) => (counts[s] ?? 0) > 0)
-  if (present.length === 0) return '<div class="g2-sel-section-empty">none</div>'
-  return '<div class="tree-count-chips">'
-    + present.map((s) => `<span class="tree-count-chip ${s}">${counts[s]} ${s.replace(/_/gu, ' ')}</span>`).join('')
-    + '</div>'
+  if (present.length === 0) return html`<div class="g2-sel-section-empty">none</div>`
+  return html`<div class="tree-count-chips">
+    ${present.map((s) => html`<span class=${`tree-count-chip ${s}`}>${counts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+  </div>`
 }
 
 function renderStage(graph) {
-  let html = '<main class="graph2-stage">'
-  html += '<canvas id="g2-canvas"></canvas>'
-  // Top-left overlay — back button only (in package-focus
-  // mode). Stats moved to the bottom-left where they don't
-  // compete with the focused subgraph for attention; only
-  // shown here when there's something to render (the back
-  // button), so the corner is empty in normal mode.
-  if (graph2.focusedPkg) {
-    html += '<div class="g2-stage-overlay">'
-    const label = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
-    html += `<button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${esc(label)}</button>`
-    html += '</div>'
-  }
-  // Top-right overlay slot — pairs with the top-left back button
-  // (both are in-canvas graph actions, not navigation jumps). The
-  // wrapper is always present so we can hot-swap its content from
-  // refreshGraph2Sidebar when selection / solo / focus state
-  // changes; renderFocusOverlay decides whether the slot is
-  // populated (button) or empty (nothing to drill into).
-  html += `<div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr">${renderFocusOverlay(graph)}</div>`
-  // Bottom-left stats — file/package/edge/hub/issue counts.
-  // The earlier "X of Y visible" readout is gone: every node
-  // stays on screen now (filters / solo soft-dim instead of
-  // hiding), so visibleCount always equaled total.
+  // Bottom-left stats — file/package/edge/hub/issue counts. The
+  // earlier "X of Y visible" readout is gone: every node stays on
+  // screen now (filters / solo soft-dim instead of hiding), so
+  // visibleCount always equaled total.
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
   const avgDeg = graph.nodes.length === 0 ? '0.0' : (graph.edges.length * 2 / graph.nodes.length).toFixed(1)
-  html += '<div class="g2-stage-stats">'
-  html += `<span><b>${graph.nodes.length}</b> files</span>`
-  html += `<span><b>${graph.packages.length}</b> packages</span>`
-  html += `<span><b>${graph.edges.length}</b> edges (${intra} intra · ${cross} cross)</span>`
-  html += `<span><b>${issues}</b> issues</span>`
-  html += `<span>avg degree <b>${avgDeg}</b></span>`
-  html += '</div>'
-  // Bottom-right: zoom controls.
-  html += '<div class="g2-zoom-ctrl">'
-  html += '<button id="g2-zoom-in" title="Zoom in">+</button>'
-  html += '<div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>'
-  html += '<button id="g2-zoom-out" title="Zoom out">−</button>'
-  html += '<button id="g2-zoom-fit" class="g2-zoom-fit-btn" title="Fit to view">fit</button>'
-  html += '</div>'
-  html += '<div class="g2-tooltip" id="g2-tooltip"></div>'
-  html += '</main>'
-  return html
+
+  const focusedLabel = graph2.focusedPkg === '__own__' ? 'own source' : graph2.focusedPkg
+
+  return html`<main class="graph2-stage">
+    <canvas id="g2-canvas"></canvas>
+    <!-- Top-left overlay — back button only (in package-focus
+         mode). Stats moved to the bottom-left where they don't
+         compete with the focused subgraph for attention; only
+         shown here when there's something to render (the back
+         button), so the corner is empty in normal mode. -->
+    ${graph2.focusedPkg ? html`<div class="g2-stage-overlay">
+      <button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${focusedLabel}</button>
+    </div>` : null}
+    <!-- Top-right overlay slot — pairs with the top-left back button
+         (both are in-canvas graph actions, not navigation jumps). The
+         wrapper is always present so we can hot-swap its content from
+         refreshGraph2Sidebar when selection / solo / focus state
+         changes; renderFocusOverlay decides whether the slot is
+         populated (button) or empty (nothing to drill into). -->
+    <div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr">${renderFocusOverlay(graph)}</div>
+    <div class="g2-stage-stats">
+      <span><b>${graph.nodes.length}</b> files</span>
+      <span><b>${graph.packages.length}</b> packages</span>
+      <span><b>${graph.edges.length}</b> edges (${intra} intra · ${cross} cross)</span>
+      <span><b>${issues}</b> issues</span>
+      <span>avg degree <b>${avgDeg}</b></span>
+    </div>
+    <!-- Bottom-right: zoom controls. -->
+    <div class="g2-zoom-ctrl">
+      <button id="g2-zoom-in" title="Zoom in">+</button>
+      <div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>
+      <button id="g2-zoom-out" title="Zoom out">−</button>
+      <button id="g2-zoom-fit" class="g2-zoom-fit-btn" title="Fit to view">fit</button>
+    </div>
+    <div class="g2-tooltip" id="g2-tooltip"></div>
+  </main>`
 }
 
 // Decides whether the top-right overlay slot is populated. Shown
@@ -253,8 +267,8 @@ function renderStage(graph) {
 //   - a package is solo'd → use that package.
 // Hidden when there's only one file in the package (nothing to
 // visualize) or when already focused on it. Returns the button
-// HTML, or '' to leave the slot empty. Exported so the refresh
-// helper in render.js can swap it on selection change.
+// template, or null/`''` to leave the slot empty. Exported so the
+// refresh helper in render.js can swap it on selection change.
 export function renderFocusOverlay(graph) {
   let pkg = null
   if (graph2.selected) {
@@ -263,52 +277,47 @@ export function renderFocusOverlay(graph) {
   } else if (graph2.solo) {
     pkg = graph2.solo
   }
-  if (!pkg) return ''
-  if ((graph.pkgCount.get(pkg) ?? 0) <= 1) return ''
-  if (graph2.focusedPkg === pkg) return ''
+  if (!pkg) return null
+  if ((graph.pkgCount.get(pkg) ?? 0) <= 1) return null
+  if (graph2.focusedPkg === pkg) return null
   const label = pkg === '__own__' ? 'own source' : pkg
-  let html = ''
-  html += `<button type="button" class="g2-focus-pkg-btn" data-g2-focus-pkg="${esc(pkg)}" title="Focus on ${esc(label)}'s graph">`
   // Subgraph icon — three nodes connected by edges, evoking
   // "this is a smaller graph you can zoom into".
-  html += '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
-  html += '<path d="M8 4.6 L4 11 M8 4.6 L12 11 M5 11.4 L11 11.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>'
-  html += '<circle cx="8" cy="3.6" r="2" fill="currentColor"/>'
-  html += '<circle cx="3.6" cy="11.4" r="2" fill="currentColor"/>'
-  html += '<circle cx="12.4" cy="11.4" r="2" fill="currentColor"/>'
-  html += '</svg>'
-  html += '</button>'
-  return html
+  return html`<button
+    type="button"
+    class="g2-focus-pkg-btn"
+    data-g2-focus-pkg=${pkg}
+    title=${`Focus on ${label}'s graph`}
+  ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 4.6 L4 11 M8 4.6 L12 11 M5 11.4 L11 11.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      <circle cx="8" cy="3.6" r="2" fill="currentColor"/>
+      <circle cx="3.6" cy="11.4" r="2" fill="currentColor"/>
+      <circle cx="12.4" cy="11.4" r="2" fill="currentColor"/>
+    </svg></button>`
 }
 
 function renderRightPanel(graph) {
-  let html = '<aside class="graph2-right">'
-  html += '<div class="g2-panel-title">Selection</div>'
-  html += '<div id="g2-selection-area">'
-  html += renderSelectionCard(graph)
-  html += '</div>'
-  html += '<div id="g2-top-pkgs-block">'
-  html += renderTopPkgsBlock(graph)
-  html += '</div>'
-  html += '</aside>'
-  return html
+  return html`<aside class="graph2-right">
+    <div class="g2-panel-title">Selection</div>
+    <div id="g2-selection-area">${renderSelectionCard(graph)}</div>
+    <div id="g2-top-pkgs-block">${renderTopPkgsBlock(graph)}</div>
+  </aside>`
 }
 
 // Top-packages section — exported so events.js can re-render it
 // in place when the user flips the Issues/Files tab without
-// rebuilding the whole canvas. Returns the title row + dist bar
-// + dist list as HTML; the caller wraps this in #g2-top-pkgs-block.
+// rebuilding the whole canvas. The caller wraps the returned
+// template in #g2-top-pkgs-block.
 export function renderTopPkgsBlock(graph) {
   const tab = graph2.topPkgsTab
-  let html = '<div class="g2-panel-title g2-panel-title-row">'
-  html += '<span>Packages</span>'
-  html += '<div class="g2-mini-tabs">'
-  html += `<button type="button" class="g2-mini-tab${tab === 'issues' ? ' on' : ''}" data-g2-top-pkgs="issues">Issues</button>`
-  html += `<button type="button" class="g2-mini-tab${tab === 'files' ? ' on' : ''}" data-g2-top-pkgs="files">Files</button>`
-  html += '</div>'
-  html += '</div>'
-  html += renderDistribution(graph)
-  return html
+  return html`<div class="g2-panel-title g2-panel-title-row">
+    <span>Packages</span>
+    <div class="g2-mini-tabs">
+      <button type="button" class=${`g2-mini-tab${tab === 'issues' ? ' on' : ''}`} data-g2-top-pkgs="issues">Issues</button>
+      <button type="button" class=${`g2-mini-tab${tab === 'files' ? ' on' : ''}`} data-g2-top-pkgs="files">Files</button>
+    </div>
+  </div>
+  ${renderDistribution(graph)}`
 }
 
 // Selection card — extracted so it can be re-rendered in place when
@@ -324,14 +333,14 @@ export function renderSelectionCard(graph) {
   if (file) {
     const n = graph.nodeByFile.get(file)
     if (n) return renderFileCard(graph, n, file)
-    return '<div class="g2-empty-state"><strong>File not in current view</strong>Adjust filters or pick another file.</div>'
+    return html`<div class="g2-empty-state">
+      <strong>File not in current view</strong>Adjust filters or pick another file.
+    </div>`
   }
   if (graph2.solo) {
     return renderPackageCard(graph, graph2.solo)
   }
-  return '<div class="g2-empty-state">'
-    + 'Click a node or a package row to inspect.'
-    + '</div>'
+  return html`<div class="g2-empty-state">Click a node or a package row to inspect.</div>`
 }
 
 function renderFileCard(graph, n, file) {
@@ -339,42 +348,6 @@ function renderFileCard(graph, n, file) {
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
   const relPath = pkgRelative(file, n.pkg)
 
-  let html = ''
-  html += '<div class="g2-selection-card">'
-  // Three-line header (matches the hover tooltip):
-  //   1. file path relative to the package root — primary
-  //      identifier, monospace, full text colour.
-  //   2. dot + package name — secondary context.
-  //   3. (below the head's border) full path in small muted
-  //      monospace, ellipsis-clipped if the column is narrow.
-  //      Title attr keeps the full path discoverable on hover
-  //      when truncation kicks in.
-  html += '<div class="g2-sel-file-head">'
-  html += `<div class="g2-sel-path">${esc(relPath)}</div>`
-  html += '<div class="g2-sel-pkg-row">'
-  html += `<span class="g2-sel-dot" style="--dot:${col}; background:${col}"></span>`
-  html += `<span class="g2-sel-pkg">${esc(pkgLabel)}</span>`
-  html += '</div>'
-  html += '</div>'
-  html += `<div class="g2-sel-fullpath" title="${esc(file)}">${esc(file)}</div>`
-  // Own + subtree finding chips — same chrome as graph v1's
-  // sidebar (.tree-info-section / .tree-count-chip), so the
-  // visual reads consistently across the two graph tabs. The
-  // single-severity Status row + issue-text bar that lived
-  // here previously duplicated the data without showing the
-  // breakdown — chips are strictly more informative.
-  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Own findings</div>${renderSevChips(n.own)}</div>`
-  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Subtree findings</div>${renderSevChips(n.subtree)}</div>`
-  // Bottom row carries only the navigation jumps (Findings /
-  // Files). The package-graph drill-in is a different kind of
-  // action — it stays on the Graph tab and just narrows the
-  // canvas — so it lives on the canvas itself as a top-right
-  // icon button (rendered in renderStage), pairing with the
-  // top-left back button.
-  html += '<div class="g2-sel-jumps">'
-  if (n.totalIssues > 0) html += `<button type="button" class="g2-sel-jump" data-g2-jump-findings="${esc(file)}">Findings →</button>`
-  html += `<button type="button" class="g2-sel-jump" data-g2-jump-file="${esc(file)}">Files →</button>`
-  html += '</div>'
   // Directional import lists. Imported by = files that point
   // AT this one; Imports = files this one points at. The
   // earlier "Top neighbors" combined both directions and lost
@@ -387,10 +360,51 @@ function renderFileCard(graph, n, file) {
   const imports = graph.importsOf.get(file) ?? []
   const lastSlash = file.lastIndexOf('/')
   const referenceDir = lastSlash >= 0 ? file.slice(0, lastSlash) : ''
-  html += renderFileList(graph, 'Imported by', importers, referenceDir)
-  html += renderFileList(graph, 'Imports', imports, referenceDir)
-  html += '</div>'
-  return html
+
+  return html`<div class="g2-selection-card">
+    <!-- Three-line header (matches the hover tooltip):
+           1. file path relative to the package root — primary
+              identifier, monospace, full text colour.
+           2. dot + package name — secondary context.
+           3. (below the head's border) full path in small muted
+              monospace, ellipsis-clipped if the column is narrow.
+              Title attr keeps the full path discoverable on hover
+              when truncation kicks in. -->
+    <div class="g2-sel-file-head">
+      <div class="g2-sel-path">${relPath}</div>
+      <div class="g2-sel-pkg-row">
+        <span class="g2-sel-dot" style=${`--dot:${col}; background:${col}`}></span>
+        <span class="g2-sel-pkg">${pkgLabel}</span>
+      </div>
+    </div>
+    <div class="g2-sel-fullpath" title=${file}>${file}</div>
+    <!-- Own + subtree finding chips — same chrome as graph v1's
+         sidebar (.tree-info-section / .tree-count-chip), so the
+         visual reads consistently across the two graph tabs. The
+         single-severity Status row + issue-text bar that lived
+         here previously duplicated the data without showing the
+         breakdown — chips are strictly more informative. -->
+    <div class="g2-sel-section">
+      <div class="g2-sel-section-label">Own findings</div>
+      ${renderSevChips(n.own)}
+    </div>
+    <div class="g2-sel-section">
+      <div class="g2-sel-section-label">Subtree findings</div>
+      ${renderSevChips(n.subtree)}
+    </div>
+    <!-- Bottom row carries only the navigation jumps (Findings /
+         Files). The package-graph drill-in is a different kind of
+         action — it stays on the Graph tab and just narrows the
+         canvas — so it lives on the canvas itself as a top-right
+         icon button (rendered in renderStage), pairing with the
+         top-left back button. -->
+    <div class="g2-sel-jumps">
+      ${n.totalIssues > 0 ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
+      <button type="button" class="g2-sel-jump" data-g2-jump-file=${file}>Files →</button>
+    </div>
+    ${renderFileList(graph, 'Imported by', importers, referenceDir)}
+    ${renderFileList(graph, 'Imports', imports, referenceDir)}
+  </div>`
 }
 
 // Package selection card — shown when a package is solo'd via
@@ -406,10 +420,10 @@ function renderPackageCard(graph, pkg) {
     // The solo'd package has nothing visible — typically because
     // the user toggled show-all off and every file in that
     // package was clean. Offer a way out via the empty state.
-    return '<div class="g2-empty-state">'
-      + '<strong>Package has no files in view</strong>'
-      + 'Toggle "All files" to widen the file set, or pick another package.'
-      + '</div>'
+    return html`<div class="g2-empty-state">
+      <strong>Package has no files in view</strong>
+      Toggle "All files" to widen the file set, or pick another package.
+    </div>`
   }
   const col = pkgColor(pkg)
   const pkgLabel = pkg === '__own__' ? 'own source' : pkg
@@ -434,23 +448,6 @@ function renderPackageCard(graph, pkg) {
   let hubs = 0
   for (const n of filesInPkg) if (n.isHub) hubs++
 
-  let html = '<div class="g2-selection-card">'
-  html += '<div class="g2-sel-head">'
-  html += `<span class="g2-sel-dot" style="--dot:${col}; background:${col}"></span>`
-  html += `<span class="g2-sel-id">${esc(pkgLabel)}</span>`
-  html += '<span class="g2-sel-grp">package</span>'
-  html += '</div>'
-  html += '<div class="g2-sel-body">'
-  html += `<div class="g2-sel-row"><span class="k">Files</span><span class="v">${fileCount}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Hubs</span><span class="v">${hubs}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Intra edges</span><span class="v">${intraEdges}</span></div>`
-  html += `<div class="g2-sel-row"><span class="k">Cross edges</span><span class="v">${crossEdges}</span></div>`
-  html += '</div>'
-  html += `<div class="g2-sel-section"><div class="g2-sel-section-label">Findings</div>${renderSevChips(ownAgg)}</div>`
-  // The Package-graph drill-in moved out of the selection card
-  // and onto the canvas (top-right overlay button) — see
-  // renderStage. Same affordance, just placed where it belongs:
-  // it's a graph action, not a navigation jump.
   // Imported by — every file from a different package that
   // points at any file in this package. Dedup via Set since a
   // single importer file may point at multiple files in the
@@ -463,9 +460,25 @@ function renderPackageCard(graph, pkg) {
       if (importerNode && importerNode.pkg !== pkg) importerSet.add(f)
     }
   }
-  html += renderFileList(graph, 'Imported by', [...importerSet])
-  html += '</div>'
-  return html
+
+  return html`<div class="g2-selection-card">
+    <div class="g2-sel-head">
+      <span class="g2-sel-dot" style=${`--dot:${col}; background:${col}`}></span>
+      <span class="g2-sel-id">${pkgLabel}</span>
+      <span class="g2-sel-grp">package</span>
+    </div>
+    <div class="g2-sel-body">
+      <div class="g2-sel-row"><span class="k">Files</span><span class="v">${fileCount}</span></div>
+      <div class="g2-sel-row"><span class="k">Hubs</span><span class="v">${hubs}</span></div>
+      <div class="g2-sel-row"><span class="k">Intra edges</span><span class="v">${intraEdges}</span></div>
+      <div class="g2-sel-row"><span class="k">Cross edges</span><span class="v">${crossEdges}</span></div>
+    </div>
+    <div class="g2-sel-section">
+      <div class="g2-sel-section-label">Findings</div>
+      ${renderSevChips(ownAgg)}
+    </div>
+    ${renderFileList(graph, 'Imported by', [...importerSet])}
+  </div>`
 }
 
 function renderDistribution(graph) {
@@ -491,26 +504,6 @@ function renderDistribution(graph) {
     issueByPkg.set(n.pkg, (issueByPkg.get(n.pkg) ?? 0) + count)
     totalIssues += count
   }
-  // The dist BAR follows the active tab so the segment widths
-  // line up with the percentages in the list rows below. On
-  // Files: width = pkg's file share. On Issues (with the
-  // severity filter applied if any): width = pkg's share of
-  // the visible issue total. Packages with 0 in the chosen
-  // axis collapse to zero-width segments.
-  let html = '<div class="g2-dist-bar">'
-  for (const pkg of graph.packages) {
-    const c = pkgColor(pkg)
-    let w
-    if (tab === 'issues') {
-      w = totalIssues > 0
-        ? ((issueByPkg.get(pkg) ?? 0) / totalIssues * 100).toFixed(2)
-        : '0'
-    } else {
-      w = (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
-    }
-    html += `<span style="background:${c}; width:${w}%"></span>`
-  }
-  html += '</div>'
   // Ranked list reorders + filters per tab. On Issues, drop
   // packages with no issues — they're noise in an issues-first
   // ranking (matches graph v1's hubs filter). Tie-break by the
@@ -531,38 +524,51 @@ function renderDistribution(graph) {
       return (issueByPkg.get(b) ?? 0) - (issueByPkg.get(a) ?? 0)
     })
   }
-  // Show every package — the wrapping section flexes to fill the
-  // available sidebar height and scrolls past that, so the top-N
-  // cap that lived here previously is no longer needed.
-  html += '<div class="g2-dist-list">'
-  if (sorted.length === 0) {
-    html += '<div class="g2-dist-empty">No packages with issues</div>'
-  }
-  for (const pkg of sorted) {
-    const c = pkgColor(pkg)
-    const fileCnt = graph.pkgCount.get(pkg) ?? 0
-    const issueCnt = issueByPkg.get(pkg) ?? 0
-    // Count + percentage both follow the active tab — reading
-    // "30 88.2%" on Issues makes the row monotonically decrease
-    // with the sort; mixing issue counts with file percentages
-    // (the previous behavior) read as a sorting bug.
-    const cnt = tab === 'issues' ? issueCnt : fileCnt
-    const pct = tab === 'issues'
-      ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
-      : (fileCnt / totalFiles * 100).toFixed(1)
-    const label = pkg === '__own__' ? 'own source' : pkg
-    // Each row is a button with data-g2-pkg so the existing
-    // package-click handler in events.js (used by the palette
-    // swatches) handles top-pkgs clicks too: same toggle-solo
-    // semantics, same right-panel refresh, no duplicated logic.
-    const isSelected = graph2.solo === pkg
-    html += `<button type="button" class="g2-dist-item${isSelected ? ' on' : ''}" data-g2-pkg="${esc(pkg)}" title="${esc(label)}">`
-    html += `<span class="g2-dist-dot" style="background:${c}"></span>`
-    html += `<span class="g2-dist-name">${esc(label)}</span>`
-    html += `<span class="g2-dist-count">${cnt}</span>`
-    html += `<span class="g2-dist-pct">${pct}%</span>`
-    html += '</button>'
-  }
-  html += '</div>'
-  return html
+
+  return html`<!-- The dist BAR follows the active tab so the segment widths
+       line up with the percentages in the list rows below. On
+       Files: width = pkg's file share. On Issues (with the
+       severity filter applied if any): width = pkg's share of
+       the visible issue total. Packages with 0 in the chosen
+       axis collapse to zero-width segments. -->
+  <div class="g2-dist-bar">
+    ${graph.packages.map((pkg) => {
+      const c = pkgColor(pkg)
+      const w = tab === 'issues'
+        ? (totalIssues > 0 ? ((issueByPkg.get(pkg) ?? 0) / totalIssues * 100).toFixed(2) : '0')
+        : (graph.pkgCount.get(pkg) / totalFiles * 100).toFixed(2)
+      return html`<span style=${`background:${c}; width:${w}%`}></span>`
+    })}
+  </div>
+  <!-- Show every package — the wrapping section flexes to fill
+       the available sidebar height and scrolls past that, so the
+       top-N cap that lived here previously is no longer needed. -->
+  <div class="g2-dist-list">
+    ${sorted.length === 0 ? html`<div class="g2-dist-empty">No packages with issues</div>` : null}
+    ${sorted.map((pkg) => {
+      const c = pkgColor(pkg)
+      const fileCnt = graph.pkgCount.get(pkg) ?? 0
+      const issueCnt = issueByPkg.get(pkg) ?? 0
+      // Count + percentage both follow the active tab — reading
+      // "30 88.2%" on Issues makes the row monotonically decrease
+      // with the sort; mixing issue counts with file percentages
+      // (the previous behavior) read as a sorting bug.
+      const cnt = tab === 'issues' ? issueCnt : fileCnt
+      const pct = tab === 'issues'
+        ? (totalIssues > 0 ? (issueCnt / totalIssues * 100).toFixed(1) : '0.0')
+        : (fileCnt / totalFiles * 100).toFixed(1)
+      const label = pkg === '__own__' ? 'own source' : pkg
+      // Each row is a button with data-g2-pkg so the existing
+      // package-click handler in events.js (used by the palette
+      // swatches) handles top-pkgs clicks too: same toggle-solo
+      // semantics, same right-panel refresh, no duplicated logic.
+      const isSelected = graph2.solo === pkg
+      return html`<button
+        type="button"
+        class=${`g2-dist-item${isSelected ? ' on' : ''}`}
+        data-g2-pkg=${pkg}
+        title=${label}
+      ><span class="g2-dist-dot" style=${`background:${c}`}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
+    })}
+  </div>`
 }

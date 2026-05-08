@@ -1,3 +1,4 @@
+import { render as litRender } from 'lit'
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
 import { esc, prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
@@ -79,14 +80,18 @@ export function refreshGraph2Sidebar() {
   if (!area) return
   const data = buildGraph2Data()
   if (!data) return
-  area.innerHTML = renderSelectionCard(data.graph)
+  area.innerHTML = ''
+  litRender(renderSelectionCard(data.graph), area)
   // The top-right canvas overlay (drill-in icon button) depends
   // on the same selection / solo / focus state the selection
   // card does, so refresh both from the same trigger. Slot
   // element is rendered unconditionally by renderStage; we just
-  // swap its innerHTML.
+  // swap its content.
   const focusSlot = document.getElementById('g2-focus-overlay-slot')
-  if (focusSlot) focusSlot.innerHTML = renderFocusOverlay(data.graph)
+  if (focusSlot) {
+    focusSlot.innerHTML = ''
+    litRender(renderFocusOverlay(data.graph), focusSlot)
+  }
 }
 
 // Re-render only the right-panel "Top packages" block. Called when
@@ -98,7 +103,8 @@ export function refreshGraph2TopPkgs() {
   if (!block) return
   const data = buildGraph2Data()
   if (!data) return
-  block.innerHTML = renderTopPkgsBlock(data.graph)
+  block.innerHTML = ''
+  litRender(renderTopPkgsBlock(data.graph), block)
 }
 
 // Source-specific header titles. Used when every loaded report shares
@@ -781,8 +787,17 @@ export function render() {
       // but the early-out here is defensive.
       state.currentView = 'findings'
     } else {
-      html += renderGraph2Layout(data.graph)
+      // Placeholder slot for the Lit-rendered graph2 layout; the
+      // surrounding `html` string is still string-built (report
+      // tabs, etc.), so we drop a slot here, do the innerHTML
+      // assign, then `litRender` the layout into the slot.
+      // `renderGraph2Layout` is a Lit template — its outer
+      // `.graph2-layout` ends up as a child of the slot, which CSS
+      // doesn't care about (the layout class targets descendants).
+      html += '<div id="g2-layout-slot"></div>'
       report.innerHTML = html
+      const slot = document.getElementById('g2-layout-slot')
+      if (slot) litRender(renderGraph2Layout(data.graph), slot)
       report.classList.add('active')
       dropZone.classList.add('hidden')
       document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
