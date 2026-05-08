@@ -9,6 +9,14 @@ import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } 
 import { migrateLegacyFilenames } from './migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { triageSync } from './triage-sync.js'
+
+// Hard-coded localhost endpoint until a settings UI exists. Click
+// on the status button toggles between "off" (no URL) and this
+// URL; whatever the user types via DeepView.triageSync.setServerUrl
+// in the console takes precedence and is preserved across toggles
+// only if the toggle stays "off".
+const DEFAULT_SYNC_URL = 'ws://127.0.0.1:8765'
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
 // the report's filename. We carry both this private mime AND
@@ -244,6 +252,14 @@ sidebar.addEventListener('click', (e) => {
     deleteCurrent()
     return
   }
+  if (e.target.closest('#sync-status')) {
+    // Toggle sync between off and the default localhost endpoint.
+    // The triageSync module persists the last URL, so a re-toggle
+    // on later loads picks up whatever was set most recently.
+    if (triageSync.status === 'off') triageSync.setServerUrl(DEFAULT_SYNC_URL)
+    else triageSync.setServerUrl('')
+    return
+  }
   if (e.target.closest('#sidebar-toggle')) {
     sidebar.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0') } catch {}
@@ -257,6 +273,28 @@ if (searchInput) {
     renderSidebar()
   })
 }
+
+// Sync-status button at the bottom of the sidebar. Reflects the
+// triageSync status (`off` / `offline` / `online`) via a colored
+// dot + label; click toggles sync on or off (see the click delegate
+// above). Subscribes once at module load so the indicator follows
+// every reconnect / setServerUrl change without polling.
+const SYNC_LABELS = { off: 'Sync off', online: 'Online', offline: 'Offline' }
+const SYNC_TITLES = {
+  off: 'Sync off — click to enable (localhost)',
+  online: 'Online — click to disable sync',
+  offline: 'Offline (reconnecting) — click to disable sync',
+}
+function renderSyncStatus(status) {
+  const btn = document.getElementById('sync-status')
+  if (!btn) return
+  btn.dataset.status = status
+  btn.title = SYNC_TITLES[status] ?? ''
+  const label = btn.querySelector('.sync-label')
+  if (label) label.textContent = SYNC_LABELS[status] ?? ''
+}
+renderSyncStatus(triageSync.status)
+triageSync.onStatusChange(renderSyncStatus)
 
 // Double-click a workspace row → inline rename. Replaces the label
 // span with an <input> on the fly; Enter or blur commits, Escape

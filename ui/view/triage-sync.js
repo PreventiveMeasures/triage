@@ -84,6 +84,24 @@ let socket = null
 let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
+
+// `off` | `offline` | `online`. Public via the API for status-bar
+// indicators; emitted via `onStatusChange` whenever the value
+// transitions so consumers don't have to poll.
+const statusListeners = new Set()
+function currentStatus() {
+  if (!serverUrl) return 'off'
+  return socket?.readyState === WebSocket.OPEN ? 'online' : 'offline'
+}
+let lastEmittedStatus = 'off'
+function emitStatusIfChanged() {
+  const status = currentStatus()
+  if (status === lastEmittedStatus) return
+  lastEmittedStatus = status
+  for (const fn of statusListeners) {
+    try { fn(status) } catch (err) { console.warn('Triage sync status listener:', err) }
+  }
+}
 // Re-entrancy guard. Bumped while we're applying remote state so
 // the saveTriage at the tail doesn't trigger a notify and bounce
 // the same change back at the server.
@@ -515,6 +533,7 @@ function openSocket() {
       trySendSubscribe()
       trySendSave()
     }
+    emitStatusIfChanged()
   })
   ws.addEventListener('message', (e) => handleMessage(e.data))
   ws.addEventListener('close', () => {
@@ -527,6 +546,7 @@ function openSocket() {
       session.subscribed = false
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
+    emitStatusIfChanged()
     if (serverUrl) scheduleReconnect()
   })
   ws.addEventListener('error', () => {
@@ -557,11 +577,27 @@ export const triageSync = {
     } catch {}
     closeSocket()
     if (next) openSocket()
+    emitStatusIfChanged()
   },
 
   getServerUrl() { return serverUrl },
 
   get connected() { return socket?.readyState === WebSocket.OPEN },
+
+  // Status flag for connection-state indicators. One of:
+  //   'off'      no server URL configured (sync disabled)
+  //   'offline'  URL set but socket isn't open (reconnecting / down)
+  //   'online'   WebSocket is open
+  get status() { return currentStatus() },
+
+  // Subscribe to status transitions. Returns an unsubscribe
+  // function. Listeners only fire when the status string changes,
+  // so transient open → close → open during a reconnect storm
+  // doesn't replay the same value back-to-back.
+  onStatusChange(listener) {
+    statusListeners.add(listener)
+    return () => statusListeners.delete(listener)
+  },
 
   // Called by triage.js at the tail of saveTriage(). When inside
   // applyChainToBase / handleAck (suppressNotify > 0), bail — that

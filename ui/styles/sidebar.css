@@ -33,9 +33,20 @@
 
   &.collapsed .brand,
   &.collapsed .sidebar-search,
-  &.collapsed #file-list,
-  &.collapsed .sidebar-actions { display: none; }
+  &.collapsed #file-list { display: none; }
   &.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
+  /* Collapsed: keep the actions row visible but hide the
+     Delete-current button + the sync-status text label, so just
+     the colored sync dot remains as a single-glyph indicator. */
+  &.collapsed .sidebar-actions {
+    padding: .35rem 0;
+    justify-content: center;
+  }
+  &.collapsed #delete-current,
+  &.collapsed #sync-status .sync-label { display: none; }
+  &.collapsed #sync-status {
+    padding: .25rem; border: 0;
+  }
 }
 
 .sidebar-header {
@@ -277,7 +288,10 @@
 .sidebar-actions {
   padding: .35rem .55rem .45rem;
   border-top: 1px solid var(--border);
-  display: flex; gap: .35rem; flex-wrap: wrap;
+  display: flex; gap: .35rem; align-items: center;
+  /* Delete-current sits left, Sync status sits right — opposite
+     ends of the action row. */
+  justify-content: space-between;
 
   & button {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
@@ -288,6 +302,28 @@
     &.danger:hover { color: var(--critical); border-color: var(--critical); }
     &[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
   }
+}
+
+/* Sync-status indicator. Three states drive the dot color via
+   `data-status` on the button:
+     off      grey  — no server URL configured
+     offline  red   — URL set, socket isn't open (reconnecting / down)
+     online   green — WebSocket is open
+   The label hides in collapsed sidebar mode (see the override
+   below) so only the dot shows; the row stays visible there too,
+   which is why .sidebar-actions's collapsed `display: none` rule
+   gets relaxed for this button. */
+#sync-status {
+  display: inline-flex; align-items: center; gap: .35rem;
+
+  & .sync-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
+  }
+  &[data-status="online"]  .sync-dot { background: var(--green); }
+  &[data-status="offline"] .sync-dot { background: var(--critical); }
 }
 
 /* Workspace import: triage conflict dialog. The native <dialog>
