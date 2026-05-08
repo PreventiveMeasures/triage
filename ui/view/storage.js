@@ -1,3 +1,5 @@
+import { encodeUtf8 } from '../../common/utf8.js'
+
 // Persistent file storage backs the sidebar. OPFS — Origin Private
 // File System — is the preferred layer (real files, larger quota); on
 // origins where OPFS is unavailable (file://, older browsers) we
@@ -29,7 +31,7 @@ async function getOpfsDir() {
 // (same primitive used by loadTriage / saveTriage). Base64 is the
 // transport because localStorage values are strings.
 async function gzipString(text) {
-  const bytes = new TextEncoder().encode(text)
+  const bytes = encodeUtf8(text)
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
   const arr = new Uint8Array(await new Response(stream).arrayBuffer())
   return arr.toBase64()

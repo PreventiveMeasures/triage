@@ -1,5 +1,6 @@
 import { state } from './state.js'
 import { triageSync } from './triage-sync.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 
 // Markers + deletions + comments + fix-links survive page reload
 // via `localStorage['deepview.triage']`. Payload shape:
@@ -50,7 +51,7 @@ export async function saveTriage() {
       localStorage.removeItem(TRIAGE_KEY)
       return
     }
-    const bytes = new TextEncoder().encode(JSON.stringify(entries))
+    const bytes = encodeUtf8(JSON.stringify(entries))
     const compressed = await compressBrotli(bytes)
     localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
   } catch (err) {

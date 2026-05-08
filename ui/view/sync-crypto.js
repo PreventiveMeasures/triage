@@ -1,4 +1,5 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
 // changesets travel encrypted through the relay server. The server
@@ -18,6 +19,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 const KEY_INFO = 'deepview-triage-sync.v1.content-key'
 const SIGN_INFO = 'deepview-triage-sync.v1.sign-key'
 const SIGN_DOMAIN = 'deepview-triage-sync.v1.save'
+const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 const NONCE_LEN = 12
 
 // PKCS8 prefix for an Ed25519 private key seed (RFC 8410). The
@@ -78,7 +80,7 @@ export async function deriveSessionKey(privateKeyBase64) {
       name: 'HKDF',
       hash: 'SHA-256',
       salt: new Uint8Array(),
-      info: new TextEncoder().encode(KEY_INFO),
+      info: encodeUtf8(KEY_INFO),
     },
     baseKey,
     256,
@@ -116,7 +118,7 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
       name: 'HKDF',
       hash: 'SHA-256',
       salt: new Uint8Array(),
-      info: new TextEncoder().encode(`${SIGN_INFO}|${workspaceId}`),
+      info: encodeUtf8(`${SIGN_INFO}|${workspaceId}`),
     },
     baseKey,
     256,
@@ -151,7 +153,7 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
 // `base` field, so this is unambiguous without explicit
 // length-prefix framing.
 function canonicalSavePayload({ publicKeyB64, base, nonceB64, ciphertextB64 }) {
-  return new TextEncoder().encode([
+  return encodeUtf8([
     SIGN_DOMAIN,
     publicKeyB64,
     base == null ? '' : String(base),
@@ -162,6 +164,20 @@ function canonicalSavePayload({ publicKeyB64, base, nonceB64, ciphertextB64 }) {
 
 export async function signSavePayload(privateKey, payload) {
   const message = canonicalSavePayload(payload)
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
+  return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
+// Same idea as the save signature, but the canonical bytes are
+// `<subscribe-domain>\n<pubkey>` — no base/nonce/ciphertext to
+// bind. Different domain prefix from save so a save signature
+// can't be replayed as a subscribe and vice versa.
+function canonicalSubscribePayload(publicKeyB64) {
+  return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64].join('\n'))
+}
+
+export async function signSubscribePayload(privateKey, publicKeyB64) {
+  const message = canonicalSubscribePayload(publicKeyB64)
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
 }
@@ -204,7 +220,7 @@ function randomNonce() {
 // = '' when the session has no base yet, e.g. the very first save).
 export function buildAad(workspaceTag, base) {
   const baseStr = base == null ? '' : String(base)
-  return new TextEncoder().encode(`${workspaceTag}|${baseStr}`)
+  return encodeUtf8(`${workspaceTag}|${baseStr}`)
 }
 
 export async function encryptBytes(keyBytes, plaintext, aad) {
@@ -251,7 +267,7 @@ export async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
 // `{ nonce, ciphertext }` (both base64) and decrypt back. Tag is
 // appended to the ciphertext by the AEAD; we ship it as one blob.
 export async function encryptJson(keyBytes, value, aad) {
-  const plaintext = new TextEncoder().encode(JSON.stringify(value))
+  const plaintext = encodeUtf8(JSON.stringify(value))
   const { nonce, ciphertext } = await encryptBytes(keyBytes, plaintext, aad)
   return { nonce: nonce.toBase64(), ciphertext: ciphertext.toBase64() }
 }

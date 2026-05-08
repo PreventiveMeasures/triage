@@ -7,6 +7,8 @@
 // Two reports produced from the same source yield the same id for the
 // same finding; edits to description or source invalidate it.
 
+import { encodeUtf8 } from './utf8.js'
+
 function toHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
@@ -24,7 +26,7 @@ function toBase64(bytes) {
 // consumers already parse; `sha512-` prefix is the SRI-style algorithm
 // tag so downstream tools can tell hash algorithms apart at a glance.
 export async function computeFileHash(source) {
-  const bytes = typeof source === 'string' ? new TextEncoder().encode(source) : source
+  const bytes = typeof source === 'string' ? encodeUtf8(source) : source
   const digest = await crypto.subtle.digest('SHA-512', bytes)
   return `sha512-${toBase64(new Uint8Array(digest))}`
 }
@@ -33,7 +35,7 @@ export async function computeFileHash(source) {
 // UUID (it's derived, not generated) but the shape lets downstream tools
 // treat it as an opaque id without caring.
 async function fingerprintToId(fingerprint) {
-  const bytes = new TextEncoder().encode(JSON.stringify(fingerprint))
+  const bytes = encodeUtf8(JSON.stringify(fingerprint))
   const digest = await crypto.subtle.digest('SHA-256', bytes)
   const u = new Uint8Array(digest, 0, 16)
   // version 4: 0100xxxx

@@ -9,6 +9,7 @@ import {
   encryptJson,
   decryptJson,
   signSavePayload,
+  signSubscribePayload,
   verifySavePayload,
 } from './sync-crypto.js'
 
@@ -199,6 +200,38 @@ function send(msg) {
     console.warn('Triage sync send failed:', err)
     return false
   }
+}
+
+// Send a `workspace-subscribe` once per session-on-this-socket. The
+// server uses this to register the connection as a subscriber for
+// the workspace's broadcasts even when there's no local change to
+// push (e.g. a fresh client opening a workspace whose triage is
+// already in sync with the server). Idempotent on the client:
+// `session.subscribed` flips true on send and resets on socket
+// close so a reconnect re-subscribes.
+function trySendSubscribe() {
+  if (!session) return
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  if (session.subscribed) return
+  if (!session.signingKey || !session.workspaceTag) return
+  const owner = session
+  ;(async () => {
+    try {
+      const signature = await signSubscribePayload(owner.signingKey, owner.workspaceTag)
+      if (session !== owner) return
+      // Mark subscribed BEFORE sending so re-entrant calls (the
+      // ws 'open' handler firing twice during a flaky reconnect,
+      // or trySendSave running back-to-back) don't double up.
+      session.subscribed = true
+      send({
+        type: 'workspace-subscribe',
+        workspaceTag: session.workspaceTag,
+        signature,
+      })
+    } catch (err) {
+      console.warn('Triage sync: subscribe sign failed:', err)
+    }
+  })()
 }
 
 // Encryption inserts an `await` between "decided to send" and
@@ -472,11 +505,14 @@ function openSocket() {
     reconnectDelayMs = 1_000
     if (session) {
       // Re-establish against the freshly opened socket. baseState /
-      // baseRevision survived the disconnect; if there's an overlay
-      // (or we hadn't sent the initial state yet), trySendSave
-      // pushes it.
+      // baseRevision survived the disconnect; subscribed resets so
+      // we re-subscribe on this fresh socket; if there's an
+      // overlay (or we hadn't sent the initial state yet),
+      // trySendSave pushes it.
       session.pending = null
       session.pendingSave = false
+      session.subscribed = false
+      trySendSubscribe()
       trySendSave()
     }
   })
@@ -485,8 +521,10 @@ function openSocket() {
     if (socket === ws) socket = null
     if (session) {
       // The pending request is gone with the socket. Mark the slot
-      // free; reconnect handler will resend.
+      // free; reconnect handler will resend. `subscribed` clears
+      // so reconnect can re-subscribe.
       session.pending = null
+      session.subscribed = false
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
     if (serverUrl) scheduleReconnect()
@@ -574,6 +612,11 @@ export const triageSync = {
       pendingSave: false,
       key: null,
       encrypting: false,
+      // Flips true once we ship a `workspace-subscribe` over the
+      // current socket; resets on socket close so reconnects
+      // re-subscribe. Decoupled from `pending` (saves) because a
+      // workspace whose state is in sync still wants broadcasts.
+      subscribed: false,
     }
     session = newSession
     // Derive content-encryption key + Ed25519 signing keypair in
@@ -590,9 +633,13 @@ export const triageSync = {
       session.signingKey = kp.privateKey
       session.verifyingKey = kp.publicKey
       session.workspaceTag = kp.publicKeyB64
-      // pendingSave was raised every time we hit trySendSave
-      // before the key landed; flush now.
-      if (socket?.readyState === WebSocket.OPEN) trySendSave()
+      // Subscribe + flush any pending save now that we have keys.
+      // Subscribe gets us broadcast-eligibility regardless of
+      // whether there's anything to push.
+      if (socket?.readyState === WebSocket.OPEN) {
+        trySendSubscribe()
+        trySendSave()
+      }
     }).catch((err) => {
       console.warn('Triage sync: key derivation failed:', err)
     })

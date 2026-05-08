@@ -5,6 +5,7 @@ import { deriveFindingId } from '../../common/finding-id.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { setReportWorkspace } from './workspaces.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 
 // Workspace export — bundle the workspace's metadata, every report
 // belonging to it, the per-report repo URLs that the user has typed,
@@ -42,7 +43,7 @@ async function reportFindingIds(content) {
 }
 
 async function gzip(text) {
-  const stream = new Blob([new TextEncoder().encode(text)]).stream().pipeThrough(new CompressionStream('gzip'))
+  const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
   return await new Response(stream).blob()
 }
 
