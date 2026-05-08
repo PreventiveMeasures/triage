@@ -193,13 +193,19 @@ view-mode-buttons { display: contents; }
   display: inline-flex; align-items: center; flex-wrap: wrap;
   gap: 6px;
 }
+/* Boxy 4px corners + uppercase + tabular monospace count to match
+   the rest of the chrome — `.tag` chips in the page-head, `.badge`
+   severity pills inside finding rows, `.tree-count-chip` swatches
+   on the Files tab. The earlier 999px pills + sentence-case
+   labels stood out against everything around them. */
 .sev-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 4px 10px 4px 9px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 7px;
   background: var(--bg);
-  border: 1px solid var(--border); border-radius: 999px;
+  border: 1px solid var(--border); border-radius: 4px;
   color: var(--muted);
-  font-size: .75rem; font-weight: 500;
+  font-size: .7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
   cursor: pointer;
   transition: border-color .12s, background .12s, color .12s;
 
@@ -210,14 +216,16 @@ view-mode-buttons { display: contents; }
     display: inline-block;
     background: currentColor;  /* per-severity rule below sets the real color */
   }
-  & .name { letter-spacing: -0.005em; }
+  & .name { letter-spacing: .03em; }
   & .n {
     font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     font-size: .68rem; color: var(--muted); font-weight: 600;
+    text-transform: none; letter-spacing: 0;
     background: var(--surface);
-    border: 1px solid var(--border); border-radius: 999px;
-    padding: 0 6px; min-width: 18px;
-    text-align: center; line-height: 16px;
+    border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 5px; min-width: 16px;
+    text-align: center; line-height: 15px;
   }
 
   &.active {
