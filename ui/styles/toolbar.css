@@ -74,34 +74,37 @@
      icons inherit currentColor so theme + state recolor automatically.
      The "View:" label sits to the left as a sibling, not inside the
      group, so the bordered shell only wraps the buttons. */
-  /* `<view-mode-buttons>` wraps the View: label + the icon group.
-     `display: contents` flattens the host out of the layout so the
-     two children become direct flex items of the toolbar-row,
-     picking up its `gap` between them (the label's slight negative
-     margin tightens that gap to a comfortable label↔group spacing). */
-  & view-mode-buttons { display: contents; }
-  & .view-mode-label { color: var(--muted); margin-right: -.4rem; }
+}
 
-  & .view-mode-group {
-    display: inline-flex;
-    border: 1px solid var(--border); border-radius: 4px;
-    overflow: hidden;
+/* `<view-mode-buttons>` styles live outside `.toolbar` so the same
+   chrome lands wherever the component is mounted — the findings
+   toolbar AND the Files-tab `.tree-toolbar`. `display: contents`
+   on the host flattens it out of layout so the View: label and the
+   icon group become direct flex items of whichever toolbar row
+   wraps them, picking up its `gap` (the label's slight negative
+   margin tightens that gap to a comfortable label↔group spacing). */
+view-mode-buttons { display: contents; }
+.view-mode-label { color: var(--muted); margin-right: -.4rem; }
 
-    & .view-mode-btn {
-      background: transparent; border: none; color: var(--muted);
-      /* Slightly bumped from .2rem .42rem / 14px icons so the trio
-         reads as a primary toolbar control without dominating it.
-         Icons are 16px (see VIEW_ICONS in render.js). */
-      padding: .28rem .5rem; cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
-      transition: background .12s, color .12s;
-      font-family: inherit;
+.view-mode-group {
+  display: inline-flex;
+  border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
 
-      &:not(:last-child) { border-right: 1px solid var(--border); }
-      &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-      &.active { color: var(--accent); background: var(--surface-active); }
-      & svg { display: block; }
-    }
+  & .view-mode-btn {
+    background: transparent; border: none; color: var(--muted);
+    /* Slightly bumped from .2rem .42rem / 14px icons so the trio
+       reads as a primary toolbar control without dominating it.
+       Icons are 16px (see VIEW_ICONS in render.js). */
+    padding: .28rem .5rem; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s;
+    font-family: inherit;
+
+    &:not(:last-child) { border-right: 1px solid var(--border); }
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    &.active { color: var(--accent); background: var(--surface-active); }
+    & svg { display: block; }
   }
 }
 
