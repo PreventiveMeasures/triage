@@ -44,6 +44,19 @@ async function gunzipString(b64) {
   return new TextDecoder().decode(arr)
 }
 
+// Binary gzip — bytes in, bytes out. Used by the bundles layer so
+// .map sourcemaps (text JSON, highly compressible) cost less in OPFS;
+// readBundle auto-detects via the gzip magic bytes (1f 8b) so the
+// flag doesn't need to live in metadata.
+async function gzipBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+async function gunzipBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
 // Storage layer: try OPFS first (real files, large quota), fall back to
 // gzipped localStorage when OPFS is unavailable. Each function probes
 // OPFS once per call — caching is unnecessary because getDirectoryHandle
@@ -190,12 +203,19 @@ export async function listBundles() {
   return [...meta].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-// Persists a dropped bundle. Computes SHA-512 of the content and
-// stores the bytes under the SRI-style key; updates the metadata
-// with the dropped filename so the bundles list can show "name
-// (sha512-…)". Identical content dropped twice updates the name
-// without rewriting the content; different content with the same
-// name sits as a separate entry.
+// Persists a dropped bundle. Computes SHA-512 of the ORIGINAL
+// content and stores the bytes under the SRI-style key; updates
+// the metadata with the dropped filename so the bundles list can
+// show "name (sha512-…)". Identical content dropped twice updates
+// the name without rewriting the content; different content with
+// the same name sits as a separate entry.
+//
+// `.map` sourcemaps are gzipped before being written to OPFS — they
+// are JSON text and compress well. Integrity stays computed on the
+// original (uncompressed) bytes, matching SRI semantics. readBundle
+// auto-decompresses via the gzip magic bytes, so callers always see
+// the uncompressed content. Stasis bundles are already brotli-
+// compressed at the source so we store them as-is.
 export async function saveBundle(name, content) {
   const dir = await getOpfsBundlesDir()
   if (!dir) throw new Error(`Cannot save bundle ${name}: OPFS unavailable`)
@@ -205,10 +225,13 @@ export async function saveBundle(name, content) {
   const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
   const integrity = `sha512-${new Uint8Array(hashBuf).toBase64()}`
   const opfsKey = integrityToOpfsKey(integrity)
+  const storeBytes = name.toLowerCase().endsWith('.map')
+    ? await gzipBytes(bytes)
+    : bytes
   try { await dir.removeEntry(opfsKey) } catch {}
   const fh = await dir.getFileHandle(opfsKey, { create: true })
   const w = await fh.createWritable()
-  await w.write(bytes)
+  await w.write(storeBytes)
   await w.close()
   const meta = await readBundleMeta(dir)
   const idx = meta.findIndex((e) => e.integrity === integrity)
@@ -232,5 +255,13 @@ export async function readBundle(integrity) {
   if (!dir) throw new Error('OPFS unavailable')
   const fh = await dir.getFileHandle(integrityToOpfsKey(integrity))
   const file = await fh.getFile()
-  return new Uint8Array(await file.arrayBuffer())
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  // Auto-decompress when the on-disk bytes start with the gzip magic
+  // (1f 8b) — saveBundle gzips .map sourcemaps to save OPFS space,
+  // but the caller wants the original content. Stasis bundles use
+  // brotli (different magic) so they fall through unchanged.
+  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    return await gunzipBytes(bytes)
+  }
+  return bytes
 }
