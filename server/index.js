@@ -154,6 +154,14 @@ async function handleSubscribe(socket, msg) {
   }
   const tag = msg.workspaceTag
   subscribe(socket, tag)
+  // Explicit ack — distinguishes "the server processed my
+  // subscribe and registered me as a peer" from "the WebSocket
+  // is open". A client that sent a malformed / bad-sig subscribe
+  // never gets this; a client that did gets one before the chain
+  // arrives. Lets the UI surface a `connecting → online`
+  // transition based on real handshake completion, not just
+  // socket state.
+  send(socket, { type: 'workspace-subscribed', workspaceTag: tag })
   // `from` is the last revision id the client claims to have
   // applied; we send only revisions newer than that. Client lying
   // about `from` just means they get a smaller catch-up — their

@@ -39,12 +39,20 @@ import {
 //
 // Wire shape
 // ----------
-//   client → server  workspace-save     { workspaceTag, base,
-//                                          nonce, ciphertext, signature }
-//   server → client  workspace-save-ack { workspaceTag, base, id }
-//   server → client  workspace-state    { workspaceTag, revisions:
-//                                          [{ base, id, nonce,
-//                                             ciphertext, signature }, ...] }
+//   client → server  workspace-save       { workspaceTag, base,
+//                                            nonce, ciphertext, signature }
+//   client → server  workspace-subscribe  { workspaceTag, from, signature }
+//   server → client  workspace-subscribed { workspaceTag }
+//   server → client  workspace-save-ack   { workspaceTag, base, id }
+//   server → client  workspace-state      { workspaceTag, revisions:
+//                                            [{ base, id, nonce,
+//                                               ciphertext, signature }, ...] }
+//
+// `workspace-subscribed` is sent right after the server registers
+// the client as a peer for the workspace; `workspace-state` (with
+// the catch-up chain) follows. The ack lets the client distinguish
+// "WS open" from "subscribe accepted" — the latter is what
+// determines whether broadcasts will actually reach us.
 //
 // `workspaceTag` is the base64url-encoded Ed25519 public key derived
 // from the workspace's private key + UUID — see sync-crypto.js's
@@ -92,13 +100,22 @@ let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
 
-// `off` | `offline` | `online`. Public via the API for status-bar
-// indicators; emitted via `onStatusChange` whenever the value
-// transitions so consumers don't have to poll.
+// `off` | `offline` | `connecting` | `online`. Public via the API
+// for status-bar indicators; emitted via `onStatusChange` whenever
+// the value transitions so consumers don't have to poll.
+//
+// `connecting` covers the window between socket-open and the
+// server's `workspace-subscribed` ack landing — useful because a
+// dangling open socket without a registered subscription means
+// no broadcasts will reach the client even though the WS layer
+// looks fine. `online` requires the ack OR no active session
+// (the empty state, where there's nothing to subscribe to).
 const statusListeners = new Set()
 function currentStatus() {
   if (!serverUrl) return 'off'
-  return socket?.readyState === WebSocket.OPEN ? 'online' : 'offline'
+  if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
+  if (session && !session.subscribeAcked) return 'connecting'
+  return 'online'
 }
 let lastEmittedStatus = 'off'
 function emitStatusIfChanged() {
@@ -567,6 +584,13 @@ async function handleMessage(data) {
     await handleAck(msg)
   } else if (msg.type === 'workspace-state') {
     await handleChain(msg.revisions)
+  } else if (msg.type === 'workspace-subscribed') {
+    // Server confirmed our subscribe was accepted — we're a
+    // peer now and broadcasts will reach us. Flip the status
+    // out of `connecting`. The chain that follows arrives as
+    // a separate `workspace-state` message.
+    session.subscribeAcked = true
+    emitStatusIfChanged()
   }
 }
 
@@ -604,13 +628,15 @@ function openSocket() {
     reconnectDelayMs = 1_000
     if (session) {
       // Re-establish against the freshly opened socket. baseState /
-      // baseRevision survived the disconnect; subscribed resets so
-      // we re-subscribe on this fresh socket; if there's an
-      // overlay (or we hadn't sent the initial state yet),
-      // trySendSave pushes it.
+      // baseRevision survived the disconnect; subscribed +
+      // subscribeAcked reset so we re-subscribe on this fresh
+      // socket and walk through `connecting` until the new ack
+      // arrives; if there's an overlay (or we hadn't sent the
+      // initial state yet), trySendSave pushes it.
       session.pending = null
       session.pendingSave = false
       session.subscribed = false
+      session.subscribeAcked = false
       trySendSubscribe()
       trySendSave()
     }
@@ -621,10 +647,12 @@ function openSocket() {
     if (socket === ws) socket = null
     if (session) {
       // The pending request is gone with the socket. Mark the slot
-      // free; reconnect handler will resend. `subscribed` clears
-      // so reconnect can re-subscribe.
+      // free; reconnect handler will resend. `subscribed` /
+      // `subscribeAcked` both clear so reconnect re-subscribes
+      // and the status walks `offline → connecting → online` again.
       session.pending = null
       session.subscribed = false
+      session.subscribeAcked = false
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
     emitStatusIfChanged()
@@ -667,6 +695,7 @@ export const triageSync = {
       session.pending = null
       session.pendingSave = false
       session.subscribed = false
+      session.subscribeAcked = false
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
       session.baseState = restored?.baseState ?? {}
@@ -755,6 +784,13 @@ export const triageSync = {
       // re-subscribe. Decoupled from `pending` (saves) because a
       // workspace whose state is in sync still wants broadcasts.
       subscribed: false,
+      // Set when the server's `workspace-subscribed` ack lands.
+      // Distinct from `subscribed` (which only means "we sent the
+      // request"): the server can drop a request silently on
+      // sig-fail / bad-tag, so without an explicit ack the client
+      // can't tell registered-as-peer from sent-into-the-void.
+      // Drives the `connecting` → `online` status transition.
+      subscribeAcked: false,
     }
     session = newSession
     // Derive content-encryption key + Ed25519 signing keypair in

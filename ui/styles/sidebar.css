@@ -322,8 +322,9 @@
     flex-shrink: 0;
     box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
   }
-  &[data-status="online"]  .sync-dot { background: var(--green); }
-  &[data-status="offline"] .sync-dot { background: var(--critical); }
+  &[data-status="online"]     .sync-dot { background: var(--green); }
+  &[data-status="connecting"] .sync-dot { background: var(--medium); }
+  &[data-status="offline"]    .sync-dot { background: var(--critical); }
 }
 /* The bare `#sync-status` rule above carries (1,0,0) specificity
    which beats the user-agent's `[hidden] { display: none }`

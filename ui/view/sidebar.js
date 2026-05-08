@@ -300,11 +300,17 @@ if (searchInput) {
 // has a sensible default (only 127.0.0.1 today; see
 // `DEFAULT_SYNC_URL` above). When either condition fails the
 // button is hidden so it doesn't read as a broken affordance.
-const SYNC_LABELS = { off: 'Sync off', online: 'Online', offline: 'Offline' }
+const SYNC_LABELS = {
+  off: 'Sync off',
+  online: 'Online',
+  offline: 'Offline',
+  connecting: 'Connecting…',
+}
 const SYNC_TITLES = {
   off: 'Sync off — click to enable',
   online: 'Online — click to disable sync',
   offline: 'Offline (reconnecting) — click to disable sync',
+  connecting: 'Connecting (waiting for server) — click to disable sync',
 }
 
 function syncButtonVisible() {
