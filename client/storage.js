@@ -1,4 +1,4 @@
-import { encodeUtf8 } from '../../common/utf8.js'
+import { encodeUtf8 } from '../common/utf8.js'
 
 // Persistent file storage backs the sidebar. OPFS — Origin Private
 // File System — is the preferred layer (real files, larger quota); on

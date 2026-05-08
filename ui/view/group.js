@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state } from '../../client/state.js'
 import { SEVERITY_ORDER } from './format.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a

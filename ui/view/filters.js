@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state } from '../../client/state.js'
 import { isModule, findingText, SEVERITY_ORDER } from './format.js'
 import { tabKey, primaryTab } from './group.js'
 

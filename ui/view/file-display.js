@@ -1,4 +1,4 @@
-import { getKind } from './counts.js'
+import { getKind } from '../../client/counts.js'
 
 // Shared file-row affordances — the brand-marked "sticker" icons,
 // the source-bucket detection, and the display-name transform that

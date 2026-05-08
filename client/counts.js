@@ -14,8 +14,8 @@
 // sidebar treats as "no badge / unknown bucket yet" — the lazy fetch
 // runs in the background and re-renders when each entry lands.
 import { readFile } from './storage.js'
-import { parseMarkdownFindings } from '../../common/parse-md.js'
-import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
+import { parseMarkdownFindings } from '../common/parse-md.js'
+import { parseDeepsecFindings } from '../common/parse-deepsec.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
 

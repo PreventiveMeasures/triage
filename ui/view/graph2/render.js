@@ -1,6 +1,6 @@
 import { html } from 'lit'
 import { SEVERITIES, formatBytes } from '../format.js'
-import { state } from '../state.js'
+import { state } from '../../../client/state.js'
 import { graph2 } from './state.js'
 import { pkgColor } from '../graph/utils.js'
 import { pkgRelative } from './data.js'

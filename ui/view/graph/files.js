@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit'
-import { state } from '../state.js'
+import { state } from '../../../client/state.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { treeAnchor } from './utils.js'
 

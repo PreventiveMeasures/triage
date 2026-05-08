@@ -1,6 +1,5 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
-import { render } from './render.js'
 import { listWorkspaces } from './workspaces.js'
 import {
   deriveSessionKey,
@@ -108,6 +107,13 @@ const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 const SESSION_STATE_KEY = 'deepview.sync.sessions.v2'
 const SESSION_STATE_KEY_LEGACY = 'deepview.sync.sessions'
 const SESSION_ID_RE = /^\d+$/u
+
+// UI redraw hook — installed once at app boot by ui/view.js so this
+// module doesn't need to import from the rendering layer (would be
+// the wrong direction: client → ui). Defaults to a no-op so a
+// triage-sync update outside a UI context (tests, console scripts)
+// doesn't blow up.
+let redraw = () => {}
 
 let serverUrl = ''
 // User-driven enable/disable, persisted. The sidebar status button
@@ -577,7 +583,7 @@ async function rebaseAndPersist() {
   // switch back) skips the full-chain replay. Scoped by serverUrl
   // — see `loadPersistedSession`.
   persistSession(session)
-  render()
+  redraw()
 }
 
 async function handleAck(msg) {
@@ -776,6 +782,14 @@ function closeSocket() {
 }
 
 // ─────────── public API ───────────
+
+// Wire up the UI's render() function as the post-rebase redraw.
+// Called once from the app entry; using a setter (instead of an
+// import from this file) keeps the dependency arrow pointing
+// ui → client, not the other way.
+export function setRedraw(fn) {
+  redraw = typeof fn === 'function' ? fn : () => {}
+}
 
 export const triageSync = {
   setServerUrl(url) {

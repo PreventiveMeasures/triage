@@ -1,16 +1,16 @@
 import { html, render as litRender, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { state } from './state.js'
+import { state } from '../../client/state.js'
 import { sidebar, fileList } from './dom.js'
-import { listFiles, listBundles } from './storage.js'
+import { listFiles, listBundles } from '../../client/storage.js'
 import { render } from './render.js'
 import { switchToFile, switchToWorkspace, deleteCurrent } from './ingest.js'
-import { getCount, ensureCounts } from './counts.js'
-import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } from './workspaces.js'
-import { migrateLegacyFilenames } from './migrate-legacy.js'
+import { getCount, ensureCounts } from '../../client/counts.js'
+import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } from '../../client/workspaces.js'
+import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
-import { triageSync } from './triage-sync.js'
+import { triageSync } from '../../client/triage-sync.js'
 
 // Default sync endpoint used when the user toggles the sidebar
 // status button on. Only populated for pages served from

@@ -1,10 +1,10 @@
-import { state, loadRepoUrlFor } from './state.js'
-import { readFile } from './storage.js'
+import { state, loadRepoUrlFor } from '../../client/state.js'
+import { readFile } from '../../client/storage.js'
 import { toGroup } from './group.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
-import { setReportWorkspace } from './workspaces.js'
+import { setReportWorkspace } from '../../client/workspaces.js'
 import { encodeUtf8 } from '../../common/utf8.js'
 
 // Workspace export — bundle the workspace's metadata, every report

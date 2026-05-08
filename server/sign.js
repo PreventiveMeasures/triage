@@ -1,6 +1,6 @@
 // Ed25519 signature verification for incoming wire messages. The
 // canonical signing payload format is identical to the client's
-// (see ui/view/sync-crypto.js's `canonicalSavePayload`) so a
+// (see client/sync-crypto.js's `canonicalSavePayload`) so a
 // signature produced by a holder of the workspace seed verifies
 // here without re-derivation.
 //

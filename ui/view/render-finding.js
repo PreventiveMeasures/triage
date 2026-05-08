@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { state } from './state.js'
+import { state } from '../../client/state.js'
 import { prettyModel, stripExportMarker, fileUrl, commitUrl } from './format.js'
 import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'

@@ -5,10 +5,12 @@
 // import sidebar before ingest so the sidebar click delegate exists by
 // the time `addFiles` calls `renderSidebar`.
 import { sidebar } from './view/dom.js'
-import { listFiles } from './view/storage.js'
+import { listFiles } from '../client/storage.js'
 import { renderSidebar } from './view/sidebar.js'
 import { switchToFile, switchToWorkspace, LAST_FILE_KEY } from './view/ingest.js'
-import { listWorkspaces } from './view/workspaces.js'
+import { listWorkspaces } from '../client/workspaces.js'
+import { setRedraw } from '../client/triage-sync.js'
+import { render } from './view/render.js'
 import './view/events.js'
 import './view/theme.js'
 import './view/finding-table.js'
@@ -29,6 +31,11 @@ import './view/brotli-decompress.js'
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
 // loaded → drop zone stays visible.
+// Wire the UI's render() into triage-sync so a remote update
+// repaints the view. The client/ layer doesn't import from ui/, so
+// this hook bridges the two.
+setRedraw(render)
+
 ;(async () => {
   try {
     if (localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')

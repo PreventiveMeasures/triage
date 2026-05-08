@@ -1,6 +1,6 @@
 // DeepView triage-sync relay server. WebSocket front-end, SQLite
 // backing store. Implements the protocol described in
-// `ui/view/triage-sync.js` (and `server/sign.js` for the canonical
+// `client/triage-sync.js` (and `server/sign.js` for the canonical
 // signature payloads):
 //
 //   client → server  workspace-save      { workspaceTag, base,
