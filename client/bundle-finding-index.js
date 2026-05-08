@@ -93,7 +93,7 @@ async function indexOne(name) {
 // newly-dropped reports without re-parsing the ones already
 // indexed. Returns when every (currently-listed) report is
 // indexed.
-export async function ensureBundleFindingsIndexed() {
+export function ensureBundleFindingsIndexed() {
   if (activeRun) return activeRun
   activeRun = (async () => {
     try {
