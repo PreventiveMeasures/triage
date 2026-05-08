@@ -328,12 +328,11 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo) {
 
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${titleText}${fileChip}</h1>
+      <h1>${titleText}${fileChip}${repoTpl}</h1>
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
         ${tags.length > 0 ? html`${sep}${tags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
-        ${repoTpl !== nothing ? html`${sep}${repoTpl}` : nothing}
       </div>
     </div>
   </header>`
