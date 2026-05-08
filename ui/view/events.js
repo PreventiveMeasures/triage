@@ -29,35 +29,20 @@ function pathClosest(e, selector) {
 // selectors come first so a more specific match short-circuits before a
 // generic one (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
-  // Top-level view switcher (Findings / Tree / Files). Switching tabs
-  // also drops fullscreen — the mode is bound to the graph canvas (it
-  // hides the sidebar + header so the canvas can fill the viewport),
-  // and persisting it across to Findings or Files leaves the page in
-  // a chrome-less half-state with no canvas to justify it.
-  const viewTab = e.target.closest('.report-tab')
-  if (viewTab && viewTab.dataset.view) {
-    // Tear down the previous tab's canvas teardown before switching
-    // so its rAF / observers / window listeners stop firing once
-    // we replace #report's innerHTML in render(). cleanupGraph2 is a
-    // no-op when graph2 wasn't active.
-    if (state.currentView === 'graph2' && viewTab.dataset.view !== 'graph2') cleanupGraph2()
-    state.currentView = viewTab.dataset.view
-    document.body.classList.remove('report-fullscreen')
-    render()
-    return
-  }
-  // Files toggle (page header, right of the repo chip). Replaces the
-  // old Files tab — flips state.currentView between 'files' and the
-  // user's prior non-files view, mirroring the on/off shape of the
-  // Trash button. Same canvas teardown rule as the tab path above
-  // since switching out of graph2 needs to drop its rAF / observers.
+  // Files toggle (page header, right of the repo chip). On/off
+  // shape — clicking flips state.currentView between 'files' and
+  // 'findings', mirroring the Trash button's state.showDeleted.
+  // The graph view-mode (when active) lives inside Findings now;
+  // its rAF/observers tear down naturally when the body's innerHTML
+  // resets at the top of render(), but cleanupGraph2 is called
+  // explicitly so the canvas state can drop its viewport cache /
+  // hover state cleanly across the view switch.
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
     if (state.currentView === 'files') {
-      state.currentView = state.preFilesView ?? 'findings'
+      state.currentView = 'findings'
     } else {
-      if (state.currentView === 'graph2') cleanupGraph2()
-      state.preFilesView = state.currentView
+      if (state.viewMode === 'graph') cleanupGraph2()
       state.currentView = 'files'
     }
     document.body.classList.remove('report-fullscreen')

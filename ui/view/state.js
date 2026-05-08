@@ -43,7 +43,7 @@ export function saveRepoUrlFor(name, url) {
 
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
-// `state.reports`, `state.currentView = 'graph2'`, etc. Wrapped in
+// `state.reports`, `state.currentView = 'files'`, etc. Wrapped in
 // `store()` (see rray-modules/frontend/state-management.mjs) so
 // reads done from inside a `StateElement.render()` are tracked and
 // the element re-renders automatically when those properties (or
@@ -70,17 +70,12 @@ export const state = store({
   // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
   // with `ws:` when set.
   currentWorkspace: null,
-  // Top-level tab — 'findings' (default), 'graph2' (canvas graph with
-  // selection card sidebar), or 'files' (the per-file cards listing).
-  // Graph / files tabs are only visible when the loaded report carries
-  // a `tree` block with more than one file; switching files / loading
-  // a tree-less report auto-falls back to 'findings' inside render().
+  // Top-level view — 'findings' (default; table / list / grouped /
+  // graph view-modes inside) or 'files' (per-file cards listing,
+  // reached via the page-header Files toggle). Files is gated on a
+  // tree-bearing report with >1 file; loading a tree-less report
+  // auto-falls back to 'findings' inside render().
   currentView: 'findings',
-  // Tracks the last non-`files` view so the page-header Files
-  // toggle (top-right of the header, next to the repo chip) can
-  // restore the user's prior view when toggled off — same
-  // on/off semantic the Trash button uses for state.showDeleted.
-  preFilesView: 'findings',
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

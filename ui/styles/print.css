@@ -13,7 +13,7 @@
   html { font-size: 9pt; }
   body { background: #fff; color: #000; line-height: 1.35; display: block; }
 
-  .toolbar, .stats, .report-tabs { display: none !important; }
+  .toolbar, .stats { display: none !important; }
   #drop-zone, #sidebar { display: none !important; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }

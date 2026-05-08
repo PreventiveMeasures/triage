@@ -360,7 +360,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
         data-action="toggle-files"
         title=${filesActive ? 'exit files view' : 'show files'}
         aria-pressed=${String(filesActive)}
-      >${`Files (${treeFileCount})`}</button>`
+      >${`Files: ${treeFileCount}`}</button>`
     : nothing
 
   return html`<header class="page-head">
@@ -751,24 +751,22 @@ export function render() {
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  // Top-level view switcher. Tabs only appear for tree-bearing
-  // reports with >1 file — a single-file tree adds no navigation
-  // value. The Files view is reached via the page-header toggle
-  // button (rendered in headerTemplate) instead of a tab; same gate
-  // applies. Switching to a tree-less report auto-falls back to
-  // 'findings' so the user doesn't end up on a hidden view.
+  // Two top-level views: the default `findings` (table / list /
+  // grouped / graph view-modes — chrome owned by render() below)
+  // and `files` (per-file tree, reached via the page-header Files
+  // toggle). Files is gated on a tree-bearing report with >1 file;
+  // a single-file tree adds no navigation value. Stale state on a
+  // report swap (or workspace switch) auto-falls back to findings.
   const treeData = state.reports[0]?.tree
   const treeFileCount = treeData ? Object.keys(treeData).length : 0
-  const showTreeTab = treeFileCount > 1
-  if (!showTreeTab && (state.currentView === 'files' || state.currentView === 'graph2')) {
-    state.currentView = 'findings'
-  }
+  const treeAvailable = treeFileCount > 1
+  if (!treeAvailable && state.currentView === 'files') state.currentView = 'findings'
   // Same shape as the sort-priority drop above — `graph` is only a
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away
   // (workspace switch, report unload), fall back to the default
   // table layout so a stale selection can't render an empty body.
-  if (!showTreeTab && state.viewMode === 'graph') state.viewMode = 'table'
+  if (!treeAvailable && state.viewMode === 'graph') state.viewMode = 'table'
 
   // `headerTemplate` returns a Lit template — drop a slot in the
   // string-built HTML, then `litRender` into it after the
@@ -776,23 +774,16 @@ export function render() {
   const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo, treeFileCount)
   let htmlBuf = '<div id="header-slot"></div>'
 
-  if (showTreeTab) {
-    htmlBuf += '<div class="report-tabs">'
-    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
-    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph</button>`
-    htmlBuf += '</div>'
-  }
-
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
     // `renderTreeView` returns a Lit template now — drop a slot in
     // the string-built HTML, then litRender into it post-flush.
     htmlBuf += '<div id="tree-view-slot"></div>'
     report.innerHTML = htmlBuf
-    // Same header on every tab — landed in the html string above
-    // (`<div id="header-slot">`). Without this litRender the slot
-    // would just stay empty on Files / Graph (the bottom-of-render
-    // litRender only runs on the Findings path).
+    // Header lands in the slot stamped above (`<div id="header-slot">`).
+    // Without this litRender the slot would just stay empty on the
+    // Files view (the bottom-of-render litRender only runs on the
+    // findings path).
     const fHeader = document.getElementById('header-slot')
     if (fHeader) litRender(headerTpl, fHeader)
     const treeSlot = document.getElementById('tree-view-slot')
@@ -801,39 +792,6 @@ export function render() {
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
     return
-  }
-
-  if (state.currentView === 'graph2') {
-    const data = buildGraph2Data()
-    if (!data) {
-      // Tree-bearing report disappeared between renders; the tab
-      // switcher above will already have reset state.currentView,
-      // but the early-out here is defensive.
-      state.currentView = 'findings'
-    } else {
-      // Placeholder slot for the Lit-rendered graph2 layout; the
-      // surrounding `html` string is still string-built (report
-      // tabs, etc.), so we drop a slot here, do the innerHTML
-      // assign, then `litRender` the layout into the slot.
-      // `renderGraph2Layout` is a Lit template — its outer
-      // `.graph2-layout` ends up as a child of the slot, which CSS
-      // doesn't care about (the layout class targets descendants).
-      htmlBuf += '<div id="g2-layout-slot"></div>'
-      report.innerHTML = htmlBuf
-      // Mirror the Files-tab path: the header-slot lives in the
-      // shared html prefix, but only the Findings branch reaches
-      // the bottom-of-render litRender, so we have to fill the
-      // slot here too.
-      const gHeader = document.getElementById('header-slot')
-      if (gHeader) litRender(headerTpl, gHeader)
-      const slot = document.getElementById('g2-layout-slot')
-      if (slot) litRender(renderGraph2Layout(data.graph), slot)
-      report.classList.add('active')
-      dropZone.classList.add('hidden')
-      document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
-      attachGraph2Interaction(report, data.graph, refreshGraph2Sidebar)
-      return
-    }
   }
 
   // Wrap the findings-only body in a max-width container so the
@@ -870,7 +828,7 @@ export function render() {
   let g2DataForBody = null
   if (state.viewMode === 'graph' && treeData) {
     g2DataForBody = buildGraph2Data()
-    // Tree disappeared between the showTreeTab gate and buildGraph2Data
+    // Tree disappeared between the treeAvailable gate and buildGraph2Data
     // (workspace switch race); fall back to the default table view so
     // we don't render an empty graph slot.
     if (!g2DataForBody) state.viewMode = 'table'
@@ -899,7 +857,7 @@ export function render() {
       showSource: hasAnyModulesPath,
       showConfidence: hasAnyConfidence,
       showPriority: hasAnyPriority,
-      showGraphMode: showTreeTab,
+      showGraphMode: treeAvailable,
     })
 
     // Empty-state line — slot-based so the typeLabel (which can carry
@@ -950,12 +908,11 @@ export function render() {
   const bodySlot = document.getElementById('findings-body-slot')
   if (bodySlot && bodyTemplate !== nothing) litRender(bodyTemplate, bodySlot)
 
-  // Graph view-mode (Findings tab): render the same graph2 layout
-  // used by the dedicated Graph tab into the findings-graph slot,
-  // and wire the canvas interaction. Mirrors the `state.currentView
-  // === 'graph2'` early-return path above. The view-mode chooser
-  // rides along as an extra row in the graph's own topbar so the
-  // Findings tab doesn't need a separate toolbar above the canvas.
+  // Graph view-mode: render the graph2 layout into the
+  // findings-graph slot and wire the canvas interaction. The
+  // view-mode chooser rides along as an extra row in the graph's
+  // own topbar so this view doesn't need a separate toolbar above
+  // the canvas.
   if (g2DataForBody) {
     const graphSlot = document.getElementById('findings-graph-slot')
     if (graphSlot) {

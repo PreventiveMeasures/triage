@@ -101,20 +101,25 @@
 
     /* Files toggle — replaces the old Files (N) tab. Same on/off
        shape as the toolbar's `.trash-btn`, scoped to the page
-       header where it sits next to the repo chip. Uses the same
-       chrome (surface bg, hover/active borders) so the two
-       on/off toggles in the page read consistently. Active state
-       uses `--accent` rather than `--critical` because Files
-       isn't a destructive view. */
+       header where it sits next to the repo chip. Pill chrome
+       (`.125rem .5rem` padding, 999px radius, .72rem font) mirrors
+       the sibling `.file-chip` and the repo-chip so all three
+       elements in the title row share one height + corner shape.
+       Active state uses `--accent` rather than `--critical`
+       because Files isn't a destructive view. */
     & .files-toggle-btn {
-      background: var(--bg); color: var(--text);
-      border: 1px solid var(--border); border-radius: 4px;
-      padding: .2rem .5rem;
-      font-size: .72rem; font-weight: 500;
+      display: inline-flex; align-items: center;
+      padding: .125rem .5rem;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
       font-family: inherit;
+      font-size: .72rem;
+      font-weight: 500;
       cursor: pointer;
       transition: border-color .12s, color .12s, background .12s;
-      &:hover { border-color: var(--accent); }
+      &:hover { border-color: var(--accent); color: var(--text); }
       &.active {
         border-color: var(--accent);
         color: var(--accent);
@@ -142,28 +147,9 @@
    matching how the Graph tab renders. */
 .findings-content.with-graph { max-width: none; }
 
-/* Top-level view switcher — Findings / Tree / Files. Only rendered
-   when the report has a tree block with more than one file (single-file
-   reports don't gain anything from a tree view). */
-.report-tabs {
-  display: flex; gap: .25rem; margin-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
-
-  & button {
-    background: transparent; border: none; color: var(--muted);
-    padding: .5rem 1rem; cursor: pointer;
-    font-size: .9rem; font-family: inherit;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
-
-    &:hover { color: var(--text); }
-    &.active { color: var(--accent); border-bottom-color: var(--accent); }
-  }
-}
-
-/* Fullscreen — toolbar's ⛶ button toggles `body.report-fullscreen`.
-   Hides the chrome and lets the graph2-layout grow into the viewport.
-   The 64px subtraction leaves room for the .report-tabs bar at the
-   top. */
+/* Fullscreen — graph topbar's ⛶ button toggles
+   `body.report-fullscreen`. Hides the chrome and lets the graph2
+   layout grow into the viewport. */
 body.report-fullscreen {
   & #sidebar { display: none; }
   & #report header.page-head { display: none; }
