@@ -9,6 +9,7 @@
   & label { color: var(--muted); margin-right: .15rem; }
 
   & select {
+    height: 30px; box-sizing: border-box;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; cursor: pointer;
     &:focus { border-color: var(--accent); outline: none; }
@@ -78,6 +79,7 @@
    to the right, and inheriting margin-left would interfere with
    that intentional layout. */
 .trash-btn {
+  height: 30px; box-sizing: border-box;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
   font-family: inherit;
@@ -98,6 +100,12 @@ view-mode-buttons { display: contents; }
 
 .view-mode-group {
   display: inline-flex;
+  /* Pinned to 30px so the View chooser matches the rest of the
+     toolbar controls (.sev-chip / .triage-filter / .toolbar-search
+     / .trash-btn — all 30px). Without this the group measured ~27px
+     from button intrinsic + group border, which exposed as a step
+     against the 30px chip row. */
+  height: 30px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 4px;
   overflow: hidden;
 
