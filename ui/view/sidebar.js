@@ -318,6 +318,14 @@ function renderSyncStatus(status) {
   if (!btn) return
   if (!syncButtonVisible()) {
     btn.hidden = true
+    // The displayed "no button" state has to mean sync IS off — a
+    // configured-but-unreachable session would otherwise keep
+    // ticking invisibly. setServerUrl('') here also drops the
+    // saved URL; the next time the button becomes visible it
+    // starts from the per-origin default. Skip the call when
+    // status is already 'off' to avoid a no-op write that the
+    // status listener would echo back into us.
+    if (triageSync.status !== 'off') triageSync.setServerUrl('')
     return
   }
   btn.hidden = false
