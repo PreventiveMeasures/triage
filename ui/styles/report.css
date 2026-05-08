@@ -211,6 +211,14 @@
       align-self: stretch;
       max-height: 100%;
     }
+    /* Graph mode hides the list so the graph2-layout can use the
+       full bundles-view width. The detail panel takes the whole
+       row and uncaps its max-width. */
+    &.graph-mode {
+      grid-template-columns: 1fr;
+    }
+    &.graph-mode > .bundles-list { display: none; }
+    &.graph-mode > .bundles-details { max-width: none; }
   }
 
   /* Right-side details panel — surface card with a header bar
@@ -275,6 +283,32 @@
     flex: 1;
     min-height: 0;
     font-size: .78rem;
+  }
+
+  /* Graph tab — let the graph2-layout (which is itself a flex
+     `flex: 1` child of the body) actually receive the available
+     height. Drop the body's own padding + overflow so the graph
+     grid fills edge-to-edge inside the panel. */
+  &.graph-mode .bundles-details-body {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+  }
+  & .bundle-graph-slot {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+  }
+  & .bundle-graph-slot > .graph2-layout {
+    flex: 1;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    margin-bottom: 0;
+    background: transparent;
   }
 
   /* Definition list for the metadata block — labels left, values

@@ -139,6 +139,107 @@ export function refreshGraph2TopPkgs() {
   litRender(renderTopPkgsBlock(data.graph), block)
 }
 
+// Bundles graph — parallel to buildGraph2Data above, but the data
+// source is a parsed bundle (sourcemap / stasis) instead of a
+// loaded report. Findings are not attached yet (a follow-up wires
+// them by file-hash matching against state.reports). The reused
+// pieces below (refreshBundleGraphSidebar / refreshBundleGraphTopPkgs)
+// mirror their findings-tab counterparts so the same renderGraph2Layout
+// can render against either data source: each call uses the cached
+// `_currentBundleGraph` reference to feed the right-panel templates.
+let _currentBundleGraph = null
+
+// Per-file content map for the open bundle. Stasis's `json.sources`
+// is `{ file: content }` directly; sourcemaps shred sources and
+// sourcesContent across two parallel arrays. Returns Map<file,
+// content-string>; non-string content is skipped.
+function bundleSourcesAsMap(details) {
+  const result = new Map()
+  if (!details || !details.json) return result
+  if (details.kind === 'stasis') {
+    for (const [file, content] of Object.entries(details.json.sources ?? {})) {
+      if (typeof content === 'string') result.set(file, content)
+    }
+  } else if (details.kind === 'sourcemap') {
+    const srcs = details.json.sources ?? []
+    const contents = details.json.sourcesContent ?? []
+    for (let i = 0; i < srcs.length; i++) {
+      if (typeof contents[i] === 'string') result.set(srcs[i], contents[i])
+    }
+  }
+  return result
+}
+
+// File → set of resolved import paths. Stasis carries imports under
+// `json.imports['<type>']['<file>']['<spec>']`; we union across all
+// resolution kinds (node, import, module-sync, ...) and dedupe per
+// file. Sourcemaps have no import info, so the map is empty.
+function bundleImportsAsMap(details) {
+  const result = new Map()
+  if (!details || details.kind !== 'stasis' || !details.json) return result
+  for (const byFile of Object.values(details.json.imports ?? {})) {
+    for (const [file, specMap] of Object.entries(byFile ?? {})) {
+      if (!result.has(file)) result.set(file, new Set())
+      for (const resolved of Object.values(specMap ?? {})) {
+        if (typeof resolved === 'string') result.get(file).add(resolved)
+      }
+    }
+  }
+  return result
+}
+
+// Synthesise a treeData blob shaped like the analyzer's tree dump,
+// so buildGraph (in graph2/data.js) can chew on it without
+// modification. Sizes come from the source content (UTF-8 byte
+// length). Imports are filtered to those that resolve to a file
+// within the bundle — out-of-bundle resolutions would otherwise
+// inflate node count with phantom files and break adjacency.
+function buildBundleTree(details) {
+  const sources = bundleSourcesAsMap(details)
+  const imports = bundleImportsAsMap(details)
+  const tree = {}
+  for (const [file, content] of sources) {
+    const imps = imports.get(file)
+    tree[file] = {
+      imports: imps ? [...imps].filter((i) => sources.has(i)) : [],
+      size: new TextEncoder().encode(content).byteLength,
+    }
+  }
+  return tree
+}
+
+// Build a graph2-shaped graph from the open bundle. No findings
+// yet — ownCounts is empty so every node is "clean" from the
+// canvas's perspective. A follow-up pass will populate counts /
+// severity / color sets by matching state.reports findings against
+// per-file SHA-512 hashes.
+export function buildBundleGraphData(details) {
+  const tree = buildBundleTree(details)
+  const files = Object.keys(tree)
+  if (files.length === 0) return null
+  const ownCounts = new Map()
+  const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
+  return buildGraph(tree, files, ownCounts, transitiveCounts, null, null, null)
+}
+
+export function refreshBundleGraphSidebar() {
+  if (!_currentBundleGraph) return
+  const area = document.getElementById('g2-selection-area')
+  if (area) litRender(renderSelectionCard(_currentBundleGraph), area)
+  const focusSlot = document.getElementById('g2-focus-overlay-slot')
+  if (focusSlot) litRender(renderFocusOverlay(_currentBundleGraph), focusSlot)
+}
+
+export function refreshBundleGraphTopPkgs() {
+  if (!_currentBundleGraph) return
+  const block = document.getElementById('g2-top-pkgs-block')
+  if (block) litRender(renderTopPkgsBlock(_currentBundleGraph), block)
+}
+
+export function setCurrentBundleGraph(graph) {
+  _currentBundleGraph = graph
+}
+
 // Source-specific header titles. Used when every loaded report shares
 // the same `source` marker — those reports lack the analyzer
 // (model / effort / exportsMode) metadata that the analyzer-combo
@@ -769,8 +870,16 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // without a remaining directory map to `__own__`.
   const packages = new Set()
   for (const p of stripped) packages.add(bundlePkgOf(p))
-  const useTabs = packages.size > BUNDLE_TABS_THRESHOLD
-  const activeTab = useTabs ? (state.bundleDetailsTab ?? 'packages') : null
+  const splitPkgFiles = packages.size > BUNDLE_TABS_THRESHOLD
+  const activeTab = state.bundleDetailsTab ?? 'packages'
+  // Graph is always available as a separate tab; the Packages /
+  // Files tabs only split out when there are more than 5 packages
+  // (otherwise the inline Packages + Files reads fine on one
+  // page). When the split is off, treat 'packages' / 'files' as
+  // the same single "sources" tab.
+  const onSourcesTab = !splitPkgFiles
+    ? activeTab !== 'graph'
+    : (activeTab === 'packages' || activeTab === 'files')
 
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
@@ -791,14 +900,19 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
     })}
   </ul>` : nothing
 
+  // Graph slot — render() picks this up after litRender lands and
+  // populates it with renderGraph2Layout + canvas wiring against
+  // the bundle's synthesised graph data.
+  const graphTpl = html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
+
   return html`${meta}
     <dl class="bundles-detail-meta">
       ${extras}
       <dt>Sources</dt><dd>${sources.length}</dd>
       ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     </dl>
-    ${useTabs ? html`<div class="bundles-tabs" role="tablist">
-      <button
+    <div class="bundles-tabs" role="tablist">
+      ${splitPkgFiles ? html`<button
         type="button"
         class=${`bundles-tab${activeTab === 'packages' ? ' active' : ''}`}
         data-bundle-tab="packages"
@@ -811,11 +925,26 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         data-bundle-tab="files"
         aria-selected=${String(activeTab === 'files')}
         role="tab"
-      >Files (${sources.length})</button>
-    </div>` : nothing}
-    ${useTabs
-      ? (activeTab === 'packages' ? distTpl : filesTpl)
-      : html`${distTpl}${filesTpl}`}`
+      >Files (${sources.length})</button>` : html`<button
+        type="button"
+        class=${`bundles-tab${onSourcesTab ? ' active' : ''}`}
+        data-bundle-tab="packages"
+        aria-selected=${String(onSourcesTab)}
+        role="tab"
+      >Sources (${sources.length})</button>`}
+      <button
+        type="button"
+        class=${`bundles-tab${activeTab === 'graph' ? ' active' : ''}`}
+        data-bundle-tab="graph"
+        aria-selected=${String(activeTab === 'graph')}
+        role="tab"
+      >Graph</button>
+    </div>
+    ${activeTab === 'graph'
+      ? graphTpl
+      : (splitPkgFiles
+          ? (activeTab === 'files' ? filesTpl : distTpl)
+          : html`${distTpl}${filesTpl}`)}`
 }
 
 // Bundles view body — flat list of `{integrity, name}` entries.
@@ -830,8 +959,15 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 function renderBundlesList(bundles) {
   const selected = state.selectedBundle
   const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
-  const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
-  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>
+  // When the open bundle's details panel is on the Graph tab, the
+  // layout drops the bundle list column entirely so the graph can
+  // use the full width — its 1fr stage + 300px sidebar grid would
+  // otherwise be cramped inside the 2fr / max 800px details slot.
+  const onGraph = selectedEntry && state.bundleDetailsTab === 'graph'
+  const layoutClass = selectedEntry
+    ? `bundles-layout open${onGraph ? ' graph-mode' : ''}`
+    : 'bundles-layout'
+  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}${onGraph ? ' graph-mode' : ''}`}>
     <header class="page-head">
       <div class="page-title">
         <h1>Bundles</h1>
@@ -961,6 +1097,30 @@ export function render() {
       report.innerHTML = '<div id="bundles-slot"></div>'
       const slot = document.getElementById('bundles-slot')
       if (slot) litRender(renderBundlesList(state.bundles), slot)
+      // Bundle graph tab — populate the slot left by
+      // renderBundleSourcesPanel with the same renderGraph2Layout
+      // the findings tab uses, fed bundle-synthesised graph data
+      // (no findings yet — wired up in a follow-up). The two
+      // refresh helpers fill the right-panel slots; attaching the
+      // canvas wires hover / click / pan / zoom onto the new DOM.
+      if (
+        state.selectedBundle &&
+        state.bundleDetailsTab === 'graph' &&
+        state.bundleDetails &&
+        state.bundleDetails.json
+      ) {
+        const graphSlot = document.getElementById('bundle-graph-slot')
+        if (graphSlot) {
+          const graph = buildBundleGraphData(state.bundleDetails)
+          if (graph) {
+            setCurrentBundleGraph(graph)
+            litRender(renderGraph2Layout(graph), graphSlot)
+            refreshBundleGraphSidebar()
+            refreshBundleGraphTopPkgs()
+            attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
+          }
+        }
+      }
       report.classList.add('active')
       dropZone.classList.add('hidden')
       document.title = 'DeepView results — bundles'
