@@ -110,4 +110,4 @@ or move id-assignment behind a unique index retry loop.
 
 ## License
 
-ISC.
+MIT.
