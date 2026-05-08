@@ -41,13 +41,17 @@
 /* ── Top bar ───────────────────────────────────────────────── */
 /* Topbar is a column container so it can stack multiple rows; the
    Findings-tab embed adds a view-mode chooser row above the main
-   topbar contents. Standalone Graph tab renders a single
-   `.graph2-topbar-row` and reads identical to the prior single-row
-   layout (44px min height, same padding, same gap, same flex). */
+   topbar contents. Padding + gap mirror the findings `.toolbar`'s
+   `.6rem .75rem` / `.5rem` so the View row reads at the same height
+   and the inter-row spacing matches. Bottom padding is intentionally
+   omitted — the canvas sits flush against the topbar's bottom edge,
+   matching the existing standalone Graph tab look. */
 .graph2-topbar {
   grid-area: topbar;
   display: flex;
   flex-direction: column;
+  gap: .5rem;
+  padding: .6rem 0 0 0;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--graph-divider);
@@ -58,15 +62,22 @@
   align-items: center;
   gap: 10px;
   padding: 0 12px;
-  /* Tuned so two stacked rows land at roughly the same inter-row
-     spacing as the findings toolbar's `.5rem` row gap (~8px between
-     content baselines). With ~30px chip content centered, 38px
-     leaves ~4px above + below per row. The standalone Graph tab
-     renders a single row and reads the same. */
-  min-height: 38px;
+  /* Reserve enough room so the row never collapses below the
+     button group's intrinsic height when a row is short on
+     content (e.g. extra row with just the view-mode chooser).
+     Findings toolbar rows are content-driven; using min-height
+     instead of fixed height keeps the same elasticity. */
+  min-height: 30px;
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }
+
+/* Bottom row hugs the canvas — drop the .5rem gap-derived margin
+   above when it's the last row before the stage by leaving the
+   topbar's gap intact and just clipping the row's own bottom space.
+   The grid-area "topbar" naturally clips the topbar's content to
+   its grid track height, which is auto-sized to fit the rows + the
+   .6rem top padding declared above. */
 
 .g2-icon-btn {
   width: 28px; height: 28px;
