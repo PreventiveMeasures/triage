@@ -28,13 +28,13 @@ import { isGroupDeleted } from '../group.js'
 // toolbar above the canvas.
 export function renderGraph2Layout(graph, options = {}) {
   return html`<div class="graph2-layout">
-    ${renderTopBar(graph, options.extraTopRow)}
+    ${renderTopBar(graph, options.extraTopRow, options.hideAllFiles ?? false)}
     ${renderStage(graph)}
     ${renderRightPanel()}
   </div>`
 }
 
-function renderTopBar(graph, extraTopRow) {
+function renderTopBar(graph, extraTopRow, hideAllFiles) {
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -94,9 +94,12 @@ function renderTopBar(graph, extraTopRow) {
 
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
-  // edges, different layout). Defaults to off → only files with own
-  // or subtree findings are kept.
-  const allFilesBtn = html`<button
+  // edges, different layout). The findings tab defaults to off
+  // (issue-bearing files + their deps); the bundle graph defaults
+  // to on (full inventory). Hidden entirely when the caller passes
+  // `hideAllFiles` — bundle sourcemaps don't carry import edges,
+  // so there's nothing for the toggle to filter against.
+  const allFilesBtn = hideAllFiles ? null : html`<button
     type="button"
     class=${`g2-topbar-toggle${graph2.showAll ? ' on' : ''}`}
     data-g2-show-all

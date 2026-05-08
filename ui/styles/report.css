@@ -335,6 +335,18 @@
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
+  /* Issue summary above the panel tabs — chips identical to the
+     tree-view Files tab's count chips so a user moving between the
+     two views reads them as the same data. Hidden when no
+     findings have matched yet (hashes still computing, or none
+     of the indexed reports cover this bundle). */
+  & .bundles-issue-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem;
+    margin: 0 0 .5rem;
+  }
+
   /* Tab strip in the details panel — Packages / Files split when
      the bundle has > 5 packages, and "Graph →" / "Issues →"
      trailing-arrow action buttons that open the full-width slide.

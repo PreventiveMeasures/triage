@@ -262,6 +262,35 @@ function bundleFindingsByFile(fileHashes) {
   return result
 }
 
+// BFS-walk the import graph starting from every issue-bearing
+// file and return the closure (issue files + every file they
+// depend on, directly or transitively). Used by
+// `buildBundleGraphData` when `graph2.showAll` is OFF: the file
+// set narrows to this closure so clean files that aren't a dep of
+// any issue-bearing file get hidden, but every file the issue
+// chain depends on stays visible.
+function bundleReachableFromIssueFiles(tree, ownCounts) {
+  const visible = new Set()
+  for (const [file, counts] of ownCounts) {
+    if (!counts) continue
+    for (const v of Object.values(counts)) {
+      if (v > 0) { visible.add(file); break }
+    }
+  }
+  const queue = [...visible]
+  while (queue.length > 0) {
+    const file = queue.shift()
+    const imps = tree[file]?.imports ?? []
+    for (const imp of imps) {
+      if (!visible.has(imp) && tree[imp]) {
+        visible.add(imp)
+        queue.push(imp)
+      }
+    }
+  }
+  return visible
+}
+
 // Build a graph2-shaped graph from the open bundle. When the
 // bundle's per-file hashes have been computed (events.js kicks
 // the async digest after parse), findings from the loaded reports
@@ -277,10 +306,15 @@ function bundleFindingsByFile(fileHashes) {
 // node ids (otherwise the graph would never light up findings —
 // findings would be looked up under original paths but nodes live
 // under stripped ones).
+//
+// `graph2.showAll === true` (the bundle default): every bundle
+// file is a node. `false`: filter to issue-bearing files plus
+// every file in their dep tree (so reachable deps stay visible
+// while clean unrelated files drop out).
 export function buildBundleGraphData(details) {
   const { tree, origToStripped } = buildBundleTree(details)
-  const files = Object.keys(tree)
-  if (files.length === 0) return null
+  const allFiles = Object.keys(tree)
+  if (allFiles.length === 0) return null
   let strippedHashes = null
   if (details.fileHashes && details.fileHashes.size > 0) {
     strippedHashes = new Map()
@@ -312,6 +346,9 @@ export function buildBundleGraphData(details) {
     fileFindings.set(file, ff)
   }
   const transitiveCounts = computeTransitiveCounts(tree, ownCounts)
+  const files = graph2.showAll
+    ? allFiles
+    : [...bundleReachableFromIssueFiles(tree, ownCounts)]
   return buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings)
 }
 
@@ -980,6 +1017,27 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 
   const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i] }))
   const distTpl = renderBundleSizeDistribution(distItems)
+
+  // Issue summary — total findings across the bundle's matched
+  // files, broken down by severity (same chip palette the Files
+  // tab in the report's tree view uses). Empty when no findings
+  // match yet (hashes still computing, no relevant reports
+  // indexed). Drives whether the "Issues →" trailing button gets
+  // rendered too.
+  const issueSummary = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
+  let issueTotal = 0
+  if (state.bundleDetails?.fileHashes) {
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    for (const findings of matches.values()) {
+      for (const f of findings) {
+        if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
+        issueTotal++
+      }
+    }
+  }
+  const issueChips = SEVERITIES
+    .filter((s) => issueSummary[s] > 0)
+    .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replace(/_/gu, ' ')}</span>`)
   const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
     ${order.map((i) => {
       const src = sources[i]
@@ -998,6 +1056,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       <dt>Sources</dt><dd>${sources.length}</dd>
       ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     </dl>
+    ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     <div class="bundles-tabs" role="tablist">
       ${splitPkgFiles ? html`<button
         type="button"
@@ -1020,12 +1079,12 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         data-bundle-tab="graph"
         title="Open the bundle's import graph"
       >Graph →</button>
-      <button
+      ${issueTotal > 0 ? html`<button
         type="button"
         class="bundles-tab bundles-tab-action"
         data-bundle-tab="issues"
         title="Open the bundle's matched issues"
-      >Issues →</button>
+      >Issues →</button>` : nothing}
     </div>
     ${splitPkgFiles
       ? (activeTab === 'files' ? filesTpl : distTpl)
@@ -1298,7 +1357,11 @@ export function render() {
           const graph = buildBundleGraphData(state.bundleDetails)
           if (graph) {
             setCurrentBundleGraph(graph)
-            litRender(renderGraph2Layout(graph), graphSlot)
+            // Hide the "All files" toggle when the bundle has no
+            // edges to walk (sourcemaps don't carry import info,
+            // so the toggle would have nothing to filter against).
+            const hideAllFiles = graph.edges.length === 0
+            litRender(renderGraph2Layout(graph, { hideAllFiles }), graphSlot)
             refreshBundleGraphSidebar()
             refreshBundleGraphTopPkgs()
             attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)

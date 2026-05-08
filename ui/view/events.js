@@ -144,6 +144,12 @@ report.addEventListener('click', (e) => {
     // the new one (especially when one had >5 packages and the
     // other doesn't, so tabs aren't even rendered).
     state.bundleDetailsTab = 'packages'
+    // Default "All files" to ON for the bundle graph: the user
+    // expects to see the whole bundle inventory first, then
+    // optionally narrow it down to issue-bearing files + their
+    // deps via the toggle. The setting persists for the duration
+    // of this bundle's session; opening a different bundle resets.
+    graph2.showAll = true
     render()
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     if (!entry) return
