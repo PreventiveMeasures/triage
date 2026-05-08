@@ -27,7 +27,7 @@
 // `pathClosest`-based delegate. No row-select equivalent — cards
 // don't drive a side-details panel.
 import { html, unsafeCSS } from 'lit'
-import { StateElement } from '../rray-modules/frontend/state-element.mjs'
+import { StateElement } from '../../rray-modules/frontend/state-element.mjs'
 import { findingCardGid, findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import cardCSS from './finding-card.css'
 

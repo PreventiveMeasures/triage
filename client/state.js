@@ -1,4 +1,4 @@
-import { store } from '../ui/rray-modules/frontend/state-management.mjs'
+import { store } from '../rray-modules/frontend/state-management.mjs'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
