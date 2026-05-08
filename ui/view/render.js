@@ -718,7 +718,7 @@ export function render() {
   // string-built HTML, then `litRender` into it after the
   // `report.innerHTML = html` flush at the bottom of this function.
   const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo)
-  let html = '<div id="header-slot"></div>'
+  let htmlBuf = '<div id="header-slot"></div>'
 
   // Top-level view switcher. Tree tab only appears for tree-bearing
   // reports with >1 file — a single-file tree adds no navigation value.
@@ -738,19 +738,19 @@ export function render() {
   // table layout so a stale selection can't render an empty body.
   if (!showTreeTab && state.viewMode === 'graph') state.viewMode = 'table'
   if (showTreeTab) {
-    html += '<div class="report-tabs">'
-    html += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
-    html += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph</button>`
-    html += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
-    html += '</div>'
+    htmlBuf += '<div class="report-tabs">'
+    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
+    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph</button>`
+    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
+    htmlBuf += '</div>'
   }
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
     // `renderTreeView` returns a Lit template now — drop a slot in
     // the string-built HTML, then litRender into it post-flush.
-    html += '<div id="tree-view-slot"></div>'
-    report.innerHTML = html
+    htmlBuf += '<div id="tree-view-slot"></div>'
+    report.innerHTML = htmlBuf
     // Same header on every tab — landed in the html string above
     // (`<div id="header-slot">`). Without this litRender the slot
     // would just stay empty on Files / Graph (the bottom-of-render
@@ -780,8 +780,8 @@ export function render() {
       // `renderGraph2Layout` is a Lit template — its outer
       // `.graph2-layout` ends up as a child of the slot, which CSS
       // doesn't care about (the layout class targets descendants).
-      html += '<div id="g2-layout-slot"></div>'
-      report.innerHTML = html
+      htmlBuf += '<div id="g2-layout-slot"></div>'
+      report.innerHTML = htmlBuf
       // Mirror the Files-tab path: the header-slot lives in the
       // shared html prefix, but only the Findings branch reaches
       // the bottom-of-render litRender, so we have to fill the
@@ -842,7 +842,7 @@ export function render() {
   let wrapperClass = 'findings-content'
   if (tableWithDetails) wrapperClass += ' with-details'
   if (renderGraphInBody) wrapperClass += ' with-graph'
-  html += `<div class="${wrapperClass}">`
+  htmlBuf += `<div class="${wrapperClass}">`
 
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
@@ -852,11 +852,11 @@ export function render() {
     // Graph mode: the only slot inside .findings-content is the
     // graph layout. View-mode chooser piggy-backs on the graph's
     // topbar; no separate findings toolbar / empty-state.
-    html += '<div id="findings-graph-slot"></div>'
+    htmlBuf += '<div id="findings-graph-slot"></div>'
   } else {
     // `toolbarTemplate` returns a Lit template — drop a slot here, then
     // litRender into it after innerHTML lands.
-    html += '<div id="toolbar-slot"></div>'
+    htmlBuf += '<div id="toolbar-slot"></div>'
     toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
       showSource: hasAnyModulesPath,
       showConfidence: hasAnyConfidence,
@@ -875,14 +875,14 @@ export function render() {
     } else if (allGroups.length === 0) {
       emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
     }
-    html += '<div id="empty-state-slot"></div>'
+    htmlBuf += '<div id="empty-state-slot"></div>'
 
     pendingTableItems = null
     pendingFindingCards.clear()
-    html += '<div id="findings-body-slot"></div>'
+    htmlBuf += '<div id="findings-body-slot"></div>'
     bodyTemplate = findingsBodyTemplate(filtered)
   }
-  html += '</div>'
+  htmlBuf += '</div>'
 
   // Detach the persistent <finding-table> (if mounted) before the
   // innerHTML wipe so the element + its <finding-row> children
@@ -895,7 +895,7 @@ export function render() {
     persistentFindingTable.remove()
   }
 
-  report.innerHTML = html
+  report.innerHTML = htmlBuf
 
   const headerSlot = document.getElementById('header-slot')
   if (headerSlot) litRender(headerTpl, headerSlot)
