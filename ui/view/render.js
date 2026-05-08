@@ -91,39 +91,38 @@ export function buildGraph2Data() {
   }
 }
 
-// Re-render only the right-panel selection card in the graph tab.
-// Surgical innerHTML swap so the canvas DOM (and thus the active
-// rAF / hover state) survives a click on a node or a sidebar
-// neighbor link.
+// Re-render only the right-panel selection card. Surgical update
+// — the canvas DOM (and thus the active rAF / hover state) survives
+// a click on a node or a sidebar neighbor link. `litRender` runs its
+// own diff against the cached PartInfo it stamps on the container,
+// so we feed the new template directly; clearing `innerHTML` first
+// would orphan the cache and the next render would try to
+// `insertBefore` on a null parent (TypeError on the next click).
 export function refreshGraph2Sidebar() {
   const area = document.getElementById('g2-selection-area')
   if (!area) return
   const data = buildGraph2Data()
   if (!data) return
-  area.innerHTML = ''
   litRender(renderSelectionCard(data.graph), area)
   // The top-right canvas overlay (drill-in icon button) depends
   // on the same selection / solo / focus state the selection
   // card does, so refresh both from the same trigger. Slot
   // element is rendered unconditionally by renderStage; we just
-  // swap its content.
+  // swap its content via the same lit-managed update.
   const focusSlot = document.getElementById('g2-focus-overlay-slot')
-  if (focusSlot) {
-    focusSlot.innerHTML = ''
-    litRender(renderFocusOverlay(data.graph), focusSlot)
-  }
+  if (focusSlot) litRender(renderFocusOverlay(data.graph), focusSlot)
 }
 
 // Re-render only the right-panel "Top packages" block. Called when
 // the user flips the Issues/Files mini-tab. Same canvas-preserving
-// pattern as refreshGraph2Sidebar — surgical innerHTML swap, no
-// teardown of the rAF loop / hover state on the main canvas.
+// pattern as refreshGraph2Sidebar — let `litRender` diff against
+// its cached PartInfo on the container; manually clearing
+// `innerHTML` would break the cache.
 export function refreshGraph2TopPkgs() {
   const block = document.getElementById('g2-top-pkgs-block')
   if (!block) return
   const data = buildGraph2Data()
   if (!data) return
-  block.innerHTML = ''
   litRender(renderTopPkgsBlock(data.graph), block)
 }
 
@@ -921,6 +920,15 @@ export function render() {
         modes="table,list,grouped,graph"
       ></view-mode-buttons>`
       litRender(renderGraph2Layout(g2DataForBody.graph, { extraTopRow: viewModeRow }), graphSlot)
+      // Populate the right-panel selection slot + the top-packages
+      // block + the canvas's drill-in overlay slot via the same
+      // refresh helpers the canvas's click handlers use later.
+      // Slots are emitted empty by renderGraph2Layout — each runs
+      // its own `litRender` so subsequent clicks diff against a
+      // single Lit cache per slot, instead of the parent layout's
+      // cache + the per-slot cache stepping on each other.
+      refreshGraph2Sidebar()
+      refreshGraph2TopPkgs()
       attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
     }
   }

@@ -30,7 +30,7 @@ export function renderGraph2Layout(graph, options = {}) {
   return html`<div class="graph2-layout">
     ${renderTopBar(graph, options.extraTopRow)}
     ${renderStage(graph)}
-    ${renderRightPanel(graph)}
+    ${renderRightPanel()}
   </div>`
 }
 
@@ -275,7 +275,7 @@ function renderStage(graph) {
          refreshGraph2Sidebar when selection / solo / focus state
          changes; renderFocusOverlay decides whether the slot is
          populated (button) or empty (nothing to drill into). -->
-    <div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr">${renderFocusOverlay(graph)}</div>
+    <div id="g2-focus-overlay-slot" class="g2-stage-overlay-tr"></div>
     <div class="g2-stage-stats">
       <span><b>${graph.nodes.length}</b> files</span>
       <span><b>${graph.packages.length}</b> packages</span>
@@ -329,11 +329,19 @@ export function renderFocusOverlay(graph) {
     </svg></button>`
 }
 
-function renderRightPanel(graph) {
+function renderRightPanel() {
+  // The selection-card area and top-packages block are populated
+  // by `refreshGraph2Sidebar` / `refreshGraph2TopPkgs` (in
+  // view/render.js) which `litRender` directly into these slots.
+  // Leaving them empty here means each refresh manages its own
+  // Lit PartInfo on the slot — populating inline would mean two
+  // separate Lit caches both touching the same DOM, and the
+  // refresh's manual `innerHTML = ''` wipe would orphan the
+  // parent's cache (TypeError on the next click).
   return html`<aside class="graph2-right">
     <div class="g2-panel-title">Selection</div>
-    <div id="g2-selection-area">${renderSelectionCard(graph)}</div>
-    <div id="g2-top-pkgs-block">${renderTopPkgsBlock(graph)}</div>
+    <div id="g2-selection-area"></div>
+    <div id="g2-top-pkgs-block"></div>
   </aside>`
 }
 
