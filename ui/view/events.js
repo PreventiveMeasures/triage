@@ -4,7 +4,28 @@ import { commonPrefix } from './format.js'
 import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
-import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes } from './render.js'
+import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render.js'
+
+// The findings-tab graph view and the bundles-tab graph view share
+// the same renderGraph2Layout chrome but draw from different graph
+// data. Click delegates below pick the right refresh helper based
+// on which view is currently active so a node selection inside a
+// bundle graph repaints the bundle's sidebar (and its top-pkgs
+// block), not the findings tab's.
+function refreshActiveGraphSidebar() {
+  if (state.currentView === 'bundles' && state.bundleDetailsTab === 'graph') {
+    refreshBundleGraphSidebar()
+  } else {
+    refreshGraph2Sidebar()
+  }
+}
+function refreshActiveGraphTopPkgs() {
+  if (state.currentView === 'bundles' && state.bundleDetailsTab === 'graph') {
+    refreshBundleGraphTopPkgs()
+  } else {
+    refreshGraph2TopPkgs()
+  }
+}
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
@@ -67,14 +88,18 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Bundle details — Packages / Files tab switch (only rendered
-  // when the open bundle has > 5 packages). State is purely UI;
-  // the parsed bundleDetails stays cached so flipping tabs is
-  // a paint-only operation.
+  // Bundle details — tab switch (Packages / Files / Graph / Issues
+  // — `Sources` collapses to `Packages` when the bundle has ≤5
+  // packages, see render.js). State is purely UI; the parsed
+  // bundleDetails stays cached so flipping tabs is paint-only.
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'packages' || tab === 'files') {
+    if (tab === 'packages' || tab === 'files' || tab === 'graph' || tab === 'issues') {
+      // Tear down the canvas when leaving Graph so its rAF /
+      // observers stop. attachGraph2Interaction will re-wire on
+      // re-entry.
+      if (state.bundleDetailsTab === 'graph' && tab !== 'graph') cleanupGraph2()
       state.bundleDetailsTab = tab
       render()
     }
@@ -198,8 +223,8 @@ report.addEventListener('click', (e) => {
     // earlier file selection would keep displaying file info
     // even though the user just asked for package-level info.
     if (graph2.solo) graph2.selected = null
-    refreshGraph2Sidebar()
-    refreshGraph2TopPkgs()
+    refreshActiveGraphSidebar()
+    refreshActiveGraphTopPkgs()
     graph2.graphState?.requestDraw?.()
     return
   }
@@ -212,7 +237,7 @@ report.addEventListener('click', (e) => {
   const g2Select = e.target.closest('[data-g2-select]')
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
-    refreshGraph2Sidebar()
+    refreshActiveGraphSidebar()
     return
   }
   // Top-packages mini-tabs (Issues / Files). Pure right-panel
@@ -220,7 +245,7 @@ report.addEventListener('click', (e) => {
   const g2TopPkgs = e.target.closest('[data-g2-top-pkgs]')
   if (g2TopPkgs) {
     graph2.topPkgsTab = g2TopPkgs.dataset.g2TopPkgs
-    refreshGraph2TopPkgs()
+    refreshActiveGraphTopPkgs()
     return
   }
   const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')
@@ -634,7 +659,7 @@ report.addEventListener('severity-toggle', (e) => {
     else graph2.selectedSeverities.add(sev)
     e.target.selected = [...graph2.selectedSeverities]
     graph2.graphState?.requestDraw?.()
-    refreshGraph2TopPkgs()
+    refreshActiveGraphTopPkgs()
     return
   }
   // Findings-tab usage (default) — flips `state.filterSeverities`
@@ -655,7 +680,7 @@ report.addEventListener('color-toggle', (e) => {
     else graph2.selectedColors.add(col)
     e.target.selected = [...graph2.selectedColors]
     graph2.graphState?.requestDraw?.()
-    refreshGraph2TopPkgs()
+    refreshActiveGraphTopPkgs()
     return
   }
   if (state.filterColors.has(col)) state.filterColors.delete(col)

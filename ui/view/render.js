@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
+import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -977,6 +977,11 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // populates it with renderGraph2Layout + canvas wiring against
   // the bundle's synthesised graph data.
   const graphTpl = html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
+  // Issues tab — flat sorted list of every finding from the
+  // loaded reports that matched a bundle file by SHA-512 hash.
+  // No matches (or hashes still computing) shows the appropriate
+  // placeholder.
+  const issuesTpl = renderBundleIssuesList(state.bundleDetails)
 
   return html`${meta}
     <dl class="bundles-detail-meta">
@@ -1012,12 +1017,74 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         aria-selected=${String(activeTab === 'graph')}
         role="tab"
       >Graph</button>
+      <button
+        type="button"
+        class=${`bundles-tab${activeTab === 'issues' ? ' active' : ''}`}
+        data-bundle-tab="issues"
+        aria-selected=${String(activeTab === 'issues')}
+        role="tab"
+      >Issues</button>
     </div>
     ${activeTab === 'graph'
       ? graphTpl
-      : (splitPkgFiles
-          ? (activeTab === 'files' ? filesTpl : distTpl)
-          : html`${distTpl}${filesTpl}`)}`
+      : activeTab === 'issues'
+        ? issuesTpl
+        : (splitPkgFiles
+            ? (activeTab === 'files' ? filesTpl : distTpl)
+            : html`${distTpl}${filesTpl}`)}`
+}
+
+// Issues tab — flat list of findings matched to the open bundle's
+// files via SHA-512 fileHash equality. Sorted by severity (most
+// severe first), tie-breaking by file path. Until the async hash
+// computation completes (events.js kicks it after parse), shows a
+// loading placeholder. No matches → "no issues" line so the user
+// knows there isn't a render glitch.
+function renderBundleIssuesList(details) {
+  if (!details || !details.json) return nothing
+  if (!details.fileHashes) {
+    return html`<div class="bundle-issues-empty">Computing file hashes…</div>`
+  }
+  const findingsByFile = bundleFindingsByFile(details.fileHashes)
+  if (findingsByFile.size === 0) {
+    return html`<div class="bundle-issues-empty">No issues match this bundle's files.</div>`
+  }
+  // Flatten into [{file, finding}, ...] for stable severity-desc
+  // sorting. Bundle the stripped (no-prefix) display path so long
+  // shared roots don't dominate every row.
+  const allFiles = [...findingsByFile.keys()]
+  const { prefix, stripped } = stripCommonPathPrefix(allFiles)
+  const fileToBare = new Map(allFiles.map((f, i) => [f, stripped[i]]))
+  const flat = []
+  for (const [file, findings] of findingsByFile) {
+    for (const f of findings) flat.push({ file, finding: f })
+  }
+  flat.sort((a, b) => {
+    const sa = SEVERITY_ORDER[a.finding.severity] ?? 0
+    const sb = SEVERITY_ORDER[b.finding.severity] ?? 0
+    if (sb !== sa) return sb - sa
+    const fa = fileToBare.get(a.file) ?? a.file
+    const fb = fileToBare.get(b.file) ?? b.file
+    return fa.localeCompare(fb)
+  })
+  return html`<div class="bundle-issues">
+    <div class="bundle-issues-summary">
+      ${flat.length} ${flat.length === 1 ? 'issue' : 'issues'} across
+      ${findingsByFile.size} ${findingsByFile.size === 1 ? 'file' : 'files'}
+      ${prefix ? html` <span class="mono">${prefix}</span>` : nothing}
+    </div>
+    <ul class="bundle-issues-list">
+      ${flat.map(({ file, finding }) => {
+        const bare = fileToBare.get(file) ?? file
+        const sev = finding.severity
+        return html`<li>
+          <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+          <span class="bundle-issue-file" title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</span>
+          <span class="bundle-issue-desc">${finding.description ?? ''}</span>
+        </li>`
+      })}
+    </ul>
+  </div>`
 }
 
 // Bundles view body — flat list of `{integrity, name}` entries.
