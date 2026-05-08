@@ -13,7 +13,11 @@
 .graph2-layout {
   display: grid;
   grid-template-columns: 1fr 300px;
-  grid-template-rows: 44px 1fr;
+  /* Topbar row sized `auto` so it can grow when it carries extra
+     rows (e.g. the Findings-tab embed adds a view-mode chooser
+     above the main topbar row). Standalone Graph tab still hits
+     ~44px from the single `.graph2-topbar-row`'s min-height. */
+  grid-template-rows: auto 1fr;
   /* `right` spans both rows so the sidebar starts at the very
      top of the layout, alongside the topbar — its first row
      (Selection title + inline fullscreen) sits at the same Y
@@ -35,15 +39,31 @@
 }
 
 /* ── Top bar ───────────────────────────────────────────────── */
+/* Topbar is a column container so it can stack multiple rows; the
+   Findings-tab embed adds a view-mode chooser row above the main
+   topbar contents. Standalone Graph tab renders a single
+   `.graph2-topbar-row` and reads identical to the prior single-row
+   layout (44px min height, same padding, same gap, same flex). */
 .graph2-topbar {
   grid-area: topbar;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--graph-divider);
+}
+
+.graph2-topbar-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 12px;
-  background: var(--surface);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 1px solid var(--graph-divider);
+  min-height: 44px;
+}
+
+/* Divider between rows when the topbar carries more than one. */
+.graph2-topbar-row + .graph2-topbar-row {
+  border-top: 1px solid var(--graph-divider);
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }

@@ -386,24 +386,12 @@ function triageFilterTemplate(colorCounts) {
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
 function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
-  const { showSource, showConfidence, showPriority, showGraphMode, graphMode } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode } = flags
   // The findings tab gains a 4th "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). Switching to it
   // replaces the table / list / grouped body with the graph2 canvas
   // — see the findings-graph slot in render() below.
   const viewModes = showGraphMode ? 'table,list,grouped,graph' : 'table,list,grouped'
-  // When the body is the graph2 canvas, the findings filters / sort
-  // / search don't apply (the graph has its own topbar with severity
-  // chips + trash). Render a minimal toolbar with just the view-mode
-  // chooser so the user can switch back without crowding the chrome
-  // with controls that wouldn't affect the visible canvas.
-  if (graphMode) {
-    return html`<div class="toolbar">
-      <div class="toolbar-row">
-        <view-mode-buttons mode=${state.viewMode} modes=${viewModes}></view-mode-buttons>
-      </div>
-    </div>`
-  }
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
   const sourceOpt = (value, label) => html`<option value=${value} ?selected=${state.filterSource === value}>${label}</option>`
 
@@ -832,64 +820,65 @@ export function render() {
   // wrapper drops its max-width cap so the graph layout (a CSS grid
   // with 1fr stage + 300px sidebar) can spread across the full
   // viewport like the standalone Graph tab does.
-  const showGraphInFindings = state.viewMode === 'graph' && treeData
+  // Graph view-mode within the Findings tab swaps the table/list/grouped
+  // body for the same canvas the dedicated Graph tab uses. The
+  // wrapper drops its max-width cap so the graph layout (a CSS grid
+  // with 1fr stage + 300px sidebar) can spread across the full
+  // viewport like the standalone Graph tab does. The view-mode
+  // chooser moves INSIDE the graph2 topbar (as an extra row) so
+  // there's a single toolbar instead of stacking a Findings-tab
+  // toolbar above the graph's own — see the
+  // `extraTopRow` argument to renderGraph2Layout below.
+  let g2DataForBody = null
+  if (state.viewMode === 'graph' && treeData) {
+    g2DataForBody = buildGraph2Data()
+    // Tree disappeared between the showTreeTab gate and buildGraph2Data
+    // (workspace switch race); fall back to the default table view so
+    // we don't render an empty graph slot.
+    if (!g2DataForBody) state.viewMode = 'table'
+  }
+  const renderGraphInBody = !!g2DataForBody
+
   let wrapperClass = 'findings-content'
   if (tableWithDetails) wrapperClass += ' with-details'
-  if (showGraphInFindings) wrapperClass += ' with-graph'
+  if (renderGraphInBody) wrapperClass += ' with-graph'
   html += `<div class="${wrapperClass}">`
-  // `toolbarTemplate` returns a Lit template — drop a slot here, then
-  // litRender into it after innerHTML lands.
-  html += '<div id="toolbar-slot"></div>'
-  const toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
-    showSource: hasAnyModulesPath,
-    showConfidence: hasAnyConfidence,
-    showPriority: hasAnyPriority,
-    showGraphMode: showTreeTab,
-    graphMode: showGraphInFindings,
-  })
 
-  // Empty-state line — slot-based so the typeLabel (which can carry
-  // user-controlled analyzer-type strings) flows through Lit's
-  // auto-escape rather than a hand-rolled `esc()`. Empty template
-  // when none of the empty-state branches matches.
+  let toolbarTpl = nothing
   let emptyStateTpl = nothing
-  if (state.showDeleted && allGroups.length === 0) {
-    emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
-  } else if (filtered.length === 0 && allGroups.length > 0) {
-    emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
-  } else if (allGroups.length === 0) {
-    emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
-  }
-  html += '<div id="empty-state-slot"></div>'
-
-  pendingTableItems = null
-  pendingFindingCards.clear()
-  // `findingsBodyTemplate` returns a Lit template — drop a slot
-  // here, then `litRender` into it after `report.innerHTML = html`.
-  // The outer findings-content wrapper closes BEFORE the slot
-  // because the slot wraps the body content the template expects to
-  // sit inside it.
-  //
-  // Graph view-mode (Findings tab) takes a different slot —
-  // findings-graph-slot — and renders the same graph2 layout the
-  // dedicated Graph tab uses. We still build `bodyTemplate` so the
-  // empty-state computations etc. behave consistently, but skip
-  // emitting the findings-body slot when graph mode is active.
   let bodyTemplate = nothing
-  let g2DataForBody = null
-  if (showGraphInFindings) {
-    g2DataForBody = buildGraph2Data()
-    if (!g2DataForBody) {
-      // Tree disappeared between the showTreeTab gate and now;
-      // fall back to the default table view so we don't render an
-      // empty graph slot.
-      state.viewMode = 'table'
-      bodyTemplate = findingsBodyTemplate(filtered)
-      html += '<div id="findings-body-slot"></div>'
-    } else {
-      html += '<div id="findings-graph-slot"></div>'
-    }
+
+  if (renderGraphInBody) {
+    // Graph mode: the only slot inside .findings-content is the
+    // graph layout. View-mode chooser piggy-backs on the graph's
+    // topbar; no separate findings toolbar / empty-state.
+    html += '<div id="findings-graph-slot"></div>'
   } else {
+    // `toolbarTemplate` returns a Lit template — drop a slot here, then
+    // litRender into it after innerHTML lands.
+    html += '<div id="toolbar-slot"></div>'
+    toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
+      showSource: hasAnyModulesPath,
+      showConfidence: hasAnyConfidence,
+      showPriority: hasAnyPriority,
+      showGraphMode: showTreeTab,
+    })
+
+    // Empty-state line — slot-based so the typeLabel (which can carry
+    // user-controlled analyzer-type strings) flows through Lit's
+    // auto-escape rather than a hand-rolled `esc()`. Empty template
+    // when none of the empty-state branches matches.
+    if (state.showDeleted && allGroups.length === 0) {
+      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
+    } else if (filtered.length === 0 && allGroups.length > 0) {
+      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
+    } else if (allGroups.length === 0) {
+      emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
+    }
+    html += '<div id="empty-state-slot"></div>'
+
+    pendingTableItems = null
+    pendingFindingCards.clear()
     html += '<div id="findings-body-slot"></div>'
     bodyTemplate = findingsBodyTemplate(filtered)
   }
@@ -926,11 +915,17 @@ export function render() {
   // Graph view-mode (Findings tab): render the same graph2 layout
   // used by the dedicated Graph tab into the findings-graph slot,
   // and wire the canvas interaction. Mirrors the `state.currentView
-  // === 'graph2'` early-return path above.
+  // === 'graph2'` early-return path above. The view-mode chooser
+  // rides along as an extra row in the graph's own topbar so the
+  // Findings tab doesn't need a separate toolbar above the canvas.
   if (g2DataForBody) {
     const graphSlot = document.getElementById('findings-graph-slot')
     if (graphSlot) {
-      litRender(renderGraph2Layout(g2DataForBody.graph), graphSlot)
+      const viewModeRow = html`<view-mode-buttons
+        mode=${state.viewMode}
+        modes="table,list,grouped,graph"
+      ></view-mode-buttons>`
+      litRender(renderGraph2Layout(g2DataForBody.graph, { extraTopRow: viewModeRow }), graphSlot)
       attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
     }
   }

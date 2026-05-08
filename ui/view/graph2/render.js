@@ -21,15 +21,20 @@ import { isGroupDeleted } from '../group.js'
 //   graph     — buildGraph(...) result; nodes/edges/packages/etc.
 //   ownCounts — file → severity-count map; drives the "Top groups"
 //               distribution and the per-package issue counts
-export function renderGraph2Layout(graph) {
+// `options.extraTopRow` — optional Lit template emitted as a
+// SECOND row above the main topbar contents. Used by the
+// Findings-tab embed to host the view-mode chooser inside the
+// graph's own toolbar instead of stacking a separate findings
+// toolbar above the canvas.
+export function renderGraph2Layout(graph, options = {}) {
   return html`<div class="graph2-layout">
-    ${renderTopBar(graph)}
+    ${renderTopBar(graph, options.extraTopRow)}
     ${renderStage(graph)}
     ${renderRightPanel(graph)}
   </div>`
 }
 
-function renderTopBar(graph) {
+function renderTopBar(graph, extraTopRow) {
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -59,6 +64,8 @@ function renderTopBar(graph) {
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
 
   return html`<div class="graph2-topbar">
+    ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra">${extraTopRow}</div>` : null}
+    <div class="graph2-topbar-row graph2-topbar-row-main">
     ${hasAnyVisible ? html`<severity-chips
       counts=${JSON.stringify(issueCounts)}
       selected=${JSON.stringify([...graph2.selectedSeverities])}
@@ -106,6 +113,7 @@ function renderTopBar(graph) {
          the stage column, so the button's right-edge position here
          sits right at the stage / sidebar boundary. -->
     <button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>
+    </div>
   </div>`
 }
 
