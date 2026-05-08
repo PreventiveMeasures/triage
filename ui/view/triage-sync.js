@@ -551,19 +551,39 @@ async function handleAck(msg) {
   // `msg.base`. Verify the base matches what we sent and fold the
   // pending changeset into baseState so it becomes the new agreed
   // floor.
-  if (!session?.pending) return
-  if (msg.base !== session.pending.base) {
+  if (!session) return
+  if (session.pending && msg.base === session.pending.base) {
+    session.baseState = applyChangeset(session.baseState, session.pending.changeset)
+    session.baseRevision = msg.id
+    session.pending = null
+    await rebaseAndPersist()
+    // The user may have edited during the round-trip; if there's a
+    // residual overlay (or pendingSave was raised), flush it.
+    if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
+      session.pendingSave = false
+      trySendSave()
+    }
+    return
+  }
+  // Late ack — pending was already cleared by something else
+  // (a chain that advanced baseRevision past us, a reconnect that
+  // wiped pending, or an out-of-order delivery the queued
+  // handler chain hasn't processed yet). The server believes the
+  // save committed at `msg.id`; the changeset is no longer in
+  // `pending`, so we can't fold it in. Trigger a fresh save —
+  // the server's stale-base path returns the catch-up chain
+  // including our committed revision, and we end up at the same
+  // place via rebase. Mismatched-base acks log + bail; this only
+  // schedules a retry when the ack referred to something newer
+  // than what we already track.
+  if (session.pending) {
     console.warn(`Triage sync: ack base mismatch (pending ${session.pending.base}, ack ${msg.base})`)
     return
   }
-  session.baseState = applyChangeset(session.baseState, session.pending.changeset)
-  session.baseRevision = msg.id
-  session.pending = null
-  await rebaseAndPersist()
-  // The user may have edited during the round-trip; if there's a
-  // residual overlay (or pendingSave was raised), flush it.
-  if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
-    session.pendingSave = false
+  if (session.baseRevision == null
+      || (typeof msg.id === 'number' && msg.id > session.baseRevision)) {
+    console.warn(`Triage sync: late ack for base=${msg.base} id=${msg.id}; pending was already cleared`)
+    session.pendingSave = true
     trySendSave()
   }
 }
@@ -666,7 +686,23 @@ function openSocket() {
     }
     emitStatusIfChanged()
   })
-  ws.addEventListener('message', (e) => handleMessage(e.data))
+  // Serialize handlers via a Promise chain — handleAck and
+  // handleChain both contain awaits (decrypt, saveTriage,
+  // persistSession), and the message-event listener fires a fresh
+  // async invocation per message, so without the chain two
+  // handlers can interleave: one's `rebaseAndPersist` running
+  // while the other reads / mutates `session.localState`,
+  // double-render(), persistSession with intermediate state, and
+  // similar small horrors. The chain forces strictly serial
+  // processing so each message sees a settled state before the
+  // next runs. Errors are swallowed (logged) so one bad message
+  // doesn't break the chain.
+  let queue = Promise.resolve()
+  ws.addEventListener('message', (e) => {
+    queue = queue.then(() => handleMessage(e.data)).catch((err) => {
+      console.warn('Triage sync handler error:', err)
+    })
+  })
   ws.addEventListener('close', () => {
     if (socket === ws) socket = null
     if (session) {
