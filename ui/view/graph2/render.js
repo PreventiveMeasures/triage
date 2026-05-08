@@ -28,13 +28,16 @@ import { isGroupDeleted } from '../group.js'
 // toolbar above the canvas.
 export function renderGraph2Layout(graph, options = {}) {
   return html`<div class="graph2-layout">
-    ${renderTopBar(graph, options.extraTopRow, options.hideAllFiles ?? false)}
+    ${renderTopBar(graph, options)}
     ${renderStage(graph)}
     ${renderRightPanel()}
   </div>`
 }
 
-function renderTopBar(graph, extraTopRow, hideAllFiles) {
+function renderTopBar(graph, options) {
+  const extraTopRow = options.extraTopRow
+  const hideAllFiles = options.hideAllFiles ?? false
+  const deletedCountOverride = options.deletedCount
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -78,8 +81,17 @@ function renderTopBar(graph, extraTopRow, hideAllFiles) {
   // statistics, and per-package issue counts all switch to the
   // deleted-only view. This is a data-level filter, not a
   // visual overlay.
-  const allGroups = state.reports.flatMap((r) => r.groups)
-  const deletedCount = allGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
+  // Bundle path passes a precomputed `deletedCount` so the topbar
+  // tracks deleted findings within the bundle's matched set, not
+  // state.reports' (which may be empty in bundle-only sessions, or
+  // count deletions from reports unrelated to the open bundle).
+  let deletedCount
+  if (typeof deletedCountOverride === 'number') {
+    deletedCount = deletedCountOverride
+  } else {
+    const allGroups = state.reports.flatMap((r) => r.groups)
+    deletedCount = allGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
+  }
   const showTrash = deletedCount > 0 || state.showDeleted
   const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`

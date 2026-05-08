@@ -249,15 +249,41 @@ export async function computeBundleFileHashes(details) {
 // Multiple findings can share a fileHash (a single source dropped
 // in one scan may emit several), and a single hash may map to
 // multiple bundle files (rare — duplicate sources).
+// Total number of bundle-matched findings currently in the trash.
+// Walks the same hash → finding index that bundleFindingsByFile
+// uses, but counts deleted entries instead of filtering them out
+// — needed by the graph topbar to decide whether to render the
+// Trash button (and what count to show on it). Re-keys via the
+// bundle's stripped-path hash map when present.
+function countBundleDeletedFindings(details) {
+  if (!details?.fileHashes) return 0
+  let n = 0
+  const seen = new Set()
+  for (const hash of details.fileHashes.values()) {
+    if (seen.has(hash)) continue
+    seen.add(hash)
+    for (const f of findingsForFileHash(hash)) {
+      if (state.deletedIds.has(tabKey(f))) n++
+    }
+  }
+  return n
+}
+
 function bundleFindingsByFile(fileHashes) {
   if (!fileHashes || fileHashes.size === 0) return new Map()
   const result = new Map()
   for (const [file, hash] of fileHashes) {
     const found = findingsForFileHash(hash)
     if (found.length === 0) continue
+    // Trash split: live findings by default, deleted-only in trash
+    // mode. Mirrors the findings tab's group-level isGroupDeleted
+    // filter (each bundle finding is treated as a single-member
+    // group, so deletion is per-finding under deletedIds).
+    const filtered = found.filter((f) => state.deletedIds.has(tabKey(f)) === state.showDeleted)
+    if (filtered.length === 0) continue
     if (!result.has(file)) result.set(file, [])
     const arr = result.get(file)
-    for (const f of found) arr.push(f)
+    for (const f of filtered) arr.push(f)
   }
   return result
 }
@@ -1401,7 +1427,8 @@ export function render() {
             // edges to walk (sourcemaps don't carry import info,
             // so the toggle would have nothing to filter against).
             const hideAllFiles = graph.edges.length === 0
-            litRender(renderGraph2Layout(graph, { hideAllFiles }), graphSlot)
+            const deletedCount = countBundleDeletedFindings(state.bundleDetails)
+            litRender(renderGraph2Layout(graph, { hideAllFiles, deletedCount }), graphSlot)
             refreshBundleGraphSidebar()
             refreshBundleGraphTopPkgs()
             attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
