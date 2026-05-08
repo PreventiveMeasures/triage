@@ -48,7 +48,7 @@
   /* Page-head: strip the screen pill chrome (chip backgrounds /
      borders / interactive controls) so the title row reads as
      plain printed type, theme-independent. The screen rules in
-     report.css are nested under `#report > header.page-head` —
+     report.css are nested under `#report header.page-head` —
      specificity 1,1,1 and up — so plain `.page-head .file-chip`
      would lose the cascade and the chips would still pull
      `var(--text)` / `var(--muted)` from whichever theme the user

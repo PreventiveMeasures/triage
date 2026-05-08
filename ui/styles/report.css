@@ -10,7 +10,13 @@
 
   &.active { display: block; }
 
-  & > header.page-head {
+  /* Was `& > header.page-head` (direct child of #report) before
+     render.js's Lit refactor. The header is now Lit-rendered into a
+     `<div id="header-slot">` placeholder, so the direct-child path
+     no longer matches; descendant selector still uniquely picks the
+     page header (the only `header.page-head` inside #report; the
+     details-panel header uses `.findings-table-details-bar`). */
+  & header.page-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 1rem;
     margin-bottom: 1.125rem;
@@ -132,7 +138,7 @@
    top. */
 body.report-fullscreen {
   & #sidebar { display: none; }
-  & #report > header { display: none; }
+  & #report header.page-head { display: none; }
   & #report { max-width: none; padding: .5rem; }
   & .graph2-layout { height: calc(100vh - 64px); }
 }

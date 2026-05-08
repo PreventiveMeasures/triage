@@ -176,7 +176,11 @@ view-mode-buttons { display: contents; }
    filter strip from stretching across into the details column.
    The list / details split below stays at its full expanded
    width — only the filter chrome is constrained. */
-.findings-content.with-details > .toolbar { max-width: 1200px; }
+/* Was `> .toolbar` before the Lit refactor; render.js now drops
+   the toolbar into a `<div id="toolbar-slot">` placeholder, so the
+   direct-child path doesn't match. `.toolbar` is unique inside
+   `.findings-content` so descendant selector is safe. */
+.findings-content.with-details .toolbar { max-width: 1200px; }
 
 /* Severity-filter chips — ported from the DeepView.0 prototype's
    `.sev-chip` block. Pill-shaped chip with a colored swatch on the
