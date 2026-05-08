@@ -38,6 +38,16 @@
   font-size: 12px;
 }
 
+/* Findings-tab embed — panel chrome matches `.toolbar` (6px radius
+   + glass shadow) so toggling between table/list/grouped and graph
+   view-modes re-renders without a visible chrome jump. The topbar
+   already owns its `--surface` background + `.6rem .75rem` padding;
+   what's left is the outer panel's radius and shadow. */
+.findings-content.with-graph .graph2-layout {
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+}
+
 /* ── Top bar ───────────────────────────────────────────────── */
 /* Padding / gap / font-size all match the findings `.toolbar`
    (.6rem .75rem padding, .5rem inter-row gap, .825rem font) so the
@@ -53,7 +63,7 @@
   display: flex;
   flex-direction: column;
   gap: .5rem;
-  padding: .6rem 0;
+  padding: .6rem .75rem;
   font-size: .825rem;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
@@ -64,14 +74,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 .75rem;
-  /* Floor each row to the height of the standalone severity chip
-     (30px) so a short row (e.g. just the view-mode chooser) keeps
-     the same vertical rhythm as a chip-bearing row. Findings
-     toolbar rows are content-driven, but their content tends to
-     hit the same intrinsic height; using min-height keeps that
-     rhythm explicit here. */
-  min-height: 30px;
+  padding: 0;
+  /* No min-height — content drives row height (matching the
+     findings `.toolbar-row` shape). Forcing a floor here added
+     ~2.4px to the View row vs its findings-toolbar counterpart
+     (which is content-driven), breaking the seamless transition
+     between view-modes. */
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }
