@@ -1,3 +1,4 @@
+import { html, nothing } from 'lit'
 import { state } from './state.js'
 
 // Severity ranking — higher = more severe. The ladder splits into
@@ -19,12 +20,6 @@ export const SEVERITY_ORDER = {
 // summary slots.
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational']
 export const NODE_MODULES_RE = /(^|\/)node_modules\//
-
-export function esc(str) {
-  const el = document.createElement('span')
-  el.textContent = str
-  return el.innerHTML
-}
 
 export function isModule(file) { return NODE_MODULES_RE.test(file) }
 
@@ -118,21 +113,22 @@ export function fileUrl(file, githubRepo, repoFallback) {
 
 export function fileLink(file, githubRepo, repoFallback) {
   const url = fileUrl(file, githubRepo, repoFallback)
-  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}</a>` : esc(file)
+  return url ? html`<a href=${url} target="_blank" rel="noopener">${file}</a>` : file
 }
 
-// Returns "line N" (linkified when a fileUrl is available) or '' when
-// `line` isn't a finite integer — codex / claude-security imports
-// don't carry line numbers and stub them as '?', and rendering a bare
-// "line ?" adds noise without information. Callers suppress the
-// wrapping `<span class="line-num">` when this returns ''.
+// Returns a "line N" template (linkified when a fileUrl is available)
+// or `nothing` when `line` isn't a finite integer — codex /
+// claude-security imports don't carry line numbers and stub them as
+// '?', and rendering a bare "line ?" adds noise without information.
+// Callers suppress the wrapping `<span class="line-num">` when this
+// returns `nothing`.
 export function lineLink(file, line, githubRepo, repoFallback) {
   const lineNum = parseInt(line, 10)
-  if (!Number.isFinite(lineNum)) return ''
+  if (!Number.isFinite(lineNum)) return nothing
   const url = fileUrl(file, githubRepo, repoFallback)
   const text = `line ${lineNum}`
   if (!url) return text
-  return `<a href="${esc(url)}#L${lineNum}" target="_blank" rel="noopener">${text}</a>`
+  return html`<a href=${`${url}#L${lineNum}`} target="_blank" rel="noopener">${text}</a>`
 }
 
 // Commit URL builder + link renderer. Used by codex imports which
@@ -151,11 +147,11 @@ export function commitUrl(githubRepo, hash) {
   return `${base}/commit/${hash}`
 }
 export function commitLink(githubRepo, hash) {
-  if (!hash) return ''
+  if (!hash) return nothing
   // Short SHA for display (first 7 chars, GitHub's default abbrev).
   // Full hash on hover via the title attribute.
   const short = hash.slice(0, 7)
   const url = commitUrl(githubRepo, hash)
-  if (!url) return `<span title="${esc(hash)}">${esc(short)}</span>`
-  return `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(hash)}">${esc(short)}</a>`
+  if (!url) return html`<span title=${hash}>${short}</span>`
+  return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
 }

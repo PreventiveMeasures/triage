@@ -1,7 +1,7 @@
-import { render as litRender } from 'lit'
+import { html, render as litRender, nothing } from 'lit'
 import { state } from './state.js'
 import { dropZone, report } from './dom.js'
-import { esc, prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
+import { prettyModel, fileLink, lineLink, isModule, SEVERITIES } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -120,7 +120,7 @@ const SOURCE_TITLES = {
 
 // Outline file glyph for the title's filename chip. Matches the icon
 // used in the sidebar's file-list rows for visual continuity.
-const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>'
+const HEADER_FILE_ICON = html`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
 
 // Build the repo-chip element for the page header. The actual visual
 // (three modes — editable+collapsed, editable+expanded, read-only)
@@ -139,17 +139,16 @@ const HEADER_FILE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="
 // `repoInputUseful` is the existing flag computed in the main render
 // path — true when at least one non-module finding lacks per-finding
 // repo info, so user-typed `state.repoUrl` is needed to build links.
-function repoChipHtml(repoInputUseful, knownRepo) {
+function repoChipTemplate(repoInputUseful, knownRepo) {
   if (state.currentWorkspace) {
-    if (knownRepo) return `<repo-chip url="${esc(knownRepo)}"></repo-chip>`
-    return ''
+    if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
+    return nothing
   }
   if (repoInputUseful) {
-    const editing = state.repoEditing ? ' editing' : ''
-    return `<repo-chip url="${esc(state.repoUrl)}" editable${editing}></repo-chip>`
+    return html`<repo-chip url=${state.repoUrl} editable ?editing=${state.repoEditing}></repo-chip>`
   }
-  if (knownRepo) return `<repo-chip url="${esc(knownRepo)}"></repo-chip>`
-  return ''
+  if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
+  return nothing
 }
 
 // Canonical order for analyzer-combo fields. Each finding contributes
@@ -251,7 +250,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSec findings`); otherwise it's `DeepView findings`,
 // matching the prior single-vs-mixed selection rule.
-function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
+function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
   // Workspace mode wins over the source-based title — the user
@@ -269,11 +268,11 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
   // loads collapse to a count to keep the chip compact. The chip is
   // omitted entirely when no files are loaded (shouldn't happen at
   // this code path, but defensive).
-  let fileChip = ''
+  let fileChip = nothing
   if (fileNames.length === 1) {
-    fileChip = `<span class="file-chip">${HEADER_FILE_ICON}<span>${esc(fileNames[0])}</span></span>`
+    fileChip = html`<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames[0]}</span></span>`
   } else if (fileNames.length > 1) {
-    fileChip = `<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<span class="file-chip">${HEADER_FILE_ICON}<span>${fileNames.length} reports</span></span>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
@@ -300,15 +299,13 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
     ? COMBO_FIELDS.filter((f) => f !== 'type')
     : COMBO_FIELDS
   const tags = buildAnalyzerTags(findings, tagFields)
-  const tagHtml = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')
 
-  const sep = '<span class="sep" aria-hidden="true"></span>'
-  const metaParts = [`<span>${esc(countLabel)}</span>`]
   // Severity status bar — workspace-merged views show a stacked bar
   // sized proportionally to each severity's group count (using the
   // primary tab's severity, so each group contributes once and the
   // segments sum to totalCount). Gives a quick "how bad is this
   // workspace overall" signal without scanning the toolbar chips.
+  let statusBarTpl = nothing
   if (state.currentWorkspace && totalCount > 0) {
     const sevCounts = {}
     for (const r of state.reports) {
@@ -317,27 +314,29 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
         if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
       }
     }
-    const segments = SEVERITIES
-      .filter((s) => sevCounts[s] > 0)
-      .map((s) => {
-        const pct = (sevCounts[s] / totalCount) * 100
+    const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
+    if (presentSevs.length > 0) {
+      statusBarTpl = html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) => {
         const tip = `${sevCounts[s]} ${s.replace(/_/gu, ' ')}`
-        return `<span class="status-seg sev-${s}" style="flex-grow: ${sevCounts[s]}" title="${esc(tip)}"></span>`
-      })
-      .join('')
-    if (segments) metaParts.push(`<span class="status-bar" aria-hidden="true">${segments}</span>`)
+        return html`<span class=${`status-seg sev-${s}`} style=${`flex-grow: ${sevCounts[s]}`} title=${tip}></span>`
+      })}</span>`
+    }
   }
-  if (tagHtml) metaParts.push(sep, tagHtml)
-  const repoHtml = repoChipHtml(repoInputUseful, knownRepo)
-  if (repoHtml) metaParts.push(sep, repoHtml)
 
-  let html = '<header class="page-head">'
-  html += '<div class="page-title">'
-  html += `<h1>${esc(titleText)}${fileChip}</h1>`
-  html += `<div class="meta-row">${metaParts.join('')}</div>`
-  html += '</div>'
-  html += '</header>'
-  return html
+  const repoTpl = repoChipTemplate(repoInputUseful, knownRepo)
+  const sep = html`<span class="sep" aria-hidden="true"></span>`
+
+  return html`<header class="page-head">
+    <div class="page-title">
+      <h1>${titleText}${fileChip}</h1>
+      <div class="meta-row">
+        <span>${countLabel}</span>
+        ${statusBarTpl}
+        ${tags.length > 0 ? html`${sep}${tags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
+        ${repoTpl !== nothing ? html`${sep}${repoTpl}` : nothing}
+      </div>
+    </div>
+  </header>`
 }
 
 // Stats — clickable filter chips. Severity chips on the left, mark-color
@@ -367,16 +366,18 @@ function headerHtml(totalCount, fileNames, repoInputUseful, knownRepo) {
 // and dispatch `severity-toggle` / `color-toggle` events; events.js
 // has the matching handlers. The CSS still lives in toolbar.css
 // (the components render to light DOM so those rules apply).
-function severityChipsHtml(counts) {
-  const c = JSON.stringify(counts)
-  const sel = JSON.stringify([...state.filterSeverities])
-  return `<severity-chips counts='${c}' selected='${sel}'></severity-chips>`
+function severityChipsTemplate(counts) {
+  return html`<severity-chips
+    counts=${JSON.stringify(counts)}
+    selected=${JSON.stringify([...state.filterSeverities])}
+  ></severity-chips>`
 }
 
-function triageFilterHtml(colorCounts) {
-  const c = JSON.stringify(colorCounts)
-  const sel = JSON.stringify([...state.filterColors])
-  return `<triage-filter counts='${c}' selected='${sel}'></triage-filter>`
+function triageFilterTemplate(colorCounts) {
+  return html`<triage-filter
+    counts=${JSON.stringify(colorCounts)}
+    selected=${JSON.stringify([...state.filterColors])}
+  ></triage-filter>`
 }
 
 // `flags` carries per-render applicability: when no finding in the
@@ -385,124 +386,92 @@ function triageFilterHtml(colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-function toolbarHtml(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
+function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
   const { showSource, showConfidence, showPriority } = flags
-  let html = '<div class="toolbar">'
-  html += '<div class="toolbar-row">'
-  // View mode leads the row — `<view-mode-buttons>` renders the
-  // table / list / grouped icon group; immediately followed by the
-  // Sort dropdown with no separator between them.
-  html += `<view-mode-buttons mode="${state.viewMode}"></view-mode-buttons>`
-  // Sort dropdown — bare select (no `Sort:` label preceding it). The
-  // selected option's text already advertises what it sorts by, plus
-  // a `↓` / `↑` arrow showing direction, so the label was redundant
-  // chrome. Class `sort-select` lets toolbar.css give the button a
-  // touch more padding than the generic toolbar select.
-  html += `<select id="sort-select" class="sort-select" aria-label="Sort findings">`
-  html += `<option value="severity"${state.sortBy === 'severity' ? ' selected' : ''}>Severity ↓</option>`
-  html += `<option value="file"${state.sortBy === 'file' ? ' selected' : ''}>File ↑</option>`
-  // Confidence sort options drop out alongside the Confidence
-  // min/max filter when no finding carries a confidence value
-  // (codex / claude security imports). Without this guard the
-  // user could pick "Confidence (high first)" on a report where
-  // every confidence is undefined and end up with applySorting's
-  // ?? -1 fallback shuffling the list arbitrarily.
-  if (showConfidence) {
-    html += `<option value="confidence-desc"${state.sortBy === 'confidence-desc' ? ' selected' : ''}>Confidence ↓</option>`
-    html += `<option value="confidence-asc"${state.sortBy === 'confidence-asc' ? ' selected' : ''}>Confidence ↑</option>`
-  }
-  // Priority — same pattern as Confidence: only renders when at
-  // least one finding carries a numeric `priority` (0.0–10.0). State
-  // is forced back to 'file' upstream if a previously-set priority
-  // sort no longer applies.
-  if (showPriority) {
-    html += `<option value="priority-desc"${state.sortBy === 'priority-desc' ? ' selected' : ''}>Priority ↓</option>`
-    html += `<option value="priority-asc"${state.sortBy === 'priority-asc' ? ' selected' : ''}>Priority ↑</option>`
-  }
-  html += `</select>`
-  if (showSource) {
-    html += `<div class="sep"></div>`
-    html += `<label for="source-select">Source:</label>`
-    html += `<select id="source-select">`
-    html += `<option value="all"${state.filterSource === 'all' ? ' selected' : ''}>All files</option>`
-    html += `<option value="own"${state.filterSource === 'own' ? ' selected' : ''}>Own source</option>`
-    html += `<option value="modules"${state.filterSource === 'modules' ? ' selected' : ''}>node_modules</option>`
-    html += `</select>`
-  }
-  if (showConfidence) {
-    html += `<div class="sep"></div>`
-    html += `<label for="conf-range">Confidence</label>`
-    // Dual-thumb slider replaces the prior `min` / `max` select pair.
-    // Lower bound at 0 means "include findings without a confidence
-    // rating"; upper bound at 10 means "no upper cap (allow >10
-    // outliers)" — both edges are how the user opts out of that
-    // half of the filter (see filters.js / matchesFilters). The
-    // `<span id="conf-range-vals">` mirrors the live value during
-    // drag (events.js patches its textContent on `range-input`); on
-    // release a `range-change` event triggers a full re-render and
-    // the span gets re-baked here.
-    html += `<range-slider id="conf-range" min="0" max="10" step="1" low="${state.filterConfMin}" high="${state.filterConfMax}" aria-label="Confidence range"></range-slider>`
-    html += `<span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>`
-  }
-  // Trash toggle only shows when there's something to toggle: either
-  // findings are already deleted (count > 0) or the user is currently
-  // viewing the trash (showDeleted=true) and needs a way back. Empty
-  // trash + live view = button is dead chrome, hide it.
-  if (deletedCount > 0 || state.showDeleted) {
-    const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
-    const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
-    html += `<button type="button" id="toggle-trash" class="trash-btn${state.showDeleted ? ' active' : ''}" title="${trashTitle}">${trashLabel}</button>`
-  }
-  // Print button moved out of the toolbar — now a fixed icon in the
-  // top-right corner under the theme toggle, see styles/theme.css and
-  // view.html. Visibility is gated by `body.show-print-btn` toggled in
-  // render() so it only appears on the findings tab with a report
-  // loaded.
-  html += '</div>'
-  // Filter row: severity chips + mark-color triage pill + search
-  // field, all inline so they read as one composable filter strip.
-  // The "X shown / All / None" actions block from the prototype's
-  // outer `.sev-row` is intentionally left off — the result count at
-  // the row's right edge and the per-chip toggle cover those needs.
-  html += '<div class="toolbar-row sev-row">'
-  html += severityChipsHtml(counts)
-  // Mark-color filter pill — compact circle group sitting between
-  // severity chips and the search field. Same colored-circle
-  // vocabulary as `<color-marker>`, so the per-row pickers and the
-  // filter pill share one visual language.
-  html += triageFilterHtml(colorCounts)
-  // Search field + result count grouped into a single flex item so
-  // they wrap as a unit — when the row is too narrow to keep the
-  // strip inline, the search and `X of Y` move to a new line
-  // together rather than the count clinging to the right of the
-  // chips while the search drops below alone. See toolbar.css's
-  // `.search-row` rule + the wrapping breakpoints under
-  // `@media (max-width: 1200px)` and `.findings-content.with-details`.
-  html += '<div class="search-row">'
-  // Search field — ported from the DeepView.0 prototype's `.field.grow`
-  // (magnifier glyph + borderless input inside a pill that grows to
-  // fill the row). Drops the prior labeled `Include:` / `Exclude:`
-  // pair: a single search field that substring-matches finding text
-  // covers the common case, the `Exclude:` companion was rarely
-  // used, and a search-glyphed input is the more conventional UI.
-  // The input id is `filter-search` (the visible identity); state
-  // still lives on `state.filterInclude` (it's still semantically
-  // "include findings that match the substring").
-  html += '<div class="toolbar-search">'
-  html += '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
-  html += `<input type="text" id="filter-search" value="${esc(state.filterInclude)}" placeholder="Search findings…">`
-  html += '</div>'
-  html += `<span class="result-count">${filteredCount} of ${allCount}</span>`
-  html += '</div>'
-  html += '</div>'
-  // The Repo URL input lives in the page header now (see headerHtml /
-  // repoChipHtml). When findings need it (`repoInputUseful` true) the
-  // header chip expands into an `<input>` on click; when every
-  // finding carries its own `repo.github` and they all match, the
-  // header shows a read-only chip instead. The toolbar previously
-  // carried a labeled `Repo:` row here.
-  html += '</div>'
-  return html
+  const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
+  const sourceOpt = (value, label) => html`<option value=${value} ?selected=${state.filterSource === value}>${label}</option>`
+
+  return html`<div class="toolbar">
+    <div class="toolbar-row">
+      <!-- View mode leads the row — <view-mode-buttons> renders the
+           table / list / grouped icon group; immediately followed by
+           the Sort dropdown with no separator between them. -->
+      <view-mode-buttons mode=${state.viewMode}></view-mode-buttons>
+      <!-- Sort dropdown — bare select (no Sort: label preceding it).
+           The selected option's text already advertises what it sorts
+           by, plus a ↓ / ↑ arrow showing direction. Class
+           sort-select lets toolbar.css give the button a touch more
+           padding than the generic toolbar select. -->
+      <select id="sort-select" class="sort-select" aria-label="Sort findings">
+        ${sortOpt('severity', 'Severity ↓')}
+        ${sortOpt('file', 'File ↑')}
+        ${showConfidence ? html`${sortOpt('confidence-desc', 'Confidence ↓')}${sortOpt('confidence-asc', 'Confidence ↑')}` : nothing}
+        ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
+      </select>
+      ${showSource ? html`<div class="sep"></div>
+        <label for="source-select">Source:</label>
+        <select id="source-select">
+          ${sourceOpt('all', 'All files')}
+          ${sourceOpt('own', 'Own source')}
+          ${sourceOpt('modules', 'node_modules')}
+        </select>` : nothing}
+      ${showConfidence ? html`<div class="sep"></div>
+        <label for="conf-range">Confidence</label>
+        <!-- Dual-thumb slider replaces the prior min / max select
+             pair. Lower bound at 0 means "include findings without a
+             confidence rating"; upper bound at 10 means "no upper cap
+             (allow >10 outliers)" — both edges are how the user opts
+             out of that half of the filter (see filters.js /
+             matchesFilters). The conf-range-vals span mirrors the
+             live value during drag (events.js patches its textContent
+             on range-input); on release a range-change event triggers
+             a full re-render and the span gets re-baked here. -->
+        <range-slider
+          id="conf-range" min="0" max="10" step="1"
+          low=${state.filterConfMin}
+          high=${state.filterConfMax}
+          aria-label="Confidence range"></range-slider>
+        <span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>` : nothing}
+      ${(deletedCount > 0 || state.showDeleted) ? html`<button
+        type="button"
+        id="toggle-trash"
+        class=${`trash-btn${state.showDeleted ? ' active' : ''}`}
+        title=${state.showDeleted ? 'exit trash view' : 'show deleted findings'}
+      >${`Trash${deletedCount ? ` (${deletedCount})` : ''}`}</button>` : nothing}
+    </div>
+    <!-- Filter row: severity chips + mark-color triage pill + search
+         field, all inline so they read as one composable filter strip.
+         The "X shown / All / None" actions block from the prototype's
+         outer .sev-row is intentionally left off — the result count
+         at the row's right edge and the per-chip toggle cover those
+         needs. -->
+    <div class="toolbar-row sev-row">
+      ${severityChipsTemplate(counts)}
+      ${triageFilterTemplate(colorCounts)}
+      <!-- Search field + result count grouped into a single flex item
+           so they wrap as a unit — when the row is too narrow to keep
+           the strip inline, the search and the X of Y count move to a
+           new line together rather than the count clinging to the
+           right of the chips while the search drops below alone. See
+           the .search-row rule in toolbar.css + the wrapping
+           breakpoints under @media (max-width: 1200px) and
+           .findings-content.with-details. -->
+      <div class="search-row">
+        <div class="toolbar-search">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="m20 20-3.5-3.5"/>
+          </svg>
+          <input
+            type="text"
+            id="filter-search"
+            .value=${state.filterInclude}
+            placeholder="Search findings…">
+        </div>
+        <span class="result-count">${filteredCount} of ${allCount}</span>
+      </div>
+    </div>
+  </div>`
 }
 
 // Render the body of the findings tab — table view (compact 2-row
@@ -533,11 +502,12 @@ const pendingFindingCards = new Map()
 function findingCardPlaceholder(g, inGroup = false) {
   const gid = findingCardGid(g)
   pendingFindingCards.set(gid, { group: g, inGroup })
-  return `<finding-card data-gid="${esc(gid)}"${inGroup ? ' in-group' : ''}></finding-card>`
+  return inGroup
+    ? html`<finding-card data-gid=${gid} in-group></finding-card>`
+    : html`<finding-card data-gid=${gid}></finding-card>`
 }
 
-function findingsBodyHtml(filtered) {
-  let html = ''
+function findingsBodyTemplate(filtered) {
   if (state.viewMode === 'table') {
     // Table view is always flat. For 'file' sort we still want
     // line-within-file ordering to match the file-grouped layout's
@@ -552,7 +522,7 @@ function findingsBodyHtml(filtered) {
         return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
       })
       : filtered
-    if (items.length === 0) return html
+    if (items.length === 0) return nothing
     // Re-validate against the current filtered set so a stale gid
     // (filter or sort changed, showDeleted flipped) doesn't open the
     // details panel against a row no longer rendered.
@@ -565,46 +535,39 @@ function findingsBodyHtml(filtered) {
     // capped at 800px). Collapses to single-column when no row is
     // selected.
     const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
-    html += `<div class="${layoutClass}">`
-    // Placeholder div — render() reattaches the persistent
-    // <finding-table> here after innerHTML lands. Keeping the table
-    // element across renders preserves its <finding-row> children
-    // (and StateElement-driven reactivity inside them), avoiding a
-    // full shadow-DOM rebuild on every state change.
-    html += '<div class="findings-table-list"><div class="finding-table-slot"></div></div>'
-    if (selectedGroup) {
-      html += '<aside class="findings-table-details" id="findings-table-details">'
-      html += '<header class="findings-table-details-bar">'
-      html += '<span class="findings-table-details-label">Details</span>'
-      html += '<button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>'
-      html += '</header>'
-      html += '<div class="findings-table-details-body">'
-      html += findingCardPlaceholder(selectedGroup)
-      html += '</div>'
-      html += '</aside>'
-    }
-    html += '</div>'
-    return html
+    return html`<div class=${layoutClass}>
+      <!-- Placeholder div — render() reattaches the persistent
+           <finding-table> here after innerHTML lands. Keeping the
+           table element across renders preserves its <finding-row>
+           children (and StateElement-driven reactivity inside them),
+           avoiding a full shadow-DOM rebuild on every state change. -->
+      <div class="findings-table-list"><div class="finding-table-slot"></div></div>
+      ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details">
+        <header class="findings-table-details-bar">
+          <span class="findings-table-details-label">Details</span>
+          <button type="button" class="findings-table-details-close" data-table-deselect title="Close details" aria-label="Close details">×</button>
+        </header>
+        <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
+      </aside>` : nothing}
+    </div>`
   }
   if (state.viewMode === 'grouped') {
-    // Group groups by file. All tabs in a dedup group share the same file
-    // (dedup runs per-file by fileHash upstream), so the primary tab's
-    // file is a safe representative.
+    // Group groups by file. All tabs in a dedup group share the same
+    // file (dedup runs per-file by fileHash upstream), so the primary
+    // tab's file is a safe representative.
     const byFile = new Map()
     for (const g of filtered) {
       const file = primaryTab(g).file
       if (!byFile.has(file)) byFile.set(file, [])
       byFile.get(file).push(g)
     }
-
-    // For file sort, sort files alphabetically; otherwise preserve first-appearance order
+    // For file sort, sort files alphabetically; otherwise preserve
+    // first-appearance order.
     const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
-
-    for (const file of fileKeys) {
+    return html`${fileKeys.map((file) => {
       const items = state.sortBy === 'file'
         ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
         : byFile.get(file)
-      html += '<div class="file-group">'
       // All findings under one file share the same `repo.github` (it's
       // a property of the source file's package), so probe the first
       // group's primary tab — every other tab in this file would carry
@@ -612,19 +575,20 @@ function findingsBodyHtml(filtered) {
       // is also a per-file property (every finding from one report
       // carries the same value), so the same probe gets its fallback.
       const probe = primaryTab(items[0])
-      const githubRepo = probe?.repo?.github
-      const repoFallback = probe?._repoFallback
-      html += `<div class="file-header"><span>${fileLink(file, githubRepo, repoFallback)}</span><span class="count">${items.length}</span></div>`
-      html += '<div class="file-body">'
-      for (const g of items) html += findingCardPlaceholder(g)
-      html += '</div></div>'
-    }
-    return html
+      return html`<div class="file-group">
+        <div class="file-header">
+          <span>${fileLink(file, probe?.repo?.github, probe?._repoFallback)}</span>
+          <span class="count">${items.length}</span>
+        </div>
+        <div class="file-body">${items.map((g) => findingCardPlaceholder(g))}</div>
+      </div>`
+    })}`
   }
-  // Flat mode: each dedup group renders inside its own card (.flat-group)
-  // with a small location header on top (file · line · exportName).
-  // For the 'file' sort we extend that ordering with line-within-file,
-  // which the file-grouped path achieves by sorting per-file.
+  // Flat mode: each dedup group renders inside its own card
+  // (.flat-group) with a small location header on top
+  // (file · line · exportName). For the 'file' sort we extend that
+  // ordering with line-within-file, which the file-grouped path
+  // achieves by sorting per-file.
   const items = state.sortBy === 'file'
     ? [...filtered].sort((a, b) => {
       const pa = primaryTab(a), pb = primaryTab(b)
@@ -637,22 +601,20 @@ function findingsBodyHtml(filtered) {
   // `.flat-group .finding .line-row`) so the same info doesn't
   // appear twice. Tab switches re-render, so the header tracks the
   // active tab automatically.
-  for (const g of items) {
+  return html`${items.map((g) => {
     const p = activeTabFor(g)
-    // Skip the line span entirely when there's no line number — a
-    // bare "line ?" reads as broken metadata. lineLink returns '' in
-    // that case (codex / claude-security imports don't carry lines).
-    const lineLinkHtml = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
-    const lineHtml = lineLinkHtml ? `<span class="line-num">${lineLinkHtml}</span>` : ''
-    const exportHtml = p.exportName ? `<span class="meta">${esc(p.exportName)}</span>` : ''
+    const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
     const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
-    const metaHtml = meta ? `<span class="run-meta">${esc(meta)}</span>` : ''
-    html += '<div class="flat-group">'
-    html += `<div class="flat-group-loc"><span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>${lineHtml}${exportHtml}${metaHtml}</div>`
-    html += findingCardPlaceholder(g, true)
-    html += '</div>'
-  }
-  return html
+    return html`<div class="flat-group">
+      <div class="flat-group-loc">
+        <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>
+        ${lineLinkTpl !== nothing ? html`<span class="line-num">${lineLinkTpl}</span>` : nothing}
+        ${p.exportName ? html`<span class="meta">${p.exportName}</span>` : nothing}
+        ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
+      </div>
+      ${findingCardPlaceholder(g, true)}
+    </div>`
+  })}`
 }
 
 export function render() {
@@ -748,7 +710,11 @@ export function render() {
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  let html = headerHtml(mergedGroups.length, fileNames, repoInputUseful, knownRepo)
+  // `headerTemplate` returns a Lit template — drop a slot in the
+  // string-built HTML, then `litRender` into it after the
+  // `report.innerHTML = html` flush at the bottom of this function.
+  const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo)
+  let html = '<div id="header-slot"></div>'
 
   // Top-level view switcher. Tree tab only appears for tree-bearing
   // reports with >1 file — a single-file tree adds no navigation value.
@@ -771,8 +737,12 @@ export function render() {
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
-    html += renderTreeView(treeData, findingCounts)
+    // `renderTreeView` returns a Lit template now — drop a slot in
+    // the string-built HTML, then litRender into it post-flush.
+    html += '<div id="tree-view-slot"></div>'
     report.innerHTML = html
+    const treeSlot = document.getElementById('tree-view-slot')
+    if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
@@ -824,23 +794,38 @@ export function render() {
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
   html += `<div class="findings-content${tableWithDetails ? ' with-details' : ''}">`
-  html += toolbarHtml(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
+  // `toolbarTemplate` returns a Lit template — drop a slot here, then
+  // litRender into it after innerHTML lands.
+  html += '<div id="toolbar-slot"></div>'
+  const toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
     showSource: hasAnyModulesPath,
     showConfidence: hasAnyConfidence,
     showPriority: hasAnyPriority,
   })
 
+  // Empty-state line — slot-based so the typeLabel (which can carry
+  // user-controlled analyzer-type strings) flows through Lit's
+  // auto-escape rather than a hand-rolled `esc()`. Empty template
+  // when none of the empty-state branches matches.
+  let emptyStateTpl = nothing
   if (state.showDeleted && allGroups.length === 0) {
-    html += `<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
+    emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
   } else if (filtered.length === 0 && allGroups.length > 0) {
-    html += `<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
+    emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
   } else if (allGroups.length === 0) {
-    html += `<p style="color:var(--green)">No ${esc(typeLabel)} issues found.</p>`
+    emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
   }
+  html += '<div id="empty-state-slot"></div>'
 
   pendingTableItems = null
   pendingFindingCards.clear()
-  html += findingsBodyHtml(filtered)
+  // `findingsBodyTemplate` returns a Lit template — drop a slot
+  // here, then `litRender` into it after `report.innerHTML = html`.
+  // The outer findings-content wrapper closes BEFORE the slot
+  // because the slot wraps the body content the template expects to
+  // sit inside it.
+  html += '<div id="findings-body-slot"></div>'
+  const bodyTemplate = findingsBodyTemplate(filtered)
   html += '</div>'
 
   // Detach the persistent <finding-table> (if mounted) before the
@@ -855,6 +840,21 @@ export function render() {
   }
 
   report.innerHTML = html
+
+  const headerSlot = document.getElementById('header-slot')
+  if (headerSlot) litRender(headerTpl, headerSlot)
+  const toolbarSlot = document.getElementById('toolbar-slot')
+  if (toolbarSlot) litRender(toolbarTpl, toolbarSlot)
+  const emptyStateSlot = document.getElementById('empty-state-slot')
+  if (emptyStateSlot && emptyStateTpl !== nothing) litRender(emptyStateTpl, emptyStateSlot)
+
+  // Now that the slots are in the DOM, litRender the Lit-templated
+  // findings body into its placeholder. The body template covers
+  // every viewMode (table / list / grouped); the table case still
+  // emits a `.finding-table-slot` div inside the template, which
+  // the `<finding-table>` reattach below targets.
+  const bodySlot = document.getElementById('findings-body-slot')
+  if (bodySlot && bodyTemplate !== nothing) litRender(bodyTemplate, bodySlot)
 
   // Hand the sorted item list and current selection to the
   // <finding-table> custom element after the DOM lands. Stashing the

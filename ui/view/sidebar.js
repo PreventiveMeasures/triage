@@ -1,6 +1,7 @@
+import { html, render as litRender, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from './state.js'
 import { sidebar, fileList } from './dom.js'
-import { esc } from './format.js'
 import { listFiles } from './storage.js'
 import { switchToFile, switchToWorkspace, deleteCurrent } from './ingest.js'
 import { getCount, ensureCounts } from './counts.js'
@@ -41,27 +42,34 @@ const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec']
 // losing their search.
 let searchQuery = ''
 
-function fileItemHtml(n, opts = {}) {
-  const indented = opts.indented ? ' indented' : ''
-  const cls = `file-item${n === state.currentFile ? ' current' : ''}${indented}`
+function fileItemTemplate(n, opts = {}) {
+  const cls = `file-item${n === state.currentFile ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
-  const countHtml = count !== undefined ? `<span class="file-count">${count}</span>` : ''
-  const icon = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
-  // Indented rows live inside a workspace; carry the workspace id so a
-  // drop onto one of these is treated as "assign to this workspace"
+  const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
+  // Indented rows live inside a workspace; carry the workspace id so
+  // a drop onto one of these is treated as "assign to this workspace"
   // (which is idempotent if it's the report's current home, and a
   // move when it isn't). Top-level rows have no workspace attribute,
   // so dropping onto them is treated as "outside any workspace" and
-  // falls through to the unfiled-section drop target.
-  const wsAttr = opts.workspaceId ? ` data-workspace-id="${esc(opts.workspaceId)}"` : ''
-  return `<li class="${cls}" data-file="${esc(n)}"${wsAttr} draggable="true"><button type="button" class="file-name" title="${esc(label)}">${icon}<span class="file-label">${esc(label)}</span>${countHtml}</button></li>`
+  // falls through to the unfiled-section drop target. The brand
+  // "sticker" icons in `FILE_ICONS` are SVG fragments authored in
+  // file-display.js — controlled-domain content, no user input — so
+  // they're piped through `unsafeHTML` to skip Lit's text escape.
+  return html`<li
+    class=${cls}
+    data-file=${n}
+    data-workspace-id=${opts.workspaceId ?? nothing}
+    draggable="true"
+  ><button type="button" class="file-name" title=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count !== undefined ? html`<span class="file-count">${count}</span>` : nothing}</button></li>`
 }
 
-function groupHeaderHtml(label, count, opts = {}) {
-  const extraClass = opts.dropTarget ? ' default-reports' : ''
-  const dataAttr = opts.dropTarget ? ' data-default-reports="true"' : ''
-  return `<li class="file-group-header${extraClass}"${dataAttr}><span class="group-label">${esc(label)}</span><span class="group-count">${count}</span></li>`
+function groupHeaderTemplate(label, count, opts = {}) {
+  const cls = `file-group-header${opts.dropTarget ? ' default-reports' : ''}`
+  return html`<li
+    class=${cls}
+    data-default-reports=${opts.dropTarget ? 'true' : nothing}
+  ><span class="group-label">${label}</span><span class="group-count">${count}</span></li>`
 }
 
 // Workspaces section header — same chrome as a regular bucket header,
@@ -69,27 +77,24 @@ function groupHeaderHtml(label, count, opts = {}) {
 // `data-action="new-workspace"` is what the sidebar click delegate
 // dispatches on; the chip's title gives the affordance a tooltip
 // mirroring the "Delete current" button below.
-const WORKSPACE_PLUS_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>'
-function workspaceHeaderHtml(count) {
-  return `<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><span class="group-count">${count}</span><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
+const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
+function workspaceHeaderTemplate(count) {
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><span class="group-count">${count}</span><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
 }
 
-const WORKSPACE_ICON = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
+const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>`
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
 // the section header.
-const WORKSPACE_EXPORT_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>'
-function workspaceItemHtml(w, reportCount) {
+const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>`
+function workspaceItemTemplate(w, reportCount) {
   const isCurrent = state.currentWorkspace === w.id
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
-  const countHtml = reportCount > 0 ? `<span class="file-count workspace-count">${reportCount}</span>` : ''
   // Clicking the workspace's main button loads every report in the
   // workspace into a single merged view (handled by the `.file-item`
   // click delegate against the dataset.workspaceId). The
-  // hover-revealed download exports the workspace as a `.gz`
-  // bundle.
-  const exportBtn = `<button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>`
-  return `<li class="${cls}" data-workspace-id="${esc(w.id)}"><button type="button" class="file-name" title="${esc(w.name)}">${WORKSPACE_ICON}<span class="file-label">${esc(w.name)}</span></button>${exportBtn}${countHtml}</li>`
+  // hover-revealed download exports the workspace as a `.gz` bundle.
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label">${w.name}</span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
@@ -143,7 +148,6 @@ export async function renderSidebar() {
     buckets.get(g).push(n)
   }
 
-  let html = ''
   // Workspaces above Reports. The header itself is filtered by name;
   // each workspace's own reports are filtered too so a name search
   // surfaces matches inside workspaces without the parent disappearing.
@@ -152,12 +156,6 @@ export async function renderSidebar() {
     if (w.name.toLowerCase().includes(searchQuery)) return true
     return w.reports.some((r) => nameSet.has(r) && matchesSearch(r))
   })
-  html += workspaceHeaderHtml(visibleWorkspaces.length)
-  for (const w of visibleWorkspaces) {
-    const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
-    html += workspaceItemHtml(w, visibleReports.length)
-    for (const r of visibleReports) html += fileItemHtml(r, { indented: true, workspaceId: w.id })
-  }
 
   // Default buckets — render unfiled reports under their format header.
   // The Reports (default JSON) header is also a drop target for "remove
@@ -166,14 +164,26 @@ export async function renderSidebar() {
   // some workspace has reports, we still render the Reports header (with
   // count 0) so the unassign affordance stays reachable.
   const anyWorkspaceHasReports = workspaces.some((w) => w.reports.some((r) => nameSet.has(r)))
-  for (const g of GROUP_ORDER) {
-    const list = buckets.get(g) ?? []
-    const isDefault = g === 'default'
-    if (list.length === 0 && !(isDefault && anyWorkspaceHasReports)) continue
-    html += groupHeaderHtml(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })
-    for (const n of list) html += fileItemHtml(n)
-  }
-  fileList.innerHTML = html
+
+  litRender(html`
+    ${workspaceHeaderTemplate(visibleWorkspaces.length)}
+    ${visibleWorkspaces.map((w) => {
+      const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
+      return html`
+        ${workspaceItemTemplate(w, visibleReports.length)}
+        ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
+      `
+    })}
+    ${GROUP_ORDER.map((g) => {
+      const list = buckets.get(g) ?? []
+      const isDefault = g === 'default'
+      if (list.length === 0 && !(isDefault && anyWorkspaceHasReports)) return null
+      return html`
+        ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })}
+        ${list.map((n) => fileItemTemplate(n))}
+      `
+    })}
+  `, fileList)
 
   const deleteBtn = document.getElementById('delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
