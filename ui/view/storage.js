@@ -99,8 +99,16 @@ export async function saveFile(name, content) {
     // and OPFS quota is shared with bundles + workspaces. readFile
     // sniffs the gzip magic on read so legacy uncompressed entries
     // keep working until they're rewritten through here.
+    //
+    // No prior removeEntry — createWritable() opens the file with
+    // `keepExistingData: false` by default, which truncates on
+    // close, so an overwrite naturally shrinks. Removing first
+    // raced with the fire-and-forget migration in readFile: a
+    // concurrent listFiles() (e.g. from renderSidebar after a
+    // click) could land in the window where the entry was gone,
+    // which made the just-clicked file vanish from the sidebar
+    // until reload.
     const bytes = await gzipBytes(new TextEncoder().encode(content))
-    try { await dir.removeEntry(name) } catch {}
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
     await writable.write(bytes)
