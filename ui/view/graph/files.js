@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { state } from '../state.js'
-import { SEVERITIES } from '../format.js'
+import { SEVERITIES, formatBytes } from '../format.js'
 import { treeAnchor } from './utils.js'
 
 // Render the Files tab. Two view modes:
@@ -107,11 +107,13 @@ export function renderTreeView(treeData, findingCounts) {
           ${files.map((file) => {
             const issues = totalIssues(file)
             const isSel = file === selected
+            const sizeLabel = formatBytes(treeData[file]?.size)
             return html`<div
               class=${`tree-table-row${isSel ? ' selected' : ''}${issues === 0 ? ' clean' : ''}`}
               data-tree-select=${file}
             >
               <span class="tree-table-name">${file}</span>
+              ${sizeLabel ? html`<span class="tree-table-size">${sizeLabel}</span>` : nothing}
               ${sevChips(file) ?? html`<span class="tree-table-clean-marker">—</span>`}
             </div>`
           })}
@@ -137,9 +139,11 @@ export function renderTreeView(treeData, findingCounts) {
     ${files.map((file) => {
       const entry = treeData[file]
       const incoming = importedBy.get(file) ?? []
+      const sizeLabel = formatBytes(entry?.size)
       return html`<section class="tree-file" id=${treeAnchor(file)}>
         <div class="tree-file-header">
           <span class="name">${file}</span>
+          ${sizeLabel ? html`<span class="tree-file-size">${sizeLabel}</span>` : nothing}
           ${sevChips(file)}
         </div>
         ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">${[
@@ -168,8 +172,12 @@ export function renderTreeView(treeData, findingCounts) {
 // imported by, exports) but without the tree-file wrapper since
 // the panel itself is the wrapper.
 function renderFileDetails(entry, file, incoming, linkOrText) {
+  const sizeLabel = formatBytes(entry?.size)
   return html`
-    <div class="tree-detail-name"><span class="name">${file}</span></div>
+    <div class="tree-detail-name">
+      <span class="name">${file}</span>
+      ${sizeLabel ? html`<span class="tree-detail-size">${sizeLabel}</span>` : nothing}
+    </div>
     ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">${[
       entry.fileHash ? `file: ${entry.fileHash}` : null,
       entry.treeHash ? `tree: ${entry.treeHash}` : null,

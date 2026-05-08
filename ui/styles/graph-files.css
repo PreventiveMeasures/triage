@@ -155,7 +155,25 @@
   & .tree-table-clean-marker {
     color: var(--muted); font-size: .75rem; min-width: 1rem; text-align: center;
   }
+  & .tree-table-size {
+    flex-shrink: 0;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: .72rem;
+    font-variant-numeric: tabular-nums;
+  }
   &.clean .tree-table-name { color: var(--muted); }
+}
+
+/* Size chip in the list-mode header and the details panel — same
+   muted monospace as the table-row size, sized down a touch. */
+.tree-file-header .tree-file-size,
+.tree-detail-name .tree-detail-size {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+  margin-left: .5rem;
 }
 
 .tree-table-empty {

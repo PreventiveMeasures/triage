@@ -1,5 +1,5 @@
 import { html } from 'lit'
-import { SEVERITIES } from '../format.js'
+import { SEVERITIES, formatBytes } from '../format.js'
 import { state } from '../state.js'
 import { graph2 } from './state.js'
 import { pkgColor } from '../graph/utils.js'
@@ -419,6 +419,7 @@ function renderFileCard(graph, n, file) {
       </div>
     </div>
     <div class="g2-sel-fullpath" title=${file}>${file}</div>
+    ${formatBytes(n.size) ? html`<div class="g2-sel-size">${formatBytes(n.size)}</div>` : null}
     <!-- Own + subtree finding chips — same chrome as graph v1's
          sidebar (.tree-info-section / .tree-count-chip), so the
          visual reads consistently across the two graph tabs. The

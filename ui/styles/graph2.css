@@ -573,6 +573,14 @@
   color: var(--muted);
   word-break: break-all;
 }
+.g2-tt-size {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 
 .g2-tt-badge {
   display: inline-block;
@@ -659,6 +667,20 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Source-byte size for the selected file. Sits above the chip
+   sections, mirroring the muted-mono treatment of the full path
+   above. Optional — only rendered when the analyzer dump carried
+   a `size` (see `formatBytes` and `n.size` in graph2/data.js). */
+.g2-sel-size {
+  padding: 5px 13px 7px;
+  border-bottom: 1px solid var(--graph-divider);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .g2-sel-dot {

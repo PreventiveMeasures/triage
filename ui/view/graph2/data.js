@@ -75,6 +75,10 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
       totalIssues,
       own,
       subtree,
+      // Source-byte size from the analyzer's tree blob; null when
+      // the dump didn't carry a `size` (older exports). Surfaces in
+      // the selection card, tooltip, and Files tab via formatBytes.
+      size: typeof treeData[file]?.size === 'number' ? treeData[file].size : null,
       severitySet: severitySets?.get(file) ?? null,
       colorSet: colorSets?.get(file) ?? null,
       findings: fileFindings?.get(file) ?? null,

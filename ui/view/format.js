@@ -29,6 +29,16 @@ export const NODE_MODULES_RE = /(^|\/)(?:node_modules|dependencies)\//
 
 export function isModule(file) { return NODE_MODULES_RE.test(file) }
 
+// File size formatter — bytes with thousand-separators and a `B`
+// suffix (`12,345 B`). Used by the file table/list and the graph's
+// selection card / tooltip when treeData entries carry a `size`.
+// Returns null for missing values so callers can suppress the chip
+// rather than render a placeholder.
+export function formatBytes(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return null
+  return `${n.toLocaleString()} B`
+}
+
 // Strip the `<deps-dir>/<pkg>/` prefix so the path is rooted at the
 // package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
 // `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
