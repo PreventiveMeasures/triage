@@ -1,6 +1,6 @@
 import { html, render as litRender, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS } from './file-display.js'
+import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
 import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
@@ -8,7 +8,7 @@ import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './gr
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
-import { findingsForFileHash } from '../../client/bundle-finding-index.js'
+import { findingsForFileHash, reportsForFinding } from '../../client/bundle-finding-index.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -1151,6 +1151,28 @@ function renderBundleSlide(entry) {
   </div>`
 }
 
+// Per-issue list of OPFS reports the finding showed up in. Up to
+// two chips render with the brand sticker + display name (mirrors
+// the workspace `.report-chip` from render-finding.js); a third+
+// report collapses into a trailing ", and more…" hint so the row
+// stays readable when a finding is shared across many reports.
+// Each chip is clickable — the data attribute hands the report
+// name to events.js, which calls switchToFile to navigate.
+function bundleIssueReportsTemplate(finding) {
+  if (!finding?.fileHash) return nothing
+  const reports = reportsForFinding(finding.fileHash, finding)
+  if (reports.length === 0) return nothing
+  const visible = reports.slice(0, 2)
+  const extra = reports.length - visible.length
+  return html`<div class="bundle-issue-reports">
+    ${visible.map((name) => {
+      const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+      return html`<button type="button" class="report-chip" title=${name} data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
+    })}
+    ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}
+  </div>`
+}
+
 // Issues tab — flat list of findings matched to the open bundle's
 // files via SHA-512 fileHash equality. Sorted by severity (most
 // severe first), tie-breaking by file path. Until the async hash
@@ -1196,7 +1218,10 @@ function renderBundleIssuesList(details) {
         const sev = finding.severity
         return html`<li>
           <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
-          <span class="bundle-issue-file" title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</span>
+          <div class="bundle-issue-file-cell">
+            <span class="bundle-issue-file" title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</span>
+            ${bundleIssueReportsTemplate(finding)}
+          </div>
           <span class="bundle-issue-desc">${finding.description ?? ''}</span>
         </li>`
       })}

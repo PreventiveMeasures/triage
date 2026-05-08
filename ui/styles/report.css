@@ -465,6 +465,12 @@
     &.sev-bug           { background: var(--bug); }
     &.sev-informational { background: var(--info); }
   }
+  & .bundle-issue-file-cell {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    min-width: 0;
+  }
   & .bundle-issue-file {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--text);
@@ -472,6 +478,42 @@
   }
   & .bundle-issue-line {
     color: var(--muted);
+  }
+  /* Report chip row under the bundle issue's file name. Mirrors
+     the workspace `.report-chip` (finding-row.css / finding-card.css)
+     so the visual style matches across views. The chips are
+     buttons here so they're keyboard-focusable; events.js's
+     [data-bundle-issue-report] delegate handles the click. */
+  & .bundle-issue-reports {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: .25rem .35rem;
+  }
+  & .bundle-issue-reports .report-chip {
+    display: inline-flex; align-items: center; gap: .3rem;
+    padding: 0 .35rem; height: 1.3rem;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: transparent;
+    color: var(--muted); font-size: .68rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    max-width: 12rem;
+    cursor: pointer;
+  }
+  & .bundle-issue-reports .report-chip:hover {
+    border-color: var(--accent, #2563eb);
+    color: var(--text);
+  }
+  & .bundle-issue-reports .report-chip-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  & .bundle-issue-reports .file-icon { flex-shrink: 0; }
+  & .bundle-issue-reports .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+  & .bundle-issue-reports .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+  & .bundle-issue-reports .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+  & .bundle-issue-reports .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+  & .bundle-issue-reports-more {
+    color: var(--muted);
+    font-size: .68rem;
   }
   & .bundle-issue-desc {
     color: var(--muted);

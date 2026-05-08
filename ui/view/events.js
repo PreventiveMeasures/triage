@@ -39,6 +39,7 @@ function refreshActiveGraphTopPkgs() {
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
+import { switchToFile } from './ingest.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -124,6 +125,17 @@ report.addEventListener('click', (e) => {
     if (state.bundleDetailsTab === 'graph') cleanupGraph2()
     state.bundleDetailsTab = 'packages'
     render()
+    return
+  }
+  // Bundle Issues row — report chip click. Each chip carries the
+  // OPFS report name in its dataset; navigate to that report
+  // (switchToFile loads it into the findings tab and flips
+  // currentView away from bundles, which is the desired UX since
+  // the user is opting in to inspecting the report's findings).
+  const issueReport = e.target.closest('[data-bundle-issue-report]')
+  if (issueReport) {
+    const name = issueReport.dataset.bundleIssueReport
+    if (name) switchToFile(name)
     return
   }
   // Bundles list — row select. Opens the right-side details panel,

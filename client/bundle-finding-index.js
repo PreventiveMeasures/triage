@@ -47,6 +47,20 @@ export function findingsForFileHash(hash) {
   return byHash.get(hash)?.list ?? []
 }
 
+// Companion lookup: list of OPFS report names that contain a given
+// finding (deduped — a finding present in N reports returns all N
+// names). Keyed by the dedupe id under findingDedupeKey, so callers
+// pass a finding object and get back the reports its dedupe key
+// matched during indexing. Empty array when the finding wasn't
+// indexed (shouldn't happen for findings returned by
+// findingsForFileHash, but a defensive default keeps the UI safe).
+export function reportsForFinding(hash, finding) {
+  const bucket = byHash.get(hash)
+  if (!bucket) return []
+  const reports = bucket.reports.get(findingDedupeKey(finding))
+  return reports ? [...reports] : []
+}
+
 function extractFindings(data) {
   // DeepView-native dumps carry findings under `groups` (array of
   // Finding[]) or a flat `findings` array. Either shape works —
@@ -93,16 +107,30 @@ async function indexOne(name) {
     for (const f of findings) {
       let bucket = byHash.get(f.fileHash)
       if (!bucket) {
-        bucket = { keys: new Set(), list: [] }
+        bucket = { keys: new Set(), list: [], reports: new Map() }
         byHash.set(f.fileHash, bucket)
       }
       // Dedupe: the same finding can land here multiple times when
       // the user has both the original report AND a workspace
       // export covering it (or two analyzer runs producing the
       // same id). The bundle Issues tab should still list each
-      // finding once.
+      // finding once — but we DO track every report it came from
+      // so the Issues tab can list "found in: report-a, report-b".
       const key = findingDedupeKey(f)
-      if (bucket.keys.has(key)) continue
+      let reportSet = bucket.reports.get(key)
+      if (!reportSet) {
+        reportSet = new Set()
+        bucket.reports.set(key, reportSet)
+      }
+      const wasNewReport = !reportSet.has(name)
+      reportSet.add(name)
+      if (bucket.keys.has(key)) {
+        // Same finding from a different report — not new content but
+        // we still want subscribers to repaint so the report list
+        // under the issue picks up the additional source.
+        if (wasNewReport) added = true
+        continue
+      }
       bucket.keys.add(key)
       bucket.list.push(f)
       added = true
