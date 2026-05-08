@@ -6,6 +6,7 @@ import { resetFilters } from './filters.js'
 import { saveTriage } from './triage.js'
 import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs } from './render.js'
 import { deleteBundle, listBundles, readBundle } from './storage.js'
+import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
@@ -95,7 +96,18 @@ report.addEventListener('click', (e) => {
             details = { integrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
           }
         } else {
-          details = { integrity, kind: 'stasis', size: bytes.byteLength }
+          // Stasis — brotli-decompress, then parse JSON. brotliDecompress
+          // dispatches to native DecompressionStream when available and
+          // falls through to the SW echo trick when it's not (see
+          // view/brotli-decompress.js); a thrown error surfaces in the
+          // panel's "Failed to parse" path.
+          try {
+            const out = await brotliDecompress(bytes)
+            const json = JSON.parse(new TextDecoder().decode(out))
+            details = { integrity, kind: 'stasis', size: bytes.byteLength, json }
+          } catch (err) {
+            details = { integrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
+          }
         }
       } catch (err) {
         details = { integrity, error: err.message, size: 0 }

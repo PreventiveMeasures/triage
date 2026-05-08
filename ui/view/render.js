@@ -778,10 +778,33 @@ function renderBundleDetails(entry, details) {
         })}
       </ul>` : nothing}`
   }
-  // Stasis (.stasis.code.br) — brotli-decoding in browser isn't
-  // universally available, so we don't try to peek inside; the
-  // metadata block above already answers "is this the right bundle".
-  return html`${meta}<div class="bundles-detail-stasis">Stasis bundle (compressed; contents not parsed in-browser).</div>`
+  if (details.kind === 'stasis' && details.json) {
+    const json = details.json
+    const sourceMap = json.sources ?? {}
+    const sourceNames = Object.keys(sourceMap).sort()
+    const importTypes = json.imports ? Object.keys(json.imports) : []
+    return html`${meta}
+      <dl class="bundles-detail-meta">
+        <dt>Sources</dt><dd>${sourceNames.length}</dd>
+        ${importTypes.length > 0 ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>` : nothing}
+      </dl>
+      ${sourceNames.length > 0 ? html`<ul class="bundles-sources-list">
+        ${sourceNames.map((src) => {
+          const content = sourceMap[src]
+          const size = typeof content === 'string'
+            ? new TextEncoder().encode(content).byteLength
+            : null
+          return html`<li>
+            <span class="bundles-source-path" title=${src}>${src}</span>
+            ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+          </li>`
+        })}
+      </ul>` : nothing}`
+  }
+  // Stasis without parsed JSON — likely a brotli decompression that
+  // failed silently (no error path filled in). Fall back to the
+  // metadata block above plus a generic "not parsed" line.
+  return html`${meta}<div class="bundles-detail-stasis">Bundle contents not parsed.</div>`
 }
 
 export function render() {

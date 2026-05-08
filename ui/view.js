@@ -20,6 +20,11 @@ import './view/severity-chips.js'
 import './view/triage-filter.js'
 import './view/view-mode-buttons.js'
 import './view/api.js'
+// Eager import — registers / unregisters the brotli SW based on
+// whether DecompressionStream('br') works natively. The module's
+// own side-effect block kicks the detect+register pass at boot;
+// nothing else needs to call into it just to trigger setup.
+import './view/brotli-decompress.js'
 
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
