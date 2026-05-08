@@ -1094,6 +1094,18 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 // renders the active sub-tab's content edge to edge.
 function renderBundleSlide(entry) {
   const tab = state.bundleDetailsTab
+  // Hide the in-slide Graph / Issues switcher when this bundle has
+  // zero matched findings — there's nothing to switch to. The
+  // Issues entry from the details panel is hidden by the same
+  // gate (see renderBundleSourcesPanel), so the slide is only
+  // ever reachable via Graph in that case; no switcher needed.
+  let hasIssues = false
+  if (state.bundleDetails?.fileHashes) {
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    for (const findings of matches.values()) {
+      if (findings.length > 0) { hasIssues = true; break }
+    }
+  }
   return html`<div class="bundles-view bundles-slide-view">
     <header class="bundles-slide-bar">
       <button
@@ -1107,7 +1119,7 @@ function renderBundleSlide(entry) {
         <div class="bundles-slide-name">${entry.name}</div>
         <div class="bundles-slide-integrity" title=${entry.integrity}>${entry.integrity}</div>
       </div>
-      <div class="bundles-slide-tabs" role="tablist">
+      ${hasIssues ? html`<div class="bundles-slide-tabs" role="tablist">
         <button
           type="button"
           class=${`bundles-tab${tab === 'graph' ? ' active' : ''}`}
@@ -1122,7 +1134,7 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'issues')}
           role="tab"
         >Issues</button>
-      </div>
+      </div>` : nothing}
     </header>
     <div class="bundles-slide-body">
       ${tab === 'graph'
