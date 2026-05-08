@@ -14,7 +14,7 @@ import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { setCount, removeCount, analyzeContent } from './counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
-import { listWorkspaces } from './workspaces.js'
+import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -182,10 +182,19 @@ export async function switchToWorkspace(workspaceId) {
 
 // Remove the current file from OPFS and close the view. Doesn't
 // auto-switch to another — the user picks from the sidebar.
+//
+// Also strips the name from any workspace's `reports` array so the
+// workspaces JSON doesn't accumulate ghost references over time —
+// that's the canonical "prune at write time" point. Without this,
+// a deleted file would stay listed inside any workspace it had
+// been moved into; render skips ghosts but `workspace-export`
+// would otherwise log skip-warnings forever and the next workspace
+// import on another machine would re-resurrect the stale entry.
 export async function deleteCurrent() {
   if (!state.currentFile) return
   const name = state.currentFile
   await deleteFile(name)
+  setReportWorkspace(name, null)
   removeCount(name)
   saveRepoUrlFor(name, '')
   state.currentFile = null

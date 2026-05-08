@@ -4,6 +4,7 @@ import { toGroup } from './group.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
+import { setReportWorkspace } from './workspaces.js'
 
 // Workspace export — bundle the workspace's metadata, every report
 // belonging to it, the per-report repo URLs that the user has typed,
@@ -72,6 +73,14 @@ export async function exportWorkspace(workspace) {
       content = await readFile(name)
     } catch (err) {
       console.warn(`Workspace export: skipping ${name}: ${err.message}`)
+      // Defensive prune: stale references from before deleteCurrent
+      // started cleaning up workspaces (or from external OPFS
+      // tampering) live in the workspace JSON forever otherwise.
+      // Remove the ghost from any workspace that pins it so the
+      // next export is clean and the next workspace-import on
+      // another machine doesn't re-resurrect a name that points at
+      // nothing.
+      setReportWorkspace(name, null)
       continue
     }
     reports.push({ name, content })
