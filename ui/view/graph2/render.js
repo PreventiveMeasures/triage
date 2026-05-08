@@ -63,8 +63,25 @@ function renderTopBar(graph, extraTopRow) {
   const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
   const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
 
+  const trashBtn = showTrash ? html`<button
+    type="button"
+    class=${`g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}`}
+    id="g2-toggle-trash"
+    title=${trashTitle}
+    aria-pressed=${String(state.showDeleted)}
+  ><span>${trashLabel}</span></button>` : null
+
+  // When the topbar carries an extra row (Findings-tab embed), the
+  // trash button rides along on that row instead of the main one,
+  // tucked at the right edge alongside the view-mode chooser. Keeps
+  // the main row tight to its data-shaping controls (severity,
+  // path, All files, fullscreen).
   return html`<div class="graph2-topbar">
-    ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra">${extraTopRow}</div>` : null}
+    ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra">
+      ${extraTopRow}
+      <div class="g2-spacer"></div>
+      ${trashBtn}
+    </div>` : null}
     <div class="graph2-topbar-row graph2-topbar-row-main">
     ${hasAnyVisible ? html`<severity-chips
       counts=${JSON.stringify(issueCounts)}
@@ -100,13 +117,7 @@ function renderTopBar(graph, extraTopRow) {
       data-g2-show-all
       aria-pressed=${String(graph2.showAll)}
     ><span>All files</span><span class="g2-switch"></span></button>
-    ${showTrash ? html`<button
-      type="button"
-      class=${`g2-topbar-toggle g2-trash-btn${state.showDeleted ? ' on' : ''}`}
-      id="g2-toggle-trash"
-      title=${trashTitle}
-      aria-pressed=${String(state.showDeleted)}
-    ><span>${trashLabel}</span></button>` : null}
+    ${extraTopRow ? null : trashBtn}
     <div class="g2-spacer"></div>
     <!-- Fullscreen — toggles body.report-fullscreen. With the
          sidebar now spanning both grid rows, the topbar covers only

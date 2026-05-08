@@ -61,11 +61,6 @@
   min-height: 44px;
 }
 
-/* Divider between rows when the topbar carries more than one. */
-.graph2-topbar-row + .graph2-topbar-row {
-  border-top: 1px solid var(--graph-divider);
-}
-
 .graph2-topbar .g2-spacer { flex: 1; }
 
 .g2-icon-btn {
