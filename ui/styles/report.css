@@ -98,6 +98,29 @@
        custom properties (`--surface`, `--border`, `--text`, etc.)
        inherit through the shadow boundary so theme switching works
        without copying rules here. */
+
+    /* Files toggle — replaces the old Files (N) tab. Same on/off
+       shape as the toolbar's `.trash-btn`, scoped to the page
+       header where it sits next to the repo chip. Uses the same
+       chrome (surface bg, hover/active borders) so the two
+       on/off toggles in the page read consistently. Active state
+       uses `--accent` rather than `--critical` because Files
+       isn't a destructive view. */
+    & .files-toggle-btn {
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: .2rem .5rem;
+      font-size: .72rem; font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: border-color .12s, color .12s, background .12s;
+      &:hover { border-color: var(--accent); }
+      &.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: var(--surface-active);
+      }
+    }
   }
 }
 

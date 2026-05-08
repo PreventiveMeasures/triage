@@ -76,6 +76,11 @@ export const state = store({
   // a `tree` block with more than one file; switching files / loading
   // a tree-less report auto-falls back to 'findings' inside render().
   currentView: 'findings',
+  // Tracks the last non-`files` view so the page-header Files
+  // toggle (top-right of the header, next to the repo chip) can
+  // restore the user's prior view when toggled off — same
+  // on/off semantic the Trash button uses for state.showDeleted.
+  preFilesView: 'findings',
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

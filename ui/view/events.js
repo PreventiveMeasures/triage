@@ -46,6 +46,24 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Files toggle (page header, right of the repo chip). Replaces the
+  // old Files tab — flips state.currentView between 'files' and the
+  // user's prior non-files view, mirroring the on/off shape of the
+  // Trash button. Same canvas teardown rule as the tab path above
+  // since switching out of graph2 needs to drop its rAF / observers.
+  const filesToggle = e.target.closest('[data-action="toggle-files"]')
+  if (filesToggle) {
+    if (state.currentView === 'files') {
+      state.currentView = state.preFilesView ?? 'findings'
+    } else {
+      if (state.currentView === 'graph2') cleanupGraph2()
+      state.preFilesView = state.currentView
+      state.currentView = 'files'
+    }
+    document.body.classList.remove('report-fullscreen')
+    render()
+    return
+  }
   // Graph v2 — segmented controls (layout / edge mode), palette
   // swatches, severity rows, toggle rows, neighbor jumps, and the
   // jump-to-Findings / jump-to-Files buttons. All grouped here so

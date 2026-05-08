@@ -270,7 +270,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 // agrees on one (`Claude Security findings`, `Codex Security
 // findings`, `DeepSec findings`); otherwise it's `DeepView findings`,
 // matching the prior single-vs-mixed selection rule.
-function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo) {
+function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeFileCount) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
   // Workspace mode wins over the source-based title — the user
@@ -346,9 +346,26 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo) {
   const repoTpl = repoChipTemplate(repoInputUseful, knownRepo)
   const sep = html`<span class="sep" aria-hidden="true"></span>`
 
+  // Files toggle — replaces the top-of-page Files (N) tab. Sits
+  // right after the repo chip in the title row so it's visually
+  // tied to the report identity, and operates on/off like the
+  // Trash button: clicking flips state.currentView between 'files'
+  // and the previous (saved) view. Same `treeFileCount > 1` gate
+  // the old Files tab used; a single-file tree adds no value.
+  const filesActive = state.currentView === 'files'
+  const filesBtnTpl = (treeFileCount ?? 0) > 1
+    ? html`<button
+        type="button"
+        class=${`files-toggle-btn${filesActive ? ' active' : ''}`}
+        data-action="toggle-files"
+        title=${filesActive ? 'exit files view' : 'show files'}
+        aria-pressed=${String(filesActive)}
+      >${`Files (${treeFileCount})`}</button>`
+    : nothing
+
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${titleText}${fileChip}${repoTpl}</h1>
+      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}</h1>
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
@@ -734,17 +751,12 @@ export function render() {
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  // `headerTemplate` returns a Lit template — drop a slot in the
-  // string-built HTML, then `litRender` into it after the
-  // `report.innerHTML = html` flush at the bottom of this function.
-  const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo)
-  let htmlBuf = '<div id="header-slot"></div>'
-
-  // Top-level view switcher. Tree tab only appears for tree-bearing
-  // reports with >1 file — a single-file tree adds no navigation value.
-  // Both Tree (graph + sidebar) and Files (per-file cards) tabs share
-  // the same gate; switching files / loading a tree-less report falls
-  // back to 'findings' so the user doesn't end up on a hidden tab.
+  // Top-level view switcher. Tabs only appear for tree-bearing
+  // reports with >1 file — a single-file tree adds no navigation
+  // value. The Files view is reached via the page-header toggle
+  // button (rendered in headerTemplate) instead of a tab; same gate
+  // applies. Switching to a tree-less report auto-falls back to
+  // 'findings' so the user doesn't end up on a hidden view.
   const treeData = state.reports[0]?.tree
   const treeFileCount = treeData ? Object.keys(treeData).length : 0
   const showTreeTab = treeFileCount > 1
@@ -757,11 +769,17 @@ export function render() {
   // (workspace switch, report unload), fall back to the default
   // table layout so a stale selection can't render an empty body.
   if (!showTreeTab && state.viewMode === 'graph') state.viewMode = 'table'
+
+  // `headerTemplate` returns a Lit template — drop a slot in the
+  // string-built HTML, then `litRender` into it after the
+  // `report.innerHTML = html` flush at the bottom of this function.
+  const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo, treeFileCount)
+  let htmlBuf = '<div id="header-slot"></div>'
+
   if (showTreeTab) {
     htmlBuf += '<div class="report-tabs">'
     htmlBuf += `<button type="button" class="report-tab${state.currentView === 'findings' ? ' active' : ''}" data-view="findings">Findings</button>`
     htmlBuf += `<button type="button" class="report-tab${state.currentView === 'graph2' ? ' active' : ''}" data-view="graph2">Graph</button>`
-    htmlBuf += `<button type="button" class="report-tab${state.currentView === 'files' ? ' active' : ''}" data-view="files">Files (${treeFileCount})</button>`
     htmlBuf += '</div>'
   }
 
