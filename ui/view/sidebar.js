@@ -11,12 +11,18 @@ import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from './triage-sync.js'
 
-// Hard-coded localhost endpoint until a settings UI exists. Click
-// on the status button toggles between "off" (no URL) and this
-// URL; whatever the user types via DeepView.triageSync.setServerUrl
-// in the console takes precedence and is preserved across toggles
-// only if the toggle stays "off".
-const DEFAULT_SYNC_URL = 'ws://127.0.0.1:8765'
+// Default sync endpoint used when the user toggles the sidebar
+// status button on. Only populated for pages served from
+// `127.0.0.1` — production origins keep this empty so the button
+// can't accidentally point at a localhost server that isn't
+// reachable from there. A user who wants to point a non-localhost
+// page at some other server can still call
+// `DeepView.triageSync.setServerUrl('wss://…')` from the console;
+// the `null`-default just means there's no toggle-on target by
+// default.
+const DEFAULT_SYNC_URL = (typeof location !== 'undefined' && location.hostname === '127.0.0.1')
+  ? 'ws://127.0.0.1:8765'
+  : ''
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
 // the report's filename. We carry both this private mime AND
@@ -196,6 +202,12 @@ export async function renderSidebar() {
   const deleteBtn = document.getElementById('delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
 
+  // Sync button visibility tracks workspace state (non-empty
+  // workspaces) — re-evaluate on every sidebar render so adding
+  // the first report into a workspace, or emptying the last one,
+  // toggles it correctly without waiting for a sync-status event.
+  renderSyncStatus()
+
   // Lazy-fill counts for any pre-existing OPFS entries that don't
   // have one cached yet. Re-renders incrementally as each lands so
   // the user sees badges populate progressively rather than waiting
@@ -279,19 +291,41 @@ if (searchInput) {
 // dot + label; click toggles sync on or off (see the click delegate
 // above). Subscribes once at module load so the indicator follows
 // every reconnect / setServerUrl change without polling.
+//
+// Visibility is gated on (a) at least one workspace having a
+// non-empty `reports` array — sync is a workspace concept, no
+// point in showing it before any workspace actually carries
+// content — AND (b) a usable server URL existing, either because
+// the user previously configured one or because the page's origin
+// has a sensible default (only 127.0.0.1 today; see
+// `DEFAULT_SYNC_URL` above). When either condition fails the
+// button is hidden so it doesn't read as a broken affordance.
 const SYNC_LABELS = { off: 'Sync off', online: 'Online', offline: 'Offline' }
 const SYNC_TITLES = {
-  off: 'Sync off — click to enable (localhost)',
+  off: 'Sync off — click to enable',
   online: 'Online — click to disable sync',
   offline: 'Offline (reconnecting) — click to disable sync',
 }
+
+function syncButtonVisible() {
+  const usableUrl = triageSync.getServerUrl() || DEFAULT_SYNC_URL
+  if (!usableUrl) return false
+  return listWorkspaces().some((w) => w.reports.length > 0)
+}
+
 function renderSyncStatus(status) {
   const btn = document.getElementById('sync-status')
   if (!btn) return
-  btn.dataset.status = status
-  btn.title = SYNC_TITLES[status] ?? ''
+  if (!syncButtonVisible()) {
+    btn.hidden = true
+    return
+  }
+  btn.hidden = false
+  const s = status ?? triageSync.status
+  btn.dataset.status = s
+  btn.title = SYNC_TITLES[s] ?? ''
   const label = btn.querySelector('.sync-label')
-  if (label) label.textContent = SYNC_LABELS[status] ?? ''
+  if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
 renderSyncStatus(triageSync.status)
 triageSync.onStatusChange(renderSyncStatus)
