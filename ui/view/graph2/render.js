@@ -525,20 +525,30 @@ function renderPackageCard(graph, pkg) {
 function renderDistribution(graph) {
   const totalFiles = graph.nodes.length || 1
   const tab = graph2.topPkgsTab
-  // Aggregate own-issue counts per package. When the topbar's
-  // severity filter has 1+ tiers selected, count only those
-  // tiers — same scope the canvas highlights — so the Issues
-  // tab here reflects what the user is currently looking at.
-  // Empty selection = count every tier (default).
+  // Aggregate own-issue counts per package. The topbar's severity
+  // and triage filters narrow what's counted — empty filters = full
+  // count, otherwise count only findings whose severity AND color
+  // both pass their respective filter (intersection across axes,
+  // matching what the canvas dim predicate highlights). Per-finding
+  // {severity, color} pairs are stamped on each node by
+  // buildGraph2Data; without them an empty `n.findings` falls back
+  // to `n.totalIssues` (which equals the unfiltered count).
   const sevFilter = graph2.selectedSeverities
-  const useFilter = sevFilter.size > 0
+  const colorFilter = graph2.selectedColors
+  const useSev = sevFilter.size > 0
+  const useColor = colorFilter.size > 0
+  const useFilter = useSev || useColor
   const issueByPkg = new Map()
   let totalIssues = 0
   for (const n of graph.nodes) {
     let count
     if (useFilter) {
       count = 0
-      if (n.own) for (const sev of sevFilter) count += n.own[sev] ?? 0
+      if (n.findings) for (const f of n.findings) {
+        if (useSev && !sevFilter.has(f.severity)) continue
+        if (useColor && !colorFilter.has(f.color)) continue
+        count++
+      }
     } else {
       count = n.totalIssues
     }

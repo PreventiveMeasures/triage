@@ -61,6 +61,14 @@
   flex: 1; min-height: 0;
 }
 
+/* Transparent in layout — render() emits #findings-graph-slot as a
+   wrapper for the litRender of the graph layout, but it sits
+   between .findings-content (flex column) and .graph2-layout
+   (flex: 1) and breaks the flex chain. `display: contents` drops
+   the slot's own box so .graph2-layout becomes a layout-child of
+   .findings-content directly, picking up flex: 1 cleanly. */
+.findings-content.with-graph #findings-graph-slot { display: contents; }
+
 .findings-content.with-graph .graph2-layout {
   flex: 1; min-height: 0;
   border-radius: 6px;

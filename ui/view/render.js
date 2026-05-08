@@ -57,12 +57,22 @@ export function buildGraph2Data() {
   // would have been displayed by the table".
   const severitySets = new Map()
   const colorSets = new Map()
+  // Per-finding `{severity, color}` pairs, stamped on each node so
+  // the Packages → Issues distribution can count findings filtered
+  // by BOTH severity and color simultaneously (a count derived from
+  // per-severity totals alone can't intersect with the color
+  // filter). Sets above stay separate for the canvas dim predicate
+  // and the topbar chip counts where set membership is enough.
+  const fileFindings = new Map()
   for (const g of visibleGroups) {
     for (const f of g) {
       if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
       severitySets.get(f.file).add(f.severity)
+      const color = state.markers.get(tabKey(f)) ?? 'none'
       if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
-      colorSets.get(f.file).add(state.markers.get(tabKey(f)) ?? 'none')
+      colorSets.get(f.file).add(color)
+      if (!fileFindings.has(f.file)) fileFindings.set(f.file, [])
+      fileFindings.get(f.file).push({ severity: f.severity, color })
     }
   }
   // Package-focus mode narrows to files in the focused package.
@@ -88,7 +98,7 @@ export function buildGraph2Data() {
       : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   }
   return {
-    graph: buildGraph(treeData, files, findingCounts, transitiveCounts, severitySets, colorSets),
+    graph: buildGraph(treeData, files, findingCounts, transitiveCounts, severitySets, colorSets, fileFindings),
     findingCounts,
   }
 }

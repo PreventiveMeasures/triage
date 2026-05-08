@@ -30,7 +30,15 @@ export function topIssueOf(counts) {
 // counts so the graph mirrors the findings-tab filter semantics
 // (any finding's severity / color counts, not just the file's
 // top-severity tier). Either may be missing for a clean file.
-export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets) {
+//
+// `fileFindings` (Map<file, Array<{severity, color}>>): per-finding
+// {severity, color} pairs stamped on each node so callers (the
+// Packages → Issues distribution) can count findings filtered by
+// BOTH filters at once — set-based counts can't intersect across
+// axes since a file with high+blue and low+red findings has BOTH
+// severities in its set and BOTH colors in its set, but only some
+// findings match a "high AND blue" filter.
+export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings) {
   const fileSet = new Set(files)
   const importsOf = new Map()
   const importedBy = new Map()
@@ -69,6 +77,7 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
       subtree,
       severitySet: severitySets?.get(file) ?? null,
       colorSet: colorSets?.get(file) ?? null,
+      findings: fileFindings?.get(file) ?? null,
       isHub: false,
       label: file.split('/').pop() ?? file,
     }
