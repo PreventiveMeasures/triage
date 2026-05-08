@@ -345,6 +345,11 @@
   background: var(--surface); color: var(--text);
   padding: 1.1rem 1.25rem 1rem;
   max-width: 720px; width: min(94vw, 720px);
+  /* Center horizontally — UA stylesheets do this for showModal()
+     dialogs via `margin: auto`, but explicit margin-inline: auto
+     keeps the dialog centered regardless of browser-specific
+     defaults (some land it flush-left without it). */
+  margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
   &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
