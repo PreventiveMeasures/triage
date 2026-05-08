@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, configureDepsDir, formatBytes } from './format.js'
+import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
 import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -757,6 +757,14 @@ function renderBundleDetails(entry, details) {
     const json = details.json
     const sources = json.sources ?? []
     const contents = json.sourcesContent ?? []
+    // Collapse a shared directory prefix into a single "Prefix" row;
+    // each listed source then renders relative to it. Mirrors the
+    // analyzer's stripCommonPrefix (src/paths.js) — `node_modules/`
+    // and `@scope/` segments are preserved in the stripped paths so
+    // the package boundaries stay readable. `bareSrc` is the
+    // displayed path; `src` is the original (used for the title /
+    // hover tooltip).
+    const { prefix, stripped } = stripCommonPathPrefix(sources)
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Version</dt><dd>${String(json.version ?? '?')}</dd>
@@ -764,15 +772,17 @@ function renderBundleDetails(entry, details) {
         ${json.sourceRoot ? html`<dt>Source root</dt><dd class="mono">${json.sourceRoot}</dd>` : nothing}
         ${json.names ? html`<dt>Names</dt><dd>${json.names.length}</dd>` : nothing}
         <dt>Sources</dt><dd>${sources.length}</dd>
+        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
       </dl>
       ${sources.length > 0 ? html`<ul class="bundles-sources-list">
-        ${sources.map((src, i) => {
+        ${stripped.map((bareSrc, i) => {
+          const src = sources[i]
           const content = contents[i]
           const size = typeof content === 'string'
             ? new TextEncoder().encode(content).byteLength
             : null
           return html`<li>
-            <span class="bundles-source-path" title=${src}>${src}</span>
+            <span class="bundles-source-path" title=${src}>${bareSrc}</span>
             ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
           </li>`
         })}
@@ -783,19 +793,22 @@ function renderBundleDetails(entry, details) {
     const sourceMap = json.sources ?? {}
     const sourceNames = Object.keys(sourceMap).sort()
     const importTypes = json.imports ? Object.keys(json.imports) : []
+    const { prefix, stripped } = stripCommonPathPrefix(sourceNames)
     return html`${meta}
       <dl class="bundles-detail-meta">
         <dt>Sources</dt><dd>${sourceNames.length}</dd>
         ${importTypes.length > 0 ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>` : nothing}
+        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
       </dl>
       ${sourceNames.length > 0 ? html`<ul class="bundles-sources-list">
-        ${sourceNames.map((src) => {
+        ${stripped.map((bareSrc, i) => {
+          const src = sourceNames[i]
           const content = sourceMap[src]
           const size = typeof content === 'string'
             ? new TextEncoder().encode(content).byteLength
             : null
           return html`<li>
-            <span class="bundles-source-path" title=${src}>${src}</span>
+            <span class="bundles-source-path" title=${src}>${bareSrc}</span>
             ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
           </li>`
         })}

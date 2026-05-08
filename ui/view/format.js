@@ -65,6 +65,40 @@ export function formatBytes(n) {
   return `${n.toLocaleString()} B`
 }
 
+// Strip the longest common DIRECTORY prefix shared by every path
+// in `paths`. Mirrors `stripCommonPrefix` in src/paths.js so the
+// UI matches what the analyzer-side normalisation produces:
+//
+//   * Segment-level (only whole directory segments are stripped).
+//   * Caps the prefix so it never ends in a `@scope` segment or
+//     a `node_modules` segment — those identify the package each
+//     listed file belongs to and should stay visible in the
+//     stripped output. So
+//     `node_modules/foo/{a,b}.js` strips to `node_modules/foo/{a,b}.js`
+//     (prefix '') rather than to `{a,b}.js`.
+//
+// Returns `{ prefix, stripped }`. `prefix` ends with `/` (or is
+// empty); `stripped` is a parallel array. With ≤1 path the result
+// is a no-op pass-through.
+export function stripCommonPathPrefix(paths) {
+  if (paths.length <= 1) return { prefix: '', stripped: [...paths] }
+  const split = paths.map((p) => p.split('/'))
+  const minLen = Math.min(...split.map((s) => s.length))
+  let prefixLen = 0
+  for (let i = 0; i < minLen - 1; i++) {
+    if (split.every((s) => s[i] === split[0][i])) prefixLen = i + 1
+    else break
+  }
+  // Back off the prefix when its last segment is part of the
+  // package's identity (scope `@org` or the `node_modules` marker).
+  if (prefixLen > 0 && split[0][prefixLen - 1].startsWith('@')) prefixLen--
+  if (prefixLen > 0 && split[0][prefixLen - 1] === 'node_modules') prefixLen--
+  if (prefixLen === 0) return { prefix: '', stripped: [...paths] }
+  const prefix = `${split[0].slice(0, prefixLen).join('/')}/`
+  const stripped = split.map((s) => s.slice(prefixLen).join('/'))
+  return { prefix, stripped }
+}
+
 // Strip the `<deps-dir>/<pkg>/` prefix so the path is rooted at the
 // package's repo root — `node_modules/lodash/lib/foo.js` → `lib/foo.js`,
 // `dependencies/@org/pkg/sub/x.js` → `sub/x.js`. Greedy `.*\/` runs to
