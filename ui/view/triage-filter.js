@@ -41,6 +41,11 @@ class TriageFilter extends LitElement {
   static properties = {
     counts:   { type: Object },
     selected: { type: Array },
+    // Identifies which state slot the host wires up — events.js
+    // routes 'graph' to graph2.selectedColors (surgical canvas
+    // redraw) vs the default findings-tab state.filterColors
+    // (full re-render). Mirrors severity-chips' kind attribute.
+    kind:     { type: String },
   }
 
   // CSS lives in styles/toolbar.css under the `.triage-filter`
@@ -53,6 +58,7 @@ class TriageFilter extends LitElement {
     super()
     this.counts = {}
     this.selected = []
+    this.kind = 'findings'
   }
 
   render() {
@@ -74,7 +80,7 @@ class TriageFilter extends LitElement {
 
   _toggle(color) {
     this.dispatchEvent(new CustomEvent('color-toggle', {
-      detail: { color },
+      detail: { color, kind: this.kind },
       bubbles: true,
       composed: true,
     }))

@@ -24,7 +24,13 @@ export function topIssueOf(counts) {
 // edges (intra/cross), adj (file → edge index list), ambassadors
 // (file paths flagged as hubs). Side-effect free; all positions
 // written into nodes by the caller's layout pass.
-export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
+// `severitySets` / `colorSets` (both Map<file, Set<string>>): the
+// distinct severities and triage-marker colors that appear on each
+// file's own findings. Used by the canvas dim-logic + topbar chip
+// counts so the graph mirrors the findings-tab filter semantics
+// (any finding's severity / color counts, not just the file's
+// top-severity tier). Either may be missing for a clean file.
+export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets) {
   const fileSet = new Set(files)
   const importsOf = new Map()
   const importedBy = new Map()
@@ -61,6 +67,8 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts) {
       totalIssues,
       own,
       subtree,
+      severitySet: severitySets?.get(file) ?? null,
+      colorSet: colorSets?.get(file) ?? null,
       isHub: false,
       label: file.split('/').pop() ?? file,
     }

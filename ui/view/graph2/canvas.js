@@ -199,17 +199,34 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   // Soft-dim predicate. Returns true when a node should be
   // rendered at reduced opacity (0.1) — triggered by any of:
-  //   - severity filter: 1+ severities selected and this
-  //     node's issue isn't in the set
+  //   - severity filter: 1+ severities selected and no finding on
+  //     this file matches one of them
+  //   - color filter: 1+ marker colors selected and no finding on
+  //     this file carries one of them (severity AND color combine
+  //     independently — same union-per-axis semantics the findings
+  //     tab uses, so the canvas highlight tracks the table's view)
   //   - package-solo: a package is solo'd and this node isn't
   //     in it
   //   - path/package filter: non-empty, and neither the file
   //     path nor the package name case-insensitively contains
   //     the filter text
-  // All three are independent and AND-combine — a node passes
-  // only when it satisfies every active filter.
+  // All filters AND-combine — a node passes only when it
+  // satisfies every active filter.
   function nodeIsDimmed(n) {
-    if (graph2.selectedSeverities.size > 0 && !(n.issue && graph2.selectedSeverities.has(n.issue))) return true
+    if (graph2.selectedSeverities.size > 0) {
+      const sevs = n.severitySet
+      if (!sevs) return true
+      let hit = false
+      for (const s of graph2.selectedSeverities) if (sevs.has(s)) { hit = true; break }
+      if (!hit) return true
+    }
+    if (graph2.selectedColors.size > 0) {
+      const cols = n.colorSet
+      if (!cols) return true
+      let hit = false
+      for (const c of graph2.selectedColors) if (cols.has(c)) { hit = true; break }
+      if (!hit) return true
+    }
     if (graph2.solo && n.pkg !== graph2.solo) return true
     const pathQ = graph2.pathFilter
     if (pathQ) {

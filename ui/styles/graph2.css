@@ -58,7 +58,12 @@
   align-items: center;
   gap: 10px;
   padding: 0 12px;
-  min-height: 44px;
+  /* Tuned so two stacked rows land at roughly the same inter-row
+     spacing as the findings toolbar's `.5rem` row gap (~8px between
+     content baselines). With ~30px chip content centered, 38px
+     leaves ~4px above + below per row. The standalone Graph tab
+     renders a single row and reads the same. */
+  min-height: 38px;
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }

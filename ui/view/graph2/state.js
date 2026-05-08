@@ -43,6 +43,13 @@ export const graph2 = {
   // into this single set (selecting all four = the old
   // issues-only behavior, automatically).
   selectedSeverities: new Set(),
+  // Mark-color highlight filter — same shape as the severity set.
+  // Empty = no filter. When non-empty, a node stays full-opacity
+  // only if at least one finding on that file carries one of the
+  // selected colors (with severity filter AND-combined when both
+  // are active). Mirrors the findings-tab triage filter so the
+  // canvas highlight matches what the table would show.
+  selectedColors: new Set(),
   // Path-substring filter. Empty = no filter. Non-empty =
   // case-insensitive substring match; non-matching nodes
   // dim to 0.1 (same soft-dim path as solo / severity).

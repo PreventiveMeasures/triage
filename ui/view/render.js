@@ -46,6 +46,23 @@ export function buildGraph2Data() {
     state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
+  // Per-file Sets that drive the topbar severity / triage chip
+  // counts AND the canvas dim predicate. Each finding contributes
+  // its severity tier and its current marker color (default 'none'
+  // when unmarked); a file is highlighted under a filter iff any
+  // of its findings matches — same union semantics the findings
+  // tab's filter uses, so the canvas highlight tracks "issues that
+  // would have been displayed by the table".
+  const severitySets = new Map()
+  const colorSets = new Map()
+  for (const g of visibleGroups) {
+    for (const f of g) {
+      if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
+      severitySets.get(f.file).add(f.severity)
+      if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
+      colorSets.get(f.file).add(state.markers.get(tabKey(f)) ?? 'none')
+    }
+  }
   // Package-focus mode narrows to files in the focused package.
   // graph2.showAll still gates the clean-file filter inside that
   // scope: when off, drop files that have neither own findings
@@ -68,7 +85,10 @@ export function buildGraph2Data() {
       ? allFiles
       : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   }
-  return { graph: buildGraph(treeData, files, findingCounts, transitiveCounts), findingCounts }
+  return {
+    graph: buildGraph(treeData, files, findingCounts, transitiveCounts, severitySets, colorSets),
+    findingCounts,
+  }
 }
 
 // Re-render only the right-panel selection card in the graph tab.

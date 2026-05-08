@@ -44,10 +44,31 @@ function renderTopBar(graph, extraTopRow) {
   // that severity. Empty selectedSeverities = no canvas dimming.
   // Lives at the left edge of the topbar (before All files)
   // since it's the most-frequently-used control.
+  // Each file contributes to EVERY severity tier present in its
+  // findings (same union semantic the findings-tab toolbar uses),
+  // not just its top-tier — so a file with high+low findings
+  // counts under both chips and toggling either one keeps the file
+  // highlighted. Mirrors `severitySet` on the node, populated by
+  // buildGraph2Data from the visible groups.
   const issueCounts = {}
   for (const sev of SEVERITIES) issueCounts[sev] = 0
-  for (const n of graph.nodes) if (n.issue && issueCounts[n.issue] !== undefined) issueCounts[n.issue]++
+  for (const n of graph.nodes) {
+    if (!n.severitySet) continue
+    for (const s of n.severitySet) if (issueCounts[s] !== undefined) issueCounts[s]++
+  }
   const hasAnyVisible = SEVERITIES.some((sev) => issueCounts[sev] > 0 || graph2.selectedSeverities.has(sev))
+
+  // Triage filter — same buttons / colors as the findings-tab pill
+  // (none / red / blue / green / gray). Counts are per-FILE: a file
+  // contributes to every color present on any of its findings,
+  // matching the union semantic the severity counts use.
+  const COLORS = ['none', 'red', 'blue', 'green', 'gray']
+  const colorCounts = { none: 0, red: 0, blue: 0, green: 0, gray: 0 }
+  for (const n of graph.nodes) {
+    if (!n.colorSet) continue
+    for (const c of n.colorSet) if (colorCounts[c] !== undefined) colorCounts[c]++
+  }
+  const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
   // Trash toggle — same role as the findings tab's trash button.
   // Visible when there are deleted findings to show OR when the
@@ -71,14 +92,26 @@ function renderTopBar(graph, extraTopRow) {
     aria-pressed=${String(state.showDeleted)}
   ><span>${trashLabel}</span></button>` : null
 
+  // "All files" controls the FILE SET, not just rendering —
+  // flipping it rebuilds the graph (different nodes, different
+  // edges, different layout). Defaults to off → only files with own
+  // or subtree findings are kept.
+  const allFilesBtn = html`<button
+    type="button"
+    class=${`g2-topbar-toggle${graph2.showAll ? ' on' : ''}`}
+    data-g2-show-all
+    aria-pressed=${String(graph2.showAll)}
+  ><span>All files</span><span class="g2-switch"></span></button>`
+
   // When the topbar carries an extra row (Findings-tab embed), the
-  // trash button rides along on that row instead of the main one,
-  // tucked at the right edge alongside the view-mode chooser. Keeps
-  // the main row tight to its data-shaping controls (severity,
-  // path, All files, fullscreen).
+  // view-mode chooser + All files + Trash sit on the new top row,
+  // and the main row keeps the data-shaping filters (severity /
+  // triage / path / fullscreen). Standalone Graph tab keeps
+  // everything on a single row exactly as before.
   return html`<div class="graph2-topbar">
     ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra">
       ${extraTopRow}
+      ${allFilesBtn}
       <div class="g2-spacer"></div>
       ${trashBtn}
     </div>` : null}
@@ -88,6 +121,11 @@ function renderTopBar(graph, extraTopRow) {
       selected=${JSON.stringify([...graph2.selectedSeverities])}
       kind="graph"
     ></severity-chips>` : null}
+    ${hasAnyColor ? html`<triage-filter
+      counts=${JSON.stringify(colorCounts)}
+      selected=${JSON.stringify([...graph2.selectedColors])}
+      kind="graph"
+    ></triage-filter>` : null}
     <!-- Path / package substring filter — case-insensitive match
          against each node's file path AND its package name. Same
          soft-dim treatment as the severity / solo filters: non-
@@ -107,16 +145,7 @@ function renderTopBar(graph, extraTopRow) {
         .value=${graph2.pathFilter}>
       <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
     </div>
-    <!-- "All files" controls the FILE SET, not just rendering —
-         flipping it rebuilds the graph (different nodes, different
-         edges, different layout). Defaults to off → only files
-         with own or subtree findings are kept. -->
-    <button
-      type="button"
-      class=${`g2-topbar-toggle${graph2.showAll ? ' on' : ''}`}
-      data-g2-show-all
-      aria-pressed=${String(graph2.showAll)}
-    ><span>All files</span><span class="g2-switch"></span></button>
+    ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : trashBtn}
     <div class="g2-spacer"></div>
     <!-- Fullscreen — toggles body.report-fullscreen. With the

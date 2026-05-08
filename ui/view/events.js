@@ -477,6 +477,19 @@ report.addEventListener('severity-toggle', (e) => {
 })
 report.addEventListener('color-toggle', (e) => {
   const col = e.detail.color
+  if (e.detail.kind === 'graph') {
+    // Graph topbar usage — flip `graph2.selectedColors` (the canvas
+    // highlight set, separate from the findings-tab filter) and
+    // trigger a surgical canvas redraw + Top-packages refresh.
+    // Mirrors the severity-toggle 'graph' branch above; a full
+    // render() would tear down the canvas's rAF loop / hover state.
+    if (graph2.selectedColors.has(col)) graph2.selectedColors.delete(col)
+    else graph2.selectedColors.add(col)
+    e.target.selected = [...graph2.selectedColors]
+    graph2.graphState?.requestDraw?.()
+    refreshGraph2TopPkgs()
+    return
+  }
   if (state.filterColors.has(col)) state.filterColors.delete(col)
   else state.filterColors.add(col)
   render()
