@@ -300,7 +300,14 @@ sidebar.addEventListener('click', (e) => {
   const fileEl = e.target.closest('.file-item[data-file]')
   if (fileEl) {
     const name = fileEl.dataset.file
-    if (name && name !== state.currentFile) switchToFile(name)
+    // Re-run switchToFile when the user clicks the SAME file but
+    // is currently on a different view (Bundles / Files header) —
+    // the click should drop them back into the findings view for
+    // that report. Without the currentView check we'd noop and
+    // strand the user on the bundles view.
+    if (name && (name !== state.currentFile || state.currentView !== 'findings')) {
+      switchToFile(name)
+    }
     return
   }
   if (e.target.closest('#delete-current')) {
