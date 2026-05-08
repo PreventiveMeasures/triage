@@ -16,8 +16,22 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 // MAC, future versions) from the same secret without collision.
 
 const KEY_INFO = 'deepview-triage-sync.v1.content-key'
-const TAG_INFO = 'deepview-triage-sync.v1.workspace-tag'
+const SIGN_INFO = 'deepview-triage-sync.v1.sign-key'
+const SIGN_DOMAIN = 'deepview-triage-sync.v1.save'
 const NONCE_LEN = 12
+
+// PKCS8 prefix for an Ed25519 private key seed (RFC 8410). The
+// 32-byte seed concatenated to the end produces a valid PKCS8 blob
+// that crypto.subtle.importKey('pkcs8', …, { name: 'Ed25519' }, …)
+// accepts. Letting WebCrypto own the keypair means the seed never
+// needs to leave the implementation as raw bytes after derivation.
+const ED25519_PKCS8_HEADER = new Uint8Array([
+  0x30, 0x2e,
+  0x02, 0x01, 0x00,
+  0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+  0x04, 0x22,
+  0x04, 0x20,
+])
 
 let webCryptoChaChaCheck = null
 function detectWebCryptoChaCha() {
@@ -72,19 +86,20 @@ export async function deriveSessionKey(privateKeyBase64) {
   return new Uint8Array(bits)
 }
 
-// Derive an opaque server-facing identifier for the workspace.
-// Hides the workspaceId UUID from the relay server: clients with
-// the same private key + workspaceId converge on the same tag, but
-// the server can't reverse-engineer the underlying UUID from the
-// tag (without the private key it can't distinguish a tag from
-// random bytes). Domain-separated from the content key — the same
-// IKM passes through HKDF with a different `info`, so leaking the
-// tag tells you nothing about the encryption key and vice versa.
-// 128 bits is plenty for collision-resistance across a sane number
-// of workspaces; output is base64url so the tag is safe to use as
-// a URL path / WebSocket header value if the server protocol grows
-// to want that.
-export async function deriveWorkspaceTag(privateKeyBase64, workspaceId) {
+// Derive an Ed25519 signing keypair deterministically from the
+// workspace's private key + UUID. Two clients on the same
+// workspace get the same keypair, so each can sign messages the
+// others (and the server) will accept as authoritative. The seed
+// passes through HKDF-SHA-256 with a different `info` from the
+// content key, so leaking the signing seed reveals nothing about
+// the encryption key (and vice versa).
+//
+// The returned `privateKey` is a non-extractable WebCrypto
+// CryptoKey scoped to ['sign'] only. The 32-byte public key
+// material is also returned (raw + base64url) — the wire layer
+// uses it as the workspace's server-facing identifier (the
+// "workspaceTag" field is the public key).
+export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
   const secret = Uint8Array.fromBase64(privateKeyBase64)
   if (secret.length !== 32) {
     throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
@@ -96,17 +111,81 @@ export async function deriveWorkspaceTag(privateKeyBase64, workspaceId) {
     false,
     ['deriveBits'],
   )
-  const bits = await crypto.subtle.deriveBits(
+  const seedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
       hash: 'SHA-256',
       salt: new Uint8Array(),
-      info: new TextEncoder().encode(`${TAG_INFO}|${workspaceId}`),
+      info: new TextEncoder().encode(`${SIGN_INFO}|${workspaceId}`),
     },
     baseKey,
-    128,
+    256,
   )
-  return new Uint8Array(bits).toBase64({ alphabet: 'base64url', omitPadding: true })
+  const seed = new Uint8Array(seedBits)
+  // PKCS8 wrap so WebCrypto accepts the raw seed. Importable as
+  // extractable so we can pull the public key out via JWK; the
+  // signing key never gets re-exported as raw bytes from JS code
+  // — the JWK path only happens once at derivation time.
+  const pkcs8 = new Uint8Array(ED25519_PKCS8_HEADER.length + 32)
+  pkcs8.set(ED25519_PKCS8_HEADER, 0)
+  pkcs8.set(seed, ED25519_PKCS8_HEADER.length)
+  const privateKey = await crypto.subtle.importKey(
+    'pkcs8',
+    pkcs8,
+    { name: 'Ed25519' },
+    true,
+    ['sign'],
+  )
+  // JWK export gives us the raw 32-byte public key in `x`
+  // (base64url). Easier than re-implementing the curve maths to
+  // recover the pubkey from the seed.
+  const jwk = await crypto.subtle.exportKey('jwk', privateKey)
+  const publicKey = Uint8Array.fromBase64(jwk.x, { alphabet: 'base64url' })
+  const publicKeyB64 = publicKey.toBase64({ alphabet: 'base64url', omitPadding: true })
+  return { privateKey, publicKey, publicKeyB64 }
+}
+
+// Bytes the signature covers — kept identical between sender and
+// every receiver. Domain prefix + newline-joined fields. Newlines
+// can't appear in base64url or in the bare integer/empty
+// `base` field, so this is unambiguous without explicit
+// length-prefix framing.
+function canonicalSavePayload({ publicKeyB64, base, nonceB64, ciphertextB64 }) {
+  return new TextEncoder().encode([
+    SIGN_DOMAIN,
+    publicKeyB64,
+    base == null ? '' : String(base),
+    nonceB64,
+    ciphertextB64,
+  ].join('\n'))
+}
+
+export async function signSavePayload(privateKey, payload) {
+  const message = canonicalSavePayload(payload)
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
+  return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
+export async function verifySavePayload(publicKey, payload, signatureB64) {
+  let key
+  try {
+    key = await crypto.subtle.importKey(
+      'raw',
+      publicKey,
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    )
+  } catch {
+    return false
+  }
+  const sig = Uint8Array.fromBase64(signatureB64, { alphabet: 'base64url' })
+  const message = canonicalSavePayload(payload)
+  try {
+    return await crypto.subtle.verify({ name: 'Ed25519' }, key, sig, message)
+  } catch {
+    return false
+  }
 }
 
 function randomNonce() {

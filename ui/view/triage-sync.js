@@ -2,7 +2,15 @@ import { state } from './state.js'
 import { saveTriage } from './triage.js'
 import { render } from './render.js'
 import { listWorkspaces } from './workspaces.js'
-import { deriveSessionKey, deriveWorkspaceTag, buildAad, encryptJson, decryptJson } from './sync-crypto.js'
+import {
+  deriveSessionKey,
+  deriveSigningKeypair,
+  buildAad,
+  encryptJson,
+  decryptJson,
+  signSavePayload,
+  verifySavePayload,
+} from './sync-crypto.js'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
 // changesets. Disabled by default. `setServerUrl(url)` enables; the
@@ -30,16 +38,20 @@ import { deriveSessionKey, deriveWorkspaceTag, buildAad, encryptJson, decryptJso
 //
 // Wire shape
 // ----------
-//   client → server  workspace-save { workspaceTag, base, nonce, ciphertext }
+//   client → server  workspace-save     { workspaceTag, base,
+//                                          nonce, ciphertext, signature }
 //   server → client  workspace-save-ack { workspaceTag, base, id }
-//   server → client  workspace-state { workspaceTag, revisions:
-//                      [{ base, id, nonce, ciphertext }, ...] }
+//   server → client  workspace-state    { workspaceTag, revisions:
+//                                          [{ base, id, nonce,
+//                                             ciphertext, signature }, ...] }
 //
-// `workspaceTag` is an opaque, deterministic identifier derived from
-// the workspace's private key + UUID — see sync-crypto.js's
-// `deriveWorkspaceTag`. The server uses it to route messages between
-// peers but learns nothing about the underlying workspace UUID
-// (which doesn't leave the client).
+// `workspaceTag` is the base64url-encoded Ed25519 public key derived
+// from the workspace's private key + UUID — see sync-crypto.js's
+// `deriveSigningKeypair`. The server uses it to route messages and
+// to verify each save's `signature` before accepting it as a
+// revision. Receivers verify the same way. Holders of the workspace's
+// private key are the authorized writers; everyone else fails the
+// signature check.
 //
 // `workspace-save-ack` confirms that the client's pending save with
 // `base` was accepted as revision `id`. The client already holds the
@@ -197,9 +209,9 @@ function trySendSave() {
     session.pendingSave = true
     return
   }
-  if (!session.key) {
-    // Key derivation hasn't finished yet (or it failed). Mark the
-    // intent so when key arrives we send.
+  if (!session.key || !session.signingKey) {
+    // Key / keypair derivation hasn't finished yet (or it failed).
+    // Mark the intent so when keys arrive we send.
     session.pendingSave = true
     return
   }
@@ -215,10 +227,21 @@ function trySendSave() {
     try {
       const aad = buildAad(owner.workspaceTag, sentBase)
       const { nonce, ciphertext } = await encryptJson(owner.key, changeset, aad)
+      // Sign the (workspaceTag, base, nonce, ciphertext) tuple —
+      // the same canonical bytes any verifier (server or peer)
+      // will reconstruct from the wire fields. Holding the
+      // signature proves the sender derived the workspace's
+      // signing key, i.e. they know the workspace's private key.
+      const signature = await signSavePayload(owner.signingKey, {
+        publicKeyB64: owner.workspaceTag,
+        base: sentBase,
+        nonceB64: nonce,
+        ciphertextB64: ciphertext,
+      })
       // Session may have been closed (or replaced) during the
-      // await — drop the result if so. baseRevision may have
-      // moved if a chain landed during encryption; in that case
-      // the ciphertext is bound to a stale base, so requeue.
+      // await chain — drop the result if so. baseRevision may
+      // have moved if a chain landed during encryption; in that
+      // case the ciphertext is bound to a stale base, so requeue.
       if (session !== owner) return
       if (session.baseRevision !== sentBase) {
         session.pendingSave = true
@@ -232,9 +255,10 @@ function trySendSave() {
         base: sentBase,
         nonce,
         ciphertext,
+        signature,
       })
     } catch (err) {
-      console.warn('Triage sync: encrypt failed:', err)
+      console.warn('Triage sync: encrypt/sign failed:', err)
     } finally {
       if (session === owner) {
         session.encrypting = false
@@ -250,15 +274,23 @@ function trySendSave() {
 }
 
 // Apply a chain of revisions (each `{ base, id, nonce,
-// ciphertext }`) to baseState. Verifies continuity — every
-// revision's `base` must equal the current baseRevision before its
-// changeset applies, so out-of-order or gappy chains don't silently
-// corrupt state. Decrypts each revision's ciphertext along the way
-// using the AAD derived from the (workspaceTag, base) pair the
-// sender bound it to. Returns true on success. On failure
-// (continuity break or decrypt error) baseState is left untouched
-// from the failure point onward; the caller resyncs by clearing
-// baseRevision so the next save resends the full state.
+// ciphertext, signature }`) to baseState. Three checks per
+// revision:
+//   1. continuity — `base` must equal the current baseRevision so
+//      out-of-order or gappy chains don't silently corrupt state.
+//      A break here triggers a resync (clear baseRevision; next
+//      save resends the full state).
+//   2. signature — the Ed25519 sig must verify against the
+//      session's public key (= workspaceTag). A revision with a
+//      bad sig is dropped and skipped; baseState stays where it
+//      is for the next revision in the chain.
+//   3. decrypt — AEAD tag check on the ciphertext using AAD
+//      derived from (workspaceTag, base). A decrypt failure is
+//      similarly skipped, not fatal.
+// Skipping malformed individual revisions keeps a single bad
+// message from poisoning every reconnecting client; only an
+// explicit continuity break (which signature-verified attackers
+// can't cause) can request a full resync.
 async function applyChainToBase(revisions) {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
@@ -274,15 +306,40 @@ async function applyChainToBase(revisions) {
       session.baseState = {}
       return false
     }
+    // Signature first — confirms the revision came from someone
+    // holding the workspace's signing key. A failed signature is a
+    // forgery / corruption; skip the bad revision and keep the
+    // previous baseState intact (the malicious / broken entry
+    // doesn't get to decide our future). Continuity for subsequent
+    // revisions still has to hold.
+    if (!rev.signature || !rev.nonce || !rev.ciphertext) {
+      console.warn('Triage sync: revision missing signature/nonce/ciphertext; skipping')
+      session.baseRevision = rev.id
+      continue
+    }
+    const ok2 = await verifySavePayload(
+      session.verifyingKey,
+      {
+        publicKeyB64: session.workspaceTag,
+        base: rev.base,
+        nonceB64: rev.nonce,
+        ciphertextB64: rev.ciphertext,
+      },
+      rev.signature,
+    )
+    if (!ok2) {
+      console.warn('Triage sync: revision signature did not verify; skipping')
+      session.baseRevision = rev.id
+      continue
+    }
     let changeset
     try {
       const aad = buildAad(session.workspaceTag, rev.base)
       changeset = await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)
     } catch (err) {
-      console.warn('Triage sync: decrypt failed; resync requested', err)
-      session.baseRevision = null
-      session.baseState = {}
-      return false
+      console.warn('Triage sync: decrypt failed; skipping', err)
+      session.baseRevision = rev.id
+      continue
     }
     session.baseState = applyChangeset(session.baseState, changeset ?? {})
     session.baseRevision = rev.id
@@ -486,14 +543,20 @@ export const triageSync = {
     if (!ws) return
     const ids = buildWorkspaceIds()
     const newSession = {
-      // `workspaceId` is the local UUID — used for AAD-equivalent
-      // contexts inside the app (state.currentWorkspace, etc.).
-      // `workspaceTag` is the opaque server-facing identifier
-      // derived from the workspace's private key; it's what
-      // travels on the wire and what the AEAD's AAD is bound to.
-      // The server never sees the UUID.
+      // `workspaceId` is the local UUID — used inside the app
+      // (state.currentWorkspace, etc.). `workspaceTag` is the
+      // base64url Ed25519 public key derived from the workspace's
+      // private key; it's the server-facing identifier AND the
+      // verification key for every save signature, so a server
+      // (or peer) can both route messages and authenticate that
+      // they came from a holder of the workspace's secret.
+      // `signingKey` is the matching CryptoKey with sign
+      // capability, locked inside WebCrypto — never leaves the
+      // module.
       workspaceId,
       workspaceTag: null,
+      signingKey: null,
+      verifyingKey: null,
       ids,
       // Until the server tells us its current revision, we have no
       // base. localState is whatever's in state.* right now;
@@ -508,19 +571,20 @@ export const triageSync = {
       encrypting: false,
     }
     session = newSession
-    // Derive the per-workspace content-encryption key + the
-    // server-facing tag in parallel — both come off the same
-    // private key via HKDF with different domain-separating info
-    // strings, so there's no work-saving from sequencing them.
-    // If the session gets replaced or closed before derivation
-    // finishes, the identity check drops the result.
+    // Derive content-encryption key + Ed25519 signing keypair in
+    // parallel. Both come off the same private key via HKDF with
+    // different domain-separating info strings. If the session
+    // gets replaced or closed before derivation finishes, the
+    // identity check drops the result.
     Promise.all([
       deriveSessionKey(ws.privateKey),
-      deriveWorkspaceTag(ws.privateKey, workspaceId),
-    ]).then(([key, tag]) => {
+      deriveSigningKeypair(ws.privateKey, workspaceId),
+    ]).then(([key, kp]) => {
       if (session !== newSession) return
       session.key = key
-      session.workspaceTag = tag
+      session.signingKey = kp.privateKey
+      session.verifyingKey = kp.publicKey
+      session.workspaceTag = kp.publicKeyB64
       // pendingSave was raised every time we hit trySendSave
       // before the key landed; flush now.
       if (socket?.readyState === WebSocket.OPEN) trySendSave()
