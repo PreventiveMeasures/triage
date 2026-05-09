@@ -69,9 +69,15 @@
   .page-head .file-chip svg,
   .page-head .meta-row .repo-chip svg { color: #000 !important; }
   .page-head .meta-row { color: #000 !important; }
-  .page-head .repo-edit-btn,
-  .page-head .repo-input,
-  .page-head .meta-row .repo-chip.empty { display: none !important; }
+  /* The repo-chip's pencil + input live inside its shadow root —
+     `repo-chip.css` carries the print rule that hides them. Here
+     we only drop the empty-state CTA chip (a pure on-screen
+     affordance) and the workspace severity bar (proportional
+     palette of severity colors that prints as muddy noise on
+     paper; `display: none` rather than `visibility: hidden` so
+     the row reflows without a phantom 200×8 gap). */
+  .page-head .meta-row .repo-chip.empty,
+  .page-head .meta-row .status-bar { display: none !important; }
   .page-head { break-after: avoid; page-break-after: avoid; }
 
   /* Per-finding card print rules (break-inside: avoid, multi-case

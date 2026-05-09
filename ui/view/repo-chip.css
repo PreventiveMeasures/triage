@@ -47,3 +47,17 @@ input {
   font-size: .72rem;
   outline: none;
 }
+
+/* Print: force the chip text + icon to black regardless of theme,
+   and drop the pencil edit affordance. The page-head's print rules
+   in `ui/styles/print.css` handle the host element (background /
+   border / padding strip) but stop at the shadow boundary —
+   `var(--text)` inherits across that boundary, so a dark-theme
+   user printing a report would otherwise get the chip in light-on-
+   white. The svg uses `var(--muted)` for the same reason. */
+@media print {
+  .chip { color: #000 !important; }
+  .chip svg { color: #000 !important; }
+  .edit-btn { display: none !important; }
+  input { display: none !important; }
+}
