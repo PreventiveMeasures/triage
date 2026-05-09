@@ -2822,7 +2822,14 @@ export function render() {
   // brings the same instances back into the document, where Lit's
   // diff happily reuses the existing children when items / selection
   // change.
-  if (persistentFindingTable && persistentFindingTable.isConnected) {
+  // Track whether we tore the table out of bodySlot — the slot's
+  // Lit part-cache still references the now-orphaned `.finding-table-slot`
+  // marker (replaceWith'd by the persistent table on the previous
+  // render). Lit can't safely diff against that stale tree, so the
+  // bodySlot recreate below uses this flag to drop the cache even
+  // when this render isn't going back into the table view.
+  const detachedPersistentTable = !!(persistentFindingTable && persistentFindingTable.isConnected)
+  if (detachedPersistentTable) {
     persistentFindingTable.remove()
   }
 
@@ -2870,11 +2877,17 @@ export function render() {
   // inside the bodyTemplate output (`slot.replaceWith(...)`),
   // which leaves Lit's part-cache for bodySlot pointing at
   // orphaned nodes — next render then diffs against a stale tree
-  // and can render the body empty. Recreating bodySlot in the
-  // table-view path resets that cache, while the list / grouped
-  // paths keep the original element so Lit can diff in place.
+  // and can render the body empty (or, when the previous render
+  // had a selection-details aside whose `<finding-card>` ChildPart
+  // committed primitive text, crashes inside `_commitText` because
+  // the cached `_$startNode.nextSibling` was ejected with the
+  // detached <finding-table>). Recreating bodySlot resets the
+  // cache; we do it whenever we're about to render the table view
+  // (pendingTableItems truthy) AND whenever we just detached a
+  // previously-mounted persistent table (cache is poisoned even if
+  // this render is going to nothing / list / grouped).
   let bodySlot = document.getElementById('findings-body-slot')
-  if (bodySlot && pendingTableItems) {
+  if (bodySlot && (pendingTableItems || detachedPersistentTable)) {
     const fresh = document.createElement('div')
     fresh.id = 'findings-body-slot'
     bodySlot.replaceWith(fresh)
