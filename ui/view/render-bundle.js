@@ -870,36 +870,61 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
 
 // Files-mode result pane — the directory tree, optionally
 // filtered to paths matching `query` (case-insensitive
-// substring on the original path). Empty query renders the
-// full tree. The filtered tree is rebuilt from scratch (rather
-// than hiding nodes) so the auto-open `containsCurrent` logic
-// in renderBundleSourceTree falls out naturally on hits.
-function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex) {
+// substring on the prefix-stripped path the user actually sees
+// in the rail). Empty query renders the full tree. The filtered
+// tree is rebuilt from scratch (rather than hiding nodes) so the
+// auto-open `containsCurrent` logic in renderBundleSourceTree
+// falls out naturally on hits.
+function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '') {
   if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
   const q = query.toLowerCase()
-  const matchingPaths = []
-  const collect = (n, prefixParts) => {
-    for (const [, child] of n.dirs) collect(child, prefixParts)
+  // Walk the (already-remapped) tree to collect every full path
+  // whose prefix-stripped form contains the query. Matching
+  // against the stripped form keeps the filter UX consistent
+  // with what the rail prefix label promises ("paths under here
+  // are RELATIVE to <prefix>").
+  const matches = []
+  const collect = (n) => {
+    for (const [, child] of n.dirs) collect(child)
     for (const [, full] of n.files) {
-      if (full.toLowerCase().includes(q)) matchingPaths.push(full)
+      const view = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full
+      if (view.toLowerCase().includes(q)) matches.push(full)
     }
   }
-  collect(tree, [])
-  if (matchingPaths.length === 0) {
+  collect(tree)
+  if (matches.length === 0) {
     return html`<div class="bundle-code-search-empty">No files match.</div>`
   }
-  // Build a fresh tree from the matching original paths so the
-  // sub-tree only carries the kept files; reuse the same render
-  // helper so visuals match the unfiltered case.
-  const filtered = buildBundleSourceTree(matchingPaths)
+  // Build a fresh tree from the STRIPPED forms of the matches so
+  // the visual hierarchy doesn't waste rows on a shared prefix
+  // that's already shown above the rail. Files at the leaves are
+  // remapped back to original paths so the click delegate's
+  // `data-bundle-view-source=${full}` resolves against
+  // `sources` (which keys by the original path).
+  const stripped = prefix
+    ? matches.map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p))
+    : matches
+  const strippedToOrig = new Map()
+  for (let i = 0; i < matches.length; i++) strippedToOrig.set(stripped[i], matches[i])
+  const filtered = buildBundleSourceTree(stripped)
+  const remap = (n) => {
+    const remappedFiles = new Map()
+    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
+    n.files = remappedFiles
+    for (const d of n.dirs.values()) remap(d)
+  }
+  remap(filtered)
   return renderBundleSourceTree(filtered, currentPath, 0, issueIndex)
 }
 
 // Code-mode result pane — flat list of files, each with up to
 // `MAX_HITS_PER_FILE` matching lines underneath. Each hit is a
-// click target that selects the file; line text is shown
-// truncated. Strict substring search; empty query shows a hint.
-function renderBundleCodeContentResults(sources, query, currentPath) {
+// click target that selects the file AND scrolls the source
+// viewer to the matching line (via `data-bundle-view-line`,
+// which the events.js delegate forwards to the existing
+// scroll-to-line path). Line text is shown truncated. Strict
+// substring search; empty query shows a hint.
+function renderBundleCodeContentResults(sources, query, currentPath, prefix = '') {
   if (!query) {
     return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
   }
@@ -928,19 +953,22 @@ function renderBundleCodeContentResults(sources, query, currentPath) {
   }
   return html`<div class="bundle-code-search-results">
     <div class="bundle-code-search-summary">${totalHits} ${totalHits === 1 ? 'hit' : 'hits'} in ${results.length} ${results.length === 1 ? 'file' : 'files'}</div>
-    ${results.map(({ path: p, hits }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
+    ${results.map(({ path: p, hits }) => {
+      const bare = prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
+      return html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
       <button
         type="button"
         class="bundle-code-search-file-name"
         data-bundle-view-source=${p}
         title=${p}
-      >${p}</button>
+      >${bare}</button>
       <ul class="bundle-code-search-hits">
         ${hits.map((h) => html`<li class="bundle-code-search-hit">
           <button
             type="button"
             class="bundle-code-search-hit-link"
             data-bundle-view-source=${p}
+            data-bundle-view-line=${h.ln}
             title=${`${p}:${h.ln}`}
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
@@ -948,7 +976,8 @@ function renderBundleCodeContentResults(sources, query, currentPath) {
           </button>
         </li>`)}
       </ul>
-    </div>`)}
+    </div>`
+    })}
   </div>`
 }
 
@@ -1122,9 +1151,9 @@ function renderBundleCodeView(details) {
       </div>
       <div class="bundle-code-rail-body">
         ${searchMode === 'files'
-          ? renderBundleCodeFilesPanel(tree, path, query, issueIndex)
+          ? renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)
           : searchMode === 'code'
-            ? renderBundleCodeContentResults(sources, query, path)
+            ? renderBundleCodeContentResults(sources, query, path, prefix)
             : renderBundleCodeIssuesResults(details, query, path, prefix)}
       </div>
     </aside>
