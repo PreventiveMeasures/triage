@@ -144,6 +144,17 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
     false,
     ['sign'],
   )
+  // Zero the seed bytes (and the pkcs8 envelope that copied them)
+  // so a heap-snapshot dump of this realm doesn't expose the
+  // workspace's signing material. The WebCrypto `privateKey` is
+  // already non-extractable; this closes the in-process disclosure
+  // window for the brief lifetime of the local Uint8Arrays.
+  // Defense-in-depth — JS doesn't expose a deterministic erase
+  // primitive (the GC may have already moved the bytes), but the
+  // explicit `fill(0)` guarantees the wrappers we hold no longer
+  // contain the seed. Audit round-8 L1.
+  seed.fill(0)
+  pkcs8.fill(0)
   return { privateKey, publicKey, publicKeyB64 }
 }
 

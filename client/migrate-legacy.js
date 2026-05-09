@@ -17,6 +17,7 @@ import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
 import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor } from './state.js'
+import { loadPromise as triageLoadPromise } from './triage.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -31,6 +32,15 @@ export function migrateLegacyFilenames() {
 }
 
 async function run() {
+  // Wait for triage to finish loading before mutating workspace
+  // membership. The migration's `setReportWorkspace(...)` calls fire
+  // `onReportMembershipChanged`, which the sync layer's hydration
+  // path treats as "newly attached" — `hydrateStateFromBaseState`
+  // would gap-fill from chain baseState BEFORE state.* loaded the
+  // user's persisted local triage, silently overriding it on the
+  // local-wins resolution. Awaiting `triageLoadPromise` here closes
+  // that boot-time race. Audit round-8 H4.
+  try { await triageLoadPromise } catch {}
   let names
   try { names = await listFiles() } catch { return }
   const nameSet = new Set(names)

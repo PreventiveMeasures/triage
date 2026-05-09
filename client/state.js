@@ -237,3 +237,15 @@ export const state = store({
   // selection, details panel hidden). Re-clicking the row clears it.
   filesSelectedFile: null,
 })
+
+// Cross-tab propagation: a sibling tab's `saveRepoUrlFor` fires a
+// `storage` event in this tab. When the active file's URL changed
+// upstream, sync `state.repoUrl` so the header chip refreshes
+// immediately rather than showing stale text until the next
+// switchToFile / reload. Audit round-8 H3.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== REPO_URLS_KEY) return
+    if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
+  })
+}

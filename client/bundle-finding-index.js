@@ -23,10 +23,15 @@
 // open view (Bundles' Issues tab, Packages page) can repaint
 // progressively as findings come in.
 
-import { listFiles, readFile } from './storage.js'
+import { listFiles, onFileMutated, readFile } from './storage.js'
 
 const byHash = new Map()
 const byPackage = new Map()
+// Reverse index: which (hash, key) and (pkg, key) pairs did each
+// report contribute? Lets `invalidateName` prune precisely on a
+// file delete / overwrite without re-scanning every report. Audit
+// round-8 H1.
+const contributionsByName = new Map()
 
 // Package extractor — matches `node_modules/<pkg>/...` and
 // `dependencies/<pkg>/...` (both conventions are common); whichever
@@ -159,6 +164,15 @@ function findingDedupeKey(f) {
   return `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
 }
 
+function rememberContribution(name, kind, ref) {
+  let entry = contributionsByName.get(name)
+  if (!entry) {
+    entry = { hash: [], pkg: [] }
+    contributionsByName.set(name, entry)
+  }
+  entry[kind].push(ref)
+}
+
 // Hash-keyed bucket update. Returns true when the bucket gained
 // new content (either a fresh dedupe key or a new origin report
 // against an existing key — both cases warrant a subscriber
@@ -176,6 +190,7 @@ function indexFindingByHash(f, key, name) {
   }
   const wasNewReport = !reportSet.has(name)
   reportSet.add(name)
+  if (wasNewReport) rememberContribution(name, 'hash', { hash: f.fileHash, key })
   if (bucket.keys.has(key)) return wasNewReport
   bucket.keys.add(key)
   bucket.list.push(f)
@@ -193,16 +208,87 @@ function indexFindingByPackage(f, key, name) {
   if (!pkg) return false
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
-    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set() }
+    // `keyReports` tracks which reports contributed each key so
+    // `invalidateName` can prune precisely. `reports` (Set) is the
+    // public summary; we keep both forms because callers iterate
+    // `reports` directly. Audit round-8 H1.
+    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), keyReports: new Map() }
     byPackage.set(pkg, pBucket)
   }
   pBucket.reports.add(name)
+  let krSet = pBucket.keyReports.get(key)
+  if (!krSet) {
+    krSet = new Set()
+    pBucket.keyReports.set(key, krSet)
+  }
+  const wasNewReport = !krSet.has(name)
+  krSet.add(name)
+  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file })
   if (pBucket.keys.has(key)) return false
   pBucket.keys.add(key)
   pBucket.findings.push(f)
   if (!pBucket.files.has(f.file)) pBucket.files.set(f.file, [])
   pBucket.files.get(f.file).push(f)
   return true
+}
+
+// Drop everything `name` contributed to byHash / byPackage and
+// clear it from `indexed` so the next `ensureBundleFindingsIndexed`
+// re-processes it (after `saveFile` overwrite) or skips it (after
+// `deleteFile`). Per-file invalidation walks the reverse-index
+// `contributionsByName`; no full re-scan. Audit round-8 H1.
+function invalidateName(name) {
+  const contrib = contributionsByName.get(name)
+  contributionsByName.delete(name)
+  indexed.delete(name)
+  if (!contrib) return false
+  let dirty = false
+  for (const { hash, key } of contrib.hash) {
+    const bucket = byHash.get(hash)
+    if (!bucket) continue
+    const reportSet = bucket.reports.get(key)
+    if (!reportSet) continue
+    if (reportSet.delete(name)) dirty = true
+    if (reportSet.size === 0) {
+      bucket.reports.delete(key)
+      bucket.keys.delete(key)
+      const idx = bucket.list.findIndex((f) => findingDedupeKey(f) === key)
+      if (idx >= 0) bucket.list.splice(idx, 1)
+    }
+    if (bucket.keys.size === 0) byHash.delete(hash)
+  }
+  for (const { pkg, key, file } of contrib.pkg) {
+    const pBucket = byPackage.get(pkg)
+    if (!pBucket) continue
+    const krSet = pBucket.keyReports.get(key)
+    if (!krSet) continue
+    if (krSet.delete(name)) dirty = true
+    if (krSet.size === 0) {
+      pBucket.keyReports.delete(key)
+      pBucket.keys.delete(key)
+      const idx = pBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
+      if (idx >= 0) pBucket.findings.splice(idx, 1)
+      const fileList = pBucket.files.get(file)
+      if (fileList) {
+        const fi = fileList.findIndex((f) => findingDedupeKey(f) === key)
+        if (fi >= 0) fileList.splice(fi, 1)
+        if (fileList.length === 0) pBucket.files.delete(file)
+      }
+    }
+    // Recompute the public `reports` set: any report still appearing
+    // in any keyReports entry stays. Cheaper to recompute on prune
+    // than to maintain a refcount.
+    if (pBucket.keyReports.size === 0) {
+      byPackage.delete(pkg)
+    } else {
+      const stillContributing = new Set()
+      for (const set of pBucket.keyReports.values()) {
+        for (const r of set) stillContributing.add(r)
+      }
+      pBucket.reports = stillContributing
+    }
+  }
+  return dirty
 }
 
 async function indexOne(name) {
@@ -248,3 +334,20 @@ export function ensureBundleFindingsIndexed() {
   })()
   return activeRun
 }
+
+// Subscribe to the storage layer's mutation events so file-level
+// changes prune (delete) or evict-then-re-index-on-next-walk (save)
+// without the caller having to invoke us. Audit round-8 H1.
+//
+// Every save (including overwrites) goes through `invalidateName` to
+// drop the OLD content's contributions; the next
+// `ensureBundleFindingsIndexed` walk re-processes the file because
+// it's no longer in the `indexed` Set. Deletes prune in place — no
+// re-index because the file is gone.
+//
+// `notify()` after a successful invalidate so subscribers (Bundles
+// Issues tab, Packages page) repaint immediately rather than
+// waiting for the next index walk.
+onFileMutated((name) => {
+  if (invalidateName(name)) notify()
+})

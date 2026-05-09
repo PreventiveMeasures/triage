@@ -90,33 +90,52 @@ export function analyzeContent(content) {
 // can re-render incrementally; files that error during read are
 // skipped — the sidebar will fall back to no badge.
 //
-// The `running` flag is a re-entrance guard: each `onUpdate` call
-// triggers a sidebar re-render, which in turn calls back into
-// `ensureCounts(names)`. Without the guard those nested calls would
-// fork their own sequential walks over the same `missing` list and
-// re-fetch every later entry concurrently. With it, the nested call
-// short-circuits and the outer loop stays the only fetcher; once it
-// finishes, the next renderSidebar finds the cache fully populated
-// and the function fast-paths to a no-op.
-let running = false
-export async function ensureCounts(names, onUpdate) {
-  if (running) return
-  running = true
-  try {
-    const c = load()
-    for (const n of names) {
-      if (c[n] !== undefined) continue
-      try {
-        const content = await readFile(n)
-        const { count, source } = analyzeContent(content)
-        c[n] = source ? { count, source } : { count }
-        persist()
-        if (onUpdate) onUpdate(n, count)
-      } catch {
-        // Leave missing — the sidebar omits the badge for unknown counts.
-      }
-    }
-  } finally {
-    running = false
+// Concurrency model: at most ONE active walk at a time. While a walk
+// is in progress, additional `ensureCounts` calls union their `names`
+// into the active run's pending set; when the active loop finishes
+// its current iteration it picks up any new names that were enqueued.
+// Previous shape used a re-entrance flag that simply DROPPED the
+// nested call — a workspace switch firing `ensureCounts(namesB)`
+// while an earlier sidebar render's `ensureCounts(namesA)` was still
+// running would silently skip every name only in B. Audit round-8 H2.
+let activeRun = null
+let activePending = null   // Set<name> queued during the current run
+let activeOnUpdate = null  // most-recent onUpdate wins (cheap renderer redraw)
+
+export function ensureCounts(names, onUpdate) {
+  if (activeRun) {
+    if (onUpdate) activeOnUpdate = onUpdate
+    for (const n of names) activePending.add(n)
+    return activeRun
   }
+  activePending = new Set(names)
+  activeOnUpdate = onUpdate ?? null
+  activeRun = (async () => {
+    try {
+      const c = load()
+      // Walk-and-drain: pull from `activePending` until empty, since
+      // new names can be enqueued mid-walk by re-entrant ensureCounts
+      // calls. Set iteration is order-preserving in JS, but we delete
+      // as we go so the next iteration sees only undone names.
+      while (activePending.size > 0) {
+        const n = activePending.values().next().value
+        activePending.delete(n)
+        if (c[n] !== undefined) continue
+        try {
+          const content = await readFile(n)
+          const { count, source } = analyzeContent(content)
+          c[n] = source ? { count, source } : { count }
+          persist()
+          if (activeOnUpdate) activeOnUpdate(n, count)
+        } catch {
+          // Leave missing — the sidebar omits the badge for unknown counts.
+        }
+      }
+    } finally {
+      activeRun = null
+      activePending = null
+      activeOnUpdate = null
+    }
+  })()
+  return activeRun
 }

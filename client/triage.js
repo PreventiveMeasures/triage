@@ -235,7 +235,13 @@ export async function reloadTriageFromStorage() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (e.key !== TRIAGE_KEY) return
+    // Listen for both keys: a sibling's normal saveTriage commits
+    // the compressed `TRIAGE_KEY`; a sibling crash mid-compress
+    // leaves only the uncompressed `TRIAGE_PENDING_KEY` written.
+    // `readTriageBlob` prefers pending → compressed, so triggering
+    // a reload on either event lets this tab pick up newer data
+    // without waiting for a page reload. Audit round-8 M3.
+    if (e.key !== TRIAGE_KEY && e.key !== TRIAGE_PENDING_KEY) return
     // Don't notify the sync layer — the data we just loaded came
     // from another tab that's already on the same wire under the
     // same workspaceTag, so an outbound save here would just push

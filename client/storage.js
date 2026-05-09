@@ -77,6 +77,24 @@ async function gunzipBytes(bytes) {
 const cache = new Map()
 const inFlight = new Map()
 
+// File-mutation listener registry. Consumers (e.g. the bundle-finding
+// index, which caches per-name parsed findings) subscribe so a
+// `saveFile` overwrite or a `deleteFile` invalidation can prune
+// dependent state without polling. Fired AFTER the storage write
+// commits — failures don't notify (subscribers wouldn't observe a
+// reverted state otherwise). One bad subscriber doesn't break the
+// chain. Audit round-8 H1.
+const fileChangeListeners = new Set()
+export function onFileMutated(cb) {
+  fileChangeListeners.add(cb)
+  return () => fileChangeListeners.delete(cb)
+}
+function notifyFileMutated(name, kind) {
+  for (const cb of fileChangeListeners) {
+    try { cb(name, kind) } catch (err) { console.warn('storage file-change listener:', err) }
+  }
+}
+
 export async function listFiles() {
   const dir = await getOpfsDir()
   if (dir) {
@@ -111,15 +129,30 @@ export async function saveFile(name, content) {
     const bytes = await gzipBytes(new TextEncoder().encode(content))
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
-    await writable.write(bytes)
-    await writable.close()
+    try {
+      await writable.write(bytes)
+      await writable.close()
+    } catch (err) {
+      // OPFS write failed mid-flight (closed handle, quota, etc.).
+      // The previous content was already truncated by createWritable's
+      // default `keepExistingData: false`, so leaving the in-memory
+      // cache alone would surface stale text on the next readFile.
+      // Drop the cache entry so the next read goes back to OPFS (and
+      // either succeeds with the partial / new content or surfaces
+      // the failure) instead of silently serving the OLD content.
+      // Audit M2 round-8.
+      cache.delete(name)
+      throw err
+    }
     cache.set(name, content)
+    notifyFileMutated(name, 'save')
     return
   }
   const compressed = await gzipString(content)
   try {
     localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
     cache.set(name, content)
+    notifyFileMutated(name, 'save')
   } catch (err) {
     // Most likely QuotaExceededError. Re-throw so the drop handler can
     // surface a useful message to the user instead of silently dropping.
@@ -174,9 +207,11 @@ export async function deleteFile(name) {
   const dir = await getOpfsDir()
   if (dir) {
     try { await dir.removeEntry(name) } catch {}
+    notifyFileMutated(name, 'delete')
     return
   }
   localStorage.removeItem(LS_REPORT_PREFIX + name)
+  notifyFileMutated(name, 'delete')
 }
 
 // Bundles — sourcemap (.map) and stasis (.stasis.code.br)

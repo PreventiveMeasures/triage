@@ -55,14 +55,34 @@ export function listWorkspaces() {
   return list
 }
 
-export function createWorkspace(name) {
-  const trimmed = (name ?? '').trim()
+// Cap so a runaway paste / scripted input doesn't blow the
+// `localStorage` quota with one giant name. 200 chars is comfortably
+// past any sensible display label and short enough to keep the JSON
+// blob small. Audit round-8 L3.
+const MAX_WORKSPACE_NAME_LEN = 200
+
+// `\0` is the separator inside `state.ignoredIds` keys
+// (`${reportName}\0${id}`); a workspace name is never used in that
+// position, but a control-char-bearing name still pollutes display
+// layers and cross-tab logs. Strip control chars (incl. NUL) and
+// cap length. Returns the cleaned string or null when nothing
+// usable remains.
+function sanitizeWorkspaceName(raw) {
+  const trimmed = (raw ?? '').trim()
   if (!trimmed) return null
+  // eslint-disable-next-line no-control-regex
+  const cleaned = trimmed.replace(/[\u0000-\u001F\u007F]/gu, "").slice(0, MAX_WORKSPACE_NAME_LEN)
+  return cleaned || null
+}
+
+export function createWorkspace(name) {
+  const cleaned = sanitizeWorkspaceName(name)
+  if (!cleaned) return null
   const keyBytes = new Uint8Array(32)
   crypto.getRandomValues(keyBytes)
   const workspace = {
     id: crypto.randomUUID(),
-    name: trimmed,
+    name: cleaned,
     privateKey: keyBytes.toBase64(),
     reports: [],
     createdAt: Date.now(),
@@ -147,12 +167,12 @@ export function deleteWorkspace(id) {
 // inline edit; otherwise the trimmed value replaces the existing
 // name and the helper returns true.
 export function renameWorkspace(id, name) {
-  const trimmed = (name ?? '').trim()
-  if (!trimmed) return false
+  const cleaned = sanitizeWorkspaceName(name)
+  if (!cleaned) return false
   const list = readRaw()
   const ws = list.find((w) => w.id === id)
-  if (!ws || ws.name === trimmed) return false
-  ws.name = trimmed
+  if (!ws || ws.name === cleaned) return false
+  ws.name = cleaned
   writeRaw(list)
   return true
 }
@@ -173,9 +193,17 @@ export function upsertWorkspace(workspace) {
   const list = readRaw()
   const idx = list.findIndex((w) => w.id === workspace.id)
   const previous = idx >= 0 ? list[idx] : null
+  // Sanitize the incoming name — `workspace` may come from an
+  // imported bundle whose author put control chars or unbounded
+  // length in `workspace.name`. Fall back to the previous name (on
+  // update) or 'Workspace' (on first insert) when sanitization
+  // empties the string. Audit round-8 L3.
+  const cleanedName = sanitizeWorkspaceName(workspace.name)
+    ?? previous?.name
+    ?? 'Workspace'
   const next = {
     id: workspace.id,
-    name: workspace.name,
+    name: cleanedName,
     privateKey: workspace.privateKey,
     reports: Array.isArray(workspace.reports) ? workspace.reports : [],
     createdAt: workspace.createdAt ?? Date.now(),

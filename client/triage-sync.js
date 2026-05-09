@@ -1710,6 +1710,26 @@ export const triageSync = {
     // serverUrl returns null (revision IDs don't carry across
     // servers).
     const restored = loadPersistedSession(workspaceId, serverUrl)
+    const restoredBaseState = restored?.baseState ?? {}
+    // Gap-fill state.* from the restored baseState for in-scope ids
+    // BEFORE computing localState. Without this, an id whose chain
+    // value was set by a peer (persisted in baseState) but whose
+    // local state.* never received the value (boot ordering, or the
+    // user simply never opened that finding) would snapshot as `{}`,
+    // and `effectiveLocalState`'s empty-snapshot branch would
+    // `delete out[id]` — the next save's changeset emits `{id:
+    // null}`, wiping the peer's triage from the chain. The
+    // membership listener already runs hydration when reports get
+    // attached mid-session, but the openSession path bypassed it
+    // for already-in-scope ids restored from persisted baseState.
+    // Audit round-8 M1.
+    //
+    // Hydrate is gap-only (local-wins on conflict). Conflicts at
+    // boot would be rare (state.* loaded from `deepview.triage`
+    // differing from the persisted chain baseState) and we leave
+    // them unresolved here — the conflict dialog drives only the
+    // eager attach path; boot keeps local values.
+    hydrateStateFromBaseState(restoredBaseState, ids)
     const newSession = {
       // `workspaceId` is the local UUID — used inside the app
       // (state.currentWorkspace, etc.). `workspaceTag` is the
@@ -1730,9 +1750,9 @@ export const triageSync = {
       // per-server persistence when present; otherwise null / empty
       // / 0 and the first save sends the full local snapshot.
       baseRevision: restored?.baseRevision ?? null,
-      baseState: restored?.baseState ?? {},
+      baseState: restoredBaseState,
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
-      localState: effectiveLocalState(restored?.baseState ?? {}, ids),
+      localState: effectiveLocalState(restoredBaseState, ids),
       pending: null,
       pendingSave: false,
       key: null,
