@@ -9,6 +9,7 @@ import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { findingsForFileHash, reportsForFinding } from '../../client/bundle-finding-index.js'
+import { highlight as prismHighlight, langForPath } from './prism-highlight.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -1197,21 +1198,51 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 // to slice the source per line — Lit interpolation auto-escapes
 // the content, no XSS risk. Click-outside / × button / Escape all
 // dismiss; the close handler clears state.bundleSourceFile.
-// Per-line rendering for the source viewer. Splits on \n so each
-// line gets its own gutter cell + code cell pair, no CSS counter
-// trickery needed and the line numbers stay aligned even when the
-// code wraps. Width of the gutter is set on the container via a
-// CSS custom property derived from the line count's digit width
-// so the gutter doesn't shift between small (3 digits) and large
-// (5+ digits) files.
-function renderBundleSourceLines(content) {
-  const lines = content.split('\n')
-  const digits = String(lines.length).length
+// Cache: integrity\0path → highlighted HTML string (or null when
+// prism doesn't support the language / failed). Persists for the
+// session so re-opens of the same file are instant.
+const _bundleHighlightCache = new Map()
+const _bundleHighlightPending = new Set()
+
+// Per-line rendering for the source viewer. Renders a sticky
+// gutter of line numbers next to a single `<pre>` holding the
+// full source. Two columns rather than per-line interleaving so
+// prism's highlighted output (where tokens may span newlines)
+// stays valid HTML — the pre takes the highlighted string as-is
+// via unsafeHTML, the gutter is built per-line from the line
+// count. line-height matches across both columns so the numbers
+// align with their lines.
+function renderBundleSourceLines(content, path, integrity) {
+  const lineCount = content.split('\n').length
+  const digits = String(lineCount).length
+  const lang = langForPath(path)
+  const cacheKey = `${integrity ?? ''}\0${path}`
+  // Trigger prism asynchronously on first sight of this file.
+  // The cache value is undefined initially; once the highlight
+  // resolves we set it (string for success, null for "no highlight
+  // available") and re-render so the unsafeHTML branch picks it up.
+  if (lang && !_bundleHighlightCache.has(cacheKey) && !_bundleHighlightPending.has(cacheKey)) {
+    _bundleHighlightPending.add(cacheKey)
+    prismHighlight(content, lang).then((html) => {
+      _bundleHighlightCache.set(cacheKey, html ?? null)
+      _bundleHighlightPending.delete(cacheKey)
+      // Cheap re-render — the rest of the bundles view rebuilds
+      // from the same render() call but Lit only patches what
+      // changed, so the cost is the highlighted string getting
+      // injected via unsafeHTML on the next pass.
+      if (state.bundleSourceFile === path) render()
+    })
+  }
+  const highlighted = _bundleHighlightCache.get(cacheKey)
+  // Build the gutter as a single text node — line breaks separate
+  // each number, line-height matches the pre. CSS handles the
+  // sticky-left positioning + right-aligned numbers.
+  const gutterText = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')
   return html`<div class="bundle-source-lines" style=${`--lineno-width:${digits}ch`}>
-    ${lines.map((line, i) => html`<div class="bundle-source-line">
-      <span class="bundle-source-lineno">${i + 1}</span>
-      <span class="bundle-source-linecode">${line}</span>
-    </div>`)}
+    <pre class="bundle-source-lineno-col" aria-hidden="true">${gutterText}</pre>
+    <pre class="bundle-source-code"><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
+      ? unsafeHTML(highlighted)
+      : content}</code></pre>
   </div>`
 }
 
@@ -1234,7 +1265,7 @@ function renderBundleSourceModal() {
       </header>
       <div class="bundle-source-body">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content)
+          ? renderBundleSourceLines(content, path, state.bundleDetails?.integrity)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
     </div>

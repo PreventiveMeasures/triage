@@ -853,13 +853,11 @@ body.report-fullscreen {
   padding: 1rem; color: var(--muted);
   font-size: .82rem;
 }
-/* Line-numbered source viewer. Each line is its own row; the
-   gutter is a fixed-width column driven by --lineno-width (set
-   inline on the container from the file's line count digits) so
-   alignment holds regardless of file size. White-space:pre on the
-   code cell preserves indentation and tabs without wrapping —
-   long lines extend horizontally and the body's overflow:auto
-   handles scroll. The gutter is sticky-left so it stays visible
+/* Line-numbered source viewer. Two-column layout: a sticky-left
+   gutter `<pre>` holding line numbers separated by newlines, and a
+   `<pre>` for the source code (plain or Prism-highlighted). The
+   shared font + line-height keep both columns vertically aligned;
+   the gutter's sticky-left position keeps the numbers visible
    while horizontally scrolling wide code. */
 .bundle-source-lines {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -868,28 +866,83 @@ body.report-fullscreen {
   color: var(--text);
   tab-size: 2;
   --lineno-width: 4ch;
-  /* Match the explicit min-width so wide code rows don't squish
-     the line column when the body scrolls. width:max-content lets
-     the rows stretch as needed. */
+  display: flex;
+  align-items: flex-start;
   min-width: max-content;
-  padding: .25rem 0;
 }
-.bundle-source-line {
-  display: flex; align-items: flex-start;
-}
-.bundle-source-lineno {
+.bundle-source-lineno-col {
   flex-shrink: 0;
+  margin: 0;
+  padding: .5rem .75rem;
   width: calc(var(--lineno-width) + 1.5rem);
-  padding: 0 .75rem 0 .5rem;
   text-align: right;
   color: var(--muted);
   user-select: none;
   position: sticky; left: 0;
   background: var(--bg);
   border-right: 1px solid var(--border);
-}
-.bundle-source-linecode {
-  flex: 1;
-  padding: 0 .75rem;
+  font: inherit;
   white-space: pre;
 }
+.bundle-source-code {
+  flex: 1;
+  margin: 0;
+  padding: .5rem .75rem;
+  white-space: pre;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  & code { font: inherit; background: transparent; padding: 0; }
+}
+
+/* Prism token theme — minimal palette tuned to the project's
+   dark surface. Prism stamps tokens as `<span class="token X Y">`
+   where X is the primary kind (keyword / string / etc) and Y is
+   an optional sub-modifier (we don't differentiate, the kind
+   alone gives enough signal). Mirrors the highlight-tier feel of
+   common dark themes (one-dark, dracula). */
+.bundle-source-code .token.comment,
+.bundle-source-code .token.prolog,
+.bundle-source-code .token.cdata {
+  color: #6b7c93; font-style: italic;
+}
+.bundle-source-code .token.punctuation { color: var(--muted); }
+.bundle-source-code .token.string,
+.bundle-source-code .token.attr-value,
+.bundle-source-code .token.char,
+.bundle-source-code .token.regex {
+  color: #98c379;
+}
+.bundle-source-code .token.number,
+.bundle-source-code .token.boolean,
+.bundle-source-code .token.constant,
+.bundle-source-code .token.symbol {
+  color: #d19a66;
+}
+.bundle-source-code .token.keyword,
+.bundle-source-code .token.builtin,
+.bundle-source-code .token.important,
+.bundle-source-code .token.atrule {
+  color: #c678dd;
+}
+.bundle-source-code .token.function,
+.bundle-source-code .token.class-name,
+.bundle-source-code .token.tag {
+  color: #61afef;
+}
+.bundle-source-code .token.operator,
+.bundle-source-code .token.entity,
+.bundle-source-code .token.url,
+.bundle-source-code .token.attr-name,
+.bundle-source-code .token.selector {
+  color: #56b6c2;
+}
+.bundle-source-code .token.variable,
+.bundle-source-code .token.property,
+.bundle-source-code .token.parameter {
+  color: #e06c75;
+}
+.bundle-source-code .token.deleted { color: #ef596f; }
+.bundle-source-code .token.inserted { color: #98c379; }
+.bundle-source-code .token.italic { font-style: italic; }
+.bundle-source-code .token.bold { font-weight: bold; }
