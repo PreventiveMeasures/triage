@@ -68,7 +68,7 @@ function setReports(findings, fileName = 'test.md') {
 
 function clearTriageState() {
   state.markers.clear()
-  state.deletedIds.clear()
+  state.triageState.clear()
   state.comments.clear()
   state.fixes.clear()
 }
@@ -1131,6 +1131,62 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
+  it('triage state transitions (fixed/invalid/deleted) round-trip through the chain', async () => {
+    // Regression for the entriesEqual gap left over from the
+    // Fixed/Invalid/Deleted bucket commit: snapshotEntry was
+    // updated to emit `entry.triage` and applyToReactiveState was
+    // updated to read it, but entriesEqual still compared the
+    // legacy `deleted` boolean — so `computeChangeset` saw two
+    // entries that differed only in `triage` as equal, the
+    // changeset went out empty, and triage transitions were
+    // silently never synced.
+    const wsId = await startSession(['finding-A'])
+    state.triageState.set('finding-A', 'fixed')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'fixed acked')
+    const baseAfterFixed = triageSync.sessionInfo(wsId).baseRevision
+
+    state.triageState.set('finding-A', 'invalid')
+    await saveTriage()
+    await waitFor(
+      () => triageSync.sessionInfo(wsId).baseRevision !== baseAfterFixed,
+      'invalid acked (transition synced)',
+    )
+
+    // Verify the chain on the server reflects the latest value.
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered
+      .filter((m) => m.type === 'workspace-state')
+      .flatMap((s) => s.revisions)
+    const key = await cryptoMod.deriveSessionKey(seed)
+    let cumulative = {}
+    for (const rev of revisions) {
+      const aad = cryptoMod.buildAad(tag, rev.base)
+      const changeset = await cryptoMod.decryptJson(key, rev.nonce, rev.ciphertext, aad)
+      for (const [id, entry] of Object.entries(changeset)) {
+        if (entry === null) delete cumulative[id]
+        else cumulative[id] = entry
+      }
+    }
+    assert.equal(cumulative['finding-A']?.triage, 'invalid', 'latest triage value reached the chain')
+    reader.close()
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────

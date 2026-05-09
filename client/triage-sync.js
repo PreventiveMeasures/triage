@@ -331,8 +331,16 @@ function effectiveLocalState(baseState, ids) {
 }
 
 function entriesEqual(a, b) {
+  // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'`
+  // or absent). Legacy `deleted: true` from older peers / stored
+  // chains is treated as 'deleted' for comparison purposes — the
+  // receive-side migrates on apply, but a local state still
+  // carrying the legacy boolean shouldn't false-equal a remote
+  // entry that already moved to the new field.
+  const triageA = a.triage ?? (a.deleted ? 'deleted' : '')
+  const triageB = b.triage ?? (b.deleted ? 'deleted' : '')
   return a.color === b.color
-    && Boolean(a.deleted) === Boolean(b.deleted)
+    && triageA === triageB
     && (a.comment ?? '') === (b.comment ?? '')
     && (a.fix ?? '') === (b.fix ?? '')
 }
