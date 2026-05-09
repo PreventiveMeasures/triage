@@ -57,9 +57,27 @@ export function createWorkspace(name) {
   return workspace
 }
 
+// Listeners notified after a workspace is removed via
+// `deleteWorkspace`. The triage-sync layer subscribes here so its
+// in-memory + persisted session for the deleted workspace tears
+// down immediately, instead of waiting for the next page-load
+// prune (`prunePersistedSessions`). Listener errors are swallowed
+// so one bad subscriber can't strand the rest.
+const deleteListeners = new Set()
+
+export function onWorkspaceDeleted(cb) {
+  deleteListeners.add(cb)
+  return () => deleteListeners.delete(cb)
+}
+
 export function deleteWorkspace(id) {
-  const list = readRaw().filter((w) => w.id !== id)
-  writeRaw(list)
+  const list = readRaw()
+  const next = list.filter((w) => w.id !== id)
+  if (next.length === list.length) return
+  writeRaw(next)
+  for (const cb of deleteListeners) {
+    try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
+  }
 }
 
 // Rename a workspace in place. Empty / whitespace-only names are

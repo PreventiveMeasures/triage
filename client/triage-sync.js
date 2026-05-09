@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
-import { listWorkspaces } from './workspaces.js'
+import { listWorkspaces, onWorkspaceDeleted } from './workspaces.js'
 import {
   buildAad,
   computeRevisionId,
@@ -447,6 +447,16 @@ function prunePersistedSessions() {
     }
   }
   if (changed) saveAllSessions(all)
+}
+
+// Drop the persisted-session entry for one workspace id (if any).
+// Used by the workspace-deleted listener so the live persistence
+// blob doesn't survive the deletion until the next page-load prune.
+function dropPersistedSession(workspaceId) {
+  const all = loadAllSessions()
+  if (!(workspaceId in all)) return
+  delete all[workspaceId]
+  saveAllSessions(all)
 }
 
 // Reflect `targetState` into the in-memory state.* containers,
@@ -1454,6 +1464,18 @@ try {
 // are loaded synchronously from localStorage so `listWorkspaces()`
 // is ready by now.
 prunePersistedSessions()
+
+// Live counterpart to the page-load prune above: the moment a
+// workspace is deleted via `deleteWorkspace`, drop its in-memory
+// session and its persisted-base entry. Without this the session
+// keeps trying to encrypt / sign saves for an id the rest of the
+// app considers gone, and the persistence blob carries the dead
+// base around until the next page load.
+onWorkspaceDeleted((workspaceId) => {
+  const removed = sessions.delete(workspaceId)
+  dropPersistedSession(workspaceId)
+  if (removed) emitStatusIfChanged()
+})
 
 // Discard the pre-content-addressed-id session blob. Its integer
 // baseRevisions don't match the new string-id chain check, so we

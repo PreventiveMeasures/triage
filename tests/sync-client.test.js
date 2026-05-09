@@ -1187,6 +1187,28 @@ describe('triage-sync client', () => {
     triageSync.closeSession(wsId)
     deleteWorkspace(wsId)
   })
+
+  it('deleteWorkspace tears down the live session and drops persisted base', async () => {
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    // Sanity: session is live and a persisted entry exists.
+    assert.notEqual(triageSync.sessionInfo(wsId), null)
+    const persistedBefore = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    assert.ok(persistedBefore[wsId], 'persisted session entry exists pre-delete')
+
+    // Workspace deletion goes through the listener wired up in
+    // triage-sync at module init: in-memory session is dropped AND
+    // the persisted-base entry is wiped, so the same id can't get
+    // reanimated from a stale chain on the next page load.
+    deleteWorkspace(wsId)
+
+    assert.equal(triageSync.sessionInfo(wsId), null, 'session removed in-memory')
+    const persistedAfter = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    assert.equal(persistedAfter[wsId], undefined, 'persisted session entry dropped')
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────
