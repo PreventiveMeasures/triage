@@ -26,6 +26,7 @@
 // `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
 // from this module.
 import { html, render as litRender, nothing } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
@@ -1280,7 +1281,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind }) {
       ${prefix ? html` <span class="mono">${prefix}</span>` : nothing}
     </div>
     <ul class="bundle-issues-list">
-      ${fileEntries.map(([file, findings]) => {
+      ${repeat(fileEntries, ([file]) => file, ([file, findings]) => {
         const bare = fileToBare.get(file) ?? file
         // Sort findings within a file by severity desc → line asc
         // so the most urgent surfaces first; line ordering helps
@@ -1301,7 +1302,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind }) {
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
-            ${sortedFindings.map((finding) => {
+            ${repeat(sortedFindings, (finding) => finding.id ?? `${file}\0${finding.line ?? ''}\0${finding.severity ?? ''}\0${finding.description ?? ''}`, (finding) => {
               // findingIdx is the position in the ORIGINAL per-file
               // findings array (the one findingsByFile returned);
               // the source viewer's bundleSourceFindingIdx points at

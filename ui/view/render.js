@@ -1,4 +1,5 @@
 import { html, render as litRender, nothing } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from '../../client/state.js'
@@ -662,7 +663,7 @@ function findingsBodyTemplate(filtered) {
     // For file sort, sort files alphabetically; otherwise preserve
     // first-appearance order.
     const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
-    return html`${fileKeys.map((file) => {
+    return html`${repeat(fileKeys, (file) => file, (file) => {
       const items = state.sortBy === 'file'
         ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line, 10) - parseInt(primaryTab(b).line, 10))
         : byFile.get(file)
@@ -678,7 +679,7 @@ function findingsBodyTemplate(filtered) {
           <span>${fileLink(file, probe?.repo?.github, probe?._repoFallback)}</span>
           <span class="count">${items.length}</span>
         </div>
-        <div class="file-body">${items.map((g) => findingCardPlaceholder(g))}</div>
+        <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g))}</div>
       </div>`
     })}`
   }
@@ -699,7 +700,7 @@ function findingsBodyTemplate(filtered) {
   // `.flat-group .finding .line-row`) so the same info doesn't
   // appear twice. Tab switches re-render, so the header tracks the
   // active tab automatically.
-  return html`${items.map((g) => {
+  return html`${repeat(items, (g) => findingCardGid(g), (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
     const meta = formatRunMeta(p)

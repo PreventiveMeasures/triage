@@ -1,4 +1,5 @@
 import { html } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { state } from '../../../client/state.js'
 import { graph2 } from './state.js'
@@ -665,7 +666,7 @@ function renderDistribution(graph, activeTab) {
        top-N cap that lived here previously is no longer needed. -->
   <div class="g2-dist-list">
     ${sorted.length === 0 ? html`<div class="g2-dist-empty">${emptyMsg}</div>` : null}
-    ${sorted.map((pkg) => {
+    ${repeat(sorted, (pkg) => pkg, (pkg) => {
       const c = pkgColor(pkg)
       const fileCnt = graph.pkgCount.get(pkg) ?? 0
       const issueCnt = issueByPkg.get(pkg) ?? 0
