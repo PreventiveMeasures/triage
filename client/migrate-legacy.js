@@ -42,8 +42,12 @@ async function run() {
     // sidebar will show it in the default bucket until the user
     // resolves the conflict by deleting one side.
     if (nameSet.has(target)) continue
+    // `content` is read inside the try (so a failed read short-circuits
+    // the rename) but ALSO referenced below in the count-cache carry-over
+    // path. Declare it outside so it survives the try block scope.
+    let content
     try {
-      const content = await readFile(name)
+      content = await readFile(name)
       await saveFile(target, content)
       await deleteFile(name)
     } catch (err) {

@@ -1,0 +1,349 @@
+// `client/bundle-finding-index.js` — OPFS-wide finding index. Uses
+// `client/storage.js` under the hood, which falls back to gzipped
+// localStorage when OPFS is unavailable (= the Node test
+// environment). That path doubles as a clean test substrate: we
+// seed reports via `saveFile`, then exercise the index.
+//
+// Coverage:
+//   - hash-keyed lookup (findingsForFileHash)
+//   - package-keyed view (getPackagesIndex)
+//   - reportsForFinding (cross-report attribution by dedupe key)
+//   - subscribeToBundleFindingIndex (notify on each report indexed)
+//   - dedupe key fallback (id vs content-based)
+//   - extractFindings shape variants (findings array, groups array,
+//     mixed single + grouped entries)
+//   - silent skip on non-JSON (markdown / CSV) files
+
+import assert from 'node:assert/strict'
+import { beforeEach, describe, it } from 'node:test'
+
+function createLocalStorage() {
+  const store = new Map()
+  return {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)) },
+    removeItem: (k) => { store.delete(k) },
+    clear: () => { store.clear() },
+    get length() { return store.size },
+    key: (i) => Array.from(store.keys())[i] ?? null,
+  }
+}
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = createLocalStorage()
+}
+
+const { saveFile } = await import('../client/storage.js')
+const {
+  ensureBundleFindingsIndexed,
+  findingsForFileHash,
+  getPackagesIndex,
+  reportsForFinding,
+  subscribeToBundleFindingIndex,
+} = await import('../client/bundle-finding-index.js')
+
+// Each test gets a unique report-name suffix so the in-memory storage
+// cache (which doesn't get cleared between tests) doesn't bleed
+// state. The index also tracks `indexed` (a module-level Set) — once
+// a name is processed it skips re-indexing. Unique names per test
+// avoid re-runs of identical content.
+let nameCounter = 0
+function uniqueName(stem) {
+  nameCounter += 1
+  return `${stem}-${Date.now()}-${nameCounter}.json`
+}
+
+async function seedReport(content) {
+  const name = uniqueName('rpt')
+  await saveFile(name, JSON.stringify(content))
+  return name
+}
+
+describe('bundle-finding-index — hash-keyed lookup', () => {
+  beforeEach(() => { /* in-memory state persists; test names are unique */ })
+
+  it('joins findings across reports by fileHash', async () => {
+    const hash = `H${Date.now()}-A`
+    await seedReport({
+      findings: [
+        { id: 'f1', severity: 'high', file: 'src/a.js', fileHash: hash, description: 'first' },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: 'f2', severity: 'low', file: 'src/a.js', fileHash: hash, description: 'second' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const list = findingsForFileHash(hash)
+    assert.equal(list.length, 2)
+    const ids = list.map((f) => f.id).sort()
+    assert.deepEqual(ids, ['f1', 'f2'])
+  })
+
+  it('dedupes findings with the same id across reports', async () => {
+    const hash = `H${Date.now()}-DEDUPE`
+    await seedReport({
+      findings: [
+        { id: 'shared', severity: 'high', file: 'x.js', fileHash: hash, description: 'first hit' },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: 'shared', severity: 'high', file: 'x.js', fileHash: hash, description: 'first hit' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const list = findingsForFileHash(hash)
+    assert.equal(list.length, 1, 'duplicate id collapses to one bucket entry')
+    assert.equal(list[0].description, 'first hit')
+  })
+
+  it('falls back to a content-based dedupe key when findings have no id', async () => {
+    const hash = `H${Date.now()}-NOID`
+    // Two id-less findings with identical (severity, description, file, line, fileHash).
+    await seedReport({
+      findings: [
+        { severity: 'high', file: 'a.js', line: 1, fileHash: hash, description: 'same' },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { severity: 'high', file: 'a.js', line: 1, fileHash: hash, description: 'same' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const list = findingsForFileHash(hash)
+    assert.equal(list.length, 1, 'content-key dedupe collapses identical id-less findings')
+  })
+
+  it('returns an empty list for unknown hashes', () => {
+    assert.deepEqual(findingsForFileHash('never-indexed'), [])
+  })
+})
+
+describe('bundle-finding-index — reportsForFinding (cross-report attribution)', () => {
+  it('returns every report name that contributed a given finding', async () => {
+    const hash = `H${Date.now()}-MULTIREP`
+    const r1 = await seedReport({
+      findings: [
+        { id: 'multi', severity: 'high', file: 'x.js', fileHash: hash, description: 'd' },
+      ],
+    })
+    const r2 = await seedReport({
+      findings: [
+        { id: 'multi', severity: 'high', file: 'x.js', fileHash: hash, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const finding = findingsForFileHash(hash).find((f) => f.id === 'multi')
+    const reports = reportsForFinding(hash, finding)
+    assert.deepEqual(reports.sort(), [r1, r2].sort())
+  })
+
+  it('returns an empty array for an unknown hash', () => {
+    assert.deepEqual(reportsForFinding('never-indexed', { id: 'whatever' }), [])
+  })
+})
+
+describe('bundle-finding-index — package-keyed view', () => {
+  it('aggregates findings by package extracted from file path', async () => {
+    const tag = `pkg-${Date.now()}`
+    await seedReport({
+      findings: [
+        // node_modules/<pkg>/...
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/lib/a.js`, description: 'A' },
+        // dependencies/<pkg>/... — same pkg name resolves identical
+        { id: `${tag}-f2`, severity: 'low', file: `dependencies/${tag}/sub/b.js`, description: 'B' },
+        // own source — not in any package
+        { id: `${tag}-f3`, severity: 'medium', file: 'src/main.js', description: 'C' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const idx = getPackagesIndex()
+    const bucket = idx.get(tag)
+    assert.ok(bucket, `package "${tag}" indexed`)
+    assert.equal(bucket.findings.length, 2, 'own source skipped')
+    const ids = bucket.findings.map((f) => f.id).sort()
+    assert.deepEqual(ids, [`${tag}-f1`, `${tag}-f2`])
+  })
+
+  it('walks past .pnpm shim segments to the real package name', async () => {
+    const tag = `pnpm-${Date.now()}`
+    await seedReport({
+      findings: [
+        {
+          id: `${tag}-f1`,
+          severity: 'high',
+          // pnpm layout: .pnpm/<name>@<ver>/node_modules/<name>/lib
+          file: `node_modules/.pnpm/${tag}@1.0.0/node_modules/${tag}/lib/x.js`,
+          description: 'pnpm-shim',
+        },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const idx = getPackagesIndex()
+    assert.ok(idx.get(tag), `real package name (not .pnpm) wins for ${tag}`)
+    assert.equal(idx.get('.pnpm'), undefined, '.pnpm itself never surfaces as a package')
+  })
+
+  it('captures @scope/name packages whole', async () => {
+    const tag = `scoped${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/@chalker/${tag}/index.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const idx = getPackagesIndex()
+    assert.ok(idx.get(`@chalker/${tag}`), 'scoped package name preserved')
+  })
+
+  it('groups files within a package and tracks contributing reports', async () => {
+    const tag = `multi-file-${Date.now()}`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'd1' },
+        { id: `${tag}-f2`, severity: 'high', file: `node_modules/${tag}/b.js`, description: 'd2' },
+      ],
+    })
+    const r2 = await seedReport({
+      findings: [
+        { id: `${tag}-f3`, severity: 'low', file: `node_modules/${tag}/a.js`, description: 'd3' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.equal(bucket.files.size, 2, 'two distinct files in this package')
+    assert.equal(bucket.files.get(`node_modules/${tag}/a.js`).length, 2)
+    assert.equal(bucket.files.get(`node_modules/${tag}/b.js`).length, 1)
+    assert.deepEqual([...bucket.reports].sort(), [r1, r2].sort())
+  })
+})
+
+describe('bundle-finding-index — extract shape variants', () => {
+  it('handles `findings` as an array of mixed single + grouped entries', async () => {
+    const tag = `mixed-${Date.now()}`
+    await seedReport({
+      findings: [
+        // single Finding
+        { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' },
+        // grouped Finding[]
+        [
+          { id: `${tag}-2`, severity: 'low', file: `node_modules/${tag}/y.js`, description: 'b' },
+          { id: `${tag}-3`, severity: 'low', file: `node_modules/${tag}/y.js`, description: 'c' },
+        ],
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const ids = getPackagesIndex().get(tag).findings.map((f) => f.id).sort()
+    assert.deepEqual(ids, [`${tag}-1`, `${tag}-2`, `${tag}-3`])
+  })
+
+  it('reads `groups` when `findings` is absent (deepview-native dump shape)', async () => {
+    const tag = `grouped-${Date.now()}`
+    await seedReport({
+      groups: [
+        [{ id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' }],
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket, 'groups-shaped report indexed')
+    assert.equal(bucket.findings.length, 1)
+  })
+
+  it('silently skips files that fail JSON.parse (markdown imports etc.)', async () => {
+    // Save a non-JSON file and verify ensureBundleFindingsIndexed
+    // doesn't throw; the file just doesn't contribute anything.
+    const name = uniqueName('rpt-md')
+    await saveFile(name, '# Not JSON\nplain prose here')
+    await ensureBundleFindingsIndexed()
+    // Sanity check: a fresh hash from a JSON report still indexes after.
+    const tag = `after-skip-${Date.now()}`
+    await seedReport({
+      findings: [{ id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd' }],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag), 'subsequent JSON report still indexes after a skipped non-JSON one')
+  })
+
+  it('inherits run-level meta from the report header onto findings without their own', async () => {
+    const tag = `meta-${Date.now()}`
+    await seedReport({
+      type: 'analysis',
+      model: 'claude-opus-4-7',
+      effort: 'high',
+      findings: [
+        // No per-finding meta → inherit from header
+        { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' },
+        // Has its own meta → keep
+        { id: `${tag}-2`, severity: 'high', file: `node_modules/${tag}/y.js`, description: 'b', model: 'other-model' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const findings = getPackagesIndex().get(tag).findings
+    const f1 = findings.find((f) => f.id === `${tag}-1`)
+    const f2 = findings.find((f) => f.id === `${tag}-2`)
+    assert.equal(f1.model, 'claude-opus-4-7', 'inherits model from report header')
+    assert.equal(f1.effort, 'high', 'inherits effort from report header')
+    assert.equal(f2.model, 'other-model', 'preserves per-finding meta')
+  })
+
+  it('does NOT inherit report-level meta when data.source is set (codex/claude-security)', async () => {
+    const tag = `nosource-${Date.now()}`
+    await seedReport({
+      type: 'security',
+      source: 'claude-security', // opt-out marker
+      model: 'should-not-inherit',
+      findings: [
+        { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const f = getPackagesIndex().get(tag).findings[0]
+    assert.equal(f.model, undefined, 'source-marked report does not stamp meta on findings')
+  })
+})
+
+describe('bundle-finding-index — subscribe', () => {
+  it('fires the listener as new reports get indexed', async () => {
+    let calls = 0
+    const unsub = subscribeToBundleFindingIndex(() => { calls += 1 })
+    const beforeCalls = calls
+    const tag = `sub-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'a' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(calls > beforeCalls, 'subscriber notified after a report indexed')
+    unsub()
+    const afterUnsub = calls
+    const tag2 = `sub2-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag2}-1`, severity: 'low', file: `node_modules/${tag2}/x.js`, description: 'b' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.equal(calls, afterUnsub, 'unsubscribed listener no longer fires')
+  })
+
+  it('listener errors are swallowed (one bad subscriber doesn\'t break the chain)', async () => {
+    let goodCalls = 0
+    const unsubBad = subscribeToBundleFindingIndex(() => { throw new Error('boom') })
+    const unsubGood = subscribeToBundleFindingIndex(() => { goodCalls += 1 })
+    const beforeGood = goodCalls
+    const tag = `swallow-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(goodCalls > beforeGood, 'good subscriber still fires despite bad one throwing')
+    unsubBad()
+    unsubGood()
+  })
+})
