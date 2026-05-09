@@ -25,6 +25,8 @@
 
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor } from './state.js'
+import { parseMarkdownFindings } from '../common/parse-md.js'
+import { parseDeepsecFindings } from '../common/parse-deepsec.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -401,7 +403,21 @@ async function indexOne(name) {
   indexed.add(name)
   try {
     const content = await readFile(name)
-    const data = JSON.parse(content)
+    // Same parser chain ingest.js walks: JSON first (the
+    // analyzer's native dump format), DeepSec markdown next
+    // (most specific guard — `## SEVERITY (n)`), then Claude
+    // Security / generic markdown. Without this fallback, every
+    // markdown-format report (Claude / DeepSec) would silently
+    // skip the index because `JSON.parse` throws on them, so
+    // they'd never surface in Packages or Repositories.
+    let data
+    try {
+      data = JSON.parse(content)
+    } catch {
+      data = parseDeepsecFindings(content)
+        ?? parseMarkdownFindings(content)
+    }
+    if (!data) return false
     const findings = extractFindings(data)
     if (findings.length === 0) return false
     // Per-report typed URL — set by the user via the page
