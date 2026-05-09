@@ -4,8 +4,8 @@ import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
-import { computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
-import { ensureBundleFindingsIndexed, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
+import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
+import { subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 
 // Subscribe once to the bundle-finding index. Any time another
 // OPFS report finishes parsing, re-render IF the user is currently
@@ -76,8 +76,8 @@ function renderPreservingScrollOf(selector) {
   const after = document.querySelector(selector)
   if (after) after.scrollTop = top
 }
-import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
-import { brotliDecompress } from './brotli-decompress.js'
+import { deleteBundle, listBundles } from '../../client/storage.js'
+import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { switchToFile } from './ingest.js'
 import { treeAnchor } from './graph/utils.js'
@@ -114,8 +114,13 @@ report.addEventListener('click', (e) => {
   const codeBundle = e.target.closest('[data-bundle-row-code]')
   if (codeBundle) {
     const integrity = codeBundle.dataset.bundleRowCode
+    // Same state setup as data-select-bundle below; the only
+    // difference is `bundleDetailsTab = 'code'` (drop the user
+    // straight onto the code tab) and the cache short-circuit
+    // when bundleDetails is already loaded for this integrity
+    // (clicking Code → on the already-open bundle shouldn't
+    // re-parse the snapshot).
     state.selectedBundle = integrity
-    state.bundleDetails = state.selectedBundle === integrity ? state.bundleDetails : null
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
     state.bundleCodeSearchQuery = ''
@@ -123,54 +128,14 @@ report.addEventListener('click', (e) => {
     state.bundleDetailsTab = 'code'
     graph2.showAll = true
     state.shownTriage = null
-    render()
-    // Async parse path — mirrors the data-select-bundle handler
-    // below. Skipping when bundleDetails is already cached for
-    // this integrity (clicking Code → on the already-open bundle
-    // shouldn't re-parse).
-    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
-    if (!entry) return
-    if (state.bundleDetails && state.bundleDetails.integrity === integrity) return
-    state.bundleDetails = null
-    ;(async () => {
-      let details
-      try {
-        const bytes = await readBundle(integrity)
-        const isMap = entry.name.toLowerCase().endsWith('.map')
-        if (isMap) {
-          try {
-            const json = JSON.parse(new TextDecoder().decode(bytes))
-            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, json }
-          } catch (err) {
-            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
-          }
-        } else {
-          try {
-            const out = await brotliDecompress(bytes)
-            const json = JSON.parse(new TextDecoder().decode(out))
-            details = { integrity, kind: 'stasis', size: bytes.byteLength, json }
-          } catch (err) {
-            details = { integrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
-          }
-        }
-      } catch (err) {
-        details = { integrity, error: err.message, size: 0 }
-      }
-      if (state.selectedBundle !== integrity) return
-      state.bundleDetails = details
+    if (state.bundleDetails?.integrity === integrity) {
+      // Already parsed — just paint the new tab choice.
       render()
-      if (details.json) {
-        ;(async () => {
-          try {
-            const fileHashes = await computeBundleFileHashes(details)
-            if (state.selectedBundle !== integrity) return
-            details.fileHashes = fileHashes
-            render()
-          } catch {}
-        })()
-      }
-      ensureBundleFindingsIndexed().catch(() => {})
-    })()
+      return
+    }
+    state.bundleDetails = null
+    render()
+    openBundle(integrity)
     return
   }
   // Bundles list — per-row delete button (`data-delete-bundle=<integrity>`).
@@ -446,64 +411,13 @@ report.addEventListener('click', (e) => {
     // first.
     state.shownTriage = null
     render()
-    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
-    if (!entry) return
-    ;(async () => {
-      let details
-      try {
-        const bytes = await readBundle(integrity)
-        const isMap = entry.name.toLowerCase().endsWith('.map')
-        if (isMap) {
-          try {
-            const json = JSON.parse(new TextDecoder().decode(bytes))
-            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, json }
-          } catch (err) {
-            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
-          }
-        } else {
-          // Stasis — brotli-decompress, then parse JSON. brotliDecompress
-          // dispatches to native DecompressionStream when available and
-          // falls through to the SW echo trick when it's not (see
-          // view/brotli-decompress.js); a thrown error surfaces in the
-          // panel's "Failed to parse" path.
-          try {
-            const out = await brotliDecompress(bytes)
-            const json = JSON.parse(new TextDecoder().decode(out))
-            details = { integrity, kind: 'stasis', size: bytes.byteLength, json }
-          } catch (err) {
-            details = { integrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
-          }
-        }
-      } catch (err) {
-        details = { integrity, error: err.message, size: 0 }
-      }
-      // Drop the result if the user moved on while we loaded.
-      if (state.selectedBundle !== integrity) return
-      state.bundleDetails = details
-      render()
-      // Kick off SHA-512 hashing of every source so the bundle
-      // graph's nodes + Issues tab can match findings by fileHash.
-      // The digest is async (large bundles take a moment); the
-      // panel renders immediately with no findings, then a re-
-      // render once the hashes land paints any matches.
-      if (details.json) {
-        ;(async () => {
-          try {
-            const fileHashes = await computeBundleFileHashes(details)
-            if (state.selectedBundle !== integrity) return
-            details.fileHashes = fileHashes
-            render()
-          } catch {}
-        })()
-      }
-      // Index every OPFS report's findings (background) so the
-      // bundle's hash-match join sees findings from reports the
-      // user hasn't currently loaded too. Idempotent — subsequent
-      // bundle opens just walk the listFiles delta. Subscribe (at
-      // module load above) keeps re-rendering the bundle view as
-      // new entries land in the index.
-      ensureBundleFindingsIndexed().catch(() => {})
-    })()
+    // Async open pipeline (read bytes, parse, set bundleDetails,
+    // kick file hashes, kick the cross-report findings indexer)
+    // lives in view/bundle-load.js — shared with the Code →
+    // shortcut above and the bundle-only drop branch in
+    // ingest.js. Stale resolves drop via state.selectedBundle
+    // checks inside that helper.
+    openBundle(integrity)
     return
   }
   // Files toggle (page header, right of the repo chip). On/off

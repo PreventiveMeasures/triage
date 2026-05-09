@@ -1,16 +1,15 @@
 import { render as litRender, nothing } from 'lit'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { deleteFile, readBundle, readFile, saveBundle, saveFile } from '../../client/storage.js'
+import { deleteFile, readFile, saveBundle, saveFile } from '../../client/storage.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from '../../client/triage.js'
 import { triageSync } from '../../client/triage-sync.js'
-import { computeBundleFileHashes, render } from './render.js'
+import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph2/state.js'
-import { brotliDecompress } from './brotli-decompress.js'
-import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
+import { openBundle } from './bundle-load.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
@@ -136,9 +135,10 @@ export async function addFiles(files) {
   } else if (lastBundleIntegrity) {
     // Bundle-only drop: switch to the bundles view AND open the
     // dropped bundle's details panel automatically. Mirrors the
-    // events.js data-select-bundle flow: clear stale source-viewer
-    // state, reset the search field, kick the async parse so the
-    // panel populates without a second click.
+    // events.js data-select-bundle flow — clear stale source-
+    // viewer state, reset search, then hand off to the shared
+    // open-bundle pipeline so the panel populates without a
+    // second click.
     state.currentView = 'bundles'
     state.selectedBundle = lastBundleIntegrity
     state.bundleDetails = null
@@ -151,49 +151,7 @@ export async function addFiles(files) {
     graph2.showAll = true
     render()
     await renderSidebar()
-    // Async parse — same pipeline the events.js handler runs.
-    const entry = (state.bundles ?? []).find((b) => b.integrity === lastBundleIntegrity)
-    if (entry) {
-      ;(async () => {
-        let details
-        try {
-          const bytes = await readBundle(lastBundleIntegrity)
-          const isMap = entry.name.toLowerCase().endsWith('.map')
-          if (isMap) {
-            try {
-              const json = JSON.parse(new TextDecoder().decode(bytes))
-              details = { integrity: lastBundleIntegrity, kind: 'sourcemap', size: bytes.byteLength, json }
-            } catch (err) {
-              details = { integrity: lastBundleIntegrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
-            }
-          } else {
-            try {
-              const out = await brotliDecompress(bytes)
-              const json = JSON.parse(new TextDecoder().decode(out))
-              details = { integrity: lastBundleIntegrity, kind: 'stasis', size: bytes.byteLength, json }
-            } catch (err) {
-              details = { integrity: lastBundleIntegrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
-            }
-          }
-        } catch (err) {
-          details = { integrity: lastBundleIntegrity, error: err.message, size: 0 }
-        }
-        if (state.selectedBundle !== lastBundleIntegrity) return
-        state.bundleDetails = details
-        render()
-        if (details.json) {
-          ;(async () => {
-            try {
-              const fileHashes = await computeBundleFileHashes(details)
-              if (state.selectedBundle !== lastBundleIntegrity) return
-              details.fileHashes = fileHashes
-              render()
-            } catch {}
-          })()
-        }
-        ensureBundleFindingsIndexed().catch(() => {})
-      })()
-    }
+    openBundle(lastBundleIntegrity)
   }
 }
 
