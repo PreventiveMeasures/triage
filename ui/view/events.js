@@ -501,14 +501,19 @@ report.addEventListener('click', (e) => {
     const group = findGroupById(gid)
     if (!group) return
     const action = triageActionBtn.dataset.triageAction
-    if (action !== 'fixed' && action !== 'invalid' && action !== 'deleted') return
+    if (action !== 'fixed' && action !== 'invalid' && action !== 'deleted' && action !== 'restore') return
     const groupSt = groupState(group)
     const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
     for (const f of targets) {
       const key = tabKey(f)
-      // Toggle: clicking the active state clears it (back to live).
-      if (state.triageState.get(key) === action) state.triageState.delete(key)
-      else state.triageState.set(key, action)
+      if (action === 'restore') {
+        state.triageState.delete(key)
+      } else if (state.triageState.get(key) === action) {
+        // Toggle: clicking the active state clears it (back to live).
+        state.triageState.delete(key)
+      } else {
+        state.triageState.set(key, action)
+      }
     }
     state.openTriageMenuGid = null
     saveTriage()

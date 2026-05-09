@@ -228,9 +228,24 @@
   border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
+  gap: .25rem;
+  font: inherit;
 }
 .mark-triage-menu:hover { color: var(--text); border-color: var(--accent); }
 .mark-triage-menu.open { border-color: var(--accent); color: var(--text); }
+.mark-triage-menu.with-label {
+  padding: 0 .35rem 0 .5rem;
+  font-size: .72rem;
+  height: 1.5rem;
+}
+.mark-triage-menu .mark-triage-label {
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-weight: 600;
+}
+.mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
+.mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
+.mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
 .triage-menu {
   position: absolute;
   top: calc(100% + .25rem);

@@ -107,51 +107,67 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
   const fixBtn = html`<button type="button" class=${`mark-fix${activeFix ? ' has-fix' : ''}`} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
-  // In any non-live triage view (Fixed / Invalid / Deleted), the
-  // primary action is "restore" — clear the bucket on the whole
-  // group so it goes back to the active set. The triage-menu drop-
-  // down is hidden in those views to keep the action focused.
-  if (state.shownTriage) {
-    return html`${reportChip}${commentBtn}${fixBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
-  }
-  // Triage menu — replaces the prior delete `×` with a chevron
-  // button that opens a small Fixed / Invalid / Delete menu.
+  // Triage menu — chevron button that opens a small popover with
+  // Fixed / Invalid / Delete actions. In any triage view (Fixed /
+  // Invalid / Deleted), the button's label switches to the current
+  // bucket name (e.g. "Deleted ▾") and the menu prepends a Restore
+  // option, so the user can flip a deleted finding to fixed without
+  // first restoring + re-triaging. In the live view the button is
+  // a chevron-only chip.
   // Conflict groups still scope the action to the active tab,
-  // matching the prior delete-active-tab semantic; the title is
-  // updated to reflect the menu instead of "delete".
+  // matching the prior delete-active-tab semantic.
   const menuTitle = groupSt.hasConflict
-    ? 'mark active tab (colors mismatch — acts per-tab)'
-    : (sortedTabs.length > 1 ? 'mark whole group' : 'mark')
+    ? 'change triage state (colors mismatch — acts per-tab)'
+    : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
   return html`${reportChip}${commentBtn}${fixBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
 }
 
-// Triage menu — a chevron button that toggles a small popover
-// with three actions: Fixed / Invalid / Delete. The button's
-// data-triage-menu attribute is the open/close anchor; events.js
-// toggles state.openTriageMenuGid on click. Each option emits
-// data-triage-action=<state> which events.js writes onto the
-// group's triage state. The popover is rendered as a sibling so
-// CSS positions it relative to the wrapper without affecting the
-// button's height.
+// Triage menu — chevron button that toggles a small popover.
+// In live view: chevron only, options are Fixed / Invalid / Delete.
+// In a triage view: button reads "<current> ▾" and the menu starts
+// with Restore (clears the state) followed by the other two states
+// so the user can pivot between buckets without an intermediate
+// restore.
+//
+// `data-triage-menu` is the open/close anchor; events.js toggles
+// state.openTriageMenuGid on click. Options emit either
+// `data-triage-action=<state>` (set/toggle that state) or
+// `data-triage-action=restore` (clear it).
 function triageMenuTemplate(group, title) {
   const gid = tabKey(group[0])
   const open = state.openTriageMenuGid === gid
   const groupSt = groupState(group)
   const activeKey = tabKey(activeTabFor(group))
-  // Reflect the current triage state back as a checkmark on the
-  // active option so a re-open of the menu shows what's set. For
-  // conflict groups we read the active tab's own triage; for
-  // non-conflict, the common one (any annotated member shares it).
+  // Reflect the current triage state on the menu — for conflict
+  // groups read the active tab's own triage; for non-conflict, the
+  // common rollup. The triage view's button label tracks
+  // state.shownTriage rather than `current` so it always reads as
+  // the active bucket the user is filtering by (which matches the
+  // group's commonTriage in non-conflict cases).
   const current = groupSt.hasConflict
     ? state.triageState.get(activeKey)
     : groupSt.commonTriage
-  const actions = [
-    { key: 'fixed',   label: 'Fixed' },
-    { key: 'invalid', label: 'Invalid' },
-    { key: 'deleted', label: 'Delete' },
-  ]
+  const STATE_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted' }
+  const inTriageView = Boolean(state.shownTriage)
+  const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
+  const actions = inTriageView
+    ? [
+        { key: 'restore', label: 'Restore' },
+        ...['fixed', 'invalid', 'deleted']
+          .filter((s) => s !== state.shownTriage)
+          .map((s) => ({ key: s, label: s === 'deleted' ? 'Delete' : STATE_LABELS[s] })),
+      ]
+    : [
+        { key: 'fixed',   label: 'Fixed' },
+        { key: 'invalid', label: 'Invalid' },
+        { key: 'deleted', label: 'Delete' },
+      ]
+  const btnClasses = ['mark-triage-menu']
+  if (open) btnClasses.push('open')
+  if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${`mark-triage-menu${open ? ' open' : ''}`} data-triage-menu title=${title} aria-label=${title} aria-expanded=${String(open)}>
+    <button type="button" class=${btnClasses.join(' ')} data-triage-menu title=${title} aria-label=${title} aria-expanded=${String(open)}>
+      ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
