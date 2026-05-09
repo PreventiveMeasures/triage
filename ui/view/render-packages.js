@@ -410,16 +410,6 @@ function renderPackageOverview(pkg, bucket) {
   ${chips.length > 0 ? html`<div class="packages-detail-chips">
     ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
   </div>` : nothing}
-  <h3 class="packages-detail-section">Files</h3>
-  <ul class="packages-detail-files">
-    ${sortedFiles.map(([file, findings]) => {
-      const stripped = pkgRelativePath(pkg, file)
-      return html`<li class="packages-detail-file">
-        <span class="packages-detail-file-path mono" title=${file}>${stripped}</span>
-        <span class="packages-detail-file-count">${findings.length}</span>
-      </li>`
-    })}
-  </ul>
   <h3 class="packages-detail-section">Reports</h3>
   <ul class="packages-detail-reports">
     ${sortedReports.map((r) => {
@@ -428,6 +418,16 @@ function renderPackageOverview(pkg, bucket) {
         <button type="button" class="packages-detail-report" title=${r} data-package-report=${r}>
           ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label">${displayName(r)}</span>
         </button>
+      </li>`
+    })}
+  </ul>
+  <h3 class="packages-detail-section">Files</h3>
+  <ul class="packages-detail-files">
+    ${sortedFiles.map(([file, findings]) => {
+      const stripped = pkgRelativePath(pkg, file)
+      return html`<li class="packages-detail-file">
+        <span class="packages-detail-file-path mono" title=${file}>${stripped}</span>
+        <span class="packages-detail-file-count">${findings.length}</span>
       </li>`
     })}
   </ul>`
