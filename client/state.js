@@ -95,6 +95,10 @@ export const state = store({
   // package size visualization from the flat file list across two
   // tabs. Reset to 'packages' when selectedBundle changes.
   bundleDetailsTab: 'packages',
+  // Path of the bundle source currently open in the source viewer
+  // modal (null when closed). Reset on bundle change / view switch
+  // so an old viewer doesn't reopen against a different bundle.
+  bundleSourceFile: null,
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

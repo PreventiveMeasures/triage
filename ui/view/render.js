@@ -1099,14 +1099,22 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   const issueChips = SEVERITIES
     .filter((s) => issueSummary[s] > 0)
     .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replace(/_/gu, ' ')}</span>`)
+  // Each row is a button so the whole strip is a click target +
+  // keyboard-focusable; data-bundle-view-source carries the full
+  // (un-stripped) path for the source viewer modal. Rows render
+  // as buttons regardless of whether the bundle carries content
+  // (the click handler checks bundleSourcesAsMap and shows an
+  // empty placeholder when content is missing).
   const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
     ${order.map((i) => {
       const src = sources[i]
       const bareSrc = stripped[i]
       const size = sizes[i]
       return html`<li>
-        <span class="bundles-source-path" title=${src}>${bareSrc}</span>
-        ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+        <button type="button" class="bundles-source-row" data-bundle-view-source=${src} title=${src}>
+          <span class="bundles-source-path">${bareSrc}</span>
+          ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+        </button>
       </li>`
     })}
   </ul>` : nothing
@@ -1180,6 +1188,41 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 // header bar across the top carries the back button + bundle name
 // + integrity, plus a Graph / Issues sub-tab switcher. Body
 // renders the active sub-tab's content edge to edge.
+// Source viewer overlay — opens on top of any bundles view (regular
+// or slide) when state.bundleSourceFile is set. Reads the open
+// bundle's source map / stasis content via bundleSourcesAsMap;
+// missing entries (sourcemap with no `sourcesContent`, stasis
+// without that file) render as a placeholder line. Body is a plain
+// `<pre><code>` with a CSS-counter-driven gutter so we don't have
+// to slice the source per line — Lit interpolation auto-escapes
+// the content, no XSS risk. Click-outside / × button / Escape all
+// dismiss; the close handler clears state.bundleSourceFile.
+function renderBundleSourceModal() {
+  const path = state.bundleSourceFile
+  if (!path) return nothing
+  const sources = bundleSourcesAsMap(state.bundleDetails)
+  const content = sources.get(path)
+  return html`<div class="bundle-source-overlay">
+    <div class="bundle-source-modal">
+      <header class="bundle-source-bar">
+        <div class="bundle-source-title" title=${path}>${path}</div>
+        <button
+          type="button"
+          class="bundle-source-close"
+          data-action="bundle-source-close"
+          title="Close source viewer (Esc)"
+          aria-label="Close source viewer"
+        >×</button>
+      </header>
+      <div class="bundle-source-body">
+        ${typeof content === 'string'
+          ? html`<pre class="bundle-source-pre"><code>${content}</code></pre>`
+          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+      </div>
+    </div>
+  </div>`
+}
+
 function renderBundleSlide(entry) {
   const tab = state.bundleDetailsTab
   // Hide the in-slide Graph / Issues switcher when this bundle has
@@ -1300,7 +1343,7 @@ function renderBundleIssuesList(details) {
         return html`<li>
           <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
           <div class="bundle-issue-file-cell">
-            <span class="bundle-issue-file" title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</span>
+            <button type="button" class="bundle-issue-file" data-bundle-view-source=${file} title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</button>
             ${bundleIssueReportsTemplate(finding)}
           </div>
           <span class="bundle-issue-desc">${finding.description ?? ''}</span>
@@ -1329,7 +1372,7 @@ function renderBundlesList(bundles) {
   // Packages / Files tab) renders the regular list + details.
   const inSlide = selectedEntry
     && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues')
-  if (inSlide) return renderBundleSlide(selectedEntry)
+  if (inSlide) return html`${renderBundleSlide(selectedEntry)}${renderBundleSourceModal()}`
   const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
   return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>
     <header class="page-head">
@@ -1370,6 +1413,7 @@ function renderBundlesList(bundles) {
         </div>
       </aside>` : nothing}
     </div>
+    ${renderBundleSourceModal()}
   </div>`
 }
 

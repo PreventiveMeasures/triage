@@ -84,6 +84,7 @@ report.addEventListener('click', (e) => {
       if (state.selectedBundle === integrity) {
         state.selectedBundle = null
         state.bundleDetails = null
+        state.bundleSourceFile = null
       }
       state.bundles = await listBundles()
       render()
@@ -138,6 +139,30 @@ report.addEventListener('click', (e) => {
     if (name) switchToFile(name)
     return
   }
+  // Bundle source viewer — open / close. Close fires when the click
+  // lands directly on the backdrop (NOT a descendant — clicks inside
+  // the modal body shouldn't dismiss) or on any element carrying
+  // data-action="bundle-source-close" (the × button). Open clicks
+  // land on [data-bundle-view-source].
+  // Order: close BEFORE open so a stray view-source target inside
+  // the modal doesn't reopen it.
+  if (e.target.classList?.contains('bundle-source-overlay')
+      || e.target.closest('[data-action="bundle-source-close"]')) {
+    if (state.bundleSourceFile) {
+      state.bundleSourceFile = null
+      render()
+    }
+    return
+  }
+  const sourceOpen = e.target.closest('[data-bundle-view-source]')
+  if (sourceOpen) {
+    const path = sourceOpen.dataset.bundleViewSource
+    if (path) {
+      state.bundleSourceFile = path
+      render()
+    }
+    return
+  }
   // Bundles list — row select. Opens the right-side details panel,
   // then asynchronously reads + parses the bundle (.map gets
   // sourcemap fields surfaced; .stasis falls back to metadata-only).
@@ -151,6 +176,7 @@ report.addEventListener('click', (e) => {
     if (state.selectedBundle === integrity) return
     state.selectedBundle = integrity
     state.bundleDetails = null
+    state.bundleSourceFile = null
     // Reset to the Packages tab when a different bundle opens —
     // the user shouldn't carry the prior bundle's tab choice into
     // the new one (especially when one had >5 packages and the
@@ -775,4 +801,15 @@ report.addEventListener('repo-cancel', (e) => {
   saveRepoUrlFor(state.currentFile, state.repoUrl)
   state.repoEditing = false
   render()
+})
+
+// Escape closes the bundle source viewer when it's open. Listen at
+// the document level so the keypress lands regardless of which
+// element holds focus (the modal isn't a focusable container, and
+// we don't want to force-focus on open just to catch keys).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.bundleSourceFile) {
+    state.bundleSourceFile = null
+    render()
+  }
 })

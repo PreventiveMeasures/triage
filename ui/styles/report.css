@@ -474,7 +474,15 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* Now a button (data-bundle-view-source) — strip native chrome
+       so it reads as a plain path. Hover hints clickability. */
+    background: transparent;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
   }
+  & .bundle-issue-file:hover { color: var(--accent, #60a5fa); }
   & .bundle-issue-line {
     color: var(--muted);
   }
@@ -627,12 +635,27 @@
     border-top: 1px solid var(--border);
 
     & li {
-      display: flex; align-items: center; gap: .5rem;
-      padding: .25rem .25rem;
       border-bottom: 1px solid var(--border);
+      &:last-child { border-bottom: none; }
+    }
+    /* Whole-row click target — opens the bundle source viewer.
+       Reset native button chrome so it reads as a list row, not a
+       button; hover lifts the row tone slightly so the click
+       affordance stays visible without dominating the panel. */
+    & .bundles-source-row {
+      display: flex; align-items: center; gap: .5rem;
+      width: 100%;
+      padding: .25rem .25rem;
+      background: transparent;
+      border: 0;
+      color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .72rem;
-      &:last-child { border-bottom: none; }
+      cursor: pointer;
+      text-align: left;
+    }
+    & .bundles-source-row:hover {
+      background: var(--surface);
     }
     & .bundles-source-path {
       flex: 1; min-width: 0;
@@ -769,4 +792,82 @@ body.report-fullscreen {
   & #sidebar { display: none; }
   & #report header.page-head { display: none; }
   & #report { max-width: none; padding: .5rem; }
+}
+
+/* Bundle source viewer — modal overlay shown on top of the
+   bundles view (regular or slide). The backdrop captures clicks
+   that fall outside the modal box (closes via the events.js
+   delegate); the modal itself stops propagation in its template
+   so clicks inside the body don't trigger close. Sized to most of
+   the viewport with internal scroll; the body uses ui-monospace
+   so the source matches the file-row chrome elsewhere. */
+.bundle-source-overlay {
+  position: fixed; inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: stretch; justify-content: center;
+  padding: 2.5rem 1.5rem;
+}
+.bundle-source-modal {
+  display: flex; flex-direction: column;
+  width: 100%; max-width: 1100px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
+}
+.bundle-source-bar {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.bundle-source-title {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .8rem;
+  color: var(--text);
+}
+.bundle-source-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 1.6rem; height: 1.6rem;
+  font-size: 1rem; line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+.bundle-source-close:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--text);
+}
+.bundle-source-body {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.bundle-source-empty {
+  padding: 1rem; color: var(--muted);
+  font-size: .82rem;
+}
+/* Line-numbered code block. CSS counters drive the gutter — no
+   per-line markup needed, content is a single text node so the
+   pre's :before pseudo-element on each visual line isn't an
+   option; instead split lines visually via white-space and use
+   `tab-size`. The gutter is rendered by wrapping the pre's
+   contents in an inline-block code element with a sticky
+   border-left. Simple v1: no syntax highlight, just monospace
+   wrapped at content-width with horizontal scroll on overflow. */
+.bundle-source-pre {
+  margin: 0;
+  padding: .75rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+  line-height: 1.45;
+  color: var(--text);
+  tab-size: 2;
+  white-space: pre;
 }
