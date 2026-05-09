@@ -75,14 +75,14 @@ export function analyzeContent(content) {
   try {
     const data = JSON.parse(content)
     if (data && Array.isArray(data.findings)) {
-      return { count: data.findings.length, source: data.source }
+      return { count: data.findings.length, source: data.source, recognized: true }
     }
   } catch {}
   const ds = parseDeepsecFindings(content)
-  if (ds) return { count: ds.findings.length, source: ds.source }
+  if (ds) return { count: ds.findings.length, source: ds.source, recognized: true }
   const md = parseMarkdownFindings(content)
-  if (md) return { count: md.findings.length, source: md.source }
-  return { count: 0 }
+  if (md) return { count: md.findings.length, source: md.source, recognized: true }
+  return { count: 0, recognized: false }
 }
 
 // Walk a list of names and populate the cache for any not yet known.

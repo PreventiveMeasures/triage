@@ -1,13 +1,15 @@
 import { state, loadRepoUrlFor, saveRepoUrlFor } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { saveFile, readFile, deleteFile, saveBundle } from '../../client/storage.js'
+import { saveFile, readFile, deleteFile, saveBundle, readBundle } from '../../client/storage.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from '../../client/triage.js'
 import { triageSync } from '../../client/triage-sync.js'
-import { render } from './render.js'
+import { render, computeBundleFileHashes } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
+import { brotliDecompress } from './brotli-decompress.js'
+import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
@@ -57,7 +59,7 @@ function bundleKind(name) {
 
 export async function addFiles(files) {
   let last = null
-  let savedBundles = false
+  let lastBundleIntegrity = null
   for (const file of files) {
     try {
       // .gz drops are routed to the workspace-import pipeline. Reading
@@ -77,8 +79,8 @@ export async function addFiles(files) {
       const kind = bundleKind(file.name)
       if (kind) {
         const buf = new Uint8Array(await file.arrayBuffer())
-        await saveBundle(file.name, buf)
-        savedBundles = true
+        const { integrity } = await saveBundle(file.name, buf)
+        lastBundleIntegrity = integrity
         continue
       }
       const content = await file.text()
@@ -93,31 +95,92 @@ export async function addFiles(files) {
           last = { name: codexName, content: json }
         }
       } else {
+        // Validate before persisting — analyzeContent recognises
+        // analyzer-native JSON, DeepSec, and Claude / Codex /
+        // markdown imports. Anything else is rejected so we don't
+        // litter OPFS with files the report viewer can't parse.
+        const result = analyzeContent(content)
+        if (!result.recognized) {
+          throw new Error('not a recognized DeepView, DeepSec, Claude Security, or Codex report')
+        }
         // The original drop name (and its extension) is preserved.
-        // Source detection — DeepSec vs Claude Security vs analyzer-
-        // native JSON — is content-based via analyzeContent, and the
-        // detected source is stamped into the counts cache so the
-        // sidebar can bucket the file without re-parsing.
         await saveFile(file.name, content)
-        const { count, source } = analyzeContent(content)
-        setCount(file.name, count, source)
+        setCount(file.name, result.count, result.source)
         last = { name: file.name, content }
       }
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)
     }
   }
-  if (last) await switchToFile(last.name, last.content)
-  // renderSidebar refreshes state.bundles from OPFS, so it has to
-  // run BEFORE the bundles view re-render below — otherwise the
-  // freshly-saved bundle wouldn't show up in the list (render()
-  // would paint with the stale snapshot from before the drop).
+  // renderSidebar refreshes state.bundles from OPFS so the bundle
+  // we just imported is visible to the bundles view path below.
   await renderSidebar()
-  // If the drop was bundles-only AND the user is on the bundles
-  // view, re-render so the new entries land in the list. switchToFile
-  // already re-renders for regular drops; the bundles view doesn't
-  // get one for free since `last` stays null.
-  if (!last && savedBundles && state.currentView === 'bundles') render()
+  if (last) {
+    // Single-report drop wins over a bundle when both happen in
+    // the same drop — the user's primary intent was the report.
+    await switchToFile(last.name, last.content)
+  } else if (lastBundleIntegrity) {
+    // Bundle-only drop: switch to the bundles view AND open the
+    // dropped bundle's details panel automatically. Mirrors the
+    // events.js data-select-bundle flow: clear stale source-viewer
+    // state, reset the search field, kick the async parse so the
+    // panel populates without a second click.
+    state.currentView = 'bundles'
+    state.selectedBundle = lastBundleIntegrity
+    state.bundleDetails = null
+    state.bundleDetailsTab = 'packages'
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
+    state.shownTriage = null
+    graph2.showAll = true
+    render()
+    await renderSidebar()
+    // Async parse — same pipeline the events.js handler runs.
+    const entry = (state.bundles ?? []).find((b) => b.integrity === lastBundleIntegrity)
+    if (entry) {
+      ;(async () => {
+        let details
+        try {
+          const bytes = await readBundle(lastBundleIntegrity)
+          const isMap = entry.name.toLowerCase().endsWith('.map')
+          if (isMap) {
+            try {
+              const json = JSON.parse(new TextDecoder().decode(bytes))
+              details = { integrity: lastBundleIntegrity, kind: 'sourcemap', size: bytes.byteLength, json }
+            } catch (err) {
+              details = { integrity: lastBundleIntegrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
+            }
+          } else {
+            try {
+              const out = await brotliDecompress(bytes)
+              const json = JSON.parse(new TextDecoder().decode(out))
+              details = { integrity: lastBundleIntegrity, kind: 'stasis', size: bytes.byteLength, json }
+            } catch (err) {
+              details = { integrity: lastBundleIntegrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
+            }
+          }
+        } catch (err) {
+          details = { integrity: lastBundleIntegrity, error: err.message, size: 0 }
+        }
+        if (state.selectedBundle !== lastBundleIntegrity) return
+        state.bundleDetails = details
+        render()
+        if (details.json) {
+          ;(async () => {
+            try {
+              const fileHashes = await computeBundleFileHashes(details)
+              if (state.selectedBundle !== lastBundleIntegrity) return
+              details.fileHashes = fileHashes
+              render()
+            } catch {}
+          })()
+        }
+        ensureBundleFindingsIndexed().catch(() => {})
+      })()
+    }
+  }
 }
 
 // Replace the active view with the named OPFS file. Pre-fetched
