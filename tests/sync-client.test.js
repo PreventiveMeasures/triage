@@ -1251,9 +1251,15 @@ describe('triage-sync client', () => {
     // reanimated from a stale chain on the next page load.
     deleteWorkspace(wsId)
 
+    // The in-memory teardown is synchronous (sessions.delete) but
+    // the persisted-base wipe goes through navigator.locks.request,
+    // so the localStorage write resolves a microtask later. Poll
+    // briefly for it to land.
     assert.equal(triageSync.sessionInfo(wsId), null, 'session removed in-memory')
-    const persistedAfter = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
-    assert.equal(persistedAfter[wsId], undefined, 'persisted session entry dropped')
+    await waitFor(
+      () => JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId] === undefined,
+      'persisted session entry dropped',
+    )
   })
 })
 

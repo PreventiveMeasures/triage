@@ -83,32 +83,119 @@ export async function saveTriage() {
   triageSync.notify()
 }
 
-async function loadTriage() {
-  try {
-    const raw = localStorage.getItem(TRIAGE_KEY)
-    if (!raw) return
-    const compressed = Uint8Array.fromBase64(raw)
-    const decompressed = await decompressBrotli(compressed)
-    const entries = JSON.parse(new TextDecoder().decode(decompressed))
-    for (const [k, v] of Object.entries(entries)) {
-      if (v && v.color) state.markers.set(k, v.color)
-      // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
-      // Legacy entries that only carry `deleted: true` migrate to 'deleted'.
-      if (v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted')) {
-        state.triageState.set(k, v.triage)
-      } else if (v && v.deleted) {
-        state.triageState.set(k, 'deleted')
+// Decode the persisted blob into `{ id: entry }` form. Returns
+// null when nothing's stored; throws errors are swallowed at the
+// caller so a corrupt blob doesn't take down ingestReport / the
+// cross-tab listener.
+async function readTriageBlob() {
+  const raw = localStorage.getItem(TRIAGE_KEY)
+  if (!raw) return null
+  const compressed = Uint8Array.fromBase64(raw)
+  const decompressed = await decompressBrotli(compressed)
+  return JSON.parse(new TextDecoder().decode(decompressed))
+}
+
+// Apply `entries` (a `{ id: { color, triage, comment, fix } }` map)
+// to the in-memory state. When `replace = true` (the cross-tab
+// reload path), persisted-id entries that the new blob doesn't
+// carry are removed from state.* — that's how a sibling tab's
+// "cleared a marker" propagates here. Session-only ids (numeric,
+// pre-uuid) are never in the blob and are left alone in either
+// mode so the active tab's session-scoped triage doesn't get
+// nuked by a sibling's persistence write.
+function applyTriageEntries(entries, { replace } = { replace: false }) {
+  if (replace) {
+    for (const k of [...state.markers.keys()]) {
+      if (SESSION_ID_RE.test(k)) continue
+      if (!entries || !(k in entries) || !entries[k]?.color) state.markers.delete(k)
+    }
+    for (const k of [...state.triageState.keys()]) {
+      if (SESSION_ID_RE.test(k)) continue
+      const v = entries?.[k]
+      const next = (v?.triage === 'fixed' || v?.triage === 'invalid' || v?.triage === 'deleted')
+        ? v.triage
+        : (v?.deleted ? 'deleted' : null)
+      if (!next) state.triageState.delete(k)
+    }
+    for (const k of [...state.comments.keys()]) {
+      if (SESSION_ID_RE.test(k)) continue
+      if (!entries || !(k in entries) || typeof entries[k]?.comment !== 'string' || !entries[k].comment) state.comments.delete(k)
+    }
+    for (const k of [...state.fixes.keys()]) {
+      if (SESSION_ID_RE.test(k)) continue
+      if (!entries || !(k in entries) || typeof entries[k]?.fix !== 'string' || !entries[k].fix) state.fixes.delete(k)
+    }
+    // Per-report ignore: keys are `${reportName}\0${id}`. Drop
+    // entries whose id is non-session AND whose (id, reportName)
+    // pair isn't reflected in the new blob's `ignoredReports`
+    // list. Session-only ids are left alone, same as the other
+    // collections.
+    for (const key of [...state.ignoredIds]) {
+      const sep = key.indexOf('\0')
+      if (sep < 0) continue
+      const reportName = key.slice(0, sep)
+      const id = key.slice(sep + 1)
+      if (SESSION_ID_RE.test(id)) continue
+      const blobReports = entries?.[id]?.ignoredReports
+      if (!Array.isArray(blobReports) || !blobReports.includes(reportName)) {
+        state.ignoredIds.delete(key)
       }
-      const ignoredReports = v && Array.isArray(v.ignoredReports) ? v.ignoredReports : []
-      for (const r of ignoredReports) {
+    }
+  }
+  if (!entries) return
+  for (const [k, v] of Object.entries(entries)) {
+    if (v && v.color) state.markers.set(k, v.color)
+    // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
+    // Legacy entries that only carry `deleted: true` migrate to 'deleted'.
+    if (v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted')) {
+      state.triageState.set(k, v.triage)
+    } else if (v && v.deleted) {
+      state.triageState.set(k, 'deleted')
+    }
+    if (v && Array.isArray(v.ignoredReports)) {
+      for (const r of v.ignoredReports) {
         if (typeof r === 'string') state.ignoredIds.add(`${r}\0${k}`)
       }
-      if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
-      if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)
     }
+    if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
+    if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)
+  }
+}
+
+async function loadTriage() {
+  try {
+    const entries = await readTriageBlob()
+    applyTriageEntries(entries)
   } catch (err) {
     console.warn('Failed to load triage:', err)
   }
+}
+
+// Cross-tab learning: a sibling tab's saveTriage fires a `storage`
+// event in this tab. Re-read the blob and replace persisted-id
+// entries so the user's edits in tab A show up in tab B without
+// round-tripping through the sync server (and even when the server
+// is offline). `replace: true` is what handles a sibling clearing
+// a marker — without it, a delete in tab A wouldn't land here.
+export async function reloadTriageFromStorage() {
+  try {
+    const entries = await readTriageBlob()
+    applyTriageEntries(entries, { replace: true })
+  } catch (err) {
+    console.warn('Failed to reload triage:', err)
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== TRIAGE_KEY) return
+    // Don't notify the sync layer — the data we just loaded came
+    // from another tab that's already on the same wire under the
+    // same workspaceTag, so an outbound save here would just push
+    // a redundant changeset (or worse, race with the originating
+    // tab's save). The sync chain takes care of server propagation.
+    reloadTriageFromStorage()
+  })
 }
 
 // Triage loads asynchronously at module init. `ingestReport` awaits

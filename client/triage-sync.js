@@ -403,6 +403,16 @@ function changesetEmpty(cs) {
 
 // ─────────── per-workspace session persistence ───────────
 
+// The sessions blob is keyed per-workspace inside one JSON object,
+// so two tabs writing entries for DIFFERENT workspaces still race on
+// the read-modify-write of the outer object. Serialize every RMW
+// behind a same-origin Web Lock so concurrent writers see each
+// other's updates instead of clobbering them. The lock name is the
+// storage key — Web Locks are namespaced per-origin, which is the
+// scope that matters here (every tab on the same origin shares the
+// localStorage instance and the lock manager).
+const SESSION_STATE_LOCK = SESSION_STATE_KEY
+
 function loadAllSessions() {
   try {
     const raw = localStorage.getItem(SESSION_STATE_KEY)
@@ -412,7 +422,7 @@ function loadAllSessions() {
   } catch { return {} }
 }
 
-function saveAllSessions(map) {
+function writeAllSessionsRaw(map) {
   try {
     localStorage.setItem(SESSION_STATE_KEY, JSON.stringify(map))
   } catch (err) {
@@ -422,10 +432,10 @@ function saveAllSessions(map) {
   }
 }
 
-// Try to restore previously-persisted base for `workspaceId` against
-// the current `serverUrl`. Returns null when nothing's stored OR the
-// stored serverUrl differs (revision IDs are per-server, so a stored
-// base from another server is meaningless).
+// Read-only — used by `openSession` to restore on module load /
+// re-open. No lock: the read alone can't corrupt anything, and a
+// concurrent writer's blob is whatever it serialized atomically
+// anyway. Callers that read-then-write go through `mutateAllSessions`.
 function loadPersistedSession(workspaceId, currentServerUrl) {
   if (!currentServerUrl) return null
   const all = loadAllSessions()
@@ -438,44 +448,63 @@ function loadPersistedSession(workspaceId, currentServerUrl) {
   }
 }
 
+// Apply `mutator(map)` to the persisted-sessions blob under the
+// SESSION_STATE_LOCK Web Lock. The mutator runs on a freshly-read
+// copy so a concurrent tab's writes are visible. Setting `false` as
+// the mutator's return value skips the write (no-op when the mutator
+// didn't actually change anything).
+export async function mutateAllSessions(mutator) {
+  await navigator.locks.request(SESSION_STATE_LOCK, async () => {
+    const all = loadAllSessions()
+    const result = await mutator(all)
+    if (result === false) return
+    writeAllSessionsRaw(all)
+  })
+}
+
 function persistSession(target) {
   if (!target || !serverUrl) return
-  const all = loadAllSessions()
-  all[target.workspaceId] = {
-    serverUrl,
-    baseRevision: target.baseRevision,
-    savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
-    baseState: target.baseState,
-  }
-  saveAllSessions(all)
+  // Fire-and-forget — callers don't await. The lock serializes the
+  // RMW; ordering between back-to-back persistSession calls follows
+  // Web Locks FIFO semantics, so the most-recent state for any one
+  // workspace wins.
+  mutateAllSessions((all) => {
+    all[target.workspaceId] = {
+      serverUrl,
+      baseRevision: target.baseRevision,
+      savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
+      baseState: target.baseState,
+    }
+  })
 }
 
 // One-shot prune at module load — drop persisted entries for
 // workspaces that no longer exist (deleted but their session state
 // stayed). Cheap; runs once per page load.
 function prunePersistedSessions() {
-  const all = loadAllSessions()
-  const ids = Object.keys(all)
-  if (ids.length === 0) return
-  const live = new Set(listWorkspaces().map((w) => w.id))
-  let changed = false
-  for (const id of ids) {
-    if (!live.has(id)) {
-      delete all[id]
-      changed = true
+  mutateAllSessions((all) => {
+    const ids = Object.keys(all)
+    if (ids.length === 0) return false
+    const live = new Set(listWorkspaces().map((w) => w.id))
+    let changed = false
+    for (const id of ids) {
+      if (!live.has(id)) {
+        delete all[id]
+        changed = true
+      }
     }
-  }
-  if (changed) saveAllSessions(all)
+    return changed ? undefined : false
+  })
 }
 
 // Drop the persisted-session entry for one workspace id (if any).
 // Used by the workspace-deleted listener so the live persistence
 // blob doesn't survive the deletion until the next page-load prune.
 function dropPersistedSession(workspaceId) {
-  const all = loadAllSessions()
-  if (!(workspaceId in all)) return
-  delete all[workspaceId]
-  saveAllSessions(all)
+  mutateAllSessions((all) => {
+    if (!(workspaceId in all)) return false
+    delete all[workspaceId]
+  })
 }
 
 // Derive content-encryption key + Ed25519 signing keypair in parallel.
