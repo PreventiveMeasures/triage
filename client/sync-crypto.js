@@ -153,17 +153,25 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
 // `base` field, so this is unambiguous without explicit
 // length-prefix framing.
 //
-// The `keyframe` field is `'1'` for a keyframe revision, `''`
-// otherwise. Including it in the SIGNED bytes means a malicious
-// server can't relabel a normal save as a keyframe (or vice
-// versa): the wire-level flag the server uses for routing /
-// storage MUST match the signed flag, or the signature fails.
+// The `keyframe` field is `'1'` only when the value is `=== true`,
+// `''` otherwise — STRICT, not truthy. The server's
+// `canonicalSave` matches; the storage path (`msg.keyframe ===
+// true`) matches; if any of the three drifted to a looser rule
+// (e.g. `keyframe ? '1' : ''`), a non-boolean truthy wire flag
+// like `keyframe: 1` would hash differently between the sender
+// and one of the receivers, sail past sig-verify on the wrong
+// side, and end up as a chain row that no one can apply.
+//
+// Including `keyframe` in the SIGNED bytes also stops a malicious
+// server from relabeling a normal save as a keyframe (or vice
+// versa) — the wire flag the server uses for routing/storage
+// MUST match the signed flag, or the signature fails.
 function canonicalSavePayload({ publicKeyB64, base, keyframe, nonceB64, ciphertextB64 }) {
   return encodeUtf8([
     SIGN_DOMAIN,
     publicKeyB64,
     base == null ? '' : String(base),
-    keyframe ? '1' : '',
+    keyframe === true ? '1' : '',
     nonceB64,
     ciphertextB64,
   ].join('\n'))

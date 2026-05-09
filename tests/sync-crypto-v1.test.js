@@ -73,6 +73,39 @@ describe('triage-sync v1 canonical formulas (golden)', () => {
     assert.equal(await computeRevisionId(input), expected)
   })
 
+  it('save canonical: keyframe is STRICT === true, not truthy', async () => {
+    // Truthy non-boolean values (e.g. `keyframe: 1` from a buggy
+    // sender) hash as the EMPTY string, identical to `false`.
+    // The server's storage path uses `=== true`, so the canonical
+    // and the storage MUST agree on what counts as a keyframe —
+    // otherwise a malformed save can land in the chain unreadable
+    // to peers (sig fails on the receive side because the wire
+    // flag canonicalises differently from what the sender signed).
+    const truthy = await computeRevisionId({
+      publicKeyB64: 'pk',
+      base: null,
+      keyframe: 1,
+      nonceB64: 'n',
+      ciphertextB64: 'c',
+    })
+    const explicitFalse = await computeRevisionId({
+      publicKeyB64: 'pk',
+      base: null,
+      keyframe: false,
+      nonceB64: 'n',
+      ciphertextB64: 'c',
+    })
+    const explicitTrue = await computeRevisionId({
+      publicKeyB64: 'pk',
+      base: null,
+      keyframe: true,
+      nonceB64: 'n',
+      ciphertextB64: 'c',
+    })
+    assert.equal(truthy, explicitFalse, 'non-boolean truthy hashes as `false`')
+    assert.notEqual(truthy, explicitTrue, 'non-boolean truthy is NOT a keyframe')
+  })
+
   it('AAD: `<workspaceTag>|<base>` with empty string for null base', () => {
     assert.deepEqual(buildAad('TAG', null), encodeUtf8('TAG|'))
     assert.deepEqual(buildAad('TAG', 'rev-id'), encodeUtf8('TAG|rev-id'))

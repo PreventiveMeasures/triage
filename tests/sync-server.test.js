@@ -358,6 +358,37 @@ describe('triage-sync server', () => {
     c1.ws.close(); c2.ws.close()
   })
 
+  it('drops a save with a non-boolean truthy keyframe flag (signed under truthy canonical)', async () => {
+    // Regression for the asymmetric-normalization bug: server
+    // `canonicalSave` and `handleSave` storage must agree on what
+    // counts as a keyframe. STRICT (`=== true`) on both sides
+    // catches a malformed peer that sets `keyframe: 1` (number)
+    // and signs over a TRUTHY canonical (so they hash `'1'`). The
+    // server's strict canonical hashes `''` for that input — sig
+    // verify fails, the save is dropped at the gate. Without the
+    // fix, the row would land in storage with `keyframe = 0`,
+    // broadcast as `keyframe: 0`, and become an unreadable chain
+    // entry that breaks subsequent saves' continuity for peers.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
+    const ciphertext = b64url(new TextEncoder().encode('payload'))
+    // Sign over the OLD truthy canonical: `keyframe ? '1' : ''`
+    // with `keyframe = 1` (truthy non-bool) → `'1'`. The server
+    // now hashes `''` instead, so this should fail.
+    const truthyCanonical = encodeUtf8([
+      SAVE_DOMAIN, tag, '', '1', nonce, ciphertext,
+    ].join('\n'))
+    const sig = b64url(new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, sk, truthyCanonical)))
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: tag, base: null,
+      keyframe: 1, nonce, ciphertext, signature: sig,
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
   it('drops a save where the wire keyframe flag does not match the signed flag', async () => {
     // Sign as a non-keyframe save, then add `keyframe: true` to
     // the wire message. The server canonicalises with the wire

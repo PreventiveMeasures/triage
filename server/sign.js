@@ -22,15 +22,20 @@ function fromB64Url(str) {
 }
 
 // Mirrors client/sync-crypto.js's `canonicalSavePayload`. `keyframe`
-// is `'1'` for a keyframe revision, `''` otherwise. Bound into the
-// signature so the wire-level flag (which the server uses for
-// routing) MUST match the signed flag — otherwise verify fails.
+// is `'1'` for a keyframe revision (`=== true` exactly), `''`
+// otherwise. STRICT equality, not truthy: a non-boolean truthy
+// value like `keyframe: 1` (which JSON.parse couldn't have
+// produced unless the sender went out of its way) hashes as `''`
+// here, matching `handleSave`'s `msg.keyframe === true` storage
+// rule. Without strict matching the canonical and the storage
+// disagree on which inputs are keyframes, and a malformed save
+// can land in the chain unreadable to peers.
 function canonicalSave({ workspaceTag, base, keyframe, nonce, ciphertext }) {
   return encodeUtf8([
     SAVE_DOMAIN,
     workspaceTag,
     base == null ? '' : String(base),
-    keyframe ? '1' : '',
+    keyframe === true ? '1' : '',
     nonce,
     ciphertext,
   ].join('\n'))
