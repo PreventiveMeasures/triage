@@ -28,16 +28,16 @@ import { listFiles, readFile } from './storage.js'
 const byHash = new Map()
 const byPackage = new Map()
 
-// Package extractor — matches both `node_modules/<pkg>/...` and
-// `dependencies/<pkg>/...` regardless of which dir a given report
-// uses (the ui-side `packageOf` peeks at a global `depsDirName`,
-// which doesn't make sense across the OPFS-wide scan where
-// different reports may have come from different setups).
-// Walks past pnpm's synthetic `.pnpm/<name>@<ver>/node_modules/<name>`
-// shim so `@noble/hashes` / `ws` / etc. surface as themselves
-// rather than under `.pnpm`. Falls back to the path's first
-// segment for own source ('src', 'tests', etc.); files at the
-// repo root cluster under '/' (rare).
+// Package extractor — matches `node_modules/<pkg>/...` and
+// `dependencies/<pkg>/...` (both conventions are common); whichever
+// the report uses, the matched name surfaces. Walks past pnpm's
+// synthetic `.pnpm/<name>@<ver>/node_modules/<name>` shim so
+// `@noble/hashes` / `ws` / etc. surface as themselves rather than
+// under `.pnpm`. Returns null when the path is OWN source
+// (`src/...`, `tests/...`, repo-root files) — the Packages view
+// only aggregates third-party deps; own source clutters the page
+// with "src" / "tests" / "playground" pseudo-packages that aren't
+// what the user thinks of as a package.
 function packageOf(file) {
   if (!file) return null
   const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
@@ -45,8 +45,7 @@ function packageOf(file) {
   while ((m = re.exec(file)) !== null) {
     if (m[1] !== '.pnpm') return m[1]
   }
-  const slash = file.indexOf('/')
-  return slash > 0 ? file.slice(0, slash) : '/'
+  return null
 }
 const indexed = new Set()
 const listeners = new Set()
@@ -184,10 +183,14 @@ function indexFindingByHash(f, key, name) {
 }
 
 // Package-keyed bucket update. Independent of fileHash so all
-// findings with a `file` surface in the Packages view, even when
-// the analyzer didn't stamp a content hash.
+// findings inside `node_modules/` / `dependencies/` paths surface
+// in the Packages view, even when the analyzer didn't stamp a
+// content hash. Findings outside those dirs (own source) are
+// skipped — the page only aggregates third-party deps. Returns
+// false when the file isn't part of a package.
 function indexFindingByPackage(f, key, name) {
-  const pkg = packageOf(f.file) ?? '/'
+  const pkg = packageOf(f.file)
+  if (!pkg) return false
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
     pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set() }

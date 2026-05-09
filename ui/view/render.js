@@ -2193,11 +2193,10 @@ function renderPackageRow(pkg, bucket) {
     return fa.localeCompare(fb)
   })
   const dotColor = pkgColor(pkg)
-  const label = pkg === '/' ? '(repo root)' : pkg
   return html`<li class="packages-row">
     <header class="packages-row-head">
       <span class="packages-dot" style=${`background:${dotColor}`}></span>
-      <span class="packages-name">${label}</span>
+      <span class="packages-name">${pkg}</span>
       <span class="packages-count">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} in ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'}</span>
     </header>
     ${chips.length > 0 ? html`<div class="packages-chips">
@@ -2223,7 +2222,6 @@ function renderPackageRow(pkg, bucket) {
 // top-level dir + trailing slash gets stripped; for the repo-root
 // bucket ('/') the file is shown as-is.
 function pkgRelativePath(pkg, file) {
-  if (pkg === '/') return file
   for (const dep of ['node_modules', 'dependencies']) {
     const anchor = `${dep}/${pkg}/`
     const idx = file.indexOf(anchor)
