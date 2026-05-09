@@ -155,7 +155,17 @@ function workspaceItemTemplate(w, reportCount) {
   // workspace into a single merged view (handled by the `.file-item`
   // click delegate against the dataset.workspaceId). The
   // hover-revealed download exports the workspace as a `.gz` bundle.
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label">${w.name}</span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
+  // The .file-label uses a `.textContent` property binding instead
+  // of a child interpolation because the dblclick inline-rename
+  // handler (below) clears `labelSpan.textContent` and appends an
+  // <input> as the temporary edit affordance. A child interpolation
+  // would emit Lit marker comments around the text, and clearing
+  // textContent would wipe those markers — the next renderSidebar
+  // (which always runs on rename commit/cancel) would then crash
+  // inside Lit's `_commitText`. The property binding keeps no
+  // marker comments inside the span; the inline mutation becomes
+  // a plain overwrite that the next render reapplies.
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
