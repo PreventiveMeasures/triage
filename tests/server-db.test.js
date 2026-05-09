@@ -221,6 +221,60 @@ describe('chainFrom — cutoff semantics', () => {
     } finally { cleanup() }
   })
 
+  it('uses the most recent keyframe when multiple keyframes exist', () => {
+    // `lastKeyframeSeq` returns MAX(seq) across keyframe rows. A
+    // workspace with kf1 → reg → kf2 → reg → kf3 → reg should anchor
+    // catch-up at kf3, dropping everything before. Pin so a
+    // refactor that switched to "first keyframe" wouldn't regress.
+    const { handle, cleanup } = freshDb()
+    try {
+      insertRevision(handle, rev({ id: 'kf1', keyframe: true }))
+      insertRevision(handle, rev({ id: 'r2', base: 'kf1' }))
+      insertRevision(handle, rev({ id: 'kf2', base: 'r2', keyframe: true }))
+      insertRevision(handle, rev({ id: 'r4', base: 'kf2' }))
+      insertRevision(handle, rev({ id: 'kf3', base: 'r4', keyframe: true }))
+      insertRevision(handle, rev({ id: 'r6', base: 'kf3' }))
+      const chain = chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['kf3', 'r6'])
+    } finally { cleanup() }
+  })
+
+  it('returns post-keyframe revisions only when from=<keyframe id>', () => {
+    // The known-from path: seqOfId(kf) → chainAfterSeq(kf.seq)
+    // returns rows with seq STRICTLY greater than kf.seq. The
+    // keyframe itself isn't echoed back — the client already has it
+    // (that's why they passed it as `from`). Pin so a future
+    // chainAfterSeq → chainFromSeq swap (inclusive vs exclusive)
+    // would surface here.
+    const { handle, cleanup } = freshDb()
+    try {
+      insertRevision(handle, rev({ id: 'r1' }))
+      insertRevision(handle, rev({ id: 'kf', base: 'r1', keyframe: true }))
+      insertRevision(handle, rev({ id: 'r3', base: 'kf' }))
+      const chain = chainFrom(handle, 'tag-A', 'kf')
+      assert.deepEqual(chain.map((r) => r.id), ['r3'])
+    } finally { cleanup() }
+  })
+
+  it('returns the in-between revisions when from=<id BEFORE the keyframe>', () => {
+    // The known-from path is purely "everything after row.seq" — it
+    // does NOT promote the catch-up to the keyframe even when one
+    // exists in between. The client expects continuity (each rev's
+    // base = its predecessor's id), so we can't skip the gap. Pin
+    // the wasteful-but-correct behaviour so an over-eager
+    // optimisation that bypasses pre-keyframe deltas would surface
+    // here as a continuity break.
+    const { handle, cleanup } = freshDb()
+    try {
+      insertRevision(handle, rev({ id: 'r1' }))
+      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      insertRevision(handle, rev({ id: 'kf', base: 'r2', keyframe: true }))
+      insertRevision(handle, rev({ id: 'r4', base: 'kf' }))
+      const chain = chainFrom(handle, 'tag-A', 'r1')
+      assert.deepEqual(chain.map((r) => r.id), ['r2', 'kf', 'r4'])
+    } finally { cleanup() }
+  })
+
   it('chain entries carry every signed-payload field for re-verification', () => {
     const { handle, cleanup } = freshDb()
     try {

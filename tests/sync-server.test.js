@@ -541,4 +541,123 @@ describe('triage-sync server', () => {
     assert.equal(chain.revisions[1].id, b.id)
     writer.ws.close(); reader.ws.close()
   })
+
+  it('drops a malformed (non-JSON) frame silently', async () => {
+    // The message handler's `try { JSON.parse } catch { return }`
+    // path. Any text frame that isn't JSON is a no-op — no
+    // disconnect, no error response, the socket stays usable.
+    const c = await connect(serverUrl)
+    c.ws.send('not-json {}{')
+    await c.expectSilent(150)
+    // Socket still works — heartbeat round-trip confirms.
+    c.ws.send(JSON.stringify({ type: 'ping' }))
+    const pong = await c.recv((m) => m.type === 'pong')
+    assert.equal(pong.type, 'pong')
+    c.ws.close()
+  })
+
+  it('drops a non-object JSON payload silently (string, number, array)', async () => {
+    // The handler's `if (!msg || typeof msg !== 'object') return`
+    // gate. JSON arrays are typeof 'object' so they pass the gate
+    // but have no `type` field → fall through every branch
+    // silently.
+    const c = await connect(serverUrl)
+    c.ws.send(JSON.stringify('hello'))
+    c.ws.send(JSON.stringify(42))
+    c.ws.send(JSON.stringify(null))
+    await c.expectSilent(150)
+    c.ws.close()
+  })
+
+  it('drops an unknown message type silently', async () => {
+    // The dispatch is an `if / else if / else if` with no `else` —
+    // anything that isn't save / subscribe / ping is a no-op.
+    const c = await connect(serverUrl)
+    c.ws.send(JSON.stringify({ type: 'workspace-pretend', whatever: 1 }))
+    c.ws.send(JSON.stringify({ /* no type */ x: 1 }))
+    await c.expectSilent(150)
+    // Verify the socket is still alive afterwards.
+    c.ws.send(JSON.stringify({ type: 'ping' }))
+    const pong = await c.recv((m) => m.type === 'pong')
+    assert.equal(pong.type, 'pong')
+    c.ws.close()
+  })
+
+  it('cleans up subscribers when a socket closes (broadcast survives the dead peer)', async () => {
+    // Three subscribers; one closes. A subsequent save's broadcast
+    // must reach the remaining two without throwing inside the
+    // broadcast loop. Pre-`unsubscribeAll` shape would have left a
+    // dead socket in the per-tag set; `send`'s try/catch swallows
+    // the thrown EPIPE today, but the cleanest signal that the
+    // close handler ran is "the broadcast still arrives at every
+    // surviving peer in O(N), no skip".
+    const { sk, tag } = await makeKp()
+    const writer = await connect(serverUrl)
+    const r1 = await connect(serverUrl)
+    const r2 = await connect(serverUrl)
+    await subscribe(writer, sk, tag)
+    await subscribe(r1, sk, tag)
+    await subscribe(r2, sk, tag)
+    // Close r1 and wait for the server-side close handler to run.
+    // A short wait is unavoidable — `socket.on('close', ...)` fires
+    // asynchronously after the TCP FIN propagates.
+    r1.ws.close()
+    await new Promise((resolve) => { setTimeout(resolve, 100) })
+    const save = await buildSave(sk, tag, null, 'after-close')
+    writer.ws.send(JSON.stringify(save.msg))
+    const [ack, state] = await Promise.all([
+      writer.recv((m) => m.type === 'workspace-save-ack'),
+      r2.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0),
+    ])
+    assert.equal(ack.id, save.id)
+    assert.equal(state.revisions[0].id, save.id)
+    writer.ws.close(); r2.ws.close()
+  })
+
+  it('demultiplexes by workspaceTag — one socket can subscribe to multiple workspaces', async () => {
+    // The subscribers map keys on workspaceTag and a socket lives
+    // in the set of every tag it subscribed to. A save on tag X
+    // broadcasts only to X's subscribers, leaving Y untouched.
+    const wsX = await makeKp()
+    const wsY = await makeKp()
+    const multi = await connect(serverUrl)
+    await subscribe(multi, wsX.sk, wsX.tag)
+    await subscribe(multi, wsY.sk, wsY.tag)
+    // Writer for workspace X only.
+    const writerX = await connect(serverUrl)
+    await subscribe(writerX, wsX.sk, wsX.tag)
+    const save = await buildSave(wsX.sk, wsX.tag, null, 'multi-tag')
+    writerX.ws.send(JSON.stringify(save.msg))
+    const state = await multi.recv((m) => m.type === 'workspace-state' && m.workspaceTag === wsX.tag && m.revisions.length > 0)
+    assert.equal(state.revisions[0].id, save.id)
+    // No broadcast on tag Y — multi shouldn't see anything for Y.
+    await multi.expectSilent(150)
+    multi.ws.close(); writerX.ws.close()
+  })
+
+  it('save without a prior subscribe still receives subsequent broadcasts (auto-subscribe)', async () => {
+    // `handleSave` calls `subscribe(socket, tag)` for the sender,
+    // so a client that fires-and-forgets a save still becomes a
+    // peer for future broadcasts. Pinned because it's an
+    // intentional contract: the client doesn't need to track
+    // subscribe state separately from save state.
+    const { sk, tag } = await makeKp()
+    const a = await connect(serverUrl)
+    const b = await connect(serverUrl)
+    // A sends a save WITHOUT subscribing first.
+    const first = await buildSave(sk, tag, null, 'auto-sub-first')
+    a.ws.send(JSON.stringify(first.msg))
+    await a.recv((m) => m.type === 'workspace-save-ack')
+    // B subscribes (would receive A's first save in the chain too —
+    // drain it) and then sends its own save.
+    await subscribe(b, sk, tag)
+    const second = await buildSave(sk, tag, first.id, 'auto-sub-second')
+    b.ws.send(JSON.stringify(second.msg))
+    // A — who never explicitly subscribed — should receive B's
+    // broadcast because the auto-subscribe inside handleSave
+    // registered them as a peer.
+    const broadcast = await a.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    assert.equal(broadcast.revisions[0].id, second.id)
+    a.ws.close(); b.ws.close()
+  })
 })
