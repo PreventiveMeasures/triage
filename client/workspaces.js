@@ -24,10 +24,26 @@ function readRaw() {
 function writeRaw(list) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    // Local mutations don't fire `storage` events in this tab, so
+    // we update the cache here directly. The storage event handler
+    // below diffs sibling-tab writes against this same cache.
+    lastSeen = list.map(snapshotForCache)
   } catch (err) {
     console.warn('Failed to save workspaces:', err)
   }
 }
+
+// Defensive shallow clone of the fields we diff on. Keeps the
+// cache stable even if a caller hands us mutable `reports` arrays.
+function snapshotForCache(w) {
+  return {
+    id: w.id,
+    privateKey: w.privateKey,
+    reports: Array.isArray(w.reports) ? [...w.reports] : [],
+  }
+}
+
+let lastSeen = readRaw().map(snapshotForCache)
 
 export function listWorkspaces() {
   const list = readRaw()
@@ -189,4 +205,62 @@ export function setReportWorkspace(filename, workspaceId) {
       try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
     }
   }
+}
+
+
+// Cross-tab propagation: a sibling tab's `deleteWorkspace` /
+// `upsertWorkspace` (key rotation, re-import) / `setReportWorkspace`
+// fires a `storage` event in this tab. Diff the new blob against
+// our cached view and re-fire the matching local listeners so the
+// sync layer (which wires those listeners up) cleans up its
+// in-memory + persisted session state without waiting for a page
+// reload. Audit M-1.
+//
+// `lastSeen` is updated by both the storage handler AND `writeRaw`
+// (local writes don't fire storage events in the originating tab,
+// so the cache would otherwise drift); diffs are always against
+// the most-recently observed view.
+//
+// Exposed (not just registered) so node:test environments can
+// drive the diff path directly — `window` doesn't exist in tests
+// and the storage event never fires there.
+export function propagateWorkspaceChangesFromStorage() {
+  const next = readRaw().map(snapshotForCache)
+  const prev = lastSeen
+  lastSeen = next
+  const prevById = new Map(prev.map((w) => [w.id, w]))
+  const nextById = new Map(next.map((w) => [w.id, w]))
+  for (const id of prevById.keys()) {
+    if (nextById.has(id)) continue
+    for (const cb of deleteListeners) {
+      try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
+    }
+  }
+  for (const [id, w] of nextById) {
+    const p = prevById.get(id)
+    if (!p) continue
+    if (p.privateKey !== w.privateKey) {
+      for (const cb of privateKeyChangeListeners) {
+        try { cb(id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
+      }
+    }
+    if (!arraysEqualByOrderedString(p.reports, w.reports)) {
+      for (const cb of reportMembershipListeners) {
+        try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
+      }
+    }
+  }
+}
+
+function arraysEqualByOrderedString(a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY) return
+    propagateWorkspaceChangesFromStorage()
+  })
 }

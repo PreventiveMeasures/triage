@@ -1953,6 +1953,186 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
+  it('cross-tab workspace deletion (storage event) tears down the local session', async () => {
+    // Audit M-1: when a sibling tab deletes a workspace, the
+    // localStorage write fires a `storage` event in this tab, and
+    // workspaces.js's listener re-fires the local
+    // `onWorkspaceDeleted` handlers — same end state as if the
+    // local tab itself had called deleteWorkspace.
+    const { propagateWorkspaceChangesFromStorage } = await import('../client/workspaces.js')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    assert.notEqual(triageSync.sessionInfo(wsId), null, 'session live before sibling delete')
+
+    // Simulate a sibling tab deleting the workspace: rewrite the
+    // localStorage blob directly (NOT via this tab's deleteWorkspace
+    // — that path already fires the local listener), then drive the
+    // diff handler that the storage-event listener would call.
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const remaining = persisted.filter((w) => w.id !== wsId)
+    localStorage.setItem('deepview.workspaces', JSON.stringify(remaining))
+    propagateWorkspaceChangesFromStorage()
+
+    // Triage-sync's onWorkspaceDeleted listener tears down the session.
+    assert.equal(triageSync.sessionInfo(wsId), null, 'sibling delete tore down session')
+    await waitFor(
+      () => JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId] === undefined,
+      'sibling delete dropped persisted base',
+    )
+  })
+
+  it('cross-tab workspace privateKey rotation (storage event) re-opens the session', async () => {
+    // Audit M-1: same flow, for the rotation case. Sibling tab
+    // upserts the workspace with a fresh privateKey; storage event
+    // diff fires onWorkspacePrivateKeyChanged → triage-sync drops
+    // the old session and re-opens under the new identity.
+    const { propagateWorkspaceChangesFromStorage } = await import('../client/workspaces.js')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack under old key')
+    const oldTag = triageSync.sessionInfo(wsId).workspaceTag
+
+    // Sibling tab rotates: rewrite the localStorage blob with a new
+    // privateKey for the same id, then drive the diff handler.
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const idx = persisted.findIndex((w) => w.id === wsId)
+    persisted[idx] = { ...persisted[idx], privateKey: randomBase64() }
+    localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+    propagateWorkspaceChangesFromStorage()
+
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null
+        && triageSync.sessionInfo(wsId).workspaceTag !== oldTag,
+      'session re-opened with fresh workspaceTag after sibling rotation',
+    )
+    await waitFor(statusOnline, 'online under new identity')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('cross-tab report membership change (storage event) refreshes session.ids', async () => {
+    // Audit M-1: same flow, for setReportWorkspace. Sibling tab
+    // attaches a new report to a workspace; storage event diff
+    // fires onReportMembershipChanged → session.ids picks up the
+    // new id and hydration runs.
+    const { propagateWorkspaceChangesFromStorage } = await import('../client/workspaces.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'in-A', _id: 'in-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'in-B', _id: 'in-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    assert.equal(triageSync.sessionInfo(wsId).tracked, 1, 'A.md only')
+
+    // Sibling tab attaches B.md: rewrite the blob, drive the diff.
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const idx = persisted.findIndex((w) => w.id === wsId)
+    persisted[idx] = { ...persisted[idx], reports: ['A.md', 'B.md'] }
+    localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+    propagateWorkspaceChangesFromStorage()
+
+    // Membership listener refreshes session.ids — `tracked` now
+    // counts both findings.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.tracked === 2,
+      'session.ids picked up sibling-attached report',
+    )
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('hydration conflict resolver: M-2 user edit during dialog wins over imported decision', async () => {
+    // Audit M-2: the resolver is async; if the user mutates state.*
+    // for one of the conflicting properties WHILE the dialog is
+    // open, an `imported` decision must NOT silently overwrite
+    // their fresh edit. applyHydrationDecisions re-checks current
+    // state.* against `c.local` and skips the imported assignment
+    // when they no longer match.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-B': { color: 'blue' },
+    })
+    await waitFor(
+      () => {
+        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
+      },
+      'B in baseState',
+    )
+    state.markers.set('finding-B', 'green')
+
+    let dialogResolve = null
+    let resolverArgs = null
+    setHydrationConflictResolver((conflicts) => {
+      resolverArgs = conflicts
+      // Block the resolver until the test releases it — simulating
+      // the user staring at the dialog.
+      return new Promise((resolve) => { dialogResolve = resolve })
+    })
+    try {
+      setReportWorkspace('R1.md', wsId)
+      await waitFor(() => resolverArgs != null, 'resolver invoked')
+      // While the dialog is open, user re-edits state.markers.
+      // (Imagine the user clicked through to that finding's row
+      // and used the toolbar to set yet another color.)
+      state.markers.set('finding-B', 'cyan')
+
+      // Now the user picks "Apply imported" in the dialog.
+      const decisions = {}
+      for (const c of resolverArgs) decisions[`${c.id}:${c.property}`] = 'imported'
+      dialogResolve(decisions)
+
+      // M-2 guard: applyHydrationDecisions sees state.markers ===
+      // 'cyan' (not 'green' that was c.local) and skips the
+      // overwrite. User's mid-dialog edit survives.
+      await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
+      assert.equal(state.markers.get('finding-B'), 'cyan', 'mid-dialog edit preserved')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
   it('upsertWorkspace with the same privateKey does NOT tear down the session', async () => {
     // Listener only fires when privateKey actually changed — a
     // re-import that carries the same key (the common case) must

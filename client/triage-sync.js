@@ -418,10 +418,20 @@ function hydrateStateFromBaseState(baseState, ids) {
 // `${id}:${property}` with `'local'` / `'imported'`. Triage's
 // 'imported' branch also clears the per-report ignored entries
 // for the id (mutex).
+//
+// The dialog is async (user time) so state.* may have changed
+// while it was open — a chain that landed via `applyChainToBase`
+// or a saveTriage from an action handler. Re-read each property's
+// current local value at apply-time and SKIP any 'imported'
+// decision whose `local` no longer matches: the user (or another
+// peer's chain) has effectively voted "local" again. Without this
+// guard the dialog's `imported` choice would silently overwrite
+// fresh local edits made during the dialog window. Audit M-2.
 function applyHydrationDecisions(conflicts, decisions) {
   for (const c of conflicts) {
     const key = `${c.id}:${c.property}`
     if (decisions[key] !== 'imported') continue
+    if (currentLocalValue(c.id, c.property) !== c.local) continue
     if (c.property === 'color') state.markers.set(c.id, c.imported)
     else if (c.property === 'comment') state.comments.set(c.id, c.imported)
     else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
@@ -433,6 +443,14 @@ function applyHydrationDecisions(conflicts, decisions) {
       }
     }
   }
+}
+
+function currentLocalValue(id, property) {
+  if (property === 'color') return state.markers.get(id)
+  if (property === 'triage') return state.triageState.get(id)
+  if (property === 'comment') return state.comments.get(id)
+  if (property === 'fix') return state.fixes.get(id)
+  return undefined
 }
 
 // Recompute `session.ids` from current workspace membership and
@@ -589,12 +607,14 @@ function persistSession(target) {
   // and a `setServerUrl(...)` call landing in between would
   // otherwise stamp the persisted entry with the wrong server's
   // URL, hiding it from `loadPersistedSession` on next page load.
-  // Audit M3.
+  // Audit M3 (round 1).
   const url = serverUrl
   // Fire-and-forget — callers don't await. The lock serializes the
   // RMW; ordering between back-to-back persistSession calls follows
   // Web Locks FIFO semantics, so the most-recent state for any one
-  // workspace wins.
+  // workspace wins. Catch any rejection (Web Locks rejects on tab
+  // teardown / browser quirks) so this fire-and-forget can't leak
+  // an unhandledrejection — audit M-3 (round 2).
   mutateAllSessions((all) => {
     all[target.workspaceId] = {
       serverUrl: url,
@@ -602,12 +622,13 @@ function persistSession(target) {
       savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
       baseState: target.baseState,
     }
-  })
+  }).catch((err) => { console.warn('Triage sync: persistSession lock failed:', err) })
 }
 
 // One-shot prune at module load — drop persisted entries for
 // workspaces that no longer exist (deleted but their session state
-// stayed). Cheap; runs once per page load.
+// stayed). Cheap; runs once per page load. Same fire-and-forget
+// rejection guard as `persistSession`.
 function prunePersistedSessions() {
   mutateAllSessions((all) => {
     const ids = Object.keys(all)
@@ -621,7 +642,7 @@ function prunePersistedSessions() {
       }
     }
     return changed ? undefined : false
-  })
+  }).catch((err) => { console.warn('Triage sync: prunePersistedSessions lock failed:', err) })
 }
 
 // Drop the persisted-session entry for one workspace id (if any).
@@ -1726,7 +1747,12 @@ try {
 // deletes during init).
 onWorkspaceDeleted((workspaceId) => {
   const removed = sessions.delete(workspaceId)
-  dropPersistedSession(workspaceId)
+  // Fire-and-forget — guard the rejection (Web Locks can fail on
+  // tab teardown) so it can't surface as an unhandledrejection.
+  // Audit M-3 (round 2).
+  dropPersistedSession(workspaceId).catch((err) => {
+    console.warn('Triage sync: dropPersistedSession lock failed:', err)
+  })
   if (removed) emitStatusIfChanged()
 })
 
@@ -1773,21 +1799,18 @@ onReportMembershipChanged((workspaceId) => {
   const session = sessions.get(workspaceId)
   if (!session) return
   const { conflicts, hydrated } = refreshSessionIds(session)
-  if (conflicts.length === 0) {
-    if (hydrated) {
-      // State.* changed via gap-fill — persist + push (saveTriage
-      // notifies, which kicks trySendSave for every open session).
-      saveTriage()
-    } else {
-      trySendSave(session)
-    }
-    return
-  }
-  // Conflicts surfaced. The resolver is async (UI dialog). Don't
-  // await the listener — fire-and-forget so setReportWorkspace
-  // returns synchronously to its caller. The user's decisions land
-  // when the dialog closes.
+  // Both branches run inside an async IIFE so saveTriage is
+  // ordered (no parallel writes to the deepview.triage blob from
+  // back-to-back attaches), the catch keeps a Web Locks rejection
+  // from leaking as an unhandledrejection, and setReportWorkspace
+  // still returns synchronously to its caller. Audit M-4.
   ;(async () => {
+    if (conflicts.length === 0) {
+      if (hydrated) await saveTriage()
+      else trySendSave(session)
+      return
+    }
+    // Conflicts surfaced. The resolver is async (UI dialog).
     let decisions = null
     if (hydrationConflictResolver) {
       try {
@@ -1801,7 +1824,7 @@ onReportMembershipChanged((workspaceId) => {
     // Persist state.* (gap-fill + applied decisions) and let the
     // sync layer propagate via saveTriage's notify.
     await saveTriage()
-  })()
+  })().catch((err) => { console.warn('Triage sync: membership listener failed:', err) })
 })
 
 // Drop persisted session entries whose workspace was deleted
