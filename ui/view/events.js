@@ -926,10 +926,19 @@ document.getElementById('print-btn').addEventListener('click', async () => {
   if (state.reports.length === 0) return
   if (printing) return
   printing = true
+  // Captured up front so the `finally` can restore them even if
+  // anything inside the try throws (a finding-card's
+  // updateComplete rejecting, window.print itself rejecting on
+  // some browsers, etc.). Without this the title would stay
+  // hijacked and viewMode stranded in 'list'.
+  const oldMode = state.viewMode
+  const oldTitle = document.title
+  let modeSwapped = false
+  let titleSwapped = false
   try {
-    const oldMode = state.viewMode
     if (oldMode === 'table') {
       state.viewMode = 'list'
+      modeSwapped = true
       render()
       // Wait for Lit's batched per-card update to land before
       // letting the browser snapshot. `updateComplete` resolves
@@ -949,15 +958,17 @@ document.getElementById('print-btn').addEventListener('click', async () => {
     // `.` from a partial common prefix like `security-foo.j` —
     // only `.json` exactly at the end gets removed.
     target = target.replace(/\.json$/u, '')
-    const oldTitle = document.title
-    if (target) document.title = target
+    if (target) {
+      document.title = target
+      titleSwapped = true
+    }
     window.print()
-    document.title = oldTitle
-    if (state.viewMode !== oldMode) {
+  } finally {
+    if (titleSwapped) document.title = oldTitle
+    if (modeSwapped && state.viewMode !== oldMode) {
       state.viewMode = oldMode
       render()
     }
-  } finally {
     printing = false
   }
 })
