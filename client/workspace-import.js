@@ -184,12 +184,17 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     }
     // Per-report ignore — additive merge. Each (reportName, id) is
     // an independent slot; we union the imported list into local.
-    // No conflict path here since the keys don't collide between
-    // local and imported (a key represents "ignored in this
-    // report" — both sides setting it is identical).
+    // No conflict path since the keys don't collide between sides
+    // (a key represents "ignored in this report" — both sides
+    // setting it is identical). Mutual-exclusion guard: if the
+    // id has a triage state locally now (whether pre-existing or
+    // just-imported above), skip the ignored merge so the local
+    // state honors the per-tab invariant.
     const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
-    for (const r of ignoredReports) {
-      if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+    if (!state.triageState.has(id)) {
+      for (const r of ignoredReports) {
+        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+      }
     }
   }
   if (conflicts.length > 0 && conflictResolver) {

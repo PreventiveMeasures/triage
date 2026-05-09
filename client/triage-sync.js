@@ -332,6 +332,22 @@ function effectiveLocalState(baseState, ids) {
   return out
 }
 
+// Set-equal comparison for `ignoredReports`. Each list is an
+// unordered collection of report names; a peer's snapshot may
+// produce them in iteration order of state.ignoredIds (insertion
+// order), and an applied chain may produce them in a different
+// order, so a positional compare would falsely report changes
+// and produce empty-but-nonzero changesets.
+function ignoredReportsEqual(a, b) {
+  const la = Array.isArray(a) ? a : []
+  const lb = Array.isArray(b) ? b : []
+  if (la.length !== lb.length) return false
+  if (la.length === 0) return true
+  const seen = new Set(la)
+  for (const r of lb) if (!seen.has(r)) return false
+  return true
+}
+
 function entriesEqual(a, b) {
   // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'`
   // or absent). Legacy `deleted: true` from older peers / stored
@@ -345,6 +361,7 @@ function entriesEqual(a, b) {
     && triageA === triageB
     && (a.comment ?? '') === (b.comment ?? '')
     && (a.fix ?? '') === (b.fix ?? '')
+    && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
 }
 
 function statesEqual(a, b) {
@@ -539,12 +556,18 @@ function applyToReactiveState(targetState, ids) {
     // Per-report ignore replaces the local set for this id with
     // whatever the wire entry carries. Drop existing keys for the
     // id first so a remote that cleared all reports for an id
-    // resets us; then re-add from the entry.
+    // resets us; then re-add from the entry. Mutual exclusion
+    // with triage: if the wire entry carries a triage state we
+    // skip its ignoredReports — the action-level invariant says
+    // triage and ignore can't coexist on a tab, and a stale chain
+    // that carries both should resolve in favor of triage (matches
+    // the action handler, which clears ignore when setting triage).
     for (const key of [...state.ignoredIds]) {
       const sep = key.indexOf('\0')
       if (sep >= 0 && key.slice(sep + 1) === id) state.ignoredIds.delete(key)
     }
-    if (Array.isArray(entry.ignoredReports)) {
+    const triageWasSet = entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted' || entry.deleted
+    if (!triageWasSet && Array.isArray(entry.ignoredReports)) {
       for (const r of entry.ignoredReports) {
         if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
       }
