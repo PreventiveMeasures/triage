@@ -1310,7 +1310,18 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind }) {
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
               const triage = state.triageState.get(tabKey(finding))
-              const triageLabel = triage === 'fixed' ? 'FIXED' : null
+              // Show the badge for any persisted triage state. The
+              // bundle Issues tab + the package slide's `live` view
+              // both filter invalid + deleted out of `findingsByFile`
+              // upstream, so only `fixed` ever surfaces there. On the
+              // package slide's `[Invalid]` / `[Deleted]` tabs the
+              // findings carry the matching state by construction —
+              // tagging each row makes it obvious which bucket the
+              // user is looking at without having to remember which
+              // tab they clicked.
+              const triageLabel = (triage === 'fixed' || triage === 'invalid' || triage === 'deleted')
+                ? triage.toUpperCase()
+                : null
               const inner = html`<div class="bundle-issues-finding-head">
                 <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
                 ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
