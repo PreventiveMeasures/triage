@@ -70,6 +70,22 @@ export function onWorkspaceDeleted(cb) {
   return () => deleteListeners.delete(cb)
 }
 
+// Listeners notified after a workspace's `privateKey` changes (via
+// `upsertWorkspace`, e.g. import of a re-keyed bundle, or a future
+// "rotate workspace key" affordance). The triage-sync layer
+// subscribes so the in-flight session — whose cached
+// `signingKey` / `workspaceTag` were derived from the OLD key —
+// tears down and re-opens with fresh keys; otherwise saves keep
+// going to the old chain under a now-orphan workspaceTag and
+// silently drift away from the new identity. Listener errors are
+// swallowed so one bad subscriber can't strand the rest.
+const privateKeyChangeListeners = new Set()
+
+export function onWorkspacePrivateKeyChanged(cb) {
+  privateKeyChangeListeners.add(cb)
+  return () => privateKeyChangeListeners.delete(cb)
+}
+
 export function deleteWorkspace(id) {
   const list = readRaw()
   const next = list.filter((w) => w.id !== id)
@@ -101,6 +117,7 @@ export function renameWorkspace(id, name) {
 export function upsertWorkspace(workspace) {
   const list = readRaw()
   const idx = list.findIndex((w) => w.id === workspace.id)
+  const previousPrivateKey = idx >= 0 ? list[idx].privateKey : null
   const next = {
     id: workspace.id,
     name: workspace.name,
@@ -111,6 +128,16 @@ export function upsertWorkspace(workspace) {
   if (idx >= 0) list[idx] = next
   else list.push(next)
   writeRaw(list)
+  // Fire the private-key-change listeners AFTER the persisted list
+  // is updated so a subscriber that re-reads the workspace via
+  // `listWorkspaces()` sees the new key. Only fires when the value
+  // actually changed (not on first insert, not on a re-import that
+  // carries the same key). Listener errors are swallowed.
+  if (previousPrivateKey != null && previousPrivateKey !== next.privateKey) {
+    for (const cb of privateKeyChangeListeners) {
+      try { cb(next.id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
+    }
+  }
   return next
 }
 

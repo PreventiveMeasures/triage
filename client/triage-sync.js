@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
-import { listWorkspaces, onWorkspaceDeleted } from './workspaces.js'
+import { listWorkspaces, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import {
   buildAad,
   computeRevisionId,
@@ -1568,5 +1568,23 @@ onWorkspaceDeleted((workspaceId) => {
   const removed = sessions.delete(workspaceId)
   dropPersistedSession(workspaceId)
   if (removed) emitStatusIfChanged()
+})
+
+// Workspace privateKey rotation (re-import of a re-keyed bundle, or
+// a future "rotate key" affordance): the live session has cached
+// `signingKey` / `workspaceTag` / `key` derived from the OLD key.
+// Continuing to use them would route saves to an orphan workspaceTag
+// on the server and silently drop the user's edits on the floor.
+// Tear the session down (in-memory + persisted base both — the
+// persisted chain was content-addressed under the old workspaceTag,
+// useless to the new identity) and re-open so kickKeyDerivation
+// picks up the fresh key via listWorkspaces().
+onWorkspacePrivateKeyChanged((workspaceId) => {
+  const wasOpen = sessions.delete(workspaceId)
+  dropPersistedSession(workspaceId)
+  if (wasOpen) {
+    triageSync.openSession(workspaceId)
+    emitStatusIfChanged()
+  }
 })
 

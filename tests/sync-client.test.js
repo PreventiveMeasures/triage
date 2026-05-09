@@ -1261,6 +1261,85 @@ describe('triage-sync client', () => {
       'persisted session entry dropped',
     )
   })
+
+  it('rotating a workspace privateKey tears down + reopens the live session under the new identity', async () => {
+    // upsertWorkspace with a different privateKey for the same id
+    // (re-import of a re-keyed bundle, or a future "rotate key"
+    // affordance). The live session has cached signingKey /
+    // workspaceTag derived from the OLD key — keeping it would
+    // route saves to an orphan workspaceTag. The privateKey-change
+    // listener tears down the session, drops the persisted base
+    // (chain ids were content-addressed under the old tag and are
+    // useless to the new identity), and reopens.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack under old key')
+    const oldTag = triageSync.sessionInfo(wsId).workspaceTag
+    assert.ok(oldTag, 'workspaceTag derived under old key')
+    const oldPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    assert.ok(oldPersisted?.baseRevision, 'persisted base existed under old key')
+
+    // Rotate the workspace's privateKey via upsertWorkspace.
+    upsertWorkspace({
+      id: wsId,
+      name: wsId,
+      privateKey: randomBase64(),
+      reports: ['test.md'],
+    })
+
+    // Wait for the listener to drop the old session AND for the
+    // re-opened session to derive its new workspaceTag.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null
+        && triageSync.sessionInfo(wsId).workspaceTag !== oldTag,
+      'session re-opened with fresh workspaceTag derived from new key',
+    )
+    await waitFor(statusOnline, 'session reaches online under new identity')
+
+    // Persisted base for the OLD identity was dropped; the new
+    // session, syncing under the new tag, may re-persist its own
+    // (different) baseRevision, but never the old one.
+    const newPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    assert.notEqual(newPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base reset (or replaced) for new identity')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('upsertWorkspace with the same privateKey does NOT tear down the session', async () => {
+    // Listener only fires when privateKey actually changed — a
+    // re-import that carries the same key (the common case) must
+    // be a no-op for the running session, otherwise re-importing
+    // the same bundle would needlessly drop the chain and force a
+    // resubscribe round-trip.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const oldTag = triageSync.sessionInfo(wsId).workspaceTag
+    const oldPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+
+    // Re-import with the SAME privateKey.
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const samePrivateKey = persisted.find((w) => w.id === wsId).privateKey
+    upsertWorkspace({
+      id: wsId,
+      name: wsId,
+      privateKey: samePrivateKey,
+      reports: ['test.md'],
+    })
+
+    // Give a couple of ticks to make sure no async listener-driven
+    // teardown is in flight.
+    await new Promise((r) => { setTimeout(r, 50) })
+    assert.equal(triageSync.sessionInfo(wsId).workspaceTag, oldTag, 'workspaceTag unchanged')
+    const stillPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    assert.equal(stillPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base unchanged')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────
