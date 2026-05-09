@@ -809,13 +809,18 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
              matchesFilters). The conf-range-vals span mirrors the
              live value during drag (events.js patches its textContent
              on range-input); on release a range-change event triggers
-             a full re-render and the span gets re-baked here. -->
+             a full re-render and the property binding below
+             refreshes the value. The label uses .textContent (a
+             property binding) instead of a child interpolation so
+             the inline patch from range-input does not wipe Lit's
+             part-marker comments; those would crash _commitText on
+             the next full render. -->
         <range-slider
           id="conf-range" min="0" max="10" step="1"
           low=${state.filterConfMin}
           high=${state.filterConfMax}
           aria-label="Confidence range"></range-slider>
-        <span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>` : nothing}
+        <span id="conf-range-vals" class="conf-vals" .textContent=${`${state.filterConfMin}–${state.filterConfMax}`}></span>` : nothing}
       ${triageSelectorTemplate(triageCounts)}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
