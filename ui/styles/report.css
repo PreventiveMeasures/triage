@@ -626,6 +626,170 @@
    list and details columns each scroll independently rather than
    pushing #report past 100vh. Mirrors how the graph view fits to
    screen. */
+/* Per-file grouped issue list — shared by the bundle Issues tab
+   and the package Issues slide. Severity badge + file path +
+   description per row, sorted by severity desc. The summary line
+   above the list shows the matched-file count and the shared
+   path prefix when one exists. */
+.bundle-issues-summary {
+  color: var(--muted);
+  font-size: .72rem;
+  margin-bottom: .5rem;
+}
+.bundle-issues-empty {
+  color: var(--muted);
+  font-size: .78rem;
+  padding: .5rem 0;
+}
+/* Issues list — grouped by file. Each group is a `<li>` with a
+   sticky-feeling header (path + count) followed by the individual
+   findings as nested rows. The header path button opens the
+   source viewer at the file (no specific finding); the finding
+   rows open at a specific line + finding-idx so the viewer's side
+   panel auto-pops on click. */
+.bundle-issues-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 1rem;
+}
+.bundle-issues-file-group {
+  display: flex; flex-direction: column;
+  gap: .25rem;
+}
+.bundle-issues-file-header {
+  display: flex; align-items: baseline; gap: .5rem;
+  padding: .25rem .35rem;
+  border-bottom: 1px solid var(--border);
+}
+.bundle-issues-file-name {
+  flex: 1; min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font-size: .82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundle-issues-file-name:hover { color: var(--accent, #60a5fa); }
+.bundle-issues-file-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.bundle-issues-findings {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+}
+.bundle-issues-finding { padding: 0; }
+.bundle-issues-finding-link {
+  display: flex; flex-direction: column;
+  gap: .2rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: .35rem .5rem .4rem;
+  cursor: pointer;
+  font: inherit;
+}
+.bundle-issues-finding-link:hover { background: var(--surface); }
+.bundle-issues-findings .bundle-issues-finding:last-child .bundle-issues-finding-link {
+  border-bottom: 0;
+}
+/* Top row of each finding — severity + line + optional triage
+   badge + spacer + reports. Spacer pushes the report chips to
+   the right edge so they line up across rows. */
+.bundle-issues-finding-head {
+  display: flex; align-items: center; gap: .4rem;
+  flex-wrap: wrap;
+}
+.bundle-issues-finding-spacer { flex: 1; }
+.bundle-issues-finding-line {
+  color: var(--muted);
+  font-size: .72rem;
+}
+.bundle-issues-finding-triage {
+  text-transform: uppercase;
+  font-size: .55rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 1px .35rem;
+  border-radius: 3px;
+  border: 1px solid currentcolor;
+  background: transparent;
+  white-space: nowrap;
+  &.triage-fixed   { color: var(--green, #4ade80); }
+  &.triage-invalid { color: var(--muted); }
+  &.triage-deleted { color: var(--critical); }
+}
+.bundle-issues-finding-desc {
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.bundle-issue-sev {
+  text-transform: uppercase;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 1px .4rem;
+  border-radius: 3px;
+  color: #000;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
+}
+/* Report chip row under each issue's file name. Mirrors the
+   workspace `.report-chip` (finding-row.css / finding-card.css)
+   so the visual style matches across views. The chips are
+   buttons here so they're keyboard-focusable; events.js's
+   [data-bundle-issue-report] delegate handles the click. */
+.bundle-issue-reports {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: .25rem .35rem;
+}
+.bundle-issue-reports .report-chip {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: 0 .35rem; height: 1.3rem;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: transparent;
+  color: var(--muted); font-size: .68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-width: 12rem;
+  cursor: pointer;
+}
+.bundle-issue-reports .report-chip:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--text);
+}
+.bundle-issue-reports .report-chip-label {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+.bundle-issue-reports .file-icon { flex-shrink: 0; }
+.bundle-issue-reports .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+.bundle-issue-reports .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+.bundle-issue-reports .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+.bundle-issue-reports .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+.bundle-issue-reports-more {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
 .bundles-view {
   max-width: 1200px;
   display: flex;
@@ -737,169 +901,11 @@
     overflow: hidden;
     display: flex;
   }
-  /* Issues tab — flat list of findings matched to bundle files
-     via SHA-512 fileHash. Each row is severity badge + file path
-     + description; sorted by severity desc. The summary line at
-     the top shows the matched-file count and the shared path
-     prefix when one exists. */
-  & .bundle-issues-summary {
-    color: var(--muted);
-    font-size: .72rem;
-    margin-bottom: .5rem;
-  }
-  & .bundle-issues-empty {
-    color: var(--muted);
-    font-size: .78rem;
-    padding: .5rem 0;
-  }
-  /* Issues list — grouped by file. Each group is a `<li>` with
-     a sticky-feeling header (path + count) followed by the
-     individual findings as nested rows. The header path button
-     opens the source viewer at the file (no specific finding);
-     the finding rows open at a specific line + finding-idx so
-     the viewer's side panel auto-pops on click. */
-  & .bundle-issues-list {
-    list-style: none; margin: 0; padding: 0;
-    display: flex; flex-direction: column;
-    gap: 1rem;
-  }
-  & .bundle-issues-file-group {
-    display: flex; flex-direction: column;
-    gap: .25rem;
-  }
-  & .bundle-issues-file-header {
-    display: flex; align-items: baseline; gap: .5rem;
-    padding: .25rem .35rem;
-    border-bottom: 1px solid var(--border);
-  }
-  & .bundle-issues-file-name {
-    flex: 1; min-width: 0;
-    background: transparent;
-    border: 0;
-    padding: 0;
-    color: var(--text);
-    font-size: .82rem;
-    font-weight: 600;
-    text-align: left;
-    cursor: pointer;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  & .bundle-issues-file-name:hover { color: var(--accent, #60a5fa); }
-  & .bundle-issues-file-count {
-    flex-shrink: 0;
-    color: var(--muted);
-    font-size: .68rem;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-  }
-  & .bundle-issues-findings {
-    list-style: none; margin: 0; padding: 0;
-    display: flex; flex-direction: column;
-  }
-  & .bundle-issues-finding { padding: 0; }
-  & .bundle-issues-finding-link {
-    display: flex; flex-direction: column;
-    gap: .2rem;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    padding: .35rem .5rem .4rem;
-    cursor: pointer;
-    font: inherit;
-  }
-  & .bundle-issues-finding-link:hover { background: var(--surface); }
-  & .bundle-issues-findings .bundle-issues-finding:last-child .bundle-issues-finding-link {
-    border-bottom: 0;
-  }
-  /* Top row of each finding — severity + line + optional triage
-     badge + spacer + reports. Spacer pushes the report chips to
-     the right edge so they line up across rows. */
-  & .bundle-issues-finding-head {
-    display: flex; align-items: center; gap: .4rem;
-    flex-wrap: wrap;
-  }
-  & .bundle-issues-finding-spacer { flex: 1; }
-  & .bundle-issues-finding-line {
-    color: var(--muted);
-    font-size: .72rem;
-  }
-  & .bundle-issues-finding-triage {
-    text-transform: uppercase;
-    font-size: .55rem;
-    font-weight: 700;
-    letter-spacing: .06em;
-    padding: 1px .35rem;
-    border-radius: 3px;
-    border: 1px solid currentcolor;
-    background: transparent;
-    white-space: nowrap;
-    &.triage-fixed   { color: var(--green, #4ade80); }
-    &.triage-invalid { color: var(--muted); }
-    &.triage-deleted { color: var(--critical); }
-  }
-  & .bundle-issues-finding-desc {
-    color: var(--muted);
-    font-size: .75rem;
-    line-height: 1.45;
-    word-break: break-word;
-  }
-  & .bundle-issue-sev {
-    text-transform: uppercase;
-    font-size: .6rem;
-    font-weight: 700;
-    letter-spacing: .08em;
-    padding: 1px .4rem;
-    border-radius: 3px;
-    color: #000;
-    white-space: nowrap;
-    flex-shrink: 0;
-
-    &.sev-critical      { background: var(--critical); }
-    &.sev-high          { background: var(--high); }
-    &.sev-medium        { background: var(--medium); }
-    &.sev-low           { background: var(--low); }
-    &.sev-high_bug      { background: var(--high-bug); }
-    &.sev-bug           { background: var(--bug); }
-    &.sev-informational { background: var(--info); }
-  }
-  /* Report chip row under the bundle issue's file name. Mirrors
-     the workspace `.report-chip` (finding-row.css / finding-card.css)
-     so the visual style matches across views. The chips are
-     buttons here so they're keyboard-focusable; events.js's
-     [data-bundle-issue-report] delegate handles the click. */
-  & .bundle-issue-reports {
-    display: flex; align-items: center; flex-wrap: wrap;
-    gap: .25rem .35rem;
-  }
-  & .bundle-issue-reports .report-chip {
-    display: inline-flex; align-items: center; gap: .3rem;
-    padding: 0 .35rem; height: 1.3rem;
-    border: 1px solid var(--border); border-radius: 3px;
-    background: transparent;
-    color: var(--muted); font-size: .68rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    max-width: 12rem;
-    cursor: pointer;
-  }
-  & .bundle-issue-reports .report-chip:hover {
-    border-color: var(--accent, #2563eb);
-    color: var(--text);
-  }
-  & .bundle-issue-reports .report-chip-label {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    min-width: 0;
-  }
-  & .bundle-issue-reports .file-icon { flex-shrink: 0; }
-  & .bundle-issue-reports .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
-  & .bundle-issue-reports .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
-  & .bundle-issue-reports .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
-  & .bundle-issue-reports .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
-  & .bundle-issue-reports-more {
-    color: var(--muted);
-    font-size: .68rem;
-  }
+  /* Issues / report-chip rules for the bundle Issues tab live at
+     top level (below this block) so the package Issues slide,
+     which reuses the same `.bundle-issues-*` class names, picks
+     up the same chrome — those slides aren't nested under
+     `.bundles-view`. */
   & .bundle-graph-slot {
     display: flex;
     flex-direction: column;
