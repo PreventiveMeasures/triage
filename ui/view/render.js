@@ -603,7 +603,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
     fileChip = html`<span class="file-chip">${multiSticker}<span>${fileNames.length} reports</span></span>`
   }
 
-  const findings = state.reports.flatMap((r) => r.groups.flatMap((g) => g))
+  const findings = state.reports.flatMap((r) => r.groups.flat())
 
   // Count covers EVERY loaded finding (live + trashed) — the trashed
   // entries are still part of the report, just hidden from the active

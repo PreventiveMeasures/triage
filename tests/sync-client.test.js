@@ -37,7 +37,7 @@ function createLocalStorage() {
   }
 }
 
-if (typeof globalThis.localStorage === 'undefined') {
+if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 

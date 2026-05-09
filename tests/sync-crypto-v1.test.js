@@ -11,7 +11,7 @@ import { encodeUtf8 } from '../common/utf8.js'
 // Polyfill `localStorage` so the client modules import cleanly in
 // Node — sync-crypto itself doesn't read it, but its module graph
 // does at load time.
-if (typeof globalThis.localStorage === 'undefined') {
+if (globalThis.localStorage === undefined) {
   globalThis.localStorage = (() => {
     const m = new Map()
     return {

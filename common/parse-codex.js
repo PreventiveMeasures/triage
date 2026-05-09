@@ -122,12 +122,11 @@ export function parseCodexCsvToScans(text) {
 }
 
 function rowToFinding(r, cols) {
-  // First filename only, for now. The next commit will surface
-  // multiple `relevant_paths` entries on one finding (some rows list
-  // 2-N paths separated by ` | `).
-  const paths = (r[cols.relevant_paths] || '')
-    .split(' | ').map((s) => s.trim()).filter(Boolean)
-  const file = paths[0] || 'unknown'
+  // First non-empty filename only, for now. The next commit will
+  // surface multiple `relevant_paths` entries on one finding (some
+  // rows list 2-N paths separated by ` | `).
+  const file = (r[cols.relevant_paths] || '')
+    .split(' | ').map((s) => s.trim()).find(Boolean) || 'unknown'
 
   // Codex CSVs lack line numbers — '?' is the same placeholder
   // markdown findings use when the source has no `#L<n>` anchor.

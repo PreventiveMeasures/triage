@@ -164,8 +164,8 @@ function placeFilesInDisk(graph, pkgInfo) {
     // in the inner band [0, 0.3·groupR]; [innerN, N) live in the
     // outer band [0.4·groupR, groupR]. Angle is the same i ×
     // 137.508° golden-step across both bands.
-    const slotX = new Array(N)
-    const slotY = new Array(N)
+    const slotX = Array.from({ length: N })
+    const slotY = Array.from({ length: N })
     for (let i = 0; i < N; i++) {
       const angle = (i * 137.508) * Math.PI / 180
       let radius
@@ -181,7 +181,7 @@ function placeFilesInDisk(graph, pkgInfo) {
       slotY[i] = info.y + Math.sin(angle) * radius
     }
 
-    const used = new Array(N).fill(false)
+    const used = Array.from({ length: N }, () => false)
 
     for (let fi = 0; fi < N; fi++) {
       const f = files[fi]
@@ -366,7 +366,7 @@ export function layoutSpiral(graph, w, h) {
   // ring-to-ring radial spacing gets too tight and within-ring
   // permutation has too few slots to meaningfully optimize over.
   const numRings = Math.max(1, Math.min(10, Math.round(Math.sqrt(Nothers) / 1.2)))
-  const ringStart = new Array(numRings + 1)
+  const ringStart = Array.from({ length: numRings + 1 })
   for (let k = 0; k <= numRings; k++) {
     ringStart[k] = Math.floor(k * k / (numRings * numRings) * Nothers)
   }
@@ -399,8 +399,8 @@ export function layoutSpiral(graph, w, h) {
   // relative radii inside the ring; only the ring centre moves).
   // Outer rings may extend past the original maxRUnit; computeFit
   // reads actual node positions and auto-zooms.
-  const ringGroupCount = new Array(numRings)
-  const ringNodeCount = new Array(numRings)
+  const ringGroupCount = Array.from({ length: numRings })
+  const ringNodeCount = Array.from({ length: numRings })
   for (let k = 0; k < numRings; k++) {
     const startIdx = ringStart[k]
     const endIdx = ringStart[k + 1]
@@ -411,12 +411,12 @@ export function layoutSpiral(graph, w, h) {
     }
     ringNodeCount[k] = nodes
   }
-  const ringR0 = new Array(numRings)
+  const ringR0 = Array.from({ length: numRings })
   for (let k = 0; k < numRings; k++) {
     const midT = (ringStart[k] + ringStart[k + 1] - 1) / 2 / Math.max(1, Nothers - 1)
     ringR0[k] = Math.sqrt(Math.max(0, midT))
   }
-  const ringR1 = new Array(numRings)
+  const ringR1 = Array.from({ length: numRings })
   ringR1[0] = ringR0[0]
   for (let k = 1; k < numRings; k++) {
     const grp = ringGroupCount[k - 1]
@@ -425,7 +425,7 @@ export function layoutSpiral(graph, w, h) {
     const factor = 1 + GAP_SCALE_K * Math.sqrt(Math.max(0, avg - 1))
     ringR1[k] = ringR1[k - 1] + (ringR0[k] - ringR0[k - 1]) * factor
   }
-  const ringDelta = new Array(numRings)
+  const ringDelta = Array.from({ length: numRings })
   for (let k = 0; k < numRings; k++) ringDelta[k] = ringR1[k] - ringR0[k]
 
   // Pre-compute the Vogel sunflower positions for every index
@@ -433,8 +433,8 @@ export function layoutSpiral(graph, w, h) {
   // as before, with each package's band shifted by the per-ring
   // delta computed above (preserves within-ring spread, just
   // translates the ring centre).
-  const vogelX = new Array(Nothers)
-  const vogelY = new Array(Nothers)
+  const vogelX = Array.from({ length: Nothers })
+  const vogelY = Array.from({ length: Nothers })
   let curRing = 0
   for (let i = 0; i < Nothers; i++) {
     while (curRing < numRings - 1 && i >= ringStart[curRing + 1]) curRing++
@@ -458,7 +458,7 @@ export function layoutSpiral(graph, w, h) {
     const endIdx = ringStart[k + 1]
     const M = endIdx - startIdx
     if (M === 0) continue
-    const used = new Array(M).fill(false)
+    const used = Array.from({ length: M }, () => false)
 
     for (let i = startIdx; i < endIdx; i++) {
       const pkg = others[i]

@@ -113,7 +113,7 @@ window.DeepView = {
   // arrays doesn't touch `state`.
   get reports() { return state.reports.slice() },
   get groups() { return state.reports.flatMap((r) => r.groups) },
-  get findings() { return state.reports.flatMap((r) => r.groups.flatMap((g) => g)) },
+  get findings() { return state.reports.flatMap((r) => r.groups.flat()) },
 
   // Identifies the active load: one of these is set when something
   // is open, both null on the empty drop-zone screen.

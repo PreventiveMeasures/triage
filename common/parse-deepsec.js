@@ -151,12 +151,11 @@ function parseBlock(block, severity) {
   const fullDescription = title + (description ? '\n\n' + description : '')
 
   const file = stripBackticks(fields.file || 'unknown')
-  const lines = (fields.lines || '').split(',').map((s) => s.trim()).filter(Boolean)
-  // First line only for now — the renderer takes a single `f.line`,
-  // and lineLink wraps it as a `#L<n>` anchor when a fileUrl is
-  // available. Surfacing additional lines could go into the expanded
-  // body later.
-  const line = lines[0] || '?'
+  // First non-empty line only for now — the renderer takes a single
+  // `f.line`, and lineLink wraps it as a `#L<n>` anchor when a fileUrl
+  // is available. Surfacing additional lines could go into the
+  // expanded body later.
+  const line = (fields.lines || '').split(',').map((s) => s.trim()).find(Boolean) || '?'
 
   const finding = { file, line, severity, description: fullDescription }
   if (recommendation) finding.recommendation = recommendation.replace(/\*\*/gu, '')

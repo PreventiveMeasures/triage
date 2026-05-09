@@ -25,11 +25,11 @@ export function buildTriageExportPayload() {
   const entries = {}
   for (const [k, color] of state.markers) {
     if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...(entries[k] || {}), color }
+    entries[k] = { ...entries[k], color }
   }
   for (const [k, triage] of state.triageState) {
     if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...(entries[k] || {}), triage }
+    entries[k] = { ...entries[k], triage }
   }
   // Per-report ignore: same id-keyed `ignoredReports: [name, …]`
   // shape used by `saveTriage` and the workspace export, so a
@@ -46,15 +46,15 @@ export function buildTriageExportPayload() {
   }
   for (const [id, ignoredIn] of ignoredByid) {
     if (ignoredIn.length === 0) continue
-    entries[id] = { ...(entries[id] || {}), ignoredReports: ignoredIn }
+    entries[id] = { ...entries[id], ignoredReports: ignoredIn }
   }
   for (const [k, comment] of state.comments) {
     if (SESSION_ID_RE.test(k)) continue
-    if (comment) entries[k] = { ...(entries[k] || {}), comment }
+    if (comment) entries[k] = { ...entries[k], comment }
   }
   for (const [k, fix] of state.fixes) {
     if (SESSION_ID_RE.test(k)) continue
-    if (fix) entries[k] = { ...(entries[k] || {}), fix }
+    if (fix) entries[k] = { ...entries[k], fix }
   }
 
   let repoUrls = {}

@@ -84,11 +84,11 @@ export async function buildWorkspaceExportPayload(workspace) {
   const triage = {}
   for (const [id, color] of state.markers) {
     if (!claimedIds.has(id)) continue
-    triage[id] = { ...(triage[id] ?? {}), color }
+    triage[id] = { ...triage[id], color }
   }
   for (const [id, triageVal] of state.triageState) {
     if (!claimedIds.has(id)) continue
-    triage[id] = { ...(triage[id] ?? {}), triage: triageVal }
+    triage[id] = { ...triage[id], triage: triageVal }
   }
   // Per-report ignore — group by id and stamp `ignoredReports`
   // on the entry. Same shape triage.js / triage-sync.js use.
@@ -104,15 +104,15 @@ export async function buildWorkspaceExportPayload(workspace) {
   }
   for (const [id, reportNames] of ignoredByid) {
     if (reportNames.length === 0) continue
-    triage[id] = { ...(triage[id] ?? {}), ignoredReports: reportNames }
+    triage[id] = { ...triage[id], ignoredReports: reportNames }
   }
   for (const [id, comment] of state.comments) {
     if (!claimedIds.has(id)) continue
-    if (comment) triage[id] = { ...(triage[id] ?? {}), comment }
+    if (comment) triage[id] = { ...triage[id], comment }
   }
   for (const [id, fix] of state.fixes) {
     if (!claimedIds.has(id)) continue
-    if (fix) triage[id] = { ...(triage[id] ?? {}), fix }
+    if (fix) triage[id] = { ...triage[id], fix }
   }
 
   // Per-report repo URLs — each report carries its own user-typed URL

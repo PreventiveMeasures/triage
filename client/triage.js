@@ -42,11 +42,11 @@ export async function saveTriage() {
     const entries = {}
     for (const [k, color] of state.markers) {
       if (SESSION_ID_RE.test(k)) continue
-      entries[k] = { ...(entries[k] || {}), color }
+      entries[k] = { ...entries[k], color }
     }
     for (const [k, triage] of state.triageState) {
       if (SESSION_ID_RE.test(k)) continue
-      entries[k] = { ...(entries[k] || {}), triage }
+      entries[k] = { ...entries[k], triage }
     }
     // Per-report ignore is persisted as `ignoredReports: ['nameA',
     // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
@@ -65,15 +65,15 @@ export async function saveTriage() {
     }
     for (const [id, ignoredIn] of ignoredByid) {
       if (ignoredIn.length === 0) continue
-      entries[id] = { ...(entries[id] || {}), ignoredReports: ignoredIn }
+      entries[id] = { ...entries[id], ignoredReports: ignoredIn }
     }
     for (const [k, comment] of state.comments) {
       if (SESSION_ID_RE.test(k)) continue
-      if (comment) entries[k] = { ...(entries[k] || {}), comment }
+      if (comment) entries[k] = { ...entries[k], comment }
     }
     for (const [k, fix] of state.fixes) {
       if (SESSION_ID_RE.test(k)) continue
-      if (fix) entries[k] = { ...(entries[k] || {}), fix }
+      if (fix) entries[k] = { ...entries[k], fix }
     }
     if (Object.keys(entries).length === 0) {
       localStorage.removeItem(TRIAGE_KEY)
@@ -132,7 +132,7 @@ async function readTriageBlob() {
 // pre-uuid) are never in the blob and are left alone in either
 // mode so the active tab's session-scoped triage doesn't get
 // nuked by a sibling's persistence write.
-function applyTriageEntries(entries, { replace } = { replace: false }) {
+function applyTriageEntries(entries, { replace = false } = {}) {
   if (replace) {
     for (const k of [...state.markers.keys()]) {
       if (SESSION_ID_RE.test(k)) continue
