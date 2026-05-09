@@ -1131,6 +1131,52 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
+  it('dismissError re-runs key derivation when keys never landed', async () => {
+    // Regression: dismissError used to just clear `session.error`
+    // and call trySendSubscribe / trySendSave. Both silently bail
+    // on `!session.key || !session.signingKey`, so a no-keys
+    // session that the user retried looked recovered — the error
+    // chip went away — but no save ever went out and the workspace
+    // tag stayed null forever. The fix re-runs key derivation in
+    // that case, so a corrected privateKey actually heals the
+    // session.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error != null,
+      'initial key-derivation failure surfaced',
+    )
+    // Pre-condition: session has no usable keys yet — workspaceTag
+    // is the public part, populated only after a successful
+    // derivation.
+    assert.equal(triageSync.sessionInfo(wsId).workspaceTag, null)
+
+    // User "fixes" the workspace (e.g. re-imports it with a
+    // correct-length key). Same workspace id, fresh privateKey.
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+
+    triageSync.dismissError(wsId)
+    // Without the fix, workspaceTag would stay null and the session
+    // would silently never sync. With the fix, dismissError calls
+    // kickKeyDerivation which picks up the fresh privateKey.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'workspaceTag set after dismissError re-runs key derivation',
+    )
+    await waitFor(statusOnline, 'session reaches online after retry')
+    assert.equal(triageSync.sessionInfo(wsId).error, null)
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
   it('triage state transitions (fixed/invalid/deleted) round-trip through the chain', async () => {
     // Regression for the entriesEqual gap left over from the
     // Fixed/Invalid/Deleted bucket commit: snapshotEntry was

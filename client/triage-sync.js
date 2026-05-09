@@ -459,6 +459,64 @@ function dropPersistedSession(workspaceId) {
   saveAllSessions(all)
 }
 
+// Derive content-encryption key + Ed25519 signing keypair in parallel.
+// Both come off the same private key via HKDF with different
+// domain-separating info strings. If the session gets removed or
+// replaced before derivation finishes, the identity check drops the
+// result. Used by `openSession` (initial derivation) and by
+// `dismissError` (retry path when derivation failed and the user
+// asked to retry — without this the no-keys session would clear its
+// error but stay silently keyless forever).
+function kickKeyDerivation(session) {
+  // Re-look-up the workspace each time so a re-import (same id, fresh
+  // privateKey) on retry actually picks up the corrected key. The
+  // initial-derivation caller already validated the workspace exists,
+  // so this is mostly belt-and-suspenders for the retry path.
+  const ws = listWorkspaces().find((w) => w.id === session.workspaceId)
+  if (!ws) {
+    session.error = 'workspace no longer exists'
+    emitStatusIfChanged()
+    return
+  }
+  ;(async () => {
+    try {
+      const [key, kp] = await Promise.all([
+        deriveSessionKey(ws.privateKey),
+        deriveSigningKeypair(ws.privateKey, session.workspaceId),
+      ])
+      if (sessions.get(session.workspaceId) !== session) return
+      session.key = key
+      session.signingKey = kp.privateKey
+      session.verifyingKey = kp.publicKey
+      session.workspaceTag = kp.publicKeyB64
+      // Subscribe + flush any pending save now that we have keys.
+      // Subscribe gets us broadcast-eligibility regardless of
+      // whether there's anything to push.
+      if (socket?.readyState !== WebSocket.OPEN) {
+        // Socket isn't open yet — open it lazily so the very first
+        // openSession of the page-load brings the connection up.
+        // Subsequent openSessions reuse it.
+        if (isActive() && !socket) openSocket()
+        return
+      }
+      trySendSubscribe(session)
+      trySendSave(session)
+      emitStatusIfChanged()
+    } catch (err) {
+      console.warn('Triage sync: key derivation failed:', err)
+      // Non-recoverable from the sync layer's POV — without signing
+      // keys we can't sign any save or subscribe under this
+      // workspace. Surface it so the UI can warn the user (typical
+      // cause: a corrupt / wrong-length privateKey on the workspace
+      // record).
+      if (sessions.get(session.workspaceId) === session) {
+        session.error = `key derivation failed: ${err?.message ?? err}`
+        emitStatusIfChanged()
+      }
+    }
+  })()
+}
+
 // Reflect `targetState` into the in-memory state.* containers,
 // scoped to `ids`. Entries outside the workspace's scope are left
 // alone so single-file triage isn't clobbered.
@@ -1338,48 +1396,7 @@ export const triageSync = {
       error: null,
     }
     sessions.set(workspaceId, newSession)
-    // Derive content-encryption key + Ed25519 signing keypair in
-    // parallel. Both come off the same private key via HKDF with
-    // different domain-separating info strings. If the session
-    // gets removed or replaced before derivation finishes, the
-    // identity check drops the result.
-    ;(async () => {
-      try {
-        const [key, kp] = await Promise.all([
-          deriveSessionKey(ws.privateKey),
-          deriveSigningKeypair(ws.privateKey, workspaceId),
-        ])
-        if (sessions.get(workspaceId) !== newSession) return
-        newSession.key = key
-        newSession.signingKey = kp.privateKey
-        newSession.verifyingKey = kp.publicKey
-        newSession.workspaceTag = kp.publicKeyB64
-        // Subscribe + flush any pending save now that we have keys.
-        // Subscribe gets us broadcast-eligibility regardless of
-        // whether there's anything to push.
-        if (socket?.readyState !== WebSocket.OPEN) {
-          // Socket isn't open yet — open it lazily so the very
-          // first openSession of the page-load brings the
-          // connection up. Subsequent openSessions reuse it.
-          if (isActive() && !socket) openSocket()
-          return
-        }
-        trySendSubscribe(newSession)
-        trySendSave(newSession)
-        emitStatusIfChanged()
-      } catch (err) {
-        console.warn('Triage sync: key derivation failed:', err)
-        // Non-recoverable from the sync layer's POV — without
-        // signing keys we can't sign any save or subscribe under
-        // this workspace. Surface it so the UI can warn the user
-        // (typical cause: a corrupt / wrong-length privateKey on
-        // the workspace record).
-        if (sessions.get(workspaceId) === newSession) {
-          newSession.error = `key derivation failed: ${err?.message ?? err}`
-          emitStatusIfChanged()
-        }
-      }
-    })()
+    kickKeyDerivation(newSession)
     if (isActive() && !socket) openSocket()
     emitStatusIfChanged()
   },
@@ -1430,6 +1447,13 @@ export const triageSync = {
   // the next round-trip attempt happens. With no argument, clears
   // every session's error. The sidebar's sync button wires the
   // no-arg form to "click while in error state".
+  //
+  // If key derivation never succeeded for this session (the typical
+  // path into `error` from `openSession`), we re-run derivation
+  // before touching the wire — without that the session keeps
+  // `key === null` / `signingKey === null` and `trySendSave` /
+  // `trySendSubscribe` silently bail, leaving the user with a
+  // "retried, looks fine" status that secretly never syncs again.
   dismissError(workspaceId) {
     const ids = workspaceId == null ? [...sessions.keys()] : [workspaceId]
     let changed = false
@@ -1439,7 +1463,9 @@ export const triageSync = {
       session.error = null
       session.consecutiveFailures = 0
       changed = true
-      if (socket?.readyState === WebSocket.OPEN) {
+      if (!session.key || !session.signingKey) {
+        kickKeyDerivation(session)
+      } else if (socket?.readyState === WebSocket.OPEN) {
         trySendSubscribe(session)
         trySendSave(session)
       }
