@@ -909,7 +909,6 @@ body.report-fullscreen {
   &.triage-fixed   { color: var(--green, #4ade80); }
   &.triage-invalid { color: var(--muted); }
   &.triage-deleted { color: var(--critical); }
-  &.triage-none    { color: var(--muted); }
 }
 .bundle-source-panel-close {
   flex-shrink: 0;
