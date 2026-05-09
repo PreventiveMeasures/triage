@@ -141,8 +141,15 @@
   cursor: pointer;
   transition: background .12s;
 
-  &:last-child { border-bottom: none; }
   &:hover { background: rgb(from var(--text) r g b / .04); }
+  /* Match the parent `.tree-table-list`'s 6px radius on edge
+     rows so a `.selected` outline traces the rounded clip
+     rather than painting a square inside it. */
+  &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+  &:last-child {
+    border-bottom: none;
+    border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+  }
   &.selected { background: rgb(from var(--text) r g b / .06); outline: 1px solid var(--accent); outline-offset: -1px; }
 
   & .tree-table-name {

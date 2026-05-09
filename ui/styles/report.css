@@ -1102,8 +1102,15 @@
       cursor: pointer;
       transition: background .12s;
 
-      &:last-child { border-bottom: none; }
       &:hover { background: rgb(from var(--text) r g b / .04); }
+      /* See `.packages-list li` — first/last rows inherit the
+         parent's corner radius so a `.selected` outline traces
+         the rounded clip instead of a square inside it. */
+      &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+      &:last-child {
+        border-bottom: none;
+        border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+      }
       &.selected {
         background: rgb(from var(--text) r g b / .06);
         outline: 1px solid var(--accent);
@@ -1691,8 +1698,18 @@ body.report-fullscreen {
     cursor: pointer;
     transition: background .12s;
 
-    &:last-child { border-bottom: none; }
     &:hover { background: rgb(from var(--text) r g b / .04); }
+    /* Inherit the parent's corner radius on edge rows so the
+       selection outline follows the rounded clip — without this,
+       a `.selected` first/last row paints a square outline
+       against the parent's curved corner (the parent's
+       overflow: hidden hides the row's overflowing rectangle but
+       the inset outline stays visible inside the curve). */
+    &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+    &:last-child {
+      border-bottom: none;
+      border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+    }
     &.selected {
       background: rgb(from var(--text) r g b / .06);
       outline: 1px solid var(--accent);
