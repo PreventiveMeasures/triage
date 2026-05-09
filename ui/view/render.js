@@ -1879,6 +1879,26 @@ function bundleIssueReportsTemplate(finding) {
 // computation completes (events.js kicks it after parse), shows a
 // loading placeholder. No matches → "no issues" line so the user
 // knows there isn't a render glitch.
+// Human-readable line label for a finding. Accepts either a
+// single line ("10" or 10) or a range string ("10-15"); returns
+// "Line 10" / "Lines 10-15" / "" when the value isn't usable.
+// Skips ranges where end ≤ start (treats them as a single line)
+// since those usually come from a malformed source.
+function formatFindingLine(line) {
+  if (line == null || line === '') return ''
+  const s = String(line)
+  const dash = s.indexOf('-')
+  if (dash > 0) {
+    const a = parseInt(s.slice(0, dash), 10)
+    const b = parseInt(s.slice(dash + 1), 10)
+    if (Number.isFinite(a) && Number.isFinite(b) && b > a) return `Lines ${a}-${b}`
+    if (Number.isFinite(a)) return `Line ${a}`
+    return ''
+  }
+  const n = parseInt(s, 10)
+  return Number.isFinite(n) ? `Line ${n}` : ''
+}
+
 function renderBundleIssuesList(details) {
   if (!details || !details.json) return nothing
   if (!details.fileHashes) {
@@ -1951,7 +1971,7 @@ function renderBundleIssuesList(details) {
                 >
                   <div class="bundle-issues-finding-head">
                     <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
-                    ${finding.line ? html`<span class="bundle-issues-finding-line mono">:${finding.line}</span>` : nothing}
+                    ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
                     ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
                     <span class="bundle-issues-finding-spacer"></span>
                     ${bundleIssueReportsTemplate(finding)}

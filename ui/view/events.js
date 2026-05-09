@@ -56,17 +56,17 @@ function renderPreservingSourceScroll() {
   }
 }
 
-// Re-render preserving the Code slide's left rail scroll. Picking a
-// file in the tree triggers render() — Lit may rebuild the rail's
-// child nodes (the tree edits each node's classes for the
-// `current` highlight, plus the auto-open dirs may change), and a
-// rebuilt subtree resets scrollTop on the scrolling ancestor.
-// Capture before, restore after on the freshly-rendered element.
-function renderPreservingCodeRailScroll() {
-  const before = document.querySelector('.bundle-code-rail-body')
+// Re-render preserving scrollTop on a named container. Picking a
+// row in any list-driven view (Code rail tree, Issues slide list,
+// Code search results) triggers render() — Lit may rebuild the
+// container's child nodes for the `.current` highlight or for a
+// data shape change, and a rebuilt subtree resets scrollTop on
+// the scrolling ancestor.
+function renderPreservingScrollOf(selector) {
+  const before = document.querySelector(selector)
   const top = before?.scrollTop ?? 0
   render()
-  const after = document.querySelector('.bundle-code-rail-body')
+  const after = document.querySelector(selector)
   if (after) after.scrollTop = top
 }
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
@@ -325,12 +325,17 @@ report.addEventListener('click', (e) => {
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = path
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
-    // Preserve the Code rail's scroll when the click came from
-    // inside it (tree pick or search-result row). render() rebuilds
-    // the rail subtree to flip the `.current` highlight, which
-    // resets the scrolling ancestor's scrollTop without this guard.
+    // Preserve the scroll position of whichever list-style
+    // container the click came from. Code rail (tree / search
+    // results), Issues slide (file-grouped list), and Code source
+    // viewer panels each scroll inside their own element; the
+    // outermost match wins. render() would otherwise reset
+    // scrollTop on whichever subtree Lit rebuilds for the new
+    // `.current` highlight.
     if (sourceOpen.closest('.bundle-code-rail')) {
-      renderPreservingCodeRailScroll()
+      renderPreservingScrollOf('.bundle-code-rail-body')
+    } else if (sourceOpen.closest('.bundles-slide-body')) {
+      renderPreservingScrollOf('.bundles-slide-body')
     } else {
       render()
     }
