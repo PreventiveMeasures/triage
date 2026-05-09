@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
 import { commitUrl, fileUrl, formatRunMeta, stripExportMarker } from './format.js'
@@ -104,8 +105,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const activeFix = state.fixes.get(activeKey) ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
-  const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
-  const fixBtn = html`<button type="button" class=${`mark-fix${activeFix ? ' has-fix' : ''}`} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
+  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
+  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
@@ -219,7 +220,7 @@ function triageMenuTemplate(group, title) {
     <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu" @beforetoggle=${positionTriagePopover}>
       ${actions.map((a) => html`<button
         type="button"
-        class=${`triage-menu-item triage-menu-${a.key}${current === a.key ? ' active' : ''}`}
+        class=${classMap({ 'triage-menu-item': true, [`triage-menu-${a.key}`]: true, active: current === a.key })}
         data-triage-action=${a.key}
         role="menuitem"
       >${a.label}</button>`)}
@@ -274,7 +275,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
     ? html`<span class="line-num">${locLink}, ${exportName}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
-  return html`<div class=${`tab-body${isActive ? ' active' : ''}`} data-tid=${key}>
+  return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>

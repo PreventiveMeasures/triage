@@ -26,8 +26,10 @@
 // `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
 // from this module.
 import { html, render as litRender, nothing } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
@@ -377,21 +379,22 @@ function renderBundleSizeDistribution(items) {
   const sorted = [...totalByPkg.entries()].sort((a, b) => b[1] - a[1])
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
-      ${sorted.map(([pkg, size]) => html`<span
+      ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
         class="bundles-dist-seg"
-        style=${`flex-grow: ${size}; background: ${pkgColor(pkg)}`}
+        style=${styleMap({ flexGrow: size, background: pkgColor(pkg) })}
         title=${`${pkg}: ${formatBytes(size)}`}
       ></span>`)}
     </div>
     <ul class="bundles-dist-list">
-      ${sorted.map(([pkg, size]) => {
+      ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => {
         const pct = (size / total * 100).toFixed(1)
         const label = pkg === '__own__' ? 'own source' : pkg
+        const c = pkgColor(pkg)
         return html`<li>
-          <span class="bundles-dist-dot" style=${`background: ${pkgColor(pkg)}`}></span>
+          <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
           <span class="bundles-dist-pkg" title=${pkg}>${label}</span>
           <span class="bundles-dist-bar-row" aria-hidden="true">
-            <span class="bundles-dist-bar-fill" style=${`width: ${pct}%; background: ${pkgColor(pkg)}`}></span>
+            <span class="bundles-dist-bar-fill" style=${styleMap({ width: `${pct}%`, background: c })}></span>
           </span>
           <span class="bundles-dist-size">${formatBytes(size)}</span>
           <span class="bundles-dist-percent">${pct}%</span>
@@ -522,21 +525,21 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
     <div class="bundles-tabs" role="tablist">
       <button
         type="button"
-        class=${`bundles-tab${activeTab === 'packages' ? ' active' : ''}`}
+        class=${classMap({ 'bundles-tab': true, active: activeTab === 'packages' })}
         data-bundle-tab="packages"
         aria-selected=${String(activeTab === 'packages')}
         role="tab"
       >Packages (${packages.size})</button>
       <button
         type="button"
-        class=${`bundles-tab${activeTab === 'files' ? ' active' : ''}`}
+        class=${classMap({ 'bundles-tab': true, active: activeTab === 'files' })}
         data-bundle-tab="files"
         aria-selected=${String(activeTab === 'files')}
         role="tab"
       >Files (${sources.length})</button>
       ${reports.length > 0 ? html`<button
         type="button"
-        class=${`bundles-tab${activeTab === 'reports' ? ' active' : ''}`}
+        class=${classMap({ 'bundles-tab': true, active: activeTab === 'reports' })}
         data-bundle-tab="reports"
         aria-selected=${String(activeTab === 'reports')}
         role="tab"
@@ -637,7 +640,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
     })()
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
-  return html`<div class="bundle-source-lines" style=${`--lineno-width:${digits}ch`}>
+  return html`<div class="bundle-source-lines" style=${styleMap({ '--lineno-width': `${digits}ch` })}>
     <aside class="bundle-source-lineno-col" aria-hidden="true">
       ${Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
@@ -649,7 +652,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
           ${entries
             ? html`<button
                 type="button"
-                class=${`bundle-source-dot sev-${sev}${isActive ? ' active' : ''}`}
+                class=${classMap({ 'bundle-source-dot': true, [`sev-${sev}`]: true, active: isActive })}
                 data-bundle-source-finding=${entries[0].idx}
                 title=${`${entries.length} ${entries.length === 1 ? 'issue' : 'issues'} on line ${ln}`}
                 aria-label=${`${entries.length} issues on line ${ln}`}
@@ -758,7 +761,7 @@ function renderBundleSourceModal() {
     }
   }
   return html`<div class="bundle-source-overlay">
-    <div class=${`bundle-source-modal${state.bundleSourceFindingIdx == null ? '' : ' with-panel'}`}>
+    <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       <header class="bundle-source-bar">
         <div class="bundle-source-title" title=${path}>${path}</div>
         <button
@@ -833,7 +836,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
   // ancestors of currentPath); Lit's part-cache short-circuits
   // when the computed value matches the last committed one, so
   // user-driven open/close survives across renders too.
-  return html`<ul class=${`bundle-code-tree${depth === 0 ? ' root' : ''}`}>
+  return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
     ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
       const childPath = parentPath ? `${parentPath}/${name}` : name
       return html`<li class="bundle-code-tree-dir">
@@ -853,7 +856,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       return html`<li class="bundle-code-tree-file">
         <button
           type="button"
-          class=${`bundle-code-tree-link${full === currentPath ? ' current' : ''}`}
+          class=${classMap({ 'bundle-code-tree-link': true, current: full === currentPath })}
           data-bundle-view-source=${full}
           title=${full}
         >
@@ -925,7 +928,7 @@ function renderBundleCodeContentResults(sources, query, currentPath) {
   }
   return html`<div class="bundle-code-search-results">
     <div class="bundle-code-search-summary">${totalHits} ${totalHits === 1 ? 'hit' : 'hits'} in ${results.length} ${results.length === 1 ? 'file' : 'files'}</div>
-    ${results.map(({ path: p, hits }) => html`<div class=${`bundle-code-search-file${p === currentPath ? ' current' : ''}`}>
+    ${results.map(({ path: p, hits }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: p === currentPath })}>
       <button
         type="button"
         class="bundle-code-search-file-name"
@@ -999,7 +1002,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
         // happen since prefix is derived from the same set).
         const bare = prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
         const isCurrent = file === currentPath && state.bundleSourceFindingIdx === fileIdx
-        return html`<li class=${`bundle-code-search-issue${isCurrent ? ' current' : ''}`}>
+        return html`<li class=${classMap({ 'bundle-code-search-issue': true, current: isCurrent })}>
           <button
             type="button"
             class="bundle-code-search-issue-link"
@@ -1103,7 +1106,7 @@ function renderBundleCodeView(details) {
         <div class="bundle-code-search-modes" role="tablist">
           ${searchModes.map((m) => html`<button
             type="button"
-            class=${`bundle-code-search-mode${searchMode === m ? ' active' : ''}`}
+            class=${classMap({ 'bundle-code-search-mode': true, active: searchMode === m })}
             data-bundle-search-mode=${m}
             role="tab"
             aria-selected=${String(searchMode === m)}
@@ -1125,7 +1128,7 @@ function renderBundleCodeView(details) {
             : renderBundleCodeIssuesResults(details, query, path, prefix)}
       </div>
     </aside>
-    <div class=${`bundle-code-main${state.bundleSourceFindingIdx == null ? '' : ' with-panel'}`}>
+    <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${path
         ? html`<header class="bundle-code-main-bar">
             <span class="bundle-code-main-path mono" title=${path}>${path}</span>
@@ -1173,21 +1176,21 @@ function renderBundleSlide(entry) {
       <div class="bundles-slide-tabs" role="tablist">
         <button
           type="button"
-          class=${`bundles-tab${tab === 'graph' ? ' active' : ''}`}
+          class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
           data-bundle-tab="graph"
           aria-selected=${String(tab === 'graph')}
           role="tab"
         >Graph</button>
         ${hasIssues ? html`<button
           type="button"
-          class=${`bundles-tab${tab === 'issues' ? ' active' : ''}`}
+          class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
           data-bundle-tab="issues"
           aria-selected=${String(tab === 'issues')}
           role="tab"
         >Issues</button>` : nothing}
         <button
           type="button"
-          class=${`bundles-tab${tab === 'code' ? ' active' : ''}`}
+          class=${classMap({ 'bundles-tab': true, active: tab === 'code' })}
           data-bundle-tab="code"
           aria-selected=${String(tab === 'code')}
           role="tab"
@@ -1386,7 +1389,7 @@ export function renderBundlesList(bundles) {
     && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
   if (inSlide) return html`${renderBundleSlide(selectedEntry)}${renderBundleSourceModal()}`
   const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
-  return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>
+  return html`<div class=${classMap({ 'bundles-view': true, 'with-details': !!selectedEntry })}>
     <header class="page-head">
       <div class="page-title">
         <h1>Bundles</h1>

@@ -1,6 +1,8 @@
 import { html, render as litRender, nothing } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from '../../client/state.js'
@@ -367,7 +369,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
     if (presentSevs.length > 0) {
       statusBarTpl = html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) => {
         const tip = `${sevCounts[s]} ${s.replace(/_/gu, ' ')}`
-        return html`<span class=${`status-seg sev-${s}`} style=${`flex-grow: ${sevCounts[s]}`} title=${tip}></span>`
+        return html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} title=${tip}></span>`
       })}</span>`
     }
   }
@@ -385,7 +387,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   const filesBtnTpl = (treeFileCount ?? 0) > 1
     ? html`<button
         type="button"
-        class=${`files-toggle-btn${filesActive ? ' active' : ''}`}
+        class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
         data-action="toggle-files"
         title=${filesActive ? 'exit files view' : 'show files'}
         aria-pressed=${String(filesActive)}
@@ -472,7 +474,7 @@ function triageSelectorTemplate(triageCounts) {
       if (n === 0 && !active) return nothing
       return html`<button
         type="button"
-        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
         title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
         aria-pressed=${String(active)}
@@ -491,7 +493,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
   const srcChip = (value, label) => html`<button
     type="button"
-    class=${`source-chip${state.filterSources.has(value) ? ' active' : ''}`}
+    class=${classMap({ 'source-chip': true, active: state.filterSources.has(value) })}
     data-source-toggle=${value}
     aria-pressed=${String(state.filterSources.has(value))}
   >${label}</button>`

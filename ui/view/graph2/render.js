@@ -1,5 +1,7 @@
 import { html } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { state } from '../../../client/state.js'
 import { graph2 } from './state.js'
@@ -107,7 +109,7 @@ function renderTopBar(graph, options) {
       if (n === 0 && !active) return null
       return html`<button
         type="button"
-        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
         title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
         aria-pressed=${String(active)}
@@ -124,7 +126,7 @@ function renderTopBar(graph, options) {
   // so there's nothing for the toggle to filter against.
   const allFilesBtn = hideAllFiles ? null : html`<button
     type="button"
-    class=${`g2-topbar-toggle${graph2.showAll ? ' on' : ''}`}
+    class=${classMap({ 'g2-topbar-toggle': true, on: graph2.showAll })}
     data-g2-show-all
     aria-pressed=${String(graph2.showAll)}
   ><span>All files</span><span class="g2-switch"></span></button>`
@@ -249,7 +251,7 @@ function renderFileList(graph, label, files, referenceDir) {
         const node = graph.nodeByFile.get(f)
         const c = node ? pkgColor(node.pkg) : '#666'
         return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f} title=${f}>
-          <span class="g2-sel-file-dot" style=${`background:${c}`}></span>
+          <span class="g2-sel-file-dot" style=${styleMap({ background: c })}></span>
           <span class="g2-sel-file-path">${display}</span>
         </button></li>`
       })}
@@ -395,9 +397,9 @@ export function renderTopPkgsBlock(graph) {
   return html`<div class="g2-panel-title g2-panel-title-row">
     <span>Packages</span>
     <div class="g2-mini-tabs">
-      ${showIssues ? html`<button type="button" class=${`g2-mini-tab${tab === 'issues' ? ' on' : ''}`} data-g2-top-pkgs="issues">Issues</button>` : null}
-      <button type="button" class=${`g2-mini-tab${tab === 'files' ? ' on' : ''}`} data-g2-top-pkgs="files">Files</button>
-      ${showSize ? html`<button type="button" class=${`g2-mini-tab${tab === 'size' ? ' on' : ''}`} data-g2-top-pkgs="size">Size</button>` : null}
+      ${showIssues ? html`<button type="button" class=${classMap({ 'g2-mini-tab': true, on: tab === 'issues' })} data-g2-top-pkgs="issues">Issues</button>` : null}
+      <button type="button" class=${classMap({ 'g2-mini-tab': true, on: tab === 'files' })} data-g2-top-pkgs="files">Files</button>
+      ${showSize ? html`<button type="button" class=${classMap({ 'g2-mini-tab': true, on: tab === 'size' })} data-g2-top-pkgs="size">Size</button>` : null}
     </div>
   </div>
   ${renderDistribution(graph, tab)}`
@@ -456,7 +458,7 @@ function renderFileCard(graph, n, file) {
     <div class="g2-sel-file-head">
       <div class="g2-sel-path">${relPath}</div>
       <div class="g2-sel-pkg-row">
-        <span class="g2-sel-dot" style=${`--dot:${col}; background:${col}`}></span>
+        <span class="g2-sel-dot" style=${styleMap({ '--dot': col, background: col })}></span>
         <span class="g2-sel-pkg">${pkgLabel}</span>
       </div>
     </div>
@@ -550,7 +552,7 @@ function renderPackageCard(graph, pkg) {
 
   return html`<div class="g2-selection-card">
     <div class="g2-sel-head">
-      <span class="g2-sel-dot" style=${`--dot:${col}; background:${col}`}></span>
+      <span class="g2-sel-dot" style=${styleMap({ '--dot': col, background: col })}></span>
       <span class="g2-sel-id">${pkgLabel}</span>
       <span class="g2-sel-grp">package</span>
     </div>
@@ -658,7 +660,7 @@ function renderDistribution(graph, activeTab) {
   return html`<div class="g2-dist-bar">
     ${graph.packages.map((pkg) => {
       const c = pkgColor(pkg)
-      return html`<span style=${`background:${c}; width:${widthFor(pkg)}%`}></span>`
+      return html`<span style=${styleMap({ background: c, width: `${widthFor(pkg)}%` })}></span>`
     })}
   </div>
   <!-- Show every package — the wrapping section flexes to fill
@@ -690,10 +692,10 @@ function renderDistribution(graph, activeTab) {
       const isSelected = graph2.solo === pkg
       return html`<button
         type="button"
-        class=${`g2-dist-item${isSelected ? ' on' : ''}`}
+        class=${classMap({ 'g2-dist-item': true, on: isSelected })}
         data-g2-pkg=${pkg}
         title=${label}
-      ><span class="g2-dist-dot" style=${`background:${c}`}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
+      ><span class="g2-dist-dot" style=${styleMap({ background: c })}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
     })}
   </div>`
 }

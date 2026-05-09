@@ -17,7 +17,9 @@
 // so the chrome stays consistent across the two cross-report
 // drill-ins (same `bundle-issues-*` class names, same row shape).
 import { html, nothing } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
 import { ensureBundleFindingsIndexed, getPackagesIndex } from '../../client/bundle-finding-index.js'
@@ -93,7 +95,7 @@ export function renderPackagesView() {
   const totalReports = new Set()
   for (const [, bucket] of filtered) for (const r of bucket.reports) totalReports.add(r)
   const layoutClass = selectedEntry ? 'packages-layout open' : 'packages-layout'
-  return html`<div class=${`packages-view${selectedEntry ? ' with-details' : ''}`}>
+  return html`<div class=${classMap({ 'packages-view': true, 'with-details': !!selectedEntry })}>
     <header class="page-head">
       <div class="page-title">
         <h1>Packages</h1>
@@ -174,7 +176,7 @@ function packagesTriageSelectorTemplate(triageCounts) {
       if (n === 0 && !active) return nothing
       return html`<button
         type="button"
-        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
         data-triage-show=${s}
         title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
         aria-pressed=${String(active)}
@@ -278,7 +280,7 @@ function packageSlideTriageTabsTemplate(counts) {
       const active = state.packageSlideTriage === b
       return html`<button
         type="button"
-        class=${`triage-state-btn triage-state-${b}${active ? ' active' : ''}`}
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
         data-package-slide-triage=${b}
         title=${active ? `Exit ${b} view` : `Show ${b} (${counts[b]})`}
         aria-pressed=${String(active)}
@@ -301,7 +303,7 @@ function renderPackageRow(pkg, bucket, isSel) {
     class=${isSel ? 'selected' : ''}
     data-select-package=${pkg}
   >
-    <span class="packages-dot" style=${`background:${dotColor}`}></span>
+    <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
       <span class="packages-name">${pkg}</span>
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
