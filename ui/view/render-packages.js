@@ -24,7 +24,7 @@ import { tabKey } from './group.js'
 import { SEVERITIES } from './format.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { pkgColor } from './graph/utils.js'
-import { renderIssuesGroupedByFile } from './render.js'
+import { renderIssuesGroupedByFile } from './render-bundle.js'
 
 export function renderPackagesView() {
   // Pulls from the OPFS-wide finding index (populated by the

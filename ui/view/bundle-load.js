@@ -12,7 +12,8 @@ import { readBundle } from '../../client/storage.js'
 import { state } from '../../client/state.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
-import { computeBundleFileHashes, render } from './render.js'
+import { render } from './render.js'
+import { computeBundleFileHashes } from './render-bundle.js'
 
 // Read OPFS bytes for the given bundle, classify by the entry's
 // name (`.map` → sourcemap, anything else → stasis), and parse

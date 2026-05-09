@@ -4,7 +4,8 @@ import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
-import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
+import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
+import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
 import { subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 
 // Subscribe once to the bundle-finding index. Any time another
