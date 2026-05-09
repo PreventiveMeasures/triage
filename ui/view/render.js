@@ -2373,24 +2373,18 @@ export function render() {
   }
   const renderGraphInBody = !!g2DataForBody
 
+  // Wrapper class — modifiers come and go between renders without
+  // changing the wrapper's identity, so we update className in
+  // place rather than rebuilding the element.
   let wrapperClass = 'findings-content'
   if (tableWithDetails) wrapperClass += ' with-details'
   if (renderGraphInBody) wrapperClass += ' with-graph'
-  htmlBuf += `<div class="${wrapperClass}">`
 
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
   let bodyTemplate = nothing
 
-  if (renderGraphInBody) {
-    // Graph mode: the only slot inside .findings-content is the
-    // graph layout. View-mode chooser piggy-backs on the graph's
-    // topbar; no separate findings toolbar / empty-state.
-    htmlBuf += '<div id="findings-graph-slot"></div>'
-  } else {
-    // `toolbarTemplate` returns a Lit template — drop a slot here, then
-    // litRender into it after innerHTML lands.
-    htmlBuf += '<div id="toolbar-slot"></div>'
+  if (!renderGraphInBody) {
     toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
       showSource: hasAnyModulesPath,
       showConfidence: hasAnyConfidence,
@@ -2409,17 +2403,14 @@ export function render() {
     } else if (allGroups.length === 0) {
       emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
     }
-    htmlBuf += '<div id="empty-state-slot"></div>'
 
     pendingTableItems = null
     pendingFindingCards.clear()
-    htmlBuf += '<div id="findings-body-slot"></div>'
     bodyTemplate = findingsBodyTemplate(filtered)
   }
-  htmlBuf += '</div>'
 
-  // Detach the persistent <finding-table> (if mounted) before the
-  // innerHTML wipe so the element + its <finding-row> children
+  // Detach the persistent <finding-table> (if mounted) before any
+  // innerHTML reset so the element + its <finding-row> children
   // survive. `.remove()` fires disconnectedCallback on the subtree,
   // but the JS reference keeps everything alive; the reattach below
   // brings the same instances back into the document, where Lit's
@@ -2429,14 +2420,40 @@ export function render() {
     persistentFindingTable.remove()
   }
 
-  report.innerHTML = htmlBuf
+  // Slot-reuse: only rebuild the chrome when the structure
+  // actually changes (cross-view entry, or switching between
+  // graph mode and non-graph mode — the slot set differs). Inside
+  // a stable shape, every render() is just litRender into existing
+  // slots → Lit diffs in place, scroll / focus / persistent
+  // <finding-table> all survive without manual capture-restore.
+  let headerSlot = document.getElementById('header-slot')
+  let wrapper = report.querySelector(':scope > .findings-content')
+  const hadGraphSlot = wrapper && wrapper.querySelector(':scope > #findings-graph-slot')
+  const hadBodySlot = wrapper && wrapper.querySelector(':scope > #findings-body-slot')
+  const wantedShape = renderGraphInBody ? 'graph' : 'body'
+  const haveShape = hadGraphSlot ? 'graph' : (hadBodySlot ? 'body' : null)
+  const shapeMatches = wrapper && haveShape === wantedShape
+  if (!headerSlot || !wrapper || !report.contains(headerSlot) || !report.contains(wrapper) || !shapeMatches) {
+    const inner = renderGraphInBody
+      ? '<div id="findings-graph-slot"></div>'
+      : '<div id="toolbar-slot"></div><div id="empty-state-slot"></div><div id="findings-body-slot"></div>'
+    report.innerHTML = `<div id="header-slot"></div><div class="${wrapperClass}">${inner}</div>`
+    headerSlot = document.getElementById('header-slot')
+    wrapper = report.querySelector(':scope > .findings-content')
+  } else if (wrapper.className !== wrapperClass) {
+    wrapper.className = wrapperClass
+  }
 
-  const headerSlot = document.getElementById('header-slot')
   if (headerSlot) litRender(headerTpl, headerSlot)
+  // Always litRender into existing slots — passing `nothing`
+  // clears the slot's prior content. Without this, a slot that
+  // was populated last render would keep stale content when the
+  // current render's template resolves to `nothing` (e.g. the
+  // empty-state line disappearing once findings appear).
   const toolbarSlot = document.getElementById('toolbar-slot')
   if (toolbarSlot) litRender(toolbarTpl, toolbarSlot)
   const emptyStateSlot = document.getElementById('empty-state-slot')
-  if (emptyStateSlot && emptyStateTpl !== nothing) litRender(emptyStateTpl, emptyStateSlot)
+  if (emptyStateSlot) litRender(emptyStateTpl, emptyStateSlot)
 
   // Now that the slots are in the DOM, litRender the Lit-templated
   // findings body into its placeholder. The body template covers
@@ -2444,7 +2461,7 @@ export function render() {
   // emits a `.finding-table-slot` div inside the template, which
   // the `<finding-table>` reattach below targets.
   const bodySlot = document.getElementById('findings-body-slot')
-  if (bodySlot && bodyTemplate !== nothing) litRender(bodyTemplate, bodySlot)
+  if (bodySlot) litRender(bodyTemplate, bodySlot)
 
   // Graph view-mode: render the graph2 layout into the
   // findings-graph slot and wire the canvas interaction. The
