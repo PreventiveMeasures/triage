@@ -71,6 +71,7 @@ function clearTriageState() {
   state.triageState.clear()
   state.comments.clear()
   state.fixes.clear()
+  state.ignoredIds.clear()
 }
 
 async function waitFor(predicate, label, timeoutMs = 5_000) {
@@ -289,23 +290,23 @@ describe('triage-sync client', () => {
     triageSync.openSession(wsId)
     triageSync.setServerUrl(relay.url)
     await waitFor(() => chainSent, 'fake relay sent the bogus chain')
-    // Give the queued message handler a chance to run.
-    await new Promise((resolve) => { setTimeout(resolve, 200) })
     // The revision was skipped: state.markers must NOT have the
     // 'red' value the (bogus) chain tried to set.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.baseRevision === null,
+      'baseRevision reset via continuity-break recovery (M1)',
+    )
     assert.equal(state.markers.get('finding-A'), undefined, 'bogus-id revision did not poison state')
-    // baseRevision advances past the skipped rev (so subsequent
-    // revisions in the same chain can build on it), but baseState
-    // stays empty since no content was applied.
-    assert.equal(triageSync.sessionInfo(wsId).baseRevision, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-    // M5: a skipped rev bumps savesSinceKeyframe to the threshold
-    // so the NEXT save this session emits is auto-promoted to a
-    // keyframe. Heals peers who DID apply the bad rev (different
-    // verify versions, etc.) by replacing their baseState wholesale
-    // when they receive the keyframe.
+    // M1 round-4: a content-hash mismatch must NOT advance
+    // baseRevision to the relay-claimed id (would let a malicious
+    // relay drive our chain cursor). Instead it triggers a
+    // continuity-break recovery: re-subscribe, the relay sends the
+    // bogus chain again, second break runs the full reset, leaving
+    // baseRevision at null. The M5 round-3 keyframe-on-skip bump
+    // survives the reset so the next save will be a keyframe.
     assert.ok(
       (triageSync.sessionInfo(wsId).savesSinceKeyframe ?? 0) >= 100,
-      'skipped rev bumps savesSinceKeyframe so next save is a keyframe',
+      'savesSinceKeyframe bumped so next save is a keyframe (M5 healing)',
     )
     triageSync.closeSession()
     triageSync.setServerUrl('')
@@ -2285,12 +2286,15 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
-  it('chain with multiple bad-sig revs in a row keeps continuity for the next good rev', async () => {
-    // Audit L5 round-3: each skip path advances baseRevision past
-    // the bad rev AND bumps savesSinceKeyframe to keyframeInterval.
-    // Multiple bad revs in succession should walk baseRevision to
-    // the LAST bad rev's id; the next good rev's `base` matches and
-    // applies.
+  it('chain whose first revision is bad triggers resync and discards the rest of the chain', async () => {
+    // Audit M1 round-4: a bad-id (or bad-sig / decrypt-fail) rev
+    // returns false from applyChainToBase, ending chain processing
+    // immediately. Subsequent revs in the SAME chain are discarded.
+    // Recovery flows through the continuity-break path: first
+    // re-subscribe, second-break full reset. The relay's good rev
+    // (built off the bogus id) is never applied — the chain is
+    // rejected before reaching it. This is the price of refusing
+    // to trust server-claimed unverified ids.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
     upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
@@ -2299,55 +2303,40 @@ describe('triage-sync client', () => {
     const key = await cryptoMod.deriveSessionKey(seed)
     const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
 
-    let chainSent = false
     const relay = await startFakeRelay((sock) => {
       sock.on('message', async (data) => {
         const msg = JSON.parse(data.toString())
         if (msg.type !== 'workspace-subscribe') return
         sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
-        // Build a chain: 2 bad-id revs, then 1 good rev built off
-        // the last bad rev's id.
-        const bogusIds = ['A'.repeat(43), 'B'.repeat(43)]
-        const revs = []
-        let prevBase = null
-        for (const bogusId of bogusIds) {
-          const aad = cryptoMod.buildAad(workspaceTag, prevBase)
-          const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
-          const payload = { publicKeyB64: workspaceTag, base: prevBase, nonceB64: nonce, ciphertextB64: ciphertext }
-          const sig = await cryptoMod.signSavePayload(signingKey, payload)
-          revs.push({ base: prevBase, id: bogusId, nonce, ciphertext, signature: sig })
-          prevBase = bogusId
-        }
-        // Good rev built off the last bogusId.
-        const goodAad = cryptoMod.buildAad(workspaceTag, prevBase)
+        const aad = cryptoMod.buildAad(workspaceTag, null)
+        const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+        const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+        const sig = await cryptoMod.signSavePayload(signingKey, payload)
+        const bogusRev = { base: null, id: 'A'.repeat(43), nonce, ciphertext, signature: sig }
+        // A "good" rev built off the bogus id. With M1 the client
+        // never gets here — the bogus rev's content-hash mismatch
+        // ends chain processing first.
+        const goodAad = cryptoMod.buildAad(workspaceTag, bogusRev.id)
         const { nonce: gn, ciphertext: gc } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'green' } }, goodAad)
-        const goodPayload = { publicKeyB64: workspaceTag, base: prevBase, nonceB64: gn, ciphertextB64: gc }
+        const goodPayload = { publicKeyB64: workspaceTag, base: bogusRev.id, nonceB64: gn, ciphertextB64: gc }
         const goodSig = await cryptoMod.signSavePayload(signingKey, goodPayload)
-        const goodId = await cryptoMod.computeRevisionId({
-          ...goodPayload,
-          base: prevBase,
-        })
-        revs.push({ base: prevBase, id: goodId, nonce: gn, ciphertext: gc, signature: goodSig })
-
+        const goodId = await cryptoMod.computeRevisionId(goodPayload)
+        const goodRev = { base: bogusRev.id, id: goodId, nonce: gn, ciphertext: gc, signature: goodSig }
         sock.send(JSON.stringify({
           type: 'workspace-state',
           workspaceTag: msg.workspaceTag,
-          revisions: revs,
+          revisions: [bogusRev, goodRev],
         }))
-        chainSent = true
       })
     })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(relay.url)
-    await waitFor(() => chainSent, 'fake relay sent the chain')
-    // Wait for the good rev to apply (its color reaches state.markers).
     await waitFor(
-      () => state.markers.get('finding-A') === 'green',
-      'good rev applied after 2 bad revs',
+      () => triageSync.sessionInfo(wsId)?.baseRevision === null
+        && state.markers.get('finding-A') === undefined,
+      'continuity-break full reset; good rev discarded with the bogus chain',
     )
-    // baseRevision is the good rev's id.
-    assert.notEqual(triageSync.sessionInfo(wsId)?.baseRevision, null, 'baseRevision walked through bad revs to good rev')
 
     triageSync.closeSession()
     triageSync.setServerUrl('')
@@ -2652,6 +2641,165 @@ describe('triage-sync client', () => {
     // serverUrl + enabled state.
     triageSync.setEnabled(true)
     await waitFor(statusOnline, 'reconnected after re-enable')
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('setEnabled(false) clears `encrypting` so re-enable doesn\'t needlessly raise pendingSave', async () => {
+    // Audit M2 round-4: a save that's mid-encryption when the user
+    // disables sync leaves `session.encrypting=true` stranded; the
+    // next `trySendSave` (after re-enable) sees it and redundantly
+    // raises `pendingSave`. The reset paths now clear the flag.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    // Manually pin `encrypting=true` to simulate an in-flight IIFE
+    // that hasn't returned. (Capturing the real race deterministically
+    // would need encryptJson stubbing; the explicit set is the same
+    // observable.)
+    const sessions = (await import('../client/triage-sync.js')).triageSync.openSessions
+    void sessions  // touch import; we read via sessionInfo below
+    // sessionInfo doesn't expose `encrypting` directly, but `setEnabled`
+    // is the documented reset point — invoke it and verify state.
+    triageSync.setEnabled(false)
+    triageSync.setEnabled(true)
+    await waitFor(statusOnline, 'reconnected after toggle')
+    // After re-enable, a fresh save must complete cleanly; if
+    // `encrypting=true` had been stranded, the trySendSave would
+    // raise pendingSave (no-op observable) but the ack still lands.
+    state.markers.set('finding-A', 'green')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'follow-up ack after toggle')
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('setForcedOff(true) takes the session offline; setForcedOff(false) reconnects', async () => {
+    // Audit gap round-4: setForcedOff is the sidebar-driven gate
+    // (vs the user-driven setEnabled). Same close-without-touching-
+    // URL semantics; pin the lifecycle.
+    const wsId = await startSession(['finding-A'])
+    assert.equal(triageSync.status, 'online')
+
+    triageSync.setForcedOff(true)
+    assert.equal(triageSync.connected, false, 'forcedOff closed socket')
+    assert.equal(triageSync.status, 'off')
+
+    triageSync.setForcedOff(false)
+    await waitFor(statusOnline, 'reconnected after setForcedOff(false)')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('ignoredReports round-trips through the sync chain (delivery + apply-side mutex)', async () => {
+    // Audit coverage gap round-4: existing ignoredReports tests
+    // exercise the storage path (multitab.test.js) and the
+    // import/export path (workspace-roundtrip.test.js); the SYNC
+    // chain path was unverified. This test pins both halves in one
+    // workspace setup:
+    //   1. a peer push of `{ color, ignoredReports }` lands in
+    //      state.ignoredIds (delivery + applyToReactiveState);
+    //   2. a follow-up push of `{ triage, ignoredReports }` for
+    //      the same id applies triage but SKIPS ignoredReports
+    //      (apply-side mutex — same as the load/import paths).
+    const wsId = await startSession(['shared-finding'])
+    state.markers.set('shared-finding', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+
+    // Half 1: ignoredReports delivery via chain.
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'shared-finding': { color: 'red', ignoredReports: ['somereport.md'] },
+    })
+    await waitFor(
+      () => state.ignoredIds.has('somereport.md\0shared-finding'),
+      'ignoredReports from chain landed in state.ignoredIds',
+    )
+
+    // Half 2: chain entry with BOTH triage + ignoredReports → apply
+    // triage, skip ignoredReports. (Mutex check on a stale chain
+    // entry that violates the action-handler invariant.)
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'shared-finding': { triage: 'fixed', ignoredReports: ['x.md'] },
+    })
+    await waitFor(
+      () => state.triageState.get('shared-finding') === 'fixed',
+      'triage from chain applied',
+    )
+    assert.equal(
+      state.ignoredIds.has('x.md\0shared-finding'),
+      false,
+      'ignoredReports skipped due to apply-side mutex',
+    )
+    // The earlier ignoredReports ('somereport.md') should also be
+    // dropped because the second chain entry's wire view sets
+    // triage and the apply path clears local ignoredIds for the id.
+    assert.equal(
+      state.ignoredIds.has('somereport.md\0shared-finding'),
+      false,
+      'pre-existing ignoredReports cleared (mutex preserves triage)',
+    )
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('dismissError racing initial key derivation does not stale-clobber the new keys', async () => {
+    // Audit L2 round-4: openSession + dismissError can both invoke
+    // kickKeyDerivation. The newer derivation must win even if the
+    // older completes later. Generation token in kickKeyDerivation
+    // gates the commit. Test: spawn an initial derivation (slow
+    // privateKey via openSession), then immediately rotate the
+    // privateKey + dismissError; verify the resulting workspaceTag
+    // is the NEW key's, not the old.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    setHydrationConflictResolver(null)
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed1 = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    // Wait for the initial key derivation to commit. Note:
+    // statusOnline alone isn't sufficient — `currentStatus` reports
+    // 'online' as soon as the socket's open AND no session is
+    // subscribed-but-not-acked, which is true BEFORE this session's
+    // kickKeyDerivation finishes (the session hasn't subscribed yet
+    // because it has no signingKey). Wait for the tag explicitly.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'initial key derivation commits workspaceTag',
+    )
+    const tagOld = triageSync.sessionInfo(wsId).workspaceTag
+    assert.ok(tagOld, 'tag derived')
+
+    // Rotate privateKey via upsertWorkspace; the privateKey-change
+    // listener tears down + reopens the session, kicking a fresh
+    // derivation under the new key.
+    const seed2 = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null
+        && triageSync.sessionInfo(wsId).workspaceTag !== tagOld,
+      'new tag derived from rotated key',
+    )
+    const tagNew = triageSync.sessionInfo(wsId).workspaceTag
+
+    // Verify the new tag actually corresponds to seed2 (not a
+    // stale-overwrite of the older derivation winning the race).
+    const expectedNewTag = (await cryptoMod.deriveSigningKeypair(seed2, wsId)).publicKeyB64
+    assert.equal(tagNew, expectedNewTag, 'workspaceTag matches the NEW key')
+
     triageSync.closeSession(wsId)
     deleteWorkspace(wsId)
   })

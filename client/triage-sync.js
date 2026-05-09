@@ -275,27 +275,57 @@ function sessionIsLive(session) {
 
 // ─────────── pure state / changeset helpers ───────────
 
-function snapshotEntry(id) {
+// Collect every per-report ignore key matching `id`, returned as
+// the wire-shaped `[reportName, ...]` array. One-off callers
+// (snapshotEntry without a pre-built index) pay O(|state.ignoredIds|)
+// per call. Loop callers that snapshot many ids (effectiveLocalState)
+// build a per-id bucket once via `bucketIgnoredByid` and pass it
+// in via `ignoredByid` to drop the per-call cost to O(1) — closes
+// the symmetric L1 round-4 perf gap that round-3 fixed for the
+// apply side.
+function snapshotEntry(id, ignoredByid = null) {
   const entry = {}
   const color = state.markers.get(id)
   if (color !== undefined) entry.color = color
   const triage = state.triageState.get(id)
   if (triage) entry.triage = triage
-  // Collect every per-report ignore key matching this id; the
-  // wire form mirrors the localStorage shape used by triage.js.
-  const ignoredReports = []
-  for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    if (key.slice(sep + 1) !== id) continue
-    ignoredReports.push(key.slice(0, sep))
-  }
+  const ignoredReports = ignoredByid == null
+    ? ignoredReportsForId(id)
+    : (ignoredByid.get(id) ?? [])
   if (ignoredReports.length > 0) entry.ignoredReports = ignoredReports
   const comment = state.comments.get(id)
   if (comment) entry.comment = comment
   const fix = state.fixes.get(id)
   if (fix) entry.fix = fix
   return entry
+}
+
+function ignoredReportsForId(id) {
+  const out = []
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    if (key.slice(sep + 1) !== id) continue
+    out.push(key.slice(0, sep))
+  }
+  return out
+}
+
+// Pre-bucket `state.ignoredIds` by id, optionally filtered to a set
+// of ids of interest. Used by `effectiveLocalState` (and any future
+// many-id snapshotter) so per-id `ignoredReports` lookup is O(1).
+function bucketIgnoredByid(idsScope = null) {
+  const map = new Map()
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    const id = key.slice(sep + 1)
+    if (idsScope && !idsScope.has(id)) continue
+    const list = map.get(id)
+    if (list) list.push(key.slice(0, sep))
+    else map.set(id, [key.slice(0, sep)])
+  }
+  return map
 }
 
 // Collect the finding ids that belong to a workspace's reports,
@@ -337,8 +367,10 @@ function buildWorkspaceIds(workspaceId) {
 // in our current session.ids scope.
 function effectiveLocalState(baseState, ids) {
   const out = { ...baseState }
-  for (const id of ids) {
-    const entry = snapshotEntry(id)
+  const idsSet = ids instanceof Set ? ids : new Set(ids)
+  const ignoredByid = bucketIgnoredByid(idsSet)
+  for (const id of idsSet) {
+    const entry = snapshotEntry(id, ignoredByid)
     if (Object.keys(entry).length > 0) out[id] = entry
     else delete out[id]
   }
@@ -678,6 +710,16 @@ function kickKeyDerivation(session) {
     emitStatusIfChanged()
     return
   }
+  // Generation token: openSession + dismissError can both invoke
+  // kickKeyDerivation. If the user rotates the workspace privateKey
+  // (or otherwise causes a second kick) while the first IIFE is
+  // still awaiting derivation, both runs would race to write the
+  // session's key/signingKey. The OLDER IIFE could clobber the
+  // NEWER's keys, leaving the session pinned to a stale identity.
+  // Bump on every kick; the IIFE only commits when the token it
+  // captured at start is still the current one. Audit L2 round-4.
+  const gen = (session.keyDerivationGen ?? 0) + 1
+  session.keyDerivationGen = gen
   ;(async () => {
     try {
       const [key, kp] = await Promise.all([
@@ -685,6 +727,7 @@ function kickKeyDerivation(session) {
         deriveSigningKeypair(ws.privateKey, session.workspaceId),
       ])
       if (sessions.get(session.workspaceId) !== session) return
+      if (session.keyDerivationGen !== gen) return
       session.key = key
       session.signingKey = kp.privateKey
       session.verifyingKey = kp.publicKey
@@ -709,7 +752,7 @@ function kickKeyDerivation(session) {
       // workspace. Surface it so the UI can warn the user (typical
       // cause: a corrupt / wrong-length privateKey on the workspace
       // record).
-      if (sessions.get(session.workspaceId) === session) {
+      if (sessions.get(session.workspaceId) === session && session.keyDerivationGen === gen) {
         session.error = `key derivation failed: ${err?.message ?? err}`
         emitStatusIfChanged()
       }
@@ -1017,19 +1060,24 @@ async function applyChainToBase(session, revisions) {
       // chain also breaks does the full reset run.
       return false
     }
-    // Signature first — confirms the revision came from someone
-    // holding the workspace's signing key. A failed signature is a
-    // forgery / corruption; skip the bad revision and keep the
-    // previous baseState intact (the malicious / broken entry
-    // doesn't get to decide our future). Continuity for subsequent
-    // revisions still has to hold.
+    // Signature / id / decrypt failures: a malicious or buggy relay
+    // could feed us a revision with arbitrary `id` (or even no id),
+    // signed-but-not-verifiable, or undecryptable. We refuse to
+    // advance `baseRevision` to a server-claimed id we couldn't
+    // independently authenticate — that would let the relay drive
+    // our chain cursor for short windows. Instead, return false so
+    // `handleChain` fires the continuity-break recovery path
+    // (re-subscribe from current baseRevision, then full reset on a
+    // second break). Audit M1 round-4.
+    //
+    // We also bump `savesSinceKeyframe` so that whenever we DO
+    // emit our next save, it goes out as a keyframe — peers that
+    // applied the bad rev (different verify versions, future
+    // protocol bug) get a wholesale replace. Audit M5 round-3.
     if (!rev.signature || !rev.nonce || !rev.ciphertext || typeof rev.id !== 'string') {
-      console.warn('Triage sync: revision missing signature/nonce/ciphertext/id; skipping')
-      if (typeof rev.id === 'string') {
-        session.baseRevision = rev.id
-        session.savesSinceKeyframe = keyframeInterval
-      }
-      continue
+      console.warn('Triage sync: revision missing signature/nonce/ciphertext/id; resyncing')
+      session.savesSinceKeyframe = keyframeInterval
+      return false
     }
     const payload = {
       publicKeyB64: session.workspaceTag,
@@ -1038,22 +1086,9 @@ async function applyChainToBase(session, revisions) {
       nonceB64: rev.nonce,
       ciphertextB64: rev.ciphertext,
     }
-    // Recompute the content-addressed id from the same canonical
-    // bytes. A server-claimed id that doesn't match the content
-    // hash is the protocol's signal that the server is trying to
-    // relabel / re-attribute a revision — drop the rev. The
-    // keyframe flag is part of the canonical bytes, so a server
-    // that flipped it on/off would also fail this check.
-    const expectedId = await computeRevisionId(payload)
-    // Session may have been closed during the verify/decrypt awaits
-    // — bail before any further mutation of an orphan.
-    if (!sessionIsLive(session)) return false
-    if (rev.id !== expectedId) {
-      console.warn('Triage sync: revision id does not match content hash; skipping')
-      session.baseRevision = rev.id
-      session.savesSinceKeyframe = keyframeInterval
-      continue
-    }
+    // Verify the signature FIRST (cheap reject for forgeries) and
+    // only then compute the content-addressed id (a SHA-256 round-
+    // trip we don't need to do for invalid sigs). Audit L5 round-4.
     const ok2 = await verifySavePayload(
       session.verifyingKey,
       payload,
@@ -1061,20 +1096,31 @@ async function applyChainToBase(session, revisions) {
     )
     if (!sessionIsLive(session)) return false
     if (!ok2) {
-      console.warn('Triage sync: revision signature did not verify; skipping')
-      session.baseRevision = rev.id
+      console.warn('Triage sync: revision signature did not verify; resyncing')
       session.savesSinceKeyframe = keyframeInterval
-      continue
+      return false
+    }
+    // Recompute the content-addressed id from the same canonical
+    // bytes. A server-claimed id that doesn't match the content
+    // hash is the protocol's signal that the server is trying to
+    // relabel / re-attribute a revision — drop the rev. The
+    // keyframe flag is part of the canonical bytes, so a server
+    // that flipped it on/off would also fail this check.
+    const expectedId = await computeRevisionId(payload)
+    if (!sessionIsLive(session)) return false
+    if (rev.id !== expectedId) {
+      console.warn('Triage sync: revision id does not match content hash; resyncing')
+      session.savesSinceKeyframe = keyframeInterval
+      return false
     }
     let changeset
     try {
       const aad = buildAad(session.workspaceTag, rev.base)
       changeset = await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)
     } catch (err) {
-      console.warn('Triage sync: decrypt failed; skipping', err)
-      session.baseRevision = rev.id
+      console.warn('Triage sync: decrypt failed; resyncing', err)
       session.savesSinceKeyframe = keyframeInterval
-      continue
+      return false
     }
     if (!sessionIsLive(session)) return false
     // Keyframes carry a changeset computed against an EMPTY base,
@@ -1363,6 +1409,14 @@ function openSocket() {
     for (const session of sessions.values()) {
       session.pending = null
       session.pendingSave = false
+      // NOTE: `session.encrypting` is intentionally NOT cleared
+      // here. An IIFE running across the socket-close boundary
+      // is still in flight; clearing the flag would let a fresh
+      // `trySendSave` (which we kick below) start a parallel
+      // encryption against the new socket. Let the old IIFE drain;
+      // its `send()` will land on the new socket (or no-op if the
+      // socket isn't ready yet) and `pendingSave` re-kicks via
+      // handleAck.
       session.subscribed = false
       session.subscribeAcked = false
       session.resyncAttempted = false
@@ -1490,6 +1544,13 @@ export const triageSync = {
     for (const session of sessions.values()) {
       session.pending = null
       session.pendingSave = false
+      // Mark any in-flight encryption as orphaned. The IIFE checks
+      // `sessionIsLive` before mutating session state but doesn't
+      // know about reset-without-close paths; an unreset
+      // `encrypting=true` makes the next `trySendSave` redundantly
+      // raise `pendingSave` even though no encryption is racing.
+      // Audit M2 round-4.
+      session.encrypting = false
       session.subscribed = false
       session.subscribeAcked = false
       session.resyncAttempted = false
@@ -1520,6 +1581,11 @@ export const triageSync = {
       for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
+        // Audit M2 round-4: clear `encrypting` on reset paths so
+        // a stranded in-flight IIFE doesn't make the next
+        // `trySendSave` (when sync is re-enabled) redundantly
+        // raise `pendingSave`.
+        session.encrypting = false
         session.subscribed = false
         session.subscribeAcked = false
         session.resyncAttempted = false
@@ -1546,6 +1612,8 @@ export const triageSync = {
       for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
+        // Audit M2 round-4 — see setEnabled.
+        session.encrypting = false
         session.subscribed = false
         session.subscribeAcked = false
         session.resyncAttempted = false
