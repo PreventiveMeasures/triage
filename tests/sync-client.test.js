@@ -2344,6 +2344,72 @@ describe('triage-sync client', () => {
     await relay.close()
   })
 
+  it('bad-rev → full reset emits a healing keyframe even with no local overlay', async () => {
+    // Audit M1 round-5: the M5 keyframe-on-skip bump puts
+    // `savesSinceKeyframe = keyframeInterval` so the next save is
+    // a keyframe. But trySendSave used to short-circuit on an
+    // empty changeset — meaning if the user had no local overlay
+    // (state.* matches baseState after the full reset's `{}`),
+    // no keyframe was ever emitted, leaving any peer who applied
+    // the bad rev divergent indefinitely. The fix: don't
+    // short-circuit when isKeyframe is true. Even an empty-content
+    // keyframe carries signal — receivers wholesale-replace
+    // baseState with {} so divergent content gets cleared.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let savesReceived = 0
+    let lastSaveKeyframe = null
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', async (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          // Always send the bogus chain — first one trips the
+          // continuity-break recovery; second one trips the full
+          // reset. After full reset, the client's next save is
+          // what we're observing here.
+          const aad = cryptoMod.buildAad(workspaceTag, null)
+          const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+          const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+          const sig = await cryptoMod.signSavePayload(signingKey, payload)
+          sock.send(JSON.stringify({
+            type: 'workspace-state',
+            workspaceTag: msg.workspaceTag,
+            revisions: [{ base: null, id: 'A'.repeat(43), nonce, ciphertext, signature: sig }],
+          }))
+        } else if (msg.type === 'workspace-save') {
+          savesReceived += 1
+          lastSaveKeyframe = msg.keyframe
+          sock.send(JSON.stringify({
+            type: 'workspace-save-ack',
+            workspaceTag: msg.workspaceTag,
+            base: msg.base,
+            id: 'X'.repeat(43),
+          }))
+        }
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    // The client has no local triage; baseState is empty after the
+    // full reset; localState is empty. With M1 round-5 the empty
+    // keyframe still goes out for cluster healing.
+    await waitFor(() => savesReceived >= 1, 'healing keyframe emitted after full reset', 3_000)
+    assert.equal(lastSaveKeyframe, true, 'save was a keyframe (heals divergent peers)')
+
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
   it('outbound chain entries never carry the legacy `deleted: true` shape', async () => {
     // Audit L3 round-3: snapshotEntry emits `triage` (new) only,
     // never `deleted: true`. Pin via a save round-trip + reader.

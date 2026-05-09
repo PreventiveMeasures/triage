@@ -913,7 +913,15 @@ function trySendSave(session) {
   const isKeyframe = (session.savesSinceKeyframe ?? 0) >= keyframeInterval
   const sourceBase = isKeyframe ? {} : session.baseState
   const changeset = computeChangeset(sourceBase, session.localState)
-  if (changesetEmpty(changeset)) return
+  // Skip the wire round-trip when there's nothing to send — UNLESS
+  // we're in a keyframe slot. The skip-bumped keyframe (audit M5
+  // round-3) heals peers who applied a bad rev that we rejected;
+  // even an empty-content keyframe has signal because receivers
+  // wholesale-replace baseState with `{}` (clearing divergent
+  // content). Emitting it is necessary when the local user has no
+  // overlay to push but peer divergence still needs healing —
+  // closes the empty-local gap audit M1 round-5 called out.
+  if (changesetEmpty(changeset) && !isKeyframe) return
   const sentBase = session.baseRevision
   session.encrypting = true
   ;(async () => {

@@ -216,6 +216,40 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported decision should win')
   })
 
+  it('imported decision skipped when state.* changed during the dialog (M-2 stale guard)', async () => {
+    // Audit H1 round-5: workspace-import's applyConflictDecisions
+    // used to overwrite state.* unconditionally on an 'imported'
+    // pick, even if the user (or a peer chain) had mutated the
+    // value while the dialog was open. The hydration dialog has
+    // had this guard since round-4 M-2; this test pins the
+    // symmetric guard for the import path.
+    state.markers.set(FINDING_A, 'green')
+    state.comments.set(FINDING_A, 'note A')
+    // Resolver picks 'imported' for both color and comment, but
+    // mutates state.* mid-flight to simulate a user edit (or a peer
+    // chain landing) while the dialog is open.
+    const conflictResolver = (conflicts) => {
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      // Mid-dialog mutation: user types a new comment, peer chain
+      // overwrites color.
+      state.comments.set(FINDING_A, 'fresh user edit')
+      state.markers.set(FINDING_A, 'cyan')
+      return decisions
+    }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-stale', name: 'S', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: { [FINDING_A]: { color: 'red', comment: 'imported note' } },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    // Both decisions were 'imported' BUT state.* changed mid-dialog.
+    // The stale-check skips the writes; mid-dialog edits survive.
+    assert.equal(state.markers.get(FINDING_A), 'cyan', 'mid-dialog color edit preserved')
+    assert.equal(state.comments.get(FINDING_A), 'fresh user edit', 'mid-dialog comment preserved')
+  })
+
   it('imported triage decision drops pre-existing local ignored entries (mutex)', async () => {
     // Audit M8: the conflict-resolution loop sets state.triageState
     // when the user picks 'imported' on a triage conflict, but

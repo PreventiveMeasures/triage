@@ -223,6 +223,75 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // no recognized properties, so nothing lands in state.*).
     assert.equal(state.markers.get('__topLevel'), undefined)
   })
+
+  it('crash mid-compress: pending uncompressed snapshot recovers the user edit', async () => {
+    // Audit M3 round-5: saveTriage's `await compressBrotli` window
+    // would lose the user's edit on a tab crash — in-memory state.*
+    // dies with the process, the compressed key wasn't updated, and
+    // triageSync.notify hadn't fired yet. The fix writes an
+    // uncompressed snapshot to a `pending` key BEFORE the await;
+    // readTriageBlob prefers it on next load.
+    //
+    // We simulate the crash by stubbing CompressionStream so the
+    // await never resolves, kicking saveTriage in the background,
+    // then verifying the pending key has the data and reload picks
+    // it up.
+    state.markers.set(FINDING_A, 'red')
+    state.comments.set(FINDING_A, 'pre-crash note')
+    const realCompressionStream = globalThis.CompressionStream
+    let resolveStuck
+    globalThis.CompressionStream = class {
+      constructor() {
+        const { writable, readable } = new TransformStream()
+        // Block forever — simulates a crash mid-compress.
+        this.writable = new WritableStream({ write() { return new Promise((r) => { resolveStuck = r }) } })
+        this.readable = readable
+        void writable
+      }
+    }
+    try {
+      // Fire saveTriage but don't await — it'll hang on compress.
+      const saving = saveTriage()
+      void saving
+      // Pending key landed synchronously before the await.
+      const pending = globalThis.localStorage.getItem('deepview.triage.pending')
+      assert.ok(pending, 'pending uncompressed blob written sync before compress')
+      const parsed = JSON.parse(pending)
+      assert.equal(parsed[FINDING_A]?.color, 'red')
+      assert.equal(parsed[FINDING_A]?.comment, 'pre-crash note')
+
+      // Simulate restart: clear in-memory state, then reload from
+      // localStorage. readTriageBlob prefers pending → state.*
+      // recovers.
+      state.markers.clear()
+      state.comments.clear()
+      await reloadTriageFromStorage()
+      assert.equal(state.markers.get(FINDING_A), 'red', 'pre-crash marker recovered')
+      assert.equal(state.comments.get(FINDING_A), 'pre-crash note', 'pre-crash comment recovered')
+    } finally {
+      globalThis.CompressionStream = realCompressionStream
+      // Unblock the stuck stream so the test process can exit
+      // cleanly. saveTriage's catch swallows whatever happens after.
+      if (resolveStuck) resolveStuck()
+    }
+  })
+
+  it('successful saveTriage clears the pending key', async () => {
+    // Counterpart to the crash test: in the happy path, after the
+    // compressed write lands, the pending key is removed so future
+    // reads get the (canonical) compressed view.
+    state.markers.set(FINDING_A, 'red')
+    await saveTriage()
+    assert.equal(
+      globalThis.localStorage.getItem('deepview.triage.pending'),
+      null,
+      'pending key cleared after successful compress + write',
+    )
+    assert.ok(
+      globalThis.localStorage.getItem('deepview.triage'),
+      'compressed key has the canonical blob',
+    )
+  })
 })
 
 describe('sessions blob persistence (Web Locks)', () => {

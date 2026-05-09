@@ -16,6 +16,15 @@ import { encodeUtf8 } from '../common/utf8.js'
 // finding-url ids the codex CSV importer attaches. Any non-numeric
 // id is treated as stable enough to round-trip.
 const TRIAGE_KEY = 'deepview.triage'
+// Synchronous "ahead-of-compress" snapshot — populated by saveTriage
+// before the async compressBrotli await, cleared after the
+// compressed write lands. A tab crash mid-compress would otherwise
+// drop the user's edit (the in-memory state.* mutation is gone with
+// the process, the compressed key wasn't updated, and triageSync
+// notify hasn't fired yet because it runs at the END of saveTriage).
+// readTriageBlob prefers this key when present — it's strictly newer
+// than the compressed one. Audit M3 round-5.
+const TRIAGE_PENDING_KEY = 'deepview.triage.pending'
 const SESSION_ID_RE = /^\d+$/u
 
 async function compressBrotli(bytes) {
@@ -68,11 +77,23 @@ export async function saveTriage() {
     }
     if (Object.keys(entries).length === 0) {
       localStorage.removeItem(TRIAGE_KEY)
+      localStorage.removeItem(TRIAGE_PENDING_KEY)
       return
     }
-    const bytes = encodeUtf8(JSON.stringify(entries))
+    const json = JSON.stringify(entries)
+    // Synchronous belt-and-suspenders write: a tab crash during the
+    // compressBrotli await would otherwise lose this edit (in-memory
+    // state.* gone with the process, compressed key still stale,
+    // triageSync.notify hasn't fired yet). The pending key holds
+    // the uncompressed JSON; readTriageBlob prefers it on next load.
+    // Wrapped in its own try so a localStorage quota failure here
+    // doesn't abort the compress + main write below. Audit M3
+    // round-5.
+    try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
+    const bytes = encodeUtf8(json)
     const compressed = await compressBrotli(bytes)
     localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
+    try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
   } catch (err) {
     console.warn('Failed to save triage:', err)
   }
@@ -88,6 +109,14 @@ export async function saveTriage() {
 // caller so a corrupt blob doesn't take down ingestReport / the
 // cross-tab listener.
 async function readTriageBlob() {
+  // Prefer the synchronous "ahead-of-compress" snapshot when
+  // present — it's strictly newer than the compressed key (a
+  // successful saveTriage clears it after the compressed write
+  // lands). Audit M3 round-5.
+  const pending = localStorage.getItem(TRIAGE_PENDING_KEY)
+  if (pending) {
+    try { return JSON.parse(pending) } catch {}
+  }
   const raw = localStorage.getItem(TRIAGE_KEY)
   if (!raw) return null
   const compressed = Uint8Array.fromBase64(raw)

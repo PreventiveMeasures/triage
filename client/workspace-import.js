@@ -208,10 +208,19 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
 // 'triage' branch also drops any local `ignoredIds` for the same
 // id — mutex with triage that the apply / load paths in
 // triage-sync.js / triage.js already enforce. Audit M8.
+//
+// The dialog is async (user time), so state.* may have changed
+// while it was open — a chain that landed via `applyToReactiveState`
+// or a saveTriage from an action handler. Re-read each property's
+// current local value at apply-time and SKIP any 'imported'
+// decision whose `local` no longer matches: the user (or another
+// peer's chain) has effectively voted "local" again. Mirrors the
+// hydration dialog's M-2 round-4 guard. Audit H1 round-5.
 function applyConflictDecisions(conflicts, decisions) {
   for (const c of conflicts) {
     const key = `${c.id}:${c.property}`
     if (decisions[key] !== 'imported') continue
+    if (currentLocalValue(c.id, c.property) !== c.local) continue
     if (c.property === 'color') state.markers.set(c.id, c.imported)
     else if (c.property === 'comment') state.comments.set(c.id, c.imported)
     else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
@@ -220,6 +229,17 @@ function applyConflictDecisions(conflicts, decisions) {
       dropIgnoredFor(c.id)
     }
   }
+}
+
+// Mirror the comparison shape `mergeTriage` used at conflict-
+// collection time so the M-2 stale-check is meaningful: comment /
+// fix were normalised via `?? ''`, color / triage came back raw.
+function currentLocalValue(id, property) {
+  if (property === 'color') return state.markers.get(id)
+  if (property === 'triage') return state.triageState.get(id) ?? null
+  if (property === 'comment') return state.comments.get(id) ?? ''
+  if (property === 'fix') return state.fixes.get(id) ?? ''
+  return undefined
 }
 
 function dropIgnoredFor(id) {
