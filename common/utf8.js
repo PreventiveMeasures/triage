@@ -23,7 +23,15 @@ const encoder = new TextEncoder()
 // valid JSON, so a corrupted string field would silently survive)
 // or stores it; in both cases we want to know about the
 // corruption immediately.
-const decoder = new TextDecoder('utf-8', { fatal: true })
+// `ignoreBOM: true` keeps a leading U+FEFF (EF BB BF in UTF-8)
+// in the output as a regular character. The default
+// `ignoreBOM: false` *strips* a leading BOM, which is invisible
+// at the call site but breaks byte-exact round-trips: encoding
+// the decoded string would not reproduce the original bytes,
+// and any downstream hash / sig / storage compare would mismatch.
+// We treat the BOM as data — callers that want it stripped can
+// do so explicitly.
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 export function encodeUtf8(str) {
   if (typeof str !== 'string') {
