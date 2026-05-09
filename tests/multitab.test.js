@@ -292,6 +292,80 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
       'compressed key has the canonical blob',
     )
   })
+
+  it('QuotaExceededError on the compressed key falls back to the pending blob (audit round-7)', async () => {
+    // saveTriage wraps both writes in try/catch — a quota failure
+    // on the compressed key shouldn't take down the in-memory state
+    // or block future writes. The pending key (M3 round-5) is the
+    // belt-and-suspenders snapshot: written synchronously before the
+    // compress await, with `try { } catch {}` around it so its own
+    // quota failure can't suppress the main write either.
+    //
+    // Verify: with quota throwing on the compressed write only, the
+    // outer try/catch swallows the error, the pending key still
+    // holds the latest data (so reload-from-storage recovers), and
+    // the in-memory state.* is unchanged.
+    state.markers.set(FINDING_A, 'red')
+    state.comments.set(FINDING_A, 'pre-quota note')
+
+    const realSetItem = globalThis.localStorage.setItem
+    let quotaHits = 0
+    globalThis.localStorage.setItem = function setItem(k, v) {
+      if (k === 'deepview.triage') {
+        quotaHits += 1
+        const err = new Error('Quota exceeded')
+        err.name = 'QuotaExceededError'
+        throw err
+      }
+      return realSetItem.call(this, k, v)
+    }
+    const realWarn = console.warn
+    const warnCalls = []
+    console.warn = (...args) => { warnCalls.push(args) }
+    try {
+      await saveTriage()
+    } finally {
+      globalThis.localStorage.setItem = realSetItem
+      console.warn = realWarn
+    }
+
+    assert.equal(quotaHits, 1, 'compressed-key write attempted exactly once')
+    assert.equal(
+      globalThis.localStorage.getItem('deepview.triage'),
+      null,
+      'compressed-key write rejected by quota',
+    )
+    // Pending key was written BEFORE the compress await, with its
+    // own try/catch — and the cleanup `removeItem` after the
+    // compressed write never runs because the compressed write
+    // threw. So the pending blob should still hold the data.
+    const pending = globalThis.localStorage.getItem('deepview.triage.pending')
+    assert.ok(pending, 'pending key holds the data after the quota failure')
+    const parsed = JSON.parse(pending)
+    assert.equal(parsed[FINDING_A]?.color, 'red')
+    assert.equal(parsed[FINDING_A]?.comment, 'pre-quota note')
+
+    // saveTriage logged the quota failure via console.warn — pinning
+    // the error path so a future change can't silently regress it
+    // into a throw.
+    assert.ok(
+      warnCalls.some((args) => String(args[0] ?? '').includes('Failed to save triage')),
+      'saveTriage logged the quota failure',
+    )
+
+    // In-memory state.* survives — the user's edit isn't dropped.
+    assert.equal(state.markers.get(FINDING_A), 'red')
+    assert.equal(state.comments.get(FINDING_A), 'pre-quota note')
+
+    // And reloadTriageFromStorage recovers via the pending key
+    // (preferred over the missing compressed key). Same primitive
+    // that the M3 round-5 crash test exercises.
+    state.markers.clear()
+    state.comments.clear()
+    await reloadTriageFromStorage()
+    assert.equal(state.markers.get(FINDING_A), 'red', 'reload recovered marker via pending key')
+    assert.equal(state.comments.get(FINDING_A), 'pre-quota note', 'reload recovered comment via pending key')
+  })
 })
 
 describe('sessions blob persistence (Web Locks)', () => {

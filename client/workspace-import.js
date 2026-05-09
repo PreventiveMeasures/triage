@@ -3,6 +3,7 @@ import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, setCount } from './counts.js'
+import { firstDescriptionLine } from './finding-lookup.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
@@ -91,16 +92,6 @@ export function readImportedTriageBucket(entry) {
   }
   if (entry?.deleted) return 'deleted'
   return null
-}
-
-// First non-empty trimmed line of a description — used by the
-// conflict dialog (UI side) to show a one-line preview per finding.
-function firstDescriptionLine(text) {
-  if (!text) return ''
-  for (const line of text.split('\n')) {
-    if (line.trim()) return line.trim()
-  }
-  return ''
 }
 
 // Build an `id → { severity, file, line, description }` map by

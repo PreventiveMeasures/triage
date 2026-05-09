@@ -1477,12 +1477,23 @@ function openSocket() {
     // `subscribed` / `subscribeAcked` both clear so reconnect
     // re-subscribes and the status walks `offline → connecting →
     // online` again per session.
+    // Always raise pendingSave on close so the reconnect-time
+    // trySendSave runs its refreshSessionIds + effectiveLocalState
+    // pass and decides whether to send. The previous
+    // `!statesEqual(localState, baseState)` early-decide was a
+    // microoptimization that depended on `localState` being
+    // perfectly fresh at close-time — fragile across the M4 round-6
+    // refresh-on-bail change, and wrong when state.* edits land
+    // AFTER close (the close handler doesn't re-fire). The
+    // empty-changeset short-circuit inside trySendSave makes the
+    // no-op case cheap, so unconditional `true` here costs us
+    // nothing.
     for (const session of sessions.values()) {
       session.pending = null
       session.subscribed = false
       session.subscribeAcked = false
       session.resyncAttempted = false
-      session.pendingSave = !statesEqual(session.localState, session.baseState)
+      session.pendingSave = true
     }
     emitStatusIfChanged()
     // Only auto-reconnect when sync is actively wanted — a
