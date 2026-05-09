@@ -73,6 +73,19 @@ export function createWorkspace(name) {
   return workspace
 }
 
+// Listeners notified after a new workspace is added via
+// `upsertWorkspace` (first-insert) or via cross-tab propagation.
+// Symmetric with `onWorkspaceDeleted`; nothing in triage-sync
+// auto-subscribes to fresh workspaces today, but registries that
+// repaint UI affordances or seed per-workspace caches can hook
+// here without polling.
+const createListeners = new Set()
+
+export function onWorkspaceCreated(cb) {
+  createListeners.add(cb)
+  return () => createListeners.delete(cb)
+}
+
 // Listeners notified after a workspace is removed via
 // `deleteWorkspace`. The triage-sync layer subscribes here so its
 // in-memory + persisted session for the deleted workspace tears
@@ -146,11 +159,20 @@ export function renameWorkspace(id, name) {
 
 // Insert or replace a workspace by id. Used by the import path so a
 // re-import of the same workspace (same id) updates in place rather
-// than producing a duplicate entry.
+// than producing a duplicate entry. Fires:
+//   - `onWorkspaceCreated` on first-insert (new id);
+//   - `onWorkspacePrivateKeyChanged` when an existing id's privateKey
+//     changes (re-import of a re-keyed bundle, or a future "rotate
+//     workspace key" affordance);
+//   - `onReportMembershipChanged` when an existing id's `reports`
+//     list changes (set-equal compare so reordering is a no-op) —
+//     audit H1: a re-import that adds reports via upsertWorkspace
+//     used to skip the eager hydration / conflict-dialog path the
+//     rest of the membership listeners drive.
 export function upsertWorkspace(workspace) {
   const list = readRaw()
   const idx = list.findIndex((w) => w.id === workspace.id)
-  const previousPrivateKey = idx >= 0 ? list[idx].privateKey : null
+  const previous = idx >= 0 ? list[idx] : null
   const next = {
     id: workspace.id,
     name: workspace.name,
@@ -161,17 +183,30 @@ export function upsertWorkspace(workspace) {
   if (idx >= 0) list[idx] = next
   else list.push(next)
   writeRaw(list)
-  // Fire the private-key-change listeners AFTER the persisted list
-  // is updated so a subscriber that re-reads the workspace via
-  // `listWorkspaces()` sees the new key. Only fires when the value
-  // actually changed (not on first insert, not on a re-import that
-  // carries the same key). Listener errors are swallowed.
-  if (previousPrivateKey != null && previousPrivateKey !== next.privateKey) {
-    for (const cb of privateKeyChangeListeners) {
-      try { cb(next.id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
+  if (previous == null) {
+    for (const cb of createListeners) {
+      try { cb(next.id) } catch (err) { console.warn('workspace create listener failed:', err) }
+    }
+  } else {
+    if (previous.privateKey !== next.privateKey) {
+      for (const cb of privateKeyChangeListeners) {
+        try { cb(next.id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
+      }
+    }
+    if (!reportsSetEqual(previous.reports ?? [], next.reports)) {
+      for (const cb of reportMembershipListeners) {
+        try { cb(next.id) } catch (err) { console.warn('workspace membership listener failed:', err) }
+      }
     }
   }
   return next
+}
+
+function reportsSetEqual(a, b) {
+  if (a.length !== b.length) return false
+  const set = new Set(a)
+  for (const x of b) if (!set.has(x)) return false
+  return true
 }
 
 // Move a report to `workspaceId` (or detach it back to the unfiled
@@ -230,6 +265,7 @@ export function propagateWorkspaceChangesFromStorage() {
   lastSeen = next
   const prevById = new Map(prev.map((w) => [w.id, w]))
   const nextById = new Map(next.map((w) => [w.id, w]))
+  // Deletions
   for (const id of prevById.keys()) {
     if (nextById.has(id)) continue
     for (const cb of deleteListeners) {
@@ -238,24 +274,28 @@ export function propagateWorkspaceChangesFromStorage() {
   }
   for (const [id, w] of nextById) {
     const p = prevById.get(id)
-    if (!p) continue
+    if (!p) {
+      // Sibling-tab create — symmetric with the delete branch above.
+      // Audit M3 round-3.
+      for (const cb of createListeners) {
+        try { cb(id) } catch (err) { console.warn('workspace create listener failed:', err) }
+      }
+      continue
+    }
     if (p.privateKey !== w.privateKey) {
       for (const cb of privateKeyChangeListeners) {
         try { cb(id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
       }
     }
-    if (!arraysEqualByOrderedString(p.reports, w.reports)) {
+    // Set-equal compare on `reports` — reordering doesn't change
+    // session.ids so it shouldn't fire spurious membership listeners.
+    // Audit M2 round-3.
+    if (!reportsSetEqual(p.reports, w.reports)) {
       for (const cb of reportMembershipListeners) {
         try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
       }
     }
   }
-}
-
-function arraysEqualByOrderedString(a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
 }
 
 if (typeof window !== 'undefined') {

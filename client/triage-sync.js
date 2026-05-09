@@ -720,8 +720,24 @@ function kickKeyDerivation(session) {
 // Reflect `targetState` into the in-memory state.* containers,
 // scoped to `ids`. Entries outside the workspace's scope are left
 // alone so single-file triage isn't clobbered.
+//
+// Per-report ignore is rebuilt scoped to `ids`. The naive form —
+// a `[...state.ignoredIds]` scan inside the per-id loop — is
+// O(|state.ignoredIds| · |ids|); pre-bucket once per call so the
+// total cost is O(|state.ignoredIds| + |ids|). Audit M5 round-3.
 function applyToReactiveState(targetState, ids) {
-  for (const id of ids) {
+  const idsSet = ids instanceof Set ? ids : new Set(ids)
+  const existingIgnoredByid = new Map()
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    const id = key.slice(sep + 1)
+    if (!idsSet.has(id)) continue
+    const list = existingIgnoredByid.get(id)
+    if (list) list.push(key)
+    else existingIgnoredByid.set(id, [key])
+  }
+  for (const id of idsSet) {
     const entry = targetState[id] ?? {}
     if (entry.color) state.markers.set(id, entry.color)
     else state.markers.delete(id)
@@ -743,9 +759,9 @@ function applyToReactiveState(targetState, ids) {
     // triage and ignore can't coexist on a tab, and a stale chain
     // that carries both should resolve in favor of triage (matches
     // the action handler, which clears ignore when setting triage).
-    for (const key of [...state.ignoredIds]) {
-      const sep = key.indexOf('\0')
-      if (sep >= 0 && key.slice(sep + 1) === id) state.ignoredIds.delete(key)
+    const oldKeys = existingIgnoredByid.get(id)
+    if (oldKeys) {
+      for (const k of oldKeys) state.ignoredIds.delete(k)
     }
     const triageWasSet = entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted' || entry.deleted
     if (!triageWasSet && Array.isArray(entry.ignoredReports)) {

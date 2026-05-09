@@ -2167,6 +2167,280 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
+  it('upsertWorkspace with a different reports list fires the membership listener', async () => {
+    // Audit H1 round-3: a re-import that adds (or removes) reports
+    // via upsertWorkspace used to skip the eager hydration / dialog
+    // path because only the privateKey-change listener fired.
+    // Now: set-equal diff on `reports` fires the membership
+    // listener; triage-sync's handler refreshes session.ids and
+    // hydrates state.* for the newly-in-scope ids.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'in-A', _id: 'in-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'in-B', _id: 'in-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    assert.equal(triageSync.sessionInfo(wsId).tracked, 1, 'A.md only initially')
+
+    // Re-import via upsertWorkspace — adds B.md without going
+    // through setReportWorkspace.
+    upsertWorkspace({
+      id: wsId,
+      name: wsId,
+      privateKey: seed,
+      reports: ['A.md', 'B.md'],
+    })
+
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.tracked === 2,
+      'membership listener fired; session.ids refreshed',
+    )
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('upsertWorkspace with reports reordered (set-equal) does NOT fire membership listener', async () => {
+    // Audit M2 round-3: reordered reports list (no add/remove)
+    // doesn't change session.ids, so the listener should NOT fire.
+    // Test by registering a counter and verifying it stays at zero
+    // for a pure reorder. setReportWorkspace's diff also uses
+    // set-equal semantics elsewhere; this pins upsertWorkspace.
+    const { onReportMembershipChanged } = await import('../client/workspaces.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'in-A', _id: 'in-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'in-B', _id: 'in-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md', 'B.md'] })
+
+    let firedFor = null
+    const off = onReportMembershipChanged((id) => { if (id === wsId) firedFor = id })
+    try {
+      // Re-import with the SAME set, different order.
+      upsertWorkspace({
+        id: wsId,
+        name: wsId,
+        privateKey: seed,
+        reports: ['B.md', 'A.md'],
+      })
+      // Give microtasks a turn — listener fires synchronously, so
+      // a delay isn't strictly needed, but be defensive.
+      await new Promise((r) => { setTimeout(r, 25) })
+      assert.equal(firedFor, null, 'no membership listener fire on pure reorder')
+    } finally {
+      off()
+    }
+
+    deleteWorkspace(wsId)
+  })
+
+  it('cross-tab workspace creation fires onWorkspaceCreated', async () => {
+    // Audit M3 round-3: sibling-tab create symmetric with delete.
+    // Direct localStorage rewrite simulating a sibling tab; drive
+    // the diff handler; assert the create listener fires.
+    const { propagateWorkspaceChangesFromStorage, onWorkspaceCreated } = await import('../client/workspaces.js')
+    triageSync.closeSession()
+    clearTriageState()
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+
+    let firedFor = null
+    const off = onWorkspaceCreated((id) => { firedFor = id })
+    try {
+      const persisted = JSON.parse(localStorage.getItem('deepview.workspaces') ?? '[]')
+      persisted.push({
+        id: wsId,
+        name: wsId,
+        privateKey: randomBase64(),
+        reports: [],
+        createdAt: Date.now(),
+      })
+      localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+      propagateWorkspaceChangesFromStorage()
+
+      assert.equal(firedFor, wsId, 'create listener fired with new workspace id')
+    } finally {
+      off()
+    }
+
+    deleteWorkspace(wsId)
+  })
+
+  it('chain with multiple bad-sig revs in a row keeps continuity for the next good rev', async () => {
+    // Audit L5 round-3: each skip path advances baseRevision past
+    // the bad rev AND bumps savesSinceKeyframe to keyframeInterval.
+    // Multiple bad revs in succession should walk baseRevision to
+    // the LAST bad rev's id; the next good rev's `base` matches and
+    // applies.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let chainSent = false
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', async (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        // Build a chain: 2 bad-id revs, then 1 good rev built off
+        // the last bad rev's id.
+        const bogusIds = ['A'.repeat(43), 'B'.repeat(43)]
+        const revs = []
+        let prevBase = null
+        for (const bogusId of bogusIds) {
+          const aad = cryptoMod.buildAad(workspaceTag, prevBase)
+          const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+          const payload = { publicKeyB64: workspaceTag, base: prevBase, nonceB64: nonce, ciphertextB64: ciphertext }
+          const sig = await cryptoMod.signSavePayload(signingKey, payload)
+          revs.push({ base: prevBase, id: bogusId, nonce, ciphertext, signature: sig })
+          prevBase = bogusId
+        }
+        // Good rev built off the last bogusId.
+        const goodAad = cryptoMod.buildAad(workspaceTag, prevBase)
+        const { nonce: gn, ciphertext: gc } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'green' } }, goodAad)
+        const goodPayload = { publicKeyB64: workspaceTag, base: prevBase, nonceB64: gn, ciphertextB64: gc }
+        const goodSig = await cryptoMod.signSavePayload(signingKey, goodPayload)
+        const goodId = await cryptoMod.computeRevisionId({
+          ...goodPayload,
+          base: prevBase,
+        })
+        revs.push({ base: prevBase, id: goodId, nonce: gn, ciphertext: gc, signature: goodSig })
+
+        sock.send(JSON.stringify({
+          type: 'workspace-state',
+          workspaceTag: msg.workspaceTag,
+          revisions: revs,
+        }))
+        chainSent = true
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(() => chainSent, 'fake relay sent the chain')
+    // Wait for the good rev to apply (its color reaches state.markers).
+    await waitFor(
+      () => state.markers.get('finding-A') === 'green',
+      'good rev applied after 2 bad revs',
+    )
+    // baseRevision is the good rev's id.
+    assert.notEqual(triageSync.sessionInfo(wsId)?.baseRevision, null, 'baseRevision walked through bad revs to good rev')
+
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
+  it('outbound chain entries never carry the legacy `deleted: true` shape', async () => {
+    // Audit L3 round-3: snapshotEntry emits `triage` (new) only,
+    // never `deleted: true`. Pin via a save round-trip + reader.
+    const wsId = await startSession(['finding-A'])
+    state.triageState.set('finding-A', 'deleted')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'save acked')
+
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered.filter((m) => m.type === 'workspace-state').flatMap((s) => s.revisions)
+    const key = await cryptoMod.deriveSessionKey(seed)
+    for (const rev of revisions) {
+      const aad = cryptoMod.buildAad(tag, rev.base)
+      const changeset = await cryptoMod.decryptJson(key, rev.nonce, rev.ciphertext, aad)
+      for (const [, entry] of Object.entries(changeset)) {
+        if (entry === null) continue
+        assert.equal(entry.deleted, undefined, 'no chain entry carries legacy `deleted: true`')
+        assert.notEqual(entry.triage, undefined, 'triage carried as new shape')
+      }
+    }
+    reader.close()
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('three workspaces sharing a finding-id all converge after a chain on one', async () => {
+    // Audit gap round-3: existing two-session test pins propagation
+    // to one peer; a three-way scenario verifies the cross-session
+    // kick loop bounds at convergence (each session's empty-changeset
+    // short-circuit is what stops the cycle).
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'shared', _id: 'shared' } ]] })
+    state.reports.push({ fileName: 'B.md', groups: [[ { id: 'shared', _id: 'shared' } ]] })
+    state.reports.push({ fileName: 'C.md', groups: [[ { id: 'shared', _id: 'shared' } ]] })
+    const ids = ['A', 'B', 'C'].map((suffix) => `ws-${suffix}-${Math.random().toString(36).slice(2, 6)}`)
+    const seeds = [randomBase64(), randomBase64(), randomBase64()]
+    upsertWorkspace({ id: ids[0], name: ids[0], privateKey: seeds[0], reports: ['A.md'] })
+    upsertWorkspace({ id: ids[1], name: ids[1], privateKey: seeds[1], reports: ['B.md'] })
+    upsertWorkspace({ id: ids[2], name: ids[2], privateKey: seeds[2], reports: ['C.md'] })
+
+    for (const id of ids) triageSync.openSession(id)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'all three online')
+    for (const id of ids) {
+      await waitFor(
+        () => triageSync.sessionInfo(id)?.workspaceTag != null,
+        `${id} tag derived`,
+      )
+    }
+
+    // Push a remote change under workspace A's tag.
+    await pushRemoteChange(serverUrl, triageSync.sessionInfo(ids[0]).workspaceTag, seeds[0], {
+      shared: { color: 'red' },
+    })
+
+    // Wait for state.* to land + all three sessions to settle.
+    await waitFor(() => state.markers.get('shared') === 'red', 'shared visible')
+    for (const id of ids) {
+      await waitFor(() => settledAfterAck(id), `${id} settled`)
+    }
+    // Each session ended up with a non-null baseRevision under its
+    // own tag — confirms the propagation actually pushed.
+    for (const id of ids) {
+      assert.notEqual(triageSync.sessionInfo(id).baseRevision, null, `${id} baseRevision advanced`)
+    }
+
+    for (const id of ids) triageSync.closeSession(id)
+    for (const id of ids) deleteWorkspace(id)
+  })
+
   it('setServerUrl mid-save reaches a healthy state on the new server', async () => {
     // Audit gap: changing serverUrl while an encryption is in flight
     // is a race — the in-flight save's IIFE captures `sentBase`

@@ -91,7 +91,15 @@ function send(socket, msg) {
 function broadcast(tag, msg, except) {
   const set = subscribers.get(tag)
   if (!set) return
-  for (const s of set) {
+  // Snapshot before iterating — `send`'s try/catch swallows
+  // socket.send errors, but a socket transitioning to CLOSED
+  // mid-broadcast triggers `unsubscribeAll` from the 'close'
+  // handler, which mutates `set` while we're walking it. Set
+  // iteration is well-defined under same-key delete today; the
+  // snapshot keeps a future refactor (e.g. switching to a
+  // different collection or an async send) from silently
+  // skipping subscribers. Audit M4 round-3.
+  for (const s of [...set]) {
     if (s === except) continue
     send(s, msg)
   }
