@@ -11,7 +11,7 @@ import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.js'
-import { ensureBundleFindingsIndexed, getPackagesIndex } from '../../client/bundle-finding-index.js'
+import { ensureBundleFindingsIndexed, getPackagesIndex, getRepositoriesIndex } from '../../client/bundle-finding-index.js'
 
 // Distinct package count across every report the OPFS finding
 // index has scanned (NOT just state.reports — Packages aggregates
@@ -19,6 +19,14 @@ import { ensureBundleFindingsIndexed, getPackagesIndex } from '../../client/bund
 // Cheap walk; sidebar renders aren't on the hot path.
 function countLoadedPackages() {
   return getPackagesIndex().size
+}
+
+// Mirror for the Repositories view — own-source findings bucketed
+// by their `repo.github` (or per-report `_repoFallback`) URL.
+// Same OPFS-wide signal as countLoadedPackages so the sidebar
+// header hides when the index is empty.
+function countLoadedRepositories() {
+  return getRepositoriesIndex().size
 }
 
 // Default sync endpoint used when the user toggles the sidebar
@@ -129,6 +137,18 @@ function packagesHeaderTemplate(count) {
   const cls = `file-group-header packages-header${state.currentView === 'packages' ? ' current' : ''}`
   return html`<li class=${cls} data-action="show-packages" role="button" tabindex="0" title="Show packages">
     <span class="group-label">Packages</span><span class="group-count">${count}</span>
+  </li>`
+}
+
+// Repositories section header — same shape as the Packages
+// header, immediately under it. Routes to the cross-report
+// own-source-by-repo aggregation. Hidden until at least one
+// own-source finding has been indexed (an empty section header
+// would just confuse — the user has nothing to navigate to).
+function repositoriesHeaderTemplate(count) {
+  const cls = `file-group-header packages-header${state.currentView === 'repositories' ? ' current' : ''}`
+  return html`<li class=${cls} data-action="show-repositories" role="button" tabindex="0" title="Show repositories">
+    <span class="group-label">Repositories</span><span class="group-count">${count}</span>
   </li>`
 }
 
@@ -251,6 +271,7 @@ export async function renderSidebar() {
   litRender(html`
     ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
+    ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
     ${visibleWorkspaces.map((w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
@@ -311,6 +332,12 @@ sidebar.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-action="show-packages"]')) {
     state.currentView = 'packages'
+    render()
+    renderSidebar()
+    return
+  }
+  if (e.target.closest('[data-action="show-repositories"]')) {
+    state.currentView = 'repositories'
     render()
     renderSidebar()
     return

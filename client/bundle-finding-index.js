@@ -27,10 +27,20 @@ import { listFiles, onFileMutated, readFile } from './storage.js'
 
 const byHash = new Map()
 const byPackage = new Map()
-// Reverse index: which (hash, key) and (pkg, key) pairs did each
-// report contribute? Lets `invalidateName` prune precisely on a
-// file delete / overwrite without re-scanning every report. Audit
-// round-8 H1.
+// Mirror of `byPackage` for own-source findings (anything whose
+// path doesn't sit under `node_modules/` / `dependencies/`),
+// keyed by the finding's repo URL — `f.repo?.github` when the
+// analyzer stamped one, else the per-report `_repoFallback`
+// the user typed. Powers the cross-report Repositories view,
+// which complements Packages: most findings end up in exactly
+// one of the two (third-party deps in Packages, own source in
+// Repositories). Findings without any repo signal aren't
+// indexed here — there's nothing to bucket them under.
+const byRepo = new Map()
+// Reverse index: which (hash, key), (pkg, key), and (repo, key)
+// pairs did each report contribute? Lets `invalidateName` prune
+// precisely on a file delete / overwrite without re-scanning
+// every report. Audit round-8 H1.
 const contributionsByName = new Map()
 
 // Package extractor — matches `node_modules/<pkg>/...` and
@@ -50,6 +60,21 @@ function packageOf(file) {
   while ((m = re.exec(file)) !== null) {
     if (m[1] !== '.pnpm') return m[1]
   }
+  return null
+}
+
+// Extracts the repo "key" the Repositories view buckets under.
+// Prefers the analyzer-stamped `repo.github` (a `user/repo` slug
+// or full URL) so findings from the same upstream repo merge
+// regardless of which report dropped them. Falls back to the
+// per-report `_repoFallback` (the URL the user typed for that
+// report) so reports whose findings don't carry per-finding
+// repo metadata still surface under their typed URL. Returns
+// null when neither is present — those findings simply don't
+// appear in Repositories.
+function repoOf(f) {
+  if (typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
+  if (typeof f._repoFallback === 'string' && f._repoFallback) return f._repoFallback
   return null
 }
 const indexed = new Set()
@@ -86,6 +111,16 @@ export function findingsForFileHash(hash) {
 // (don't need to copy on read since the views just iterate).
 export function getPackagesIndex() {
   return byPackage
+}
+
+// Snapshot of the OPFS-wide repository index for the cross-report
+// Repositories view. Same shape as the Packages index (Map<repoKey,
+// { findings, files, reports, … }>), but only own-source findings
+// (those NOT in node_modules / dependencies) get indexed; deps
+// already surface in Packages, so Repositories is the
+// complementary view. Repo key comes from `repoOf(f)` above.
+export function getRepositoriesIndex() {
+  return byRepo
 }
 
 // Companion lookup: list of OPFS report names that contain a given
@@ -167,7 +202,7 @@ function findingDedupeKey(f) {
 function rememberContribution(name, kind, ref) {
   let entry = contributionsByName.get(name)
   if (!entry) {
-    entry = { hash: [], pkg: [] }
+    entry = { hash: [], pkg: [], repo: [] }
     contributionsByName.set(name, entry)
   }
   entry[kind].push(ref)
@@ -232,8 +267,40 @@ function indexFindingByPackage(f, key, name) {
   return true
 }
 
-// Drop everything `name` contributed to byHash / byPackage and
-// clear it from `indexed` so the next `ensureBundleFindingsIndexed`
+// Repository-keyed bucket update. Mirror of indexFindingByPackage
+// but for own-source findings (those NOT inside a deps dir),
+// keyed by `repoOf(f)`. Findings with no repo signal AT ALL
+// (no `repo.github`, no `_repoFallback`) are skipped — there's
+// nowhere to bucket them. Returns true on a fresh dedupe key,
+// matching the package path's contract.
+function indexFindingByRepo(f, key, name) {
+  if (packageOf(f.file) !== null) return false
+  const repo = repoOf(f)
+  if (!repo) return false
+  let rBucket = byRepo.get(repo)
+  if (!rBucket) {
+    rBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), keyReports: new Map() }
+    byRepo.set(repo, rBucket)
+  }
+  rBucket.reports.add(name)
+  let krSet = rBucket.keyReports.get(key)
+  if (!krSet) {
+    krSet = new Set()
+    rBucket.keyReports.set(key, krSet)
+  }
+  const wasNewReport = !krSet.has(name)
+  krSet.add(name)
+  if (wasNewReport) rememberContribution(name, 'repo', { repo, key, file: f.file })
+  if (rBucket.keys.has(key)) return false
+  rBucket.keys.add(key)
+  rBucket.findings.push(f)
+  if (!rBucket.files.has(f.file)) rBucket.files.set(f.file, [])
+  rBucket.files.get(f.file).push(f)
+  return true
+}
+
+// Drop everything `name` contributed to byHash / byPackage / byRepo
+// and clear it from `indexed` so the next `ensureBundleFindingsIndexed`
 // re-processes it (after `saveFile` overwrite) or skips it (after
 // `deleteFile`). Per-file invalidation walks the reverse-index
 // `contributionsByName`; no full re-scan. Audit round-8 H1.
@@ -288,6 +355,36 @@ function invalidateName(name) {
       pBucket.reports = stillContributing
     }
   }
+  // Same shape for the repository index — own-source findings only,
+  // keyed by repo URL. See the package path above for the rationale.
+  for (const { repo, key, file } of contrib.repo) {
+    const rBucket = byRepo.get(repo)
+    if (!rBucket) continue
+    const krSet = rBucket.keyReports.get(key)
+    if (!krSet) continue
+    if (krSet.delete(name)) dirty = true
+    if (krSet.size === 0) {
+      rBucket.keyReports.delete(key)
+      rBucket.keys.delete(key)
+      const idx = rBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
+      if (idx >= 0) rBucket.findings.splice(idx, 1)
+      const fileList = rBucket.files.get(file)
+      if (fileList) {
+        const fi = fileList.findIndex((f) => findingDedupeKey(f) === key)
+        if (fi >= 0) fileList.splice(fi, 1)
+        if (fileList.length === 0) rBucket.files.delete(file)
+      }
+    }
+    if (rBucket.keyReports.size === 0) {
+      byRepo.delete(repo)
+    } else {
+      const stillContributing = new Set()
+      for (const set of rBucket.keyReports.values()) {
+        for (const r of set) stillContributing.add(r)
+      }
+      rBucket.reports = stillContributing
+    }
+  }
   return dirty
 }
 
@@ -306,6 +403,7 @@ async function indexOne(name) {
       const key = findingDedupeKey(f)
       if (f.fileHash && indexFindingByHash(f, key, name)) added = true
       if (f.file && indexFindingByPackage(f, key, name)) added = true
+      if (f.file && indexFindingByRepo(f, key, name)) added = true
     }
     return added
   } catch {

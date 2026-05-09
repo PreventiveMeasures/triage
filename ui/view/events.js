@@ -16,10 +16,11 @@ import { subscribeToBundleFindingIndex } from '../../client/bundle-finding-index
 subscribeToBundleFindingIndex(() => {
   if (state.currentView === 'bundles' && state.selectedBundle) render()
   else if (state.currentView === 'packages') render()
+  else if (state.currentView === 'repositories') render()
   else if (state.currentView === 'findings' || state.currentView === 'files') {
-    // Sidebar's PACKAGES entry caption depends on the index too —
-    // refresh it when the count would change. The main view stays
-    // put.
+    // Sidebar's PACKAGES / REPOSITORIES entry captions depend on
+    // the index too — refresh it when the count would change. The
+    // main view stays put.
     renderSidebar().catch(() => {})
   }
 })
@@ -248,6 +249,47 @@ report.addEventListener('click', (e) => {
   if (pkgReport) {
     const name = pkgReport.dataset.packageReport
     if (name) switchToFile(name)
+    return
+  }
+  // Repositories list — row select (mirrors data-select-package).
+  // Resets the details panel to the Overview tab and drops the
+  // slide's triage sub-view so a new pick lands on the default
+  // `live` bucket.
+  const selRepo = e.target.closest('[data-select-repository]')
+  if (selRepo) {
+    const repo = selRepo.dataset.selectRepository
+    if (state.selectedRepository === repo) return
+    state.selectedRepository = repo
+    state.repositoryDetailsTab = 'overview'
+    state.repositorySlideTriage = null
+    render()
+    return
+  }
+  if (e.target.closest('[data-deselect-repository]')) {
+    state.selectedRepository = null
+    render()
+    return
+  }
+  const repoTab = e.target.closest('[data-repository-tab]')
+  if (repoTab) {
+    const tab = repoTab.dataset.repositoryTab
+    if ((tab === 'overview' || tab === 'issues') && state.repositoryDetailsTab !== tab) {
+      state.repositoryDetailsTab = tab
+      render()
+    }
+    return
+  }
+  if (e.target.closest('[data-action="repository-slide-back"]')) {
+    state.repositoryDetailsTab = 'overview'
+    state.repositorySlideTriage = null
+    render()
+    return
+  }
+  const repoSlideTriage = e.target.closest('[data-repository-slide-triage]')
+  if (repoSlideTriage) {
+    const next = repoSlideTriage.dataset.repositorySlideTriage
+    state.repositorySlideTriage = state.repositorySlideTriage === next ? null : next
+    render()
     return
   }
   // Bundle details — tab switch (Packages / Files / Graph /
@@ -929,6 +971,7 @@ report.addEventListener('change', (e) => {
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
   else if (id === 'packages-sort-select') { state.packagesSortBy = val; render() }
+  else if (id === 'repositories-sort-select') { state.repositoriesSortBy = val; render() }
 })
 
 // Confidence range slider. `range-change` fires on release and
@@ -959,6 +1002,10 @@ report.addEventListener('input', (e) => {
   }
   else if (id === 'packages-search-input') {
     state.packagesSearchQuery = val
+    renderKeepFocus(id)
+  }
+  else if (id === 'repositories-search-input') {
+    state.repositoriesSearchQuery = val
     renderKeepFocus(id)
   }
 })

@@ -123,6 +123,14 @@ export const state = store({
   // 'files-desc', 'reports-desc', 'name-asc'.
   packagesSearchQuery: '',
   packagesSortBy: 'findings-desc',
+  // Repositories view — same shape as Packages but bucketed by
+  // each finding's repo URL (own-source findings only; deps live
+  // in Packages). The two views complement each other.
+  selectedRepository: null,
+  repositoryDetailsTab: 'overview',
+  repositorySlideTriage: null,
+  repositoriesSearchQuery: '',
+  repositoriesSortBy: 'findings-desc',
   // Path of the bundle source currently open in the source viewer
   // modal (null when closed). Reset on bundle change / view switch
   // so an old viewer doesn't reopen against a different bundle.

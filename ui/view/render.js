@@ -20,6 +20,7 @@ import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopP
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
+import { renderRepositoriesView } from './render-repositories.js'
 import {
   buildBundleGraphData,
   countBundleTriageBuckets,
@@ -837,6 +838,23 @@ export function render() {
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = 'DeepView results — packages'
+    return
+  }
+  // Repositories view — same pattern as Packages (cross-report
+  // aggregation from the OPFS-wide finding index, no dependency
+  // on state.reports). Reuses the `packages-slot` shape via the
+  // shared `.packages-view` chrome the render-repositories.js
+  // module emits.
+  if (state.currentView === 'repositories') {
+    let slot = document.getElementById('repositories-slot')
+    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+      report.innerHTML = '<div id="repositories-slot"></div>'
+      slot = document.getElementById('repositories-slot')
+    }
+    if (slot) litRender(renderRepositoriesView(), slot)
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView results — repositories'
     return
   }
   if (state.reports.length === 0) return

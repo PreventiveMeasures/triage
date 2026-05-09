@@ -170,7 +170,7 @@ export async function switchToFile(name, content) {
   // Switching to a regular report drops out of the bundles or
   // packages view — the user clicked a file row, they want to see
   // its findings.
-  if (state.currentView === 'bundles' || state.currentView === 'packages') {
+  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
     state.currentView = 'findings'
   }
   // Per-report repo URL (see state.js / saveRepoUrlFor). The user's
@@ -233,7 +233,7 @@ export async function switchToWorkspace(workspaceId) {
   triageSync.closeSession()
   // Same drop-out as switchToFile — opening a workspace lands in
   // findings, not the bundles / packages list.
-  if (state.currentView === 'bundles' || state.currentView === 'packages') {
+  if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
     state.currentView = 'findings'
   }
   state.reports = []
