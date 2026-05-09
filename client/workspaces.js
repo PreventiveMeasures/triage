@@ -24,10 +24,6 @@ function readRaw() {
 function writeRaw(list) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-    // Local mutations don't fire `storage` events in this tab, so
-    // we update the cache here directly. The storage event handler
-    // below diffs sibling-tab writes against this same cache.
-    lastSeen = list.map(snapshotForCache)
   } catch (err) {
     console.warn('Failed to save workspaces:', err)
   }
@@ -43,7 +39,30 @@ function snapshotForCache(w) {
   }
 }
 
+// `lastSeen` tracks the per-id state that listeners have already
+// observed (= "what callbacks have fired about"). The propagate
+// handler diffs the current blob against this and fires for any
+// id whose state in the blob differs from what's been observed.
+//
+// Round-8 M4: the previous design updated lastSeen to the FULL
+// blob inside `writeRaw`, so a local mutation that read a sibling's
+// concurrent change (via readRaw, post-sibling-write, pre-handler-
+// fire) would mark that sibling change as "already observed" —
+// the queued storage event then ran with prev == next and the
+// sibling's create / privateKey-change / reports-change silently
+// dropped its listener fire. Fix: writeRaw no longer touches
+// lastSeen; each public mutation calls `markObservedFor(workspace)`
+// or `markObservedDeleted(id)` for the ids IT touched. A sibling-
+// only change that came in via readRaw stays unmarked, so the
+// handler still fires for it on the next run.
 let lastSeen = readRaw().map(snapshotForCache)
+function markObservedFor(workspace) {
+  lastSeen = lastSeen.filter((w) => w.id !== workspace.id)
+  lastSeen.push(snapshotForCache(workspace))
+}
+function markObservedDeleted(id) {
+  lastSeen = lastSeen.filter((w) => w.id !== id)
+}
 
 export function listWorkspaces() {
   const list = readRaw()
@@ -90,6 +109,16 @@ export function createWorkspace(name) {
   const list = readRaw()
   list.push(workspace)
   writeRaw(list)
+  // Mark the new workspace as observed so the next propagate
+  // handler doesn't fire createListener for it. createWorkspace
+  // is a local-only affordance whose UI caller manages the new
+  // workspace directly; the create-listener path is reserved for
+  // upsertWorkspace's first-insert + cross-tab propagation. M4
+  // round-8: importantly, we do NOT mark workspaces that came
+  // through readRaw without local mutation — those may reflect a
+  // sibling's queued change that still needs to fire its own
+  // listener via the propagate handler.
+  markObservedFor(workspace)
   return workspace
 }
 
@@ -160,6 +189,7 @@ export function deleteWorkspace(id) {
   for (const cb of deleteListeners) {
     try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
   }
+  markObservedDeleted(id)
 }
 
 // Rename a workspace in place. Empty / whitespace-only names are
@@ -174,6 +204,11 @@ export function renameWorkspace(id, name) {
   if (!ws || ws.name === cleaned) return false
   ws.name = cleaned
   writeRaw(list)
+  // Names aren't part of the diff (no name listener), but mark the
+  // workspace as observed so the privateKey/reports of the rename
+  // target are pinned to their post-rename snapshot — defense
+  // against a sibling change to the same id getting masked.
+  markObservedFor(ws)
   return true
 }
 
@@ -227,6 +262,7 @@ export function upsertWorkspace(workspace) {
       }
     }
   }
+  markObservedFor(next)
   return next
 }
 
@@ -267,6 +303,13 @@ export function setReportWorkspace(filename, workspaceId) {
     for (const cb of reportMembershipListeners) {
       try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
     }
+    // Mark the post-mutation snapshot of this workspace as observed
+    // so the propagate handler doesn't re-fire for the same change.
+    // M4 round-8: only mark workspaces THIS call modified — sibling
+    // changes to OTHER workspaces in the same blob stay unmarked
+    // and still get a listener fire on the next handler run.
+    const ws = list.find((w) => w.id === id)
+    if (ws) markObservedFor(ws)
   }
 }
 
@@ -279,10 +322,15 @@ export function setReportWorkspace(filename, workspaceId) {
 // in-memory + persisted session state without waiting for a page
 // reload. Audit M-1.
 //
-// `lastSeen` is updated by both the storage handler AND `writeRaw`
-// (local writes don't fire storage events in the originating tab,
-// so the cache would otherwise drift); diffs are always against
-// the most-recently observed view.
+// `lastSeen` represents per-id state that listeners have observed.
+// Local mutations update it incrementally (only for the ids THIS
+// mutation touched) via `markObservedFor` / `markObservedDeleted`;
+// the propagate handler diffs the current blob against this and
+// fires for any id whose blob state differs from the observed one.
+// Round-8 M4: previously `writeRaw` snapshotted the FULL blob on
+// every local mutation, so a sibling change that came in via
+// `readRaw` (post-sibling-write, pre-handler-fire) was marked
+// "observed" and silently dropped its listener fire.
 //
 // Exposed (not just registered) so node:test environments can
 // drive the diff path directly — `window` doesn't exist in tests
@@ -290,7 +338,6 @@ export function setReportWorkspace(filename, workspaceId) {
 export function propagateWorkspaceChangesFromStorage() {
   const next = readRaw().map(snapshotForCache)
   const prev = lastSeen
-  lastSeen = next
   const prevById = new Map(prev.map((w) => [w.id, w]))
   const nextById = new Map(next.map((w) => [w.id, w]))
   // Deletions
@@ -324,6 +371,11 @@ export function propagateWorkspaceChangesFromStorage() {
       }
     }
   }
+  // Update lastSeen AFTER firing listeners so a re-entrant handler
+  // call (storage event during a listener's work) doesn't see a
+  // stale prev. The diff is the source of truth for what listeners
+  // know; updating in lockstep with the fires keeps that property.
+  lastSeen = next
 }
 
 if (typeof window !== 'undefined') {
