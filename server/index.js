@@ -80,7 +80,12 @@ function unsubscribeAll(socket) {
 
 function send(socket, msg) {
   if (socket.readyState !== socket.OPEN) return
-  socket.send(JSON.stringify(msg))
+  // Wrap send() in try/catch — readyState can transition from OPEN
+  // to CLOSING between the check above and the send() call (TOCTOU
+  // window in `ws`'s event loop). Without this, a socket dying
+  // mid-broadcast would throw and abort the broadcast loop, skipping
+  // every subscriber after the dead one. Audit M4.
+  try { socket.send(JSON.stringify(msg)) } catch {}
 }
 
 function broadcast(tag, msg, except) {

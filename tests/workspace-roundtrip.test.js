@@ -46,6 +46,7 @@ function clearState() {
   state.triageState.clear()
   state.comments.clear()
   state.fixes.clear()
+  state.ignoredIds.clear()
   state.reports.length = 0
   state.currentFile = null
   state.currentWorkspace = null
@@ -213,6 +214,36 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(seen[0].local, 'fixed')
     assert.equal(seen[0].imported, 'invalid')
     assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported decision should win')
+  })
+
+  it('imported triage decision drops pre-existing local ignored entries (mutex)', async () => {
+    // Audit M8: the conflict-resolution loop sets state.triageState
+    // when the user picks 'imported' on a triage conflict, but
+    // didn't clear pre-existing state.ignoredIds entries for the
+    // same id — leaving local state in the forbidden state where
+    // triage and per-report ignore coexist on a tab. The mutex
+    // applied at every other write/apply path (action handlers,
+    // sync apply, load/reload) now also runs here.
+    state.triageState.set(FINDING_A, 'fixed')
+    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    const conflictResolver = (conflicts) => {
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-mutex', name: 'M', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: { [FINDING_A]: { triage: 'invalid' } },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported triage applied')
+    assert.equal(
+      state.ignoredIds.has(`r.json\0${FINDING_A}`),
+      false,
+      'pre-existing local ignored cleared by mutex',
+    )
   })
 
   it('keeps the local value when conflict resolver returns null (cancel)', async () => {

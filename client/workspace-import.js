@@ -199,18 +199,34 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
   }
   if (conflicts.length > 0 && conflictResolver) {
     const decisions = await conflictResolver(conflicts, findingLookup ?? new Map())
-    if (decisions) {
-      for (const c of conflicts) {
-        const key = `${c.id}:${c.property}`
-        if (decisions[key] !== 'imported') continue
-        if (c.property === 'color') state.markers.set(c.id, c.imported)
-        else if (c.property === 'comment') state.comments.set(c.id, c.imported)
-        else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
-        else if (c.property === 'triage') state.triageState.set(c.id, c.imported)
-      }
-    }
+    if (decisions) applyConflictDecisions(conflicts, decisions)
   }
   await saveTriage()
+}
+
+// Apply per-conflict decisions returned by `conflictResolver`. The
+// 'triage' branch also drops any local `ignoredIds` for the same
+// id — mutex with triage that the apply / load paths in
+// triage-sync.js / triage.js already enforce. Audit M8.
+function applyConflictDecisions(conflicts, decisions) {
+  for (const c of conflicts) {
+    const key = `${c.id}:${c.property}`
+    if (decisions[key] !== 'imported') continue
+    if (c.property === 'color') state.markers.set(c.id, c.imported)
+    else if (c.property === 'comment') state.comments.set(c.id, c.imported)
+    else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
+    else if (c.property === 'triage') {
+      state.triageState.set(c.id, c.imported)
+      dropIgnoredFor(c.id)
+    }
+  }
+}
+
+function dropIgnoredFor(id) {
+  for (const k of [...state.ignoredIds]) {
+    const sep = k.indexOf('\0')
+    if (sep >= 0 && k.slice(sep + 1) === id) state.ignoredIds.delete(k)
+  }
 }
 
 // Apply a parsed workspace export to the active client state.
