@@ -846,9 +846,113 @@ body.report-fullscreen {
 }
 .bundle-source-body {
   flex: 1; min-height: 0;
-  overflow: auto;
+  display: flex;
   background: var(--bg);
 }
+/* Code wrapper handles the actual scroll (its own overflow:auto),
+   so the side panel can sit next to it without sharing the scroll
+   container. */
+.bundle-source-code-wrap {
+  flex: 1; min-width: 0;
+  overflow: auto;
+}
+/* Side panel — appears on the right when a finding is selected.
+   Width is fixed so the code area reflows predictably; vertical
+   scroll handled internally so long descriptions don't push the
+   close button offscreen. */
+.bundle-source-panel {
+  flex-shrink: 0;
+  width: 320px;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  background: var(--surface);
+}
+.bundle-source-panel-bar {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+.bundle-source-panel-sev {
+  text-transform: uppercase;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 1px .4rem;
+  border-radius: 3px;
+  color: #000;
+  flex: 1;
+  white-space: nowrap;
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
+}
+.bundle-source-panel-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 1.4rem; height: 1.4rem;
+  font-size: .9rem; line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+.bundle-source-panel-close:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--text);
+}
+.bundle-source-panel-body {
+  flex: 1; min-height: 0;
+  padding: .75rem;
+  overflow-y: auto;
+  font-size: .78rem;
+  color: var(--text);
+}
+.bundle-source-panel-line {
+  color: var(--muted);
+  margin-bottom: .35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bundle-source-panel-desc {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.bundle-source-panel-reports {
+  margin-top: .9rem;
+  display: flex; flex-direction: column; gap: .25rem;
+}
+.bundle-source-panel-reports-label {
+  color: var(--muted);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: .15rem;
+}
+.bundle-source-panel-report {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .25rem .4rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .7rem;
+  cursor: pointer;
+  text-align: left;
+  & .file-icon { flex-shrink: 0; }
+  & .report-chip-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  & .brand-deepview { & .bg { fill: #2563eb; } & .fg { fill: #fff; } }
+  & .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
+  & .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
+  & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+}
+.bundle-source-panel-report:hover { border-color: var(--accent, #2563eb); }
 .bundle-source-empty {
   padding: 1rem; color: var(--muted);
   font-size: .82rem;
@@ -873,16 +977,54 @@ body.report-fullscreen {
 .bundle-source-lineno-col {
   flex-shrink: 0;
   margin: 0;
-  padding: .5rem .75rem;
-  width: calc(var(--lineno-width) + 1.5rem);
-  text-align: right;
-  color: var(--muted);
+  padding: .5rem .25rem .5rem .5rem;
   user-select: none;
   position: sticky; left: 0;
   background: var(--bg);
   border-right: 1px solid var(--border);
   font: inherit;
-  white-space: pre;
+  display: flex; flex-direction: column;
+}
+/* Per-line gutter row — fixed height matching the code's
+   line-height so the row aligns with the source `<pre>` line.
+   Dot + line-number live side by side, both right-aligned
+   relative to the column edge so the column reads as a single
+   right-flush block. */
+.bundle-source-lineno-row {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: .35rem;
+  height: 1.45em; /* matches .bundle-source-lines line-height */
+}
+.bundle-source-lineno-num {
+  color: var(--muted);
+  width: var(--lineno-width);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Issue dot — colored by severity tier. Button so it's
+   keyboard-focusable and click-handled by events.js. The
+   placeholder span on dot-less rows reserves the same width so
+   numbered lines align with dotted lines. */
+.bundle-source-dot {
+  flex-shrink: 0;
+  width: .65rem; height: .65rem;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .25);
+  padding: 0;
+  cursor: pointer;
+}
+.bundle-source-dot:hover { transform: scale(1.15); }
+.bundle-source-dot.active { box-shadow: 0 0 0 2px var(--accent, #2563eb); }
+.bundle-source-dot.sev-critical      { background: var(--critical); }
+.bundle-source-dot.sev-high          { background: var(--high); }
+.bundle-source-dot.sev-medium        { background: var(--medium); }
+.bundle-source-dot.sev-low           { background: var(--low); }
+.bundle-source-dot.sev-high_bug      { background: var(--high-bug); }
+.bundle-source-dot.sev-bug           { background: var(--bug); }
+.bundle-source-dot.sev-informational { background: var(--info); }
+.bundle-source-dot-placeholder {
+  flex-shrink: 0;
+  width: .65rem; height: .65rem;
 }
 .bundle-source-code {
   flex: 1;

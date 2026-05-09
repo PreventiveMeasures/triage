@@ -85,6 +85,7 @@ report.addEventListener('click', (e) => {
         state.selectedBundle = null
         state.bundleDetails = null
         state.bundleSourceFile = null
+        state.bundleSourceFindingIdx = null
       }
       state.bundles = await listBundles()
       render()
@@ -97,6 +98,8 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('[data-deselect-bundle]')) {
     state.selectedBundle = null
     state.bundleDetails = null
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
     render()
     return
   }
@@ -150,6 +153,29 @@ report.addEventListener('click', (e) => {
       || e.target.closest('[data-action="bundle-source-close"]')) {
     if (state.bundleSourceFile) {
       state.bundleSourceFile = null
+      state.bundleSourceFindingIdx = null
+      render()
+    }
+    return
+  }
+  // Source viewer side panel close — clears the selected finding
+  // but leaves the modal open.
+  if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
+    if (state.bundleSourceFindingIdx != null) {
+      state.bundleSourceFindingIdx = null
+      render()
+    }
+    return
+  }
+  // Source viewer gutter dot — selects a finding and opens the
+  // side panel. The dot's dataset carries the index into the
+  // file's findings array (built in render); the click toggles
+  // selection so a second click on the same dot dismisses.
+  const sourceFinding = e.target.closest('[data-bundle-source-finding]')
+  if (sourceFinding) {
+    const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
+    if (Number.isFinite(idx)) {
+      state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
       render()
     }
     return
@@ -177,6 +203,7 @@ report.addEventListener('click', (e) => {
     state.selectedBundle = integrity
     state.bundleDetails = null
     state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
     // Reset to the Packages tab when a different bundle opens —
     // the user shouldn't carry the prior bundle's tab choice into
     // the new one (especially when one had >5 packages and the
@@ -808,7 +835,15 @@ report.addEventListener('repo-cancel', (e) => {
 // element holds focus (the modal isn't a focusable container, and
 // we don't want to force-focus on open just to catch keys).
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && state.bundleSourceFile) {
+  if (e.key !== 'Escape') return
+  // Escape closes the side panel first when one's open — pressing
+  // Escape twice fully exits the viewer. Otherwise close the modal.
+  if (state.bundleSourceFindingIdx != null) {
+    state.bundleSourceFindingIdx = null
+    render()
+    return
+  }
+  if (state.bundleSourceFile) {
     state.bundleSourceFile = null
     render()
   }

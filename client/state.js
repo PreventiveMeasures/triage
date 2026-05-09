@@ -99,6 +99,11 @@ export const state = store({
   // modal (null when closed). Reset on bundle change / view switch
   // so an old viewer doesn't reopen against a different bundle.
   bundleSourceFile: null,
+  // Index of the finding currently highlighted in the source
+  // viewer's side panel (within the bundle's per-file findings
+  // array; null when no panel is open). Reset alongside
+  // bundleSourceFile.
+  bundleSourceFindingIdx: null,
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

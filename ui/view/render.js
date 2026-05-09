@@ -1213,15 +1213,31 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
+// Pick the worst severity (top of SEVERITIES order) among the
+// findings on a given line so the gutter dot reads as the most
+// urgent issue. Multiple findings on one line still resolve to a
+// single dot — clicking it opens the panel which lists all of
+// them.
+function _topSeverityOf(findings) {
+  for (const sev of SEVERITIES) {
+    for (const f of findings) {
+      if (f.severity === sev) return sev
+    }
+  }
+  return findings[0]?.severity ?? null
+}
+
 // Per-line rendering for the source viewer. Renders a sticky
-// gutter of line numbers next to a single `<pre>` holding the
+// gutter (one row per line) next to a single `<pre>` holding the
 // full source. Two columns rather than per-line interleaving so
 // prism's highlighted output (where tokens may span newlines)
 // stays valid HTML — the pre takes the highlighted string as-is
-// via unsafeHTML, the gutter is built per-line from the line
-// count. line-height matches across both columns so the numbers
-// align with their lines.
-function renderBundleSourceLines(content, path, integrity) {
+// via unsafeHTML, the gutter walks lines by index. line-height
+// matches across both columns so the rows align with their lines.
+//
+// `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
+// the gutter. Lines without findings render a plain number.
+function renderBundleSourceLines(content, path, integrity, lineFindings) {
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
   const lang = langForPath(path)
@@ -1243,16 +1259,73 @@ function renderBundleSourceLines(content, path, integrity) {
     })
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
-  // Build the gutter as a single text node — line breaks separate
-  // each number, line-height matches the pre. CSS handles the
-  // sticky-left positioning + right-aligned numbers.
-  const gutterText = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')
   return html`<div class="bundle-source-lines" style=${`--lineno-width:${digits}ch`}>
-    <pre class="bundle-source-lineno-col" aria-hidden="true">${gutterText}</pre>
+    <aside class="bundle-source-lineno-col" aria-hidden="true">
+      ${Array.from({ length: lineCount }, (_, i) => {
+        const ln = i + 1
+        const entries = lineFindings.get(ln)
+        const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
+        const isActive = entries && state.bundleSourceFindingIdx != null
+          && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
+        return html`<div class="bundle-source-lineno-row">
+          ${entries
+            ? html`<button
+                type="button"
+                class=${`bundle-source-dot sev-${sev}${isActive ? ' active' : ''}`}
+                data-bundle-source-finding=${entries[0].idx}
+                title=${`${entries.length} ${entries.length === 1 ? 'issue' : 'issues'} on line ${ln}`}
+                aria-label=${`${entries.length} issues on line ${ln}`}
+              ></button>`
+            : html`<span class="bundle-source-dot-placeholder"></span>`}
+          <span class="bundle-source-lineno-num">${ln}</span>
+        </div>`
+      })}
+    </aside>
     <pre class="bundle-source-code"><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
       : content}</code></pre>
   </div>`
+}
+
+// Side panel inside the source viewer modal — populated when
+// state.bundleSourceFindingIdx points at one of the file's
+// findings. Shows the severity badge, description, line, and (if
+// any) the OPFS report names that contributed the finding so the
+// user can hop over from the viewer.
+function renderBundleSourceFindingPanel(findings) {
+  const idx = state.bundleSourceFindingIdx
+  if (idx == null) return nothing
+  const f = findings[idx]
+  if (!f) return nothing
+  const reports = f.fileHash ? reportsForFinding(f.fileHash, f) : []
+  return html`<aside class="bundle-source-panel">
+    <header class="bundle-source-panel-bar">
+      <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replace(/_/gu, ' ')}</span>
+      <button
+        type="button"
+        class="bundle-source-panel-close"
+        data-action="bundle-source-panel-close"
+        title="Close (Esc)"
+        aria-label="Close finding details"
+      >×</button>
+    </header>
+    <div class="bundle-source-panel-body">
+      ${f.line ? html`<div class="bundle-source-panel-line">Line ${f.line}</div>` : nothing}
+      <div class="bundle-source-panel-desc">${f.description ?? ''}</div>
+      ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
+        <div class="bundle-source-panel-reports-label">Reported by</div>
+        ${reports.map((name) => {
+          const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
+          return html`<button
+            type="button"
+            class="report-chip bundle-source-panel-report"
+            title=${name}
+            data-bundle-issue-report=${name}
+          >${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
+        })}
+      </div>` : nothing}
+    </div>
+  </aside>`
 }
 
 function renderBundleSourceModal() {
@@ -1260,8 +1333,27 @@ function renderBundleSourceModal() {
   if (!path) return nothing
   const sources = bundleSourcesAsMap(state.bundleDetails)
   const content = sources.get(path)
+  // Find this file's matched findings (live or trash, depending on
+  // showDeleted) and bucket by line so the gutter can stamp dots.
+  // The map is also passed to the side panel: clicking a dot picks
+  // the first finding on that line by default.
+  const fileFindings = []
+  const lineFindings = new Map()
+  if (typeof content === 'string' && state.bundleDetails?.fileHashes) {
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    const onThisFile = matches.get(path) ?? []
+    for (let i = 0; i < onThisFile.length; i++) {
+      const f = onThisFile[i]
+      fileFindings.push(f)
+      const ln = parseInt(f.line, 10)
+      if (Number.isFinite(ln) && ln > 0) {
+        if (!lineFindings.has(ln)) lineFindings.set(ln, [])
+        lineFindings.get(ln).push({ f, idx: i })
+      }
+    }
+  }
   return html`<div class="bundle-source-overlay">
-    <div class="bundle-source-modal">
+    <div class=${`bundle-source-modal${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>
       <header class="bundle-source-bar">
         <div class="bundle-source-title" title=${path}>${path}</div>
         <button
@@ -1273,9 +1365,12 @@ function renderBundleSourceModal() {
         >×</button>
       </header>
       <div class="bundle-source-body">
-        ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, state.bundleDetails?.integrity)
-          : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+        <div class="bundle-source-code-wrap">
+          ${typeof content === 'string'
+            ? renderBundleSourceLines(content, path, state.bundleDetails?.integrity, lineFindings)
+            : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+        </div>
+        ${renderBundleSourceFindingPanel(fileFindings)}
       </div>
     </div>
   </div>`
