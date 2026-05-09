@@ -95,10 +95,12 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
   const ctx = canvas.getContext('2d')
   let dpr = window.devicePixelRatio || 1
-  let W = 0, H = 0
+  let H = 0
+  let W = 0
   let viewport = { tx: 0, ty: 0, k: 1 }
   let hovered = null
-  let layoutW = 0, layoutH = 0
+  let layoutH = 0
+  let layoutW = 0
   let needsLayout = true
   let needsFit = true
 
@@ -157,15 +159,20 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     if (graph.nodes.length === 0) {
       return { k: 1, tx: W / 2, ty: H / 2 }
     }
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    let minX = Infinity
+    let minY = Infinity
     for (const n of graph.nodes) {
       if (n.x < minX) minX = n.x
       if (n.y < minY) minY = n.y
       if (n.x > maxX) maxX = n.x
       if (n.y > maxY) maxY = n.y
     }
-    const w = Math.max(20, maxX - minX), h = Math.max(20, maxY - minY)
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+    const h = Math.max(20, maxY - minY)
+    const w = Math.max(20, maxX - minX)
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
     const pad = Math.min(W, H) * 0.1
     const rawK = Math.min((W - pad * 2) / w, (H - pad * 2) / h, 4)
     const k = Math.max(0.05, rawK)
@@ -251,7 +258,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   // ── Resize / DPR handling ─────────────────────────────────────
   function resize() {
     const rect = stage.getBoundingClientRect()
-    const prevW = W, prevH = H
+    const prevH = H
+    const prevW = W
     W = Math.max(80, rect.width)
     H = Math.max(80, rect.height)
     dpr = window.devicePixelRatio || 1

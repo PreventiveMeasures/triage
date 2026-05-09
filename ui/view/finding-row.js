@@ -29,7 +29,7 @@
 // delegate without intervention from this component.
 import { html, unsafeCSS } from 'lit'
 import { StateElement } from '../../rray-modules/frontend/state-element.mjs'
-import { tableRowGid, tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
+import { tableRowClasses, tableRowGid, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 
 // Every class this component might apply to the host. Listed

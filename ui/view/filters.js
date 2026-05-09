@@ -1,6 +1,6 @@
 import { state } from '../../client/state.js'
-import { isModule, findingText, SEVERITY_ORDER } from './format.js'
-import { tabKey, primaryTab } from './group.js'
+import { SEVERITY_ORDER, findingText, isModule } from './format.js'
+import { primaryTab, tabKey } from './group.js'
 
 export function resetFilters() {
   state.filterSeverities = new Set()

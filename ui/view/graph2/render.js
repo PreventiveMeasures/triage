@@ -522,7 +522,8 @@ function renderPackageCard(graph, pkg) {
   }
   // Edge stats: intra = both endpoints in this pkg, cross = one
   // endpoint here + the other elsewhere. Walk edges once.
-  let intraEdges = 0, crossEdges = 0
+  let crossEdges = 0
+  let intraEdges = 0
   for (const e of graph.edges) {
     const a = graph.nodeByFile.get(e.a)
     const b = graph.nodeByFile.get(e.b)

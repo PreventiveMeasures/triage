@@ -43,7 +43,7 @@
 //   * `repo-cancel(detail.url)` — Escape. `detail.url` is the
 //     pre-edit value (the one the input was opened with) — host
 //     should restore that and set `editing=false`.
-import { LitElement, html, unsafeCSS, nothing } from 'lit'
+import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import chipCSS from './repo-chip.css'
 
 // Strip protocol + host so the chip reads as the bare `user/repo`

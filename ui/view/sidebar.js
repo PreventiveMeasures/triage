@@ -1,12 +1,12 @@
 import { html, render as litRender, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
-import { sidebar, fileList } from './dom.js'
-import { listFiles, listBundles } from '../../client/storage.js'
+import { fileList, sidebar } from './dom.js'
+import { listBundles, listFiles } from '../../client/storage.js'
 import { render } from './render.js'
-import { switchToFile, switchToWorkspace, deleteCurrent } from './ingest.js'
-import { getCount, ensureCounts } from '../../client/counts.js'
-import { listWorkspaces, createWorkspace, setReportWorkspace, renameWorkspace } from '../../client/workspaces.js'
+import { deleteCurrent, switchToFile, switchToWorkspace } from './ingest.js'
+import { ensureCounts, getCount } from '../../client/counts.js'
+import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } from '../../client/workspaces.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -82,7 +82,7 @@ function fileItemTemplate(n, opts = {}) {
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" title=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count !== undefined ? html`<span class="file-count">${count}</span>` : nothing}</button></li>`
+  ><button type="button" class="file-name" title=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
 function groupHeaderTemplate(label, count, opts = {}) {

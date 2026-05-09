@@ -1,4 +1,4 @@
-import { state, loadRepoUrlFor } from '../../client/state.js'
+import { loadRepoUrlFor, state } from '../../client/state.js'
 import { readFile } from '../../client/storage.js'
 import { toGroup } from './group.js'
 import { deriveFindingId } from '../../common/finding-id.js'

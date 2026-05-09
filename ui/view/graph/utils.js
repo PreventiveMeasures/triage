@@ -88,7 +88,8 @@ export function fileHasFindings(file, ownCounts, transitiveCounts) {
 // so the initial seeding and spring constants match the real viewport.
 export function forceLayout(files, importsOf, layoutW, layoutH) {
   const N = files.length
-  const width = layoutW || 1100, height = layoutH || 760
+  const height = layoutH || 760
+  const width = layoutW || 1100
   // k is the "ideal edge length" — larger canvas → more spread
   const k = Math.sqrt((width * height) / Math.max(N, 1)) * 1.1
 
@@ -98,7 +99,8 @@ export function forceLayout(files, importsOf, layoutW, layoutH) {
   // produce fewer initial edge crossings than a ring and converge faster.
   const cols = Math.ceil(Math.sqrt(N * width / height))
   const rows = Math.ceil(N / cols)
-  const cellW = width / (cols + 1), cellH = height / (rows + 1)
+  const cellH = height / (rows + 1)
+  const cellW = width / (cols + 1)
   const nodes = files.map((file, i) => {
     const col = i % cols, row = Math.floor(i / cols)
     const h = seed(file)

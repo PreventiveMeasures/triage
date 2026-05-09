@@ -190,7 +190,8 @@ function placeFilesInDisk(graph, pkgInfo) {
       //   pullToCenter && member → outer band [innerN, N)
       //   !pullToCenter → entire disk [0, N) (hubs sort earlier so
       //   still get the inner indices in the outer band)
-      let bandStart, bandEnd
+      let bandEnd
+      let bandStart
       if (pullToCenter && f.isHub) { bandStart = 0; bandEnd = innerN }
       else if (pullToCenter) { bandStart = innerN; bandEnd = N }
       else { bandStart = 0; bandEnd = N }

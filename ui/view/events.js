@@ -1,10 +1,10 @@
-import { state, VIEW_MODE_KEY, saveRepoUrlFor } from '../../client/state.js'
+import { VIEW_MODE_KEY, saveRepoUrlFor, state } from '../../client/state.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
-import { tabKey, activeTabFor, groupState, findGroupById, ignoredKey } from './group.js'
+import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
-import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render.js'
+import { computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { ensureBundleFindingsIndexed, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 
 // Subscribe once to the bundle-finding index. Any time another

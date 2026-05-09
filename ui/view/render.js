@@ -3,20 +3,20 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
-import { tabKey, primaryTab, activeTabFor, groupKey, groupState } from './group.js'
+import { SEVERITIES, SEVERITY_ORDER, configureDepsDir, fileLink, formatBytes, isModule, lineLink, prettyModel, stripCommonPathPrefix } from './format.js'
+import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { findingsForFileHash, reportsForFinding } from '../../client/bundle-finding-index.js'
-import { highlight as prismHighlight, langForPath } from './prism-highlight.js'
+import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
 import { listWorkspaces } from '../../client/workspaces.js'
-import { renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock, renderFocusOverlay } from './graph2/render.js'
+import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 
@@ -610,7 +610,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   // list. The trash mode toggle button (in the toolbar) is the user's
   // signal that they're in the deleted view; the header stays steady
   // so the load total doesn't visually shift when the toggle flips.
-  const findingNoun = `finding${totalCount !== 1 ? 's' : ''}`
+  const findingNoun = `finding${totalCount === 1 ? '' : 's'}`
   const countLabel = `${totalCount} ${findingNoun}`
 
   // Source-marked reports (claude-security, codex-security, deepsec)
@@ -987,7 +987,7 @@ function findingsBodyTemplate(filtered) {
     return html`<div class="flat-group">
       <div class="flat-group-loc">
         <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>
-        ${lineLinkTpl !== nothing ? html`<span class="line-num">${lineLinkTpl}</span>` : nothing}
+        ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${p.exportName ? html`<span class="meta">${p.exportName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
@@ -1166,7 +1166,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       return html`<li>
         <button type="button" class="bundles-source-row" data-bundle-view-source=${src} title=${src}>
           <span class="bundles-source-path">${bareSrc}</span>
-          ${size != null ? html`<span class="bundles-source-size">${formatBytes(size)}</span>` : nothing}
+          ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}
         </button>
       </li>`
     })}
@@ -1429,7 +1429,7 @@ function renderBundleSourceModal() {
     }
   }
   return html`<div class="bundle-source-overlay">
-    <div class=${`bundle-source-modal${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>
+    <div class=${`bundle-source-modal${state.bundleSourceFindingIdx == null ? '' : ' with-panel'}`}>
       <header class="bundle-source-bar">
         <div class="bundle-source-title" title=${path}>${path}</div>
         <button
@@ -1783,7 +1783,7 @@ function renderBundleCodeView(details) {
             : renderBundleCodeIssuesResults(details, query, path, prefix)}
       </div>
     </aside>
-    <div class=${`bundle-code-main${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>
+    <div class=${`bundle-code-main${state.bundleSourceFindingIdx == null ? '' : ' with-panel'}`}>
       ${path
         ? html`<header class="bundle-code-main-bar">
             <span class="bundle-code-main-path mono" title=${path}>${path}</span>

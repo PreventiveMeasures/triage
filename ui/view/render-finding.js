@@ -1,8 +1,8 @@
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
-import { prettyModel, stripExportMarker, fileUrl, commitUrl } from './format.js'
-import { tabKey, groupKey, sortTabs, activeTabFor, groupState, ignoredKey } from './group.js'
+import { commitUrl, fileUrl, prettyModel, stripExportMarker } from './format.js'
+import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -244,7 +244,7 @@ function tabTemplate(f, isActive) {
   // handler. Falls through to a muted opacity hint via finding-row
   // / finding-card CSS.
   else if (ignored) classes.push('tab-ignored')
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence !== undefined ? html`<span class="tab-conf">${f.confidence}/10</span>` : nothing}</span></button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}</span></button>`
 }
 
 // One tab body — finding-left (badge column) + the right-side stack
@@ -279,7 +279,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
     <div class="finding-left">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
       <div class="value-label">Severity</div>
-      ${f.confidence !== undefined ? html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div><div class="value-label">Confidence</div>` : nothing}
+      ${f.confidence === undefined ? nothing : html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div><div class="value-label">Confidence</div>`}
     </div>
     <div>
       <div class="line-row">
@@ -398,7 +398,7 @@ export function tableRowInnerTemplate(g) {
   return html`
     <div class="row-score">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
-      ${f.confidence !== undefined ? html`<span class="row-conf"><strong>${f.confidence}</strong>/10</span>` : nothing}
+      ${f.confidence === undefined ? nothing : html`<span class="row-conf"><strong>${f.confidence}</strong>/10</span>`}
     </div>
     <div class="row-body">
       <div class="title-row">

@@ -28,7 +28,7 @@
 // don't drive a side-details panel.
 import { html, unsafeCSS } from 'lit'
 import { StateElement } from '../../rray-modules/frontend/state-element.mjs'
-import { findingCardGid, findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
+import { findingCardClasses, findingCardGid, findingCardInnerTemplate } from './render-finding.js'
 import cardCSS from './finding-card.css'
 
 const MANAGED_HOST_CLASSES = [
