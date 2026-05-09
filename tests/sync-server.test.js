@@ -16,8 +16,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
-import { WebSocket } from 'ws'
 import { encodeUtf8 } from '../common/utf8.js'
+
+// Native WebSocket is the same constructor the browser uses, so the
+// tests exercise the exact API surface the production client lives
+// against. The `ws` package's WebSocket is EventEmitter-shaped and
+// drifts slightly (`.on(...)` vs `addEventListener`, frame buffers vs
+// `event.data`), so we keep it strictly to the server side.
 
 const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
@@ -68,9 +73,9 @@ function connect(url) {
     const ws = new WebSocket(url)
     const queue = []
     const waiters = []
-    ws.on('message', (buf) => {
+    ws.addEventListener('message', (event) => {
       let msg
-      try { msg = JSON.parse(buf.toString()) } catch { return }
+      try { msg = JSON.parse(event.data) } catch { return }
       for (let i = 0; i < waiters.length; i++) {
         if (waiters[i].predicate(msg)) {
           const w = waiters[i]
@@ -105,8 +110,8 @@ function connect(url) {
         }, ms)
       })
     }
-    ws.once('open', () => resolve({ ws, recv, expectSilent }))
-    ws.once('error', reject)
+    ws.addEventListener('open', () => resolve({ ws, recv, expectSilent }), { once: true })
+    ws.addEventListener('error', (event) => reject(event.error ?? new Error('websocket error')), { once: true })
   })
 }
 

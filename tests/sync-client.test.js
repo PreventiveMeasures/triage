@@ -401,7 +401,13 @@ describe('triage-sync client', () => {
 // arriving chain looks like another peer's edit.
 
 const cryptoMod = await import('../client/sync-crypto.js')
-const { WebSocket: WSClient, WebSocketServer } = await import('ws')
+// Native WebSocket on the client side — same API surface as the
+// browser, which is the production environment the client actually
+// runs against. The `ws` package is kept strictly to the server side
+// (its WebSocketServer); its EventEmitter-shaped client drifts from
+// the browser implementation and the production code won't ever see
+// it, so exercising it from the test would test the wrong thing.
+const { WebSocketServer } = await import('ws')
 
 // In-process WebSocket server the test fully controls. Used for
 // scenarios the real server (server/index.js) won't ever produce —
@@ -422,9 +428,9 @@ async function startFakeRelay(onConnection) {
 async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   // Open a fresh socket; we'll subscribe + save + close.
   const ws = await new Promise((resolve, reject) => {
-    const s = new WSClient(url)
-    s.once('open', () => resolve(s))
-    s.once('error', reject)
+    const s = new WebSocket(url)
+    s.addEventListener('open', () => resolve(s), { once: true })
+    s.addEventListener('error', (event) => reject(event.error ?? new Error('websocket error')), { once: true })
   })
   const key = await cryptoMod.deriveSessionKey(seedB64)
   // deriveSigningKeypair takes the workspaceId as an HKDF info
@@ -436,7 +442,7 @@ async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
 
   // Drain the subscribe handshake messages first.
   const buffered = []
-  ws.on('message', (buf) => buffered.push(JSON.parse(buf.toString())))
+  ws.addEventListener('message', (event) => buffered.push(JSON.parse(event.data)))
   const subSig = await cryptoMod.signSubscribePayload(signingKey, workspaceTag, null)
   ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag, from: null, signature: subSig }))
   await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'remote subscribe chain')
