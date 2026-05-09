@@ -2311,17 +2311,20 @@ export function render() {
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)
-    // `renderTreeView` returns a Lit template now — drop a slot in
-    // the string-built HTML, then litRender into it post-flush.
-    htmlBuf += '<div id="tree-view-slot"></div>'
-    report.innerHTML = htmlBuf
-    // Header lands in the slot stamped above (`<div id="header-slot">`).
-    // Without this litRender the slot would just stay empty on the
-    // Files view (the bottom-of-render litRender only runs on the
-    // findings path).
-    const fHeader = document.getElementById('header-slot')
+    // Reuse the existing slots across renders so Lit's part-cache
+    // (keyed on each slot element) survives — without this guard
+    // every render() wiped #report, the slot elements were fresh,
+    // and the file tree got fully rebuilt instead of diffed (lost
+    // scroll, lost expand state). Recreate only on cross-view
+    // entry, detected by the slots' presence as #report children.
+    let fHeader = document.getElementById('header-slot')
+    let treeSlot = document.getElementById('tree-view-slot')
+    if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
+      report.innerHTML = '<div id="header-slot"></div><div id="tree-view-slot"></div>'
+      fHeader = document.getElementById('header-slot')
+      treeSlot = document.getElementById('tree-view-slot')
+    }
     if (fHeader) litRender(headerTpl, fHeader)
-    const treeSlot = document.getElementById('tree-view-slot')
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
