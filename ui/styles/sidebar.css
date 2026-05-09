@@ -504,6 +504,13 @@
     width: 12px; height: 12px; border-radius: 50%;
     box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
     flex-shrink: 0;
+    /* Hue per marker — pulls from the global --marker-* custom
+       properties (theme.css), same source the <color-marker>
+       picker uses, so palette changes land in one place. */
+    &.marker-red   { background: var(--marker-red); }
+    &.marker-blue  { background: var(--marker-blue); }
+    &.marker-green { background: var(--marker-green); }
+    &.marker-gray  { background: var(--marker-gray); }
   }
   & .conflict-color-name {
     text-transform: capitalize;

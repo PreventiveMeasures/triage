@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
-import { commitUrl, fileUrl, prettyModel, stripExportMarker } from './format.js'
+import { commitUrl, fileUrl, formatRunMeta, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -273,7 +273,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   const lineRowMain = exportName
     ? html`<span class="line-num">${locLink}, ${exportName}</span>`
     : html`<span class="line-num">${locLink}</span>`
-  const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const meta = formatRunMeta(f)
   return html`<div class=${`tab-body${isActive ? ' active' : ''}`} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -392,7 +392,7 @@ export function tableRowInnerTemplate(g) {
   const f = active
 
   const title = firstLine(stripExportMarker(f.description, f.exportName))
-  const typeLabel = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const typeLabel = formatRunMeta(f)
   const exportPart = f.exportName ? `, ${f.exportName}` : ''
 
   return html`

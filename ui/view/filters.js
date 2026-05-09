@@ -62,38 +62,43 @@ export function applyFilters(groups) {
   return groups.filter((g) => g.some(matchesFilters))
 }
 
-// Group-level sort. For severity/confidence modes we compare on each
-// group's primary tab (see sortTabs / primaryTab). 'file' sort is
-// handled by the grouping below.
-export function applySorting(groups) {
-  const sorted = [...groups]
-  if (state.sortBy === 'severity') {
-    sorted.sort((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
-        || pa.file.localeCompare(pb.file)
-        || parseInt(pa.line, 10) - parseInt(pb.line, 10)
-    })
-  } else if (state.sortBy === 'confidence-desc') {
-    sorted.sort((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return (pb.confidence ?? -1) - (pa.confidence ?? -1) || pa.file.localeCompare(pb.file)
-    })
-  } else if (state.sortBy === 'confidence-asc') {
-    sorted.sort((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return (pa.confidence ?? 11) - (pb.confidence ?? 11) || pa.file.localeCompare(pb.file)
-    })
-  } else if (state.sortBy === 'priority-desc') {
-    sorted.sort((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return (pb.priority ?? -1) - (pa.priority ?? -1) || pa.file.localeCompare(pb.file)
-    })
-  } else if (state.sortBy === 'priority-asc') {
-    sorted.sort((a, b) => {
-      const pa = primaryTab(a), pb = primaryTab(b)
-      return (pa.priority ?? 11) - (pb.priority ?? 11) || pa.file.localeCompare(pb.file)
-    })
+// Numeric-field comparator factory — the four `confidence-*` /
+// `priority-*` sort modes only differ in (a) which field they
+// pull off the primary tab, (b) whether higher comes first, and
+// (c) what to substitute when the field is missing. The "missing"
+// fallback is what pushes findings without a value to the FAR
+// end of the sort: -1 for desc (so they land at the bottom), 11
+// for asc (above the [0..10] band, so they land at the bottom
+// there too). File-path is the universal tiebreaker.
+function numericSorter(field, dir, missing) {
+  return (pa, pb) => {
+    const va = pa[field] ?? missing
+    const vb = pb[field] ?? missing
+    return (dir === 'desc' ? vb - va : va - vb) || pa.file.localeCompare(pb.file)
   }
-  return sorted
+}
+
+// Per-mode primary-tab comparator. Severity stays explicit because
+// it carries a three-key lex order (severity rank, then file, then
+// line) — collapsing it into the numeric helper would lose the
+// line-tiebreaker that makes the within-file order deterministic.
+const SORTERS = {
+  severity: (pa, pb) =>
+    (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
+    || pa.file.localeCompare(pb.file)
+    || parseInt(pa.line, 10) - parseInt(pb.line, 10),
+  'confidence-desc': numericSorter('confidence', 'desc', -1),
+  'confidence-asc':  numericSorter('confidence', 'asc',  11),
+  'priority-desc':   numericSorter('priority',   'desc', -1),
+  'priority-asc':    numericSorter('priority',   'asc',  11),
+}
+
+// Group-level sort. For severity/confidence/priority modes we
+// compare on each group's primary tab (see sortTabs / primaryTab).
+// 'file' sort is handled by the grouping below; an unrecognised
+// `state.sortBy` falls back to insertion order via the 0 cmp.
+export function applySorting(groups) {
+  const cmp = SORTERS[state.sortBy]
+  if (!cmp) return [...groups]
+  return [...groups].sort((a, b) => cmp(primaryTab(a), primaryTab(b)))
 }

@@ -8,24 +8,14 @@
 // render, native <dialog> for focus-trap + Esc-to-cancel, public
 // `open*` Promise wrapper that appends + showModal()s). Styles
 // live in sidebar.css next to `.workspace-conflict-dialog`.
-import { LitElement, html, render as litRender, nothing } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import {
   applyTriageImport,
   buildTriageExportGzip,
   parseTriageExportGzip,
 } from '../../client/triage-export.js'
+import { downloadBlob } from './dom.js'
 import { render as renderApp } from './render.js'
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  const host = document.createElement('span')
-  host.style.display = 'none'
-  litRender(html`<a href=${url} download=${filename}></a>`, host)
-  document.body.appendChild(host)
-  host.firstElementChild.click()
-  host.remove()
-  URL.revokeObjectURL(url)
-}
 
 class TriageExportDialog extends LitElement {
   static properties = {

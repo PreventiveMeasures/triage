@@ -28,7 +28,12 @@ button.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px currentcolor;
 }
 
-.color-red   { color: oklch(.68 .20 25); }
-.color-blue  { color: oklch(.72 .15 240); }
-.color-green { color: oklch(.74 .15 145); }
-.color-gray  { color: oklch(.55 .01 260); }
+/* Hues come from the global `--marker-*` custom properties (see
+   theme.css). Custom properties cross the shadow boundary, so the
+   `<color-marker>` shadow stylesheet stays in sync with the
+   workspace-conflict-dialog swatches and any future consumer
+   without duplicating the oklch values per surface. */
+.color-red   { color: var(--marker-red); }
+.color-blue  { color: var(--marker-blue); }
+.color-green { color: var(--marker-green); }
+.color-gray  { color: var(--marker-gray); }

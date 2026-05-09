@@ -27,6 +27,16 @@
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Triage marker palette — single source for the four colors
+     surfaced by the per-finding marker UI. Cross the shadow
+     boundary so both the `<color-marker>` shadow stylesheet and
+     the global `.workspace-conflict-dialog` swatches resolve to
+     the same hue. Mirrored under `body.theme-light` (below) when
+     the light theme needs to retune values. */
+  --marker-red:   oklch(.68 .20 25);
+  --marker-blue:  oklch(.72 .15 240);
+  --marker-green: oklch(.74 .15 145);
+  --marker-gray:  oklch(.55 .01 260);
   /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
      Earthy tones distinguish them from the saturated red/orange/amber
      vuln palette: terracotta for high_bug (still draws attention),

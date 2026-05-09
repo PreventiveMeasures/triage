@@ -142,6 +142,17 @@ export function prettyModel(model) {
   return model.replace(/^[^/]+\//u, '').replace(/^claude-/u, '').replaceAll('-', ' ')
 }
 
+// One-line per-finding run-meta string — analyzer type, model
+// (prettified), reasoning effort, exports mode — joined by ` · `
+// with absent fields elided. The same shape repeats across the
+// finding-card body, the table row's secondary line, and the
+// flat-group / bundle-source meta rows; consolidating here keeps
+// the field list, separator, and prettyModel application from
+// drifting across call sites.
+export function formatRunMeta(f) {
+  return [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+}
+
 // Walk a list of strings and shrink the candidate prefix until every
 // string starts with it. Returns '' when no shared prefix exists. Used
 // for the print button's title heuristic when multiple reports are
@@ -226,13 +237,4 @@ export function commitUrl(githubRepo, hash) {
     ? githubRepo.replace(/\/$/u, '')
     : `https://github.com/${githubRepo}`
   return `${base}/commit/${hash}`
-}
-export function commitLink(githubRepo, hash) {
-  if (!hash) return nothing
-  // Short SHA for display (first 7 chars, GitHub's default abbrev).
-  // Full hash on hover via the title attribute.
-  const short = hash.slice(0, 7)
-  const url = commitUrl(githubRepo, hash)
-  if (!url) return html`<span title=${hash}>${short}</span>`
-  return html`<a href=${url} target="_blank" rel="noopener" title=${hash}>${short}</a>`
 }

@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, SEVERITY_ORDER, configureDepsDir, fileLink, formatBytes, isModule, lineLink, prettyModel, stripCommonPathPrefix } from './format.js'
+import { SEVERITIES, SEVERITY_ORDER, configureDepsDir, fileLink, formatBytes, formatRunMeta, isModule, lineLink, prettyModel, stripCommonPathPrefix } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
@@ -985,7 +985,7 @@ function findingsBodyTemplate(filtered) {
   return html`${items.map((g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
-    const meta = [p.type, prettyModel(p.model), p.effort, p.exportsMode].filter(Boolean).join(' · ')
+    const meta = formatRunMeta(p)
     return html`<div class="flat-group">
       <div class="flat-group-loc">
         <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>
@@ -1370,7 +1370,7 @@ function renderBundleSourceFindingPanel(findings) {
   // row in the panel body so the header stays compact (just
   // severity + triage badge + close); empty when none of the
   // fields are populated.
-  const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const meta = formatRunMeta(f)
   const lineLabel = formatFindingLine(f.line)
   return html`<aside class="bundle-source-panel">
     <header class="bundle-source-panel-bar">

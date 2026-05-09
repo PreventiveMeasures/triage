@@ -17,20 +17,15 @@
 // in the global stylesheet apply directly.
 import { LitElement, html, nothing } from 'lit'
 
-// Same `oklch` values color-marker.js uses, kept in sync so the
-// dialog's chip matches the in-app picker. Only the four marker
-// colors round-trip in triage.
-const COLOR_HEX = {
-  red: 'oklch(0.68 0.20 25)',
-  blue: 'oklch(0.72 0.15 240)',
-  green: 'oklch(0.74 0.15 145)',
-  gray: 'oklch(0.55 0.01 260)',
-}
-
+// Swatch reads its hue from the global `--marker-*` custom
+// properties (see theme.css); the matching `.conflict-color-dot`
+// rules in sidebar.css map a `marker-{red,blue,green,gray}`
+// modifier class to the right `var(--marker-…)` background.
+// One source for the four marker colors — change theme.css and
+// both the in-app picker and these swatches follow.
 function colorSwatchTemplate(color) {
-  const value = COLOR_HEX[color] ?? 'transparent'
   return html`<span class="conflict-color">
-    <span class="conflict-color-dot" style=${`background:${value}`}></span>
+    <span class=${`conflict-color-dot marker-${color}`}></span>
     <span class="conflict-color-name">${color}</span>
   </span>`
 }
