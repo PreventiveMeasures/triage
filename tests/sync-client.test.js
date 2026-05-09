@@ -972,6 +972,242 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
   })
 
+  it('hydration on attach with conflict resolver = "imported" overwrites local + propagates to chain', async () => {
+    // The resolver is the UI dialog. When the user picks "Apply
+    // from chain" for a conflict, state.* gets overwritten with
+    // the chain's value, the next save's diff against the
+    // (already-matching) baseState is empty, and the chain stays
+    // on the imported value.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-A': { color: 'red' },
+      'finding-B': { color: 'blue' },
+    })
+    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+
+    state.markers.set('finding-B', 'green')
+
+    let resolverCalled = false
+    let seenConflicts = []
+    setHydrationConflictResolver((conflicts) => {
+      resolverCalled = true
+      seenConflicts = conflicts
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    })
+    try {
+      setReportWorkspace('R1.md', wsId)
+      // The listener's IIFE is async — wait for the resolver to
+      // run AND the resulting saveTriage round-trip to land.
+      await waitFor(() => resolverCalled, 'conflict resolver called')
+      await waitFor(() => state.markers.get('finding-B') === 'blue', 'imported decision applied')
+      assert.equal(seenConflicts.length, 1)
+      assert.deepEqual(seenConflicts[0], {
+        id: 'finding-B',
+        property: 'color',
+        local: 'green',
+        imported: 'blue',
+      })
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('hydration on attach with conflict resolver = "local" keeps local + propagates local-wins to chain', async () => {
+    // Same setup, but the resolver picks "Keep current". Local
+    // value wins; the diff against baseState produces a save that
+    // pushes the local value to the chain (the gap-only behaviour
+    // that this PR's resolver layer is built on).
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-B': { color: 'blue' },
+    })
+    // Wait for the chain to land; B is OOS so check via persisted
+    // baseState.
+    await waitFor(
+      () => {
+        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
+      },
+      'B in baseState',
+    )
+    state.markers.set('finding-B', 'green')
+
+    let resolverCalled = false
+    setHydrationConflictResolver((conflicts) => {
+      resolverCalled = true
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'local'
+      return decisions
+    })
+    try {
+      setReportWorkspace('R1.md', wsId)
+      await waitFor(() => resolverCalled, 'conflict resolver called')
+      // Local 'green' stays; chain advances with the local-wins value.
+      await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
+      assert.equal(state.markers.get('finding-B'), 'green', 'local kept')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('hydration on attach with cancelled resolver (returns null) keeps local everywhere', async () => {
+    // Cancel = same outcome as picking "local" for every conflict.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-B': { color: 'blue' },
+    })
+    await waitFor(
+      () => {
+        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
+      },
+      'B in baseState',
+    )
+    state.markers.set('finding-B', 'green')
+
+    let resolverCalled = false
+    setHydrationConflictResolver(() => {
+      resolverCalled = true
+      return null
+    })
+    try {
+      setReportWorkspace('R1.md', wsId)
+      await waitFor(() => resolverCalled, 'resolver invoked')
+      await waitFor(() => settledAfterAck(wsId), 'save settled')
+      assert.equal(state.markers.get('finding-B'), 'green', 'local kept on cancel')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('hydration on attach without a registered resolver falls back to gap-only (local-wins)', async () => {
+    // No resolver wired (the triage-sync default). Conflicts are
+    // silently resolved to local-wins; no dialog shows.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    setHydrationConflictResolver(null)
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-B': { color: 'blue' },
+    })
+    await waitFor(
+      () => {
+        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
+      },
+      'B in baseState',
+    )
+    state.markers.set('finding-B', 'green')
+
+    setReportWorkspace('R1.md', wsId)
+    await waitFor(() => settledAfterAck(wsId), 'save settled')
+    assert.equal(state.markers.get('finding-B'), 'green', 'gap-only kept local')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
   it('hydration on attach is gap-only: pre-existing local triage value wins, propagates to chain', async () => {
     // Spec: "applied (with a conflict resolution dialog, if needed)".
     // Current behavior: hydration is gap-only, so a pre-existing

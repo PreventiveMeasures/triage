@@ -10,6 +10,7 @@ import { renderSidebar } from './view/sidebar.js'
 import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { listWorkspaces } from '../client/workspaces.js'
 import { setRedraw } from '../client/triage-sync.js'
+import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { render } from './view/render.js'
 import './view/events.js'
 import './view/theme.js'
@@ -35,6 +36,9 @@ import './view/brotli-decompress.js'
 // repaints the view. The client/ layer doesn't import from ui/, so
 // this hook bridges the two.
 setRedraw(render)
+// Same bridge for the report-attach conflict dialog: triage-sync
+// surfaces conflicts via a callback the UI installs here.
+installHydrationConflictResolver()
 
 ;(async () => {
   try {

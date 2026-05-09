@@ -119,6 +119,17 @@ const SESSION_ID_RE = /^\d+$/u
 // doesn't blow up.
 let redraw = () => {}
 
+// Hydration conflict resolver — installed once at app boot via
+// `setHydrationConflictResolver(...)`. Called from the
+// `onReportMembershipChanged` listener when attaching a report to
+// a workspace surfaces a conflict between the local state.* value
+// and the chain's baseState value for an in-scope id. Receives
+// `(conflicts, baseState)`; returns a Promise of the per-conflict
+// decisions (`{ '<id>:<property>': 'local' | 'imported' }`) or
+// `null` to keep all locals (cancel). Defaults to null → no dialog,
+// gap-only hydration (local-wins).
+let hydrationConflictResolver = null
+
 let serverUrl = ''
 // User-driven enable/disable, persisted. The sidebar status button
 // flips this on click. Distinct from `serverUrl` so toggling doesn't
@@ -349,20 +360,44 @@ function effectiveLocalState(baseState, ids) {
 // honored — skipped when the entry already carries any triage
 // state, mirroring `applyToReactiveState`'s rule.
 function hydrateStateFromBaseState(baseState, ids) {
+  const conflicts = []
   for (const id of ids) {
     const entry = baseState[id]
     if (!entry || typeof entry !== 'object') continue
-    if (entry.color && !state.markers.has(id)) state.markers.set(id, entry.color)
+
+    if (entry.color) {
+      const local = state.markers.get(id)
+      if (local === undefined) state.markers.set(id, entry.color)
+      else if (local !== entry.color) conflicts.push({ id, property: 'color', local, imported: entry.color })
+    }
+
     let triageNext = null
     if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') triageNext = entry.triage
     else if (entry.deleted) triageNext = 'deleted'
-    if (triageNext && !state.triageState.has(id)) state.triageState.set(id, triageNext)
-    if (entry.comment && !state.comments.has(id)) state.comments.set(id, entry.comment)
-    if (entry.fix && !state.fixes.has(id)) state.fixes.set(id, entry.fix)
+    if (triageNext) {
+      const local = state.triageState.get(id)
+      if (local === undefined) state.triageState.set(id, triageNext)
+      else if (local !== triageNext) conflicts.push({ id, property: 'triage', local, imported: triageNext })
+    }
+
+    if (entry.comment) {
+      const local = state.comments.get(id)
+      if (local === undefined) state.comments.set(id, entry.comment)
+      else if (local !== entry.comment) conflicts.push({ id, property: 'comment', local, imported: entry.comment })
+    }
+
+    if (entry.fix) {
+      const local = state.fixes.get(id)
+      if (local === undefined) state.fixes.set(id, entry.fix)
+      else if (local !== entry.fix) conflicts.push({ id, property: 'fix', local, imported: entry.fix })
+    }
+
     // Per-report ignore: skipped when triage is set (mutex), and
     // when state.ignoredIds already has any entry for this id
     // (local-wins on conflict, same shape as the field-by-field
-    // checks above).
+    // checks above). No conflict path for ignoredReports — the
+    // mutex makes a "user picks ignored over triage" resolution
+    // require dropping triage too, which the dialog doesn't model.
     const triageEffectivelySet = triageNext || state.triageState.has(id)
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
     let alreadyHasAny = false
@@ -375,21 +410,46 @@ function hydrateStateFromBaseState(baseState, ids) {
       if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
     }
   }
+  return conflicts
+}
+
+// Apply the user's per-conflict decisions returned by the
+// hydration conflict resolver. `decisions` is a map keyed by
+// `${id}:${property}` with `'local'` / `'imported'`. Triage's
+// 'imported' branch also clears the per-report ignored entries
+// for the id (mutex).
+function applyHydrationDecisions(conflicts, decisions) {
+  for (const c of conflicts) {
+    const key = `${c.id}:${c.property}`
+    if (decisions[key] !== 'imported') continue
+    if (c.property === 'color') state.markers.set(c.id, c.imported)
+    else if (c.property === 'comment') state.comments.set(c.id, c.imported)
+    else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
+    else if (c.property === 'triage') {
+      state.triageState.set(c.id, c.imported)
+      for (const k of [...state.ignoredIds]) {
+        const sep = k.indexOf('\0')
+        if (sep >= 0 && k.slice(sep + 1) === c.id) state.ignoredIds.delete(k)
+      }
+    }
+  }
 }
 
 // Recompute `session.ids` from current workspace membership and
 // hydrate state.* from baseState for ids that JUST entered scope.
-// Single helper so the lazy refresh in trySendSave / captureOverlay
-// AND the eager refresh from the workspace-membership listener
-// share one code path.
+// Returns `{ conflicts, hydrated }` so the caller can decide to
+// surface a dialog (eager listener path) or fall back to local-
+// wins (lazy paths in trySendSave / captureOverlay).
 function refreshSessionIds(session) {
   const newIds = buildWorkspaceIds(session.workspaceId)
   const newlyAdded = []
   for (const id of newIds) {
     if (!session.ids.has(id)) newlyAdded.push(id)
   }
-  if (newlyAdded.length > 0) hydrateStateFromBaseState(session.baseState, newlyAdded)
+  let conflicts = []
+  if (newlyAdded.length > 0) conflicts = hydrateStateFromBaseState(session.baseState, newlyAdded)
   session.ids = newIds
+  return { conflicts, hydrated: newlyAdded.length > 0 }
 }
 
 // Set-equal comparison for `ignoredReports`. Each list is an
@@ -1338,6 +1398,18 @@ export function setRedraw(fn) {
   redraw = typeof fn === 'function' ? fn : () => {}
 }
 
+// Wire up the UI's report-attach conflict dialog. Called once at
+// app boot. When a report is attached to a workspace and the
+// chain's baseState has triage values that disagree with the
+// local state.* for an in-scope id, the resolver is invoked
+// asynchronously; the user's per-conflict choices are applied
+// before the next save propagates them to the chain. Same shape
+// as workspace-import's resolver. Defaults to "no dialog,
+// local-wins" (gap-only hydration) when not set.
+export function setHydrationConflictResolver(fn) {
+  hydrationConflictResolver = typeof fn === 'function' ? fn : null
+}
+
 // Test-only knob: shortens the heartbeat windows so a unit test
 // doesn't have to wait the production 15s/5s. No-op for any field
 // that isn't a positive number.
@@ -1700,8 +1772,36 @@ onWorkspacePrivateKeyChanged((workspaceId) => {
 onReportMembershipChanged((workspaceId) => {
   const session = sessions.get(workspaceId)
   if (!session) return
-  refreshSessionIds(session)
-  trySendSave(session)
+  const { conflicts, hydrated } = refreshSessionIds(session)
+  if (conflicts.length === 0) {
+    if (hydrated) {
+      // State.* changed via gap-fill — persist + push (saveTriage
+      // notifies, which kicks trySendSave for every open session).
+      saveTriage()
+    } else {
+      trySendSave(session)
+    }
+    return
+  }
+  // Conflicts surfaced. The resolver is async (UI dialog). Don't
+  // await the listener — fire-and-forget so setReportWorkspace
+  // returns synchronously to its caller. The user's decisions land
+  // when the dialog closes.
+  ;(async () => {
+    let decisions = null
+    if (hydrationConflictResolver) {
+      try {
+        decisions = await hydrationConflictResolver(conflicts, session.baseState)
+      } catch (err) {
+        console.warn('Triage sync: hydration conflict resolver failed:', err)
+      }
+    }
+    if (!sessionIsLive(session)) return
+    if (decisions) applyHydrationDecisions(conflicts, decisions)
+    // Persist state.* (gap-fill + applied decisions) and let the
+    // sync layer propagate via saveTriage's notify.
+    await saveTriage()
+  })()
 })
 
 // Drop persisted session entries whose workspace was deleted
