@@ -1,4 +1,5 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { encodeUtf8 } from '../common/utf8.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
@@ -124,10 +125,15 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
     256,
   )
   const seed = new Uint8Array(seedBits)
-  // PKCS8 wrap so WebCrypto accepts the raw seed. Importable as
-  // extractable so we can pull the public key out via JWK; the
-  // signing key never gets re-exported as raw bytes from JS code
-  // — the JWK path only happens once at derivation time.
+  // Public key from the seed via @noble/curves — avoids round-
+  // tripping through an extractable WebCrypto JWK export. Audit L1.
+  const publicKey = ed25519.getPublicKey(seed)
+  const publicKeyB64 = publicKey.toBase64({ alphabet: 'base64url', omitPadding: true })
+  // PKCS8 wrap so WebCrypto accepts the raw seed. NON-extractable
+  // (`false`): nothing in the JS realm — including the same module
+  // that imported it — can call exportKey('pkcs8'/'raw', key) to
+  // recover the seed afterwards. The signing key only does what
+  // the `['sign']` usage allows.
   const pkcs8 = new Uint8Array(ED25519_PKCS8_HEADER.length + 32)
   pkcs8.set(ED25519_PKCS8_HEADER, 0)
   pkcs8.set(seed, ED25519_PKCS8_HEADER.length)
@@ -135,15 +141,9 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
     'pkcs8',
     pkcs8,
     { name: 'Ed25519' },
-    true,
+    false,
     ['sign'],
   )
-  // JWK export gives us the raw 32-byte public key in `x`
-  // (base64url). Easier than re-implementing the curve maths to
-  // recover the pubkey from the seed.
-  const jwk = await crypto.subtle.exportKey('jwk', privateKey)
-  const publicKey = Uint8Array.fromBase64(jwk.x, { alphabet: 'base64url' })
-  const publicKeyB64 = publicKey.toBase64({ alphabet: 'base64url', omitPadding: true })
   return { privateKey, publicKey, publicKeyB64 }
 }
 
