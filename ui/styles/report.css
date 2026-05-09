@@ -890,6 +890,26 @@ body.report-fullscreen {
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
 }
+/* Display-only triage badge alongside the severity. Outline
+   chip style — visually distinct from the severity pill so the
+   user reads it as a status marker rather than a tier. Bucket
+   color matches the toolbar selector / row dropdown so the
+   visual link across views is clear. */
+.bundle-source-panel-triage {
+  text-transform: uppercase;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 1px .4rem;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  background: transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+  &.triage-fixed   { color: var(--green, #4ade80); }
+  &.triage-invalid { color: var(--muted); }
+  &.triage-deleted { color: var(--critical); }
+}
 .bundle-source-panel-close {
   flex-shrink: 0;
   background: transparent;
