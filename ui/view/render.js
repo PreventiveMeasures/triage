@@ -1316,7 +1316,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
         const isActive = entries && state.bundleSourceFindingIdx != null
           && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
-        return html`<div class="bundle-source-lineno-row">
+        return html`<div class="bundle-source-lineno-row" data-line=${ln}>
           ${entries
             ? html`<button
                 type="button"
@@ -1590,7 +1590,7 @@ function renderBundleCodeContentResults(sources, query, currentPath) {
 // renders as severity badge + path + description; clicking
 // selects the file (the source viewer's per-line dot can then
 // pick up the specific finding).
-function renderBundleCodeIssuesResults(details, query, currentPath) {
+function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '') {
   if (!details.fileHashes) {
     return html`<div class="bundle-code-search-empty">Computing file hashes…</div>`
   }
@@ -1600,13 +1600,18 @@ function renderBundleCodeIssuesResults(details, query, currentPath) {
   }
   const q = query.toLowerCase()
   const flat = []
+  // Track each finding's per-file index — that's what
+  // bundleSourceFindingIdx points at when the source viewer's
+  // side panel opens. Stamping it on the click target lets the
+  // events.js delegate hand the index back to state directly.
   for (const [file, findings] of matches) {
-    for (const f of findings) {
+    for (let i = 0; i < findings.length; i++) {
+      const f = findings[i]
       const desc = f.description ?? ''
       if (q && !file.toLowerCase().includes(q)
             && !f.severity.includes(q)
             && !desc.toLowerCase().includes(q)) continue
-      flat.push({ file, finding: f })
+      flat.push({ file, finding: f, fileIdx: i })
     }
   }
   flat.sort((a, b) => {
@@ -1621,20 +1626,29 @@ function renderBundleCodeIssuesResults(details, query, currentPath) {
   return html`<div class="bundle-code-search-results">
     <div class="bundle-code-search-summary">${flat.length} ${flat.length === 1 ? 'issue' : 'issues'}</div>
     <ul class="bundle-code-search-issues">
-      ${flat.map(({ file, finding }) => {
+      ${flat.map(({ file, finding, fileIdx }) => {
         const sev = finding.severity
-        return html`<li class=${`bundle-code-search-issue${file === currentPath ? ' current' : ''}`}>
+        // Prefix is shown above the rail (bundle-code-rail-prefix);
+        // strip it here so the row's path doesn't repeat the
+        // shared root. Falls back to the full path when the file
+        // doesn't actually start with prefix (defensive — shouldn't
+        // happen since prefix is derived from the same set).
+        const bare = prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+        const isCurrent = file === currentPath && state.bundleSourceFindingIdx === fileIdx
+        return html`<li class=${`bundle-code-search-issue${isCurrent ? ' current' : ''}`}>
           <button
             type="button"
             class="bundle-code-search-issue-link"
             data-bundle-view-source=${file}
+            data-bundle-view-finding-idx=${fileIdx}
+            data-bundle-view-line=${finding.line ?? ''}
             title=${file}
           >
-            <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
-            <div class="bundle-code-search-issue-meta">
-              <div class="bundle-code-search-issue-path mono">${file}${finding.line ? `:${finding.line}` : ''}</div>
-              <div class="bundle-code-search-issue-desc">${finding.description ?? ''}</div>
+            <div class="bundle-code-search-issue-row">
+              <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+              <span class="bundle-code-search-issue-path mono">${bare}${finding.line ? `:${finding.line}` : ''}</span>
             </div>
+            <div class="bundle-code-search-issue-desc">${finding.description ?? ''}</div>
           </button>
         </li>`
       })}
@@ -1743,7 +1757,7 @@ function renderBundleCodeView(details) {
           ? renderBundleCodeFilesPanel(tree, path, query)
           : searchMode === 'code'
             ? renderBundleCodeContentResults(sources, query, path)
-            : renderBundleCodeIssuesResults(details, query, path)}
+            : renderBundleCodeIssuesResults(details, query, path, prefix)}
       </div>
     </aside>
     <div class=${`bundle-code-main${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>

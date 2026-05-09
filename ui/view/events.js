@@ -229,9 +229,31 @@ report.addEventListener('click', (e) => {
   const sourceOpen = e.target.closest('[data-bundle-view-source]')
   if (sourceOpen) {
     const path = sourceOpen.dataset.bundleViewSource
-    if (path) {
-      state.bundleSourceFile = path
-      render()
+    if (!path) return
+    // Optional finding pointer — set when an Issues-mode search
+    // result is clicked; opens the side panel directly on that
+    // finding and (after render) scrolls the source viewer to
+    // its line. Plain Files-mode / Code-mode clicks omit the
+    // attribute and keep the previous bundleSourceFindingIdx
+    // (which the tab-switch reset already cleared).
+    const findingIdxAttr = sourceOpen.dataset.bundleViewFindingIdx
+    const findingIdx = findingIdxAttr === undefined ? null : parseInt(findingIdxAttr, 10)
+    const lineAttr = sourceOpen.dataset.bundleViewLine
+    const line = lineAttr ? parseInt(lineAttr, 10) : null
+    state.bundleSourceFile = path
+    if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
+    render()
+    if (Number.isFinite(line)) {
+      // Defer to the next microtask so the just-rendered source
+      // viewer is in the DOM before we look up the line row.
+      // Scroll by line — the per-line dot is keyed to the first
+      // finding on the line (multiple findings collapse to one
+      // dot), so a finding-idx-based lookup wouldn't find the
+      // dot for a non-first finding.
+      queueMicrotask(() => {
+        const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
+        if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
     }
     return
   }
