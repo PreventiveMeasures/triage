@@ -101,12 +101,20 @@ export const state = store({
   // Stale selections (against a package that fell out of the
   // current triage filter) auto-clear at render time.
   selectedPackage: null,
-  // Active tab in the package details panel — 'overview' (meta +
-  // file list + reports list) or 'issues' (per-file grouped finding
-  // list, same shape as the bundle Issues tab). Reset to 'overview'
-  // when selectedPackage changes so a new pick lands on the
-  // primary tab.
+  // Active tab in the package details panel — 'overview' keeps the
+  // regular list + details layout (panel content); 'issues' opens
+  // the full-width slide (same chrome as the bundle slide), which
+  // replaces the list + details with a back-button header + the
+  // shared per-file grouped finding list edge-to-edge. Reset to
+  // 'overview' when selectedPackage changes so a new pick lands
+  // on the primary tab.
   packageDetailsTab: 'overview',
+  // Packages list — text filter (case-insensitive substring match
+  // on the package name) and sort key. Sort options:
+  // 'findings-desc' (default — most issues first),
+  // 'files-desc', 'reports-desc', 'name-asc'.
+  packagesSearchQuery: '',
+  packagesSortBy: 'findings-desc',
   // Path of the bundle source currently open in the source viewer
   // modal (null when closed). Reset on bundle change / view switch
   // so an old viewer doesn't reopen against a different bundle.

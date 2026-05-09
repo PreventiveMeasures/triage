@@ -234,8 +234,11 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Packages details — tab switch (Overview / Issues). Pure UI;
-  // the bucket is already in memory so flipping tabs is paint-only.
+  // Packages details — tab switch. Overview keeps the regular
+  // list + details layout; Issues opens the full-width slide
+  // (state.packageDetailsTab='issues' triggers the slide branch
+  // in renderPackagesView). Pure UI flip; the bucket is already
+  // in memory so the re-render is paint-only.
   const pkgTab = e.target.closest('[data-package-tab]')
   if (pkgTab) {
     const tab = pkgTab.dataset.packageTab
@@ -243,6 +246,13 @@ report.addEventListener('click', (e) => {
       state.packageDetailsTab = tab
       render()
     }
+    return
+  }
+  // Packages slide back — drops out of the Issues slide back to
+  // the regular list + details layout (Overview tab).
+  if (e.target.closest('[data-action="package-slide-back"]')) {
+    state.packageDetailsTab = 'overview'
+    render()
     return
   }
   // Packages details — click a report row to navigate to it.
@@ -939,6 +949,7 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
+  else if (id === 'packages-sort-select') { state.packagesSortBy = val; render() }
 })
 
 // Confidence range slider. `range-input` fires continuously during
@@ -975,6 +986,10 @@ report.addEventListener('input', (e) => {
   }
   else if (id === 'bundle-code-search-input') {
     state.bundleCodeSearchQuery = val
+    renderKeepFocus(id)
+  }
+  else if (id === 'packages-search-input') {
+    state.packagesSearchQuery = val
     renderKeepFocus(id)
   }
 })

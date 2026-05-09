@@ -162,6 +162,7 @@
    reaches .bundles-view directly, the same pattern the graph view
    uses for #findings-graph-slot. */
 #bundles-slot { display: contents; }
+#packages-slot { display: contents; }
 
 /* Bundle slide — the full-width view for Graph / Issues. Replaces
    the bundles list + details panel with a header bar (back button
@@ -171,8 +172,12 @@
 /* Two-class compound so this beats `.bundles-view`'s
    `max-width: 1200px` (defined later in the stylesheet — without the
    extra specificity the cap leaks back into the slide and the graph
-   sits cramped at 1200px regardless of viewport width). */
-.bundles-view.bundles-slide-view {
+   sits cramped at 1200px regardless of viewport width). The
+   .packages-view variant carries the same chrome — the package
+   Issues drill-in renders edge-to-edge through the same .bundles-
+   slide-* classes. */
+.bundles-view.bundles-slide-view,
+.packages-view.packages-slide-view {
   max-width: none;
   display: flex;
   flex-direction: column;
@@ -1616,6 +1621,40 @@ body.report-fullscreen {
 .packages-view .packages-triage-selector {
   flex-shrink: 0;
   align-self: flex-start;
+}
+/* Page-header toolbar — search input + sort dropdown + the
+   triage selector, all on one horizontal row pinned to the
+   right of the page title. The wrapping flex row collapses
+   onto multiple lines on narrow viewports without overlapping
+   the title. */
+.packages-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+  align-self: flex-start;
+}
+.packages-toolbar .packages-search {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .25rem .5rem;
+  font: inherit;
+  font-size: .78rem;
+  min-width: 12rem;
+  &:focus { outline: none; border-color: var(--accent); }
+}
+.packages-toolbar .packages-sort {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .25rem .4rem;
+  font: inherit;
+  font-size: .78rem;
+  cursor: pointer;
+  &:focus { outline: none; border-color: var(--accent); }
 }
 /* List of packages — same row chrome as `.bundles-list` so the two
    cross-report views share their interaction model (hover bg,

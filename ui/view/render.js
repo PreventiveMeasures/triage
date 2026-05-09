@@ -2192,13 +2192,6 @@ function renderPackagesView() {
     }
     if (findings.length > 0) filtered.push([pkg, { findings, files, reports: bucket.reports }])
   }
-  filtered.sort(([a, ba], [b, bb]) => {
-    if (bb.findings.length !== ba.findings.length) return bb.findings.length - ba.findings.length
-    return a.localeCompare(b)
-  })
-  const totalFindings = filtered.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
-  const totalReports = new Set()
-  for (const [, bucket] of filtered) for (const r of bucket.reports) totalReports.add(r)
   // Selection — clear stale picks when the currently-open package
   // dropped out of the filtered set (e.g. the user flipped triage
   // and the row no longer has any findings under the new filter).
@@ -2206,17 +2199,39 @@ function renderPackagesView() {
   // across re-renders unless the entry is gone.
   const selected = state.selectedPackage
   const selectedEntry = selected ? filtered.find(([pkg]) => pkg === selected) ?? null : null
+  // Slide mode — the Issues view replaces the list + details with
+  // a full-width back-button header + the shared per-file grouped
+  // issue list. Mirrors the bundles slide pattern (Graph / Issues
+  // / Code → renders edge-to-edge instead of the panel).
+  if (selectedEntry && state.packageDetailsTab === 'issues') {
+    return renderPackageSlide(selectedEntry[0], selectedEntry[1])
+  }
+  // Apply the user-typed search filter + sort to the visible list
+  // (selection lookup above runs against the unfiltered set so
+  // typing into the search doesn't collapse the open details
+  // panel — the row stays "selected" even when the search hides
+  // every other row).
+  const searchQuery = state.packagesSearchQuery.trim().toLowerCase()
+  const visible = searchQuery
+    ? filtered.filter(([pkg]) => pkg.toLowerCase().includes(searchQuery))
+    : filtered.slice()
+  sortPackages(visible, state.packagesSortBy)
+  const totalFindings = filtered.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
+  const totalReports = new Set()
+  for (const [, bucket] of filtered) for (const r of bucket.reports) totalReports.add(r)
   const layoutClass = selectedEntry ? 'packages-layout open' : 'packages-layout'
   return html`<div class=${`packages-view${selectedEntry ? ' with-details' : ''}`}>
     <header class="page-head">
       <div class="page-title">
         <h1>Packages</h1>
         <div class="meta-row">
-          <span>${filtered.length} ${filtered.length === 1 ? 'package' : 'packages'}</span>
+          <span>${visible.length === filtered.length
+            ? html`${filtered.length} ${filtered.length === 1 ? 'package' : 'packages'}`
+            : html`${visible.length} of ${filtered.length} ${filtered.length === 1 ? 'package' : 'packages'}`}</span>
           ${totalFindings > 0 ? html`<span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${totalReports.size} ${totalReports.size === 1 ? 'report' : 'reports'}</span>` : nothing}
         </div>
       </div>
-      ${packagesTriageSelectorTemplate(triageCounts)}
+      ${packagesToolbarTemplate(triageCounts)}
     </header>
     ${filtered.length === 0
       ? html`<p style="color:var(--muted)">${buckets.size === 0
@@ -2224,9 +2239,11 @@ function renderPackagesView() {
           : state.shownTriage
             ? `No ${state.shownTriage} findings in any package.`
             : 'No untriaged findings in any package.'}</p>`
-      : html`<div class=${layoutClass}>
+      : visible.length === 0
+        ? html`<p style="color:var(--muted)">No packages match "${state.packagesSearchQuery}".</p>`
+        : html`<div class=${layoutClass}>
           <ul class="packages-list">
-            ${filtered.map(([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
+            ${visible.map(([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
           </ul>
           ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
             <header class="packages-details-bar">
@@ -2238,6 +2255,33 @@ function renderPackagesView() {
             </div>
           </aside>` : nothing}
         </div>`}
+  </div>`
+}
+
+// Toolbar at the top-right of the Packages page header — search
+// input + sort dropdown + the existing triage segmented selector.
+// Search is a case-insensitive substring match on the package name;
+// sort options key off finding / file / report counts plus a
+// name-asc fallback. The triage selector is unchanged from before
+// (same Fixed / Invalid / Deleted chips); it stays grouped here
+// so the page header reads as a single horizontal control row.
+function packagesToolbarTemplate(triageCounts) {
+  return html`<div class="packages-toolbar">
+    <input
+      type="search"
+      id="packages-search-input"
+      class="packages-search"
+      placeholder="Filter packages…"
+      aria-label="Filter packages"
+      .value=${state.packagesSearchQuery}
+    >
+    <select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${state.packagesSortBy}>
+      <option value="findings-desc">Findings ↓</option>
+      <option value="files-desc">Files ↓</option>
+      <option value="reports-desc">Reports ↓</option>
+      <option value="name-asc">Name A→Z</option>
+    </select>
+    ${packagesTriageSelectorTemplate(triageCounts)}
   </div>`
 }
 
@@ -2263,6 +2307,54 @@ function packagesTriageSelectorTemplate(triageCounts) {
         aria-pressed=${String(active)}
       >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
     })}
+  </div>`
+}
+
+// In-place sort by the user-selected key. Every option falls back
+// to alphabetical name ordering on ties so the list stays stable
+// across re-renders.
+function sortPackages(arr, sortBy) {
+  const cmp = sortBy === 'name-asc'
+    ? (a, b) => a[0].localeCompare(b[0])
+    : sortBy === 'files-desc'
+      ? (a, b) => (b[1].files.size - a[1].files.size) || a[0].localeCompare(b[0])
+      : sortBy === 'reports-desc'
+        ? (a, b) => (b[1].reports.size - a[1].reports.size) || a[0].localeCompare(b[0])
+        : (a, b) => (b[1].findings.length - a[1].findings.length) || a[0].localeCompare(b[0])
+  arr.sort(cmp)
+}
+
+// Full-width Issues slide for the open package — same chrome the
+// bundle slide uses (back button + title + body) so the visual
+// reads consistent across the two cross-report drill-ins. Body
+// renders the shared per-file grouped finding list against the
+// raw OPFS bucket so the issue inventory is independent of the
+// page's triage selector. `bucket` is unused in slide mode (the
+// raw bucket carries the live findings) but kept in the signature
+// for the meta strip in the title bar (count summary).
+function renderPackageSlide(pkg, bucket) {
+  const rawBucket = getPackagesIndex().get(pkg)
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket) : new Map()
+  const total = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
+  return html`<div class="packages-view packages-slide-view">
+    <header class="bundles-slide-bar">
+      <button
+        type="button"
+        class="bundles-slide-back"
+        data-action="package-slide-back"
+        title="Back to packages"
+        aria-label="Back to packages"
+      >← Back</button>
+      <div class="bundles-slide-title">
+        <div class="bundles-slide-name">${pkg}</div>
+        <div class="bundles-slide-integrity">${total} ${total === 1 ? 'issue' : 'issues'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
+      </div>
+    </header>
+    <div class="bundles-slide-body">
+      ${issueFindingsByFile.size === 0
+        ? html`<div class="bundle-issues-empty">No live issues for this package.</div>`
+        : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'package' })}
+    </div>
   </div>`
 }
 
@@ -2301,36 +2393,31 @@ function renderPackageRow(pkg, bucket, isSel) {
 // selector. `bucket` is the triage-filtered slice from
 // renderPackagesView.
 function renderPackageDetails(pkg, bucket) {
-  const tab = state.packageDetailsTab === 'issues' ? 'issues' : 'overview'
-  // Issue count for the tab label uses the same filter the bundle
-  // Issues tab applies (`mode: 'issues'`): strip invalid + deleted,
-  // keep everything else. Pulled from the raw bucket so the count
-  // doesn't shrink to 0 when the page's triage selector flips off
-  // the live findings.
+  // Issue count for the action-tab label uses the same filter the
+  // bundle Issues tab applies (`mode: 'issues'`): strip invalid +
+  // deleted, keep everything else. Pulled from the raw OPFS bucket
+  // so the count doesn't shrink to 0 when the page's triage
+  // selector flips off the live findings.
   const rawBucket = getPackagesIndex().get(pkg)
   const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket) : new Map()
   const issuesCount = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   return html`<div class="bundles-tabs" role="tablist">
     <button
       type="button"
-      class=${`bundles-tab${tab === 'overview' ? ' active' : ''}`}
+      class="bundles-tab active"
       data-package-tab="overview"
-      aria-selected=${String(tab === 'overview')}
+      aria-selected="true"
       role="tab"
     >Overview</button>
-    <button
+    <span class="bundles-tabs-spacer"></span>
+    ${issuesCount > 0 ? html`<button
       type="button"
-      class=${`bundles-tab${tab === 'issues' ? ' active' : ''}`}
+      class="bundles-tab bundles-tab-action"
       data-package-tab="issues"
-      aria-selected=${String(tab === 'issues')}
-      role="tab"
-    >Issues${issuesCount > 0 ? html` (${issuesCount})` : nothing}</button>
+      title="Open the package's matched issues"
+    >Issues (${issuesCount}) →</button>` : nothing}
   </div>
-  ${tab === 'issues'
-    ? (issueFindingsByFile.size === 0
-        ? html`<div class="bundle-issues-empty">No live issues for this package.</div>`
-        : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'package' }))
-    : renderPackageOverview(pkg, bucket)}`
+  ${renderPackageOverview(pkg, bucket)}`
 }
 
 // Per-file groupings for a package's Issues tab — same triage rule
