@@ -180,6 +180,49 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     assert.equal(state.markers.get('42'), 'red', 'session-only id preserved through reload')
     assert.equal(state.markers.get(FINDING_A), 'blue')
   })
+
+  it('forward-compat: a blob with unknown future fields loads cleanly', async () => {
+    // Defensive: a future build might add a new per-id field
+    // (e.g. `state.suppressedReports`) the current reader doesn't
+    // recognize. Loading must succeed and leave the known fields
+    // populated; unknown fields are silently dropped (current
+    // serialiser doesn't preserve them, which is fine — the
+    // contract is "old readers don't crash on new fields", not
+    // "old readers preserve new fields"). Pin both halves.
+    //
+    // Build a blob the same way saveTriage would, then splice in
+    // an extra field per entry plus a top-level field. Re-encode +
+    // base64 + write directly to localStorage, then reload.
+    state.markers.set(FINDING_A, 'red')
+    state.triageState.set(FINDING_A, 'fixed')
+    await saveTriage()
+    const raw = globalThis.localStorage.getItem('deepview.triage')
+    const compressed = Uint8Array.fromBase64(raw)
+    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate'))
+    const decompressed = new Uint8Array(await new Response(stream).arrayBuffer())
+    const entries = JSON.parse(new TextDecoder().decode(decompressed))
+    // Splice in unknown fields.
+    entries[FINDING_A].suppressedReports = ['x.json']
+    entries[FINDING_A].futureFlag = true
+    entries.__topLevel = { whatever: 1 }
+    const reencoded = new TextEncoder().encode(JSON.stringify(entries))
+    const recompressedStream = new Blob([reencoded]).stream().pipeThrough(new CompressionStream('deflate'))
+    const recompressed = new Uint8Array(await new Response(recompressedStream).arrayBuffer())
+    globalThis.localStorage.setItem('deepview.triage', recompressed.toBase64())
+
+    state.markers.clear()
+    state.triageState.clear()
+    await reloadTriageFromStorage()
+
+    // Known fields loaded; unknown fields silently ignored.
+    assert.equal(state.markers.get(FINDING_A), 'red', 'known marker loads')
+    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'known triage loads')
+    // Top-level keys that aren't valid id-keyed entries don't crash
+    // the loader (the reader iterates entries and treats any object
+    // value as a per-id record; `__topLevel`'s `whatever` field has
+    // no recognized properties, so nothing lands in state.*).
+    assert.equal(state.markers.get('__topLevel'), undefined)
+  })
 })
 
 describe('sessions blob persistence (Web Locks)', () => {

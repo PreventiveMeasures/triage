@@ -527,6 +527,47 @@ describe('triage-sync client', () => {
     await relay.close()
   })
 
+  it('heartbeat fires during `connecting` (subscribe not yet acked) and closes a dead socket', async () => {
+    // Audit gap: existing heartbeat test waits until status reaches
+    // `online` before checking the heartbeat, so it doesn't pin the
+    // pre-subscribe-ack window. A subscribe that the server never
+    // responds to leaves the client in `connecting` indefinitely;
+    // the heartbeat must still fire and close a dead socket so the
+    // reconnect path takes over.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
+    clearTriageState()
+
+    // Relay accepts the connection but ignores BOTH the subscribe
+    // (so subscribeAcked never flips → status stays `connecting`)
+    // AND the ping. Heartbeat must close the socket on its own.
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', () => {
+        // Deliberate: no `workspace-subscribed` for `workspace-subscribe`,
+        // no `pong` for `ping`.
+      })
+    })
+
+    setHeartbeatTimings({ pingMs: 50, pongMs: 50 })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    // Wait for the socket to open + subscribe to send (status walks
+    // off → offline → connecting). Skip `online` because the relay
+    // never ack's subscribe.
+    await waitFor(() => triageSync.status === 'connecting', 'reached connecting')
+    assert.notEqual(triageSync.status, 'online', 'never reached online (subscribe not acked)')
+    // Within ~150 ms heartbeat fires, no pong arrives, socket closes
+    // and status drops to offline (or off, depending on enabled state).
+    await waitFor(() => triageSync.status !== 'connecting', 'heartbeat closed dead socket from connecting', 1_000)
+
+    setHeartbeatTimings({ pingMs: 15_000, pongMs: 5_000 })
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
   it('emits a keyframe after `keyframeInterval` non-keyframe revisions', async () => {
     // Drop the threshold so we don't have to stage 100 saves.
     // Production stays at 100 — verified by reading sessionInfo
@@ -1449,6 +1490,221 @@ describe('triage-sync client', () => {
     const stillPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
     assert.equal(stillPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base unchanged')
 
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('setServerUrl mid-save reaches a healthy state on the new server', async () => {
+    // Audit gap: changing serverUrl while an encryption is in flight
+    // is a race — the in-flight save's IIFE captures `sentBase`
+    // before the setServerUrl reset, then completes encryption and
+    // tries to send. setServerUrl resets `pending` AND reopens the
+    // socket; the new socket's open handler resets `pending` again
+    // and re-subscribes. The in-flight send may briefly produce a
+    // stale-base save against the new server (which the server
+    // rejects with an empty chain), but the session must
+    // self-recover so the next user edit lands cleanly on the new
+    // server's chain. Pin the high-level outcome.
+    const port2 = 19500 + Math.floor(Math.random() * 500) + 500
+    const serverDir2 = mkdtempSync(path.join(tmpdir(), 'deepview-client-2-'))
+    const serverUrl2 = `ws://127.0.0.1:${port2}`
+    const serverProc2 = spawn(process.execPath, ['server/index.js'], {
+      env: { ...process.env, PORT: String(port2), HOST: '127.0.0.1', DB_PATH: path.join(serverDir2, 'data.db') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    try {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('server2 boot timeout')), 5_000)
+        serverProc2.stdout.on('data', (d) => {
+          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
+        })
+        serverProc2.stderr.on('data', () => {})
+      })
+
+      const wsId = await startSession(['finding-X'])
+      state.markers.set('finding-X', 'red')
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'baseline ack on server1')
+
+      // Trigger a fresh save and IMMEDIATELY swap servers — don't
+      // await saveTriage so the encrypt is racing with setServerUrl.
+      state.markers.set('finding-X', 'green')
+      const saveP = saveTriage()
+      triageSync.setServerUrl(serverUrl2)
+
+      // Both promises must complete without throwing; the in-flight
+      // save's send may land on server2 with a stale base (rejected),
+      // OR be dropped because socket was null at send-time. Either
+      // way, no exception escapes.
+      await saveP
+      await waitFor(() => triageSync.status === 'online', 'reconnected to server2')
+
+      // Self-recovery: a subsequent edit must land on server2 cleanly.
+      state.markers.set('finding-X', 'blue')
+      await saveTriage()
+      await waitFor(() => settledAfterAck(wsId), 'follow-up save acked on server2')
+      assert.equal(state.markers.get('finding-X'), 'blue')
+
+      triageSync.closeSession(wsId)
+      deleteWorkspace(wsId)
+    } finally {
+      triageSync.setServerUrl(serverUrl)
+      serverProc2.kill('SIGTERM')
+      await new Promise((resolve) => { serverProc2.once('exit', resolve) })
+      rmSync(serverDir2, { recursive: true, force: true })
+    }
+  })
+
+  it('reloadTriageFromStorage during an active session does not trigger an outbound save', async () => {
+    // Audit gap: the cross-tab `storage` listener calls
+    // reloadTriageFromStorage, which mutates state.* but must NOT
+    // call triageSync.notify() — otherwise an outbound save would
+    // race with the originating tab's save under the same
+    // workspaceTag, producing a redundant chain entry. The design
+    // contract: storage-event reload is view-only; the sync chain
+    // is the canonical cross-tab propagation channel.
+    const { reloadTriageFromStorage } = await import('../client/triage.js')
+    const wsId = await startSession(['shared-finding'])
+    state.markers.set('shared-finding', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const baselineRev = triageSync.sessionInfo(wsId).baseRevision
+    assert.ok(baselineRev, 'baseline revision exists')
+
+    // Simulate a sibling tab persisting different state. Build the
+    // blob the way saveTriage would (gzipped, base64) by routing
+    // through saveTriage on a swapped state, then restore state.
+    state.markers.set('shared-finding', 'green')
+    await saveTriage()
+    // saveTriage above bumped baseRevision via its own round-trip;
+    // capture the new baseline.
+    await waitFor(() => settledAfterAck(wsId), 'sibling-mimic ack')
+    const sentinelRev = triageSync.sessionInfo(wsId).baseRevision
+
+    // Now mutate state.* in-memory to simulate "this tab's view"
+    // having drifted, then call reloadTriageFromStorage as if a
+    // storage event fired. Reload should overwrite state.* with the
+    // persisted (green) value WITHOUT firing an outbound save.
+    state.markers.set('shared-finding', 'cyan')
+    await reloadTriageFromStorage()
+    assert.equal(state.markers.get('shared-finding'), 'green', 'reload picked up persisted value')
+
+    // Give a couple of ticks for any speculative save to land.
+    await new Promise((resolve) => { setTimeout(resolve, 100) })
+
+    // baseRevision unchanged — no save fired off the back of the
+    // reload, which is what protects against multi-tab kick storms.
+    assert.equal(
+      triageSync.sessionInfo(wsId).baseRevision,
+      sentinelRev,
+      'reload did not trigger an outbound save',
+    )
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('two sessions sharing a finding-id receive concurrent chains without a kick storm', async () => {
+    // Audit gap: existing "propagates a chain update across
+    // workspaces sharing a finding-id" covers one peer pushing.
+    // Pin the more interesting case where BOTH sessions receive a
+    // chain for the same shared id near-simultaneously: the cross-
+    // session propagation could in principle ping-pong (A applies,
+    // kicks B; B's snapshot differs from B's base, B saves; B's
+    // ack kicks A; ...). The convergence guarantee is that once
+    // state.* matches a session's baseState, computeChangeset emits
+    // an empty changeset and trySendSave bails — so the loop
+    // terminates with both chains carrying the same final value.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'shared', _id: 'shared' } ]],
+    })
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'shared', _id: 'shared' } ]],
+    })
+    const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
+    const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
+    const seedA = randomBase64()
+    const seedB = randomBase64()
+    upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
+    upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
+
+    triageSync.openSession(wsA)
+    triageSync.openSession(wsB)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'both online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsA)?.workspaceTag != null
+        && triageSync.sessionInfo(wsB)?.workspaceTag != null,
+      'both workspaceTags derived',
+    )
+    const tagA = triageSync.sessionInfo(wsA).workspaceTag
+    const tagB = triageSync.sessionInfo(wsB).workspaceTag
+
+    // Fire two pushes back-to-back without awaiting between them so
+    // they queue up at the server in roughly the same micro-window.
+    // pushRemoteChange opens a fresh ws each time; whichever lands
+    // first at the relay determines what the other client sees as
+    // a remote chain.
+    await Promise.all([
+      pushRemoteChange(serverUrl, tagA, seedA, { shared: { color: 'red' } }),
+      pushRemoteChange(serverUrl, tagB, seedB, { shared: { color: 'blue' } }),
+    ])
+
+    // Both sessions must reach a settled, non-null baseRevision.
+    // settledAfterAck checks: pending null AND !encrypting AND
+    // baseRevision non-null. Convergence means the kick-storm
+    // terminated without leaving anything in flight.
+    await waitFor(() => settledAfterAck(wsA), 'A settled')
+    await waitFor(() => settledAfterAck(wsB), 'B settled')
+
+    // state.markers['shared'] has SOME value (red or blue depending
+    // on which broadcast landed last); both chains carry the same
+    // final value (last-write-wins under cross-session propagation).
+    const finalColor = state.markers.get('shared')
+    assert.ok(finalColor === 'red' || finalColor === 'blue', 'shared converged to one of the two values')
+    // Both sessions advanced — propagation actually ran on both
+    // sides, didn't dead-lock waiting for each other.
+    assert.notEqual(triageSync.sessionInfo(wsA).baseRevision, null)
+    assert.notEqual(triageSync.sessionInfo(wsB).baseRevision, null)
+
+    triageSync.closeSession(wsA)
+    triageSync.closeSession(wsB)
+    deleteWorkspace(wsA)
+    deleteWorkspace(wsB)
+  })
+
+  it('setEnabled(false) keeps the socket closed across the reconnect window', async () => {
+    // Audit gap: after a user toggles sync off, no zombie reconnect
+    // should kick the socket back open. closeSocket clears the
+    // reconnect timer, and the close-handler's `if (isActive())`
+    // gate prevents the natural-disconnect path from re-scheduling
+    // — pin both with a single test that disables sync, waits past
+    // the initial 1s reconnect delay, and verifies the socket stays
+    // down.
+    const wsId = await startSession(['finding-X'])
+    assert.equal(triageSync.status, 'online')
+    assert.equal(triageSync.connected, true)
+
+    triageSync.setEnabled(false)
+    assert.equal(triageSync.status, 'off')
+    assert.equal(triageSync.connected, false, 'socket closed by setEnabled(false)')
+
+    // Wait past the initial reconnect delay (1s default) — if any
+    // reconnect timer was leaked, it'd fire here and re-open.
+    await new Promise((resolve) => { setTimeout(resolve, 1500) })
+
+    assert.equal(triageSync.connected, false, 'no zombie reconnect after disable')
+    assert.equal(triageSync.status, 'off', 'status stays off')
+
+    // Re-enable for cleanup so the next test starts with a clean
+    // serverUrl + enabled state.
+    triageSync.setEnabled(true)
+    await waitFor(statusOnline, 'reconnected after re-enable')
     triageSync.closeSession(wsId)
     deleteWorkspace(wsId)
   })
