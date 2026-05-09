@@ -198,6 +198,11 @@ wss.on('connection', (socket, req) => {
     try {
       if (msg.type === 'workspace-save') await handleSave(socket, msg)
       else if (msg.type === 'workspace-subscribe') await handleSubscribe(socket, msg)
+      // Heartbeat — application-level alive check the browser
+      // WebSocket API doesn't expose at protocol level. Stateless,
+      // unauthenticated; the security-critical paths (save /
+      // subscribe) still verify signatures.
+      else if (msg.type === 'ping') send(socket, { type: 'pong' })
     } catch (err) {
       console.warn('Handler error:', err)
     }

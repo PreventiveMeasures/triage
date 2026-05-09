@@ -43,7 +43,7 @@ if (typeof globalThis.localStorage === 'undefined') {
 
 // ─────────── client modules ───────────
 
-const { triageSync } = await import('../client/triage-sync.js')
+const { triageSync, setHeartbeatTimings } = await import('../client/triage-sync.js')
 const { state } = await import('../client/state.js')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')
@@ -385,6 +385,49 @@ describe('triage-sync client', () => {
     // baseState was reset to {} by applyChainToBase's continuity
     // failure path.
     assert.equal(triageSync.sessionInfo.baseRevision, null)
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
+  it('heartbeat closes the socket when the server stops responding to pings', async () => {
+    // Fake relay accepts the connection but never replies to a
+    // `ping`. With heartbeat enabled, the client should hit its
+    // pong-timeout and close the socket; status flips to `offline`
+    // and the reconnect path takes over.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: [] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    clearTriageState()
+
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        // Replies to subscribe so the client reaches `online`, but
+        // ignores ping. Save / chain don't matter for this test.
+        if (msg.type === 'workspace-subscribe') {
+          sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+          sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [] }))
+        }
+        // Deliberate: no `pong` for `ping`.
+      })
+    })
+
+    // Tight timings so the test doesn't have to wait the production
+    // 15 s + 5 s. Total deadline: ping fires at 50 ms, pong-timeout
+    // at +50 ms → socket closed by ~100 ms.
+    setHeartbeatTimings({ pingMs: 50, pongMs: 50 })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(statusOnline, 'sync online')
+    // Within ~150 ms the heartbeat must give up and close the socket;
+    // status drops out of `online`.
+    await waitFor(() => triageSync.status !== 'online', 'heartbeat closed socket', 1_000)
+
+    // Reset to production timings so subsequent tests aren't
+    // accidentally driven by tight windows.
+    setHeartbeatTimings({ pingMs: 15_000, pongMs: 5_000 })
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)

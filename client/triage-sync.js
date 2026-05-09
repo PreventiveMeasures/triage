@@ -133,6 +133,23 @@ let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
 
+// Application-level heartbeat. The browser WebSocket API doesn't
+// expose protocol-level ping/pong, and a server that ack'd our
+// subscribe but then silently dropped the route (or a half-open TCP
+// connection that hasn't fired a FIN yet) would leave us stuck on
+// `online` until the next save attempt or TCP keepalive kicked in.
+// We send `{ type: 'ping' }` periodically; the server replies
+// `{ type: 'pong' }`. A missing pong within `pongTimeoutMs` closes
+// the socket — `close` fires immediately, which the existing
+// reconnect path picks up.
+//
+// Mutable so tests can shorten the windows; production timings give
+// dead-connection detection within ~20 s without spamming the wire.
+let pingIntervalMs = 15_000
+let pongTimeoutMs = 5_000
+let pingIntervalId = null
+let pongTimeoutId = null
+
 // True only when all gates align: a URL exists, the user hasn't
 // flipped off, and the sidebar isn't suppressing.
 function isActive() {
@@ -690,6 +707,13 @@ async function handleMessage(data) {
   let msg
   try { msg = JSON.parse(data) } catch { return }
   if (!msg || typeof msg !== 'object') return
+  // Heartbeat — stateless, no per-session match needed. Cancel the
+  // outstanding pong-deadline timer; the next interval will start a
+  // fresh round.
+  if (msg.type === 'pong') {
+    if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
+    return
+  }
   // Match the message to our active session by tag, not UUID —
   // the wire never sees the UUID. A null tag (key derivation
   // hasn't finished) means we can't match anything yet; drop.
@@ -710,6 +734,28 @@ async function handleMessage(data) {
 }
 
 // ─────────── connection lifecycle ───────────
+
+function startHeartbeat() {
+  stopHeartbeat()
+  pingIntervalId = setInterval(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    // Don't double-arm: a previous ping is still awaiting its pong.
+    // The existing pongTimeout will close the socket if that one
+    // doesn't land.
+    if (pongTimeoutId) return
+    send({ type: 'ping' })
+    pongTimeoutId = setTimeout(() => {
+      pongTimeoutId = null
+      console.warn('Triage sync: heartbeat timeout; closing socket')
+      try { socket?.close() } catch {}
+    }, pongTimeoutMs)
+  }, pingIntervalMs)
+}
+
+function stopHeartbeat() {
+  if (pingIntervalId) { clearInterval(pingIntervalId); pingIntervalId = null }
+  if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
+}
 
 function clearReconnect() {
   if (reconnectTimer) {
@@ -755,6 +801,7 @@ function openSocket() {
       trySendSubscribe()
       trySendSave()
     }
+    startHeartbeat()
     emitStatusIfChanged()
   })
   // Serialize handlers via a Promise chain — handleAck and
@@ -776,6 +823,7 @@ function openSocket() {
   })
   ws.addEventListener('close', () => {
     if (socket === ws) socket = null
+    stopHeartbeat()
     if (session) {
       // The pending request is gone with the socket. Mark the slot
       // free; reconnect handler will resend. `subscribed` /
@@ -815,6 +863,17 @@ function closeSocket() {
 // ui → client, not the other way.
 export function setRedraw(fn) {
   redraw = typeof fn === 'function' ? fn : () => {}
+}
+
+// Test-only knob: shortens the heartbeat windows so a unit test
+// doesn't have to wait the production 15s/5s. No-op for any field
+// that isn't a positive number.
+export function setHeartbeatTimings({ pingMs, pongMs } = {}) {
+  if (typeof pingMs === 'number' && pingMs > 0) pingIntervalMs = pingMs
+  if (typeof pongMs === 'number' && pongMs > 0) pongTimeoutMs = pongMs
+  // If a heartbeat is already running (i.e. the socket is open),
+  // restart it so the new interval takes effect immediately.
+  if (pingIntervalId) startHeartbeat()
 }
 
 export const triageSync = {

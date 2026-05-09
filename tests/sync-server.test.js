@@ -329,4 +329,12 @@ describe('triage-sync server', () => {
     assert.equal(chain.revisions[0].id, save.id)
     reader.ws.close()
   })
+
+  it('responds to a ping with a pong (heartbeat)', async () => {
+    const c = await connect(serverUrl)
+    c.ws.send(JSON.stringify({ type: 'ping' }))
+    const pong = await c.recv((m) => m.type === 'pong')
+    assert.equal(pong.type, 'pong')
+    c.ws.close()
+  })
 })
