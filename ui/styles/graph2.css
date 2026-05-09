@@ -114,6 +114,16 @@
 
 .graph2-topbar .g2-spacer { flex: 1; }
 
+/* Triage selector flushes to the right of the topbar row. The
+   `.g2-spacer` above is `flex: 1`, but the toolbar-search ahead of
+   it is also `flex: 1` and consumes the available space first, so
+   the spacer collapses to 0 and the selector ends up next to All
+   files. `margin-left: auto` on the selector itself sidesteps the
+   issue: it pushes the selector (and everything after — the
+   fullscreen button) to the right edge regardless of how the
+   sibling flex items distribute. */
+.graph2-topbar .triage-selector { margin-left: auto; }
+
 .g2-icon-btn {
   width: 28px; height: 28px;
   border-radius: 5px;
