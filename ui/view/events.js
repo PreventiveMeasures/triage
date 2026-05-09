@@ -36,6 +36,25 @@ function refreshActiveGraphTopPkgs() {
     refreshGraph2TopPkgs()
   }
 }
+
+// Re-render preserving the bundle source viewer's scroll position.
+// Toggling the side panel (and any other state change while the
+// viewer is open) goes through render() — Lit may detach + reattach
+// .bundle-source-code-wrap when sibling structure changes, dropping
+// scrollTop. Capture before, restore after on the freshly-rendered
+// element. Tied specifically to the source viewer because nothing
+// else in this view has user-driven scroll worth preserving.
+function renderPreservingSourceScroll() {
+  const before = document.querySelector('.bundle-source-code-wrap')
+  const top = before?.scrollTop ?? 0
+  const left = before?.scrollLeft ?? 0
+  render()
+  const after = document.querySelector('.bundle-source-code-wrap')
+  if (after) {
+    after.scrollTop = top
+    after.scrollLeft = left
+  }
+}
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
@@ -163,7 +182,7 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
     if (state.bundleSourceFindingIdx != null) {
       state.bundleSourceFindingIdx = null
-      render()
+      renderPreservingSourceScroll()
     }
     return
   }
@@ -176,7 +195,7 @@ report.addEventListener('click', (e) => {
     const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
     if (Number.isFinite(idx)) {
       state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
-      render()
+      renderPreservingSourceScroll()
     }
     return
   }
@@ -840,7 +859,7 @@ document.addEventListener('keydown', (e) => {
   // Escape twice fully exits the viewer. Otherwise close the modal.
   if (state.bundleSourceFindingIdx != null) {
     state.bundleSourceFindingIdx = null
-    render()
+    renderPreservingSourceScroll()
     return
   }
   if (state.bundleSourceFile) {
