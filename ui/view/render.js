@@ -1924,6 +1924,17 @@ function renderBundleIssuesList(details) {
   if (findingsByFile.size === 0) {
     return html`<div class="bundle-issues-empty">No issues match this bundle's files.</div>`
   }
+  return renderIssuesGroupedByFile(findingsByFile, { kind: 'bundle' })
+}
+
+// Shared per-file grouped issue list — the bundle Issues tab and
+// the package Issues tab both render through this helper. The
+// `kind` opt selects whether the file header + finding row carry
+// click handlers (bundle: opens the source viewer modal at the
+// matched file/line) or render as plain labels (package: no source
+// viewer applies — navigation lives in the per-finding report
+// chips on the right). Sort + grouping logic is identical.
+function renderIssuesGroupedByFile(findingsByFile, { kind }) {
   // Strip the shared root once for the file headers; the leading
   // prefix is shown in the summary line so each file row reads
   // tighter without it.
@@ -1962,38 +1973,41 @@ function renderBundleIssuesList(details) {
         })
         return html`<li class="bundle-issues-file-group">
           <header class="bundle-issues-file-header">
-            <button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} title=${file}>${bare}</button>
+            ${kind === 'bundle'
+              ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} title=${file}>${bare}</button>`
+              : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" title=${file}>${bare}</span>`}
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
             ${sortedFindings.map((finding) => {
               // findingIdx is the position in the ORIGINAL per-file
-              // findings array (the one bundleFindingsByFile
-              // returned); the source viewer's
-              // bundleSourceFindingIdx points at that index, so the
-              // sorted display order doesn't break the lookup.
+              // findings array (the one findingsByFile returned);
+              // the source viewer's bundleSourceFindingIdx points at
+              // that index, so the sorted display order doesn't
+              // break the lookup. Only used by the bundle path.
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
               const triage = state.triageState.get(tabKey(finding))
               const triageLabel = triage === 'fixed' ? 'FIXED' : null
+              const inner = html`<div class="bundle-issues-finding-head">
+                <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+                ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
+                ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
+                <span class="bundle-issues-finding-spacer"></span>
+                ${bundleIssueReportsTemplate(finding)}
+              </div>
+              <div class="bundle-issues-finding-desc">${finding.description ?? ''}</div>`
               return html`<li class="bundle-issues-finding">
-                <button
-                  type="button"
-                  class="bundle-issues-finding-link"
-                  data-bundle-view-source=${file}
-                  data-bundle-view-finding-idx=${findingIdx}
-                  data-bundle-view-line=${finding.line ?? ''}
-                  title=${file}
-                >
-                  <div class="bundle-issues-finding-head">
-                    <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
-                    ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
-                    ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
-                    <span class="bundle-issues-finding-spacer"></span>
-                    ${bundleIssueReportsTemplate(finding)}
-                  </div>
-                  <div class="bundle-issues-finding-desc">${finding.description ?? ''}</div>
-                </button>
+                ${kind === 'bundle'
+                  ? html`<button
+                      type="button"
+                      class="bundle-issues-finding-link"
+                      data-bundle-view-source=${file}
+                      data-bundle-view-finding-idx=${findingIdx}
+                      data-bundle-view-line=${finding.line ?? ''}
+                      title=${file}
+                    >${inner}</button>`
+                  : html`<div class="bundle-issues-finding-link bundle-issues-finding-static" title=${file}>${inner}</div>`}
               </li>`
             })}
           </ul>
@@ -2277,10 +2291,69 @@ function renderPackageRow(pkg, bucket, isSel) {
   </li>`
 }
 
-// Right-panel details for the open package — meta dl + severity
-// chip strip + per-file list (full, no slice cap; the panel has
-// its own scroll) + the OPFS reports the findings came from.
+// Right-panel details for the open package — tabbed body. Overview
+// tab carries the meta dl + severity chip strip + per-file list +
+// OPFS reports list (the bucket the user picked). Issues tab
+// reuses the bundle Issues per-file grouped renderer against the
+// raw (unfiltered) bucket from the OPFS index — so the per-file
+// finding count there reflects every live (non invalid/deleted)
+// finding for the package, independent of the page's triage
+// selector. `bucket` is the triage-filtered slice from
+// renderPackagesView.
 function renderPackageDetails(pkg, bucket) {
+  const tab = state.packageDetailsTab === 'issues' ? 'issues' : 'overview'
+  // Issue count for the tab label uses the same filter the bundle
+  // Issues tab applies (`mode: 'issues'`): strip invalid + deleted,
+  // keep everything else. Pulled from the raw bucket so the count
+  // doesn't shrink to 0 when the page's triage selector flips off
+  // the live findings.
+  const rawBucket = getPackagesIndex().get(pkg)
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket) : new Map()
+  const issuesCount = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
+  return html`<div class="bundles-tabs" role="tablist">
+    <button
+      type="button"
+      class=${`bundles-tab${tab === 'overview' ? ' active' : ''}`}
+      data-package-tab="overview"
+      aria-selected=${String(tab === 'overview')}
+      role="tab"
+    >Overview</button>
+    <button
+      type="button"
+      class=${`bundles-tab${tab === 'issues' ? ' active' : ''}`}
+      data-package-tab="issues"
+      aria-selected=${String(tab === 'issues')}
+      role="tab"
+    >Issues${issuesCount > 0 ? html` (${issuesCount})` : nothing}</button>
+  </div>
+  ${tab === 'issues'
+    ? (issueFindingsByFile.size === 0
+        ? html`<div class="bundle-issues-empty">No live issues for this package.</div>`
+        : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'package' }))
+    : renderPackageOverview(pkg, bucket)}`
+}
+
+// Per-file groupings for a package's Issues tab — same triage rule
+// the bundle Issues tab uses (drop invalid + deleted, keep
+// everything else). Operates on the RAW bucket from
+// `getPackagesIndex()` so the issue list reflects the package's
+// full live inventory, independent of the page's triage selector.
+function packageFindingsByFile(rawBucket) {
+  const result = new Map()
+  for (const [file, findings] of rawBucket.files) {
+    const live = findings.filter((f) => {
+      const t = state.triageState.get(tabKey(f)) ?? null
+      return t !== 'invalid' && t !== 'deleted'
+    })
+    if (live.length > 0) result.set(file, live)
+  }
+  return result
+}
+
+// Overview tab body — moved out of renderPackageDetails so the
+// tab dispatch above stays compact. Same content as the previous
+// (pre-tabs) detail body.
+function renderPackageOverview(pkg, bucket) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
     if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++

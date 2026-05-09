@@ -217,11 +217,14 @@ report.addEventListener('click', (e) => {
   // Packages list — row select. Mirrors the bundles select pattern;
   // selection is purely UI (no async load — the index is already in
   // memory), so a plain re-render paints the right-side panel.
+  // Reset the details panel to the Overview tab so a new pick
+  // doesn't carry the prior selection's tab choice.
   const selPackage = e.target.closest('[data-select-package]')
   if (selPackage) {
     const pkg = selPackage.dataset.selectPackage
     if (state.selectedPackage === pkg) return
     state.selectedPackage = pkg
+    state.packageDetailsTab = 'overview'
     render()
     return
   }
@@ -229,6 +232,17 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('[data-deselect-package]')) {
     state.selectedPackage = null
     render()
+    return
+  }
+  // Packages details — tab switch (Overview / Issues). Pure UI;
+  // the bucket is already in memory so flipping tabs is paint-only.
+  const pkgTab = e.target.closest('[data-package-tab]')
+  if (pkgTab) {
+    const tab = pkgTab.dataset.packageTab
+    if ((tab === 'overview' || tab === 'issues') && state.packageDetailsTab !== tab) {
+      state.packageDetailsTab = tab
+      render()
+    }
     return
   }
   // Packages details — click a report row to navigate to it.
