@@ -109,6 +109,14 @@ export const state = store({
   // 'overview' when selectedPackage changes so a new pick lands
   // on the primary tab.
   packageDetailsTab: 'overview',
+  // Sub-view inside the package Issues slide — null = live
+  // (untriaged + fixed, the default + the same set the rest of
+  // the package surface counts as "issues"), 'invalid' / 'deleted'
+  // = the corresponding triage bucket. Surfaced as `[Invalid |
+  // Deleted]` tabs in the slide's header, only when the bucket
+  // is non-empty. Reset to null when selectedPackage changes or
+  // when the slide closes.
+  packageSlideTriage: null,
   // Packages list — text filter (case-insensitive substring match
   // on the package name) and sort key. Sort options:
   // 'findings-desc' (default — most issues first),

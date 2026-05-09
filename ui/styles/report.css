@@ -1628,6 +1628,17 @@ body.report-fullscreen {
   flex-shrink: 0;
   align-self: flex-start;
 }
+
+/* `[Invalid | Deleted]` tabs in the package Issues slide header
+   — pinned to the right edge of `.bundles-slide-bar` (the title
+   block uses `flex: 1` and pushes us out). Inherits the chip
+   chrome from `.triage-state-btn` (toolbar.css), so per-state
+   active colors match the toolbar's selector. */
+.packages-slide-view .packages-slide-triage {
+  display: flex; gap: .25rem;
+  flex-shrink: 0;
+  align-self: center;
+}
 /* Page-header toolbar — search input + sort dropdown + the
    triage selector, all on one horizontal row pinned to the
    right of the page title. The wrapping flex row collapses

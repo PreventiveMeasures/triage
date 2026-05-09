@@ -196,18 +196,48 @@ function sortPackages(arr, sortBy) {
   arr.sort(cmp)
 }
 
+// Per-bucket counts for the slide's Invalid / Deleted tabs.
+// Keys: 'live' (untriaged + fixed — the default body), 'invalid',
+// 'deleted'. Walks the raw OPFS bucket once; the slide uses the
+// counts to decide which tabs to render (non-zero only) and
+// passes the active mode to packageFindingsByFile for the body.
+function packageBucketCounts(rawBucket) {
+  const counts = { live: 0, invalid: 0, deleted: 0 }
+  if (!rawBucket) return counts
+  for (const findings of rawBucket.files.values()) {
+    for (const f of findings) {
+      const t = state.triageState.get(tabKey(f)) ?? null
+      if (t === 'invalid') counts.invalid++
+      else if (t === 'deleted') counts.deleted++
+      else counts.live++
+    }
+  }
+  return counts
+}
+
 // Full-width Issues slide for the open package — same chrome the
 // bundle slide uses (back button + title + body) so the visual
 // reads consistent across the two cross-report drill-ins. Body
 // renders the shared per-file grouped finding list against the
-// raw OPFS bucket so the issue inventory is independent of the
-// page's triage selector. `bucket` is unused in slide mode (the
-// raw bucket carries the live findings) but kept in the signature
-// for the meta strip in the title bar (count summary).
+// raw OPFS bucket; the active sub-view is selected by
+// `state.packageSlideTriage` (null = live, 'invalid' / 'deleted'
+// = those buckets). The `[Invalid | Deleted]` tabs in the header
+// surface only when the corresponding bucket is non-empty —
+// nothing to switch to otherwise. `bucket` carries the
+// page-filtered slice from renderPackagesView; the title bar's
+// `bucket.files`/`bucket.reports` counts come from there.
 function renderPackageSlide(pkg, bucket) {
   const rawBucket = getPackagesIndex().get(pkg)
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket) : new Map()
+  const counts = packageBucketCounts(rawBucket)
+  const mode = state.packageSlideTriage ?? 'live'
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, mode) : new Map()
   const total = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
+  const noun = mode === 'live'
+    ? (total === 1 ? 'issue' : 'issues')
+    : (total === 1 ? `${mode} issue` : `${mode} issues`)
+  const emptyMsg = mode === 'live'
+    ? 'No live issues for this package.'
+    : `No ${mode} issues for this package.`
   return html`<div class="packages-view packages-slide-view">
     <header class="bundles-slide-bar">
       <button
@@ -219,14 +249,40 @@ function renderPackageSlide(pkg, bucket) {
       >← Back</button>
       <div class="bundles-slide-title">
         <div class="bundles-slide-name">${pkg}</div>
-        <div class="bundles-slide-integrity">${total} ${total === 1 ? 'issue' : 'issues'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
+        <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
+      ${packageSlideTriageTabsTemplate(counts)}
     </header>
     <div class="bundles-slide-body">
       ${issueFindingsByFile.size === 0
-        ? html`<div class="bundle-issues-empty">No live issues for this package.</div>`
+        ? html`<div class="bundle-issues-empty">${emptyMsg}</div>`
         : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'package' })}
     </div>
+  </div>`
+}
+
+// Triage-bucket tabs for the package Issues slide header. Only
+// renders an `Invalid` button when there are invalid findings (or
+// the user is currently looking at that bucket — keep the active
+// chip visible even if the count drops to 0 mid-session); same
+// for `Deleted`. The default `live` view has no tab — clicking
+// the active Invalid / Deleted tab again clears
+// state.packageSlideTriage and returns to it.
+function packageSlideTriageTabsTemplate(counts) {
+  const buckets = ['invalid', 'deleted']
+  const visible = buckets.filter((b) => counts[b] > 0 || state.packageSlideTriage === b)
+  if (visible.length === 0) return nothing
+  return html`<div class="triage-selector packages-slide-triage" role="group" aria-label="Triage view">
+    ${visible.map((b) => {
+      const active = state.packageSlideTriage === b
+      return html`<button
+        type="button"
+        class=${`triage-state-btn triage-state-${b}${active ? ' active' : ''}`}
+        data-package-slide-triage=${b}
+        title=${active ? `Exit ${b} view` : `Show ${b} (${counts[b]})`}
+        aria-pressed=${String(active)}
+      >${b.charAt(0).toUpperCase() + b.slice(1)} (${counts[b]})</button>`
+    })}
   </div>`
 }
 
@@ -292,19 +348,27 @@ function renderPackageDetails(pkg, bucket) {
   ${renderPackageOverview(pkg, bucket)}`
 }
 
-// Per-file groupings for a package's Issues tab — same triage rule
-// the bundle Issues tab uses (drop invalid + deleted, keep
-// everything else). Operates on the RAW bucket from
-// `getPackagesIndex()` so the issue list reflects the package's
-// full live inventory, independent of the page's triage selector.
-function packageFindingsByFile(rawBucket) {
+// Per-file groupings for a package's Issues tab. Three modes:
+//
+//   * `'live'` (default) — untriaged + fixed. Same set the bundle
+//     Issues tab shows; matches the package-row issue count.
+//   * `'invalid'` — only findings triaged as invalid.
+//   * `'deleted'` — only findings triaged as deleted.
+//
+// Operates on the RAW bucket from `getPackagesIndex()` so the
+// list reflects the package's full inventory, independent of the
+// page's triage selector. The slide's [Invalid | Deleted] tabs
+// switch the mode via `state.packageSlideTriage`.
+function packageFindingsByFile(rawBucket, mode = 'live') {
   const result = new Map()
   for (const [file, findings] of rawBucket.files) {
-    const live = findings.filter((f) => {
+    const filtered = findings.filter((f) => {
       const t = state.triageState.get(tabKey(f)) ?? null
+      if (mode === 'invalid') return t === 'invalid'
+      if (mode === 'deleted') return t === 'deleted'
       return t !== 'invalid' && t !== 'deleted'
     })
-    if (live.length > 0) result.set(file, live)
+    if (filtered.length > 0) result.set(file, filtered)
   }
   return result
 }

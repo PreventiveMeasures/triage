@@ -191,6 +191,11 @@ report.addEventListener('click', (e) => {
     if (state.selectedPackage === pkg) return
     state.selectedPackage = pkg
     state.packageDetailsTab = 'overview'
+    // Drop the slide's triage sub-view so a new pick lands in the
+    // default `live` (untriaged + fixed) bucket — carrying a
+    // prior package's `'invalid'` / `'deleted'` mode would
+    // surprise the user.
+    state.packageSlideTriage = null
     render()
     return
   }
@@ -218,6 +223,21 @@ report.addEventListener('click', (e) => {
   // the regular list + details layout (Overview tab).
   if (e.target.closest('[data-action="package-slide-back"]')) {
     state.packageDetailsTab = 'overview'
+    // Reset the slide's triage sub-view too — re-entering the
+    // slide should land on the default `live` bucket.
+    state.packageSlideTriage = null
+    render()
+    return
+  }
+  // Package slide — Invalid / Deleted tabs in the header switch
+  // the slide body to the matching triage bucket. Clicking the
+  // currently-active tab again drops back to `live` (the
+  // default + the same set the rest of the package surface
+  // counts as "issues").
+  const pkgSlideTriage = e.target.closest('[data-package-slide-triage]')
+  if (pkgSlideTriage) {
+    const next = pkgSlideTriage.dataset.packageSlideTriage
+    state.packageSlideTriage = state.packageSlideTriage === next ? null : next
     render()
     return
   }
