@@ -385,13 +385,17 @@ report.addEventListener('click', (e) => {
     if (Number.isFinite(line)) {
       // Defer to the next microtask so the just-rendered source
       // viewer is in the DOM before we look up the line row.
-      // Scroll by line — the per-line dot is keyed to the first
-      // finding on the line (multiple findings collapse to one
-      // dot), so a finding-idx-based lookup wouldn't find the
-      // dot for a non-first finding.
+      // `data-bundle-view-scroll-block` lets the click target pick
+      // where the line should land in the viewport — code-search
+      // hits use `'start'` (top of viewport, so the matching line
+      // anchors the eye and the surrounding context flows below)
+      // while Issues / per-line-dot clicks default to `'center'`
+      // (the line IS the focus, so equal context above and below
+      // reads better).
+      const block = sourceOpen.dataset.bundleViewScrollBlock || 'center'
       queueMicrotask(() => {
         const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-        if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        if (row) row.scrollIntoView({ block, behavior: 'smooth' })
       })
     }
     return

@@ -815,7 +815,7 @@ function buildBundleSourceTree(paths) {
 // so the user can drill in. Selected file gets a `current` class
 // for the highlight strip; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '') {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
   const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))
   const files = [...node.files.entries()].sort(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -832,17 +832,20 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
   // key, Lit positionally diffs and a single keystroke that
   // changes the filtered structure recreates every node from
   // scratch — collapsing whatever the user had expanded. The
-  // `?open=` binding still owns the auto-open behavior (root +
-  // ancestors of currentPath); Lit's part-cache short-circuits
+  // `?open=` binding owns the auto-open behavior (root + ancestors
+  // of currentPath, plus every dir when `expandAll` is true — set
+  // by the file-search panel because every dir in the filtered
+  // tree exists precisely BECAUSE it contains a match, so the
+  // user expects to see them all). Lit's part-cache short-circuits
   // when the computed value matches the last committed one, so
   // user-driven open/close survives across renders too.
   return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
     ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
       const childPath = parentPath ? `${parentPath}/${name}` : name
       return html`<li class="bundle-code-tree-dir">
-        <details ?open=${depth === 0 || containsCurrent(child)}>
+        <details ?open=${expandAll || depth === 0 || containsCurrent(child)}>
           <summary>${name}</summary>
-          ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath)}
+          ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath, expandAll)}
         </details>
       </li>`
     })}
@@ -914,7 +917,11 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
     for (const d of n.dirs.values()) remap(d)
   }
   remap(filtered)
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex)
+  // expandAll: filtered tree only contains matches; every dir
+  // exists because something inside it matched, so opening them
+  // all means the user sees every hit at a glance instead of
+  // having to click every level open after typing.
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, '', true)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -969,6 +976,7 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
             class="bundle-code-search-hit-link"
             data-bundle-view-source=${p}
             data-bundle-view-line=${h.ln}
+            data-bundle-view-scroll-block="start"
             title=${`${p}:${h.ln}`}
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
