@@ -1,5 +1,5 @@
 import { html, render } from 'lit'
-import { graph2 } from './state.js'
+import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
 import { pkgRelative } from './data.js'
@@ -92,6 +92,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   const zoomEl = container.querySelector('#g2-zoom-pct')
 
   if (!canvas) return
+
+  // render.js calls this on every render() while viewMode==='graph',
+  // not just on the transition into graph mode — a triageSync push or
+  // any unrelated re-render mid-graph would otherwise re-attach
+  // window-level listeners + ResizeObserver + MutationObserver on
+  // top of the previous set, leaking handlers each time. Tear down
+  // any prior attachment before re-wiring.
+  cleanupGraph2()
 
   const ctx = canvas.getContext('2d')
   let dpr = window.devicePixelRatio || 1

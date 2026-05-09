@@ -64,6 +64,16 @@ const triage = {
           state.triageState.set(id, triageVal)
           changed = true
         }
+      } else {
+        // Reject unknown triage values loudly. 'ignored' is a
+        // common mistake — the per-report ignore set is keyed by
+        // (reportName, id), not by id alone, so it can't be
+        // expressed through this id-only API. Use the per-finding
+        // ignore button or the workspace import path instead.
+        throw new TypeError(
+          `DeepView.triage.set: unknown triage value ${JSON.stringify(triageVal)} ` +
+          "(expected 'fixed' | 'invalid' | 'deleted' | null)",
+        )
       }
     }
     if (comment !== undefined) {

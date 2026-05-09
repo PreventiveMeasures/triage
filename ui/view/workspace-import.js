@@ -35,10 +35,11 @@ export async function importWorkspaceFromGzip(file) {
     }),
   })
   // Mutating state.markers / state.triageState outside a render
-  // context doesn't auto-trigger a repaint of the loaded report —
-  // re-run render() so adopted colors and trash assignments show up
-  // immediately. No-op when nothing's loaded (render bails on an
-  // empty state.reports). Sidebar refresh is owned by addFiles.
-  if (state.currentFile) render()
+  // context doesn't auto-trigger a repaint of the loaded view —
+  // re-run render() so adopted colors and trash assignments show
+  // up immediately. Cover both file and workspace mode (they're
+  // mutually exclusive); render() bails on its own when nothing
+  // is loaded. Sidebar refresh is owned by addFiles.
+  if (state.currentFile || state.currentWorkspace) render()
   return ws
 }

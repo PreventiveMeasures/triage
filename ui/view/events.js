@@ -578,6 +578,11 @@ report.addEventListener('click', (e) => {
     state.filterConfMin = 0
     state.filterInclude = g2JumpFindings.dataset.g2JumpFindings
     state.currentView = 'findings'
+    // The jump targets the findings list, not the graph. If the
+    // user was on the in-findings graph view, stay in findings
+    // but switch to a list-style mode so the include filter
+    // (which has no UI in the graph viewport) is actually visible.
+    if (state.viewMode === 'graph') state.viewMode = 'table'
     cleanupGraph2()
     render()
     return
@@ -911,37 +916,49 @@ report.addEventListener('mark-color', (e) => {
 // pair, on the theory that the browser drains microtasks between
 // event-handler return and snapshot. It didn't, at least not
 // reliably; the explicit await is the deterministic fix.
+// Re-entrancy guard for the print flow. The handler is async (it
+// awaits per-card updateComplete before opening the print dialog),
+// so a second click during that await would capture a fresh
+// `oldMode` from the already-swapped state — when both runs settle
+// they'd restore the wrong mode and strand the user in 'list'.
+let printing = false
 document.getElementById('print-btn').addEventListener('click', async () => {
   if (state.reports.length === 0) return
-  const oldMode = state.viewMode
-  if (oldMode === 'table') {
-    state.viewMode = 'list'
-    render()
-    // Wait for Lit's batched per-card update to land before
-    // letting the browser snapshot. `updateComplete` resolves
-    // after the element's render() has applied its template;
-    // doing this on every card is overkill in steady-state but
-    // cheap enough relative to dialog-modal time.
-    await Promise.all(
-      [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
-    )
-  }
-  const fileNames = state.reports.map((r) => r.fileName)
-  let target = ''
-  if (fileNames.length === 1) target = fileNames[0]
-  else if (fileNames.length > 1) target = commonPrefix(fileNames)
-  // Strip the `.json` suffix so a "Save as PDF" doesn't end up named
-  // `<report>.json.pdf`. Also handles a stripped trailing `.` from a
-  // partial common prefix like `security-foo.j` — only `.json` exactly
-  // at the end gets removed.
-  target = target.replace(/\.json$/u, '')
-  const oldTitle = document.title
-  if (target) document.title = target
-  window.print()
-  document.title = oldTitle
-  if (state.viewMode !== oldMode) {
-    state.viewMode = oldMode
-    render()
+  if (printing) return
+  printing = true
+  try {
+    const oldMode = state.viewMode
+    if (oldMode === 'table') {
+      state.viewMode = 'list'
+      render()
+      // Wait for Lit's batched per-card update to land before
+      // letting the browser snapshot. `updateComplete` resolves
+      // after the element's render() has applied its template;
+      // doing this on every card is overkill in steady-state but
+      // cheap enough relative to dialog-modal time.
+      await Promise.all(
+        [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
+      )
+    }
+    const fileNames = state.reports.map((r) => r.fileName)
+    let target = ''
+    if (fileNames.length === 1) target = fileNames[0]
+    else if (fileNames.length > 1) target = commonPrefix(fileNames)
+    // Strip the `.json` suffix so a "Save as PDF" doesn't end up
+    // named `<report>.json.pdf`. Also handles a stripped trailing
+    // `.` from a partial common prefix like `security-foo.j` —
+    // only `.json` exactly at the end gets removed.
+    target = target.replace(/\.json$/u, '')
+    const oldTitle = document.title
+    if (target) document.title = target
+    window.print()
+    document.title = oldTitle
+    if (state.viewMode !== oldMode) {
+      state.viewMode = oldMode
+      render()
+    }
+  } finally {
+    printing = false
   }
 })
 
