@@ -1971,6 +1971,13 @@ function renderBundlesList(bundles) {
             </div>
             <button
               type="button"
+              class="bundles-row-action"
+              data-bundle-row-code=${integrity}
+              title=${`Open ${name} in the code explorer`}
+              aria-label=${`Open ${name} in the code explorer`}
+            >Code →</button>
+            <button
+              type="button"
               class="bundles-delete"
               data-delete-bundle=${integrity}
               title=${`Delete ${name}`}

@@ -97,6 +97,75 @@ function pathClosest(e, selector) {
 // selectors come first so a more specific match short-circuits before a
 // generic one (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  // Bundles list — per-row "Code →" shortcut. Selects the bundle
+  // (kicking the same async parse the data-select-bundle path
+  // does) and opens straight into the Code slide. Listed BEFORE
+  // the row-select handler since both buttons live inside the
+  // selectable row container; without the early return, the
+  // generic row-select would fire too and we'd race the slide
+  // setup against bundleDetails landing.
+  const codeBundle = e.target.closest('[data-bundle-row-code]')
+  if (codeBundle) {
+    const integrity = codeBundle.dataset.bundleRowCode
+    state.selectedBundle = integrity
+    state.bundleDetails = state.selectedBundle === integrity ? state.bundleDetails : null
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
+    state.bundleDetailsTab = 'code'
+    graph2.showAll = true
+    state.shownTriage = null
+    render()
+    // Async parse path — mirrors the data-select-bundle handler
+    // below. Skipping when bundleDetails is already cached for
+    // this integrity (clicking Code → on the already-open bundle
+    // shouldn't re-parse).
+    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+    if (!entry) return
+    if (state.bundleDetails && state.bundleDetails.integrity === integrity) return
+    state.bundleDetails = null
+    ;(async () => {
+      let details
+      try {
+        const bytes = await readBundle(integrity)
+        const isMap = entry.name.toLowerCase().endsWith('.map')
+        if (isMap) {
+          try {
+            const json = JSON.parse(new TextDecoder().decode(bytes))
+            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, json }
+          } catch (err) {
+            details = { integrity, kind: 'sourcemap', size: bytes.byteLength, error: err.message }
+          }
+        } else {
+          try {
+            const out = await brotliDecompress(bytes)
+            const json = JSON.parse(new TextDecoder().decode(out))
+            details = { integrity, kind: 'stasis', size: bytes.byteLength, json }
+          } catch (err) {
+            details = { integrity, kind: 'stasis', size: bytes.byteLength, error: err.message }
+          }
+        }
+      } catch (err) {
+        details = { integrity, error: err.message, size: 0 }
+      }
+      if (state.selectedBundle !== integrity) return
+      state.bundleDetails = details
+      render()
+      if (details.json) {
+        ;(async () => {
+          try {
+            const fileHashes = await computeBundleFileHashes(details)
+            if (state.selectedBundle !== integrity) return
+            details.fileHashes = fileHashes
+            render()
+          } catch {}
+        })()
+      }
+      ensureBundleFindingsIndexed().catch(() => {})
+    })()
+    return
+  }
   // Bundles list — per-row delete button (`data-delete-bundle=<integrity>`).
   // The dataset value is the SHA-512 integrity (the canonical id);
   // `state.bundles` carries the user-friendly name for the confirm
