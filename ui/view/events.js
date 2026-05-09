@@ -231,6 +231,15 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Packages details — click a report row to navigate to it.
+  // Mirrors the bundle Issues report-chip handler (switchToFile
+  // loads it into findings + flips currentView away from packages).
+  const pkgReport = e.target.closest('[data-package-report]')
+  if (pkgReport) {
+    const name = pkgReport.dataset.packageReport
+    if (name) switchToFile(name)
+    return
+  }
   // Bundle details — tab switch (Packages / Files / Graph /
   // Issues). Packages/Files render in the regular details panel;
   // Graph and Issues open the full-width slide layout (bundles

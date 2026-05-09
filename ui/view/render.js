@@ -2312,7 +2312,14 @@ function renderPackageDetails(pkg, bucket) {
   </ul>
   <h3 class="packages-detail-section">Reports</h3>
   <ul class="packages-detail-reports">
-    ${sortedReports.map((r) => html`<li class="mono" title=${r}>${displayName(r)}</li>`)}
+    ${sortedReports.map((r) => {
+      const iconHtml = FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default
+      return html`<li>
+        <button type="button" class="packages-detail-report" title=${r} data-package-report=${r}>
+          ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label">${displayName(r)}</span>
+        </button>
+      </li>`
+    })}
   </ul>`
 }
 
