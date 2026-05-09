@@ -104,6 +104,12 @@ export const state = store({
   // array; null when no panel is open). Reset alongside
   // bundleSourceFile.
   bundleSourceFindingIdx: null,
+  // Code-slide search state — `mode` selects what gets filtered
+  // by `query`: file paths (default), source content, or matched
+  // findings. Reset on bundle change / slide exit so a stale
+  // query doesn't carry over to the next bundle.
+  bundleCodeSearchMode: 'files',
+  bundleCodeSearchQuery: '',
   // Severity + color filters are multi-select: empty Set = "no filter,
   // show everything" (selecting every option individually is equivalent
   // — the predicate passes when every finding's value is in the Set).

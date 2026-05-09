@@ -311,6 +311,189 @@
   overflow: auto;
   padding: .35rem .25rem .5rem;
 }
+/* Search bar — three-mode toggle (Files / Code / Issues) above
+   a single text input. Mode picks what gets filtered; query
+   shared so the user can pivot between modes against the same
+   string. The wrap is a horizontal strip just below the rail
+   header / prefix row. */
+.bundle-code-search {
+  border-bottom: 1px solid var(--border);
+  padding: .35rem .5rem .5rem;
+  display: flex; flex-direction: column;
+  gap: .35rem;
+}
+.bundle-code-search-modes {
+  display: flex;
+  gap: .25rem;
+}
+.bundle-code-search-mode {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: .2rem .35rem;
+  cursor: pointer;
+}
+.bundle-code-search-mode:hover { border-color: var(--accent, #2563eb); color: var(--text); }
+.bundle-code-search-mode.active {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--accent, #2563eb);
+}
+.bundle-code-search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font: inherit;
+  font-size: .78rem;
+  padding: .25rem .4rem;
+  box-sizing: border-box;
+}
+.bundle-code-search-input:focus { outline: none; border-color: var(--accent, #2563eb); }
+
+.bundle-code-search-empty,
+.bundle-code-search-hint {
+  padding: .75rem .5rem;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.bundle-code-search-summary {
+  padding: .25rem .5rem .5rem;
+  color: var(--muted);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.bundle-code-search-results { padding: 0 .25rem; }
+/* Code-mode result blocks — file path + indented matching lines.
+   Each line is a button so clicking jumps to the file. */
+.bundle-code-search-file {
+  margin-bottom: .35rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: .25rem;
+}
+.bundle-code-search-file:last-child { border-bottom: none; }
+.bundle-code-search-file-name {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: .25rem .35rem;
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem;
+  cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: 3px;
+}
+.bundle-code-search-file-name:hover { background: var(--bg); }
+.bundle-code-search-file.current .bundle-code-search-file-name {
+  background: var(--bg);
+  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+}
+.bundle-code-search-hits {
+  list-style: none; margin: 0;
+  padding: 0 0 0 .25rem;
+}
+.bundle-code-search-hit { padding: 0; }
+.bundle-code-search-hit-link {
+  display: flex; align-items: baseline; gap: .35rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: .15rem .35rem;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.bundle-code-search-hit-link:hover { background: var(--bg); color: var(--text); }
+.bundle-code-search-hit-ln {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .68rem;
+  color: var(--muted);
+  min-width: 2.5ch;
+  text-align: right;
+}
+.bundle-code-search-hit-text {
+  flex: 1; min-width: 0;
+  font-size: .7rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+/* Issues-mode result list — severity badge + path/line + desc. */
+.bundle-code-search-issues {
+  list-style: none; margin: 0; padding: 0;
+}
+.bundle-code-search-issue { padding: 0; }
+.bundle-code-search-issue.current .bundle-code-search-issue-link {
+  background: var(--bg);
+  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+}
+.bundle-code-search-issue-link {
+  display: flex; align-items: flex-start; gap: .4rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: .35rem .4rem;
+  cursor: pointer;
+  border-radius: 3px;
+  font: inherit;
+  border-bottom: 1px solid var(--border);
+}
+.bundle-code-search-issue-link:hover { background: var(--bg); }
+.bundle-code-search-issue:last-child .bundle-code-search-issue-link { border-bottom: none; }
+.bundle-code-search-issue-sev {
+  flex-shrink: 0;
+  text-transform: uppercase;
+  font-size: .55rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 1px .3rem;
+  border-radius: 3px;
+  color: #000;
+  white-space: nowrap;
+  align-self: center;
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
+}
+.bundle-code-search-issue-meta {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  gap: .1rem;
+}
+.bundle-code-search-issue-path {
+  font-size: .68rem;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundle-code-search-issue-desc {
+  font-size: .7rem;
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
 /* Tree — nested `<details>` elements for dirs, buttons for
    files. Compact monospace; selected file picks up an accent
    strip on the left edge. */

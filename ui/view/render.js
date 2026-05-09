@@ -1501,6 +1501,147 @@ function renderBundleSourceTree(node, currentPath, depth = 0) {
   </ul>`
 }
 
+// Files-mode result pane — the directory tree, optionally
+// filtered to paths matching `query` (case-insensitive
+// substring on the original path). Empty query renders the
+// full tree. The filtered tree is rebuilt from scratch (rather
+// than hiding nodes) so the auto-open `containsCurrent` logic
+// in renderBundleSourceTree falls out naturally on hits.
+function renderBundleCodeFilesPanel(tree, currentPath, query) {
+  if (!query) return renderBundleSourceTree(tree, currentPath)
+  const q = query.toLowerCase()
+  const matchingPaths = []
+  const collect = (n, prefixParts) => {
+    for (const [, child] of n.dirs) collect(child, prefixParts)
+    for (const [, full] of n.files) {
+      if (full.toLowerCase().includes(q)) matchingPaths.push(full)
+    }
+  }
+  collect(tree, [])
+  if (matchingPaths.length === 0) {
+    return html`<div class="bundle-code-search-empty">No files match.</div>`
+  }
+  // Build a fresh tree from the matching original paths so the
+  // sub-tree only carries the kept files; reuse the same render
+  // helper so visuals match the unfiltered case.
+  const filtered = buildBundleSourceTree(matchingPaths)
+  return renderBundleSourceTree(filtered, currentPath)
+}
+
+// Code-mode result pane — flat list of files, each with up to
+// `MAX_HITS_PER_FILE` matching lines underneath. Each hit is a
+// click target that selects the file; line text is shown
+// truncated. Strict substring search; empty query shows a hint.
+function renderBundleCodeContentResults(sources, query, currentPath) {
+  if (!query) {
+    return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
+  }
+  const q = query.toLowerCase()
+  const MAX_HITS_PER_FILE = 20
+  const MAX_FILES = 100
+  const results = []
+  let totalHits = 0
+  for (const [path, content] of sources) {
+    if (typeof content !== 'string') continue
+    const hits = []
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.toLowerCase().includes(q)) {
+        hits.push({ ln: i + 1, text: line })
+        totalHits++
+        if (hits.length >= MAX_HITS_PER_FILE) break
+      }
+    }
+    if (hits.length > 0) results.push({ path, hits })
+    if (results.length >= MAX_FILES) break
+  }
+  if (results.length === 0) {
+    return html`<div class="bundle-code-search-empty">No matches.</div>`
+  }
+  return html`<div class="bundle-code-search-results">
+    <div class="bundle-code-search-summary">${totalHits} ${totalHits === 1 ? 'hit' : 'hits'} in ${results.length} ${results.length === 1 ? 'file' : 'files'}</div>
+    ${results.map(({ path: p, hits }) => html`<div class=${`bundle-code-search-file${p === currentPath ? ' current' : ''}`}>
+      <button
+        type="button"
+        class="bundle-code-search-file-name"
+        data-bundle-view-source=${p}
+        title=${p}
+      >${p}</button>
+      <ul class="bundle-code-search-hits">
+        ${hits.map((h) => html`<li class="bundle-code-search-hit">
+          <button
+            type="button"
+            class="bundle-code-search-hit-link"
+            data-bundle-view-source=${p}
+            title=${`${p}:${h.ln}`}
+          >
+            <span class="bundle-code-search-hit-ln">${h.ln}</span>
+            <span class="bundle-code-search-hit-text mono">${h.text.slice(0, 200)}</span>
+          </button>
+        </li>`)}
+      </ul>
+    </div>`)}
+  </div>`
+}
+
+// Issues-mode result pane — substring match against the bundle's
+// matched findings (severity / file / description). Each hit
+// renders as severity badge + path + description; clicking
+// selects the file (the source viewer's per-line dot can then
+// pick up the specific finding).
+function renderBundleCodeIssuesResults(details, query, currentPath) {
+  if (!details.fileHashes) {
+    return html`<div class="bundle-code-search-empty">Computing file hashes…</div>`
+  }
+  const matches = bundleFindingsByFile(details.fileHashes, 'issues')
+  if (matches.size === 0) {
+    return html`<div class="bundle-code-search-empty">No issues match this bundle's files.</div>`
+  }
+  const q = query.toLowerCase()
+  const flat = []
+  for (const [file, findings] of matches) {
+    for (const f of findings) {
+      const desc = f.description ?? ''
+      if (q && !file.toLowerCase().includes(q)
+            && !f.severity.includes(q)
+            && !desc.toLowerCase().includes(q)) continue
+      flat.push({ file, finding: f })
+    }
+  }
+  flat.sort((a, b) => {
+    const sa = SEVERITY_ORDER[a.finding.severity] ?? 0
+    const sb = SEVERITY_ORDER[b.finding.severity] ?? 0
+    if (sb !== sa) return sb - sa
+    return a.file.localeCompare(b.file)
+  })
+  if (flat.length === 0) {
+    return html`<div class="bundle-code-search-empty">No matches.</div>`
+  }
+  return html`<div class="bundle-code-search-results">
+    <div class="bundle-code-search-summary">${flat.length} ${flat.length === 1 ? 'issue' : 'issues'}</div>
+    <ul class="bundle-code-search-issues">
+      ${flat.map(({ file, finding }) => {
+        const sev = finding.severity
+        return html`<li class=${`bundle-code-search-issue${file === currentPath ? ' current' : ''}`}>
+          <button
+            type="button"
+            class="bundle-code-search-issue-link"
+            data-bundle-view-source=${file}
+            title=${file}
+          >
+            <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+            <div class="bundle-code-search-issue-meta">
+              <div class="bundle-code-search-issue-path mono">${file}${finding.line ? `:${finding.line}` : ''}</div>
+              <div class="bundle-code-search-issue-desc">${finding.description ?? ''}</div>
+            </div>
+          </button>
+        </li>`
+      })}
+    </ul>
+  </div>`
+}
+
 // Code slide — directory-tree rail on the left + the same
 // source-viewer body (line-numbered gutter, prism highlight,
 // per-line dot + side panel) on the right. Reuses
@@ -1556,6 +1697,22 @@ function renderBundleCodeView(details) {
       }
     }
   }
+  // Search state — three modes share a single query field. Issues
+  // mode is hidden when the bundle has no matched findings; the
+  // selector falls back to Files automatically.
+  const hasAnyIssues = fileFindings.length > 0 || (details.fileHashes && (() => {
+    for (const fileMatches of bundleFindingsByFile(details.fileHashes, 'issues').values()) {
+      if (fileMatches.length > 0) return true
+    }
+    return false
+  })())
+  const searchModes = hasAnyIssues
+    ? ['files', 'code', 'issues']
+    : ['files', 'code']
+  const searchMode = searchModes.includes(state.bundleCodeSearchMode)
+    ? state.bundleCodeSearchMode
+    : 'files'
+  const query = state.bundleCodeSearchQuery
   return html`<div class="bundle-code-view">
     <aside class="bundle-code-rail">
       <div class="bundle-code-rail-head">
@@ -1563,8 +1720,30 @@ function renderBundleCodeView(details) {
         <span class="bundle-code-rail-count">${allPaths.length}</span>
       </div>
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
+      <div class="bundle-code-search">
+        <div class="bundle-code-search-modes" role="tablist">
+          ${searchModes.map((m) => html`<button
+            type="button"
+            class=${`bundle-code-search-mode${searchMode === m ? ' active' : ''}`}
+            data-bundle-search-mode=${m}
+            role="tab"
+            aria-selected=${String(searchMode === m)}
+          >${m === 'files' ? 'Files' : m === 'code' ? 'Code' : 'Issues'}</button>`)}
+        </div>
+        <input
+          type="text"
+          class="bundle-code-search-input"
+          id="bundle-code-search-input"
+          placeholder=${searchMode === 'files' ? 'filter files…' : searchMode === 'code' ? 'search code…' : 'search issues…'}
+          .value=${query}
+        >
+      </div>
       <div class="bundle-code-rail-body">
-        ${renderBundleSourceTree(tree, path)}
+        ${searchMode === 'files'
+          ? renderBundleCodeFilesPanel(tree, path, query)
+          : searchMode === 'code'
+            ? renderBundleCodeContentResults(sources, query, path)
+            : renderBundleCodeIssuesResults(details, query, path)}
       </div>
     </aside>
     <div class=${`bundle-code-main${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>

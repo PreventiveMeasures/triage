@@ -119,6 +119,8 @@ report.addEventListener('click', (e) => {
     state.bundleDetails = null
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
     render()
     return
   }
@@ -157,6 +159,8 @@ report.addEventListener('click', (e) => {
     state.bundleDetailsTab = 'packages'
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
     render()
     return
   }
@@ -169,6 +173,19 @@ report.addEventListener('click', (e) => {
   if (issueReport) {
     const name = issueReport.dataset.bundleIssueReport
     if (name) switchToFile(name)
+    return
+  }
+  // Code slide search-mode tab — flips the rail between Files /
+  // Code / Issues. Doesn't clear the query so the user can pivot
+  // between modes against the same string. Renders via the
+  // shared bundles render path.
+  const codeSearchMode = e.target.closest('[data-bundle-search-mode]')
+  if (codeSearchMode) {
+    const mode = codeSearchMode.dataset.bundleSearchMode
+    if (mode === 'files' || mode === 'code' || mode === 'issues') {
+      state.bundleCodeSearchMode = mode
+      render()
+    }
     return
   }
   // Bundle source viewer — open / close. Close fires when the click
@@ -233,6 +250,8 @@ report.addEventListener('click', (e) => {
     state.bundleDetails = null
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
     // Reset to the Packages tab when a different bundle opens —
     // the user shouldn't carry the prior bundle's tab choice into
     // the new one (especially when one had >5 packages and the
@@ -789,6 +808,10 @@ report.addEventListener('input', (e) => {
   else if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
+  }
+  else if (id === 'bundle-code-search-input') {
+    state.bundleCodeSearchQuery = val
+    renderKeepFocus(id)
   }
 })
 
