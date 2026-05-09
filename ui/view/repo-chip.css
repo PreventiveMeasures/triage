@@ -56,7 +56,10 @@ input {
    user printing a report would otherwise get the chip in light-on-
    white. The svg uses `var(--muted)` for the same reason. */
 @media print {
-  .chip { color: #000 !important; }
+  .chip {
+    color: #000 !important;
+    border: 0 !important;
+  }
   .chip svg { color: #000 !important; }
   .edit-btn { display: none !important; }
   input { display: none !important; }
