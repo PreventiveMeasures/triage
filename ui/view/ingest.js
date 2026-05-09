@@ -30,6 +30,19 @@ const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // the user picks back up where they left off.
 export const LAST_FILE_KEY = 'deepview.lastFile'
 
+// Generation token shared by every async load path
+// (switchToFile / switchToWorkspace / deleteCurrent). Bumped at
+// the entry of each; in-flight loads from a previous generation
+// see their captured token go stale and bail out before touching
+// state.reports. Without this, a quick second click in the
+// sidebar could let two concurrent reads interleave their pushes
+// — the new array would briefly hold the previous file's data
+// merged with the new one. The headless `window.__loadFile` path
+// stays unguarded (it doesn't touch loadGen) so the print flow's
+// repeated-ingest accumulation still works.
+let loadGen = 0
+const isStaleLoad = (captured) => captured !== loadGen
+
 // Drag/drop entry point. Each file is read, persisted to OPFS (replacing
 // any existing entry of the same name), and the LAST one becomes the
 // active view. Multiple drops at once still all save, but only the
@@ -187,6 +200,7 @@ export async function addFiles(files) {
 // Replace the active view with the named OPFS file. Pre-fetched
 // `content` skips a redundant OPFS read (drop path passes it through).
 export async function switchToFile(name, content) {
+  const gen = ++loadGen
   // Single-file mode is workspace-sync's off-state; close any open
   // session before we drop the workspace selection so a stale
   // session doesn't try to push edits the user makes against the
@@ -223,13 +237,20 @@ export async function switchToFile(name, content) {
     try {
       content = await readFile(name)
     } catch (err) {
+      // Skip the alert / state-reset when a newer switch already
+      // took over — its setup has already replaced the things we
+      // would have cleared, and surfacing an error from the dead
+      // load would just confuse the user.
+      if (isStaleLoad(gen)) return
       alert(`Failed to read ${name}: ${err.message}`)
       state.currentFile = null
       await renderSidebar()
       return
     }
+    if (isStaleLoad(gen)) return
   }
-  await ingestReport(name, content)
+  await ingestReport(name, content, gen)
+  if (isStaleLoad(gen)) return
   await renderSidebar()
 }
 
@@ -247,6 +268,7 @@ export async function switchToFile(name, content) {
 export async function switchToWorkspace(workspaceId) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
+  const gen = ++loadGen
   // Tear the previous session down before we touch state.reports —
   // its workspace-id set is keyed off the old set of loaded reports
   // and would mis-attribute edits otherwise.
@@ -282,8 +304,10 @@ export async function switchToWorkspace(workspaceId) {
   const reads = ws.reports.map((name) => readFile(name).catch(() => null))
   for (let i = 0; i < ws.reports.length; i++) {
     const content = await reads[i]
+    if (isStaleLoad(gen)) return
     if (content === null) continue
-    await ingestReport(ws.reports[i], content)
+    await ingestReport(ws.reports[i], content, gen)
+    if (isStaleLoad(gen)) return
   }
   // Open the per-workspace sync session AFTER every report has been
   // ingested — the session needs a complete view of state.reports to
@@ -305,6 +329,11 @@ export async function switchToWorkspace(workspaceId) {
 // import on another machine would re-resurrect the stale entry.
 export async function deleteCurrent() {
   if (!state.currentFile) return
+  // Bump the load generation so any switchTo* / ingestReport
+  // already in flight bails before pushing into the cleared
+  // state.reports — a delete that races with a load would
+  // otherwise resurrect findings into the about-to-be-empty view.
+  ++loadGen
   const name = state.currentFile
   await deleteFile(name)
   setReportWorkspace(name, null)
@@ -337,12 +366,24 @@ export async function deleteCurrent() {
 // switchToFile (after content is materialized) and by the headless
 // print flow (`window.__loadFile`), so that flow can still merge
 // multiple inputs by calling repeatedly.
-export async function ingestReport(name, content) {
+//
+// `gen` is the optional load-generation token captured by the
+// caller (switchToFile / switchToWorkspace). When set, every await
+// inside checks it on resume and bails before mutating
+// state.reports; that's how a stale load triggered by a
+// since-superseded sidebar click avoids interleaving its push
+// with the current one. The headless `window.__loadFile` path
+// passes nothing, so it stays unguarded and continues to
+// accumulate across repeated calls (the print pipeline relies on
+// that).
+export async function ingestReport(name, content, gen = null) {
+  const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Persistent triage (markers/deletedIds keyed by uuid) is loaded
     // once at module init; await it before rendering so the first
     // drop already shows stored marks/deletions for matching findings.
     await loadPromise
+    if (stale()) return
     // Primary input is JSON (the analyzer's native dump format).
     // When that fails, walk the markdown parser chain: DeepSec
     // first (most specific format guard — `## SEVERITY (n)`), then
@@ -388,6 +429,7 @@ export async function ingestReport(name, content) {
     const idLess = rawEntries.flatMap(toGroup).filter((f) => !f.id)
     if (idLess.length > 0) {
       const computed = await Promise.all(idLess.map(deriveFindingId))
+      if (stale()) return
       idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
     }
     // Per-report repo URL stamped on each finding so format.js's
