@@ -129,14 +129,23 @@ function applyTriageEntries(entries, { replace } = { replace: false }) {
     // entries whose id is non-session AND whose (id, reportName)
     // pair isn't reflected in the new blob's `ignoredReports`
     // list. Session-only ids are left alone, same as the other
-    // collections.
+    // collections. If the blob's entry carries a triage state,
+    // drop every local ignored entry for that id — mutex with
+    // triage means the apply path skips re-adding ignoredReports,
+    // so the local state must mirror that resolution.
     for (const key of [...state.ignoredIds]) {
       const sep = key.indexOf('\0')
       if (sep < 0) continue
       const reportName = key.slice(0, sep)
       const id = key.slice(sep + 1)
       if (SESSION_ID_RE.test(id)) continue
-      const blobReports = entries?.[id]?.ignoredReports
+      const v = entries?.[id]
+      const triageWasSet = v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted' || v.deleted)
+      if (triageWasSet) {
+        state.ignoredIds.delete(key)
+        continue
+      }
+      const blobReports = v?.ignoredReports
       if (!Array.isArray(blobReports) || !blobReports.includes(reportName)) {
         state.ignoredIds.delete(key)
       }
@@ -147,12 +156,21 @@ function applyTriageEntries(entries, { replace } = { replace: false }) {
     if (v && v.color) state.markers.set(k, v.color)
     // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
     // Legacy entries that only carry `deleted: true` migrate to 'deleted'.
+    const triageWasSet = v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted' || v.deleted)
     if (v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted')) {
       state.triageState.set(k, v.triage)
     } else if (v && v.deleted) {
       state.triageState.set(k, 'deleted')
     }
-    if (v && Array.isArray(v.ignoredReports)) {
+    // Mutual exclusion with triage: triage and per-report ignore
+    // can't coexist on a tab. Skip importing `ignoredReports` when
+    // the same entry carries a triage state — mirrors the
+    // applyToReactiveState rule in triage-sync.js so a corrupt
+    // blob (legitimately impossible from the action handlers, but
+    // possible from a sibling tab running an older version, or
+    // pre-mutex-fix data) can't land this tab in the forbidden
+    // state.
+    if (!triageWasSet && v && Array.isArray(v.ignoredReports)) {
       for (const r of v.ignoredReports) {
         if (typeof r === 'string') state.ignoredIds.add(`${r}\0${k}`)
       }

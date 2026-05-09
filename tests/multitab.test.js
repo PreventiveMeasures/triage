@@ -49,6 +49,7 @@ function clearState() {
   state.triageState.clear()
   state.comments.clear()
   state.fixes.clear()
+  state.ignoredIds.clear()
   globalThis.localStorage.clear()
 }
 
@@ -109,6 +110,60 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     assert.equal(state.triageState.get(FINDING_A), 'fixed')
     assert.equal(state.comments.get(FINDING_A), 'verified upstream')
     assert.equal(state.fixes.get(FINDING_A), 'https://example.test/pr/42')
+  })
+
+  it('honors triage/ignored mutual-exclusion when the blob carries both', async () => {
+    // The action handlers + sync layer enforce "triage and per-
+    // report ignore can't coexist on a tab" — but a sibling tab on
+    // an older build, or a corrupt blob, could carry both for the
+    // same id. Reload must mirror the sync-layer mutex (triage
+    // wins, ignoredReports skipped) so a multi-tab race can't
+    // land this tab in the forbidden state.
+    state.markers.set(FINDING_A, 'red')
+    state.triageState.set(FINDING_A, 'fixed')
+    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    // saveTriage emits both because state has both — it doesn't
+    // enforce the invariant, the action handlers do.
+    await saveTriage()
+    // This tab's local cleared the ignored entry locally before
+    // the storage event arrived (e.g. action handler ran).
+    state.ignoredIds.clear()
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'triage preserved')
+    assert.equal(state.ignoredIds.has(`r.json\0${FINDING_A}`), false, 'ignored skipped because triage wins')
+  })
+
+  it('drops local ignored entries when sibling re-asserted triage on the same id', async () => {
+    // Local: id is ignored in r.json. Sibling tab set triage on
+    // the same id and saved (which under the mutex also clears
+    // their ignored — but if the sibling's blob still has both
+    // for any reason, local should drop its ignored entry too).
+    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    await saveTriage()
+    // Mimic sibling: write a blob with triage AND ignoredReports
+    // for the same id (forbidden state — defends against a
+    // sibling running an older build).
+    state.markers.set(FINDING_A, 'red')
+    state.triageState.set(FINDING_A, 'fixed')
+    // ignoredIds already has r.json\0FINDING_A — leave it so the
+    // saved blob carries both.
+    await saveTriage()
+    // Restore "this tab" state to before the sibling acted.
+    state.markers.clear()
+    state.triageState.clear()
+    state.ignoredIds.clear()
+    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'triage applied')
+    assert.equal(
+      state.ignoredIds.has(`r.json\0${FINDING_A}`),
+      false,
+      'pre-existing local ignored dropped because blob has triage for this id',
+    )
   })
 
   it('leaves session-only ids alone (numeric ids never round-trip)', async () => {
