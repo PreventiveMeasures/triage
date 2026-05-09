@@ -140,6 +140,38 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
 // data-gid on the popover lets the action handler resolve the
 // target group when the menu has been moved to the top layer
 // (out of the row's DOM scope).
+// Position a triage popover under its trigger button. `beforetoggle`
+// doesn't bubble, so this is bound directly on the popover via
+// Lit's `@beforetoggle=` rather than a document-level delegate.
+// Right-aligns the menu's right edge to the button's, dropping
+// below by default; flips above when the viewport's bottom would
+// clip. Reads from the popover's getRootNode() so the lookup
+// works equally for shadow-DOM rows (`<finding-row>`) and the
+// light-DOM finding cards.
+function positionTriagePopover(e) {
+  if (e.newState !== 'open') return
+  const popover = e.currentTarget
+  const root = popover.getRootNode()
+  const btn = root.querySelector?.(`[popovertarget="${popover.id}"]`)
+  if (!btn) return
+  const btnRect = btn.getBoundingClientRect()
+  // offsetWidth / offsetHeight are 0 when the popover is still
+  // display:none (beforetoggle fires before the open paint), so
+  // fall back to typical menu dimensions for the first measurement.
+  const menuW = popover.offsetWidth || 110
+  const menuH = popover.offsetHeight || 100
+  const gap = 4
+  let left = btnRect.right - menuW
+  if (left < 4) left = 4
+  if (left + menuW > window.innerWidth - 4) left = window.innerWidth - menuW - 4
+  let top = btnRect.bottom + gap
+  if (top + menuH > window.innerHeight - 4 && btnRect.top > menuH + gap) {
+    top = btnRect.top - menuH - gap
+  }
+  popover.style.top = `${top}px`
+  popover.style.left = `${left}px`
+}
+
 function triageMenuTemplate(group, title) {
   const gid = tabKey(group[0])
   const groupSt = groupState(group)
@@ -175,7 +207,7 @@ function triageMenuTemplate(group, title) {
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
-    <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu">
+    <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu" @beforetoggle=${positionTriagePopover}>
       ${actions.map((a) => html`<button
         type="button"
         class=${`triage-menu-item triage-menu-${a.key}${current === a.key ? ' active' : ''}`}
