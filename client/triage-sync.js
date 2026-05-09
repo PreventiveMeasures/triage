@@ -179,6 +179,14 @@ let pongTimeoutId = null
 // saves; the production threshold is 100.
 let keyframeInterval = 100
 
+// Non-recoverable failure threshold. After this many consecutive
+// encrypt/sign failures on a session — typically a corrupt or
+// otherwise unusable key — we stop retrying, set the session's
+// `error` field, and aggregate that into the public `status`
+// listener as `'error'` so the UI can show a visible warning.
+// Mutable so a test can drop it to 1.
+let maxConsecutiveFailures = 5
+
 // True only when all gates align: a URL exists, the user hasn't
 // flipped off, and the sidebar isn't suppressing.
 function isActive() {
@@ -198,6 +206,13 @@ function isActive() {
 const statusListeners = new Set()
 function currentStatus() {
   if (!isActive()) return 'off'
+  // Any session in a non-recoverable error state (key derivation
+  // failed; encrypt/sign repeatedly threw) takes precedence — the
+  // user needs to see this even if the socket is otherwise healthy,
+  // because no save under that workspace will ever land.
+  for (const session of sessions.values()) {
+    if (session.error) return 'error'
+  }
   if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
   // Any session that's been registered (`subscribed`) but hasn't
   // received the server's ack yet keeps the whole status in
@@ -588,14 +603,36 @@ function trySendSave(session) {
       // minimal in the common case keeps the wire trace cleaner.
       if (isKeyframe) wireMsg.keyframe = true
       send(wireMsg)
+      // Crypto round-trip succeeded — clear any prior error /
+      // failure-counter state so the UI moves out of `error` once
+      // things are working again.
+      session.consecutiveFailures = 0
+      if (session.error) {
+        session.error = null
+        emitStatusIfChanged()
+      }
     } catch (err) {
       console.warn('Triage sync: encrypt/sign failed:', err)
+      // Persistent encrypt/sign failures are typically a corrupt
+      // session.key or signingKey — non-recoverable from inside
+      // this loop. Bump the counter and, after the threshold,
+      // surface an error so the UI can warn the user instead of
+      // silently retrying forever.
+      if (sessions.get(session.workspaceId) === session) {
+        session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
+        if (session.consecutiveFailures >= maxConsecutiveFailures) {
+          session.error = `encrypt/sign failed: ${err?.message ?? err}`
+          emitStatusIfChanged()
+        }
+      }
     } finally {
       if (sessions.get(session.workspaceId) === session) {
         session.encrypting = false
         // If something queued during encrypt (or our own logic
-        // bumped pendingSave because base moved), kick it.
-        if (session.pendingSave && !session.pending) {
+        // bumped pendingSave because base moved), kick it — but
+        // not if we've given up on this session via `error`,
+        // otherwise a flaky-key state would just keep looping.
+        if (!session.error && session.pendingSave && !session.pending) {
           session.pendingSave = false
           trySendSave(session)
         }
@@ -1081,6 +1118,13 @@ export function setKeyframeInterval(n) {
   if (typeof n === 'number' && n >= 1) keyframeInterval = n
 }
 
+// Test-only knob: lower the consecutive-failure threshold so a test
+// can drive a session into the `error` state with one fault rather
+// than five. Production stays at 5.
+export function setMaxConsecutiveFailures(n) {
+  if (typeof n === 'number' && n >= 1) maxConsecutiveFailures = n
+}
+
 export const triageSync = {
   setServerUrl(url) {
     const next = (url ?? '').trim()
@@ -1256,6 +1300,16 @@ export const triageSync = {
       // the full state-push reset; otherwise a server that keeps
       // sending broken chains would loop us forever.
       resyncAttempted: false,
+      // Consecutive crypto failures (encrypt/sign in trySendSave).
+      // Reset on a successful round-trip; promoted to `error` once
+      // it crosses `maxConsecutiveFailures`. Per-session because
+      // the cause is typically the session's own keys.
+      consecutiveFailures: 0,
+      // Non-recoverable error message, or null. When set, this
+      // session stops retrying and `currentStatus()` aggregates to
+      // `'error'` so the UI can surface it. `dismissError()`
+      // clears it and retries.
+      error: null,
     }
     sessions.set(workspaceId, newSession)
     // Derive content-encryption key + Ed25519 signing keypair in
@@ -1289,6 +1343,15 @@ export const triageSync = {
         emitStatusIfChanged()
       } catch (err) {
         console.warn('Triage sync: key derivation failed:', err)
+        // Non-recoverable from the sync layer's POV — without
+        // signing keys we can't sign any save or subscribe under
+        // this workspace. Surface it so the UI can warn the user
+        // (typical cause: a corrupt / wrong-length privateKey on
+        // the workspace record).
+        if (sessions.get(workspaceId) === newSession) {
+          newSession.error = `key derivation failed: ${err?.message ?? err}`
+          emitStatusIfChanged()
+        }
       }
     })()
     if (isActive() && !socket) openSocket()
@@ -1325,6 +1388,7 @@ export const triageSync = {
       encrypting: session.encrypting,
       tracked: session.ids.size,
       savesSinceKeyframe: session.savesSinceKeyframe ?? 0,
+      error: session.error ?? null,
     }
   },
 
@@ -1333,6 +1397,28 @@ export const triageSync = {
   // surface the multi-session state at a glance.
   get openSessions() {
     return [...sessions.keys()].map((id) => this.sessionInfo(id))
+  },
+
+  // User-driven retry after a non-recoverable failure. Clears the
+  // session's error / failure-counter and kicks subscribe + save so
+  // the next round-trip attempt happens. With no argument, clears
+  // every session's error. The sidebar's sync button wires the
+  // no-arg form to "click while in error state".
+  dismissError(workspaceId) {
+    const ids = workspaceId == null ? [...sessions.keys()] : [workspaceId]
+    let changed = false
+    for (const id of ids) {
+      const session = sessions.get(id)
+      if (!session || !session.error) continue
+      session.error = null
+      session.consecutiveFailures = 0
+      changed = true
+      if (socket?.readyState === WebSocket.OPEN) {
+        trySendSubscribe(session)
+        trySendSave(session)
+      }
+    }
+    if (changed) emitStatusIfChanged()
   },
 }
 

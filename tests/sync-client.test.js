@@ -1083,6 +1083,54 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
     await relay.close()
   })
+
+  it('non-recoverable crypto failure surfaces as `error` status with a per-session message', async () => {
+    // Bug #5: persistent encrypt/sign failure (or, more directly,
+    // a bad privateKey that fails key derivation) used to log to
+    // the console and silently retry forever — no UI signal, the
+    // user sees "online" but no data ever lands. Now: session
+    // sets `error`, currentStatus aggregates to 'error', and the
+    // sidebar surfaces it with the per-session message.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    // Malformed privateKey: not 32 bytes after base64 decode.
+    // deriveSessionKey throws inside the openSession IIFE.
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+
+    const seenStatuses = []
+    const off = triageSync.onStatusChange((s) => seenStatuses.push(s))
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+
+    // Wait for the key-derivation failure to land + the error to
+    // bubble through emitStatusIfChanged.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error != null,
+      'session.error set after key derivation failure',
+    )
+    assert.match(triageSync.sessionInfo(wsId).error, /key derivation failed/i)
+    // Status aggregates to 'error', not 'online' — even though the
+    // socket may be open, no save under this workspace will ever
+    // land, so the UI must signal something is wrong.
+    await waitFor(() => triageSync.status === 'error', 'status flips to error')
+    assert.ok(seenStatuses.includes('error'), 'status listener fired with `error`')
+
+    // dismissError() with no args clears every session's error;
+    // the kicked re-derivation still fails, but only test that
+    // the no-arg form exists and clears the error transiently
+    // (the next round-trip will re-set it).
+    triageSync.dismissError(wsId)
+    assert.equal(triageSync.sessionInfo(wsId).error, null, 'dismissError clears the error field')
+
+    off()
+    triageSync.closeSession(wsId)
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+  })
+
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────

@@ -321,7 +321,12 @@ sidebar.addEventListener('click', (e) => {
     // configured yet, prime it with the per-origin default
     // (currently only set for 127.0.0.1; production defaults to
     // empty and the button stays hidden until something sets one).
-    if (triageSync.status === 'off') {
+    if (triageSync.status === 'error') {
+      // Distinct affordance: "I see the error, retry" — clears
+      // every session's error + failure-counter and kicks the
+      // subscribe / save round-trip again. Stays enabled.
+      triageSync.dismissError()
+    } else if (triageSync.status === 'off') {
       if (!triageSync.getServerUrl() && DEFAULT_SYNC_URL) {
         triageSync.setServerUrl(DEFAULT_SYNC_URL)
       }
@@ -364,12 +369,20 @@ const SYNC_LABELS = {
   online: 'Online',
   offline: 'Offline',
   connecting: 'Connecting…',
+  // `error` overrides everything else: a session has hit a
+  // non-recoverable failure (typically a corrupt key — encrypt /
+  // sign repeatedly threw, or the workspace's privateKey couldn't
+  // be derived). Surfaces in the title with the per-session error
+  // text; clicking the button is wired to `dismissError()` to
+  // give the user an explicit retry.
+  error: 'Sync error',
 }
 const SYNC_TITLES = {
   off: 'Sync off — click to enable',
   online: 'Online — click to disable sync',
   offline: 'Offline (reconnecting) — click to disable sync',
   connecting: 'Connecting (waiting for server) — click to disable sync',
+  error: 'Sync error — click to retry',
 }
 
 function syncButtonVisible() {
@@ -397,7 +410,16 @@ function renderSyncStatus(status) {
   btn.hidden = false
   const s = status ?? triageSync.status
   btn.dataset.status = s
-  btn.title = SYNC_TITLES[s] ?? ''
+  let title = SYNC_TITLES[s] ?? ''
+  if (s === 'error') {
+    // Append the first errored session's message so the user sees
+    // *what* broke, not just *that* something did. There's only one
+    // status string per connection; with multiple sessions the
+    // first one wins (typical case is anyway one workspace open).
+    const firstErr = triageSync.openSessions.find((info) => info?.error)?.error
+    if (firstErr) title = `${title}\n${firstErr}`
+  }
+  btn.title = title
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
