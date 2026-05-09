@@ -1197,6 +1197,24 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
 // to slice the source per line — Lit interpolation auto-escapes
 // the content, no XSS risk. Click-outside / × button / Escape all
 // dismiss; the close handler clears state.bundleSourceFile.
+// Per-line rendering for the source viewer. Splits on \n so each
+// line gets its own gutter cell + code cell pair, no CSS counter
+// trickery needed and the line numbers stay aligned even when the
+// code wraps. Width of the gutter is set on the container via a
+// CSS custom property derived from the line count's digit width
+// so the gutter doesn't shift between small (3 digits) and large
+// (5+ digits) files.
+function renderBundleSourceLines(content) {
+  const lines = content.split('\n')
+  const digits = String(lines.length).length
+  return html`<div class="bundle-source-lines" style=${`--lineno-width:${digits}ch`}>
+    ${lines.map((line, i) => html`<div class="bundle-source-line">
+      <span class="bundle-source-lineno">${i + 1}</span>
+      <span class="bundle-source-linecode">${line}</span>
+    </div>`)}
+  </div>`
+}
+
 function renderBundleSourceModal() {
   const path = state.bundleSourceFile
   if (!path) return nothing
@@ -1216,7 +1234,7 @@ function renderBundleSourceModal() {
       </header>
       <div class="bundle-source-body">
         ${typeof content === 'string'
-          ? html`<pre class="bundle-source-pre"><code>${content}</code></pre>`
+          ? renderBundleSourceLines(content)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
     </div>
