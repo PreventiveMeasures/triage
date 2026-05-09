@@ -61,6 +61,25 @@ export function reportsForFinding(hash, finding) {
   return reports ? [...reports] : []
 }
 
+// Run-level meta keys mirrored from ingest.js's META_FIELDS. The
+// bundle viewer's source panel reads these through prettyModel +
+// the meta chain — without inheritance from the report header, the
+// chain stays empty for every finding that doesn't carry per-
+// finding meta inline (most do not).
+const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
+
+// Inherit run-level meta from the report header onto a finding
+// that carries none of its own — same rule ingest.js follows.
+// In-place mutation is safe: bucket dedupe + index pass don't
+// rely on the absence of meta fields, and callers haven't held
+// onto the finding before this point.
+function inheritReportMeta(f, data) {
+  if (META_FIELDS.some((k) => f[k] !== undefined)) return
+  for (const key of META_FIELDS) {
+    if (data[key] !== undefined) f[key] = data[key]
+  }
+}
+
 function extractFindings(data) {
   // DeepView-native dumps carry findings under `groups` (array of
   // Finding[]) or a flat `findings` array. Either shape works —
@@ -69,15 +88,24 @@ function extractFindings(data) {
   // codex) get parsed during ingest; their findings rarely carry
   // fileHashes (no source bundle attached during their pipeline)
   // so the array.isArray guard quietly skips them.
+  //
+  // Run-level meta (type / model / effort / mode / think) is
+  // inherited from the report header. Source-marked formats
+  // (those with `data.source` set) opt out: their report-level
+  // `type` is a category label, not a per-finding analyzer
+  // descriptor.
   const list = Array.isArray(data?.findings)
     ? data.findings
     : Array.isArray(data?.groups) ? data.groups : null
   if (!list) return []
+  const inheritMeta = !data?.source
   const out = []
   for (const entry of list) {
     const members = Array.isArray(entry) ? entry : [entry]
     for (const f of members) {
-      if (f && f.fileHash) out.push(f)
+      if (!f || !f.fileHash) continue
+      if (inheritMeta) inheritReportMeta(f, data)
+      out.push(f)
     }
   }
   return out
