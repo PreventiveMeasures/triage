@@ -561,16 +561,18 @@ async function applyChainToBase(revisions) {
   return true
 }
 
-async function rebaseAndPersist() {
-  // Capture overlay BEFORE any persistence — any unsynced local
-  // edits the user has made on top of the previous baseState need
-  // to survive the rebase. localState may already match the new
-  // baseState (e.g. ack flow where pending.changeset has been
-  // folded into baseState), in which case the overlay is empty.
-  const overlay = computeChangeset(session.baseState, session.localState)
-  // baseState was already updated by the caller (applyChainToBase
-  // or the ack path). Re-apply the user's overlay on top so their
-  // unsynced edits remain visible.
+// Replay a captured user overlay on top of the (already-mutated)
+// baseState and sync state.* / persistence. The caller MUST capture
+// the overlay BEFORE mutating baseState — `overlay = state.* −
+// oldBaseState` — so non-conflicting remote changes from the new
+// baseState end up in the resulting localState while the user's
+// unsynced edits override on the same id (local-wins merge).
+//
+// Computing the overlay against a `baseState` that's already been
+// mutated would collapse to identity (apply(B, compute(B, T)) ≡ T)
+// and silently discard every remote change. See the bug discussion
+// in the rebase audit.
+async function applyOverlayAndPersist(overlay) {
   session.localState = applyChangeset(session.baseState, overlay)
   suppressNotify++
   try {
@@ -584,6 +586,15 @@ async function rebaseAndPersist() {
   // — see `loadPersistedSession`.
   persistSession(session)
   redraw()
+}
+
+// Read state.* into `session.localState` and return the overlay
+// (= state.* − current baseState). Call this BEFORE mutating
+// baseState; the returned overlay is stable across the mutation
+// and gets re-applied via `applyOverlayAndPersist` afterwards.
+function captureOverlay() {
+  session.localState = buildLocalState(session.ids)
+  return computeChangeset(session.baseState, session.localState)
 }
 
 async function handleAck(msg) {
@@ -601,10 +612,15 @@ async function handleAck(msg) {
     && msg.base === session.pending.base
     && msg.id === session.pending.id
   ) {
+    // Capture overlay BEFORE folding pending into baseState. The
+    // overlay also catches edits the user made AFTER the pending
+    // save was sent — they're in state.* but not in
+    // pending.changeset, and would be lost otherwise.
+    const overlay = captureOverlay()
     session.baseState = applyChangeset(session.baseState, session.pending.changeset)
     session.baseRevision = msg.id
     session.pending = null
-    await rebaseAndPersist()
+    await applyOverlayAndPersist(overlay)
     // The user may have edited during the round-trip; if there's a
     // residual overlay (or pendingSave was raised), flush it.
     if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
@@ -638,12 +654,20 @@ async function handleChain(revisions) {
   // Key not derived yet — bail; a future open will retry once
   // deriveSessionKey lands and trySendSave re-runs.
   if (!session?.key) return
+  // Capture overlay BEFORE applyChainToBase mutates baseState.
+  const overlay = captureOverlay()
   if (!await applyChainToBase(revisions)) {
-    // Chain didn't apply cleanly. Fall back: pretend our base is
-    // empty and resend full state. Next save will rebuild from 0.
+    // Chain didn't apply cleanly. baseState was reset to {} by
+    // applyChainToBase. Don't replay overlay on top of empty: items
+    // the user hadn't edited would also be cleared (they matched
+    // oldBaseState, so they weren't in the overlay). Instead, leave
+    // state.* alone — the next save will compute compute({}, state.*)
+    // and push everything as a full snapshot, which the server's
+    // stale-base path turns into the catch-up chain we need.
     session.pending = null
     session.pendingSave = false
-    await rebaseAndPersist()
+    persistSession(session)
+    redraw()
     trySendSave()
     return
   }
@@ -655,7 +679,7 @@ async function handleChain(revisions) {
     session.pending = null
     session.pendingSave = true
   }
-  await rebaseAndPersist()
+  await applyOverlayAndPersist(overlay)
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false
     trySendSave()
