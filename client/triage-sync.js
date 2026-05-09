@@ -24,11 +24,13 @@ import {
 // --------------
 // `notify()` is the only public mutation hook. It's called at the
 // tail of `saveTriage()` (so every UI / API mutation routes through
-// it) and reads the current `state.markers` / `.deletedIds` /
-// `.comments` for the workspace's id scope to derive `localState`.
+// it) and reads the current `state.markers` / `.triageState` /
+// `.comments` / `.fixes` / `.ignoredIds` for the workspace's id
+// scope to derive `localState`.
 //
-// The session keeps three triage objects (each a plain
-// `{ id: { color?, deleted?, comment? } }` map):
+// The session keeps two triage state objects (each a plain
+// `{ id: { color?, triage?, comment?, fix?, ignoredReports? } }`
+// map):
 //   baseState     last server-acknowledged state.
 //   localState    user's current view (= baseState + their edits
 //                 since the last ack).
@@ -1448,9 +1450,13 @@ export const triageSync = {
   get connected() { return socket?.readyState === WebSocket.OPEN },
 
   // Status flag for connection-state indicators. One of:
-  //   'off'      no server URL configured (sync disabled)
-  //   'offline'  URL set but socket isn't open (reconnecting / down)
-  //   'online'   WebSocket is open
+  //   'off'         no server URL / user disabled / no live workspace
+  //   'offline'     URL set, socket isn't open (reconnecting / down)
+  //   'connecting'  socket open, no session has acked subscribe yet
+  //   'online'      socket open, at least one session subscribe-acked
+  //   'error'       a session has a non-recoverable error (key
+  //                 derivation, persistent crypto failure); cleared
+  //                 by `dismissError()`
   get status() { return currentStatus() },
 
   // Subscribe to status transitions. Returns an unsubscribe
@@ -1636,18 +1642,16 @@ try {
   if (isActive()) openSocket()
 } catch {}
 
-// Drop persisted session entries whose workspace was deleted
-// while we were away. One-time pass on module load — workspaces
-// are loaded synchronously from localStorage so `listWorkspaces()`
-// is ready by now.
-prunePersistedSessions()
-
-// Live counterpart to the page-load prune above: the moment a
+// Live counterpart to the page-load prune below: the moment a
 // workspace is deleted via `deleteWorkspace`, drop its in-memory
 // session and its persisted-base entry. Without this the session
 // keeps trying to encrypt / sign saves for an id the rest of the
 // app considers gone, and the persistence blob carries the dead
-// base around until the next page load.
+// base around until the next page load. Registered BEFORE
+// prunePersistedSessions so a deletion that lands between
+// registration and the prune still has its handler wired up
+// (audit L5; defensive against any future caller that synchronously
+// deletes during init).
 onWorkspaceDeleted((workspaceId) => {
   const removed = sessions.delete(workspaceId)
   dropPersistedSession(workspaceId)
@@ -1699,4 +1703,12 @@ onReportMembershipChanged((workspaceId) => {
   refreshSessionIds(session)
   trySendSave(session)
 })
+
+// Drop persisted session entries whose workspace was deleted
+// while we were away. One-time pass on module load — workspaces
+// are loaded synchronously from localStorage so `listWorkspaces()`
+// is ready by now. Runs AFTER the lifecycle listeners are wired so
+// any synchronous deletion during init wouldn't bypass the live
+// handler (audit L5).
+prunePersistedSessions()
 

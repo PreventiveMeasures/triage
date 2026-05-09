@@ -254,7 +254,7 @@ export function buildAad(workspaceTag, base) {
   return encodeUtf8(`${workspaceTag}|${baseStr}`)
 }
 
-export async function encryptBytes(keyBytes, plaintext, aad) {
+async function encryptBytes(keyBytes, plaintext, aad) {
   const nonce = randomNonce()
   if (await detectWebCryptoChaCha()) {
     const cryptoKey = await crypto.subtle.importKey(
@@ -275,7 +275,7 @@ export async function encryptBytes(keyBytes, plaintext, aad) {
   return { nonce, ciphertext: cipher.encrypt(plaintext) }
 }
 
-export async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
+async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
   if (await detectWebCryptoChaCha()) {
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
@@ -308,9 +308,14 @@ export async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
 // doesn't itself reveal "this is an empty / tiny update".
 const PAD_FLOOR = 64
 
+// Smallest power of two ≥ max(n, floor). Capped at 2^30 (~1 GiB)
+// because `1 << 31` is signed-cyclic in JS (= -2147483648) and
+// would crash `new Uint8Array(target)`. The frameAndPad guard
+// below rejects compressed payloads > 0x3FFFFFFC, keeping the
+// (4 + compressed.length) bucketing within the safe range.
 function nextPow2AtLeast(n, floor) {
   if (n <= floor) return floor
-  return 1 << (32 - Math.clz32(n - 1))
+  return 2 ** (32 - Math.clz32(n - 1))
 }
 
 async function gzip(bytes) {
@@ -332,7 +337,9 @@ async function gunzip(bytes) {
 async function frameAndPad(value) {
   const json = encodeUtf8(JSON.stringify(value))
   const compressed = await gzip(json)
-  if (compressed.length > 0xFFFFFFFF) throw new Error('payload too large')
+  // 4-byte length prefix + bucketing to next pow2 (capped at 2^30
+  // so the result fits a Uint32 length passed to `new Uint8Array`).
+  if (compressed.length > 0x3FFFFFFC) throw new Error('payload too large')
   const target = nextPow2AtLeast(4 + compressed.length, PAD_FLOOR)
   const out = new Uint8Array(target)
   new DataView(out.buffer, out.byteOffset, out.byteLength).setUint32(0, compressed.length, false)

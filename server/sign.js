@@ -5,8 +5,14 @@
 // here without re-derivation.
 //
 // Two payload types:
-//   save:      `<domain>\n<pubkey>\n<base>\n<nonce>\n<ciphertext>`
-//   subscribe: `<domain>\n<pubkey>`
+//   save:      `<domain>\n<pubkey>\n<base>\n<keyframe>\n<nonce>\n<ciphertext>`
+//   subscribe: `<domain>\n<pubkey>\n<from>`
+//
+// `keyframe` is `1` / `0` (string), bound into the signed bytes so
+// the server can't promote/demote a revision after the fact.
+// `from` is the client's last-applied revision id (or empty for a
+// fresh subscribe), so a captured subscribe sig can't be replayed
+// to fast-forward another peer to a different cursor.
 //
 // Domains are different so a save signature can't be replayed as
 // a subscribe and vice versa.
