@@ -55,6 +55,20 @@ function renderPreservingSourceScroll() {
     after.scrollLeft = left
   }
 }
+
+// Re-render preserving the Code slide's left rail scroll. Picking a
+// file in the tree triggers render() — Lit may rebuild the rail's
+// child nodes (the tree edits each node's classes for the
+// `current` highlight, plus the auto-open dirs may change), and a
+// rebuilt subtree resets scrollTop on the scrolling ancestor.
+// Capture before, restore after on the freshly-rendered element.
+function renderPreservingCodeRailScroll() {
+  const before = document.querySelector('.bundle-code-rail-body')
+  const top = before?.scrollTop ?? 0
+  render()
+  const after = document.querySelector('.bundle-code-rail-body')
+  if (after) after.scrollTop = top
+}
 import { deleteBundle, listBundles, readBundle } from '../../client/storage.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { renderSidebar } from './sidebar.js'
@@ -242,7 +256,15 @@ report.addEventListener('click', (e) => {
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = path
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
-    render()
+    // Preserve the Code rail's scroll when the click came from
+    // inside it (tree pick or search-result row). render() rebuilds
+    // the rail subtree to flip the `.current` highlight, which
+    // resets the scrolling ancestor's scrollTop without this guard.
+    if (sourceOpen.closest('.bundle-code-rail')) {
+      renderPreservingCodeRailScroll()
+    } else {
+      render()
+    }
     if (Number.isFinite(line)) {
       // Defer to the next microtask so the just-rendered source
       // viewer is in the DOM before we look up the line row.

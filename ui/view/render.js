@@ -1472,7 +1472,7 @@ function buildBundleSourceTree(paths) {
 // so the user can drill in. Selected file gets a `current` class
 // for the highlight strip; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0) {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null) {
   const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))
   const files = [...node.files.entries()].sort(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -1487,17 +1487,28 @@ function renderBundleSourceTree(node, currentPath, depth = 0) {
     ${dirs.map(([name, child]) => html`<li class="bundle-code-tree-dir">
       <details ?open=${depth === 0 || containsCurrent(child)}>
         <summary>${name}</summary>
-        ${renderBundleSourceTree(child, currentPath, depth + 1)}
+        ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex)}
       </details>
     </li>`)}
-    ${files.map(([name, full]) => html`<li class="bundle-code-tree-file">
-      <button
-        type="button"
-        class=${`bundle-code-tree-link${full === currentPath ? ' current' : ''}`}
-        data-bundle-view-source=${full}
-        title=${full}
-      >${name}</button>
-    </li>`)}
+    ${files.map(([name, full]) => {
+      // Per-file issue chip — tiny pill with the count, colored by
+      // the worst severity present on the file. Skipped when the
+      // file has no matched findings (keeps clean files quiet).
+      const findings = issueIndex?.get(full)
+      const sev = findings && findings.length > 0 ? _topSeverityOf(findings) : null
+      const count = findings?.length ?? 0
+      return html`<li class="bundle-code-tree-file">
+        <button
+          type="button"
+          class=${`bundle-code-tree-link${full === currentPath ? ' current' : ''}`}
+          data-bundle-view-source=${full}
+          title=${full}
+        >
+          <span class="bundle-code-tree-name">${name}</span>
+          ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
+        </button>
+      </li>`
+    })}
   </ul>`
 }
 
@@ -1507,8 +1518,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0) {
 // full tree. The filtered tree is rebuilt from scratch (rather
 // than hiding nodes) so the auto-open `containsCurrent` logic
 // in renderBundleSourceTree falls out naturally on hits.
-function renderBundleCodeFilesPanel(tree, currentPath, query) {
-  if (!query) return renderBundleSourceTree(tree, currentPath)
+function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex) {
+  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
   const q = query.toLowerCase()
   const matchingPaths = []
   const collect = (n, prefixParts) => {
@@ -1525,7 +1536,7 @@ function renderBundleCodeFilesPanel(tree, currentPath, query) {
   // sub-tree only carries the kept files; reuse the same render
   // helper so visuals match the unfiltered case.
   const filtered = buildBundleSourceTree(matchingPaths)
-  return renderBundleSourceTree(filtered, currentPath)
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1711,15 +1722,16 @@ function renderBundleCodeView(details) {
       }
     }
   }
+  // Per-file finding index for the tree's right-side count chips
+  // and the Issues-mode hidden-when-empty gate. Computed once and
+  // reused — the tree walk reads it as Map<originalPath, Finding[]>.
+  const issueIndex = details.fileHashes
+    ? bundleFindingsByFile(details.fileHashes, 'issues')
+    : new Map()
   // Search state — three modes share a single query field. Issues
   // mode is hidden when the bundle has no matched findings; the
   // selector falls back to Files automatically.
-  const hasAnyIssues = fileFindings.length > 0 || (details.fileHashes && (() => {
-    for (const fileMatches of bundleFindingsByFile(details.fileHashes, 'issues').values()) {
-      if (fileMatches.length > 0) return true
-    }
-    return false
-  })())
+  const hasAnyIssues = issueIndex.size > 0
   const searchModes = hasAnyIssues
     ? ['files', 'code', 'issues']
     : ['files', 'code']
@@ -1754,7 +1766,7 @@ function renderBundleCodeView(details) {
       </div>
       <div class="bundle-code-rail-body">
         ${searchMode === 'files'
-          ? renderBundleCodeFilesPanel(tree, path, query)
+          ? renderBundleCodeFilesPanel(tree, path, query, issueIndex)
           : searchMode === 'code'
             ? renderBundleCodeContentResults(sources, query, path)
             : renderBundleCodeIssuesResults(details, query, path, prefix)}

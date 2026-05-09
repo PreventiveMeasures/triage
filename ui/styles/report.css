@@ -523,7 +523,7 @@
 .bundle-code-tree-dir > details[open] > summary::before { content: '▾ '; }
 .bundle-code-tree-file { padding: 0; }
 .bundle-code-tree-link {
-  display: block;
+  display: flex; align-items: center; gap: .35rem;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -533,7 +533,6 @@
   font: inherit;
   cursor: pointer;
   border-radius: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bundle-code-tree-link:hover {
   background: var(--bg);
@@ -543,6 +542,33 @@
   background: var(--bg);
   color: var(--text);
   box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+}
+.bundle-code-tree-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Per-file issue count chip — small severity-tinted pill on the
+   row's right edge. Compact: dark text on the severity color
+   (mirrors the .badge palette) so the count reads at a glance
+   without dominating the row. */
+.bundle-code-tree-count {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 0 .3rem;
+  min-width: 1.25rem;
+  text-align: center;
+  border-radius: 7px;
+  color: #000;
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
 }
 
 /* Right column — header (selected file path) + body (source +
