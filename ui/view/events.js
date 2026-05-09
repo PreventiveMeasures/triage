@@ -184,6 +184,31 @@ report.addEventListener('click', (e) => {
   // Packages list — row select. Mirrors the bundles select pattern;
   // selection is purely UI (no async load — the index is already in
   // memory), so a plain re-render paints the right-side panel.
+  // [Issues →] button on a package / repository row — open the
+  // full-width Issues slide directly, without forcing the user
+  // to drill into the right-side details panel first. Same
+  // shortcut shape bundles' [Code →] row button uses. Listed
+  // BEFORE the row-select handlers below because the button
+  // sits inside the `<li>`; closest() would otherwise bubble
+  // the click up to the row's data-select-* attribute.
+  const pkgRowIssues = e.target.closest('[data-package-row-issues]')
+  if (pkgRowIssues) {
+    const pkg = pkgRowIssues.dataset.packageRowIssues
+    state.selectedPackage = pkg
+    state.packageDetailsTab = 'issues'
+    state.packageSlideTriage = null
+    render()
+    return
+  }
+  const repoRowIssues = e.target.closest('[data-repository-row-issues]')
+  if (repoRowIssues) {
+    const repo = repoRowIssues.dataset.repositoryRowIssues
+    state.selectedRepository = repo
+    state.repositoryDetailsTab = 'issues'
+    state.repositorySlideTriage = null
+    render()
+    return
+  }
   // Reset the details panel to the Overview tab so a new pick
   // doesn't carry the prior selection's tab choice.
   const selPackage = e.target.closest('[data-select-package]')

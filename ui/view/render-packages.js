@@ -289,9 +289,13 @@ function packageSlideTriageTabsTemplate(counts) {
   </div>`
 }
 
-// Single package row in the list — compact (one line + chip strip).
-// Click-to-select via `data-select-package`; the details panel on
-// the right paints the file/report breakdown for the open row.
+// Single package row in the list — compact (one line + chip strip
+// + Issues shortcut). Click-to-select via `data-select-package`;
+// the details panel on the right paints the file/report
+// breakdown for the open row. The `[Issues →]` button at the
+// far right opens the same full-width Issues slide the details
+// panel's tab opens — same shape as bundles' `[Code →]` row
+// shortcut, no need to drill in to the details panel first.
 function renderPackageRow(pkg, bucket, isSel) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
@@ -311,6 +315,13 @@ function renderPackageRow(pkg, bucket, isSel) {
     ${chips.length > 0 ? html`<div class="packages-row-chips">
       ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replace(/_/gu, ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
+    <button
+      type="button"
+      class="packages-row-issues"
+      data-package-row-issues=${pkg}
+      title="Open issues"
+      aria-label=${`Open issues for ${pkg}`}
+    >Issues →</button>
   </li>`
 }
 

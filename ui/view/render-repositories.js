@@ -263,6 +263,13 @@ function renderRepositoryRow(repo, bucket, isSel) {
     ${chips.length > 0 ? html`<div class="packages-row-chips">
       ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replace(/_/gu, ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
+    <button
+      type="button"
+      class="packages-row-issues"
+      data-repository-row-issues=${repo}
+      title="Open issues"
+      aria-label=${`Open issues for ${label}`}
+    >Issues →</button>
   </li>`
 }
 

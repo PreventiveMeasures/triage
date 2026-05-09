@@ -24,6 +24,7 @@
 // progressively as findings come in.
 
 import { listFiles, onFileMutated, readFile } from './storage.js'
+import { loadRepoUrlFor } from './state.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -66,15 +67,20 @@ function packageOf(file) {
 // Extracts the repo "key" the Repositories view buckets under.
 // Prefers the analyzer-stamped `repo.github` (a `user/repo` slug
 // or full URL) so findings from the same upstream repo merge
-// regardless of which report dropped them. Falls back to the
-// per-report `_repoFallback` (the URL the user typed for that
-// report) so reports whose findings don't carry per-finding
-// repo metadata still surface under their typed URL. Returns
-// null when neither is present — those findings simply don't
-// appear in Repositories.
-function repoOf(f) {
+// regardless of which report dropped them. Falls back to:
+//   1. `f._repoFallback` — set by `ui/view/ingest.js` on
+//      findings already in `state.reports` (stamps `loadRepoUrlFor
+//      (reportName)`).
+//   2. `reportFallback` — the per-report typed URL passed in by
+//      the index walker. Findings parsed straight from OPFS bytes
+//      don't go through ingest, so `_repoFallback` is absent;
+//      the walker reads the URL itself and threads it down here.
+// Returns null when no signal is available — those findings
+// simply don't appear in Repositories.
+function repoOf(f, reportFallback) {
   if (typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
   if (typeof f._repoFallback === 'string' && f._repoFallback) return f._repoFallback
+  if (typeof reportFallback === 'string' && reportFallback) return reportFallback
   return null
 }
 const indexed = new Set()
@@ -273,9 +279,9 @@ function indexFindingByPackage(f, key, name) {
 // (no `repo.github`, no `_repoFallback`) are skipped — there's
 // nowhere to bucket them. Returns true on a fresh dedupe key,
 // matching the package path's contract.
-function indexFindingByRepo(f, key, name) {
+function indexFindingByRepo(f, key, name, reportFallback) {
   if (packageOf(f.file) !== null) return false
-  const repo = repoOf(f)
+  const repo = repoOf(f, reportFallback)
   if (!repo) return false
   let rBucket = byRepo.get(repo)
   if (!rBucket) {
@@ -398,12 +404,19 @@ async function indexOne(name) {
     const data = JSON.parse(content)
     const findings = extractFindings(data)
     if (findings.length === 0) return false
+    // Per-report typed URL — set by the user via the page
+    // header's repo-chip. Used as the LAST fallback when neither
+    // `f.repo.github` nor `f._repoFallback` is present (the
+    // latter never is on freshly-parsed OPFS findings — that
+    // stamp lives only on the ingest path's stamped copies).
+    let reportFallback = ''
+    try { reportFallback = loadRepoUrlFor(name) } catch {}
     let added = false
     for (const f of findings) {
       const key = findingDedupeKey(f)
       if (f.fileHash && indexFindingByHash(f, key, name)) added = true
       if (f.file && indexFindingByPackage(f, key, name)) added = true
-      if (f.file && indexFindingByRepo(f, key, name)) added = true
+      if (f.file && indexFindingByRepo(f, key, name, reportFallback)) added = true
     }
     return added
   } catch {

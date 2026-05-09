@@ -1765,6 +1765,26 @@ body.report-fullscreen {
     gap: .2rem;
     justify-content: flex-end;
   }
+  /* Row-level [Issues →] shortcut, far right. Same visual
+     weight as the bundle-row [Code →] button — pill chrome that
+     reads as a secondary action against the row's primary
+     "click to select" affordance. Its container sits inside
+     the row's click target; the events.js delegate checks
+     `[data-{package,repository}-row-issues]` BEFORE the row
+     `data-select-*`, so a click here goes straight to the
+     Issues slide without selecting the row first. */
+  & .packages-row-issues {
+    flex-shrink: 0;
+    margin-left: .25rem;
+    padding: .15rem .55rem;
+    background: transparent;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--muted);
+    font: inherit; font-size: .72rem; font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    &:hover { border-color: var(--accent); color: var(--accent); }
+  }
 }
 /* Details panel content — meta dl, severity chip strip, file list,
    reports list. Same visual rhythm as `.bundles-detail-meta`. */
