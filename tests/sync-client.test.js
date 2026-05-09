@@ -216,6 +216,180 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     deleteWorkspace(wsId)
   })
+
+  it('restores baseRevision + baseState across closeSession / openSession', async () => {
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(settledAfterAck, 'baseline ack')
+    const beforeClose = triageSync.sessionInfo.baseRevision
+
+    triageSync.closeSession()
+    // Re-opening with the same workspaceId + server URL should
+    // restore the persisted base from localStorage; subscribe uses
+    // `from = restored baseRevision`, so the server responds with
+    // an empty chain (no new revisions) and the existing state.*
+    // edits stay visible.
+    triageSync.openSession(wsId)
+    await waitFor(statusOnline, 'sync online (re-open)')
+    await waitFor(
+      () => triageSync.sessionInfo.baseRevision === beforeClose,
+      'baseRevision restored from localStorage',
+    )
+    assert.equal(state.markers.get('finding-A'), 'red', 'triage value preserved')
+    triageSync.closeSession()
+    deleteWorkspace(wsId)
+  })
+
+  it('skips a revision whose id does not match its content hash', async () => {
+    // Fake relay so we can fabricate a chain entry the real server
+    // would never produce. The signature is valid; only the `id`
+    // field is wrong, hitting the content-hash check that runs
+    // before signature verification.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    clearTriageState()
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let chainSent = false
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', async (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        const aad = cryptoMod.buildAad(workspaceTag, null)
+        const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+        const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+        const signature = await cryptoMod.signSavePayload(signingKey, payload)
+        sock.send(JSON.stringify({
+          type: 'workspace-state',
+          workspaceTag: msg.workspaceTag,
+          // 43 base64url chars (correct length for an unpadded
+          // SHA-256), but not the real hash of the content.
+          revisions: [{
+            base: null,
+            id: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            nonce, ciphertext, signature,
+          }],
+        }))
+        chainSent = true
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(() => chainSent, 'fake relay sent the bogus chain')
+    // Give the queued message handler a chance to run.
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    // The revision was skipped: state.markers must NOT have the
+    // 'red' value the (bogus) chain tried to set.
+    assert.equal(state.markers.get('finding-A'), undefined, 'bogus-id revision did not poison state')
+    // baseRevision advances past the skipped rev (so subsequent
+    // revisions in the same chain can build on it), but baseState
+    // stays empty since no content was applied.
+    assert.equal(triageSync.sessionInfo.baseRevision, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
+  it('skips a revision whose signature does not verify', async () => {
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    clearTriageState()
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let chainSent = false
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', async (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        const aad = cryptoMod.buildAad(workspaceTag, null)
+        const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+        const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+        const id = await cryptoMod.computeRevisionId(payload)
+        // Right shape, garbage bytes — the length precheck passes
+        // but Ed25519 verify rejects.
+        const fakeSignature = Buffer.alloc(64).toString('base64url')
+        sock.send(JSON.stringify({
+          type: 'workspace-state',
+          workspaceTag: msg.workspaceTag,
+          revisions: [{ base: null, id, nonce, ciphertext, signature: fakeSignature }],
+        }))
+        chainSent = true
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(() => chainSent, 'fake relay sent the bad-sig chain')
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    assert.equal(state.markers.get('finding-A'), undefined, 'bad-sig revision did not poison state')
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
+  it('continuity break in chain triggers resync without blanking state.*', async () => {
+    // The user has unsaved edits in state.* when a chain arrives
+    // whose `base` doesn't match our baseRevision. The protocol
+    // resets baseState/baseRevision and lets the next save push
+    // state.* as a wholesale snapshot — but state.* itself MUST
+    // survive (otherwise the user loses every triage they made).
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    clearTriageState()
+    state.markers.set('finding-A', 'green')
+
+    let chainSent = false
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        // Send a chain whose first revision claims a non-null
+        // `base` (we have null) — continuity check fails
+        // immediately and applyChainToBase returns false.
+        sock.send(JSON.stringify({
+          type: 'workspace-state',
+          workspaceTag: msg.workspaceTag,
+          revisions: [{
+            base: 'NONEXISTENT_BASE',
+            id: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+            nonce: 'AAAAAAAAAAAAAAAAAAAAAAA',
+            ciphertext: 'AAAA',
+            signature: Buffer.alloc(64).toString('base64url'),
+          }],
+        }))
+        chainSent = true
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(() => chainSent, 'fake relay sent the broken-continuity chain')
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    // state.* preserved.
+    assert.equal(state.markers.get('finding-A'), 'green', 'user edit survived resync')
+    // baseState was reset to {} by applyChainToBase's continuity
+    // failure path.
+    assert.equal(triageSync.sessionInfo.baseRevision, null)
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────
@@ -227,7 +401,23 @@ describe('triage-sync client', () => {
 // arriving chain looks like another peer's edit.
 
 const cryptoMod = await import('../client/sync-crypto.js')
-const { WebSocket: WSClient } = await import('ws')
+const { WebSocket: WSClient, WebSocketServer } = await import('ws')
+
+// In-process WebSocket server the test fully controls. Used for
+// scenarios the real server (server/index.js) won't ever produce —
+// content-id mismatches, bad signatures, bogus continuity in the
+// chain — so we can exercise the client's defensive skip / resync
+// paths without altering the relay.
+async function startFakeRelay(onConnection) {
+  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' })
+  await new Promise((resolve) => { wss.once('listening', resolve) })
+  const url = `ws://127.0.0.1:${wss.address().port}`
+  wss.on('connection', onConnection)
+  return {
+    url,
+    close: () => new Promise((resolve) => { wss.close(resolve) }),
+  }
+}
 
 async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   // Open a fresh socket; we'll subscribe + save + close.
