@@ -1,4 +1,5 @@
 import { html, render as litRender, nothing } from 'lit'
+import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
@@ -564,7 +565,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           <input
             type="text"
             id="filter-search"
-            .value=${state.filterInclude}
+            .value=${live(state.filterInclude)}
             placeholder="Search findings…">
         </div>
         <span class="result-count">${filteredCount} of ${allCount}</span>

@@ -26,6 +26,7 @@
 // `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
 // from this module.
 import { html, render as litRender, nothing } from 'lit'
+import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -1113,7 +1114,7 @@ function renderBundleCodeView(details) {
           class="bundle-code-search-input"
           id="bundle-code-search-input"
           placeholder=${searchMode === 'files' ? 'filter files…' : searchMode === 'code' ? 'search code…' : 'search issues…'}
-          .value=${query}
+          .value=${live(query)}
         >
       </div>
       <div class="bundle-code-rail-body">

@@ -44,6 +44,7 @@
 //     pre-edit value (the one the input was opened with) — host
 //     should restore that and set `editing=false`.
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
+import { live } from 'lit/directives/live.js'
 import chipCSS from './repo-chip.css'
 
 // Strip protocol + host so the chip reads as the bare `user/repo`
@@ -86,7 +87,7 @@ class RepoChip extends LitElement {
     if (this.editable && this.editing) {
       return html`<input
         type="text"
-        .value=${this.url}
+        .value=${live(this.url)}
         placeholder="user/repo or https://github.com/user/repo"
         @input=${this._onInput}
         @focus=${this._onFocus}

@@ -17,6 +17,7 @@
 // so the chrome stays consistent across the two cross-report
 // drill-ins (same `bundle-issues-*` class names, same row shape).
 import { html, nothing } from 'lit'
+import { live } from 'lit/directives/live.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
 import { ensureBundleFindingsIndexed, getPackagesIndex } from '../../client/bundle-finding-index.js'
@@ -145,7 +146,7 @@ function packagesToolbarTemplate(triageCounts) {
       class="packages-search"
       placeholder="Filter packages…"
       aria-label="Filter packages"
-      .value=${state.packagesSearchQuery}
+      .value=${live(state.packagesSearchQuery)}
     >
     <select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${state.packagesSortBy}>
       <option value="findings-desc">Findings ↓</option>
