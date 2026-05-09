@@ -217,7 +217,7 @@ function renderRepositorySlide(repo, bucket) {
     <div class="bundles-slide-body">
       ${issueFindingsByFile.size === 0
         ? html`<div class="bundle-issues-empty">${emptyMsg}</div>`
-        : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'repository', repoUrl: repo })}
+        : renderIssuesGroupedByFile(issueFindingsByFile, { kind: 'repository', bucketKey: repo })}
     </div>
   </div>`
 }

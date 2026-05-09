@@ -36,7 +36,7 @@ import { state } from '../../client/state.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
-import { findingsForFileHash, reportsForFinding } from '../../client/bundle-finding-index.js'
+import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo } from '../../client/bundle-finding-index.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts, pkgColor } from './graph/utils.js'
 import { graph2 } from './graph2/state.js'
@@ -1309,9 +1309,23 @@ function renderBundleSlide(entry) {
 // stays readable when a finding is shared across many reports.
 // Each chip is clickable — the data attribute hands the report
 // name to events.js, which calls switchToFile to navigate.
-function bundleIssueReportsTemplate(finding) {
-  if (!finding?.fileHash) return nothing
-  const reports = reportsForFinding(finding.fileHash, finding)
+function bundleIssueReportsTemplate(finding, ctx = {}) {
+  if (!finding) return nothing
+  // Hash-keyed lookup is the original path — analyzer-native
+  // findings carry a `fileHash`, so a single hash bucket
+  // resolves to every report that mentioned the same source
+  // file. Markdown-parsed findings (Codex / Claude Security)
+  // don't carry a hash, so the bucket-keyed fallbacks below
+  // pick them up via the package / repository index's
+  // `keyReports` map. `ctx.kind` + `ctx.bucketKey` flow in from
+  // `renderIssuesGroupedByFile` so this template knows which
+  // index to consult when the hash path comes up empty.
+  let reports = []
+  if (finding.fileHash) reports = reportsForFinding(finding.fileHash, finding)
+  if (reports.length === 0 && ctx.bucketKey) {
+    if (ctx.kind === 'package') reports = reportsForFindingByPackage(ctx.bucketKey, finding)
+    else if (ctx.kind === 'repository') reports = reportsForFindingByRepo(ctx.bucketKey, finding)
+  }
   if (reports.length === 0) return nothing
   const visible = reports.slice(0, 2)
   const extra = reports.length - visible.length
@@ -1369,13 +1383,18 @@ function renderBundleIssuesList(details) {
 // matched file/line) or render as plain labels (package: no source
 // viewer applies — navigation lives in the per-finding report
 // chips on the right). Sort + grouping logic is identical.
-// `repoUrl` is consumed only when `kind === 'repository'` — it
-// turns each file group's header into a link to that file at
-// HEAD on the upstream repo. Both a `user/repo` slug and a
-// full `https://…` URL are accepted (the slug case prepends the
-// canonical github.com origin); a missing / falsy value leaves
-// the row as a plain static span.
-export function renderIssuesGroupedByFile(findingsByFile, { kind, repoUrl } = {}) {
+// `bucketKey` is the index key the caller's slide is rendering
+// against — repo URL/slug for `kind === 'repository'`, package
+// name for `kind === 'package'`. Two consumers:
+//   * Repository slide: also drives the per-file-group HEAD
+//     link to github (so a user/repo slug or full https URL
+//     both work).
+//   * Package + Repository slides: handed to
+//     `bundleIssueReportsTemplate` so report chips for findings
+//     without a `fileHash` (Codex / Claude Security markdown
+//     findings) still surface, via the bucket's `keyReports`
+//     map.
+export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = {}) {
   // Strip the shared root once for the file headers; the leading
   // prefix is shown in the summary line so each file row reads
   // tighter without it.
@@ -1417,8 +1436,8 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, repoUrl } = {}
         // click. Bundle slide keeps its source-viewer button.
         // Package + everything else stay as static spans (no
         // unambiguous upstream to link against).
-        const repoFileUrl = kind === 'repository' && repoUrl
-          ? `${/^https?:/iu.test(repoUrl) ? repoUrl.replace(/\/$/u, '') : `https://github.com/${repoUrl}`}/blob/HEAD/${file}`
+        const repoFileUrl = kind === 'repository' && bucketKey
+          ? `${/^https?:/iu.test(bucketKey) ? bucketKey.replace(/\/$/u, '') : `https://github.com/${bucketKey}`}/blob/HEAD/${file}`
           : null
         return html`<li class="bundle-issues-file-group">
           <header class="bundle-issues-file-header">
@@ -1456,7 +1475,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, repoUrl } = {}
                 ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
                 ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
                 <span class="bundle-issues-finding-spacer"></span>
-                ${bundleIssueReportsTemplate(finding)}
+                ${bundleIssueReportsTemplate(finding, { kind, bucketKey })}
               </div>
               <div class="bundle-issues-finding-desc">${finding.description ?? ''}</div>`
               return html`<li class="bundle-issues-finding">

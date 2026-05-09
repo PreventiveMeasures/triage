@@ -145,6 +145,25 @@ export function reportsForFinding(hash, finding) {
   return reports ? [...reports] : []
 }
 
+// Per-package / per-repo lookup of contributing reports —
+// fallback path for findings without a `fileHash` (markdown-
+// parsed Codex / Claude Security findings, mostly). The
+// hash-keyed `reportsForFinding` returns nothing for those, so
+// the Packages / Repositories Issues views need a hash-free
+// path that walks the `keyReports` map on the matching bucket.
+export function reportsForFindingByPackage(pkg, finding) {
+  const bucket = byPackage.get(pkg)
+  if (!bucket) return []
+  const set = bucket.keyReports.get(findingDedupeKey(finding))
+  return set ? [...set] : []
+}
+export function reportsForFindingByRepo(repo, finding) {
+  const bucket = byRepo.get(repo)
+  if (!bucket) return []
+  const set = bucket.keyReports.get(findingDedupeKey(finding))
+  return set ? [...set] : []
+}
+
 // Run-level meta keys mirrored from ingest.js's META_FIELDS. The
 // bundle viewer's source panel reads these through prettyModel +
 // the meta chain — without inheritance from the report header, the
