@@ -397,8 +397,7 @@
 }
 .bundle-code-search-file-name:hover { background: var(--bg); }
 .bundle-code-search-file.current .bundle-code-search-file-name {
-  background: var(--bg);
-  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
 }
 .bundle-code-search-hits {
   list-style: none; margin: 0;
@@ -439,8 +438,7 @@
 }
 .bundle-code-search-issue { padding: 0; }
 .bundle-code-search-issue.current .bundle-code-search-issue-link {
-  background: var(--bg);
-  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
 }
 .bundle-code-search-issue-link {
   display: flex; flex-direction: column;
@@ -538,10 +536,14 @@
   background: var(--bg);
   color: var(--text);
 }
+/* Selection — solid accent-tinted background. Avoids the
+   inset box-shadow strip the prior version used; that strip
+   picked up the button's border-radius and rendered as a
+   curved sliver at the top/bottom. A flat tint reads as a
+   single highlighted row without the visual artefact. */
 .bundle-code-tree-link.current {
-  background: var(--bg);
+  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
   color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
 }
 .bundle-code-tree-name {
   flex: 1; min-width: 0;
