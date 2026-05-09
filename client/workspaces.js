@@ -86,6 +86,23 @@ export function onWorkspacePrivateKeyChanged(cb) {
   return () => privateKeyChangeListeners.delete(cb)
 }
 
+// Listeners notified after a workspace's `reports` membership
+// changes (via `setReportWorkspace`). Fired with each affected
+// workspace id (an attach + detach pair fires for both old and
+// new owners). The triage-sync layer subscribes so it can refresh
+// `session.ids` AND hydrate state.* from baseState for ids that
+// just entered scope — without that hydration, the next save's
+// `effectiveLocalState` would emit deletes for ids whose triage
+// was carried in baseState but never echoed into state.* (because
+// the previous applyToReactiveState was scoped to the OLD
+// session.ids). See the H1 audit finding.
+const reportMembershipListeners = new Set()
+
+export function onReportMembershipChanged(cb) {
+  reportMembershipListeners.add(cb)
+  return () => reportMembershipListeners.delete(cb)
+}
+
 export function deleteWorkspace(id) {
   const list = readRaw()
   const next = list.filter((w) => w.id !== id)
@@ -144,16 +161,32 @@ export function upsertWorkspace(workspace) {
 // Move a report to `workspaceId` (or detach it back to the unfiled
 // list when `workspaceId` is null). A report belongs to at most one
 // workspace at a time; the prior assignment, if any, is dropped first.
-// No-ops cleanly when the target workspace doesn't exist.
+// No-ops cleanly when the target workspace doesn't exist. Fires
+// `onReportMembershipChanged` for every workspace whose `reports`
+// list actually changed (so an attach + detach pair notifies both
+// the old owner and the new one); a no-op call (filename is already
+// where it should be) fires nothing.
 export function setReportWorkspace(filename, workspaceId) {
   const list = readRaw()
+  const affected = new Set()
   for (const w of list) {
     if (!Array.isArray(w.reports)) w.reports = []
-    w.reports = w.reports.filter((r) => r !== filename)
+    if (w.reports.includes(filename)) {
+      w.reports = w.reports.filter((r) => r !== filename)
+      affected.add(w.id)
+    }
   }
   if (workspaceId) {
     const target = list.find((w) => w.id === workspaceId)
-    if (target && !target.reports.includes(filename)) target.reports.push(filename)
+    if (target && !target.reports.includes(filename)) {
+      target.reports.push(filename)
+      affected.add(target.id)
+    }
   }
   writeRaw(list)
+  for (const id of affected) {
+    for (const cb of reportMembershipListeners) {
+      try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
+    }
+  }
 }

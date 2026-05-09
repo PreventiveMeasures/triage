@@ -748,6 +748,86 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsB)
   })
 
+  it('attaching a report containing a peer-triaged id does not wipe the chain on the next save', async () => {
+    // H1: a peer triaged finding-X via R2; the chain arrived here
+    // with baseState[X] populated but state.* untouched (X not in
+    // session.ids because R2 wasn't attached). User attaches R2 to
+    // the workspace, then edits a different known finding. Without
+    // the membership-listener-driven hydration, the next
+    // `effectiveLocalState` would call snapshotEntry(X) → {} →
+    // emit `X: null` (delete) → wipe the peer's triage from the
+    // chain.
+    //
+    // Simulate the "peer triaged via R2, then we attach R2" sequence
+    // by seeding the persisted-base blob directly (via the v2 lock
+    // path — same shape `applyChainToBase → persistSession` would
+    // produce), then opening the session. That avoids opening a
+    // second raw WS to push the chain, which is brittle in the
+    // full-suite ordering.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'known', _id: 'known' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+
+    // Pre-seed baseState as if a peer's chain had landed for an
+    // id this client has no loaded report for. baseRevision must
+    // be a non-null content-hash-shaped string so the next save
+    // builds a delta against it; the value itself is opaque to
+    // this test.
+    localStorage.setItem('deepview.sync.sessions', JSON.stringify({
+      [wsId]: {
+        serverUrl,
+        baseRevision: 'a'.repeat(43),
+        savesSinceKeyframe: 0,
+        baseState: { 'unknown-X': { color: 'red', triage: 'fixed' } },
+      },
+    }))
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    // The session restored baseState from the seeded blob; state.*
+    // is empty for unknown-X because applyToReactiveState's scope
+    // (session.ids) doesn't include it (R2 not attached).
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'workspaceTag derived',
+    )
+    assert.equal(state.markers.get('unknown-X'), undefined, 'state.* untouched (X out of scope)')
+
+    // Attach R2 mid-session — both state.reports (renderer) and
+    // workspace.reports (membership). The onReportMembershipChanged
+    // listener fires; refreshSessionIds sees X is newly in scope
+    // and hydrates state.* from baseState before any save runs.
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'unknown-X', _id: 'unknown-X' } ]],
+    })
+    setReportWorkspace('B.md', wsId)
+    assert.equal(state.markers.get('unknown-X'), 'red', 'state.* hydrated for newly-in-scope id')
+    assert.equal(state.triageState.get('unknown-X'), 'fixed', 'triageState hydrated too')
+
+    // After hydration, a local edit on a different finding produces
+    // a save whose effectiveLocalState carries the full unknown-X
+    // entry (matching baseState) — so the changeset against
+    // baseState contains ONLY the user's edit on 'known' and does
+    // NOT emit { 'unknown-X': null }. The post-save in-memory state
+    // confirms unknown-X stays set; without hydration, snapshotEntry
+    // would return {} and effectiveLocalState would delete it,
+    // letting trySendSave emit a wipe.
+    state.markers.set('known', 'green')
+    await saveTriage()
+    assert.equal(state.markers.get('unknown-X'), 'red', 'unknown-X marker preserved after save')
+    assert.equal(state.triageState.get('unknown-X'), 'fixed', 'unknown-X triage preserved after save')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
   it('regular save does not delete triage for ids the client does not have a report for', async () => {
     // Same root cause as the keyframe variant below, but exercised
     // on the delta-save path: the chain brings in a finding-id the
@@ -1296,6 +1376,29 @@ describe('triage-sync client', () => {
       'session re-opened with fresh workspaceTag derived from new key',
     )
     await waitFor(statusOnline, 'session reaches online under new identity')
+    // The new session must NOT inherit the OLD identity's
+    // baseRevision via a load-race against the persisted blob.
+    // Audit H2: without the `await dropPersistedSession(...)`
+    // before the re-open, `loadPersistedSession` would race the
+    // lock-scheduled mutator and restore the old `baseRevision`
+    // into the new session. The new session's auto-emitted save
+    // (state.markers carries `finding-A`='red' from before the
+    // rotation) would then send `base = oldBaseRevision`, which
+    // the server doesn't recognize under the new tag → rejected
+    // with an empty catch-up chain → pending stuck → baseRevision
+    // never advances past the race-restored value.
+    //
+    // With the fix: new session starts at null base, emits a save
+    // under the new identity, server acks, baseRevision advances
+    // to a fresh content-hash that's necessarily different from
+    // the old chain's value (different workspaceTag → different
+    // canonical bytes → different SHA-256).
+    await waitFor(() => settledAfterAck(wsId), 'first save under new identity acked')
+    assert.notEqual(
+      triageSync.sessionInfo(wsId).baseRevision,
+      oldPersisted.baseRevision,
+      'baseRevision advanced under new identity (no race-restore from old)',
+    )
 
     // Persisted base for the OLD identity was dropped; the new
     // session, syncing under the new tag, may re-persist its own

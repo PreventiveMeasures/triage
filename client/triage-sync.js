@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { saveTriage } from './triage.js'
-import { listWorkspaces, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
+import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import {
   buildAad,
   computeRevisionId,
@@ -332,6 +332,64 @@ function effectiveLocalState(baseState, ids) {
   return out
 }
 
+// Gap-only hydration: for each id in `ids`, fill missing state.*
+// fields from `baseState[id]`. Existing state.* values are NEVER
+// overwritten (local-wins on conflict), so a finding the user
+// already triaged in another open workspace (state.* is global,
+// chains are per-workspace) keeps its local value.
+//
+// Used when ids enter session scope (a report attached mid-session
+// — see `onReportMembershipChanged` listener at module init). Without
+// this, the next `effectiveLocalState` would call `snapshotEntry`
+// on each newly-in-scope id, get an empty entry (state.* not
+// populated for OOS ids), and emit a delete that wipes the chain's
+// view for that id. The `ignoredReports` mutex with triage is
+// honored — skipped when the entry already carries any triage
+// state, mirroring `applyToReactiveState`'s rule.
+function hydrateStateFromBaseState(baseState, ids) {
+  for (const id of ids) {
+    const entry = baseState[id]
+    if (!entry || typeof entry !== 'object') continue
+    if (entry.color && !state.markers.has(id)) state.markers.set(id, entry.color)
+    let triageNext = null
+    if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') triageNext = entry.triage
+    else if (entry.deleted) triageNext = 'deleted'
+    if (triageNext && !state.triageState.has(id)) state.triageState.set(id, triageNext)
+    if (entry.comment && !state.comments.has(id)) state.comments.set(id, entry.comment)
+    if (entry.fix && !state.fixes.has(id)) state.fixes.set(id, entry.fix)
+    // Per-report ignore: skipped when triage is set (mutex), and
+    // when state.ignoredIds already has any entry for this id
+    // (local-wins on conflict, same shape as the field-by-field
+    // checks above).
+    const triageEffectivelySet = triageNext || state.triageState.has(id)
+    if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
+    let alreadyHasAny = false
+    for (const key of state.ignoredIds) {
+      const sep = key.indexOf('\0')
+      if (sep >= 0 && key.slice(sep + 1) === id) { alreadyHasAny = true; break }
+    }
+    if (alreadyHasAny) continue
+    for (const r of entry.ignoredReports) {
+      if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+    }
+  }
+}
+
+// Recompute `session.ids` from current workspace membership and
+// hydrate state.* from baseState for ids that JUST entered scope.
+// Single helper so the lazy refresh in trySendSave / captureOverlay
+// AND the eager refresh from the workspace-membership listener
+// share one code path.
+function refreshSessionIds(session) {
+  const newIds = buildWorkspaceIds(session.workspaceId)
+  const newlyAdded = []
+  for (const id of newIds) {
+    if (!session.ids.has(id)) newlyAdded.push(id)
+  }
+  if (newlyAdded.length > 0) hydrateStateFromBaseState(session.baseState, newlyAdded)
+  session.ids = newIds
+}
+
 // Set-equal comparison for `ignoredReports`. Each list is an
 // unordered collection of report names; a peer's snapshot may
 // produce them in iteration order of state.ignoredIds (insertion
@@ -464,13 +522,20 @@ export async function mutateAllSessions(mutator) {
 
 function persistSession(target) {
   if (!target || !serverUrl) return
+  // Capture serverUrl by value — the mutator runs inside the Web
+  // Locks callback (potentially after a few microtasks of queueing)
+  // and a `setServerUrl(...)` call landing in between would
+  // otherwise stamp the persisted entry with the wrong server's
+  // URL, hiding it from `loadPersistedSession` on next page load.
+  // Audit M3.
+  const url = serverUrl
   // Fire-and-forget — callers don't await. The lock serializes the
   // RMW; ordering between back-to-back persistSession calls follows
   // Web Locks FIFO semantics, so the most-recent state for any one
   // workspace wins.
   mutateAllSessions((all) => {
     all[target.workspaceId] = {
-      serverUrl,
+      serverUrl: url,
       baseRevision: target.baseRevision,
       savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
       baseState: target.baseState,
@@ -500,8 +565,12 @@ function prunePersistedSessions() {
 // Drop the persisted-session entry for one workspace id (if any).
 // Used by the workspace-deleted listener so the live persistence
 // blob doesn't survive the deletion until the next page-load prune.
+// Returns the underlying lock-RMW promise so callers that need to
+// observe the wipe before they read the blob (e.g. the privateKey-
+// rotation listener, before reopening the session — audit H2)
+// can `await` it. Other callers can fire-and-forget.
 function dropPersistedSession(workspaceId) {
-  mutateAllSessions((all) => {
+  return mutateAllSessions((all) => {
     if (!(workspaceId in all)) return false
     delete all[workspaceId]
   })
@@ -684,11 +753,12 @@ function trySendSave(session) {
     session.pendingSave = true
     return
   }
-  // Refresh `session.ids` against the current workspace membership.
-  // A report dragged into the workspace mid-session would otherwise
-  // never enter `session.ids`, and edits on its findings wouldn't
-  // sync. Cheap — iterates state.reports + workspace.reports once.
-  session.ids = buildWorkspaceIds(session.workspaceId)
+  // Refresh `session.ids` against the current workspace membership
+  // and hydrate state.* from baseState for ids that JUST entered
+  // scope. The membership listener (`onReportMembershipChanged`)
+  // catches the eager case; this lazy refresh covers anything that
+  // bypassed the listener (console-driven mutation, etc.).
+  refreshSessionIds(session)
   // Refresh localState from the live state.* containers in case
   // saveTriage just persisted edits we haven't snapshotted yet.
   session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -960,7 +1030,7 @@ function captureOverlay(session) {
   // dragged in pulls the right scope when reading state.* — without
   // this, the new report's findings would be invisible to the
   // overlay/apply round-trip until the session is reopened.
-  session.ids = buildWorkspaceIds(session.workspaceId)
+  refreshSessionIds(session)
   session.localState = effectiveLocalState(session.baseState, session.ids)
   return computeChangeset(session.baseState, session.localState)
 }
@@ -1581,10 +1651,38 @@ onWorkspaceDeleted((workspaceId) => {
 // picks up the fresh key via listWorkspaces().
 onWorkspacePrivateKeyChanged((workspaceId) => {
   const wasOpen = sessions.delete(workspaceId)
-  dropPersistedSession(workspaceId)
-  if (wasOpen) {
-    triageSync.openSession(workspaceId)
-    emitStatusIfChanged()
-  }
+  // Await the persisted-base wipe BEFORE reopening — `openSession`
+  // calls `loadPersistedSession` (a lock-free read of the same
+  // blob), so without the await it would race the lock-scheduled
+  // mutator and restore the OLD identity's `baseRevision` /
+  // `baseState` into the new session. The new session's first
+  // subscribe would then carry a `from` that the server doesn't
+  // recognize under the new tag, and the next save could clobber
+  // the (just-rotated) chain. Audit H2.
+  ;(async () => {
+    await dropPersistedSession(workspaceId)
+    if (wasOpen) {
+      triageSync.openSession(workspaceId)
+      emitStatusIfChanged()
+    }
+  })()
+})
+
+// Workspace report-membership change (drag a report in/out of a
+// workspace, import that adds reports). Refreshes the open
+// session's `ids` AND hydrates state.* from baseState for the
+// newly-in-scope ids — without the eager hydration, the next
+// `effectiveLocalState` would emit a delete for every id whose
+// triage was carried in baseState but never echoed into state.*
+// (the previous applyToReactiveState was scoped to the OLD
+// session.ids), wiping the chain's view for those ids. Then kicks
+// a save so any local edits on the now-attached findings reach
+// the server promptly. No-op when the workspace has no open
+// session.
+onReportMembershipChanged((workspaceId) => {
+  const session = sessions.get(workspaceId)
+  if (!session) return
+  refreshSessionIds(session)
+  trySendSave(session)
 })
 
