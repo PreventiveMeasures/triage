@@ -1230,6 +1230,12 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         data-bundle-tab="issues"
         title="Open the bundle's matched issues"
       >Issues →</button>` : nothing}
+      <button
+        type="button"
+        class="bundles-tab bundles-tab-action"
+        data-bundle-tab="code"
+        title="Browse bundle source"
+      >Code →</button>
     </div>
     ${activeTab === 'files' ? filesTpl
       : activeTab === 'reports' ? reportsTpl
@@ -1385,6 +1391,11 @@ function renderBundleSourceFindingPanel(findings) {
 function renderBundleSourceModal() {
   const path = state.bundleSourceFile
   if (!path) return nothing
+  // In the Code slide the source already renders inline in the
+  // slide body; suppress the modal so it doesn't stack over the
+  // slide. The slide owns bundleSourceFile while it's active and
+  // resets it on slide exit (events.js's slide-back handler).
+  if (state.bundleDetailsTab === 'code') return nothing
   const sources = bundleSourcesAsMap(state.bundleDetails)
   const content = sources.get(path)
   // Find this file's matched findings (live or trash, depending on
@@ -1430,6 +1441,150 @@ function renderBundleSourceModal() {
   </div>`
 }
 
+// Build a directory tree from a flat list of paths so the Code
+// slide's left rail can render as nested `<details>` elements.
+// Each tree node is `{ name, files: Map<basename, fullpath>,
+// dirs: Map<dirname, node> }`. Files are placed under their
+// immediate parent; dirs are nested by every '/'-separated
+// segment of the prefix. Returns the root node; callers walk
+// dirs first (sorted), then files (sorted).
+function buildBundleSourceTree(paths) {
+  const root = { name: '', files: new Map(), dirs: new Map() }
+  for (const p of paths) {
+    const parts = p.split('/')
+    let node = root
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i]
+      let child = node.dirs.get(seg)
+      if (!child) {
+        child = { name: seg, files: new Map(), dirs: new Map() }
+        node.dirs.set(seg, child)
+      }
+      node = child
+    }
+    node.files.set(parts[parts.length - 1], p)
+  }
+  return root
+}
+
+// Recursive directory + file rendering for the Code slide's tree
+// rail. Open the first level by default; deeper levels collapse
+// so the user can drill in. Selected file gets a `current` class
+// for the highlight strip; the click target is the data-bundle-
+// view-source delegate (same one the Files tab uses).
+function renderBundleSourceTree(node, currentPath, depth = 0) {
+  const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const files = [...node.files.entries()].sort(([a], [b]) => a.localeCompare(b))
+  // Auto-open dirs that contain the currently selected file so
+  // the tree spotlights it on slide-open.
+  const containsCurrent = (n) => {
+    if (!currentPath) return false
+    for (const p of n.files.values()) if (p === currentPath) return true
+    for (const d of n.dirs.values()) if (containsCurrent(d)) return true
+    return false
+  }
+  return html`<ul class=${`bundle-code-tree${depth === 0 ? ' root' : ''}`}>
+    ${dirs.map(([name, child]) => html`<li class="bundle-code-tree-dir">
+      <details ?open=${depth === 0 || containsCurrent(child)}>
+        <summary>${name}</summary>
+        ${renderBundleSourceTree(child, currentPath, depth + 1)}
+      </details>
+    </li>`)}
+    ${files.map(([name, full]) => html`<li class="bundle-code-tree-file">
+      <button
+        type="button"
+        class=${`bundle-code-tree-link${full === currentPath ? ' current' : ''}`}
+        data-bundle-view-source=${full}
+        title=${full}
+      >${name}</button>
+    </li>`)}
+  </ul>`
+}
+
+// Code slide — directory-tree rail on the left + the same
+// source-viewer body (line-numbered gutter, prism highlight,
+// per-line dot + side panel) on the right. Reuses
+// renderBundleSourceLines / renderBundleSourceFindingPanel so the
+// inspect features (line dots, finding panel, source highlight)
+// behave identically to the modal version. Selection lives on
+// state.bundleSourceFile; null shows a placeholder asking the
+// user to pick a file.
+function renderBundleCodeView(details) {
+  if (!details || !details.json) return nothing
+  const sources = bundleSourcesAsMap(details)
+  if (sources.size === 0) {
+    return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
+  }
+  const allPaths = [...sources.keys()].sort()
+  const { prefix, stripped } = stripCommonPathPrefix(allPaths)
+  // Tree built from STRIPPED paths so the visual hierarchy
+  // doesn't waste horizontal space on a shared root prefix.
+  // Stripped → original mapping lets the click handlers (and
+  // sources.get) recover the full key.
+  const strippedToOrig = new Map()
+  for (let i = 0; i < allPaths.length; i++) strippedToOrig.set(stripped[i], allPaths[i])
+  // Build a tree node whose file values are ORIGINAL paths so the
+  // tree-link buttons can hand them to data-bundle-view-source
+  // directly. We feed buildBundleSourceTree stripped-keyed paths
+  // and remap files at the leaves.
+  const tree = buildBundleSourceTree(stripped)
+  const remap = (n) => {
+    const remappedFiles = new Map()
+    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
+    n.files = remappedFiles
+    for (const d of n.dirs.values()) remap(d)
+  }
+  remap(tree)
+  const path = state.bundleSourceFile
+  const content = path ? sources.get(path) : null
+  // Per-file findings + line dots — same source-viewer pipeline
+  // the modal uses; the panel renders inside the slide rather
+  // than as an overlay so the user can read source + finding
+  // details side by side.
+  const fileFindings = []
+  const lineFindings = new Map()
+  if (typeof content === 'string' && details.fileHashes) {
+    const matches = bundleFindingsByFile(details.fileHashes, 'issues')
+    const onThisFile = matches.get(path) ?? []
+    for (let i = 0; i < onThisFile.length; i++) {
+      const f = onThisFile[i]
+      fileFindings.push(f)
+      const ln = parseInt(f.line, 10)
+      if (Number.isFinite(ln) && ln > 0) {
+        if (!lineFindings.has(ln)) lineFindings.set(ln, [])
+        lineFindings.get(ln).push({ f, idx: i })
+      }
+    }
+  }
+  return html`<div class="bundle-code-view">
+    <aside class="bundle-code-rail">
+      <div class="bundle-code-rail-head">
+        <span class="bundle-code-rail-label">Files</span>
+        <span class="bundle-code-rail-count">${allPaths.length}</span>
+      </div>
+      ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
+      <div class="bundle-code-rail-body">
+        ${renderBundleSourceTree(tree, path)}
+      </div>
+    </aside>
+    <div class=${`bundle-code-main${state.bundleSourceFindingIdx != null ? ' with-panel' : ''}`}>
+      ${path
+        ? html`<header class="bundle-code-main-bar">
+            <span class="bundle-code-main-path mono" title=${path}>${path}</span>
+          </header>
+          <div class="bundle-code-main-body">
+            <div class="bundle-source-code-wrap">
+              ${typeof content === 'string'
+                ? renderBundleSourceLines(content, path, details.integrity, lineFindings)
+                : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
+            </div>
+            ${renderBundleSourceFindingPanel(fileFindings)}
+          </div>`
+        : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
+    </div>
+  </div>`
+}
+
 function renderBundleSlide(entry) {
   const tab = state.bundleDetailsTab
   // Hide the in-slide Graph / Issues switcher when this bundle has
@@ -1457,7 +1612,7 @@ function renderBundleSlide(entry) {
         <div class="bundles-slide-name">${entry.name}</div>
         <div class="bundles-slide-integrity" title=${entry.integrity}>${entry.integrity}</div>
       </div>
-      ${hasIssues ? html`<div class="bundles-slide-tabs" role="tablist">
+      <div class="bundles-slide-tabs" role="tablist">
         <button
           type="button"
           class=${`bundles-tab${tab === 'graph' ? ' active' : ''}`}
@@ -1465,19 +1620,28 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'graph')}
           role="tab"
         >Graph</button>
-        <button
+        ${hasIssues ? html`<button
           type="button"
           class=${`bundles-tab${tab === 'issues' ? ' active' : ''}`}
           data-bundle-tab="issues"
           aria-selected=${String(tab === 'issues')}
           role="tab"
-        >Issues</button>
-      </div>` : nothing}
+        >Issues</button>` : nothing}
+        <button
+          type="button"
+          class=${`bundles-tab${tab === 'code' ? ' active' : ''}`}
+          data-bundle-tab="code"
+          aria-selected=${String(tab === 'code')}
+          role="tab"
+        >Code</button>
+      </div>
     </header>
     <div class="bundles-slide-body">
       ${tab === 'graph'
         ? html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
-        : renderBundleIssuesList(state.bundleDetails)}
+        : tab === 'code'
+          ? renderBundleCodeView(state.bundleDetails)
+          : renderBundleIssuesList(state.bundleDetails)}
     </div>
   </div>`
 }
@@ -1578,7 +1742,7 @@ function renderBundlesList(bundles) {
   // content edge to edge. Anything else (no bundle open, or
   // Packages / Files tab) renders the regular list + details.
   const inSlide = selectedEntry
-    && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues')
+    && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
   if (inSlide) return html`${renderBundleSlide(selectedEntry)}${renderBundleSourceModal()}`
   const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
   return html`<div class=${`bundles-view${selectedEntry ? ' with-details' : ''}`}>

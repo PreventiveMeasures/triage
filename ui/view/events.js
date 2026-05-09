@@ -131,22 +131,32 @@ report.addEventListener('click', (e) => {
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'issues') {
+    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'issues' || tab === 'code') {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
       if (state.bundleDetailsTab === 'graph' && tab !== 'graph') cleanupGraph2()
+      // Tab switch resets the source-viewer pointer so a stale
+      // bundleSourceFile from a different tab (Code slide
+      // selection, or modal opened from the Files tab) doesn't
+      // re-render the wrong view in the new tab — the modal
+      // renders over non-slide tabs whenever the pointer is set.
       state.bundleDetailsTab = tab
+      state.bundleSourceFile = null
+      state.bundleSourceFindingIdx = null
       render()
     }
     return
   }
-  // Slide back button — drops out of the Graph / Issues slide
-  // back to the bundles list + details. Defaults to the Packages
-  // sub-tab so the panel paints meaningfully on the way out.
+  // Slide back button — drops out of the Graph / Issues / Code
+  // slide back to the bundles list + details. Defaults to the
+  // Packages sub-tab so the panel paints meaningfully on the
+  // way out. Same source-viewer reset as the tab switch above.
   if (e.target.closest('[data-action="bundle-slide-back"]')) {
     if (state.bundleDetailsTab === 'graph') cleanupGraph2()
     state.bundleDetailsTab = 'packages'
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
     render()
     return
   }
