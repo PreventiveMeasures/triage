@@ -40,13 +40,23 @@ import {
 // Wire shape
 // ----------
 //   client → server  workspace-save       { workspaceTag, base,
-//                                            nonce, ciphertext, signature }
+//                                            keyframe?, nonce,
+//                                            ciphertext, signature }
 //   client → server  workspace-subscribe  { workspaceTag, from, signature }
 //   server → client  workspace-subscribed { workspaceTag }
 //   server → client  workspace-save-ack   { workspaceTag, base, id }
 //   server → client  workspace-state      { workspaceTag, revisions:
-//                                            [{ base, id, nonce,
-//                                               ciphertext, signature }, ...] }
+//                                            [{ base, id, keyframe,
+//                                               nonce, ciphertext,
+//                                               signature }, ...] }
+//
+// The `keyframe` flag promotes a save's ciphertext from "delta
+// against base" to "full state" — the client emits one every
+// `keyframeInterval` non-keyframe revisions, and the server uses
+// it as the catch-up root for `from=null` subscribers. Bound into
+// the signed canonical bytes (see sync-crypto.js's
+// `canonicalSavePayload`), so the wire flag MUST match the signed
+// flag — the server can't relabel a normal save as a keyframe.
 //
 // `workspace-subscribed` is sent right after the server registers
 // the client as a peer for the workspace; `workspace-state` (with
@@ -149,6 +159,25 @@ let pingIntervalMs = 15_000
 let pongTimeoutMs = 5_000
 let pingIntervalId = null
 let pongTimeoutId = null
+
+// Keyframe cadence. Client decides — server can't fake the flag
+// because it's bound into the signed canonical bytes (see
+// sync-crypto.js's `canonicalSavePayload`). A keyframe carries the
+// FULL state instead of a delta; a `from=null` subscribe returns
+// the chain from the most recent keyframe (inclusive), so a fresh
+// client catches up by applying just the keyframe + everything
+// after.
+//
+// `session.savesSinceKeyframe` increments on every applied
+// non-keyframe revision (own ack or peer broadcast); resets to 0
+// on a keyframe. When the counter reaches `keyframeInterval` AND
+// there's something to send AND we're about to send, the next save
+// is emitted as a keyframe. Persisted alongside baseRevision /
+// baseState so a reload doesn't double-trigger.
+//
+// Mutable so tests can lower the interval without staging 100
+// saves; the production threshold is 100.
+let keyframeInterval = 100
 
 // True only when all gates align: a URL exists, the user hasn't
 // flipped off, and the sidebar isn't suppressing.
@@ -303,6 +332,7 @@ function loadPersistedSession(workspaceId, currentServerUrl) {
   return {
     baseRevision: entry.baseRevision ?? null,
     baseState: (entry.baseState && typeof entry.baseState === 'object') ? entry.baseState : {},
+    savesSinceKeyframe: typeof entry.savesSinceKeyframe === 'number' ? entry.savesSinceKeyframe : 0,
   }
 }
 
@@ -312,6 +342,7 @@ function persistSession(target) {
   all[target.workspaceId] = {
     serverUrl,
     baseRevision: target.baseRevision,
+    savesSinceKeyframe: target.savesSinceKeyframe ?? 0,
     baseState: target.baseState,
   }
   saveAllSessions(all)
@@ -372,10 +403,15 @@ function send(msg) {
 // already in sync with the server). Idempotent on the client:
 // `session.subscribed` flips true on send and resets on socket
 // close so a reconnect re-subscribes.
-function trySendSubscribe() {
+// `force = true` re-sends a subscribe even when `session.subscribed`
+// is already true. Used by the continuity-break recovery path:
+// re-asking with the current `baseRevision` returns the gap-filling
+// catch-up chain, which is the same primitive the initial subscribe
+// uses.
+function trySendSubscribe(force = false) {
   if (!session) return
   if (!socket || socket.readyState !== WebSocket.OPEN) return
-  if (session.subscribed) return
+  if (!force && session.subscribed) return
   if (!session.signingKey || !session.workspaceTag) return
   const owner = session
   // Capture `from` BEFORE the await — chain handlers running
@@ -424,7 +460,15 @@ function trySendSave() {
   // Refresh localState from the live state.* containers in case
   // saveTriage just persisted edits we haven't snapshotted yet.
   session.localState = buildLocalState(session.ids)
-  const changeset = computeChangeset(session.baseState, session.localState)
+  // Once `keyframeInterval` non-keyframe revisions have piled up
+  // since the last keyframe, the next save we'd emit anyway is
+  // promoted to a keyframe — its changeset is the diff against an
+  // EMPTY base, so the receiver can apply it standalone (the
+  // server uses this to answer `from=null` subscribers without
+  // replaying the whole chain). Falsy => regular delta save.
+  const isKeyframe = (session.savesSinceKeyframe ?? 0) >= keyframeInterval
+  const sourceBase = isKeyframe ? {} : session.baseState
+  const changeset = computeChangeset(sourceBase, session.localState)
   if (changesetEmpty(changeset)) return
   const sentBase = session.baseRevision
   const owner = session
@@ -433,14 +477,18 @@ function trySendSave() {
     try {
       const aad = buildAad(owner.workspaceTag, sentBase)
       const { nonce, ciphertext } = await encryptJson(owner.key, changeset, aad)
-      // Sign the (workspaceTag, base, nonce, ciphertext) tuple —
-      // the same canonical bytes any verifier (server or peer)
-      // will reconstruct from the wire fields. Holding the
+      // Sign the (workspaceTag, base, keyframe, nonce, ciphertext)
+      // tuple — the same canonical bytes any verifier (server or
+      // peer) will reconstruct from the wire fields. Holding the
       // signature proves the sender derived the workspace's
       // signing key, i.e. they know the workspace's private key.
+      // Including keyframe in the signed payload binds the wire
+      // flag to the signature so the server can't promote /
+      // demote a revision after the fact.
       const payload = {
         publicKeyB64: owner.workspaceTag,
         base: sentBase,
+        keyframe: isKeyframe,
         nonceB64: nonce,
         ciphertextB64: ciphertext,
       }
@@ -460,16 +508,21 @@ function trySendSave() {
         session.pendingSave = true
         return
       }
-      session.pending = { base: sentBase, id: revisionId, changeset }
+      session.pending = { base: sentBase, id: revisionId, changeset, keyframe: isKeyframe }
       session.pendingSave = false
-      send({
+      const wireMsg = {
         type: 'workspace-save',
         workspaceTag: session.workspaceTag,
         base: sentBase,
         nonce,
         ciphertext,
         signature,
-      })
+      }
+      // Only set the wire flag when truthy — the server treats
+      // missing/false the same way, and keeping the message
+      // minimal in the common case keeps the wire trace cleaner.
+      if (isKeyframe) wireMsg.keyframe = true
+      send(wireMsg)
     } catch (err) {
       console.warn('Triage sync: encrypt/sign failed:', err)
     } finally {
@@ -517,13 +570,21 @@ async function applyChainToBase(revisions) {
     // current baseRevision. The very first chain we receive (after
     // init, baseRevision === null) accepts a `null` base.
     const expected = session.baseRevision
+    const isKeyframe = Boolean(rev.keyframe)
+    // Continuity check. A keyframe arriving against a `null` local
+    // baseRevision is the catch-up entry-point used by `from=null`
+    // subscribes — its `base` points at some older revision the
+    // client doesn't have, but the keyframe's content IS the full
+    // state, so we accept it and replace baseState wholesale below.
     const ok = expected == null
-      ? rev.base == null
+      ? (rev.base == null || isKeyframe)
       : rev.base === expected
     if (!ok) {
-      console.warn(`Triage sync: chain base mismatch (expected ${expected}, got ${rev.base}); resync requested`)
-      session.baseRevision = null
-      session.baseState = {}
+      console.warn(`Triage sync: chain base mismatch (expected ${expected}, got ${rev.base})`)
+      // Do NOT mutate baseRevision / baseState here — the caller
+      // (handleChain) will first try to fill the gap by
+      // re-subscribing from the current baseRevision; only if THAT
+      // chain also breaks does the full reset run.
       return false
     }
     // Signature first — confirms the revision came from someone
@@ -540,13 +601,16 @@ async function applyChainToBase(revisions) {
     const payload = {
       publicKeyB64: session.workspaceTag,
       base: rev.base,
+      keyframe: isKeyframe,
       nonceB64: rev.nonce,
       ciphertextB64: rev.ciphertext,
     }
     // Recompute the content-addressed id from the same canonical
     // bytes. A server-claimed id that doesn't match the content
     // hash is the protocol's signal that the server is trying to
-    // relabel / re-attribute a revision — drop the rev.
+    // relabel / re-attribute a revision — drop the rev. The
+    // keyframe flag is part of the canonical bytes, so a server
+    // that flipped it on/off would also fail this check.
     const expectedId = await computeRevisionId(payload)
     if (rev.id !== expectedId) {
       console.warn('Triage sync: revision id does not match content hash; skipping')
@@ -572,8 +636,14 @@ async function applyChainToBase(revisions) {
       session.baseRevision = rev.id
       continue
     }
-    session.baseState = applyChangeset(session.baseState, changeset ?? {})
+    // Keyframes carry a changeset computed against an EMPTY base,
+    // so applying them is a wholesale replace. Reset the
+    // since-last-keyframe counter; bump it on regular revs.
+    const applyTo = isKeyframe ? {} : session.baseState
+    session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
+    if (isKeyframe) session.savesSinceKeyframe = 0
+    else session.savesSinceKeyframe = (session.savesSinceKeyframe ?? 0) + 1
   }
   return true
 }
@@ -634,8 +704,15 @@ async function handleAck(msg) {
     // save was sent — they're in state.* but not in
     // pending.changeset, and would be lost otherwise.
     const overlay = captureOverlay()
-    session.baseState = applyChangeset(session.baseState, session.pending.changeset)
+    // Keyframes carry a changeset computed against an EMPTY base
+    // (= full state); applying them is a wholesale replace.
+    // Regular saves stack on the current baseState.
+    const applyTo = session.pending.keyframe ? {} : session.baseState
+    session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    session.savesSinceKeyframe = session.pending.keyframe
+      ? 0
+      : (session.savesSinceKeyframe ?? 0) + 1
     session.pending = null
     await applyOverlayAndPersist(overlay)
     // The user may have edited during the round-trip; if there's a
@@ -674,20 +751,35 @@ async function handleChain(revisions) {
   // Capture overlay BEFORE applyChainToBase mutates baseState.
   const overlay = captureOverlay()
   if (!await applyChainToBase(revisions)) {
-    // Chain didn't apply cleanly. baseState was reset to {} by
-    // applyChainToBase. Don't replay overlay on top of empty: items
-    // the user hadn't edited would also be cleared (they matched
-    // oldBaseState, so they weren't in the overlay). Instead, leave
-    // state.* alone — the next save will compute compute({}, state.*)
-    // and push everything as a full snapshot, which the server's
-    // stale-base path turns into the catch-up chain we need.
+    // Continuity break. First try to fill the gap by re-subscribing
+    // with `from = current baseRevision`: in the typical case (a
+    // broadcast that skipped intermediate revisions, a transient
+    // out-of-order delivery), the server's subscribe response is
+    // the catch-up chain we need and we keep our state.
+    if (!session.resyncAttempted) {
+      session.resyncAttempted = true
+      console.warn('Triage sync: requesting catch-up from last known baseRevision')
+      trySendSubscribe(true)
+      return
+    }
+    // The re-subscribed chain also broke continuity — server has
+    // either lost our base or is genuinely broken. Fall back to a
+    // full state-push: reset baseRevision/baseState (state.* is
+    // left alone — applying the empty overlay on top of {} would
+    // clear unedited entries) and let the next save's stale-base
+    // catch-up rebuild the chain.
+    console.warn('Triage sync: catch-up also broke continuity; full state push')
+    session.baseRevision = null
+    session.baseState = {}
     session.pending = null
     session.pendingSave = false
+    session.resyncAttempted = false
     persistSession(session)
     redraw()
     trySendSave()
     return
   }
+  session.resyncAttempted = false
   // If a save was in flight when the chain arrived, the server is
   // implicitly rejecting it (it brought us forward without acking).
   // Clear pending so the next save recomputes the changeset against
@@ -798,6 +890,7 @@ function openSocket() {
       session.pendingSave = false
       session.subscribed = false
       session.subscribeAcked = false
+      session.resyncAttempted = false
       trySendSubscribe()
       trySendSave()
     }
@@ -832,6 +925,7 @@ function openSocket() {
       session.pending = null
       session.subscribed = false
       session.subscribeAcked = false
+      session.resyncAttempted = false
       session.pendingSave = !statesEqual(session.localState, session.baseState)
     }
     emitStatusIfChanged()
@@ -876,6 +970,12 @@ export function setHeartbeatTimings({ pingMs, pongMs } = {}) {
   if (pingIntervalId) startHeartbeat()
 }
 
+// Test-only knob: lower the keyframe interval so a test can trigger
+// the keyframe path with a handful of saves. Production stays at 100.
+export function setKeyframeInterval(n) {
+  if (typeof n === 'number' && n >= 1) keyframeInterval = n
+}
+
 export const triageSync = {
   setServerUrl(url) {
     const next = (url ?? '').trim()
@@ -897,9 +997,11 @@ export const triageSync = {
       session.pendingSave = false
       session.subscribed = false
       session.subscribeAcked = false
+      session.resyncAttempted = false
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
       session.baseState = restored?.baseState ?? {}
+      session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = buildLocalState(session.ids)
     }
     if (isActive()) openSocket()
@@ -925,6 +1027,7 @@ export const triageSync = {
         session.pendingSave = false
         session.subscribed = false
         session.subscribeAcked = false
+        session.resyncAttempted = false
       }
     }
     emitStatusIfChanged()
@@ -950,6 +1053,7 @@ export const triageSync = {
         session.pendingSave = false
         session.subscribed = false
         session.subscribeAcked = false
+        session.resyncAttempted = false
       }
     }
     emitStatusIfChanged()
@@ -1019,11 +1123,12 @@ export const triageSync = {
       signingKey: null,
       verifyingKey: null,
       ids,
-      // baseRevision / baseState come from per-server persistence
-      // when present; otherwise null / empty and the first save
-      // sends the full local snapshot.
+      // baseRevision / baseState / savesSinceKeyframe come from
+      // per-server persistence when present; otherwise null / empty
+      // / 0 and the first save sends the full local snapshot.
       baseRevision: restored?.baseRevision ?? null,
       baseState: restored?.baseState ?? {},
+      savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
       localState: buildLocalState(ids),
       pending: null,
       pendingSave: false,
@@ -1041,6 +1146,12 @@ export const triageSync = {
       // can't tell registered-as-peer from sent-into-the-void.
       // Drives the `connecting` → `online` status transition.
       subscribeAcked: false,
+      // True after the chain's continuity check failed once and
+      // we've already issued a re-subscribe to fill the gap. The
+      // next continuity break in the same session falls through to
+      // the full state-push reset; otherwise a server that keeps
+      // sending broken chains would loop us forever.
+      resyncAttempted: false,
     }
     session = newSession
     // Derive content-encryption key + Ed25519 signing keypair in
@@ -1085,11 +1196,12 @@ export const triageSync = {
       workspaceId: session.workspaceId,
       workspaceTag: session.workspaceTag,
       baseRevision: session.baseRevision,
-      pending: session.pending && { base: session.pending.base },
+      pending: session.pending && { base: session.pending.base, keyframe: session.pending.keyframe },
       pendingSave: session.pendingSave,
       keyReady: session.key !== null,
       encrypting: session.encrypting,
       tracked: session.ids.size,
+      savesSinceKeyframe: session.savesSinceKeyframe ?? 0,
     }
   },
 }

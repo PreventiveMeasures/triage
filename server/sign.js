@@ -21,11 +21,16 @@ function fromB64Url(str) {
   return Buffer.from(str, 'base64url')
 }
 
-function canonicalSave({ workspaceTag, base, nonce, ciphertext }) {
+// Mirrors client/sync-crypto.js's `canonicalSavePayload`. `keyframe`
+// is `'1'` for a keyframe revision, `''` otherwise. Bound into the
+// signature so the wire-level flag (which the server uses for
+// routing) MUST match the signed flag — otherwise verify fails.
+function canonicalSave({ workspaceTag, base, keyframe, nonce, ciphertext }) {
   return encodeUtf8([
     SAVE_DOMAIN,
     workspaceTag,
     base == null ? '' : String(base),
+    keyframe ? '1' : '',
     nonce,
     ciphertext,
   ].join('\n'))

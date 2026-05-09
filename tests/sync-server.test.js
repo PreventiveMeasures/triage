@@ -35,9 +35,9 @@ async function makeKp() {
   return { sk: kp.privateKey, tag: b64url(Buffer.from(jwk.x, 'base64url')) }
 }
 
-async function signSave(sk, { tag, base, nonce, ciphertext }) {
+async function signSave(sk, { tag, base, keyframe, nonce, ciphertext }) {
   const payload = encodeUtf8([
-    SAVE_DOMAIN, tag, base == null ? '' : String(base), nonce, ciphertext,
+    SAVE_DOMAIN, tag, base == null ? '' : String(base), keyframe ? '1' : '', nonce, ciphertext,
   ].join('\n'))
   const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, sk, payload))
   const id = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
@@ -52,14 +52,13 @@ async function signSubscribe(sk, tag, from) {
   return b64url(sig)
 }
 
-async function buildSave(sk, tag, base, plaintext) {
+async function buildSave(sk, tag, base, plaintext, { keyframe = false } = {}) {
   const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
   const ciphertext = b64url(new TextEncoder().encode(plaintext))
-  const { signature, id } = await signSave(sk, { tag, base, nonce, ciphertext })
-  return {
-    msg: { type: 'workspace-save', workspaceTag: tag, base, nonce, ciphertext, signature },
-    id,
-  }
+  const { signature, id } = await signSave(sk, { tag, base, keyframe, nonce, ciphertext })
+  const msg = { type: 'workspace-save', workspaceTag: tag, base, nonce, ciphertext, signature }
+  if (keyframe) msg.keyframe = true
+  return { msg, id }
 }
 
 // One persistent WS message listener per connection + a queue.
@@ -336,5 +335,70 @@ describe('triage-sync server', () => {
     const pong = await c.recv((m) => m.type === 'pong')
     assert.equal(pong.type, 'pong')
     c.ws.close()
+  })
+
+  it('keyframe save round-trips with the keyframe flag preserved on broadcast', async () => {
+    const { sk, tag } = await makeKp()
+    const c1 = await connect(serverUrl)
+    const c2 = await connect(serverUrl)
+    await subscribe(c1, sk, tag)
+    await subscribe(c2, sk, tag)
+    const save = await buildSave(sk, tag, null, 'kf-payload', { keyframe: true })
+    c1.ws.send(JSON.stringify(save.msg))
+    const [ack, state] = await Promise.all([
+      c1.recv((m) => m.type === 'workspace-save-ack'),
+      c2.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0),
+    ])
+    assert.equal(ack.id, save.id)
+    assert.equal(state.revisions.length, 1)
+    assert.equal(state.revisions[0].id, save.id)
+    // Wire flag is truthy (server stores 1, sends 1 — peers treat
+    // it as a boolean via `Boolean(rev.keyframe)`).
+    assert.ok(state.revisions[0].keyframe, 'broadcast carries keyframe flag')
+    c1.ws.close(); c2.ws.close()
+  })
+
+  it('drops a save where the wire keyframe flag does not match the signed flag', async () => {
+    // Sign as a non-keyframe save, then add `keyframe: true` to
+    // the wire message. The server canonicalises with the wire
+    // value (true) but sig was computed for false → verify fails,
+    // silent drop. This is the security-relevant invariant: the
+    // server can't promote a normal save to a keyframe (or vice
+    // versa) without invalidating the signature.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const save = await buildSave(sk, tag, null, 'oops', { keyframe: false })
+    save.msg.keyframe = true
+    c.ws.send(JSON.stringify(save.msg))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
+  it('subscribe with from=null returns chain from the most recent keyframe', async () => {
+    const { sk, tag } = await makeKp()
+    const writer = await connect(serverUrl)
+    await subscribe(writer, sk, tag)
+    // Build a chain: rev_A (regular), kf (keyframe), rev_B (regular).
+    const a = await buildSave(sk, tag, null, 'A')
+    writer.ws.send(JSON.stringify(a.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+    const kf = await buildSave(sk, tag, a.id, 'kf', { keyframe: true })
+    writer.ws.send(JSON.stringify(kf.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+    const b = await buildSave(sk, tag, kf.id, 'B')
+    writer.ws.send(JSON.stringify(b.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+
+    // Fresh subscriber with from=null should receive the chain
+    // starting at the keyframe — rev_A is excluded.
+    const reader = await connect(serverUrl)
+    const { chain } = await subscribe(reader, sk, tag)
+    assert.equal(chain.revisions.length, 2, 'chain trimmed to keyframe + everything after')
+    assert.equal(chain.revisions[0].id, kf.id)
+    assert.ok(chain.revisions[0].keyframe, 'first entry is the keyframe')
+    assert.equal(chain.revisions[1].id, b.id)
+    assert.ok(!chain.revisions[1].keyframe, 'subsequent entry is a regular delta')
+    writer.ws.close(); reader.ws.close()
   })
 })

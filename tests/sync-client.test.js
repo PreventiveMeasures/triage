@@ -43,7 +43,7 @@ if (typeof globalThis.localStorage === 'undefined') {
 
 // ─────────── client modules ───────────
 
-const { triageSync, setHeartbeatTimings } = await import('../client/triage-sync.js')
+const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.js')
 const { state } = await import('../client/state.js')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')
@@ -339,12 +339,14 @@ describe('triage-sync client', () => {
     await relay.close()
   })
 
-  it('continuity break in chain triggers resync without blanking state.*', async () => {
+  it('continuity break falls back to full state push when re-subscribe also breaks', async () => {
     // The user has unsaved edits in state.* when a chain arrives
-    // whose `base` doesn't match our baseRevision. The protocol
-    // resets baseState/baseRevision and lets the next save push
-    // state.* as a wholesale snapshot — but state.* itself MUST
-    // survive (otherwise the user loses every triage they made).
+    // whose `base` doesn't match our baseRevision. The client first
+    // tries an incremental recovery — re-subscribe with `from =
+    // current baseRevision` — but our fake relay returns the same
+    // broken chain on every subscribe, so the second break is what
+    // trips the full state-push reset. state.* itself MUST survive
+    // both rounds (otherwise the user loses every triage they made).
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
     upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
@@ -379,12 +381,87 @@ describe('triage-sync client', () => {
     triageSync.openSession(wsId)
     triageSync.setServerUrl(relay.url)
     await waitFor(() => chainSent, 'fake relay sent the broken-continuity chain')
-    await new Promise((resolve) => { setTimeout(resolve, 200) })
-    // state.* preserved.
+    // The full reset path fires `trySendSave` after wiping
+    // baseRevision; the fake relay doesn't respond to saves, so
+    // `pending` stays set once that path runs. Use that as the
+    // signal that the second break tripped the full reset (rather
+    // than guessing a sleep duration).
+    await waitFor(
+      () => triageSync.sessionInfo?.pending != null,
+      'full state-push attempted after re-subscribe also broke',
+    )
+    // state.* preserved across both break attempts.
     assert.equal(state.markers.get('finding-A'), 'green', 'user edit survived resync')
-    // baseState was reset to {} by applyChainToBase's continuity
-    // failure path.
     assert.equal(triageSync.sessionInfo.baseRevision, null)
+    triageSync.closeSession()
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
+  })
+
+  it('continuity break recovers via re-subscribe when the next chain fills the gap', async () => {
+    // The first chain breaks continuity (gap in delivery — most
+    // realistic shape: a broadcast that skipped one revision).
+    // Client should re-subscribe from baseRevision; the re-issued
+    // chain is well-formed, so the client applies it cleanly and
+    // never falls through to the full state-push reset.
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    clearTriageState()
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let subscribeCount = 0
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', async (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        subscribeCount++
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        if (subscribeCount === 1) {
+          // Broken chain on the initial subscribe — base claims a
+          // revision we never saw.
+          sock.send(JSON.stringify({
+            type: 'workspace-state',
+            workspaceTag: msg.workspaceTag,
+            revisions: [{
+              base: 'NONEXISTENT_BASE',
+              id: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+              nonce: 'AAAAAAAAAAAAAAAAAAAAAAA',
+              ciphertext: 'AAAA',
+              signature: Buffer.alloc(64).toString('base64url'),
+            }],
+          }))
+        } else {
+          // Re-subscribe: send the valid chain the client SHOULD
+          // have received the first time.
+          const aad = cryptoMod.buildAad(workspaceTag, null)
+          const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-A': { color: 'red' } }, aad)
+          const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+          const id = await cryptoMod.computeRevisionId(payload)
+          const signature = await cryptoMod.signSavePayload(signingKey, payload)
+          sock.send(JSON.stringify({
+            type: 'workspace-state',
+            workspaceTag: msg.workspaceTag,
+            revisions: [{ base: null, id, nonce, ciphertext, signature }],
+          }))
+        }
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    // Wait for the valid chain to land. baseRevision becomes the
+    // computed id of the second chain's revision (NOT null — that
+    // would mean the full reset path ran).
+    await waitFor(
+      () => state.markers.get('finding-A') === 'red',
+      'incremental recovery applied the valid chain',
+    )
+    assert.equal(subscribeCount, 2, 'client re-subscribed exactly once')
+    assert.notEqual(triageSync.sessionInfo.baseRevision, null, 'baseRevision set to valid id, not nuked')
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
@@ -432,6 +509,81 @@ describe('triage-sync client', () => {
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
     await relay.close()
+  })
+
+  it('emits a keyframe after `keyframeInterval` non-keyframe revisions', async () => {
+    // Drop the threshold so we don't have to stage 100 saves.
+    // Production stays at 100 — verified by reading sessionInfo
+    // after the keyframe round-trip lands.
+    setKeyframeInterval(2)
+    const wsId = await startSession(['finding-A'])
+    // Three saves: the first two bump the counter (1, then 2);
+    // the third trips the threshold and goes out as a keyframe.
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(settledAfterAck, 'first ack')
+    state.markers.set('finding-A', 'green')
+    await saveTriage()
+    await waitFor(settledAfterAck, 'second ack')
+    state.markers.set('finding-A', 'blue')
+    await saveTriage()
+    // After the third ack, savesSinceKeyframe should be 0 — i.e.
+    // the third save was a keyframe, and the counter reset.
+    await waitFor(
+      () => settledAfterAck() && (triageSync.sessionInfo.savesSinceKeyframe ?? -1) === 0,
+      'third save emitted as a keyframe (counter reset to 0)',
+    )
+    assert.equal(state.markers.get('finding-A'), 'blue', 'final state visible after keyframe')
+    setKeyframeInterval(100)
+    triageSync.closeSession()
+    deleteWorkspace(wsId)
+  })
+
+  it('a fresh client subscribed with from=null catches up via the keyframe (no rev_A)', async () => {
+    // Two clients on the same workspace: writer A produces a
+    // chain [rev_A (regular), kf (keyframe)]. Reader B subscribes
+    // fresh — server's from=null path returns from the keyframe,
+    // so reader's baseState reflects the keyframe's full content
+    // even though rev_A was never delivered.
+    // Counter starts at 0; with interval=1 the second save trips
+    // the threshold and is emitted as a keyframe.
+    setKeyframeInterval(1)
+    const wsId = await startSession(['finding-A', 'finding-B'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(settledAfterAck, 'rev_A ack')
+    // Counter should now be 1 — next save will be promoted to a
+    // keyframe (interval = 1). Bake finding-B into state to make
+    // the keyframe content distinguishable from rev_A's content.
+    state.markers.set('finding-B', 'green')
+    await saveTriage()
+    await waitFor(
+      () => (triageSync.sessionInfo.savesSinceKeyframe ?? -1) === 0,
+      'keyframe ack',
+    )
+
+    // Fresh reader on a new workspace context — close the writer's
+    // session, blow away local state.*, swap the persisted-session
+    // entry to look fresh, re-open. This simulates a brand-new
+    // device subscribing for the first time.
+    triageSync.closeSession()
+    clearTriageState()
+    // Wipe persisted session so re-open starts at baseRevision=null.
+    const all = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    delete all[wsId]
+    localStorage.setItem('deepview.sync.sessions.v2', JSON.stringify(all))
+    triageSync.openSession(wsId)
+    await waitFor(statusOnline, 'reader online')
+    // Server returns the chain starting at the keyframe; client
+    // applies, replacing the (empty) baseState with the keyframe's
+    // full content. state.* now reflects {A: red, B: green}.
+    await waitFor(
+      () => state.markers.get('finding-A') === 'red' && state.markers.get('finding-B') === 'green',
+      'reader caught up via keyframe',
+    )
+    setKeyframeInterval(100)
+    triageSync.closeSession()
+    deleteWorkspace(wsId)
   })
 })
 

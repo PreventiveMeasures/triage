@@ -152,11 +152,18 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
 // can't appear in base64url or in the bare integer/empty
 // `base` field, so this is unambiguous without explicit
 // length-prefix framing.
-function canonicalSavePayload({ publicKeyB64, base, nonceB64, ciphertextB64 }) {
+//
+// The `keyframe` field is `'1'` for a keyframe revision, `''`
+// otherwise. Including it in the SIGNED bytes means a malicious
+// server can't relabel a normal save as a keyframe (or vice
+// versa): the wire-level flag the server uses for routing /
+// storage MUST match the signed flag, or the signature fails.
+function canonicalSavePayload({ publicKeyB64, base, keyframe, nonceB64, ciphertextB64 }) {
   return encodeUtf8([
     SIGN_DOMAIN,
     publicKeyB64,
     base == null ? '' : String(base),
+    keyframe ? '1' : '',
     nonceB64,
     ciphertextB64,
   ].join('\n'))

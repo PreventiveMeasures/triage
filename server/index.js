@@ -130,15 +130,23 @@ async function handleSave(socket, msg) {
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
     return
   }
+  // `keyframe` is part of the signed canonical bytes — verifySaveSig
+  // already rejected anything where the wire flag didn't match what
+  // the client signed, so a `true` here means the signer intended
+  // a keyframe. Stored as 0/1 in the column; carried through as 1
+  // (truthy) on the broadcast wire so peers don't need a flag-shape
+  // contract beyond truthy/falsy.
+  const keyframe = msg.keyframe === true
   insertRevision(handle, {
     tag,
     id,
     base: baseNorm,
+    keyframe,
     nonce: msg.nonce,
     ciphertext: msg.ciphertext,
     signature: msg.signature,
   })
-  if (DEBUG) console.log(`save → revision ${id.slice(0, 8)}… for ${tag.slice(0, 12)}…`)
+  if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${tag.slice(0, 12)}…`)
   send(socket, {
     type: 'workspace-save-ack',
     workspaceTag: tag,
@@ -151,6 +159,7 @@ async function handleSave(socket, msg) {
     revisions: [{
       base: baseNorm,
       id,
+      keyframe: keyframe ? 1 : 0,
       nonce: msg.nonce,
       ciphertext: msg.ciphertext,
       signature: msg.signature,
