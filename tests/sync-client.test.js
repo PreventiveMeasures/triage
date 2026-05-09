@@ -576,9 +576,9 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     clearTriageState()
     // Wipe persisted session so re-open starts at baseRevision=null.
-    const all = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
     delete all[wsId]
-    localStorage.setItem('deepview.sync.sessions.v2', JSON.stringify(all))
+    localStorage.setItem('deepview.sync.sessions', JSON.stringify(all))
     triageSync.openSession(wsId)
     await waitFor(statusOnline, 'reader online')
     // Server returns the chain starting at the keyframe; client
@@ -1242,7 +1242,7 @@ describe('triage-sync client', () => {
 
     // Sanity: session is live and a persisted entry exists.
     assert.notEqual(triageSync.sessionInfo(wsId), null)
-    const persistedBefore = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    const persistedBefore = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
     assert.ok(persistedBefore[wsId], 'persisted session entry exists pre-delete')
 
     // Workspace deletion goes through the listener wired up in
@@ -1252,7 +1252,7 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsId)
 
     assert.equal(triageSync.sessionInfo(wsId), null, 'session removed in-memory')
-    const persistedAfter = JSON.parse(localStorage.getItem('deepview.sync.sessions.v2') ?? '{}')
+    const persistedAfter = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
     assert.equal(persistedAfter[wsId], undefined, 'persisted session entry dropped')
   })
 })

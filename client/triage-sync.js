@@ -107,15 +107,7 @@ const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 // invalidates whatever revision history the previous one assigned.
 // Stored as one JSON blob (single localStorage key) for simplicity;
 // per-workspace keys would scale better at the cost of enumeration.
-//
-// Bumped from `deepview.sync.sessions` when revision IDs switched
-// from server-assigned integers to client-derived content hashes —
-// old persisted entries' integer `baseRevision` is meaningless to
-// the new chain check, so a clean key drops them. The `init` block
-// at the bottom of this file removes the old key on load to free
-// the space.
-const SESSION_STATE_KEY = 'deepview.sync.sessions.v2'
-const SESSION_STATE_KEY_LEGACY = 'deepview.sync.sessions'
+const SESSION_STATE_KEY = 'deepview.sync.sessions'
 const SESSION_ID_RE = /^\d+$/u
 
 // UI redraw hook — installed once at app boot by ui/view.js so this
@@ -1503,7 +1495,3 @@ onWorkspaceDeleted((workspaceId) => {
   if (removed) emitStatusIfChanged()
 })
 
-// Discard the pre-content-addressed-id session blob. Its integer
-// baseRevisions don't match the new string-id chain check, so we
-// drop the legacy key instead of letting orphaned bytes sit.
-try { localStorage.removeItem(SESSION_STATE_KEY_LEGACY) } catch {}
