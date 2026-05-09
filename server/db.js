@@ -57,13 +57,16 @@ export function openDb(path) {
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
   // Idempotent migration for DBs created before the keyframe column
-  // existed. ALTER TABLE on a STRICT table works since SQLite 3.37;
-  // duplicate-column-name throws when the column is already there
-  // (i.e. on the freshly-CREATE'd path above), which we swallow.
-  try {
+  // existed. Inspect the column list rather than catching every
+  // ALTER error — the previous shape swallowed `try { ALTER } catch
+  // {}` for ANY failure (lock contention, disk full, corrupt page),
+  // masking real problems as "column already exists". Now we only
+  // ALTER when the column is genuinely missing, and any failure of
+  // the ALTER itself bubbles up as an open-time crash where the
+  // operator can act on it.
+  const columns = db.prepare(`PRAGMA table_info(workspace_revision)`).all()
+  if (!columns.some((c) => c.name === 'keyframe')) {
     db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
-  } catch {
-    // Column already present — fresh DB or already-migrated.
   }
   return {
     db,

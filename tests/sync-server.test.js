@@ -311,6 +311,52 @@ describe('triage-sync server', () => {
     c.ws.close()
   })
 
+  it('drops a save with a non-string non-null base silently', async () => {
+    // `base` is `string | null` per the wire contract. The server's
+    // signed-canonical path coerces with `String(base)` while the
+    // storage path uses the raw value — a non-string non-null base
+    // from a legit signer (here we forge the canonical ourselves to
+    // make the sig pass) would canonicalise to one shape but fail
+    // the SQLite STRICT TEXT insert. The wire-level type check now
+    // rejects up front so the symptom is silent-drop, not a swallowed
+    // handler exception.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
+    const ciphertext = b64url(new TextEncoder().encode('payload'))
+    // Sign a canonical that uses `String({})` → '[object Object]'
+    // so a buggy peer couldn't have its signed canonical accepted by
+    // verify (no use here — we want to confirm even a valid sig is
+    // dropped at the wire gate before verify runs).
+    const canon = encodeUtf8([
+      SAVE_DOMAIN, tag, '[object Object]', '', nonce, ciphertext,
+    ].join('\n'))
+    const sig = b64url(new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, sk, canon)))
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: tag, base: {}, nonce, ciphertext, signature: sig,
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
+  it('drops a subscribe with a non-string non-null from silently', async () => {
+    // Same `string | null` contract as `base`. The signed canonical
+    // uses `String(from)` but the chain-lookup path treats every
+    // non-string as null, so a legit signer sending `from: { … }`
+    // would silently take the keyframe-fallback path. The wire-level
+    // type check now rejects up front.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    const canon = encodeUtf8([SUBSCRIBE_DOMAIN, tag, '[object Object]'].join('\n'))
+    const sig = b64url(new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, sk, canon)))
+    c.ws.send(JSON.stringify({
+      type: 'workspace-subscribe', workspaceTag: tag, from: {}, signature: sig,
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
   it('persists revisions across reconnects (same DB, same tag, fresh socket)', async () => {
     const { sk, tag } = await makeKp()
     const writer = await connect(serverUrl)

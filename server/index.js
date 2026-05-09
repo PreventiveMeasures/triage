@@ -33,6 +33,14 @@ import { computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscr
 
 const PORT = Number(env.PORT ?? 8765)
 const HOST = env.HOST ?? '127.0.0.1'
+// Fail fast on a malformed PORT — `Number("abc")` is NaN, and
+// `WebSocketServer({ port: NaN })` throws deep inside `node:net`
+// with a confusing trace. A clear up-front error lets the operator
+// fix the env var without trawling the stack.
+if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
+  console.error(`Invalid PORT: ${env.PORT}`)
+  process.exit(1)
+}
 // `fileURLToPath` decodes percent-escapes and handles non-ASCII path
 // segments correctly (the older `new URL(...).pathname` form left
 // `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
@@ -125,6 +133,15 @@ async function handleSave(socket, msg) {
   if (typeof msg.workspaceTag !== 'string') return
   if (typeof msg.nonce !== 'string') return
   if (typeof msg.ciphertext !== 'string') return
+  // `base` is `string | null` per the wire contract. The signed
+  // canonical path coerces with `String(base)` while the storage /
+  // head-comparison paths use the raw value — a non-string non-null
+  // value from a legit signer would canonicalise to one shape (e.g.
+  // `'[object Object]'`) but fail the SQLite STRICT TEXT insert,
+  // throwing inside `insertRevision` after the signature check
+  // succeeded. Reject at the wire gate so the symptom is "save
+  // dropped silently" rather than a swallowed handler exception.
+  if (msg.base != null && typeof msg.base !== 'string') return
   // Verify the signature AND capture the canonical bytes in one
   // pass — the revision id (below) hashes the EXACT bytes the
   // signature covered, so the stored id is provably tied to the
@@ -206,6 +223,14 @@ async function handleSave(socket, msg) {
 
 async function handleSubscribe(socket, msg) {
   if (typeof msg.workspaceTag !== 'string') return
+  // Same `string | null` contract as `base` in handleSave. The
+  // signed canonical uses `String(from)`, but the chain-lookup path
+  // (`typeof msg.from === 'string' ? msg.from : null`) treats every
+  // non-string as null — so a legit signer sending `from: { … }`
+  // would silently take the keyframe-fallback path even though the
+  // signature was over a different canonical shape. Reject at the
+  // wire gate.
+  if (msg.from != null && typeof msg.from !== 'string') return
   const ok = await verifySubscribeSig(msg)
   if (!ok) {
     if (DEBUG) console.warn('reject subscribe: bad signature', msg.workspaceTag.slice(0, 12) + '…')
@@ -245,9 +270,21 @@ function track(promise) {
   promise.finally(() => inFlight.delete(promise))
 }
 
+// Hoisted above the connection handler so the message-loop's
+// `if (shuttingDown) return` reads from a defined binding even if
+// the closure runs in the same tick the variable is declared.
+let shuttingDown = false
+
 wss.on('connection', (socket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
   socket.on('message', (data) => {
+    // Drop new work once shutdown started — `wss.close()` stops new
+    // CONNECTIONS but already-open sockets can still send messages.
+    // Without this gate a message arriving between `wss.close()`
+    // resolving and the `inFlight` snapshot would spawn a handler
+    // that's NOT in the snapshot, then resume against the just-
+    // closed DB and throw inside `insertRevision`. Audit round-9.
+    if (shuttingDown) return
     let msg
     try { msg = JSON.parse(data.toString()) } catch { return }
     if (!msg || typeof msg !== 'object') return
@@ -280,7 +317,18 @@ wss.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${PORT} (db: ${DB_PATH})`)
 })
 
-let shuttingDown = false
+// Surface server-level errors (EADDRINUSE on bind, EACCES, the rare
+// post-listen socket fault). Without this handler `ws` re-emits the
+// underlying error as an uncaughtException, which the launcher sees
+// as a confusing crash rather than "this port was taken." Exit
+// cleanly on bind failure so systemd / docker can apply its retry
+// policy; for post-listen errors there's no clean way to recover, so
+// crash too.
+wss.on('error', (err) => {
+  console.error('Server error:', err?.message ?? err)
+  process.exit(1)
+})
+
 async function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
