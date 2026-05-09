@@ -1,6 +1,6 @@
 import { state } from './state.js'
 import { triageSync } from './triage-sync.js'
-import { encodeUtf8 } from '../common/utf8.js'
+import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 
 // Markers + deletions + comments + fix-links survive page reload
 // via `localStorage['deepview.triage']`. Payload shape:
@@ -121,7 +121,7 @@ async function readTriageBlob() {
   if (!raw) return null
   const compressed = Uint8Array.fromBase64(raw)
   const decompressed = await decompressBrotli(compressed)
-  return JSON.parse(new TextDecoder().decode(decompressed))
+  return JSON.parse(decodeUtf8(decompressed))
 }
 
 // Apply `entries` (a `{ id: { color, triage, comment, fix } }` map)

@@ -1,6 +1,6 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { encodeUtf8 } from '../common/utf8.js'
+import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
 // changesets travel encrypted through the relay server. The server
@@ -354,7 +354,7 @@ async function unframeAndUngzip(plaintext) {
   if (len + 4 > plaintext.length) throw new Error('length prefix exceeds buffer')
   const compressed = plaintext.subarray(4, 4 + len)
   const json = await gunzip(compressed)
-  return JSON.parse(new TextDecoder().decode(json))
+  return JSON.parse(decodeUtf8(json))
 }
 
 // JSON-friendly conveniences — gzip + pad + encrypt a JSON-able

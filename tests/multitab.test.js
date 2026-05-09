@@ -21,6 +21,7 @@
 
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
+import { decodeUtf8 } from '../common/utf8.js'
 
 function createLocalStorage() {
   const store = new Map()
@@ -200,7 +201,7 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     const compressed = Uint8Array.fromBase64(raw)
     const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate'))
     const decompressed = new Uint8Array(await new Response(stream).arrayBuffer())
-    const entries = JSON.parse(new TextDecoder().decode(decompressed))
+    const entries = JSON.parse(decodeUtf8(decompressed))
     // Splice in unknown fields.
     entries[FINDING_A].suppressedReports = ['x.json']
     entries[FINDING_A].futureFlag = true

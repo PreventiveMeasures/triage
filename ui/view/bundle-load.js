@@ -10,6 +10,7 @@
 import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
 import { readBundle } from '../../client/storage.js'
 import { state } from '../../client/state.js'
+import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { computeBundleFileHashes, render } from './render.js'
 
@@ -32,8 +33,8 @@ async function buildBundleDetails(integrity, entry) {
       // through to the SW echo trick when it's not (see
       // view/brotli-decompress.js).
       const decoded = isMap
-        ? new TextDecoder().decode(bytes)
-        : new TextDecoder().decode(await brotliDecompress(bytes))
+        ? decodeUtf8(bytes)
+        : decodeUtf8(await brotliDecompress(bytes))
       const json = JSON.parse(decoded)
       return { integrity, kind, size: bytes.byteLength, json }
     } catch (err) {

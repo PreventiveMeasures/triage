@@ -1,4 +1,4 @@
-import { encodeUtf8 } from '../common/utf8.js'
+import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 
 // Persistent file storage backs the sidebar. OPFS — Origin Private
 // File System — is the preferred layer (real files, larger quota); on
@@ -41,7 +41,7 @@ async function gunzipString(b64) {
   const bytes = Uint8Array.fromBase64(b64)
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
   const arr = new Uint8Array(await new Response(stream).arrayBuffer())
-  return new TextDecoder().decode(arr)
+  return decodeUtf8(arr)
 }
 
 // Binary gzip — bytes in, bytes out. Used by the bundles layer so
@@ -143,9 +143,9 @@ export async function readFile(name) {
       // the saveFile call so subsequent loads hit the fast path.
       if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
         const out = await gunzipBytes(bytes)
-        return new TextDecoder().decode(out)
+        return decodeUtf8(out)
       }
-      const text = new TextDecoder().decode(bytes)
+      const text = decodeUtf8(bytes)
       // Migrate the legacy uncompressed entry by writing it back
       // through saveFile (which gzips). Fire-and-forget — the read
       // result is already decided, and a write failure is harmless
