@@ -347,7 +347,7 @@ export function ingestReport(name, content) {
       } catch (jsonErr) {
         data = parseDeepsecFindings(content)
           ?? parseMarkdownFindings(content)
-        if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`)
+        if (!data) throw new Error(`Not JSON, and not a recognized markdown format. (JSON error: ${jsonErr.message})`, { cause: jsonErr })
       }
       // Reset filters whenever this is the first report in the current
       // view (cleared on switchToFile / deleteCurrent, accumulating in
@@ -409,20 +409,23 @@ export function ingestReport(name, content) {
         // dump's top-level meta would mask those gaps with the dedup
         // model's settings (e.g. printing effort=max on a finding whose
         // source run had no effort flag).
-        const stamped = members.map((f) => {
+        // Plain for-loop rather than .map((f) => …) — the callback
+        // form closes over the outer loop's `data` / `name` /
+        // `repoFallback`, which oxlint's no-loop-func can't reason
+        // about. The function is invoked synchronously inside this
+        // iteration, so the closure capture is actually safe; the
+        // for-loop sidesteps the lint without changing semantics.
+        //
+        // Inherit run-level meta from the report header onto
+        // findings that don't carry their own — but ONLY for native
+        // analyzer JSON dumps (no `data.source` marker). For
+        // codex / claude-security imports, the report-level type
+        // is a category label for the file as a whole, not a
+        // per-finding analyzer descriptor.
+        const stamped = []
+        for (const f of members) {
           if (f.id) seenIds.add(f.id)
           const filled = { ...f, _id: state.nextFindingId++, _repoFallback: repoFallback, _reportName: name }
-          // Inherit run-level meta from the report header onto
-          // findings that don't carry their own — but ONLY for native
-          // analyzer JSON dumps (no `data.source` marker). For
-          // codex / claude-security imports, the report-level type
-          // is a category label for the file as a whole, not a
-          // per-finding analyzer descriptor; copying it onto each
-          // finding produced misleading "security" run-meta rows on
-          // codex CSVs where the upstream carries no such field.
-          // Source-marked formats opt in to per-finding meta when
-          // they want to (parse-md.js sets f.type from **Category:**
-          // explicitly), and skip it otherwise.
           if (!data.source) {
             const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
             if (!hasOwnMeta) {
@@ -431,8 +434,8 @@ export function ingestReport(name, content) {
               }
             }
           }
-          return filled
-        })
+          stamped.push(filled)
+        }
         groups.push(stamped)
       }
       if (dupeCount > 0) console.log(`${name}: skipped ${dupeCount} duplicate finding${dupeCount === 1 ? '' : 's'}`)

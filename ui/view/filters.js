@@ -72,7 +72,7 @@ export function applySorting(groups) {
       const pa = primaryTab(a), pb = primaryTab(b)
       return (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
         || pa.file.localeCompare(pb.file)
-        || parseInt(pa.line) - parseInt(pb.line)
+        || parseInt(pa.line, 10) - parseInt(pb.line, 10)
     })
   } else if (state.sortBy === 'confidence-desc') {
     sorted.sort((a, b) => {

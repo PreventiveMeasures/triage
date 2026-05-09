@@ -371,13 +371,13 @@ export async function importWorkspaceFromGzip(file) {
   try {
     text = await gunzipText(file)
   } catch (err) {
-    throw new Error(`gzip decompression failed: ${err.message}`)
+    throw new Error(`gzip decompression failed: ${err.message}`, { cause: err })
   }
   let data
   try {
     data = JSON.parse(text)
   } catch (err) {
-    throw new Error(`payload is not JSON: ${err.message}`)
+    throw new Error(`payload is not JSON: ${err.message}`, { cause: err })
   }
   if (!isWorkspaceExport(data)) {
     throw new Error('not a deepview workspace export')

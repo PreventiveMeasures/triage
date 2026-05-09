@@ -112,9 +112,9 @@ export async function exportWorkspace(workspace) {
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
     ignoredByid.get(id).push(reportName)
   }
-  for (const [id, reports] of ignoredByid) {
-    if (reports.length === 0) continue
-    triage[id] = { ...(triage[id] ?? {}), ignoredReports: reports }
+  for (const [id, ignoredIn] of ignoredByid) {
+    if (ignoredIn.length === 0) continue
+    triage[id] = { ...(triage[id] ?? {}), ignoredReports: ignoredIn }
   }
   for (const [id, comment] of state.comments) {
     if (!claimedIds.has(id)) continue

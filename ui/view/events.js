@@ -783,7 +783,6 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('[data-tree-deselect]')) {
     state.filesSelectedFile = null
     render()
-    return
   }
   // Table-view row click is no longer a delegate here; <finding-table>
   // owns row selection and dispatches a `row-select` CustomEvent

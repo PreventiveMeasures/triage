@@ -4,7 +4,7 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
 import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
-import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey, groupState } from './group.js'
+import { tabKey, primaryTab, activeTabFor, groupKey, groupState } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
@@ -898,7 +898,7 @@ function findingsBodyTemplate(filtered) {
     const items = state.sortBy === 'file'
       ? [...filtered].sort((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
-        return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
+        return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
       })
       : filtered
     if (items.length === 0) return nothing
@@ -945,7 +945,7 @@ function findingsBodyTemplate(filtered) {
     const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
     return html`${fileKeys.map((file) => {
       const items = state.sortBy === 'file'
-        ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line) - parseInt(primaryTab(b).line))
+        ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line, 10) - parseInt(primaryTab(b).line, 10))
         : byFile.get(file)
       // All findings under one file share the same `repo.github` (it's
       // a property of the source file's package), so probe the first
@@ -971,7 +971,7 @@ function findingsBodyTemplate(filtered) {
   const items = state.sortBy === 'file'
     ? [...filtered].sort((a, b) => {
       const pa = primaryTab(a), pb = primaryTab(b)
-      return pa.file.localeCompare(pb.file) || parseInt(pa.line) - parseInt(pb.line)
+      return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
     })
     : filtered
   // Each group's location header carries the FULL line row (file +
@@ -1297,8 +1297,8 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
   // available") and re-render so the unsafeHTML branch picks it up.
   if (lang && !_bundleHighlightCache.has(cacheKey) && !_bundleHighlightPending.has(cacheKey)) {
     _bundleHighlightPending.add(cacheKey)
-    prismHighlight(content, lang).then((html) => {
-      _bundleHighlightCache.set(cacheKey, html ?? null)
+    prismHighlight(content, lang).then((highlightedHtml) => {
+      _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — the rest of the bundles view rebuilds
       // from the same render() call but Lit only patches what
@@ -2270,8 +2270,10 @@ export function render() {
   // (different findings carry different `repo.github`) so we don't
   // mislead by showing one of several.
   const perFindingRepos = new Set()
-  for (const g of mergedGroups) for (const f of g) {
-    if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
+  for (const g of mergedGroups) {
+    for (const f of g) {
+      if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
+    }
   }
   const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
   // If a previously-loaded report had node_modules and the user
@@ -2314,11 +2316,12 @@ export function render() {
   // table layout so a stale selection can't render an empty body.
   if (!treeAvailable && state.viewMode === 'graph') state.viewMode = 'table'
 
-  // `headerTemplate` returns a Lit template — drop a slot in the
-  // string-built HTML, then `litRender` into it after the
-  // `report.innerHTML = html` flush at the bottom of this function.
+  // `headerTemplate` returns a Lit template — slot reuse below
+  // ensures the part-cache survives across renders so Lit can
+  // diff in place rather than rebuilding the chrome on every
+  // render() (see the slot-reuse PRs in the bundles / files /
+  // findings paths).
   const headerTpl = headerTemplate(mergedGroups.length, fileNames, repoInputUseful, knownRepo, treeFileCount)
-  let htmlBuf = '<div id="header-slot"></div>'
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups)

@@ -54,9 +54,9 @@ export async function saveTriage() {
       if (!ignoredByid.has(id)) ignoredByid.set(id, [])
       ignoredByid.get(id).push(reportName)
     }
-    for (const [id, reports] of ignoredByid) {
-      if (reports.length === 0) continue
-      entries[id] = { ...(entries[id] || {}), ignoredReports: reports }
+    for (const [id, ignoredIn] of ignoredByid) {
+      if (ignoredIn.length === 0) continue
+      entries[id] = { ...(entries[id] || {}), ignoredReports: ignoredIn }
     }
     for (const [k, comment] of state.comments) {
       if (SESSION_ID_RE.test(k)) continue

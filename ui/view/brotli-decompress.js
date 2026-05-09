@@ -54,7 +54,7 @@ async function unregisterSW() {
   } catch {}
 }
 
-async function loadFallback() {
+function loadFallback() {
   if (fallbackPromise) return fallbackPromise
   fallbackPromise = (async () => {
     // The path is held in a variable so esbuild can't statically

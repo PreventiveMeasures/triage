@@ -328,11 +328,14 @@ export function layoutSpiral(graph, w, h) {
       entryGroupRUnit + othersCap + padding,
     )
     pkgInfo.set(entryPkg, { x: cx, y: cy, size: entrySize, groupR: entryGroupRUnit * unitToPx })
+  } else if (Nothers <= 1) {
+    minRUnit = 0
+  } else if (Nothers <= 6) {
+    minRUnit = 0.40
+  } else if (Nothers <= 20) {
+    minRUnit = 0.32
   } else {
-    if (Nothers <= 1) minRUnit = 0
-    else if (Nothers <= 6) minRUnit = 0.40
-    else if (Nothers <= 20) minRUnit = 0.32
-    else minRUnit = 0.30
+    minRUnit = 0.30
   }
   if (Nothers === 0) {
     placeFilesInDisk(graph, pkgInfo)

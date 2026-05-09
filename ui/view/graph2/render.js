@@ -590,10 +590,12 @@ function renderDistribution(graph, activeTab) {
     let count
     if (useFilter) {
       count = 0
-      if (n.findings) for (const f of n.findings) {
-        if (useSev && !sevFilter.has(f.severity)) continue
-        if (useColor && !colorFilter.has(f.color)) continue
-        count++
+      if (n.findings) {
+        for (const f of n.findings) {
+          if (useSev && !sevFilter.has(f.severity)) continue
+          if (useColor && !colorFilter.has(f.color)) continue
+          count++
+        }
       }
     } else {
       count = n.totalIssues
