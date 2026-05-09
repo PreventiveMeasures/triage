@@ -314,6 +314,18 @@ report.addEventListener('click', (e) => {
     }
     return
   }
+  // [×] clear button next to the bundle code search input.
+  // Drops the query and rerenders the rail; the input's `live`
+  // value binding picks up the empty string and the panel falls
+  // back to the unfiltered tree (Files mode) or the search-hint
+  // placeholder (Code / Issues modes).
+  if (e.target.closest('[data-bundle-search-clear]')) {
+    if (state.bundleCodeSearchQuery !== '') {
+      state.bundleCodeSearchQuery = ''
+      render()
+    }
+    return
+  }
   // Bundle source viewer — open / close. Close fires when the click
   // lands directly on the backdrop (NOT a descendant — clicks inside
   // the modal body shouldn't dismiss) or on any element carrying

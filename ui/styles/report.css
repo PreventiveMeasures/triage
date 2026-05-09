@@ -350,6 +350,9 @@
   color: var(--text);
   border-color: var(--accent, #2563eb);
 }
+.bundle-code-search-input-wrap {
+  position: relative;
+}
 .bundle-code-search-input {
   width: 100%;
   background: var(--bg);
@@ -358,10 +361,29 @@
   color: var(--text);
   font: inherit;
   font-size: .78rem;
-  padding: .25rem .4rem;
+  /* Right padding leaves room for the absolutely-positioned
+     `.bundle-code-search-clear` button when a query is set;
+     when no query is set the button isn't rendered, but the
+     padding stays so the input width doesn't jump on first
+     keystroke. */
+  padding: .25rem 1.4rem .25rem .4rem;
   box-sizing: border-box;
 }
 .bundle-code-search-input:focus { outline: none; border-color: var(--accent, #2563eb); }
+.bundle-code-search-clear {
+  position: absolute;
+  top: 50%; right: .25rem;
+  transform: translateY(-50%);
+  width: 1rem; height: 1rem;
+  display: grid; place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0; border-radius: 2px;
+  color: var(--muted);
+  font: inherit; font-size: .9rem; line-height: 1;
+  cursor: pointer;
+}
+.bundle-code-search-clear:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
 
 .bundle-code-search-empty,
 .bundle-code-search-hint {

@@ -810,6 +810,25 @@ function buildBundleSourceTree(paths) {
   return root
 }
 
+// User-driven open/close overrides for the Code slide's tree
+// rail, keyed by full dir path. The default `?open=` formula
+// (root + ancestors of currentPath = open, rest = closed) is
+// what we'd write in a fresh render; this Map records the
+// user's deliberate toggles on top of that, so a filter-typing
+// pass — which forces every dir open via `expandAll` — doesn't
+// erase the user's pre-filter state when the filter clears.
+//
+// Updated only on `<summary>` click, which the browser also
+// dispatches for keyboard activation (Enter / Space). Lit's own
+// `?open=` writes don't fire a click, so they never touch this
+// Map; the toggle event would, which is why we don't listen on
+// that side.
+//
+// Cleared when `state.selectedBundle` changes — paths from one
+// bundle don't carry meaning into another.
+const _bundleTreeUserOpen = new Map()
+let _bundleTreeMapBundle = null
+
 // Recursive directory + file rendering for the Code slide's tree
 // rail. Open the first level by default; deeper levels collapse
 // so the user can drill in. Selected file gets a `current` class
@@ -827,24 +846,44 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
     return false
   }
   // `repeat` keyed by the dir / file path so Lit reuses existing
-  // `<details>` (and their open/closed state) when the user types
-  // in the search box and the filtered tree rebuilds. Without the
-  // key, Lit positionally diffs and a single keystroke that
-  // changes the filtered structure recreates every node from
-  // scratch — collapsing whatever the user had expanded. The
-  // `?open=` binding owns the auto-open behavior (root + ancestors
-  // of currentPath, plus every dir when `expandAll` is true — set
-  // by the file-search panel because every dir in the filtered
-  // tree exists precisely BECAUSE it contains a match, so the
-  // user expects to see them all). Lit's part-cache short-circuits
-  // when the computed value matches the last committed one, so
-  // user-driven open/close survives across renders too.
+  // `<details>` when the user types in the search box and the
+  // filtered tree rebuilds. The `?open=` formula layers three
+  // signals:
+  //   1. `expandAll` (filter-active) wins — the user typed a
+  //      filter and expects to see every match, even ones in
+  //      dirs they had previously closed.
+  //   2. The user's explicit toggles — captured below by the
+  //      `<summary>` click handler — win over the default. This
+  //      is what restores the pre-filter tree state when the
+  //      user clears the search box: dirs the user had open
+  //      stay open, dirs they hadn't touched go back to default.
+  //   3. The default — root open, ancestors of currentPath open,
+  //      everything else closed.
+  // Lit's part-cache short-circuits when the computed value
+  // matches the last committed one, so renders that don't change
+  // anyone's effective state issue zero attribute writes.
+  const computeOpen = (childPath, child) => {
+    if (expandAll) return true
+    if (_bundleTreeUserOpen.has(childPath)) return _bundleTreeUserOpen.get(childPath)
+    return depth === 0 || containsCurrent(child)
+  }
+  // Click on `<summary>` toggles the parent `<details>`; the
+  // browser fires a click for both mouse and keyboard activation
+  // (Enter / Space on a focused summary). Record the upcoming
+  // open state — the click handler runs before the default
+  // action, so `parentElement.open` is the OLD value here. A
+  // separate `@toggle` listener would also catch Lit's own
+  // attribute writes (expandAll renders), which we explicitly
+  // do NOT want to record; clicks side-step that entirely.
+  const onSummaryClick = (childPath) => (e) => {
+    _bundleTreeUserOpen.set(childPath, !e.currentTarget.parentElement.open)
+  }
   return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
     ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
       const childPath = parentPath ? `${parentPath}/${name}` : name
       return html`<li class="bundle-code-tree-dir">
-        <details ?open=${expandAll || depth === 0 || containsCurrent(child)}>
-          <summary>${name}</summary>
+        <details ?open=${computeOpen(childPath, child)}>
+          <summary @click=${onSummaryClick(childPath)}>${name}</summary>
           ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath, expandAll)}
         </details>
       </li>`
@@ -1074,6 +1113,14 @@ function renderBundleCodeView(details) {
   if (sources.size === 0) {
     return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
   }
+  // Drop the user-toggled tree state when the open bundle
+  // changes — paths from one bundle don't carry meaning into
+  // another (and same-named paths between bundles probably
+  // aren't intended to share open state).
+  if (_bundleTreeMapBundle !== state.selectedBundle) {
+    _bundleTreeUserOpen.clear()
+    _bundleTreeMapBundle = state.selectedBundle
+  }
   const allPaths = [...sources.keys()].sort()
   const { prefix, stripped } = stripCommonPathPrefix(allPaths)
   // Tree built from STRIPPED paths so the visual hierarchy
@@ -1149,13 +1196,24 @@ function renderBundleCodeView(details) {
             aria-selected=${String(searchMode === m)}
           >${m === 'files' ? 'Files' : m === 'code' ? 'Code' : 'Issues'}</button>`)}
         </div>
-        <input
-          type="text"
-          class="bundle-code-search-input"
-          id="bundle-code-search-input"
-          placeholder=${searchMode === 'files' ? 'filter files…' : searchMode === 'code' ? 'search code…' : 'search issues…'}
-          .value=${live(query)}
-        >
+        <div class="bundle-code-search-input-wrap">
+          <input
+            type="text"
+            class="bundle-code-search-input"
+            id="bundle-code-search-input"
+            placeholder=${searchMode === 'files' ? 'filter files…' : searchMode === 'code' ? 'search code…' : 'search issues…'}
+            .value=${live(query)}
+          >
+          ${query
+            ? html`<button
+                type="button"
+                class="bundle-code-search-clear"
+                data-bundle-search-clear
+                title="Clear search"
+                aria-label="Clear search"
+              >×</button>`
+            : nothing}
+        </div>
       </div>
       <div class="bundle-code-rail-body">
         ${searchMode === 'files'
