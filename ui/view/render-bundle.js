@@ -811,7 +811,7 @@ function buildBundleSourceTree(paths) {
 // so the user can drill in. Selected file gets a `current` class
 // for the highlight strip; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null) {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '') {
   const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))
   const files = [...node.files.entries()].sort(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -822,14 +822,27 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null)
     for (const d of n.dirs.values()) if (containsCurrent(d)) return true
     return false
   }
+  // `repeat` keyed by the dir / file path so Lit reuses existing
+  // `<details>` (and their open/closed state) when the user types
+  // in the search box and the filtered tree rebuilds. Without the
+  // key, Lit positionally diffs and a single keystroke that
+  // changes the filtered structure recreates every node from
+  // scratch — collapsing whatever the user had expanded. The
+  // `?open=` binding still owns the auto-open behavior (root +
+  // ancestors of currentPath); Lit's part-cache short-circuits
+  // when the computed value matches the last committed one, so
+  // user-driven open/close survives across renders too.
   return html`<ul class=${`bundle-code-tree${depth === 0 ? ' root' : ''}`}>
-    ${dirs.map(([name, child]) => html`<li class="bundle-code-tree-dir">
-      <details ?open=${depth === 0 || containsCurrent(child)}>
-        <summary>${name}</summary>
-        ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex)}
-      </details>
-    </li>`)}
-    ${files.map(([name, full]) => {
+    ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
+      const childPath = parentPath ? `${parentPath}/${name}` : name
+      return html`<li class="bundle-code-tree-dir">
+        <details ?open=${depth === 0 || containsCurrent(child)}>
+          <summary>${name}</summary>
+          ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath)}
+        </details>
+      </li>`
+    })}
+    ${repeat(files, ([, full]) => full, ([name, full]) => {
       // Per-file issue chip — tiny pill with the count, colored by
       // the worst severity present on the file. Skipped when the
       // file has no matched findings (keeps clean files quiet).
