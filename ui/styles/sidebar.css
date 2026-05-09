@@ -149,6 +149,14 @@
 .file-group-header.packages-header {
   cursor: pointer;
   border-radius: 4px;
+  /* Equalize vertical padding on the clickable row-style
+     headers — `.file-group-header`'s default is top-heavy
+     (`.45rem .35rem .2rem`) because it's primarily a section
+     divider that needs breathing room above; for these rows
+     the outline / hover bg traces the asymmetric box and the
+     content reads visually offset. Matched padding makes the
+     selection outline + the text inside it look centered. */
+  padding-top: .25rem; padding-bottom: .25rem;
   transition: background .12s, color .12s;
 
   &:hover, &:focus-visible { color: var(--accent); background: rgb(from var(--text) r g b / .04); }
