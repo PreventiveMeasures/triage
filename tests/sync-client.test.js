@@ -56,9 +56,14 @@ function randomBase64() {
   return Buffer.from(bytes).toString('base64')
 }
 
-function setReports(findings) {
+// Each synthetic report needs a `fileName` so triage-sync's
+// workspace-scoped buildWorkspaceIds can match it against the
+// workspace's `reports` member list. Returns the chosen filename
+// so the caller can plug it into upsertWorkspace.
+function setReports(findings, fileName = 'test.md') {
   state.reports.length = 0
-  state.reports.push({ groups: [findings] })
+  state.reports.push({ fileName, groups: [findings] })
+  return fileName
 }
 
 function clearTriageState() {
@@ -85,8 +90,8 @@ function statusOnline() { return triageSync.status === 'online' }
 // inside trySendSave's async IIFE *after* encryptJson resolves, so
 // a naive `pending == null` predicate returns true the moment a
 // save is queued, before the round-trip even begins.
-function settledAfterAck() {
-  const info = triageSync.sessionInfo
+function settledAfterAck(workspaceId) {
+  const info = triageSync.sessionInfo(workspaceId)
   return info != null
     && info.baseRevision != null
     && info.pending == null
@@ -131,9 +136,11 @@ describe('triage-sync client', () => {
   async function startSession(findingIds) {
     triageSync.closeSession()
     clearTriageState()
-    setReports(findingIds.map((id) => ({ id, _id: id })))
+    const fileName = setReports(findingIds.map((id) => ({ id, _id: id })))
     const id = `ws-${Math.random().toString(36).slice(2, 10)}`
-    upsertWorkspace({ id, name: id, privateKey: randomBase64(), reports: [] })
+    // Workspace must list the synthetic report so buildWorkspaceIds
+    // scopes session.ids to those findings.
+    upsertWorkspace({ id, name: id, privateKey: randomBase64(), reports: [fileName] })
     triageSync.openSession(id)
     triageSync.setServerUrl(serverUrl)
     await waitFor(statusOnline, 'sync online')
@@ -141,7 +148,7 @@ describe('triage-sync client', () => {
   }
 
   it('preserves a user edit made between save and ack', async () => {
-    const ws = await startSession(['finding-A', 'finding-B'])
+    const wsId = await startSession(['finding-A', 'finding-B'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
     // Simulate the user editing again WHILE the first save is in
@@ -153,14 +160,14 @@ describe('triage-sync client', () => {
     // the second edit. Without the fix, applyToReactiveState
     // overwrites state.* with a stale localState snapshot and
     // finding-B → green is silently dropped.
-    await waitFor(settledAfterAck, 'ack landed and pending cleared')
+    await waitFor(() => settledAfterAck(wsId), 'ack landed and pending cleared')
     // After the rebase + the follow-up save for finding-B, both
     // edits must still be visible.
     await waitFor(() => state.markers.get('finding-B') === 'green', 'finding-B preserved')
     assert.equal(state.markers.get('finding-A'), 'red')
     assert.equal(state.markers.get('finding-B'), 'green')
     triageSync.closeSession()
-    deleteWorkspace(ws)
+    deleteWorkspace(wsId)
   })
 
   it('merges a remote change with an in-progress local edit', async () => {
@@ -168,12 +175,12 @@ describe('triage-sync client', () => {
     // Local: finding-A = red, sync up.
     state.markers.set('finding-A', 'red')
     await saveTriage()
-    await waitFor(settledAfterAck, 'first ack')
+    await waitFor(() => settledAfterAck(wsId), 'first ack')
 
     // Push a chain from a SECOND client (raw WS) carrying a remote
     // change to finding-B = green. Local A = red must survive; the
     // remote B = green must land.
-    const { workspaceTag } = triageSync.sessionInfo
+    const { workspaceTag } = triageSync.sessionInfo(wsId)
     const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
     const seed = persisted.find((w) => w.id === wsId).privateKey
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-B': { color: 'green' } })
@@ -189,7 +196,7 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
-    await waitFor(settledAfterAck, 'baseline ack')
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
     // User edits to amber WITHOUT calling saveTriage — simulates a
     // rapid in-flight UI edit between two ticks of the sync loop.
@@ -197,8 +204,8 @@ describe('triage-sync client', () => {
     // so the merge must see this edit even though no save is queued.
     state.markers.set('finding-A', 'amber')
 
-    const beforeRev = triageSync.sessionInfo.baseRevision
-    const { workspaceTag } = triageSync.sessionInfo
+    const beforeRev = triageSync.sessionInfo(wsId).baseRevision
+    const { workspaceTag } = triageSync.sessionInfo(wsId)
     const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
     const seed = persisted.find((w) => w.id === wsId).privateKey
     // Remote pushes A = blue. Server appends, broadcasts to client A.
@@ -206,7 +213,7 @@ describe('triage-sync client', () => {
 
     // Wait for client A's chain handler to advance baseRevision.
     await waitFor(
-      () => triageSync.sessionInfo.baseRevision !== beforeRev,
+      () => triageSync.sessionInfo(wsId).baseRevision !== beforeRev,
       'remote chain processed by client A',
     )
     // Local edit (amber) wins over the conflicting remote (blue).
@@ -221,8 +228,8 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
-    await waitFor(settledAfterAck, 'baseline ack')
-    const beforeClose = triageSync.sessionInfo.baseRevision
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const beforeClose = triageSync.sessionInfo(wsId).baseRevision
 
     triageSync.closeSession()
     // Re-opening with the same workspaceId + server URL should
@@ -233,7 +240,7 @@ describe('triage-sync client', () => {
     triageSync.openSession(wsId)
     await waitFor(statusOnline, 'sync online (re-open)')
     await waitFor(
-      () => triageSync.sessionInfo.baseRevision === beforeClose,
+      () => triageSync.sessionInfo(wsId)?.baseRevision === beforeClose,
       'baseRevision restored from localStorage',
     )
     assert.equal(state.markers.get('finding-A'), 'red', 'triage value preserved')
@@ -248,8 +255,8 @@ describe('triage-sync client', () => {
     // before signature verification.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
-    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
     const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
@@ -290,7 +297,7 @@ describe('triage-sync client', () => {
     // baseRevision advances past the skipped rev (so subsequent
     // revisions in the same chain can build on it), but baseState
     // stays empty since no content was applied.
-    assert.equal(triageSync.sessionInfo.baseRevision, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    assert.equal(triageSync.sessionInfo(wsId).baseRevision, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
@@ -300,8 +307,8 @@ describe('triage-sync client', () => {
   it('skips a revision whose signature does not verify', async () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
-    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
     const { publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
@@ -349,8 +356,8 @@ describe('triage-sync client', () => {
     // both rounds (otherwise the user loses every triage they made).
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
-    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     state.markers.set('finding-A', 'green')
 
@@ -387,12 +394,12 @@ describe('triage-sync client', () => {
     // signal that the second break tripped the full reset (rather
     // than guessing a sleep duration).
     await waitFor(
-      () => triageSync.sessionInfo?.pending != null,
+      () => triageSync.sessionInfo(wsId)?.pending != null,
       'full state-push attempted after re-subscribe also broke',
     )
     // state.* preserved across both break attempts.
     assert.equal(state.markers.get('finding-A'), 'green', 'user edit survived resync')
-    assert.equal(triageSync.sessionInfo.baseRevision, null)
+    assert.equal(triageSync.sessionInfo(wsId).baseRevision, null)
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
@@ -407,8 +414,8 @@ describe('triage-sync client', () => {
     // never falls through to the full state-push reset.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: [] })
-    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
     const { privateKey: signingKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
@@ -461,7 +468,7 @@ describe('triage-sync client', () => {
       'incremental recovery applied the valid chain',
     )
     assert.equal(subscribeCount, 2, 'client re-subscribed exactly once')
-    assert.notEqual(triageSync.sessionInfo.baseRevision, null, 'baseRevision set to valid id, not nuked')
+    assert.notEqual(triageSync.sessionInfo(wsId).baseRevision, null, 'baseRevision set to valid id, not nuked')
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
@@ -474,8 +481,8 @@ describe('triage-sync client', () => {
     // pong-timeout and close the socket; status flips to `offline`
     // and the reconnect path takes over.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: [] })
-    setReports([{ id: 'finding-A', _id: 'finding-A' }])
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
 
     const relay = await startFakeRelay((sock) => {
@@ -521,16 +528,16 @@ describe('triage-sync client', () => {
     // the third trips the threshold and goes out as a keyframe.
     state.markers.set('finding-A', 'red')
     await saveTriage()
-    await waitFor(settledAfterAck, 'first ack')
+    await waitFor(() => settledAfterAck(wsId), 'first ack')
     state.markers.set('finding-A', 'green')
     await saveTriage()
-    await waitFor(settledAfterAck, 'second ack')
+    await waitFor(() => settledAfterAck(wsId), 'second ack')
     state.markers.set('finding-A', 'blue')
     await saveTriage()
     // After the third ack, savesSinceKeyframe should be 0 — i.e.
     // the third save was a keyframe, and the counter reset.
     await waitFor(
-      () => settledAfterAck() && (triageSync.sessionInfo.savesSinceKeyframe ?? -1) === 0,
+      () => settledAfterAck(wsId) && (triageSync.sessionInfo(wsId).savesSinceKeyframe ?? -1) === 0,
       'third save emitted as a keyframe (counter reset to 0)',
     )
     assert.equal(state.markers.get('finding-A'), 'blue', 'final state visible after keyframe')
@@ -551,14 +558,14 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A', 'finding-B'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
-    await waitFor(settledAfterAck, 'rev_A ack')
+    await waitFor(() => settledAfterAck(wsId), 'rev_A ack')
     // Counter should now be 1 — next save will be promoted to a
     // keyframe (interval = 1). Bake finding-B into state to make
     // the keyframe content distinguishable from rev_A's content.
     state.markers.set('finding-B', 'green')
     await saveTriage()
     await waitFor(
-      () => (triageSync.sessionInfo.savesSinceKeyframe ?? -1) === 0,
+      () => (triageSync.sessionInfo(wsId)?.savesSinceKeyframe ?? -1) === 0,
       'keyframe ack',
     )
 
@@ -584,6 +591,84 @@ describe('triage-sync client', () => {
     setKeyframeInterval(100)
     triageSync.closeSession()
     deleteWorkspace(wsId)
+  })
+
+  it('two open sessions sync independently over one socket', async () => {
+    // Two workspaces, two reports, disjoint finding-id sets. Both
+    // get added to the multi-session map and multiplex over one WS.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'finding-in-A', _id: 'finding-in-A' } ]] })
+    state.reports.push({ fileName: 'B.md', groups: [[ { id: 'finding-in-B', _id: 'finding-in-B' } ]] })
+    const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
+    const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
+    upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
+
+    triageSync.openSession(wsA)
+    triageSync.openSession(wsB)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'sync online (both sessions)')
+
+    // Edit a finding in workspace A's scope. Only A's session
+    // should produce a save; B's session.ids doesn't include
+    // 'finding-in-A' so B's localState diff is empty.
+    state.markers.set('finding-in-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsA), 'A acked')
+    // B never acked anything (no edits in B's scope).
+    assert.equal(triageSync.sessionInfo(wsB).baseRevision, null, 'B remained at null base')
+
+    // Edit a finding in workspace B's scope. Now B saves; A is
+    // unaffected because A's session.ids doesn't include
+    // 'finding-in-B'.
+    const aBaseAfterFirstSave = triageSync.sessionInfo(wsA).baseRevision
+    state.markers.set('finding-in-B', 'green')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsB), 'B acked')
+    assert.equal(triageSync.sessionInfo(wsA).baseRevision, aBaseAfterFirstSave, 'A base unchanged')
+
+    // Each session has its own chain; the workspaceTags are
+    // different so the server tracks them as different routing
+    // entries. Verify by checking they advanced independently.
+    assert.notEqual(triageSync.sessionInfo(wsA).baseRevision, null)
+    assert.notEqual(triageSync.sessionInfo(wsB).baseRevision, null)
+    assert.notEqual(triageSync.sessionInfo(wsA).workspaceTag, triageSync.sessionInfo(wsB).workspaceTag)
+
+    triageSync.closeSession(wsA)
+    triageSync.closeSession(wsB)
+    deleteWorkspace(wsA)
+    deleteWorkspace(wsB)
+  })
+
+  it('closeSession(id) only closes that one; the other keeps syncing', async () => {
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'fA', _id: 'fA' } ]] })
+    state.reports.push({ fileName: 'B.md', groups: [[ { id: 'fB', _id: 'fB' } ]] })
+    const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
+    const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
+    upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
+
+    triageSync.openSession(wsA)
+    triageSync.openSession(wsB)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'both online')
+    // Drop A; B must remain.
+    triageSync.closeSession(wsA)
+    assert.equal(triageSync.sessionInfo(wsA), null, 'A is closed')
+    assert.notEqual(triageSync.sessionInfo(wsB), null, 'B is still open')
+    // B can still save.
+    state.markers.set('fB', 'amber')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsB), 'B acked after closing A')
+
+    triageSync.closeSession(wsB)
+    deleteWorkspace(wsA)
+    deleteWorkspace(wsB)
   })
 })
 

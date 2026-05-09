@@ -199,7 +199,13 @@ const statusListeners = new Set()
 function currentStatus() {
   if (!isActive()) return 'off'
   if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
-  if (session && !session.subscribeAcked) return 'connecting'
+  // Any session that's been registered (`subscribed`) but hasn't
+  // received the server's ack yet keeps the whole status in
+  // `connecting`. Zero sessions = `online` (nothing to subscribe
+  // to; the socket is just sitting open).
+  for (const session of sessions.values()) {
+    if (session.subscribed && !session.subscribeAcked) return 'connecting'
+  }
   return 'online'
 }
 let lastEmittedStatus = 'off'
@@ -215,9 +221,26 @@ function emitStatusIfChanged() {
 // the saveTriage at the tail doesn't trigger a notify and bounce
 // the same change back at the server.
 let suppressNotify = 0
-// Active per-workspace session (or null when no workspace is
-// loaded). Mutually exclusive with single-file mode.
-let session = null
+// Active per-workspace sessions, keyed by `workspaceId`. The single
+// WebSocket connection multiplexes them — every wire message carries
+// `workspaceTag`, which routes inbound messages to the right session
+// (`getSessionByTag`). Each session has its own keys, baseState,
+// baseRevision, savesSinceKeyframe, pending save, etc.; nothing is
+// shared between them except the socket and the heartbeat. Sessions
+// are added by `openSession(id)` and removed by `closeSession(id)`;
+// `openSession` is additive, not replace-the-current.
+const sessions = new Map()
+
+// Find the session whose derived public key matches an inbound
+// message's `workspaceTag`. Returns null if no session has finished
+// key derivation under that tag yet (the wire never sees the UUID,
+// so the tag is the only routing identifier we have for inbound).
+function getSessionByTag(tag) {
+  for (const session of sessions.values()) {
+    if (session.workspaceTag === tag) return session
+  }
+  return null
+}
 
 // ─────────── pure state / changeset helpers ───────────
 
@@ -233,9 +256,20 @@ function snapshotEntry(id) {
   return entry
 }
 
-function buildWorkspaceIds() {
+// Collect the finding ids that belong to a workspace's reports,
+// scoped by the workspace's `reports` filename list (set by
+// drag-into-workspace in the sidebar). With multiple workspaces
+// open simultaneously, an unscoped iteration over `state.reports`
+// would let any session sync changes for ids in another
+// workspace's reports — narrowing here is what keeps each
+// session's chain to its own findings.
+function buildWorkspaceIds(workspaceId) {
   const ids = new Set()
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  if (!ws) return ids
+  const memberFiles = new Set(ws.reports ?? [])
   for (const r of state.reports) {
+    if (!memberFiles.has(r.fileName)) continue
     for (const g of r.groups) {
       for (const f of g) {
         const k = f.id ?? String(f._id)
@@ -408,20 +442,22 @@ function send(msg) {
 // re-asking with the current `baseRevision` returns the gap-filling
 // catch-up chain, which is the same primitive the initial subscribe
 // uses.
-function trySendSubscribe(force = false) {
+function trySendSubscribe(session, force = false) {
   if (!session) return
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (!force && session.subscribed) return
   if (!session.signingKey || !session.workspaceTag) return
-  const owner = session
   // Capture `from` BEFORE the await — chain handlers running
   // during the sign promise could otherwise advance baseRevision
   // out from under us.
-  const fromBase = owner.baseRevision
+  const fromBase = session.baseRevision
   ;(async () => {
     try {
-      const signature = await signSubscribePayload(owner.signingKey, owner.workspaceTag, fromBase)
-      if (session !== owner) return
+      const signature = await signSubscribePayload(session.signingKey, session.workspaceTag, fromBase)
+      // Bail if the session was removed (closeSession) during the
+      // sign await. Looking it up by id again is cheap and
+      // forgery-proof — workspaceId only resolves to one entry.
+      if (sessions.get(session.workspaceId) !== session) return
       // Mark subscribed BEFORE sending so re-entrant calls (the
       // ws 'open' handler firing twice during a flaky reconnect,
       // or trySendSave running back-to-back) don't double up.
@@ -444,7 +480,7 @@ function trySendSubscribe(force = false) {
 // still cooking its ciphertext. Subsequent calls during that
 // window raise pendingSave just like in-flight; the first call's
 // completion drains the queue.
-function trySendSave() {
+function trySendSave(session) {
   if (!session) return
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (session.pending || session.encrypting) {
@@ -471,12 +507,11 @@ function trySendSave() {
   const changeset = computeChangeset(sourceBase, session.localState)
   if (changesetEmpty(changeset)) return
   const sentBase = session.baseRevision
-  const owner = session
   session.encrypting = true
   ;(async () => {
     try {
-      const aad = buildAad(owner.workspaceTag, sentBase)
-      const { nonce, ciphertext } = await encryptJson(owner.key, changeset, aad)
+      const aad = buildAad(session.workspaceTag, sentBase)
+      const { nonce, ciphertext } = await encryptJson(session.key, changeset, aad)
       // Sign the (workspaceTag, base, keyframe, nonce, ciphertext)
       // tuple — the same canonical bytes any verifier (server or
       // peer) will reconstruct from the wire fields. Holding the
@@ -486,24 +521,24 @@ function trySendSave() {
       // flag to the signature so the server can't promote /
       // demote a revision after the fact.
       const payload = {
-        publicKeyB64: owner.workspaceTag,
+        publicKeyB64: session.workspaceTag,
         base: sentBase,
         keyframe: isKeyframe,
         nonceB64: nonce,
         ciphertextB64: ciphertext,
       }
-      const signature = await signSavePayload(owner.signingKey, payload)
+      const signature = await signSavePayload(session.signingKey, payload)
       // Pre-compute the content-addressed revision id (SHA-256 of
       // the canonical bytes). The server derives the same id from
       // received content; the ack carries it back, and we use it
       // to a) match this pending save against its ack, and b)
       // verify the server didn't relabel the revision.
       const revisionId = await computeRevisionId(payload)
-      // Session may have been closed (or replaced) during the
+      // Session may have been removed (closeSession) during the
       // await chain — drop the result if so. baseRevision may
       // have moved if a chain landed during encryption; in that
       // case the ciphertext is bound to a stale base, so requeue.
-      if (session !== owner) return
+      if (sessions.get(session.workspaceId) !== session) return
       if (session.baseRevision !== sentBase) {
         session.pendingSave = true
         return
@@ -526,13 +561,13 @@ function trySendSave() {
     } catch (err) {
       console.warn('Triage sync: encrypt/sign failed:', err)
     } finally {
-      if (session === owner) {
+      if (sessions.get(session.workspaceId) === session) {
         session.encrypting = false
         // If something queued during encrypt (or our own logic
         // bumped pendingSave because base moved), kick it.
         if (session.pendingSave && !session.pending) {
           session.pendingSave = false
-          trySendSave()
+          trySendSave(session)
         }
       }
     }
@@ -557,7 +592,7 @@ function trySendSave() {
 // message from poisoning every reconnecting client; only an
 // explicit continuity break (which signature-verified attackers
 // can't cause) can request a full resync.
-async function applyChainToBase(revisions) {
+async function applyChainToBase(session, revisions) {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
     // Idempotent skip — the chain from a re-subscribe might begin
@@ -659,7 +694,7 @@ async function applyChainToBase(revisions) {
 // mutated would collapse to identity (apply(B, compute(B, T)) ≡ T)
 // and silently discard every remote change. See the bug discussion
 // in the rebase audit.
-async function applyOverlayAndPersist(overlay) {
+async function applyOverlayAndPersist(session, overlay) {
   session.localState = applyChangeset(session.baseState, overlay)
   suppressNotify++
   try {
@@ -679,17 +714,16 @@ async function applyOverlayAndPersist(overlay) {
 // (= state.* − current baseState). Call this BEFORE mutating
 // baseState; the returned overlay is stable across the mutation
 // and gets re-applied via `applyOverlayAndPersist` afterwards.
-function captureOverlay() {
+function captureOverlay(session) {
   session.localState = buildLocalState(session.ids)
   return computeChangeset(session.baseState, session.localState)
 }
 
-async function handleAck(msg) {
+async function handleAck(session, msg) {
   // The pending save was accepted as revision `msg.id`, built on
   // `msg.base`. Verify the base matches what we sent and fold the
   // pending changeset into baseState so it becomes the new agreed
   // floor.
-  if (!session) return
   // Match both `base` and `id`: the server can't relabel a
   // revision (id is content-derived), but a stray /
   // out-of-protocol message claiming an id we didn't compute
@@ -703,7 +737,7 @@ async function handleAck(msg) {
     // overlay also catches edits the user made AFTER the pending
     // save was sent — they're in state.* but not in
     // pending.changeset, and would be lost otherwise.
-    const overlay = captureOverlay()
+    const overlay = captureOverlay(session)
     // Keyframes carry a changeset computed against an EMPTY base
     // (= full state); applying them is a wholesale replace.
     // Regular saves stack on the current baseState.
@@ -714,12 +748,12 @@ async function handleAck(msg) {
       ? 0
       : (session.savesSinceKeyframe ?? 0) + 1
     session.pending = null
-    await applyOverlayAndPersist(overlay)
+    await applyOverlayAndPersist(session, overlay)
     // The user may have edited during the round-trip; if there's a
     // residual overlay (or pendingSave was raised), flush it.
     if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
       session.pendingSave = false
-      trySendSave()
+      trySendSave(session)
     }
     return
   }
@@ -739,18 +773,18 @@ async function handleAck(msg) {
   if (msg.id !== session.baseRevision) {
     console.warn(`Triage sync: late ack for base=${msg.base} id=${msg.id?.slice(0, 8)}…; pending was already cleared`)
     session.pendingSave = true
-    trySendSave()
+    trySendSave(session)
   }
 }
 
-async function handleChain(revisions) {
+async function handleChain(session, revisions) {
   if (!Array.isArray(revisions) || revisions.length === 0) return
   // Key not derived yet — bail; a future open will retry once
   // deriveSessionKey lands and trySendSave re-runs.
-  if (!session?.key) return
+  if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
-  const overlay = captureOverlay()
-  if (!await applyChainToBase(revisions)) {
+  const overlay = captureOverlay(session)
+  if (!await applyChainToBase(session, revisions)) {
     // Continuity break. First try to fill the gap by re-subscribing
     // with `from = current baseRevision`: in the typical case (a
     // broadcast that skipped intermediate revisions, a transient
@@ -759,7 +793,7 @@ async function handleChain(revisions) {
     if (!session.resyncAttempted) {
       session.resyncAttempted = true
       console.warn('Triage sync: requesting catch-up from last known baseRevision')
-      trySendSubscribe(true)
+      trySendSubscribe(session, true)
       return
     }
     // The re-subscribed chain also broke continuity — server has
@@ -776,7 +810,7 @@ async function handleChain(revisions) {
     session.resyncAttempted = false
     persistSession(session)
     redraw()
-    trySendSave()
+    trySendSave(session)
     return
   }
   session.resyncAttempted = false
@@ -788,10 +822,10 @@ async function handleChain(revisions) {
     session.pending = null
     session.pendingSave = true
   }
-  await applyOverlayAndPersist(overlay)
+  await applyOverlayAndPersist(session, overlay)
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false
-    trySendSave()
+    trySendSave(session)
   }
 }
 
@@ -806,15 +840,17 @@ async function handleMessage(data) {
     if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
     return
   }
-  // Match the message to our active session by tag, not UUID —
-  // the wire never sees the UUID. A null tag (key derivation
-  // hasn't finished) means we can't match anything yet; drop.
-  if (!session || !session.workspaceTag) return
-  if (msg.workspaceTag !== session.workspaceTag) return
+  // Demultiplex by `workspaceTag` — one socket carries traffic for
+  // every open session. A tag we don't recognise means the message
+  // is for a session we've already closed (or for a workspace this
+  // client never opened); drop silently.
+  if (typeof msg.workspaceTag !== 'string') return
+  const session = getSessionByTag(msg.workspaceTag)
+  if (!session) return
   if (msg.type === 'workspace-save-ack') {
-    await handleAck(msg)
+    await handleAck(session, msg)
   } else if (msg.type === 'workspace-state') {
-    await handleChain(msg.revisions)
+    await handleChain(session, msg.revisions)
   } else if (msg.type === 'workspace-subscribed') {
     // Server confirmed our subscribe was accepted — we're a
     // peer now and broadcasts will reach us. Flip the status
@@ -879,20 +915,20 @@ function openSocket() {
   socket = ws
   ws.addEventListener('open', () => {
     reconnectDelayMs = 1_000
-    if (session) {
-      // Re-establish against the freshly opened socket. baseState /
-      // baseRevision survived the disconnect; subscribed +
-      // subscribeAcked reset so we re-subscribe on this fresh
-      // socket and walk through `connecting` until the new ack
-      // arrives; if there's an overlay (or we hadn't sent the
-      // initial state yet), trySendSave pushes it.
+    // Re-establish every open session against the freshly opened
+    // socket. baseState / baseRevision survived the disconnect;
+    // subscribed + subscribeAcked reset so we re-subscribe per
+    // session on this fresh socket and walk through `connecting`
+    // until each ack arrives; if there's an overlay (or we hadn't
+    // sent the initial state yet), trySendSave pushes it.
+    for (const session of sessions.values()) {
       session.pending = null
       session.pendingSave = false
       session.subscribed = false
       session.subscribeAcked = false
       session.resyncAttempted = false
-      trySendSubscribe()
-      trySendSave()
+      trySendSubscribe(session)
+      trySendSave(session)
     }
     startHeartbeat()
     emitStatusIfChanged()
@@ -917,11 +953,12 @@ function openSocket() {
   ws.addEventListener('close', () => {
     if (socket === ws) socket = null
     stopHeartbeat()
-    if (session) {
-      // The pending request is gone with the socket. Mark the slot
-      // free; reconnect handler will resend. `subscribed` /
-      // `subscribeAcked` both clear so reconnect re-subscribes
-      // and the status walks `offline → connecting → online` again.
+    // The pending requests are gone with the socket — mark every
+    // session's slot free so the reconnect handler resends.
+    // `subscribed` / `subscribeAcked` both clear so reconnect
+    // re-subscribes and the status walks `offline → connecting →
+    // online` again per session.
+    for (const session of sessions.values()) {
       session.pending = null
       session.subscribed = false
       session.subscribeAcked = false
@@ -986,13 +1023,13 @@ export const triageSync = {
       else localStorage.removeItem(STORAGE_KEY)
     } catch {}
     closeSocket()
-    // Server changed — revision IDs are per-server, so the active
-    // session's tracking is stale. Reset; if there's persisted
-    // state for the NEW server (or null if turning sync off),
-    // fold that in. localState rebuilds from state.* so unsynced
-    // edits survive the reset and replay onto the new base via
-    // the rebase path.
-    if (session) {
+    // Server changed — revision IDs are per-server, so every
+    // active session's tracking is stale. Reset each one; if
+    // there's persisted state for the NEW server (or null when
+    // turning sync off), fold that in. localState rebuilds from
+    // state.* per session so unsynced edits survive the reset and
+    // replay onto the new base via the rebase path.
+    for (const session of sessions.values()) {
       session.pending = null
       session.pendingSave = false
       session.subscribed = false
@@ -1022,7 +1059,7 @@ export const triageSync = {
       if (!socket) openSocket()
     } else {
       closeSocket()
-      if (session) {
+      for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
         session.subscribed = false
@@ -1048,7 +1085,7 @@ export const triageSync = {
       if (!socket) openSocket()
     } else {
       closeSocket()
-      if (session) {
+      for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
         session.subscribed = false
@@ -1080,26 +1117,25 @@ export const triageSync = {
 
   // Called by triage.js at the tail of saveTriage(). When inside
   // applyChainToBase / handleAck (suppressNotify > 0), bail — that
-  // path already owns persistence. Otherwise schedule a save against
-  // the active session; the helper handles the inFlight gating.
+  // path already owns persistence. Otherwise schedule a save for
+  // every open session; trySendSave's empty-changeset short-circuit
+  // means sessions with no local changes turn into a cheap no-op.
   notify() {
     if (suppressNotify > 0) return
-    if (!session) return
-    trySendSave()
+    for (const session of sessions.values()) trySendSave(session)
   },
 
-  // Open a per-workspace session. Called by ingest.js after every
-  // report in the workspace is loaded into state.reports — so the
-  // workspace-id set built here matches the actual content. A
-  // second call with the same id is idempotent; a different id
-  // closes the previous session first.
+  // Open a per-workspace session. Additive — calling with a fresh
+  // `workspaceId` adds a second session multiplexed over the same
+  // socket; calling with an already-open id is idempotent. The
+  // single-workspace UI's "switch workspaces" path explicitly calls
+  // `closeSession(oldId)` before `openSession(newId)`.
   openSession(workspaceId) {
     if (!workspaceId) return
-    if (session?.workspaceId === workspaceId) return
-    this.closeSession()
+    if (sessions.has(workspaceId)) return
     const ws = listWorkspaces().find((w) => w.id === workspaceId)
     if (!ws) return
-    const ids = buildWorkspaceIds()
+    const ids = buildWorkspaceIds(workspaceId)
     // Persisted state-per-server scope: if we synced this
     // workspace against the current `serverUrl` before, restore
     // the last `baseRevision` + `baseState` so the first
@@ -1153,11 +1189,11 @@ export const triageSync = {
       // sending broken chains would loop us forever.
       resyncAttempted: false,
     }
-    session = newSession
+    sessions.set(workspaceId, newSession)
     // Derive content-encryption key + Ed25519 signing keypair in
     // parallel. Both come off the same private key via HKDF with
     // different domain-separating info strings. If the session
-    // gets replaced or closed before derivation finishes, the
+    // gets removed or replaced before derivation finishes, the
     // identity check drops the result.
     ;(async () => {
       try {
@@ -1165,32 +1201,51 @@ export const triageSync = {
           deriveSessionKey(ws.privateKey),
           deriveSigningKeypair(ws.privateKey, workspaceId),
         ])
-        if (session !== newSession) return
-        session.key = key
-        session.signingKey = kp.privateKey
-        session.verifyingKey = kp.publicKey
-        session.workspaceTag = kp.publicKeyB64
+        if (sessions.get(workspaceId) !== newSession) return
+        newSession.key = key
+        newSession.signingKey = kp.privateKey
+        newSession.verifyingKey = kp.publicKey
+        newSession.workspaceTag = kp.publicKeyB64
         // Subscribe + flush any pending save now that we have keys.
         // Subscribe gets us broadcast-eligibility regardless of
         // whether there's anything to push.
-        if (socket?.readyState !== WebSocket.OPEN) return
-        trySendSubscribe()
-        trySendSave()
+        if (socket?.readyState !== WebSocket.OPEN) {
+          // Socket isn't open yet — open it lazily so the very
+          // first openSession of the page-load brings the
+          // connection up. Subsequent openSessions reuse it.
+          if (isActive() && !socket) openSocket()
+          return
+        }
+        trySendSubscribe(newSession)
+        trySendSave(newSession)
+        emitStatusIfChanged()
       } catch (err) {
         console.warn('Triage sync: key derivation failed:', err)
       }
     })()
+    if (isActive() && !socket) openSocket()
+    emitStatusIfChanged()
   },
 
-  closeSession() {
-    if (!session) return
-    session = null
+  // Close one session (by id) or, with no argument, every open
+  // session. The single-workspace UI's "switch workspace" path
+  // calls `closeSession(oldId)` before `openSession(newId)`; the
+  // page-unload / "log out of sync" paths call it with no arg.
+  closeSession(workspaceId) {
+    if (workspaceId == null) {
+      sessions.clear()
+    } else {
+      sessions.delete(workspaceId)
+    }
+    emitStatusIfChanged()
   },
 
-  // Read-only handle for callers that want to inspect session state
-  // (debugging, tests). Not for mutation — that goes through notify
-  // / openSession / closeSession above.
-  get sessionInfo() {
+  // Read-only inspector keyed by workspaceId. Returns the same
+  // shape the single-session API used to expose, just one entry
+  // per open session. `null` for a missing id keeps the test /
+  // debug ergonomics that the old getter had.
+  sessionInfo(workspaceId) {
+    const session = sessions.get(workspaceId)
     if (!session) return null
     return {
       workspaceId: session.workspaceId,
@@ -1203,6 +1258,13 @@ export const triageSync = {
       tracked: session.ids.size,
       savesSinceKeyframe: session.savesSinceKeyframe ?? 0,
     }
+  },
+
+  // Snapshot of all open sessions — array of `sessionInfo`-shaped
+  // entries. Useful for status bars / debug consoles that want to
+  // surface the multi-session state at a glance.
+  get openSessions() {
+    return [...sessions.keys()].map((id) => this.sessionInfo(id))
   },
 }
 
