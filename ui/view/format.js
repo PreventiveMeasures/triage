@@ -34,7 +34,7 @@ export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug
 let depsDir = 'node_modules'
 
 export function configureDepsDir(reports) {
-  const has = (s) => /(^|\/)node_modules\//.test(s)
+  const has = (s) => /(^|\/)node_modules\//u.test(s)
   let hasNodeModules = false
   outer: for (const r of reports) {
     for (const g of r.groups ?? []) {
@@ -51,8 +51,8 @@ export function depsDirName() { return depsDir }
 
 export function isModule(file) {
   return depsDir === 'node_modules'
-    ? /(^|\/)node_modules\//.test(file)
-    : /(^|\/)dependencies\//.test(file)
+    ? /(^|\/)node_modules\//u.test(file)
+    : /(^|\/)dependencies\//u.test(file)
 }
 
 // File size formatter — bytes with thousand-separators and a `B`
@@ -139,7 +139,7 @@ export function findingText(f) {
 
 export function prettyModel(model) {
   if (!model) return model
-  return model.replace(/^[^/]+\//u, '').replace(/^claude-/, '').replaceAll('-', ' ')
+  return model.replace(/^[^/]+\//u, '').replace(/^claude-/u, '').replaceAll('-', ' ')
 }
 
 // Walk a list of strings and shrink the candidate prefix until every
@@ -222,7 +222,7 @@ export function commitUrl(githubRepo, hash) {
   // repo.github could already be a full URL (some imports do that)
   // or a `user/repo` slug. Detect by leading scheme; otherwise
   // treat as a slug under github.com.
-  const base = /^https?:/i.test(githubRepo)
+  const base = /^https?:/iu.test(githubRepo)
     ? githubRepo.replace(/\/$/u, '')
     : `https://github.com/${githubRepo}`
   return `${base}/commit/${hash}`

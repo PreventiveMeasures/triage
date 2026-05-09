@@ -1498,7 +1498,7 @@ describe('triage-sync client', () => {
       () => triageSync.sessionInfo(wsId)?.error != null,
       'session.error set after key derivation failure',
     )
-    assert.match(triageSync.sessionInfo(wsId).error, /key derivation failed/i)
+    assert.match(triageSync.sessionInfo(wsId).error, /key derivation failed/iu)
     // Status aggregates to 'error', not 'online' — even though the
     // socket may be open, no save under this workspace will ever
     // land, so the UI must signal something is wrong.

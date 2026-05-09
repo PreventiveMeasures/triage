@@ -40,7 +40,7 @@
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
-  const text = content.replace(/\r\n?/g, '\n').trim()
+  const text = content.replace(/\r\n?/gu, '\n').trim()
   // Cheap format guard: real markdown findings always start with an
   // h1. Anything else (random text, an empty file, a JSON-shaped blob
   // that failed to parse) returns null so the caller surfaces the
@@ -50,7 +50,7 @@ export function parseMarkdownFindings(content) {
   // Each finding starts at a line beginning with `# `. Splitting on
   // that pattern gives us per-finding chunks; the first split element
   // is whatever preamble preceded the first `# ` (usually empty).
-  const blocks = text.split(/^# /m).filter((b) => b.trim().length > 0)
+  const blocks = text.split(/^# /mu).filter((b) => b.trim().length > 0)
 
   const findings = []
   for (const block of blocks) {
@@ -125,11 +125,11 @@ function parseBlock(block) {
 // first `---` separator) and its metadata half (the block between that
 // separator and either the next `---` or end of input).
 function splitBody(body) {
-  const dashRe = /^---\s*$/m
+  const dashRe = /^---\s*$/mu
   const dashMatch = dashRe.exec(body)
   if (!dashMatch) return { sectionsText: body, metaText: '' }
   const sectionsText = body.slice(0, dashMatch.index).trim()
-  const rest = body.slice(dashMatch.index + dashMatch[0].length).replace(/^\n/, '')
+  const rest = body.slice(dashMatch.index + dashMatch[0].length).replace(/^\n/u, '')
   const next = dashRe.exec(rest)
   const metaText = next ? rest.slice(0, next.index) : rest
   return { sectionsText, metaText }
@@ -139,7 +139,7 @@ function splitBody(body) {
 // whatever preceded the first ## (usually a blank line).
 function parseSections(sectionsText) {
   const sections = {}
-  const parts = sectionsText.split(/^## /m)
+  const parts = sectionsText.split(/^## /mu)
   for (let i = 1; i < parts.length; i++) {
     const part = parts[i]
     const nl = part.indexOf('\n')
@@ -154,7 +154,7 @@ function parseSections(sectionsText) {
 // folded so consumers don't have to mind the source casing.
 function parseMeta(metaText) {
   const meta = {}
-  for (const m of metaText.matchAll(/\*\*([^:]+):\*\*\s*(.+)/g)) {
+  for (const m of metaText.matchAll(/\*\*([^:]+):\*\*\s*(.+)/gu)) {
     meta[m[1].trim().toLowerCase()] = m[2].trim()
   }
   return meta
@@ -169,11 +169,11 @@ function parseMeta(metaText) {
 // the same finding produce the same UUID and dedupe / share triage.
 function parseLocation(loc) {
   let file = '', line = '?', locationLink = ''
-  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/)
+  const linkMatch = loc.match(/\[([^\]]+)\]\(([^)]+)\)/u)
   if (linkMatch) {
     file = linkMatch[1].trim()
     locationLink = linkMatch[2]
-    const lineFromUrl = linkMatch[2].match(/#L(\d+)/)
+    const lineFromUrl = linkMatch[2].match(/#L(\d+)/u)
     if (lineFromUrl) line = lineFromUrl[1]
   } else {
     file = loc.trim()
@@ -181,7 +181,7 @@ function parseLocation(loc) {
   }
   // `:42` suffix on the file path — common shorthand. Only consume
   // if we don't already have a line from a `#L<n>` anchor.
-  const colonMatch = file.match(/^(.+):(\d+)$/)
+  const colonMatch = file.match(/^(.+):(\d+)$/u)
   if (colonMatch) {
     file = colonMatch[1]
     if (line === '?') line = colonMatch[2]
@@ -202,4 +202,4 @@ function buildDescription(title, sections) {
   return stripBold(bodyParts.join('\n\n'))
 }
 
-function stripBold(text) { return text.replace(/\*\*/g, '') }
+function stripBold(text) { return text.replace(/\*\*/gu, '') }
