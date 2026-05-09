@@ -72,7 +72,8 @@ function fileItemTemplate(n, opts = {}) {
   // leaving the previously-loaded report visually selected reads
   // as a stale state. The same suppression applies to the
   // workspace-row template below.
-  const isCurrent = n === state.currentFile && state.currentView !== 'bundles'
+  const isCurrent = n === state.currentFile
+    && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
@@ -147,7 +148,8 @@ const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14
 // the section header.
 const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>`
 function workspaceItemTemplate(w, reportCount) {
-  const isCurrent = state.currentWorkspace === w.id && state.currentView !== 'bundles'
+  const isCurrent = state.currentWorkspace === w.id
+    && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
   // Clicking the workspace's main button loads every report in the
   // workspace into a single merged view (handled by the `.file-item`

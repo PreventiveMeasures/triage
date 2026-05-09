@@ -145,7 +145,8 @@
    the main pane. Hover affordance + accent recolor mirror the
    sidebar's other clickable rows. Hidden entirely when no bundles
    exist (controlled by sidebar.js, not CSS). */
-.file-group-header.bundles-header {
+.file-group-header.bundles-header,
+.file-group-header.packages-header {
   cursor: pointer;
   border-radius: 4px;
   transition: background .12s, color .12s;
