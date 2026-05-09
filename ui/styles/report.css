@@ -699,37 +699,6 @@
     margin: 0 0 .5rem;
   }
 
-  /* Tab strip in the details panel — Packages / Files split when
-     the bundle has > 5 packages, and "Graph →" / "Issues →"
-     trailing-arrow action buttons that open the full-width slide.
-     The spacer between the data tabs and the actions pushes the
-     actions to the right edge so the visual reads as "panel
-     content tabs on the left, drill-in actions on the right". */
-  & .bundles-tabs {
-    display: flex; gap: .25rem;
-    padding: 0 .25rem;
-    margin: -.25rem 0 .5rem;
-    border-bottom: 1px solid var(--border);
-    align-items: center;
-  }
-  & .bundles-tabs-spacer { flex: 1; }
-  & .bundles-tab {
-    background: transparent; border: none;
-    color: var(--muted);
-    padding: .35rem .65rem;
-    font: inherit; font-size: .72rem;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-    transition: color .12s, border-color .12s;
-
-    &:hover { color: var(--text); }
-    &.active { color: var(--accent); border-bottom-color: var(--accent); }
-    &.bundles-tab-action {
-      color: var(--accent);
-      &:hover { color: var(--text); }
-    }
-  }
   & .bundles-details-label {
     color: var(--muted);
     font-size: .68rem;
@@ -1536,6 +1505,40 @@ body.report-fullscreen {
    plus a severity-chip strip and a nested file list. Styled like
    the bundle Issues slide so the visual rhythm carries across
    aggregate views. */
+/* Tab strip in details panels — bundles details (Packages / Files
+   / Reports / Graph → / Issues → / Code →) and packages details
+   (Overview / Issues) both render this. Hoisted out of the
+   .bundles-view scope so any details panel that drops a
+   `.bundles-tabs` strip in picks the same chrome up. The spacer
+   between the data tabs and the actions pushes the actions to
+   the right edge so the visual reads as "panel content tabs on
+   the left, drill-in actions on the right". */
+.bundles-tabs {
+  display: flex; gap: .25rem;
+  padding: 0 .25rem;
+  margin: -.25rem 0 .5rem;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.bundles-tabs-spacer { flex: 1; }
+.bundles-tab {
+  background: transparent; border: none;
+  color: var(--muted);
+  padding: .35rem .65rem;
+  font: inherit; font-size: .72rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+
+  &:hover { color: var(--text); }
+  &.active { color: var(--accent); border-bottom-color: var(--accent); }
+  &.bundles-tab-action {
+    color: var(--accent);
+    &:hover { color: var(--text); }
+  }
+}
+
 /* Packages view — list of compact package rows on the left, details
    panel on the right. Mirrors the bundles-view chrome (.bundles-
    layout / .bundles-list / .bundles-details) so the two cross-
