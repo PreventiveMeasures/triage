@@ -2869,6 +2869,148 @@ describe('triage-sync client', () => {
     triageSync.closeSession(wsId)
     deleteWorkspace(wsId)
   })
+
+  it('savesSinceKeyframe is capped at keyframeInterval (audit L3 round-6)', async () => {
+    // Audit L3 round-6: peer broadcasts that arrive while the local
+    // user is idle bump `savesSinceKeyframe` once each. Without the
+    // cap, a long burst leaves the counter far past keyframeInterval
+    // — only cosmetic (the next emit is a keyframe regardless and
+    // resets to 0), but the bloat shows up in the persisted-sessions
+    // blob and the `sessionInfo` debug view. Verify the cap by
+    // pushing more peer chains than the interval and inspecting.
+    setKeyframeInterval(3)
+    const wsId = await startSession(['shared-finding'])
+    state.markers.set('shared-finding', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+
+    // Push 6 peer chains — twice the interval. Without the cap,
+    // savesSinceKeyframe would climb to 6 (or higher, since our own
+    // baseline save was already counted toward it).
+    for (let i = 0; i < 6; i++) {
+      await pushRemoteChange(serverUrl, tag, seed, {
+        'shared-finding': { color: i % 2 ? 'green' : 'red' },
+      })
+    }
+    // Wait for the chain handler to settle on the last revision.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.savesSinceKeyframe >= 3,
+      'savesSinceKeyframe reached cap',
+    )
+    const counter = triageSync.sessionInfo(wsId).savesSinceKeyframe
+    assert.equal(counter, 3, `savesSinceKeyframe capped at keyframeInterval (got ${counter})`)
+
+    setKeyframeInterval(100)
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('privateKey rotation disarms old session keys synchronously (audit L2 round-6)', async () => {
+    // Audit L2 round-6: a `notify()` landing during the
+    // dropPersistedSession await of the rotation listener used to
+    // skip the workspace (sessions.delete was synchronous). With the
+    // fix, the OLD session entry stays in `sessions` but its keys
+    // are nulled synchronously — `notify()` finds it, `trySendSave`
+    // bails on the no-keys check, no save under the orphan
+    // workspaceTag goes out. After the drop completes, the entry is
+    // atomically replaced with a new session via openSession.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed1 = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'initial key derivation commits workspaceTag',
+    )
+    const tagOld = triageSync.sessionInfo(wsId).workspaceTag
+
+    // Trigger rotation. The listener fires synchronously inside
+    // upsertWorkspace; the keys-null mutation is synchronous, the
+    // dropPersistedSession + openSession run in an awaited IIFE.
+    const seed2 = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
+    // RIGHT after upsertWorkspace returns, the OLD session entry
+    // should still be present but with nulled keys / tag.
+    const mid = triageSync.sessionInfo(wsId)
+    assert.notEqual(mid, null, 'session entry stayed in the map during rotation')
+    assert.equal(mid.workspaceTag, null, 'old workspaceTag was cleared synchronously')
+    assert.equal(mid.keyReady, false, 'old session.key was cleared synchronously')
+
+    // After the await IIFE settles, the new derivation lands.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null
+        && triageSync.sessionInfo(wsId).workspaceTag !== tagOld,
+      'new tag derived',
+    )
+    const tagNew = triageSync.sessionInfo(wsId).workspaceTag
+    const expectedNewTag = (await cryptoMod.deriveSigningKeypair(seed2, wsId)).publicKeyB64
+    assert.equal(tagNew, expectedNewTag, 'workspaceTag matches the NEW key')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('persistSession reflects the post-rebase baseRevision (audit M2 round-6)', async () => {
+    // Audit M2 round-6: applyOverlayAndPersist used to await
+    // saveTriage (which awaits compressBrotli) BEFORE kicking
+    // persistSession's lock-RMW. A tab teardown landing inside the
+    // compress await would leave state.* updated (via saveTriage's
+    // pending-key M3 mechanism) but the persisted base stale —
+    // cosmetic chain growth on next reload. The fix reorders:
+    // persistSession kicks first (under the Web Lock), saveTriage
+    // awaits second.
+    //
+    // Black-box pin: after a peer chain lands and the rebase has
+    // settled, the persisted-sessions blob's baseRevision must
+    // match the live session's. The reorder doesn't change the
+    // observable steady-state value; it does ensure the lock-RMW
+    // is initiated earlier in the apply sequence.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const baselineRev = triageSync.sessionInfo(wsId).baseRevision
+
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    // Peer pushes a non-conflicting change; client's chain handler
+    // routes through applyOverlayAndPersist (overlay is empty, but
+    // the persist path still fires for the rebased baseRevision).
+    await pushRemoteChange(serverUrl, tag, seed, { 'finding-A': { color: 'amber' } })
+
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.baseRevision !== baselineRev
+        && triageSync.sessionInfo(wsId)?.pending == null,
+      'chain rebase settled',
+    )
+    const rebasedRev = triageSync.sessionInfo(wsId).baseRevision
+
+    // Lock-RMW is async (Web Locks). Allow microtasks to drain so
+    // the persistSession write lands.
+    await waitFor(
+      () => {
+        const blobRaw = localStorage.getItem('deepview.sync.sessions')
+        if (!blobRaw) return false
+        const blob = JSON.parse(blobRaw)
+        return blob[wsId]?.baseRevision === rebasedRev
+      },
+      'persisted-sessions baseRevision tracks live session',
+    )
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────

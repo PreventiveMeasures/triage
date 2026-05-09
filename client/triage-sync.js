@@ -884,7 +884,6 @@ function trySendSubscribe(session, force = false) {
 // completion drains the queue.
 function trySendSave(session) {
   if (!session) return
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (session.pending || session.encrypting) {
     session.pendingSave = true
     return
@@ -903,7 +902,13 @@ function trySendSave(session) {
   refreshSessionIds(session)
   // Refresh localState from the live state.* containers in case
   // saveTriage just persisted edits we haven't snapshotted yet.
+  // Done BEFORE the socket-open gate so an offline notify() still
+  // syncs `session.localState` to state.* — the close handler's
+  // `pendingSave = !statesEqual(localState, baseState)` then sees
+  // coherent data instead of relying on the reconnect path to paper
+  // over the staleness. Audit M4 round-6.
   session.localState = effectiveLocalState(session.baseState, session.ids)
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
   // Once `keyframeInterval` non-keyframe revisions have piled up
   // since the last keyframe, the next save we'd emit anyway is
   // promoted to a keyframe — its changeset is the diff against an
@@ -1138,7 +1143,13 @@ async function applyChainToBase(session, revisions) {
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
     if (isKeyframe) session.savesSinceKeyframe = 0
-    else session.savesSinceKeyframe = (session.savesSinceKeyframe ?? 0) + 1
+    // Cap at keyframeInterval: once we cross the threshold the next
+    // save we emit is a keyframe regardless of how many further
+    // peer revisions land before that emit, so growing the counter
+    // unbounded just bloats the persisted-sessions blob (and shows
+    // up confusingly in the debug `sessionInfo` view). Audit L3
+    // round-6.
+    else session.savesSinceKeyframe = Math.min((session.savesSinceKeyframe ?? 0) + 1, keyframeInterval)
   }
   return true
 }
@@ -1163,16 +1174,22 @@ async function applyOverlayAndPersist(session, overlay) {
   suppressNotify++
   try {
     applyToReactiveState(session.localState, session.ids)
+    // Kick persistSession (lock-RMW, fire-and-forget) BEFORE the
+    // saveTriage await. Both writes land under separate localStorage
+    // keys and there's no atomic cross-key write available, but
+    // scheduling the lock acquire first gives the new baseRevision a
+    // head start over saveTriage's compressBrotli await — narrows the
+    // crash window during which a tab teardown leaves state.* fresh
+    // but the persisted base stale (which on next reload would
+    // recompute the changeset against an old baseState and replay
+    // already-applied content as a fresh save). Audit M2 round-6.
+    persistSession(session)
     await saveTriage()
   } finally {
     suppressNotify--
   }
   // saveTriage's await may have crossed a closeSession; re-check.
   if (!sessionIsLive(session)) return
-  // Persist the rebased base + revision so a reload (or workspace
-  // switch back) skips the full-chain replay. Scoped by serverUrl
-  // — see `loadPersistedSession`.
-  persistSession(session)
   redraw()
   // Cross-session propagation: a finding-id can belong to more than
   // one open workspace. If this session's apply touched state.* for
@@ -1227,9 +1244,10 @@ async function handleAck(session, msg) {
     const applyTo = session.pending.keyframe ? {} : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
+    // Same cap as the chain-apply path — see audit L3 round-6.
     session.savesSinceKeyframe = session.pending.keyframe
       ? 0
-      : (session.savesSinceKeyframe ?? 0) + 1
+      : Math.min((session.savesSinceKeyframe ?? 0) + 1, keyframeInterval)
     session.pending = null
     await applyOverlayAndPersist(session, overlay)
     // applyOverlayAndPersist self-bails if the session was closed
@@ -1858,7 +1876,32 @@ onWorkspaceDeleted((workspaceId) => {
 // useless to the new identity) and re-open so kickKeyDerivation
 // picks up the fresh key via listWorkspaces().
 onWorkspacePrivateKeyChanged((workspaceId) => {
-  const wasOpen = sessions.delete(workspaceId)
+  const oldSession = sessions.get(workspaceId)
+  if (!oldSession) {
+    // No live session, but a stale persisted base for the OLD
+    // identity would mislead a future openSession (see audit H2).
+    // Drop fire-and-forget; the rejection guard below mirrors the
+    // open-session branch.
+    dropPersistedSession(workspaceId).catch((err) => {
+      console.warn('Triage sync: dropPersistedSession lock failed:', err)
+    })
+    return
+  }
+  // Disarm the OLD session synchronously: clear the keys / tag so
+  // any `notify()` landing during the dropPersistedSession await
+  // routes through trySendSave's no-keys bail (raises pendingSave
+  // and returns) instead of pushing a save under the now-orphan
+  // OLD workspaceTag. Without this, an edit during the rotation
+  // gap would land on a chain the new identity doesn't own —
+  // not data loss (the new session re-emits state.* on first save
+  // post-derivation) but cosmetic chain growth on a chain nobody
+  // reads. The session entry stays in `sessions` so iteration
+  // doesn't skip the workspace; it gets replaced atomically by
+  // openSession after the drop completes. Audit L2 round-6.
+  oldSession.signingKey = null
+  oldSession.key = null
+  oldSession.verifyingKey = null
+  oldSession.workspaceTag = null
   // Await the persisted-base wipe BEFORE reopening — `openSession`
   // calls `loadPersistedSession` (a lock-free read of the same
   // blob), so without the await it would race the lock-scheduled
@@ -1869,10 +1912,9 @@ onWorkspacePrivateKeyChanged((workspaceId) => {
   // the (just-rotated) chain. Audit H2.
   ;(async () => {
     await dropPersistedSession(workspaceId)
-    if (wasOpen) {
-      triageSync.openSession(workspaceId)
-      emitStatusIfChanged()
-    }
+    sessions.delete(workspaceId)
+    triageSync.openSession(workspaceId)
+    emitStatusIfChanged()
   })()
 })
 
