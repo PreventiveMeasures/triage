@@ -1,17 +1,21 @@
-import { html, render as litRender, nothing } from 'lit'
-
-// Modal dialog for per-property triage conflicts. Shared by
-// `ui/view/workspace-import.js` (workspace import path) and
-// `ui/view/hydration-conflict.js` (report-attach hydration path).
+// `<triage-conflict-dialog>` — modal dialog for per-property
+// triage conflicts. Shared by `ui/view/workspace-import.js`
+// (workspace import path) and `ui/view/hydration-conflict.js`
+// (report-attach hydration path).
 //
 // Conflicts are grouped by finding id so each card shows the
 // finding's context (severity badge, file:line, first line of
 // description) once and lists the per-property choices (color,
-// comment, fix, triage) inside it. Returns a map keyed by
-// `${id}:${property}` with `'local'` / `'imported'`, or null if
-// the dialog was cancelled (= keep local everywhere). Uses native
-// <dialog> for focus-trap + Esc-to-cancel; Lit `render` so all
-// interpolated text escapes automatically.
+// comment, fix, triage) inside it. The host calls
+// `resolveTriageConflicts(conflicts, lookup, labels)` and gets a
+// Promise that resolves with a map keyed by `${id}:${property}`
+// → `'local'` / `'imported'`, or `null` if cancelled (= keep
+// local everywhere).
+//
+// Uses a native <dialog> for focus-trap + Esc-to-cancel. Light
+// DOM render so the existing `.workspace-conflict-dialog` rules
+// in the global stylesheet apply directly.
+import { LitElement, html, nothing } from 'lit'
 
 // Same `oklch` values color-marker.js uses, kept in sync so the
 // dialog's chip matches the in-app picker. Only the four marker
@@ -83,37 +87,91 @@ const DEFAULT_LABELS = {
   importedSideLabel: 'Apply imported',
 }
 
-// `findingLookup` is `Map<id, { severity, file, line, description }>`.
-// `labels` overrides the default copy: { title, intro, trailingNote,
-// applyButton, importedSideLabel }. The defaults read like the
-// generic "triage conflicts" wording; pass labels to specialise for
-// "import bundle" vs "report attach".
-export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
-  const lbl = { ...DEFAULT_LABELS, ...labels }
-  return new Promise((resolve) => {
-    const dialog = document.createElement('dialog')
-    dialog.className = 'workspace-conflict-dialog'
+const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3 }
+const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state' }
 
+class TriageConflictDialog extends LitElement {
+  static properties = {
+    conflicts: { attribute: false },
+    findingLookup: { attribute: false },
+    labels: { attribute: false },
+  }
+
+  // Light DOM — `.workspace-conflict-dialog` rules live in the
+  // global stylesheet; a shadow root would hide them. Same shape
+  // the rest of the deepview LitElements use (severity-chips,
+  // triage-filter, etc.).
+  createRenderRoot() { return this }
+
+  constructor() {
+    super()
+    this.conflicts = []
+    this.findingLookup = new Map()
+    this.labels = { ...DEFAULT_LABELS }
+  }
+
+  // Show the modal once the <dialog> lands in the document. Uses
+  // updateComplete-via-firstUpdated so the underlying element
+  // exists before showModal() is called. Esc / backdrop / the
+  // explicit Cancel button all converge on `_finish(null)`.
+  firstUpdated() {
+    const dialog = this.querySelector('dialog')
+    if (dialog) dialog.showModal()
+  }
+
+  _finish(decisions) {
+    if (this._settled) return
+    this._settled = true
+    const dialog = this.querySelector('dialog')
+    if (dialog) dialog.close()
+    this.dispatchEvent(new CustomEvent('resolve', { detail: decisions }))
+  }
+
+  _onClick = (e) => {
+    const bulk = e.target.closest('[data-bulk]')
+    if (bulk) {
+      const value = bulk.dataset.bulk
+      for (const r of this.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
+      return
+    }
+    if (e.target.closest('[data-action="apply"]')) {
+      const decisions = {}
+      for (const c of this.conflicts) {
+        const key = `${c.id}:${c.property}`
+        const checked = this.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
+        decisions[key] = checked?.value ?? 'local'
+      }
+      this._finish(decisions)
+      return
+    }
+    if (e.target.closest('[data-action="cancel"]')) this._finish(null)
+  }
+
+  // Esc / backdrop close → cancel = keep all current. The native
+  // <dialog> fires a `close` event in both cases.
+  _onClose = () => this._finish(null)
+
+  render() {
+    const lbl = this.labels
     // Group by finding id so a finding with both a color AND a
     // comment conflict shows up as a single card with two
     // decisions, instead of two unrelated rows.
     const byId = new Map()
-    for (const c of conflicts) {
+    for (const c of this.conflicts) {
       if (!byId.has(c.id)) byId.set(c.id, [])
       byId.get(c.id).push(c)
     }
     // Sort properties within a card so order is stable: color
     // first, then comment, then fix, then triage — matches the
     // action-row ordering in the finding card.
-    const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3 }
     for (const list of byId.values()) {
       list.sort((a, b) => (PROP_ORDER[a.property] ?? 99) - (PROP_ORDER[b.property] ?? 99))
     }
 
-    const colorN = conflicts.filter((c) => c.property === 'color').length
-    const commentN = conflicts.filter((c) => c.property === 'comment').length
-    const fixN = conflicts.filter((c) => c.property === 'fix').length
-    const triageN = conflicts.filter((c) => c.property === 'triage').length
+    const colorN = this.conflicts.filter((c) => c.property === 'color').length
+    const commentN = this.conflicts.filter((c) => c.property === 'comment').length
+    const fixN = this.conflicts.filter((c) => c.property === 'fix').length
+    const triageN = this.conflicts.filter((c) => c.property === 'triage').length
     const summary = [
       colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
       commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
@@ -122,7 +180,11 @@ export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
     ].filter(Boolean).join(', ')
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
-    litRender(html`
+    return html`<dialog
+      class="workspace-conflict-dialog"
+      @click=${this._onClick}
+      @close=${this._onClose}
+    >
       <header class="conflict-head">
         <h3>${lbl.title}</h3>
         <p>${findingsLabel} ${lbl.intro} ${summary}.${lbl.trailingNote ? ` ${lbl.trailingNote}` : ''}</p>
@@ -134,18 +196,13 @@ export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
       <ul class="conflict-list">
         ${[...byId.entries()].map(([id, items]) => html`
           <li class="conflict-card" data-id=${id}>
-            ${findingHeaderTemplate(findingLookup.get(id), id)}
+            ${findingHeaderTemplate(this.findingLookup.get(id), id)}
             <div class="conflict-rows">
               ${items.map((c) => {
                 const key = `${c.id}:${c.property}`
                 const radioName = `conflict-${key}`
-                const propLabel = c.property === 'color' ? 'Color'
-                  : c.property === 'comment' ? 'Comment'
-                  : c.property === 'fix' ? 'Fix'
-                  : c.property === 'triage' ? 'Triage state'
-                  : c.property
                 return html`<div class="conflict-row" data-key=${key}>
-                  <span class="conflict-row-label">${propLabel}</span>
+                  <span class="conflict-row-label">${PROP_LABEL[c.property] ?? c.property}</span>
                   <label class="conflict-choice">
                     <input type="radio" name=${radioName} value="local" checked>
                     <span class="conflict-choice-label">Keep current</span>
@@ -166,38 +223,31 @@ export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
         <button type="button" data-action="cancel">Cancel</button>
         <button type="button" data-action="apply" class="primary">${lbl.applyButton}</button>
       </footer>
-    `, dialog)
+    </dialog>`
+  }
+}
 
-    document.body.appendChild(dialog)
-    let settled = false
-    const finish = (decisions) => {
-      if (settled) return
-      settled = true
-      dialog.close()
-      dialog.remove()
-      resolve(decisions)
-    }
-    dialog.addEventListener('click', (e) => {
-      const bulk = e.target.closest('[data-bulk]')
-      if (bulk) {
-        const value = bulk.dataset.bulk
-        for (const r of dialog.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
-        return
-      }
-      if (e.target.closest('[data-action="apply"]')) {
-        const decisions = {}
-        for (const c of conflicts) {
-          const key = `${c.id}:${c.property}`
-          const checked = dialog.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
-          decisions[key] = checked?.value ?? 'local'
-        }
-        finish(decisions)
-        return
-      }
-      if (e.target.closest('[data-action="cancel"]')) finish(null)
+customElements.define('triage-conflict-dialog', TriageConflictDialog)
+
+// Public API — same signature the imperative version exposed:
+// caller awaits the Promise; resolves with a `${id}:${property}`
+// → 'local' / 'imported' map, or null on cancel.
+//
+// `findingLookup` is `Map<id, { severity, file, line, description }>`.
+// `labels` overrides the default copy: { title, intro, trailingNote,
+// applyButton, importedSideLabel }. The defaults read like the
+// generic "triage conflicts" wording; pass labels to specialise for
+// "import bundle" vs "report attach".
+export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
+  return new Promise((resolve) => {
+    const el = document.createElement('triage-conflict-dialog')
+    el.conflicts = conflicts
+    el.findingLookup = findingLookup
+    el.labels = { ...DEFAULT_LABELS, ...labels }
+    el.addEventListener('resolve', (e) => {
+      el.remove()
+      resolve(e.detail)
     })
-    // Esc / backdrop close → cancel = keep all current.
-    dialog.addEventListener('close', () => finish(null))
-    dialog.showModal()
+    document.body.appendChild(el)
   })
 }

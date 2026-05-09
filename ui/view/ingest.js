@@ -1,3 +1,4 @@
+import { render as litRender, nothing } from 'lit'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
 import { deleteFile, readBundle, readFile, saveBundle, saveFile } from '../../client/storage.js'
@@ -321,7 +322,11 @@ export async function deleteCurrent() {
   cleanupGraph2()
   try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
   report.classList.remove('active')
-  report.innerHTML = ''
+  // Drop the rendered findings via Lit so any cached parts on
+  // #report (slot-reuse holds them across renders) get cleaned up
+  // alongside the DOM. A bare `report.innerHTML = ''` would leave
+  // the next render() walking a stale part-cache.
+  litRender(nothing, report)
   dropZone.classList.remove('hidden')
   document.title = 'deepview results'
   document.body.classList.remove('show-print-btn')

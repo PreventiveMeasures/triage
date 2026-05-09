@@ -952,22 +952,12 @@ report.addEventListener('change', (e) => {
   else if (id === 'packages-sort-select') { state.packagesSortBy = val; render() }
 })
 
-// Confidence range slider. `range-input` fires continuously during
-// drag and only updates the labelled values + the row-visibility
-// (no full re-render — that would tear the slider out from under
-// the user's mouse). `range-change` fires on release and triggers
-// the full render so any chrome that keys off the live counts
-// (severity-chip badges, the search row's `X of Y`) catches up.
-report.addEventListener('range-input', (e) => {
-  if (e.target.id !== 'conf-range') return
-  state.filterConfMin = e.detail.low
-  state.filterConfMax = e.detail.high
-  // Update only the live label so the user can read the range
-  // they're dragging through; defer the heavy filter render to
-  // `range-change`.
-  const label = document.getElementById('conf-range-vals')
-  if (label) label.textContent = `${state.filterConfMin}–${state.filterConfMax}`
-})
+// Confidence range slider. `range-change` fires on release and
+// triggers the full render so every chrome piece (severity-chip
+// badges, the search row's `X of Y`) catches up. The drag-time
+// label mirror is owned by the <conf-range-mirror> element — it
+// listens to `range-input` directly and updates its own text, so
+// the toolbar doesn't have to re-render per tick.
 report.addEventListener('range-change', (e) => {
   if (e.target.id !== 'conf-range') return
   state.filterConfMin = e.detail.low
