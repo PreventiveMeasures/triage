@@ -1297,7 +1297,12 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
   // available") and re-render so the unsafeHTML branch picks it up.
   if (lang && !_bundleHighlightCache.has(cacheKey) && !_bundleHighlightPending.has(cacheKey)) {
     _bundleHighlightPending.add(cacheKey)
-    prismHighlight(content, lang).then((highlightedHtml) => {
+    // Fire-and-forget: the highlight runs in the background and
+    // the next render() call (kicked from inside) injects the
+    // result via unsafeHTML. Async IIFE rather than `.then` so
+    // the empty `.then` body doesn't trip promise/always-return.
+    ;(async () => {
+      const highlightedHtml = await prismHighlight(content, lang)
       _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — the rest of the bundles view rebuilds
@@ -1305,7 +1310,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings) {
       // changed, so the cost is the highlighted string getting
       // injected via unsafeHTML on the next pass.
       if (state.bundleSourceFile === path) render()
-    })
+    })()
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
   return html`<div class="bundle-source-lines" style=${`--lineno-width:${digits}ch`}>
