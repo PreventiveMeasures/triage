@@ -2147,36 +2147,89 @@ function renderPackagesView() {
   // dropped, not just the one currently loaded. The first call
   // kicks the scan if it hasn't run yet; the events.js subscriber
   // re-renders progressively as more reports finish indexing.
+  //
+  // Triage filter: state.shownTriage gates which findings count
+  // (null = untriaged, 'fixed' / 'invalid' / 'deleted' = those
+  // buckets). Ignore is per-report and intentionally NOT
+  // considered here — a finding ignored in some report still
+  // counts against its package because the package itself isn't
+  // ignored. Same rule the bundle paths follow.
   ensureBundleFindingsIndexed().catch(() => {})
   const buckets = getPackagesIndex()
-  const sortedPkgs = [...buckets.entries()].sort(([a, ba], [b, bb]) => {
+  // Per-package filtered view + cross-bucket triage counts.
+  // `triageCounts` drives the segmented selector visibility +
+  // count chips; the filter stays unchanged when shownTriage flips
+  // so the user can pivot through the buckets without the page
+  // collapsing.
+  const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+  const filtered = []
+  for (const [pkg, bucket] of buckets) {
+    const findings = []
+    const files = new Map()
+    for (const f of bucket.findings) {
+      const t = state.triageState.get(tabKey(f)) ?? null
+      if (t === 'fixed') triageCounts.fixed++
+      else if (t === 'invalid') triageCounts.invalid++
+      else if (t === 'deleted') triageCounts.deleted++
+      if (t !== state.shownTriage) continue
+      findings.push(f)
+      if (!files.has(f.file)) files.set(f.file, [])
+      files.get(f.file).push(f)
+    }
+    if (findings.length > 0) filtered.push([pkg, { findings, files, reports: bucket.reports }])
+  }
+  filtered.sort(([a, ba], [b, bb]) => {
     if (bb.findings.length !== ba.findings.length) return bb.findings.length - ba.findings.length
     return a.localeCompare(b)
   })
-  const totalFindings = sortedPkgs.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
+  const totalFindings = filtered.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
   const totalReports = new Set()
-  for (const [, bucket] of sortedPkgs) for (const r of bucket.reports) totalReports.add(r)
-  if (sortedPkgs.length === 0) {
-    return html`<div class="packages-view">
-      <header class="page-head">
-        <div class="page-title"><h1>Packages</h1></div>
-      </header>
-      <p style="color:var(--muted)">Indexing reports… this view populates as the OPFS scan finishes.</p>
-    </div>`
-  }
+  for (const [, bucket] of filtered) for (const r of bucket.reports) totalReports.add(r)
   return html`<div class="packages-view">
     <header class="page-head">
       <div class="page-title">
         <h1>Packages</h1>
         <div class="meta-row">
-          <span>${sortedPkgs.length} ${sortedPkgs.length === 1 ? 'package' : 'packages'}</span>
-          <span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${totalReports.size} ${totalReports.size === 1 ? 'report' : 'reports'}</span>
+          <span>${filtered.length} ${filtered.length === 1 ? 'package' : 'packages'}</span>
+          ${totalFindings > 0 ? html`<span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${totalReports.size} ${totalReports.size === 1 ? 'report' : 'reports'}</span>` : nothing}
         </div>
       </div>
+      ${packagesTriageSelectorTemplate(triageCounts)}
     </header>
-    <ul class="packages-list">
-      ${sortedPkgs.map(([pkg, bucket]) => renderPackageRow(pkg, bucket))}
-    </ul>
+    ${filtered.length === 0
+      ? html`<p style="color:var(--muted)">${buckets.size === 0
+          ? 'Indexing reports… this view populates as the OPFS scan finishes.'
+          : state.shownTriage
+            ? `No ${state.shownTriage} findings in any package.`
+            : 'No untriaged findings in any package.'}</p>`
+      : html`<ul class="packages-list">
+          ${filtered.map(([pkg, bucket]) => renderPackageRow(pkg, bucket))}
+        </ul>`}
+  </div>`
+}
+
+// Triage selector for the Packages page — same shape the bundle
+// graph topbar uses (Fixed / Invalid / Deleted, no Ignored
+// because ignore is per-report and treated as untriaged here).
+// Hidden when every bucket is empty AND we're in the live view —
+// nothing to switch to.
+function packagesTriageSelectorTemplate(triageCounts) {
+  const states = ['fixed', 'invalid', 'deleted']
+  const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
+  if (total === 0 && !state.shownTriage) return nothing
+  return html`<div class="triage-selector packages-triage-selector" role="group" aria-label="Triage view">
+    ${states.map((s) => {
+      const n = triageCounts[s] ?? 0
+      const active = state.shownTriage === s
+      if (n === 0 && !active) return nothing
+      return html`<button
+        type="button"
+        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        data-triage-show=${s}
+        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
+        aria-pressed=${String(active)}
+      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
+    })}
   </div>`
 }
 

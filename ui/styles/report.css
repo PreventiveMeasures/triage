@@ -1542,6 +1542,15 @@ body.report-fullscreen {
   flex: 1;
   min-height: 0;
 }
+/* Triage selector pinned to the top-right of the page header.
+   `.page-head` is `align-items: flex-start; justify-content:
+   space-between` (see #report rule above), which already pushes
+   the selector to the right edge — this rule mostly tightens
+   the chip row so it doesn't visually compete with the title. */
+.packages-view .packages-triage-selector {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
 .packages-list {
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column;
