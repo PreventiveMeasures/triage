@@ -798,6 +798,263 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsB)
   })
 
+  it('out-of-workspace ids land in baseState but not in state.* (per-workspace scope contract)', async () => {
+    // Spec: U0 has report R0 in workspace W (with finding-A only).
+    // R1 (with findings A and B) is loaded but NOT in W. Peer U1
+    // (whose workspace also has another report R2 with A, B, C)
+    // triages all three. U0 must:
+    //   - APPLY A to state.markers (A is in W via R0).
+    //   - STORE B in baseState — needed so a future keyframe carries
+    //     it for fresh subscribers — but NOT apply to state.markers
+    //     (B isn't in W; B's appearance in R1 doesn't count because
+    //     R1 isn't in W).
+    //   - STORE C in baseState — needed for keyframe — but NOT apply
+    //     to state.markers (no report in W has C).
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    // R0 is in W; R1 is loaded but NOT in W.
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' }, { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+
+    // Peer pushes triage for all three findings under W's workspaceTag.
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-A': { color: 'red' },
+      'finding-B': { color: 'blue' },
+      'finding-C': { color: 'green' },
+    })
+
+    // Wait for the in-scope id to land in state.markers (cheapest
+    // observable for "the chain applied").
+    await waitFor(
+      () => state.markers.get('finding-A') === 'red',
+      'in-scope id applied',
+    )
+
+    // Spec assertion: in-scope A applied; OOS B and C did NOT touch
+    // state.markers. (R1 has finding-B but isn't in the workspace, so
+    // finding-B is OOS for this session.)
+    assert.equal(state.markers.get('finding-A'), 'red', 'A applied (in scope via R0)')
+    assert.equal(state.markers.get('finding-B'), undefined, 'B not applied (R1 not in workspace)')
+    assert.equal(state.markers.get('finding-C'), undefined, 'C not applied (no report in workspace has it)')
+
+    // baseState carries all three — verified via the persisted-session
+    // blob, which mirrors session.baseState. This is what guarantees a
+    // future keyframe preserves OOS triage for fresh subscribers.
+    const persisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    assert.equal(persisted?.baseState?.['finding-A']?.color, 'red', 'A in baseState')
+    assert.equal(persisted?.baseState?.['finding-B']?.color, 'blue', 'B in baseState (OOS but stored)')
+    assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C in baseState (OOS but stored)')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('attaching R1 to the workspace hydrates state.* with B from baseState (C stays OOS)', async () => {
+    // Spec continuation: from the prior test's state, U0 attaches R1
+    // to W. B is now in scope (R1 has B); C is still OOS (no report
+    // in W has C). The hydration step (audit H1 fix) reads B from
+    // baseState into state.markers; A stays put; C is left in
+    // baseState only.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' }, { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-A': { color: 'red' },
+      'finding-B': { color: 'blue' },
+      'finding-C': { color: 'green' },
+    })
+    await waitFor(
+      () => state.markers.get('finding-A') === 'red',
+      'A applied (in scope)',
+    )
+    assert.equal(state.markers.get('finding-B'), undefined, 'B not yet applied')
+
+    // Attach R1 to W. The membership listener refreshes session.ids
+    // and hydrates state.* from baseState for the newly-in-scope
+    // ids — only B in this case (A was already in scope, C still
+    // not in any of W's reports).
+    setReportWorkspace('R1.md', wsId)
+
+    assert.equal(state.markers.get('finding-A'), 'red', 'A still set')
+    assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from baseState')
+    assert.equal(state.markers.get('finding-C'), undefined, 'C still OOS (no report in W has it)')
+
+    // baseState still carries all three (hydration reads, doesn't
+    // remove). Future keyframes preserve C for fresh subscribers.
+    const persisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C remains in baseState after attach')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('attaching a different report containing only B (not C) hydrates B from baseState', async () => {
+    // Spec: "U0 adds R1 ... or adds a different report containing
+    // issue B". Verify the "different report" half — instead of R1,
+    // attach R3 which contains only finding-B (not A, not C).
+    // Hydration must still pick up B from baseState.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R3.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-A': { color: 'red' },
+      'finding-B': { color: 'blue' },
+      'finding-C': { color: 'green' },
+    })
+    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+
+    setReportWorkspace('R3.md', wsId)
+
+    assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from R3')
+    assert.equal(state.markers.get('finding-C'), undefined, 'C still OOS')
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('hydration on attach is gap-only: pre-existing local triage value wins, propagates to chain', async () => {
+    // Spec: "applied (with a conflict resolution dialog, if needed)".
+    // Current behavior: hydration is gap-only, so a pre-existing
+    // local state.markers[B] takes precedence over baseState[B].
+    // The next save then propagates the local value to the chain
+    // (local-wins). A conflict dialog isn't currently surfaced for
+    // the report-attach path; this test pins the local-wins
+    // resolution so a future "ask the user" UX is an additive
+    // change that doesn't silently drift.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'R0.md',
+      groups: [[ { id: 'finding-A', _id: 'finding-A' } ]],
+    })
+    state.reports.push({
+      fileName: 'R1.md',
+      groups: [[ { id: 'finding-B', _id: 'finding-B' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'finding-A': { color: 'red' },
+      'finding-B': { color: 'blue' },
+    })
+    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+
+    // Pre-existing local triage on B (e.g. user set it via the
+    // console API while R1 was in a different workspace, or it was
+    // restored from the deepview.triage blob at module load).
+    state.markers.set('finding-B', 'green')
+
+    setReportWorkspace('R1.md', wsId)
+
+    // Hydration is gap-only — local 'green' is preserved over the
+    // chain's 'blue'.
+    assert.equal(state.markers.get('finding-B'), 'green', 'local value preserved')
+
+    // The membership listener also kicked a save; local 'green'
+    // diffs against baseState's 'blue' and goes out as a save. Wait
+    // for the chain to advance, then read it back via a fresh raw
+    // subscriber to confirm.
+    await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered.filter((m) => m.type === 'workspace-state').flatMap((s) => s.revisions)
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const cumulative = {}
+    for (const rev of revisions) {
+      const aad = cryptoMod.buildAad(tag, rev.base)
+      const changeset = await cryptoMod.decryptJson(key, rev.nonce, rev.ciphertext, aad)
+      for (const [id, entry] of Object.entries(changeset)) {
+        if (entry === null) delete cumulative[id]
+        else cumulative[id] = entry
+      }
+    }
+    assert.equal(cumulative['finding-B']?.color, 'green', 'chain converged to local-wins value')
+    reader.close()
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
   it('attaching a report containing a peer-triaged id does not wipe the chain on the next save', async () => {
     // H1: a peer triaged finding-X via R2; the chain arrived here
     // with baseState[X] populated but state.* untouched (X not in
