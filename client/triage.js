@@ -134,12 +134,37 @@ async function readTriageBlob() {
 // nuked by a sibling's persistence write.
 function applyTriageEntries(entries, { replace = false } = {}) {
   if (replace) {
+    // Round-9 M3: when this tab is mid-saveTriage (its own pending
+    // key is set with newer-than-blob local edits), the cross-tab
+    // replace MUST NOT wipe ids the local edits have changed.
+    // Without this guard, the sequence
+    //   T1: local state.markers.set(X, 'red'); saveTriage starts;
+    //       TRIAGE_PENDING_KEY written synchronously; compress
+    //       awaits.
+    //   T2: sibling's storage event fires; reload runs; sibling's
+    //       blob doesn't contain X; replace mode deletes X from
+    //       state.markers.
+    //   T3: local saveTriage's compress completes; writes
+    //       TRIAGE_KEY (still containing X via the pre-compress
+    //       snapshot); clears pending.
+    // ends with TRIAGE_KEY persistently containing X but state.*
+    // not — the next render shows X missing until the next reload.
+    // Read the pending key once and treat its ids as protected
+    // local edits the sibling hasn't seen.
+    let pendingEntries = null
+    const pendingRaw = localStorage.getItem(TRIAGE_PENDING_KEY)
+    if (pendingRaw) {
+      try { pendingEntries = JSON.parse(pendingRaw) } catch {}
+    }
+    const pendingHas = (k) => pendingEntries != null && k in pendingEntries
     for (const k of [...state.markers.keys()]) {
       if (SESSION_ID_RE.test(k)) continue
+      if (pendingHas(k) && pendingEntries[k]?.color) continue
       if (!entries || !(k in entries) || !entries[k]?.color) state.markers.delete(k)
     }
     for (const k of [...state.triageState.keys()]) {
       if (SESSION_ID_RE.test(k)) continue
+      if (pendingHas(k) && (pendingEntries[k]?.triage || pendingEntries[k]?.deleted)) continue
       const v = entries?.[k]
       const next = (v?.triage === 'fixed' || v?.triage === 'invalid' || v?.triage === 'deleted')
         ? v.triage
@@ -148,10 +173,12 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     }
     for (const k of [...state.comments.keys()]) {
       if (SESSION_ID_RE.test(k)) continue
+      if (pendingHas(k) && pendingEntries[k]?.comment) continue
       if (!entries || !(k in entries) || typeof entries[k]?.comment !== 'string' || !entries[k].comment) state.comments.delete(k)
     }
     for (const k of [...state.fixes.keys()]) {
       if (SESSION_ID_RE.test(k)) continue
+      if (pendingHas(k) && pendingEntries[k]?.fix) continue
       if (!entries || !(k in entries) || typeof entries[k]?.fix !== 'string' || !entries[k].fix) state.fixes.delete(k)
     }
     // Per-report ignore: keys are `${reportName}\0${id}`. Drop
@@ -168,6 +195,9 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       const reportName = key.slice(0, sep)
       const id = key.slice(sep + 1)
       if (SESSION_ID_RE.test(id)) continue
+      // Local pending-write protection (round-9 M3) — see above.
+      if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
+        && pendingEntries[id].ignoredReports.includes(reportName)) continue
       const v = entries?.[id]
       const triageWasSet = v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted' || v.deleted)
       if (triageWasSet) {

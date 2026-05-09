@@ -157,8 +157,20 @@ async function handleSave(socket, msg) {
   }
   const id = await computeRevisionIdFromCanonical(canonical)
   const tag = msg.workspaceTag
-  // Sender is now an authenticated subscriber for this tag.
-  subscribe(socket, tag)
+  // NOTE: Earlier revisions auto-subscribed the sending socket here.
+  // That created a replay vector — a passive observer who captured
+  // any single valid `workspace-save` frame could replay it from any
+  // TCP connection forever to attach as a subscriber and silently
+  // mirror every future encrypted broadcast for the workspace,
+  // without ever holding the seed (the duplicate-id path returns
+  // ack-only and doesn't reject the socket). Audit round-9 H1.
+  //
+  // The legitimate client always sends an explicit
+  // `workspace-subscribe` (see `trySendSubscribe` in
+  // `client/triage-sync.js` — fires on key derivation, on
+  // socket open, on continuity-break recovery, on dismissError).
+  // The subscribe path remains the only way to attach as a
+  // broadcast subscriber.
   // Idempotent retransmit: a save with the same content (same id)
   // arriving more than once gets a fresh ack but doesn't grow the
   // chain. Useful when a client times out mid-ack and re-sends.
@@ -336,12 +348,18 @@ wss.on('listening', () => {
 // cleanly on bind failure so systemd / docker can apply its retry
 // policy; for post-listen errors there's no clean way to recover, so
 // crash too.
+// Route through `shutdown()` rather than calling `process.exit(1)`
+// directly: the previous shape skipped the in-flight handler drain
+// and the DB close, so a non-bind error after listen could lose
+// already-acked WAL frames. shutdown() is re-entrancy-safe and
+// exits with code 1 when invoked from this path so systemd /
+// docker still see a failure exit. Audit round-9 M2.
 wss.on('error', (err) => {
   console.error('Server error:', err?.message ?? err)
-  process.exit(1)
+  shutdown(1)
 })
 
-async function shutdown() {
+async function shutdown(exitCode = 0) {
   if (shuttingDown) return
   shuttingDown = true
   console.log('Shutting down…')
@@ -369,7 +387,10 @@ async function shutdown() {
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
   try { handle.close() } catch (err) { console.warn('DB close error:', err.message ?? err) }
-  process.exit(0)
+  process.exit(exitCode)
 }
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+// Wrap signal handlers so the signal name (passed as the listener's
+// first arg) doesn't bleed into shutdown's `exitCode` parameter and
+// trip `process.exit` into rejecting a non-numeric code.
+process.on('SIGINT', () => shutdown(0))
+process.on('SIGTERM', () => shutdown(0))

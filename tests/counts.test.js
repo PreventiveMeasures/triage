@@ -162,3 +162,50 @@ describe('counts cache (setCount / getCount / removeCount / getKind)', () => {
     assert.equal(fresh.getKind('legacy.json'), undefined, 'source absent on legacy entry')
   })
 })
+
+describe('ensureCounts multi-caller (audit round-9 L1)', () => {
+  it('a re-entrant ensureCounts call doesn\'t lose the FIRST caller\'s onUpdate', async () => {
+    // Round-9 L1: previously activeOnUpdate was overwritten by the
+    // most recent caller, so the FIRST caller's callback stopped
+    // firing for any of its still-pending names. Now each caller's
+    // callback is tracked alongside the names IT asked about; a
+    // re-entrant call appends instead of replacing.
+    //
+    // Use a fresh module instance so the test sees clean cache +
+    // an unused activeRun lane. Stub readFile via a fresh storage
+    // module so ensureCounts can drain.
+    globalThis.localStorage.clear()
+    const stamp = `${Date.now()}-${Math.random()}`
+    const storageMod = await import(`../client/storage.js?ec-${stamp}`)
+    const countsMod = await import(`../client/counts.js?ec-${stamp}`)
+
+    // Seed two reports so analyzeContent returns a count > 0.
+    await storageMod.saveFile(`a-${stamp}.json`, JSON.stringify({ findings: [{ id: '1' }] }))
+    await storageMod.saveFile(`b-${stamp}.json`, JSON.stringify({ findings: [{ id: '2' }, { id: '3' }] }))
+    // Drop in-memory cache entries so ensureCounts goes through readFile.
+    // (Calling getCount won't trigger a re-fetch; we need ensureCounts.)
+
+    const firedFor = (label, recv) => (n, c) => recv.push({ label, name: n, count: c })
+    const firstCalls = []
+    const secondCalls = []
+
+    // First caller asks about A. Re-entrant second caller asks about B.
+    // Both onUpdates must fire for their respective names.
+    const firstP = countsMod.ensureCounts([`a-${stamp}.json`], firedFor('first', firstCalls))
+    const secondP = countsMod.ensureCounts([`b-${stamp}.json`], firedFor('second', secondCalls))
+    await Promise.all([firstP, secondP])
+
+    assert.ok(firstCalls.some((e) => e.name === `a-${stamp}.json`),
+      'first caller\'s onUpdate fired for its name')
+    assert.ok(secondCalls.some((e) => e.name === `b-${stamp}.json`),
+      'second caller\'s onUpdate fired for its name')
+    // Round-9 L1 also: the first caller's callback should NOT fire
+    // for the second caller's names (each callback is scoped to the
+    // names that caller asked about).
+    assert.equal(
+      firstCalls.filter((e) => e.name === `b-${stamp}.json`).length,
+      0,
+      'first caller\'s onUpdate does NOT fire for second caller\'s names',
+    )
+  })
+})

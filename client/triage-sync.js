@@ -1946,7 +1946,20 @@ onWorkspacePrivateKeyChanged((workspaceId) => {
     sessions.delete(workspaceId)
     triageSync.openSession(workspaceId)
     emitStatusIfChanged()
-  })()
+  })().catch((err) => {
+    // Web Locks reject on tab teardown / abort signals; without
+    // this catch the IIFE rejection escapes as an unhandledrejection
+    // AND `sessions.delete` + `openSession` never run, leaving the
+    // session entry stranded with `signingKey = key = workspaceTag
+    // = null` (set synchronously above by the disarm step). Every
+    // subsequent `notify()` would then short-circuit in
+    // `trySendSave` and the workspace silently stops syncing. Log
+    // and explicitly clean up so a later `dismissError` /
+    // re-import has a coherent state to work from.
+    console.warn('Triage sync: privateKey rotation IIFE failed:', err)
+    sessions.delete(workspaceId)
+    emitStatusIfChanged()
+  })
 })
 
 // Workspace report-membership change (drag a report in/out of a

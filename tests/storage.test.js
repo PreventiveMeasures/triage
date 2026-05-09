@@ -173,3 +173,44 @@ describe('storage — readFile error path', () => {
     )
   })
 })
+
+describe('storage — readFile/saveFile race (audit round-9 H1)', () => {
+  it('a saveFile during an in-flight readFile does not get clobbered', async () => {
+    // Pre-fix: `readFile` started, async OPFS / LS read in flight.
+    // `saveFile(name, NEW)` lands and runs `cache.set(name, NEW)`.
+    // Then the older readFile resolves with OLD bytes and overwrites
+    // the cache via its tail `cache.set(name, content)`. Subsequent
+    // reads serve OLD until the next saveFile.
+    //
+    // Fix: `saveFile` bumps a per-name write generation BEFORE its
+    // I/O. `readFile` captures the gen at start; if it changed by
+    // resolve time, skip the cache.set so the saveFile's NEW value
+    // stays canonical.
+    //
+    // We exercise the race by issuing readFile first, then saveFile
+    // concurrently. Both promises resolve in some order; in either
+    // ordering the cache must end with the NEW value (or be empty
+    // and re-resolve to NEW on the next call).
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?race=${Date.now()}`)
+    await fresh.saveFile('race.json', 'OLD')
+    // Drop the cache so the next readFile actually goes to LS.
+    await fresh.deleteFile('race.json')
+    await fresh.saveFile('race.json', 'OLD')
+    // Drop in-memory cache without writing — direct LS write +
+    // re-save through saveFile would cache.set anew. Instead
+    // delete then re-import a fresh instance so cache starts empty.
+    const fresh2 = await import(`../client/storage.js?race2=${Date.now()}`)
+    await fresh2.saveFile('race2.json', 'OLD')
+    // Now race: kick a readFile (OLD will be read), then saveFile(NEW).
+    const readPromise = fresh2.readFile('race2.json')
+    const writePromise = fresh2.saveFile('race2.json', 'NEW')
+    await Promise.all([readPromise, writePromise])
+    // The next readFile must resolve to NEW. With the fix, the
+    // earlier readFile's tail cache.set is skipped (its captured
+    // gen is stale); cache holds NEW from saveFile. Without the
+    // fix, the read's stale OLD overwrites NEW.
+    const after = await fresh2.readFile('race2.json')
+    assert.equal(after, 'NEW', 'cache reflects the latest saveFile')
+  })
+})

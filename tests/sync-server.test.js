@@ -635,29 +635,33 @@ describe('triage-sync server', () => {
     multi.ws.close(); writerX.ws.close()
   })
 
-  it('save without a prior subscribe still receives subsequent broadcasts (auto-subscribe)', async () => {
-    // `handleSave` calls `subscribe(socket, tag)` for the sender,
-    // so a client that fires-and-forgets a save still becomes a
-    // peer for future broadcasts. Pinned because it's an
-    // intentional contract: the client doesn't need to track
-    // subscribe state separately from save state.
+  it('save without a prior subscribe does NOT register the sender as a subscriber (audit round-9 H1)', async () => {
+    // Round-9 H1: earlier revisions auto-subscribed the sending
+    // socket inside `handleSave`. That created a replay vector — a
+    // passive observer who captured one valid save frame could
+    // replay it from any TCP connection forever to silently attach
+    // as a broadcast subscriber, mirroring all future ciphertext
+    // for the workspace. The fix removes the auto-subscribe; the
+    // legitimate client always sends an explicit
+    // `workspace-subscribe`. Pin the new behavior: a save-only
+    // client is NOT a broadcast subscriber.
     const { sk, tag } = await makeKp()
     const a = await connect(serverUrl)
     const b = await connect(serverUrl)
     // A sends a save WITHOUT subscribing first.
-    const first = await buildSave(sk, tag, null, 'auto-sub-first')
+    const first = await buildSave(sk, tag, null, 'no-auto-sub-first')
     a.ws.send(JSON.stringify(first.msg))
     await a.recv((m) => m.type === 'workspace-save-ack')
-    // B subscribes (would receive A's first save in the chain too —
-    // drain it) and then sends its own save.
+    // B subscribes (gets the chain so far) and sends its own save.
     await subscribe(b, sk, tag)
-    const second = await buildSave(sk, tag, first.id, 'auto-sub-second')
+    const second = await buildSave(sk, tag, first.id, 'no-auto-sub-second')
     b.ws.send(JSON.stringify(second.msg))
-    // A — who never explicitly subscribed — should receive B's
-    // broadcast because the auto-subscribe inside handleSave
-    // registered them as a peer.
-    const broadcast = await a.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
-    assert.equal(broadcast.revisions[0].id, second.id)
+    await b.recv((m) => m.type === 'workspace-save-ack')
+    // A — who never explicitly subscribed — must NOT receive B's
+    // broadcast. expectSilent waits for any unexpected message
+    // within the timeout; saving on A doesn't put A in the
+    // subscribers set, so no broadcast should land.
+    await a.expectSilent(200)
     a.ws.close(); b.ws.close()
   })
 
@@ -673,6 +677,35 @@ describe('triage-sync server', () => {
     const pong = await c.recv((m) => m.type === 'pong')
     assert.equal(pong.type, 'pong')
     c.ws.close()
+  })
+
+  it('replay of a captured save from a third-party socket does NOT subscribe that socket (audit round-9 H1)', async () => {
+    // The exact replay scenario: socket A sends a valid save. A
+    // third party (socket C) captures the frame off the wire and
+    // resends it from their own connection. The save is
+    // signature-valid (frame is authentic) and would idempotently
+    // ack on the server. The replayer must NOT become a subscriber.
+    const { sk, tag } = await makeKp()
+    const a = await connect(serverUrl)
+    const c = await connect(serverUrl)
+    const subscriber = await connect(serverUrl)
+    await subscribe(subscriber, sk, tag) // legitimate subscriber so we have someone to broadcast to
+    // A's first save (legitimately signed).
+    const first = await buildSave(sk, tag, null, 'replay-target')
+    a.ws.send(JSON.stringify(first.msg))
+    await a.recv((m) => m.type === 'workspace-save-ack')
+    await subscriber.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    // C captures and replays the same frame from a different socket.
+    c.ws.send(JSON.stringify(first.msg))
+    // The server returns ack-only (duplicate id). C is NOT now a
+    // subscriber. Verify by sending another save and checking C
+    // doesn't receive the broadcast.
+    await c.recv((m) => m.type === 'workspace-save-ack')
+    const followup = await buildSave(sk, tag, first.id, 'after-replay')
+    a.ws.send(JSON.stringify(followup.msg))
+    await subscriber.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    await c.expectSilent(200)
+    a.ws.close(); c.ws.close(); subscriber.ws.close()
   })
 })
 

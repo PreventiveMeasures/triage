@@ -98,18 +98,32 @@ export function analyzeContent(content) {
 // nested call — a workspace switch firing `ensureCounts(namesB)`
 // while an earlier sidebar render's `ensureCounts(namesA)` was still
 // running would silently skip every name only in B. Audit round-8 H2.
+//
+// Each caller's `onUpdate` is tracked alongside the names IT asked
+// about, so a re-entrant call doesn't replace the original caller's
+// callback — both fire for their respective name sets. Round-9 L1
+// fixed the previous "last caller wins" bug where the FIRST
+// caller's onUpdate stopped firing for any of its still-pending
+// names the moment a second caller landed.
 let activeRun = null
-let activePending = null   // Set<name> queued during the current run
-let activeOnUpdate = null  // most-recent onUpdate wins (cheap renderer redraw)
+let activePending = null      // Set<name> queued during the current run
+let activeCallbacks = null    // Array<{ names: Set<name>, onUpdate }>
+
+function fireCallbacksFor(name, count) {
+  for (const { names: nset, onUpdate } of activeCallbacks) {
+    if (!nset.has(name)) continue
+    try { onUpdate(name, count) } catch (err) { console.warn('ensureCounts onUpdate:', err) }
+  }
+}
 
 export function ensureCounts(names, onUpdate) {
   if (activeRun) {
-    if (onUpdate) activeOnUpdate = onUpdate
+    if (onUpdate) activeCallbacks.push({ names: new Set(names), onUpdate })
     for (const n of names) activePending.add(n)
     return activeRun
   }
   activePending = new Set(names)
-  activeOnUpdate = onUpdate ?? null
+  activeCallbacks = onUpdate ? [{ names: new Set(names), onUpdate }] : []
   activeRun = (async () => {
     try {
       const c = load()
@@ -126,7 +140,7 @@ export function ensureCounts(names, onUpdate) {
           const { count, source } = analyzeContent(content)
           c[n] = source ? { count, source } : { count }
           persist()
-          if (activeOnUpdate) activeOnUpdate(n, count)
+          fireCallbacksFor(n, count)
         } catch {
           // Leave missing — the sidebar omits the badge for unknown counts.
         }
@@ -134,7 +148,7 @@ export function ensureCounts(names, onUpdate) {
     } finally {
       activeRun = null
       activePending = null
-      activeOnUpdate = null
+      activeCallbacks = null
     }
   })()
   return activeRun

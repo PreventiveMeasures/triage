@@ -294,6 +294,62 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     )
   })
 
+  it('replace-mode reload during local saveTriage preserves in-flight edit (audit round-9 M3)', async () => {
+    // Round-9 M3: a sibling tab's storage event reaches us while
+    // our own saveTriage is mid-compress (TRIAGE_PENDING_KEY set).
+    // Replace-mode applyTriageEntries used to wipe any local state.*
+    // id not present in the sibling's blob — including the local
+    // edit we just wrote to the pending key but haven't committed
+    // to the compressed blob yet. Fix: replace mode reads the
+    // pending key and treats its ids as protected local edits.
+
+    // Step 1: a sibling tab persisted FINDING_B=blue (compressed key).
+    state.markers.set(FINDING_B, 'blue')
+    await saveTriage()
+
+    // Step 2: locally, the user edited FINDING_A=red. saveTriage
+    // started — synchronously wrote the pending key — but compress
+    // is still in flight when the sibling's storage event arrives.
+    state.markers.set(FINDING_A, 'red')
+    globalThis.localStorage.setItem('deepview.triage.pending', JSON.stringify({
+      [FINDING_A]: { color: 'red' },
+      [FINDING_B]: { color: 'blue' },
+    }))
+
+    // Step 3: cross-tab reload (driven by the sibling's storage
+    // event firing on the compressed key). Replace mode would have
+    // wiped FINDING_A — but the pending-key check protects it.
+    await reloadTriageFromStorage()
+
+    assert.equal(state.markers.get(FINDING_A), 'red',
+      'local in-flight edit preserved across cross-tab replace')
+    assert.equal(state.markers.get(FINDING_B), 'blue',
+      'sibling\'s entry from compressed blob still present')
+  })
+
+  it('replace-mode without pending key still wipes stale local entries', async () => {
+    // Sanity: when no in-flight saveTriage is pending (no pending
+    // key), replace mode behaves as before — sibling's clear of an
+    // id that this tab still has in state.* propagates as a delete.
+    state.markers.set(FINDING_A, 'red')
+    state.markers.set(FINDING_B, 'blue')
+    await saveTriage()
+    // Sibling clears A. Simulate by deleting + re-saving here.
+    state.markers.delete(FINDING_A)
+    await saveTriage()
+    // Restore A locally (mimic divergence) — no pending key, just
+    // a stale state.* entry.
+    state.markers.set(FINDING_A, 'red')
+    assert.equal(globalThis.localStorage.getItem('deepview.triage.pending'), null,
+      'no pending key — clean fast-path')
+
+    await reloadTriageFromStorage()
+
+    assert.equal(state.markers.get(FINDING_A), undefined,
+      'sibling\'s clear propagates via replace mode')
+    assert.equal(state.markers.get(FINDING_B), 'blue')
+  })
+
   it('QuotaExceededError on the compressed key falls back to the pending blob (audit round-7)', async () => {
     // saveTriage wraps both writes in try/catch — a quota failure
     // on the compressed key shouldn't take down the in-memory state

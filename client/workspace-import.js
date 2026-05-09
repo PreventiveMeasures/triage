@@ -262,13 +262,24 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     }
   }
 
-  const ws = await upsertWorkspace({
-    id: data.workspace.id,
-    name: data.workspace.name,
-    privateKey: data.workspace.privateKey,
-    reports: savedNames,
-    createdAt: data.workspace.createdAt,
-  })
+  // Round-9 M1: merge the bundle's triage BEFORE upsertWorkspace.
+  //
+  // The reverse order would fire `onReportMembershipChanged` from
+  // upsertWorkspace, whose triage-sync.js listener calls
+  // `hydrateStateFromBaseState` (gap-fills state.* from the chain's
+  // baseState). When `mergeTriage` then ran against state.*, every
+  // bundle triage entry that disagreed with the chain would surface
+  // as a "local vs imported" conflict — but the "local" side was
+  // really just chain values the listener had silently gap-filled
+  // ms earlier. The user got conflict dialogs for disagreements
+  // they never made.
+  //
+  // Doing mergeTriage first writes the bundle's triage into state.*
+  // so the subsequent upsertWorkspace + hydration sees state.* as
+  // populated and (since hydration is gap-only / local-wins) leaves
+  // those values alone. Genuine local-vs-bundle conflicts (the user
+  // had real local triage on the same id BEFORE import) still
+  // surface via mergeTriage's resolver path.
 
   // Build the metadata lookup once up front when there's any
   // incoming triage — the dialog (if it surfaces) needs severity /
@@ -279,6 +290,14 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     ? await buildImportedFindingLookup(data.reports)
     : new Map()
   await mergeTriage(data.triage, conflictResolver, lookup)
+
+  const ws = await upsertWorkspace({
+    id: data.workspace.id,
+    name: data.workspace.name,
+    privateKey: data.workspace.privateKey,
+    reports: savedNames,
+    createdAt: data.workspace.createdAt,
+  })
 
   // Per-report repo URLs round-trip in `data.repoUrls`. Only adopt
   // entries that map to reports we actually saved AND that have no

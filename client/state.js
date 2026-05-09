@@ -251,9 +251,24 @@ export const state = store({
 // upstream, sync `state.repoUrl` so the header chip refreshes
 // immediately rather than showing stale text until the next
 // switchToFile / reload. Audit round-8 H3.
+//
+// Bail when `state.repoEditing` is set — the user has the header
+// chip expanded into its `<input>` and overwriting `state.repoUrl`
+// would re-render the chip and vanish their typed-but-unsaved URL.
+// The blur / Save handlers in events.js read the user's input and
+// call `saveRepoUrlFor` on commit; if they prefer the sibling's
+// value they can re-enter and re-edit. Audit round-9 M2.
+//
+// Exported so node:test environments can invoke the handler
+// directly — `window` doesn't exist in tests and the storage
+// event never fires there.
+export function propagateRepoUrlChangesFromStorage() {
+  if (state.repoEditing) return
+  if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
+}
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key !== REPO_URLS_KEY) return
-    if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
+    propagateRepoUrlChangesFromStorage()
   })
 }

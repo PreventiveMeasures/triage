@@ -53,7 +53,16 @@ export function openDb(path) {
   // turning them on preserves the option to add referential
   // tables later without revisiting init.
   db.exec('PRAGMA journal_mode = WAL;')
-  db.exec('PRAGMA synchronous = NORMAL;')
+  // FULL (not NORMAL): the server emits `workspace-save-ack` BEFORE
+  // returning to the event loop after `insertRevision`. With NORMAL,
+  // SQLite only fsyncs at WAL checkpoint, so a power loss between
+  // ack and the next checkpoint loses the row even though the
+  // originator and broadcast peers were told the revision committed.
+  // FULL fsyncs per commit; durability matches the contract the
+  // ack implies. Trade-off is per-commit fsync latency, acceptable
+  // for the protocol's edit-driven write pattern (triage edits, not
+  // streaming throughput). Audit round-9 M1.
+  db.exec('PRAGMA synchronous = FULL;')
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
   // Idempotent migration for DBs created before the keyframe column

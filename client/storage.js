@@ -76,6 +76,24 @@ async function gunzipBytes(bytes) {
 // clears in the finally block) so callers can retry.
 const cache = new Map()
 const inFlight = new Map()
+// Per-name write-generation token. Bumped synchronously by every
+// `saveFile` and `deleteFile` call BEFORE its async I/O. `readFile`
+// captures the token at the start of its read; if the token changed
+// by the time the read resolves (a saveFile / deleteFile landed in
+// the meantime), the read result is stale relative to the current
+// view and we skip the `cache.set(name, content)` step. Without
+// this guard, an in-flight read that started before a saveFile
+// could resolve AFTER saveFile's `cache.set(name, NEW)` ran and
+// overwrite the cache with the OLD bytes — subsequent reads serve
+// stale content with no invalidation path until the next saveFile.
+// Audit round-9 H1.
+const writeGen = new Map()
+function bumpWriteGen(name) {
+  writeGen.set(name, (writeGen.get(name) ?? 0) + 1)
+}
+function currentWriteGen(name) {
+  return writeGen.get(name) ?? 0
+}
 
 // File-mutation listener registry. Consumers (e.g. the bundle-finding
 // index, which caches per-name parsed findings) subscribe so a
@@ -111,6 +129,10 @@ export async function listFiles() {
 }
 
 export async function saveFile(name, content) {
+  // Bump synchronously BEFORE the async I/O so a concurrent readFile
+  // that already started can detect that its result is stale and
+  // skip overwriting the cache. Audit round-9 H1.
+  bumpWriteGen(name)
   const dir = await getOpfsDir()
   if (dir) {
     // OPFS reports are gzipped at rest — JSON dumps compress well
@@ -163,6 +185,12 @@ export async function saveFile(name, content) {
 export async function readFile(name) {
   if (cache.has(name)) return cache.get(name)
   if (inFlight.has(name)) return inFlight.get(name)
+  // Capture the write generation BEFORE starting the async read.
+  // If `saveFile` / `deleteFile` lands while this read is in flight,
+  // the gen will have advanced by the time we resolve and we skip
+  // the `cache.set` step below — the in-flight bytes reflect a
+  // stale view of the file. Audit round-9 H1.
+  const startedAtGen = currentWriteGen(name)
   const promise = (async () => {
     const dir = await getOpfsDir()
     if (dir) {
@@ -194,7 +222,7 @@ export async function readFile(name) {
   inFlight.set(name, promise)
   try {
     const content = await promise
-    cache.set(name, content)
+    if (currentWriteGen(name) === startedAtGen) cache.set(name, content)
     return content
   } finally {
     inFlight.delete(name)
@@ -202,6 +230,10 @@ export async function readFile(name) {
 }
 
 export async function deleteFile(name) {
+  // Bump synchronously BEFORE the async I/O — see saveFile for the
+  // race this guards (a concurrent readFile resolving with stale
+  // bytes after we cleared the cache here). Audit round-9 H1.
+  bumpWriteGen(name)
   cache.delete(name)
   inFlight.delete(name)
   const dir = await getOpfsDir()
