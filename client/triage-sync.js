@@ -708,6 +708,18 @@ async function applyOverlayAndPersist(session, overlay) {
   // — see `loadPersistedSession`.
   persistSession(session)
   redraw()
+  // Cross-session propagation: a finding-id can belong to more than
+  // one open workspace. If this session's apply touched state.* for
+  // a shared id, every OTHER session whose `ids` set covers that id
+  // now has unsynced state.* relative to its own baseState. Kick
+  // them so they push the change under their own tag. trySendSave's
+  // empty-changeset short-circuit makes the no-overlap case cheap
+  // (each session's baseState already matched state.*).
+  // The caller (handleAck / handleChain) takes care of the *current*
+  // session's follow-up, so we skip it here to avoid double work.
+  for (const other of sessions.values()) {
+    if (other !== session) trySendSave(other)
+  }
 }
 
 // Read state.* into `session.localState` and return the overlay

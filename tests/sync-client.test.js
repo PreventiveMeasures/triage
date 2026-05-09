@@ -670,6 +670,83 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsA)
     deleteWorkspace(wsB)
   })
+
+  it('propagates a chain update across workspaces sharing a finding-id', async () => {
+    // Two workspaces, two reports, BOTH containing the same
+    // finding-id. When workspace A's chain advances (a remote peer
+    // pushed an update for that shared id), workspace B's session
+    // must see state.* change for that id and push a save under
+    // B's own tag — the cross-workspace propagation that "shared
+    // finding-ids share triage" demands.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'shared', _id: 'shared' }, { id: 'a-only', _id: 'a-only' } ]],
+    })
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'shared', _id: 'shared' }, { id: 'b-only', _id: 'b-only' } ]],
+    })
+    const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
+    const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
+    const seedA = randomBase64()
+    const seedB = randomBase64()
+    upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
+    upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
+
+    triageSync.openSession(wsA)
+    triageSync.openSession(wsB)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'both online')
+    // Both workspaceTags must be derived before we can address A's
+    // chain — key derivation is async; openSession kicks subscribe
+    // once it lands.
+    await waitFor(
+      () => triageSync.sessionInfo(wsA)?.workspaceTag != null
+        && triageSync.sessionInfo(wsB)?.workspaceTag != null,
+      'both workspaceTags derived',
+    )
+
+    const tagA = triageSync.sessionInfo(wsA).workspaceTag
+    // Push a remote update under A's tag: shared = red. The client's
+    // session for A receives the broadcast, applies it, and writes
+    // state.markers['shared'] = red. The propagation step that this
+    // test pins is what happens NEXT: session B sees state.* changed
+    // for an id in its scope and emits its own save under B's tag.
+    await pushRemoteChange(serverUrl, tagA, seedA, { shared: { color: 'red' } })
+
+    // A's chain handler advances A's baseRevision.
+    await waitFor(
+      () => triageSync.sessionInfo(wsA)?.baseRevision != null,
+      'A applied the remote update',
+    )
+    // The cross-workspace propagation: B emits its own save under
+    // its own tag, the server acks it, B's baseRevision advances.
+    // Without `applyOverlayAndPersist` kicking other sessions, B
+    // would never push the shared value and this would time out.
+    await waitFor(
+      () => triageSync.sessionInfo(wsB)?.baseRevision != null,
+      'B propagated the shared update under its own tag',
+    )
+    assert.equal(state.markers.get('shared'), 'red', 'shared finding visible in state.*')
+
+    // Sanity: the two sessions ended up at different baseRevisions
+    // (different tags, different chains), confirming the propagation
+    // produced an actual save under B's tag rather than an empty
+    // round-trip.
+    assert.notEqual(
+      triageSync.sessionInfo(wsA).baseRevision,
+      triageSync.sessionInfo(wsB).baseRevision,
+      'A and B chains advanced independently',
+    )
+
+    triageSync.closeSession(wsA)
+    triageSync.closeSession(wsB)
+    deleteWorkspace(wsA)
+    deleteWorkspace(wsB)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────
