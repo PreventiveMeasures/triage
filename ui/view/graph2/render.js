@@ -474,7 +474,7 @@ function renderFileCard(graph, n, file) {
     <div class="g2-sel-jumps">
       ${n.totalIssues > 0 ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
       ${state.currentView === 'bundles'
-        ? null
+        ? (n.origFile ? html`<button type="button" class="g2-sel-jump" data-bundle-view-source=${n.origFile}>View source →</button>` : null)
         : html`<button type="button" class="g2-sel-jump" data-g2-jump-file=${file}>Files →</button>`}
     </div>
     ${renderFileList(graph, 'Imported by', importers, referenceDir)}

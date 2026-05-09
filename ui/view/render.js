@@ -381,9 +381,18 @@ export function buildBundleGraphData(details) {
   // global depsDir picked from state.reports — the report-driven
   // depsDir would otherwise miss bundle paths under whichever
   // dir the loaded reports don't use.
-  return buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, {
+  const graph = buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, {
     pkgOf: bundlePkgOf,
   })
+  // Stash the stripped→original mapping on each node so the
+  // selection card's "View source →" button can hand the unstripped
+  // path to the source viewer (which reads from bundleSourcesAsMap,
+  // which keys by the original path). Findings-tab graph nodes
+  // don't get `origFile` populated, so the button stays bundle-only.
+  const strippedToOrig = new Map()
+  for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
+  for (const n of graph.nodes) n.origFile = strippedToOrig.get(n.file)
+  return graph
 }
 
 export function refreshBundleGraphSidebar() {
