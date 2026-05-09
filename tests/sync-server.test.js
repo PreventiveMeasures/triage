@@ -44,9 +44,9 @@ async function signSave(sk, { tag, base, keyframe, nonce, ciphertext }) {
   return { signature: b64url(sig), id: b64url(id) }
 }
 
-async function signSubscribe(sk, tag, from) {
+async function signSubscribe(sk, tag, from, connectionNonce) {
   const payload = encodeUtf8([
-    SUBSCRIBE_DOMAIN, tag, from == null ? '' : String(from),
+    SUBSCRIBE_DOMAIN, tag, from == null ? '' : String(from), connectionNonce,
   ].join('\n'))
   const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, sk, payload))
   return b64url(sig)
@@ -109,7 +109,19 @@ function connect(url) {
         }, ms)
       })
     }
-    ws.addEventListener('open', () => resolve({ ws, recv, expectSilent }), { once: true })
+    ws.addEventListener('open', () => {
+      // Drain the per-socket challenge frame the server emits on
+      // connect (round-9 H2). The nonce is needed to sign every
+      // subscribe; expose it on the returned object so test helpers
+      // (`subscribe`, ad-hoc subscribe builders) can grab it. Drain
+      // BEFORE resolving so per-test queues start clean — the
+      // `expectSilent` helper would otherwise spuriously fail when
+      // the challenge frame lands during its measurement window.
+      recv((m) => m.type === 'challenge', 5_000).then((challenge) => {
+        resolve({ ws, recv, expectSilent, connectionNonce: challenge.nonce })
+        return null
+      }).catch((err) => reject(err))
+    }, { once: true })
     ws.addEventListener('error', (event) => reject(event.error ?? new Error('websocket error')), { once: true })
   })
 }
@@ -118,7 +130,10 @@ function connect(url) {
 // workspace-state pair. `from` is the last revision id the client
 // claims to have applied (null on first connect).
 async function subscribe(c, sk, tag, from = null) {
-  const sig = await signSubscribe(sk, tag, from)
+  // The per-connection challenge nonce comes off the `c.connectionNonce`
+  // field set by `connect()`. Round-9 H2 binds every subscribe sig
+  // to this nonce so the server can reject cross-connection replays.
+  const sig = await signSubscribe(sk, tag, from, c.connectionNonce)
   c.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from, signature: sig }))
   const ack = await c.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
   const chain = await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
@@ -311,6 +326,54 @@ describe('triage-sync server', () => {
     c.ws.close()
   })
 
+  it('replay of a captured subscribe from a different socket is rejected (audit round-9 H2)', async () => {
+    // Round-9 H2: subscribe canonical now includes the per-connection
+    // challenge nonce the server emitted on socket open. A captured
+    // subscribe frame replayed from a fresh connection (different
+    // nonce) fails verify and the replayer never attaches as a peer.
+    const { sk, tag } = await makeKp()
+    const a = await connect(serverUrl)
+    const replayer = await connect(serverUrl)
+    // A subscribes legitimately under A's nonce.
+    const aSig = await signSubscribe(sk, tag, null, a.connectionNonce)
+    const aFrame = { type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: aSig }
+    a.ws.send(JSON.stringify(aFrame))
+    await a.recv((m) => m.type === 'workspace-subscribed')
+    await a.recv((m) => m.type === 'workspace-state')
+    // Replayer captures A's frame off the wire and re-sends it on
+    // its OWN socket. The server checks the sig against THIS
+    // socket's challenge nonce — different from A's — verify fails,
+    // and the replayer's socket never enters the subscribers set.
+    replayer.ws.send(JSON.stringify(aFrame))
+    await replayer.expectSilent(200)
+    a.ws.close(); replayer.ws.close()
+  })
+
+  it('replayer does NOT receive subsequent broadcasts (round-9 H2)', async () => {
+    // Same scenario as above, but verifies the broadcast-set
+    // membership directly: A's save broadcasts to all subscribers;
+    // the replayer (which the server rejected) doesn't get it.
+    const { sk, tag } = await makeKp()
+    const a = await connect(serverUrl)
+    const subscriber = await connect(serverUrl)
+    const replayer = await connect(serverUrl)
+    await subscribe(subscriber, sk, tag) // legitimate witness
+    const aSig = await signSubscribe(sk, tag, null, a.connectionNonce)
+    const aFrame = { type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: aSig }
+    a.ws.send(JSON.stringify(aFrame))
+    await a.recv((m) => m.type === 'workspace-subscribed')
+    await a.recv((m) => m.type === 'workspace-state')
+    // Replayer attempts to attach via captured A frame.
+    replayer.ws.send(JSON.stringify(aFrame))
+    await replayer.expectSilent(150)
+    // A pushes a save. Subscriber receives broadcast; replayer doesn't.
+    const save = await buildSave(sk, tag, null, 'after-replay')
+    a.ws.send(JSON.stringify(save.msg))
+    await subscriber.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    await replayer.expectSilent(200)
+    a.ws.close(); subscriber.ws.close(); replayer.ws.close()
+  })
+
   it('drops a save with a non-string non-null base silently', async () => {
     // `base` is `string | null` per the wire contract. The server's
     // signed-canonical path coerces with `String(base)` while the
@@ -424,7 +487,8 @@ describe('triage-sync server', () => {
     // Fresh subscriber forces the chain-from-DB read path.
     const b = await connect(serverUrl)
     const subSig = b64url(new Uint8Array(
-      await crypto.subtle.sign({ name: 'Ed25519' }, sk, encodeUtf8([SUBSCRIBE_DOMAIN, tag, ''].join('\n'))),
+      await crypto.subtle.sign({ name: 'Ed25519' }, sk,
+        encodeUtf8([SUBSCRIBE_DOMAIN, tag, '', b.connectionNonce].join('\n'))),
     ))
     b.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await b.recv((m) => m.type === 'workspace-subscribed')

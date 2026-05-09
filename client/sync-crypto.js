@@ -208,18 +208,24 @@ export async function computeRevisionId(payload) {
 }
 
 // Same idea as the save signature, but the canonical bytes are
-// `<subscribe-domain>\n<pubkey>\n<from>` — `from` is the last
-// revision the client knows it has applied (so the server can skip
-// straight to revisions newer than that). Different domain prefix
-// from save so a save signature can't be replayed as a subscribe
-// and vice versa.
-function canonicalSubscribePayload(publicKeyB64, fromBase) {
+// `<subscribe-domain>\n<pubkey>\n<from>\n<connectionNonce>` —
+// `from` is the last revision the client knows it has applied (so
+// the server can skip straight to revisions newer than that), and
+// `connectionNonce` is the per-socket challenge the server emitted
+// in a `challenge` frame the moment this socket opened (round-9 H2).
+// The nonce binds this signature to the connection; a captured
+// subscribe frame can't be replayed from a different connection
+// because that connection's nonce is different and the signature
+// won't verify against the new canonical bytes. Different domain
+// prefix from save so a save signature can't be replayed as a
+// subscribe and vice versa.
+function canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce) {
   const fromStr = fromBase == null ? '' : String(fromBase)
-  return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64, fromStr].join('\n'))
+  return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64, fromStr, connectionNonce].join('\n'))
 }
 
-export async function signSubscribePayload(privateKey, publicKeyB64, fromBase) {
-  const message = canonicalSubscribePayload(publicKeyB64, fromBase)
+export async function signSubscribePayload(privateKey, publicKeyB64, fromBase, connectionNonce) {
+  const message = canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce)
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
 }

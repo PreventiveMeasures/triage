@@ -26,6 +26,7 @@
 // to every subscriber for the workspaceTag except the originator.
 
 import { WebSocketServer } from 'ws'
+import { randomBytes } from 'node:crypto'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { decodeUtf8 } from '../common/utf8.js'
@@ -59,6 +60,21 @@ Environment:
 }
 
 const handle = openDb(DB_PATH)
+
+// Per-connection challenge nonce (round-9 H2). Issued in a
+// `challenge` frame the moment the socket opens; the client signs
+// it into every subsequent `workspace-subscribe`. Bound to the
+// socket via WeakMap so a reconnecting client gets a fresh nonce
+// and a captured subscribe frame can't be replayed from a
+// different connection (the canonical bytes the captured signature
+// covered include the OLD nonce; the attacker's new connection
+// has a NEW nonce; the canonical bytes differ; signature verify
+// fails). 16 bytes (128 bits) is enough for collision-free
+// uniqueness; base64url so the wire stays JSON-text.
+const socketChallenge = new WeakMap()
+function newChallenge() {
+  return randomBytes(16).toString('base64url')
+}
 
 // workspaceTag → Set<WebSocket>
 const subscribers = new Map()
@@ -244,7 +260,14 @@ async function handleSubscribe(socket, msg) {
   // signature was over a different canonical shape. Reject at the
   // wire gate.
   if (msg.from != null && typeof msg.from !== 'string') return
-  const ok = await verifySubscribeSig(msg)
+  // The challenge nonce we issued on this socket is bound into
+  // the signed canonical, blocking cross-connection replay of a
+  // captured subscribe frame. A subscribe arriving before we sent
+  // the challenge (impossible from the legitimate client) has no
+  // nonce to verify against — drop. Audit round-9 H2.
+  const nonce = socketChallenge.get(socket)
+  if (typeof nonce !== 'string') return
+  const ok = await verifySubscribeSig(msg, nonce)
   if (!ok) {
     if (DEBUG) console.warn('reject subscribe: bad signature', msg.workspaceTag.slice(0, 12) + '…')
     return
@@ -290,6 +313,16 @@ let shuttingDown = false
 
 wss.on('connection', (socket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
+  // Issue a per-connection challenge nonce BEFORE the client can
+  // send anything that needs it. The client signs this nonce into
+  // every `workspace-subscribe` (see canonicalSubscribe in
+  // server/sign.js); a captured subscribe frame can't be replayed
+  // from a different connection because that connection's nonce
+  // is different and the signature won't verify against the new
+  // canonical bytes. Audit round-9 H2.
+  const nonce = newChallenge()
+  socketChallenge.set(socket, nonce)
+  send(socket, { type: 'challenge', nonce })
   socket.on('message', (data, isBinary) => {
     // Drop new work once shutdown started — `wss.close()` stops new
     // CONNECTIONS but already-open sockets can still send messages.

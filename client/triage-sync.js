@@ -144,6 +144,14 @@ let userEnabled = true
 // load, so the runtime state can rebuild itself from scratch.
 let forcedOff = false
 let socket = null
+// Per-connection challenge nonce issued by the server in a
+// `challenge` frame on socket open (round-9 H2). The client signs
+// this nonce into every subscribe so a captured subscribe frame
+// can't be replayed from a different connection. `null` until the
+// frame arrives; `trySendSubscribe` bails when null and is re-kicked
+// from the `challenge` handler. Reset on every socket close /
+// teardown so a new connection picks up the new nonce.
+let connectionNonce = null
 let reconnectTimer = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
@@ -849,17 +857,31 @@ function trySendSubscribe(session, force = false) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (!force && session.subscribed) return
   if (!session.signingKey || !session.workspaceTag) return
-  // Capture `from` BEFORE the await — chain handlers running
-  // during the sign promise could otherwise advance baseRevision
-  // out from under us.
+  // The server-issued challenge nonce binds the subscribe sig to
+  // this connection; we can't sign until it arrives (round-9 H2).
+  // The `challenge` message handler re-kicks every session's
+  // subscribe attempt the moment the nonce lands, so bailing here
+  // is safe — the legit client always sends `challenge` first.
+  if (connectionNonce == null) return
+  // Capture both `from` and the connection nonce BEFORE the await —
+  // chain handlers running during the sign promise could otherwise
+  // advance baseRevision out from under us, and a socket teardown +
+  // reconnect could swap the nonce.
   const fromBase = session.baseRevision
+  const nonce = connectionNonce
   ;(async () => {
     try {
-      const signature = await signSubscribePayload(session.signingKey, session.workspaceTag, fromBase)
+      const signature = await signSubscribePayload(session.signingKey, session.workspaceTag, fromBase, nonce)
       // Bail if the session was removed (closeSession) during the
       // sign await. Looking it up by id again is cheap and
       // forgery-proof — workspaceId only resolves to one entry.
       if (sessions.get(session.workspaceId) !== session) return
+      // Bail if the connection nonce moved while we were signing
+      // (socket close + reconnect during the sign await). The
+      // signed canonical is bound to the OLD nonce; sending it now
+      // would fail server-side verify against the NEW nonce. The
+      // post-reconnect 'challenge' handler will re-kick this session.
+      if (connectionNonce !== nonce) return
       // Mark subscribed BEFORE sending so re-entrant calls (the
       // ws 'open' handler firing twice during a flaky reconnect,
       // or trySendSave running back-to-back) don't double up.
@@ -1351,6 +1373,16 @@ async function handleMessage(data) {
     if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
     return
   }
+  // Server-issued challenge nonce (round-9 H2). Sent once per
+  // socket, before any subscribes can be signed. Store and re-kick
+  // every session's subscribe attempt so the queued subscribe-once-
+  // keys-derived sessions can finally fire.
+  if (msg.type === 'challenge') {
+    if (typeof msg.nonce !== 'string') return
+    connectionNonce = msg.nonce
+    for (const session of sessions.values()) trySendSubscribe(session)
+    return
+  }
   // Demultiplex by `workspaceTag` — one socket carries traffic for
   // every open session. A tag we don't recognise means the message
   // is for a session we've already closed (or for a workspace this
@@ -1471,6 +1503,11 @@ function openSocket() {
   })
   ws.addEventListener('close', () => {
     if (socket === ws) socket = null
+    // Drop the per-connection challenge nonce — a reconnect issues
+    // a fresh one in the new socket's `challenge` frame, and any
+    // session that tries to subscribe before that frame arrives
+    // bails on `connectionNonce == null`. Audit round-9 H2.
+    connectionNonce = null
     stopHeartbeat()
     // The pending requests are gone with the socket — mark every
     // session's slot free so the reconnect handler resends.
@@ -1509,6 +1546,11 @@ function openSocket() {
 function closeSocket() {
   clearReconnect()
   reconnectDelayMs = 1_000
+  // Same reasoning as the close-event handler: drop the
+  // per-connection challenge nonce so a fresh socket's challenge
+  // frame doesn't race a stale-nonce subscribe attempt. Audit
+  // round-9 H2.
+  connectionNonce = null
   if (socket) {
     const ws = socket
     socket = null

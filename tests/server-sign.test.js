@@ -40,8 +40,8 @@ function canonicalSaveBytes({ tag, base, keyframe, nonce, ciphertext }) {
   ].join('\n'))
 }
 
-function canonicalSubscribeBytes({ tag, from }) {
-  return encodeUtf8([SUBSCRIBE_DOMAIN, tag, from == null ? '' : String(from)].join('\n'))
+function canonicalSubscribeBytes({ tag, from, nonce }) {
+  return encodeUtf8([SUBSCRIBE_DOMAIN, tag, from == null ? '' : String(from), nonce].join('\n'))
 }
 
 async function signSaveMsg(sk, fields) {
@@ -193,16 +193,19 @@ describe('computeRevisionIdFromCanonical', () => {
 })
 
 describe('verifySubscribeSig', () => {
+  const NONCE_A = 'nonce-A-aaaaaaaa'
+  const NONCE_B = 'nonce-B-bbbbbbbb'
+
   it('returns true on a valid subscribe signature', async () => {
     const { sk, tag } = await makeKp()
-    const signature = await signSubscribeMsg(sk, { tag, from: null })
+    const signature = await signSubscribeMsg(sk, { tag, from: null, nonce: NONCE_A })
     const msg = { workspaceTag: tag, from: null, signature }
-    assert.equal(await verifySubscribeSig(msg), true)
+    assert.equal(await verifySubscribeSig(msg, NONCE_A), true)
   })
 
   it('returns false synchronously for a non-string signature', async () => {
     const { tag } = await makeKp()
-    const result = verifySubscribeSig({ workspaceTag: tag, from: null, signature: null })
+    const result = verifySubscribeSig({ workspaceTag: tag, from: null, signature: null }, NONCE_A)
     // Sync false (not a Promise); awaiting a non-thenable yields the value.
     assert.equal(result, false)
   })
@@ -211,30 +214,50 @@ describe('verifySubscribeSig', () => {
     const { tag } = await makeKp()
     const signature = b64url(new Uint8Array(32))
     const msg = { workspaceTag: tag, from: null, signature }
-    assert.equal(await verifySubscribeSig(msg), false)
+    assert.equal(await verifySubscribeSig(msg, NONCE_A), false)
   })
 
   it('returns false when signed against a different `from` cursor', async () => {
     // Replay-resistance: a captured subscribe sig for from=X can't
     // be reused for from=Y (the canonical bytes differ).
     const { sk, tag } = await makeKp()
-    const signature = await signSubscribeMsg(sk, { tag, from: 'cursor-A' })
+    const signature = await signSubscribeMsg(sk, { tag, from: 'cursor-A', nonce: NONCE_A })
     const replayed = { workspaceTag: tag, from: 'cursor-B', signature }
-    assert.equal(await verifySubscribeSig(replayed), false)
+    assert.equal(await verifySubscribeSig(replayed, NONCE_A), false)
+  })
+
+  it('returns false when verified against a different connection nonce (audit round-9 H2)', async () => {
+    // Cross-connection replay protection: a captured subscribe sig
+    // signed under the originating connection's nonce can't be
+    // replayed against a different connection (which has a
+    // different nonce).
+    const { sk, tag } = await makeKp()
+    const signature = await signSubscribeMsg(sk, { tag, from: null, nonce: NONCE_A })
+    const msg = { workspaceTag: tag, from: null, signature }
+    assert.equal(await verifySubscribeSig(msg, NONCE_B), false,
+      'replay against a different nonce fails verify')
+  })
+
+  it('returns false when no connection nonce is supplied', async () => {
+    const { sk, tag } = await makeKp()
+    const signature = await signSubscribeMsg(sk, { tag, from: null, nonce: NONCE_A })
+    const msg = { workspaceTag: tag, from: null, signature }
+    assert.equal(await verifySubscribeSig(msg, undefined), false)
+    assert.equal(await verifySubscribeSig(msg, null), false)
   })
 
   it('returns false when the subscribe was signed by a different keypair', async () => {
     const victim = await makeKp()
     const attacker = await makeKp()
-    const signature = await signSubscribeMsg(attacker.sk, { tag: victim.tag, from: null })
+    const signature = await signSubscribeMsg(attacker.sk, { tag: victim.tag, from: null, nonce: NONCE_A })
     const msg = { workspaceTag: victim.tag, from: null, signature }
-    assert.equal(await verifySubscribeSig(msg), false)
+    assert.equal(await verifySubscribeSig(msg, NONCE_A), false)
   })
 
   it('returns false when workspaceTag contains lone surrogates', async () => {
     const signature = b64url(new Uint8Array(64))
     const msg = { workspaceTag: '\uD83D', from: null, signature }
-    assert.equal(await verifySubscribeSig(msg), false)
+    assert.equal(await verifySubscribeSig(msg, NONCE_A), false)
   })
 })
 
@@ -244,7 +267,8 @@ describe('domain separation', () => {
     // a captured signature from being replayed across message
     // types. Pin the cross-replay rejection.
     const { sk, tag } = await makeKp()
-    const subSig = await signSubscribeMsg(sk, { tag, from: null })
+    const NONCE = 'shared-nonce'
+    const subSig = await signSubscribeMsg(sk, { tag, from: null, nonce: NONCE })
     // Build a save message that reuses the subscribe signature.
     const nonce = b64url(new Uint8Array(12))
     const ciphertext = b64url(new Uint8Array(8))
@@ -257,6 +281,6 @@ describe('domain separation', () => {
     // Reverse: a save signature shouldn't verify as a subscribe.
     const saveSig = await signSaveMsg(sk, { tag, base: null, keyframe: false, nonce, ciphertext })
     const fakeSub = { workspaceTag: tag, from: null, signature: saveSig }
-    assert.equal(await verifySubscribeSig(fakeSub), false)
+    assert.equal(await verifySubscribeSig(fakeSub, NONCE), false)
   })
 })

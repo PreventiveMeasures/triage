@@ -1271,7 +1271,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered.filter((m) => m.type === 'workspace-state').flatMap((s) => s.revisions)
@@ -1430,7 +1432,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered
@@ -1531,7 +1535,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered
@@ -1622,7 +1628,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered
@@ -1835,7 +1843,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered
@@ -2429,7 +2439,9 @@ describe('triage-sync client', () => {
     const buffered = []
     reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
     const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
-    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'reader challenge')
+    const challenge = buffered.find((m) => m.type === 'challenge')
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null, challenge.nonce)
     reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
     await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
     const revisions = buffered.filter((m) => m.type === 'workspace-state').flatMap((s) => s.revisions)
@@ -3039,7 +3051,15 @@ async function startFakeRelay(onConnection) {
   const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' })
   await new Promise((resolve) => { wss.once('listening', resolve) })
   const url = `ws://127.0.0.1:${wss.address().port}`
-  wss.on('connection', onConnection)
+  // Round-9 H2: the real server emits a `challenge` frame on
+  // connect, before the client can subscribe. Mimic that here so
+  // the production client (which now defers `trySendSubscribe`
+  // until the nonce arrives) doesn't hang on a fake relay.
+  wss.on('connection', (sock, req) => {
+    const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url')
+    sock.send(JSON.stringify({ type: 'challenge', nonce }))
+    onConnection(sock, req)
+  })
   return {
     url,
     close: () => new Promise((resolve) => { wss.close(resolve) }),
@@ -3047,9 +3067,17 @@ async function startFakeRelay(onConnection) {
 }
 
 async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
-  // Open a fresh socket; we'll subscribe + save + close.
+  // Open a fresh socket; we'll subscribe + save + close. Attach
+  // the message listener BEFORE waiting for 'open' so the server's
+  // `challenge` frame (sent immediately on connection accept,
+  // round-9 H2) doesn't race past us. With the listener-after-open
+  // ordering the challenge could land between the open event firing
+  // and us calling addEventListener, leaving `buffered` empty and
+  // the subsequent waitFor stuck.
+  const buffered = []
   const ws = await new Promise((resolve, reject) => {
     const s = new WebSocket(url)
+    s.addEventListener('message', (event) => buffered.push(JSON.parse(event.data)))
     s.addEventListener('open', () => resolve(s), { once: true })
     s.addEventListener('error', (event) => reject(event.error ?? new Error('websocket error')), { once: true })
   })
@@ -3061,10 +3089,12 @@ async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   const candidate = persisted.find((w) => w.privateKey === seedB64)
   const { privateKey: signingKey } = await cryptoMod.deriveSigningKeypair(seedB64, candidate.id)
 
-  // Drain the subscribe handshake messages first.
-  const buffered = []
-  ws.addEventListener('message', (event) => buffered.push(JSON.parse(event.data)))
-  const subSig = await cryptoMod.signSubscribePayload(signingKey, workspaceTag, null)
+  // Wait for the per-connection challenge nonce (round-9 H2). Every
+  // subscribe sig must bind to it; without this we'd send a stale
+  // (or empty-nonce) signature the server rejects.
+  await waitFor(() => buffered.some((m) => m.type === 'challenge'), 'remote challenge')
+  const challenge = buffered.find((m) => m.type === 'challenge')
+  const subSig = await cryptoMod.signSubscribePayload(signingKey, workspaceTag, null, challenge.nonce)
   ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag, from: null, signature: subSig }))
   await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'remote subscribe chain')
 

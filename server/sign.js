@@ -6,13 +6,19 @@
 //
 // Two payload types:
 //   save:      `<domain>\n<pubkey>\n<base>\n<keyframe>\n<nonce>\n<ciphertext>`
-//   subscribe: `<domain>\n<pubkey>\n<from>`
+//   subscribe: `<domain>\n<pubkey>\n<from>\n<connectionNonce>`
 //
 // `keyframe` is `1` / `0` (string), bound into the signed bytes so
 // the server can't promote/demote a revision after the fact.
 // `from` is the client's last-applied revision id (or empty for a
 // fresh subscribe), so a captured subscribe sig can't be replayed
 // to fast-forward another peer to a different cursor.
+// `connectionNonce` is a per-socket challenge the server emits in
+// a `challenge` frame the moment the socket opens (round-9 H2). A
+// captured subscribe frame can't be replayed from a different
+// connection because the canonical bytes the captured signature
+// covered include the OLD nonce; the attacker's new connection
+// has a DIFFERENT nonce; signature verify fails.
 //
 // Domains are different so a save signature can't be replayed as
 // a subscribe and vice versa.
@@ -47,9 +53,9 @@ function canonicalSave({ workspaceTag, base, keyframe, nonce, ciphertext }) {
   ].join('\n'))
 }
 
-function canonicalSubscribe({ workspaceTag, from }) {
+function canonicalSubscribe({ workspaceTag, from }, connectionNonce) {
   const fromStr = from == null ? '' : String(from)
-  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, fromStr].join('\n'))
+  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, fromStr, connectionNonce].join('\n'))
 }
 
 async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
@@ -106,9 +112,16 @@ export async function computeRevisionIdFromCanonical(canonical) {
   return Buffer.from(new Uint8Array(digest)).toString('base64url')
 }
 
-export function verifySubscribeSig(msg) {
+// `connectionNonce` is the per-socket challenge the server issued
+// to the originating connection (see `socketChallenge` in
+// server/index.js). The client signs a canonical that includes the
+// nonce; verifying against the SAME nonce here is what blocks
+// cross-connection replay of a captured subscribe frame. Audit
+// round-9 H2.
+export function verifySubscribeSig(msg, connectionNonce) {
   if (typeof msg.signature !== 'string') return false
+  if (typeof connectionNonce !== 'string') return false
   let payload
-  try { payload = canonicalSubscribe(msg) } catch { return false }
+  try { payload = canonicalSubscribe(msg, connectionNonce) } catch { return false }
   return verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
