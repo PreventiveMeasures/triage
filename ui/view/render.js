@@ -2143,8 +2143,19 @@ export function render() {
       // to findings rather than render an empty list.
       state.currentView = 'findings'
     } else {
-      report.innerHTML = '<div id="bundles-slot"></div>'
-      const slot = document.getElementById('bundles-slot')
+      // Reuse the existing #bundles-slot when we're already on the
+      // bundles view — `innerHTML = '<div id=...>'` would wipe Lit's
+      // part-cache (it's keyed on the container element) and force
+      // a full DOM rebuild on every render(), trashing scroll state
+      // and triggering a flash of layout. The findings-side render
+      // path doesn't touch #bundles-slot, so a stale slot only
+      // appears when we just arrived from another view; we replace
+      // #report's content only in that case.
+      let slot = document.getElementById('bundles-slot')
+      if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+        report.innerHTML = '<div id="bundles-slot"></div>'
+        slot = document.getElementById('bundles-slot')
+      }
       if (slot) litRender(renderBundlesList(state.bundles), slot)
       // Bundle graph tab — populate the slot left by
       // renderBundleSourcesPanel with the same renderGraph2Layout
