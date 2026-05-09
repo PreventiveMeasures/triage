@@ -1289,7 +1289,7 @@ body.report-fullscreen {
   padding: 1px .4rem;
   border-radius: 3px;
   color: #000;
-  flex-shrink: 0;
+  flex: 1;
   white-space: nowrap;
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
@@ -1299,17 +1299,20 @@ body.report-fullscreen {
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
 }
-/* Run meta — analyzer / model / effort / mode chained with `·`,
-   right-aligned via flex:1 so it sits between the triage badge
-   and the close button without competing with them for prominence.
-   Muted, smaller font; ellipsis-clips when the panel narrows. */
+/* Line + run meta share the row above the description: `Line N`
+   on the left, `analyzer · model · …` filling the remaining
+   space on the right. Both are read-only context; muted to keep
+   the description below as the primary content. */
+.bundle-source-panel-line-row {
+  display: flex; align-items: baseline; gap: .5rem;
+  margin-bottom: .35rem;
+}
 .bundle-source-panel-meta {
   flex: 1; min-width: 0;
   color: var(--muted);
   font-size: .68rem;
   text-align: right;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin-left: .25rem;
 }
 /* Display-only triage badge alongside the severity. Outline
    chip style — visually distinct from the severity pill so the
@@ -1354,8 +1357,8 @@ body.report-fullscreen {
 }
 .bundle-source-panel-line {
   color: var(--muted);
-  margin-bottom: .35rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem;
+  flex-shrink: 0;
 }
 .bundle-source-panel-desc {
   white-space: pre-wrap;

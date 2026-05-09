@@ -1359,15 +1359,16 @@ function renderBundleSourceFindingPanel(findings) {
   const triageLabel = triage === 'fixed' ? 'Fixed' : null
   // Run meta — analyzer / model / effort / exportsMode chained
   // with `·`, same shape the report's tab-body uses (see
-  // render-finding.js's `meta`). Surfaces alongside the severity
-  // pill so the user has provenance context without leaving the
-  // viewer. Empty when none of the fields are populated.
+  // render-finding.js's `meta`). Sits to the right of the Line
+  // row in the panel body so the header stays compact (just
+  // severity + triage badge + close); empty when none of the
+  // fields are populated.
   const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
+  const lineLabel = formatFindingLine(f.line)
   return html`<aside class="bundle-source-panel">
     <header class="bundle-source-panel-bar">
       <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replace(/_/gu, ' ')}</span>
       ${triageLabel ? html`<span class=${`bundle-source-panel-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
-      ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
       <button
         type="button"
         class="bundle-source-panel-close"
@@ -1377,7 +1378,10 @@ function renderBundleSourceFindingPanel(findings) {
       >×</button>
     </header>
     <div class="bundle-source-panel-body">
-      ${f.line ? html`<div class="bundle-source-panel-line">Line ${f.line}</div>` : nothing}
+      ${(lineLabel || meta) ? html`<div class="bundle-source-panel-line-row">
+        ${lineLabel ? html`<span class="bundle-source-panel-line">${lineLabel}</span>` : nothing}
+        ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
+      </div>` : nothing}
       <div class="bundle-source-panel-desc">${f.description ?? ''}</div>
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
         <div class="bundle-source-panel-reports-label">Reported by</div>
