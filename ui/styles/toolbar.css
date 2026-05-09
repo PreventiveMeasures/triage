@@ -108,6 +108,7 @@
 .triage-state-btn.active.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
 .triage-state-btn.active.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .triage-state-btn.active.triage-state-invalid { border-color: var(--muted); color: var(--muted); }
+.triage-state-btn.active.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
 
 /* `<view-mode-buttons>` styles live outside `.toolbar` so the same
    chrome lands wherever the component is mounted — the findings

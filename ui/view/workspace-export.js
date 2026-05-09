@@ -1,9 +1,51 @@
-import { buildWorkspaceExportGzip } from '../../client/workspace-export.js'
+import { state, loadRepoUrlFor } from '../../client/state.js'
+import { readFile } from '../../client/storage.js'
+import { toGroup } from './group.js'
+import { deriveFindingId } from '../../common/finding-id.js'
+import { parseMarkdownFindings } from '../../common/parse-md.js'
+import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
+import { setReportWorkspace } from '../../client/workspaces.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 
-// Thin DOM wrapper around the pure export pipeline in
-// `client/workspace-export.js`. Triggers a programmatic anchor
-// click to download the gzipped JSON blob — the only DOM-touching
-// concern on the export side.
+// Workspace export — bundle the workspace's metadata, every report
+// belonging to it, the per-report repo URLs that the user has typed,
+// and the subset of triage entries (markers + deletions) keyed by a
+// finding id that lives in one of those reports. The output is one
+// JSON.stringified object piped through gzip and offered as a
+// download.
+//
+// Filtering triage by report-membership requires knowing each report's
+// finding ids. Native ids ride along inside the JSON; markdown imports
+// derive theirs from content via deriveFindingId — same algorithm
+// ingest.js runs at drop time, so the ids match. Reports that fail to
+// parse contribute no ids; their content still ships in the bundle.
+
+const EXPORT_VERSION = 1
+
+async function reportFindingIds(content) {
+  const ids = new Set()
+  let data
+  try {
+    data = JSON.parse(content)
+  } catch {
+    data = parseDeepsecFindings(content) ?? parseMarkdownFindings(content)
+  }
+  if (!data?.findings) return ids
+  const all = data.findings.flatMap(toGroup)
+  for (const f of all) {
+    if (f.id) ids.add(f.id)
+  }
+  const idLess = all.filter((f) => !f.id)
+  if (idLess.length === 0) return ids
+  const derived = await Promise.all(idLess.map(deriveFindingId))
+  for (const id of derived) if (id) ids.add(id)
+  return ids
+}
+
+async function gzip(text) {
+  const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
+  return await new Response(stream).blob()
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -16,7 +58,97 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
+// Filename-safe workspace name for the download. Falls back to
+// `workspace` when the name reduces to nothing after sanitization.
+function safeFilename(name) {
+  const cleaned = (name ?? '').replace(/[^a-zA-Z0-9._-]+/gu, '_').replace(/^_+|_+$/gu, '')
+  return cleaned || 'workspace'
+}
+
 export async function exportWorkspace(workspace) {
-  const { blob, filename } = await buildWorkspaceExportGzip(workspace)
-  downloadBlob(blob, filename)
+  const reports = []
+  const claimedIds = new Set()
+  for (const name of workspace.reports ?? []) {
+    let content
+    try {
+      content = await readFile(name)
+    } catch (err) {
+      console.warn(`Workspace export: skipping ${name}: ${err.message}`)
+      // Defensive prune: stale references from before deleteCurrent
+      // started cleaning up workspaces (or from external OPFS
+      // tampering) live in the workspace JSON forever otherwise.
+      // Remove the ghost from any workspace that pins it so the
+      // next export is clean and the next workspace-import on
+      // another machine doesn't re-resurrect a name that points at
+      // nothing.
+      setReportWorkspace(name, null)
+      continue
+    }
+    reports.push({ name, content })
+    for (const id of await reportFindingIds(content)) claimedIds.add(id)
+  }
+
+  // Triage filter — only keep entries whose id appears in this
+  // workspace's reports. A single id may carry color, deleted,
+  // and/or comment; merge into one entry per id.
+  const triage = {}
+  for (const [id, color] of state.markers) {
+    if (!claimedIds.has(id)) continue
+    triage[id] = { ...(triage[id] ?? {}), color }
+  }
+  for (const [id, triageVal] of state.triageState) {
+    if (!claimedIds.has(id)) continue
+    triage[id] = { ...(triage[id] ?? {}), triage: triageVal }
+  }
+  // Per-report ignore — group by id and stamp `ignoredReports`
+  // on the entry. Same shape triage.js / triage-sync.js use.
+  const ignoredByid = new Map()
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    const reportName = key.slice(0, sep)
+    const id = key.slice(sep + 1)
+    if (!claimedIds.has(id)) continue
+    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
+    ignoredByid.get(id).push(reportName)
+  }
+  for (const [id, reports] of ignoredByid) {
+    if (reports.length === 0) continue
+    triage[id] = { ...(triage[id] ?? {}), ignoredReports: reports }
+  }
+  for (const [id, comment] of state.comments) {
+    if (!claimedIds.has(id)) continue
+    if (comment) triage[id] = { ...(triage[id] ?? {}), comment }
+  }
+  for (const [id, fix] of state.fixes) {
+    if (!claimedIds.has(id)) continue
+    if (fix) triage[id] = { ...(triage[id] ?? {}), fix }
+  }
+
+  // Per-report repo URLs — each report carries its own user-typed URL
+  // (see state.js / loadRepoUrlFor). Only the URLs for THIS workspace's
+  // reports go in the bundle; entries for unrelated reports are
+  // dropped so the export stays a clean self-contained slice.
+  const repoUrls = {}
+  for (const r of reports) {
+    const url = loadRepoUrlFor(r.name)
+    if (url) repoUrls[r.name] = url
+  }
+
+  const payload = {
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    workspace: {
+      id: workspace.id,
+      name: workspace.name,
+      privateKey: workspace.privateKey,
+      createdAt: workspace.createdAt,
+    },
+    reports,
+    repoUrls,
+    triage,
+  }
+
+  const blob = await gzip(JSON.stringify(payload))
+  downloadBlob(blob, `${safeFilename(workspace.name)}.deepview-workspace.json.gz`)
 }

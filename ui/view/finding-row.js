@@ -41,7 +41,7 @@ const MANAGED_HOST_CLASSES = [
   'is-critical',
   'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
   'has-conflict',
-  'triage-fixed', 'triage-invalid', 'triage-deleted',
+  'triage-fixed', 'triage-invalid', 'triage-deleted', 'triage-ignored',
   'selected',
 ]
 

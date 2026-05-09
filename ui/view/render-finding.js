@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
 import { prettyModel, stripExportMarker, fileUrl, commitUrl } from './format.js'
-import { tabKey, groupKey, sortTabs, activeTabFor, groupState } from './group.js'
+import { tabKey, groupKey, sortTabs, activeTabFor, groupState, ignoredKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -175,25 +175,34 @@ function positionTriagePopover(e) {
 function triageMenuTemplate(group, title) {
   const gid = tabKey(group[0])
   const groupSt = groupState(group)
-  const activeKey = tabKey(activeTabFor(group))
+  const activeTab = activeTabFor(group)
+  const activeKey = tabKey(activeTab)
+  // Active tab's "current" bucket — triage state, else 'ignored'
+  // when the per-report ignore key is set, else null. For
+  // non-conflict groups, the rollup's commonTriage already folds
+  // both axes, so we read it directly.
   const current = groupSt.hasConflict
-    ? state.triageState.get(activeKey)
+    ? (state.triageState.get(activeKey)
+       ?? (state.ignoredIds.has(ignoredKey(activeTab)) ? 'ignored' : null))
     : groupSt.commonTriage
-  const STATE_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted' }
+  const STATE_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
+  const ACTION_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
   const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
+  // Action order: triage states first (Fixed / Invalid / Delete),
+  // then Ignore. In a triage/ignored view, prepend Restore so the
+  // current bucket can be cleared in one click; the active bucket
+  // is removed from the list (clicking the labeled chip is a
+  // no-op without it).
+  const ALL_ACTIONS = ['fixed', 'invalid', 'deleted', 'ignored']
   const actions = inTriageView
     ? [
         { key: 'restore', label: 'Restore' },
-        ...['fixed', 'invalid', 'deleted']
+        ...ALL_ACTIONS
           .filter((s) => s !== state.shownTriage)
-          .map((s) => ({ key: s, label: s === 'deleted' ? 'Delete' : STATE_LABELS[s] })),
+          .map((s) => ({ key: s, label: ACTION_LABELS[s] })),
       ]
-    : [
-        { key: 'fixed',   label: 'Fixed' },
-        { key: 'invalid', label: 'Invalid' },
-        { key: 'deleted', label: 'Delete' },
-      ]
+    : ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
   const btnClasses = ['mark-triage-menu']
   if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
   // Stable popover id derived from gid — escape so
@@ -225,10 +234,16 @@ function tabTemplate(f, isActive) {
   const key = tabKey(f)
   const color = state.markers.get(key)
   const triage = state.triageState.get(key)
+  const ignored = state.ignoredIds.has(ignoredKey(f))
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
   if (triage) classes.push(`tab-${triage}`)
+  // `tab-ignored` is per-tab (each tab has its own report) and
+  // mutually exclusive with the triage classes via the action
+  // handler. Falls through to a muted opacity hint via finding-row
+  // / finding-card CSS.
+  else if (ignored) classes.push('tab-ignored')
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence !== undefined ? html`<span class="tab-conf">${f.confidence}/10</span>` : nothing}</span></button>`
 }
 

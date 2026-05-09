@@ -39,6 +39,25 @@ export async function saveTriage() {
       if (SESSION_ID_RE.test(k)) continue
       entries[k] = { ...(entries[k] || {}), triage }
     }
+    // Per-report ignore is persisted as `ignoredReports: ['nameA',
+    // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
+    // (`${reportName}\0${id}`) back by id, drop session-scoped
+    // numeric ids, and stamp the report list. Empty arrays are
+    // omitted so a clean entry doesn't leave a trace.
+    const ignoredByid = new Map()
+    for (const key of state.ignoredIds) {
+      const sep = key.indexOf('\0')
+      if (sep < 0) continue
+      const reportName = key.slice(0, sep)
+      const id = key.slice(sep + 1)
+      if (SESSION_ID_RE.test(id)) continue
+      if (!ignoredByid.has(id)) ignoredByid.set(id, [])
+      ignoredByid.get(id).push(reportName)
+    }
+    for (const [id, reports] of ignoredByid) {
+      if (reports.length === 0) continue
+      entries[id] = { ...(entries[id] || {}), ignoredReports: reports }
+    }
     for (const [k, comment] of state.comments) {
       if (SESSION_ID_RE.test(k)) continue
       if (comment) entries[k] = { ...(entries[k] || {}), comment }
@@ -79,6 +98,10 @@ async function loadTriage() {
         state.triageState.set(k, v.triage)
       } else if (v && v.deleted) {
         state.triageState.set(k, 'deleted')
+      }
+      const ignoredReports = v && Array.isArray(v.ignoredReports) ? v.ignoredReports : []
+      for (const r of ignoredReports) {
+        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${k}`)
       }
       if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
       if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)

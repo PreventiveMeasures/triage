@@ -22,7 +22,8 @@
 :host(.hidden) { display: none; }
 :host(.triage-fixed),
 :host(.triage-invalid),
-:host(.triage-deleted) { opacity: 0.75; }
+:host(.triage-deleted),
+:host(.triage-ignored) { opacity: 0.75; }
 
 .card {
   padding: .5rem .75rem;
@@ -170,6 +171,8 @@
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
   &.tab-invalid .tab-label { opacity: .65; }
   &.tab-invalid .tab-label::after { content: ' ⊘'; opacity: .6; }
+  &.tab-ignored .tab-label { opacity: .55; }
+  &.tab-ignored .tab-label::after { content: ' 👁'; opacity: .6; font-size: .7em; }
 
   & .tab-conf { color: var(--muted); font-size: .7rem; }
   &.tab-mark-red .tab-conf,
@@ -248,6 +251,7 @@
 .mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
 .mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
+.mark-triage-menu.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
 .triage-menu[popover] {
   position: fixed;
   inset: auto;
@@ -328,7 +332,8 @@
   }
   :host(.triage-fixed),
   :host(.triage-invalid),
-  :host(.triage-deleted) { opacity: 1; }
+  :host(.triage-deleted),
+  :host(.triage-ignored) { opacity: 1; }
   :host(.multi-case) .card::before {
     content: "Multiple reports of one finding";
     display: block;

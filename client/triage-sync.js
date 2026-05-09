@@ -268,6 +268,16 @@ function snapshotEntry(id) {
   if (color !== undefined) entry.color = color
   const triage = state.triageState.get(id)
   if (triage) entry.triage = triage
+  // Collect every per-report ignore key matching this id; the
+  // wire form mirrors the localStorage shape used by triage.js.
+  const ignoredReports = []
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    if (key.slice(sep + 1) !== id) continue
+    ignoredReports.push(key.slice(0, sep))
+  }
+  if (ignoredReports.length > 0) entry.ignoredReports = ignoredReports
   const comment = state.comments.get(id)
   if (comment) entry.comment = comment
   const fix = state.fixes.get(id)
@@ -525,6 +535,19 @@ function applyToReactiveState(targetState, ids) {
       state.triageState.set(id, 'deleted')
     } else {
       state.triageState.delete(id)
+    }
+    // Per-report ignore replaces the local set for this id with
+    // whatever the wire entry carries. Drop existing keys for the
+    // id first so a remote that cleared all reports for an id
+    // resets us; then re-add from the entry.
+    for (const key of [...state.ignoredIds]) {
+      const sep = key.indexOf('\0')
+      if (sep >= 0 && key.slice(sep + 1) === id) state.ignoredIds.delete(key)
+    }
+    if (Array.isArray(entry.ignoredReports)) {
+      for (const r of entry.ignoredReports) {
+        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+      }
     }
     if (entry.comment) state.comments.set(id, entry.comment)
     else state.comments.delete(id)

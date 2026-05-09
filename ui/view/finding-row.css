@@ -59,7 +59,8 @@
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
 :host(.triage-fixed),
 :host(.triage-invalid),
-:host(.triage-deleted) { opacity: .75; }
+:host(.triage-deleted),
+:host(.triage-ignored) { opacity: .75; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .row-score {
@@ -163,6 +164,8 @@
   &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
   &.tab-invalid .tab-label { opacity: .65; }
   &.tab-invalid .tab-label::after { content: ' ⊘'; opacity: .6; }
+  &.tab-ignored .tab-label { opacity: .55; }
+  &.tab-ignored .tab-label::after { content: ' 👁'; opacity: .6; font-size: .7em; }
 
   & .tab-conf { color: var(--muted); font-size: .7rem; }
   &.tab-mark-red .tab-conf,
@@ -251,6 +254,7 @@
 .mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
 .mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
+.mark-triage-menu.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
 /* Native popover — fixed position is set inline by events.js's
    beforetoggle listener. Override the UA's default centering (the
    browser auto-positions popover="auto" elements) so our coords
@@ -322,7 +326,8 @@
   }
   :host(.triage-fixed),
   :host(.triage-invalid),
-  :host(.triage-deleted) { opacity: 1; }
+  :host(.triage-deleted),
+  :host(.triage-ignored) { opacity: 1; }
   :host(.selected) .row,
   :host(.has-conflict) .row { outline: none !important; }
 

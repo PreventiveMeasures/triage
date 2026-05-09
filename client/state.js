@@ -171,6 +171,14 @@ export const state = store({
   // entries with the legacy `deleted: true` shape are migrated to
   // 'deleted' on load.
   triageState: new Map(),
+  // Per-report ignore set — keyed by `${reportName}\0${tabKey}` so
+  // ignoring a finding in report A doesn't ignore the same finding
+  // when it shows up in report B. Mutually exclusive with the
+  // triage state (setting any state clears the ignore on the same
+  // tab; setting ignore clears the triage). Lives next to triage
+  // in the deepview.triage blob, persisted as `ignoredReports:
+  // ['nameA', 'nameB']` on each id-keyed entry — see triage.js.
+  ignoredIds: new Set(),
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
   // only. Replaces the prior boolean showDeleted; the toolbar's

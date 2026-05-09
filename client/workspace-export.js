@@ -90,6 +90,22 @@ export async function buildWorkspaceExportPayload(workspace) {
     if (!claimedIds.has(id)) continue
     triage[id] = { ...(triage[id] ?? {}), triage: triageVal }
   }
+  // Per-report ignore — group by id and stamp `ignoredReports`
+  // on the entry. Same shape triage.js / triage-sync.js use.
+  const ignoredByid = new Map()
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    const reportName = key.slice(0, sep)
+    const id = key.slice(sep + 1)
+    if (!claimedIds.has(id)) continue
+    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
+    ignoredByid.get(id).push(reportName)
+  }
+  for (const [id, reportNames] of ignoredByid) {
+    if (reportNames.length === 0) continue
+    triage[id] = { ...(triage[id] ?? {}), ignoredReports: reportNames }
+  }
   for (const [id, comment] of state.comments) {
     if (!claimedIds.has(id)) continue
     if (comment) triage[id] = { ...(triage[id] ?? {}), comment }

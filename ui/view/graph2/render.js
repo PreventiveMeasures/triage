@@ -79,18 +79,25 @@ function renderTopBar(graph, options) {
   // teardown). Counts come either from the bundle path (precomputed
   // overrides for state.reports-empty bundle-only sessions) or by
   // walking state.reports' groups for the findings-tab graph.
+  // Bundle path passes a precomputed override (without `ignored` —
+  // ignore is per-report and intentionally absent from the bundle
+  // selector since the bundle aggregates findings across reports).
+  // The report-graph path counts buckets including `ignored` so
+  // its selector renders the fourth button when applicable.
   let triageCounts
+  let triageStates
   if (triageCountsOverride && typeof triageCountsOverride === 'object') {
     triageCounts = triageCountsOverride
+    triageStates = ['fixed', 'invalid', 'deleted']
   } else {
-    triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+    triageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
     const allGroups = state.reports.flatMap((r) => r.groups)
     for (const g of allGroups) {
       const t = groupState(g).commonTriage
       if (t) triageCounts[t]++
     }
+    triageStates = ['fixed', 'invalid', 'deleted', 'ignored']
   }
-  const triageStates = ['fixed', 'invalid', 'deleted']
   const triageTotal = triageStates.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
   const triageBtn = (triageTotal > 0 || state.shownTriage) ? html`<div class="triage-selector graph2-triage-selector" role="group" aria-label="Triage view">
     ${triageStates.map((s) => {

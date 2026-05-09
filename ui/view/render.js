@@ -722,7 +722,7 @@ function triageFilterTemplate(colorCounts) {
 // state.shownTriage; the live view (no triage filter) is just the
 // "all unset" mode reached by clicking the active button again.
 function triageSelectorTemplate(triageCounts) {
-  const states = ['fixed', 'invalid', 'deleted']
+  const states = ['fixed', 'invalid', 'deleted', 'ignored']
   const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
   if (total === 0 && !state.shownTriage) return nothing
   return html`<div class="triage-selector" role="group" aria-label="Triage view">
@@ -1728,7 +1728,7 @@ export function render() {
   // selector. Conflict groups stay in the "live" bucket (their
   // commonTriage is null) regardless of which states their member
   // tabs carry — matching the original behaviour.
-  const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+  const triageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   for (const g of mergedGroups) {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++

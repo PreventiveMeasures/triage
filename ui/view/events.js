@@ -1,7 +1,7 @@
 import { state, VIEW_MODE_KEY, saveRepoUrlFor } from '../../client/state.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
-import { tabKey, activeTabFor, groupState, findGroupById } from './group.js'
+import { tabKey, activeTabFor, groupState, findGroupById, ignoredKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
 import { render, renderKeepFocus, refreshGraph2Sidebar, refreshGraph2TopPkgs, computeBundleFileHashes, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render.js'
@@ -499,18 +499,33 @@ report.addEventListener('click', (e) => {
     const group = findGroupById(gid)
     if (!group) return
     const action = triageActionBtn.dataset.triageAction
-    if (action !== 'fixed' && action !== 'invalid' && action !== 'deleted' && action !== 'restore') return
+    if (!['fixed', 'invalid', 'deleted', 'ignored', 'restore'].includes(action)) return
     const groupSt = groupState(group)
     const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
     for (const f of targets) {
       const key = tabKey(f)
+      const iKey = ignoredKey(f)
       if (action === 'restore') {
+        // Clear both buckets — Restore returns the tab to live.
         state.triageState.delete(key)
-      } else if (state.triageState.get(key) === action) {
-        // Toggle: clicking the active state clears it (back to live).
-        state.triageState.delete(key)
+        state.ignoredIds.delete(iKey)
+      } else if (action === 'ignored') {
+        // Mutually exclusive with triage. Toggle on re-click.
+        if (state.ignoredIds.has(iKey)) {
+          state.ignoredIds.delete(iKey)
+        } else {
+          state.ignoredIds.add(iKey)
+          state.triageState.delete(key)
+        }
       } else {
-        state.triageState.set(key, action)
+        // Triage state — clear any ignore on the same tab. Toggle
+        // on re-click of the active state.
+        if (state.triageState.get(key) === action) {
+          state.triageState.delete(key)
+        } else {
+          state.triageState.set(key, action)
+          state.ignoredIds.delete(iKey)
+        }
       }
     }
     try { popover.hidePopover() } catch {}

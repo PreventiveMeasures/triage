@@ -182,6 +182,15 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     } else if (importedTriage && !localTriage) {
       state.triageState.set(id, importedTriage)
     }
+    // Per-report ignore — additive merge. Each (reportName, id) is
+    // an independent slot; we union the imported list into local.
+    // No conflict path here since the keys don't collide between
+    // local and imported (a key represents "ignored in this
+    // report" — both sides setting it is identical).
+    const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
+    for (const r of ignoredReports) {
+      if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+    }
   }
   if (conflicts.length > 0 && conflictResolver) {
     const decisions = await conflictResolver(conflicts, findingLookup ?? new Map())
