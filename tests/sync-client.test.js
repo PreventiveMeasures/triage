@@ -747,6 +747,194 @@ describe('triage-sync client', () => {
     deleteWorkspace(wsA)
     deleteWorkspace(wsB)
   })
+
+  it('regular save does not delete triage for ids the client does not have a report for', async () => {
+    // Same root cause as the keyframe variant below, but exercised
+    // on the delta-save path: the chain brings in a finding-id the
+    // workspace's session.ids doesn't cover, the user edits a
+    // KNOWN id, and the resulting non-keyframe save's changeset
+    // must NOT include `<unknown>: null` (delete). Without the
+    // fix, the very first edit after a chain referencing an
+    // unknown id wipes that triage on the server.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'known', _id: 'known' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'unknown': { color: 'purple', comment: 'from elsewhere' },
+      'known': { color: 'red' },
+    })
+    await waitFor(
+      () => state.markers.get('known') === 'red',
+      'remote chain applied',
+    )
+
+    // ONE local edit on the known id. With keyframeInterval=100
+    // (production default) this stays a regular delta save.
+    state.markers.set('known', 'green')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'delta save acked')
+    // Sanity: no keyframe was emitted.
+    assert.equal(triageSync.sessionInfo(wsId).pending, null)
+    assert.notEqual(triageSync.sessionInfo(wsId).savesSinceKeyframe, 0, 'still on the delta path')
+
+    // Subscribe a fresh raw client with from=null. No keyframe in
+    // the chain yet → server returns the full chain. Decrypt and
+    // apply each revision in order; the final cumulative state
+    // must include 'unknown' alongside the latest 'known' value.
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered
+      .filter((m) => m.type === 'workspace-state')
+      .flatMap((s) => s.revisions)
+    assert.ok(revisions.length >= 2, 'at least the remote save + our delta')
+    assert.ok(!revisions.some((r) => r.keyframe), 'chain has no keyframe yet')
+
+    const key = await cryptoMod.deriveSessionKey(seed)
+    let cumulative = {}
+    for (const rev of revisions) {
+      const aad = cryptoMod.buildAad(tag, rev.base)
+      const changeset = await cryptoMod.decryptJson(key, rev.nonce, rev.ciphertext, aad)
+      // Mirror applyChangeset: null entries delete; present
+      // entries overwrite.
+      for (const [id, entry] of Object.entries(changeset)) {
+        if (entry === null) delete cumulative[id]
+        else cumulative[id] = entry
+      }
+    }
+    assert.deepEqual(
+      cumulative.unknown,
+      { color: 'purple', comment: 'from elsewhere' },
+      'unknown-id triage survived the delta save',
+    )
+    assert.equal(cumulative.known.color, 'green', 'known-id reflects local edit')
+    reader.close()
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('keyframe preserves triage for ids the client does not have a report for', async () => {
+    // The chain can carry triage for finding-ids the user's
+    // session.ids doesn't include — typically a peer triaged a
+    // finding from a report this client never imported. The
+    // client must still ROUND-TRIP those entries through its own
+    // saves; otherwise its first save (or its keyframe) would
+    // emit `<unknown>: null` and erase the triage on the server,
+    // taking the data with it for every other client that DOES
+    // have that report.
+    setKeyframeInterval(2)
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'known', _id: 'known' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
+      'tag derived',
+    )
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+
+    // A peer pushes a save mentioning a finding-id our session
+    // doesn't track (no report for it locally).
+    await pushRemoteChange(serverUrl, tag, seed, {
+      'unknown': { color: 'purple', comment: 'from elsewhere' },
+      'known': { color: 'red' },
+    })
+    await waitFor(
+      () => state.markers.get('known') === 'red',
+      'remote chain applied',
+    )
+
+    // Two local edits to push savesSinceKeyframe past the
+    // threshold (which we lowered to 2). The third save would be
+    // the keyframe — but with `keyframeInterval = 2`, the second
+    // edit IS the keyframe-promoted one because the chain we just
+    // applied bumped the counter to 1.
+    state.markers.set('known', 'green')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'second ack')
+    state.markers.set('known', 'blue')
+    await saveTriage()
+    await waitFor(
+      () => (triageSync.sessionInfo(wsId)?.savesSinceKeyframe ?? -1) === 0,
+      'keyframe emitted',
+    )
+
+    // Open a fresh raw client and subscribe with `from = null` —
+    // the server returns the chain starting at the latest
+    // keyframe. Decrypt the keyframe; its full state must include
+    // the unknown-id entry untouched.
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered
+      .filter((m) => m.type === 'workspace-state')
+      .flatMap((s) => s.revisions)
+    const kf = revisions.find((r) => r.keyframe)
+    assert.ok(kf, 'chain begins at a keyframe')
+
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const aad = cryptoMod.buildAad(tag, kf.base)
+    const fullState = await cryptoMod.decryptJson(key, kf.nonce, kf.ciphertext, aad)
+    // The keyframe's full state must include the unknown-id
+    // triage even though our session never had a report for it.
+    // Without the effectiveLocalState fix, this entry would be
+    // missing — and a fresh subscriber would never see it again.
+    assert.deepEqual(
+      fullState.unknown,
+      { color: 'purple', comment: 'from elsewhere' },
+      'unknown-id triage preserved through keyframe',
+    )
+    assert.equal(fullState.known.color, 'blue', 'known-id reflects latest local edit')
+    reader.close()
+
+    setKeyframeInterval(100)
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────

@@ -280,11 +280,25 @@ function buildWorkspaceIds(workspaceId) {
   return ids
 }
 
-function buildLocalState(ids) {
-  const out = {}
+// The session's "effective" local state — what the next save
+// represents as the workspace's full triage. Starts from
+// `baseState` (= the chain we've applied so far, including
+// entries for finding-ids belonging to reports the user doesn't
+// have loaded — a peer triaged them), then overlays the live
+// state.* values for ids the workspace DOES know about. Without
+// preserving the unknown-id half, the next save's changeset
+// against `baseState` would emit `<unknown>: null` (delete),
+// destroying the triage on the server for clients that DO have
+// that report. Mirrors the keyframe-emit case as well: the full
+// state we sign and ship under `compute({}, localState)` must
+// carry every id we've ever seen in the chain, not just the ones
+// in our current session.ids scope.
+function effectiveLocalState(baseState, ids) {
+  const out = { ...baseState }
   for (const id of ids) {
     const entry = snapshotEntry(id)
     if (Object.keys(entry).length > 0) out[id] = entry
+    else delete out[id]
   }
   return out
 }
@@ -495,7 +509,7 @@ function trySendSave(session) {
   }
   // Refresh localState from the live state.* containers in case
   // saveTriage just persisted edits we haven't snapshotted yet.
-  session.localState = buildLocalState(session.ids)
+  session.localState = effectiveLocalState(session.baseState, session.ids)
   // Once `keyframeInterval` non-keyframe revisions have piled up
   // since the last keyframe, the next save we'd emit anyway is
   // promoted to a keyframe — its changeset is the diff against an
@@ -727,7 +741,7 @@ async function applyOverlayAndPersist(session, overlay) {
 // baseState; the returned overlay is stable across the mutation
 // and gets re-applied via `applyOverlayAndPersist` afterwards.
 function captureOverlay(session) {
-  session.localState = buildLocalState(session.ids)
+  session.localState = effectiveLocalState(session.baseState, session.ids)
   return computeChangeset(session.baseState, session.localState)
 }
 
@@ -1051,7 +1065,7 @@ export const triageSync = {
       session.baseRevision = restored?.baseRevision ?? null
       session.baseState = restored?.baseState ?? {}
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
-      session.localState = buildLocalState(session.ids)
+      session.localState = effectiveLocalState(session.baseState, session.ids)
     }
     if (isActive()) openSocket()
     emitStatusIfChanged()
@@ -1177,7 +1191,7 @@ export const triageSync = {
       baseRevision: restored?.baseRevision ?? null,
       baseState: restored?.baseState ?? {},
       savesSinceKeyframe: restored?.savesSinceKeyframe ?? 0,
-      localState: buildLocalState(ids),
+      localState: effectiveLocalState(restored?.baseState ?? {}, ids),
       pending: null,
       pendingSave: false,
       key: null,
