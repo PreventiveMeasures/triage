@@ -332,7 +332,12 @@ sidebar.addEventListener('click', (e) => {
   const wsRow = e.target.closest('.file-item.workspace-item[data-workspace-id]')
   if (wsRow) {
     const id = wsRow.dataset.workspaceId
-    if (id && id !== state.currentWorkspace) switchToWorkspace(id)
+    // Re-run when the user clicks the SAME workspace but is on a
+    // different view (Bundles / Packages) — the click should drop
+    // them back into the findings view for that workspace, mirroring
+    // the file-row check below.
+    const onFindings = state.currentView === 'findings' || state.currentView === 'files'
+    if (id && (id !== state.currentWorkspace || !onFindings)) switchToWorkspace(id)
     return
   }
   const fileEl = e.target.closest('.file-item[data-file]')

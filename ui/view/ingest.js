@@ -194,9 +194,12 @@ export async function switchToFile(name, content) {
   state.reports = []
   state.currentFile = name
   state.currentWorkspace = null
-  // Switching to a regular report drops out of the bundles view —
-  // the user clicked a file row, they want to see its findings.
-  if (state.currentView === 'bundles') state.currentView = 'findings'
+  // Switching to a regular report drops out of the bundles or
+  // packages view — the user clicked a file row, they want to see
+  // its findings.
+  if (state.currentView === 'bundles' || state.currentView === 'packages') {
+    state.currentView = 'findings'
+  }
   // Per-report repo URL (see state.js / saveRepoUrlFor). The user's
   // last-typed URL for THIS file lights up the header repo chip; an
   // unseen file starts empty. Reset before ingest so a stale URL
@@ -248,8 +251,10 @@ export async function switchToWorkspace(workspaceId) {
   // and would mis-attribute edits otherwise.
   triageSync.closeSession()
   // Same drop-out as switchToFile — opening a workspace lands in
-  // findings, not the bundles list.
-  if (state.currentView === 'bundles') state.currentView = 'findings'
+  // findings, not the bundles / packages list.
+  if (state.currentView === 'bundles' || state.currentView === 'packages') {
+    state.currentView = 'findings'
+  }
   state.reports = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
