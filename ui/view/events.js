@@ -14,6 +14,13 @@ import { ensureBundleFindingsIndexed, subscribeToBundleFindingIndex } from '../.
 // view without waiting for a tab flip / re-open.
 subscribeToBundleFindingIndex(() => {
   if (state.currentView === 'bundles' && state.selectedBundle) render()
+  else if (state.currentView === 'packages') render()
+  else if (state.currentView === 'findings' || state.currentView === 'files') {
+    // Sidebar's PACKAGES entry caption depends on the index too —
+    // refresh it when the count would change. The main view stays
+    // put.
+    renderSidebar().catch(() => {})
+  }
 })
 
 // The findings-tab graph view and the bundles-tab graph view share

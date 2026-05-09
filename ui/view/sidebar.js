@@ -11,23 +11,14 @@ import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.js'
-import { packageOf } from './graph/utils.js'
+import { ensureBundleFindingsIndexed, getPackagesIndex } from '../../client/bundle-finding-index.js'
 
-// Distinct package count across every loaded report's findings.
-// Used by the sidebar's PACKAGES header to gate visibility (hide
-// when no reports / no findings) and to caption the count chip.
+// Distinct package count across every report the OPFS finding
+// index has scanned (NOT just state.reports — Packages aggregates
+// across the user's entire drop history, not just what's loaded).
 // Cheap walk; sidebar renders aren't on the hot path.
 function countLoadedPackages() {
-  const pkgs = new Set()
-  for (const r of state.reports) {
-    for (const g of r.groups) {
-      for (const f of g) {
-        const pkg = packageOf(f.file)
-        if (pkg) pkgs.add(pkg)
-      }
-    }
-  }
-  return pkgs.size
+  return getPackagesIndex().size
 }
 
 // Default sync endpoint used when the user toggles the sidebar
@@ -184,6 +175,12 @@ export async function renderSidebar() {
   // subsequent renders are a no-op; awaiting before listFiles makes
   // sure the listing reflects the post-rename state.
   await migrateLegacyFilenames()
+  // Kick the OPFS-wide finding index so the Packages count + page
+  // populate in the background without needing the user to open a
+  // bundle first. Idempotent — concurrent calls share the same
+  // in-flight promise; subsequent calls walk listFiles again to
+  // pick up any newly-dropped reports.
+  ensureBundleFindingsIndexed().catch(() => {})
   const names = await listFiles()
   const workspaces = listWorkspaces()
   const bundleNames = await listBundles()

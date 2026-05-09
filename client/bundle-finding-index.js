@@ -1,27 +1,53 @@
-// Bundle-side finding index — loads every report stored in OPFS
-// (not just the currently-active state.reports) and caches their
-// findings keyed by `fileHash`. The bundle details panel
-// (Issues tab + Graph view) consults this so a bundle can be
-// matched against findings from every report the user has ever
-// dropped, not only the one they happen to have open.
+// OPFS-wide finding index — loads every report stored in OPFS
+// (not just the currently-active state.reports) and caches its
+// findings under two complementary indexes:
+//
+//   - byHash: keyed by `fileHash` so the bundle details panel
+//     (Issues tab + Graph view) can match a bundle's source
+//     fingerprints against findings from every report the user
+//     has ever dropped.
+//   - byPackage: keyed by `packageOf(file)` so the cross-report
+//     Packages view can render aggregate counts without depending
+//     on the small subset of reports loaded into state.reports.
 //
 // Indexing is incremental and idempotent: the first call kicks a
 // background walk of `listFiles()`; each report is JSON.parsed and
-// scanned for findings carrying `fileHash`. Subsequent calls
-// re-scan the OPFS file list so newly-dropped reports get indexed
-// without restart, but already-indexed reports skip the readFile.
-// Reports that don't parse or don't carry fileHashes (DeepSec /
-// Claude Security / Codex CSV imports — those drop fileHashes) are
+// scanned for findings. Subsequent calls re-scan the OPFS file
+// list so newly-dropped reports get indexed without restart, but
+// already-indexed reports skip the readFile. Reports that don't
+// JSON.parse (DeepSec / Claude Security markdown, Codex CSV
+// imports — they're parsed at ingest time, not on disk) are
 // silently skipped.
 //
-// Subscribers fire after each report finishes indexing so the
-// open bundle's panel can repaint progressively as findings come
-// in (the digests + parses can take a few seconds for large
-// workspace dumps).
+// Subscribers fire after each report finishes indexing so any
+// open view (Bundles' Issues tab, Packages page) can repaint
+// progressively as findings come in.
 
 import { listFiles, readFile } from './storage.js'
 
 const byHash = new Map()
+const byPackage = new Map()
+
+// Package extractor — matches both `node_modules/<pkg>/...` and
+// `dependencies/<pkg>/...` regardless of which dir a given report
+// uses (the ui-side `packageOf` peeks at a global `depsDirName`,
+// which doesn't make sense across the OPFS-wide scan where
+// different reports may have come from different setups).
+// Walks past pnpm's synthetic `.pnpm/<name>@<ver>/node_modules/<name>`
+// shim so `@noble/hashes` / `ws` / etc. surface as themselves
+// rather than under `.pnpm`. Falls back to the path's first
+// segment for own source ('src', 'tests', etc.); files at the
+// repo root cluster under '/' (rare).
+function packageOf(file) {
+  if (!file) return null
+  const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
+  let m
+  while ((m = re.exec(file)) !== null) {
+    if (m[1] !== '.pnpm') return m[1]
+  }
+  const slash = file.indexOf('/')
+  return slash > 0 ? file.slice(0, slash) : '/'
+}
 const indexed = new Set()
 const listeners = new Set()
 let activeRun = null
@@ -45,6 +71,17 @@ function notify() {
 // exposed.
 export function findingsForFileHash(hash) {
   return byHash.get(hash)?.list ?? []
+}
+
+// Snapshot of the OPFS-wide package index for the cross-report
+// Packages view. Returns Map<pkg, { findings, files, reports }>;
+// findings is the deduped Finding[] (one entry per dedupe key),
+// files is Map<file, Finding[]> for the package, and reports is
+// Set<reportName>. Mutating the returned objects is safe — the
+// index uses internal storage, callers see the live structure
+// (don't need to copy on read since the views just iterate).
+export function getPackagesIndex() {
+  return byPackage
 }
 
 // Companion lookup: list of OPFS report names that contain a given
@@ -82,12 +119,14 @@ function inheritReportMeta(f, data) {
 
 function extractFindings(data) {
   // DeepView-native dumps carry findings under `groups` (array of
-  // Finding[]) or a flat `findings` array. Either shape works —
-  // both yield Finding objects with `fileHash` on the analyzer-
-  // stamped ones. Other formats (deepsec / claude-security /
-  // codex) get parsed during ingest; their findings rarely carry
-  // fileHashes (no source bundle attached during their pipeline)
-  // so the array.isArray guard quietly skips them.
+  // Finding[]) or a flat `findings` array. Either shape works.
+  // Other formats (deepsec / claude-security / codex) get parsed
+  // at ingest time, not from raw OPFS — they fail JSON.parse here
+  // and the caller silently skips them.
+  //
+  // We return EVERY finding (including those without `fileHash`)
+  // so the cross-report Packages view picks them up. The hash-
+  // keyed bucket below filters on fileHash separately.
   //
   // Run-level meta (type / model / effort / mode / think) is
   // inherited from the report header. Source-marked formats
@@ -103,7 +142,7 @@ function extractFindings(data) {
   for (const entry of list) {
     const members = Array.isArray(entry) ? entry : [entry]
     for (const f of members) {
-      if (!f || !f.fileHash) continue
+      if (!f) continue
       if (inheritMeta) inheritReportMeta(f, data)
       out.push(f)
     }
@@ -121,6 +160,48 @@ function findingDedupeKey(f) {
   return `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
 }
 
+// Hash-keyed bucket update. Returns true when the bucket gained
+// new content (either a fresh dedupe key or a new origin report
+// against an existing key — both cases warrant a subscriber
+// repaint so dependent UI picks up the change).
+function indexFindingByHash(f, key, name) {
+  let bucket = byHash.get(f.fileHash)
+  if (!bucket) {
+    bucket = { keys: new Set(), list: [], reports: new Map() }
+    byHash.set(f.fileHash, bucket)
+  }
+  let reportSet = bucket.reports.get(key)
+  if (!reportSet) {
+    reportSet = new Set()
+    bucket.reports.set(key, reportSet)
+  }
+  const wasNewReport = !reportSet.has(name)
+  reportSet.add(name)
+  if (bucket.keys.has(key)) return wasNewReport
+  bucket.keys.add(key)
+  bucket.list.push(f)
+  return true
+}
+
+// Package-keyed bucket update. Independent of fileHash so all
+// findings with a `file` surface in the Packages view, even when
+// the analyzer didn't stamp a content hash.
+function indexFindingByPackage(f, key, name) {
+  const pkg = packageOf(f.file) ?? '/'
+  let pBucket = byPackage.get(pkg)
+  if (!pBucket) {
+    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set() }
+    byPackage.set(pkg, pBucket)
+  }
+  pBucket.reports.add(name)
+  if (pBucket.keys.has(key)) return false
+  pBucket.keys.add(key)
+  pBucket.findings.push(f)
+  if (!pBucket.files.has(f.file)) pBucket.files.set(f.file, [])
+  pBucket.files.get(f.file).push(f)
+  return true
+}
+
 async function indexOne(name) {
   if (indexed.has(name)) return false
   // Mark up front so concurrent ensureBundleFindingsIndexed calls
@@ -133,35 +214,9 @@ async function indexOne(name) {
     if (findings.length === 0) return false
     let added = false
     for (const f of findings) {
-      let bucket = byHash.get(f.fileHash)
-      if (!bucket) {
-        bucket = { keys: new Set(), list: [], reports: new Map() }
-        byHash.set(f.fileHash, bucket)
-      }
-      // Dedupe: the same finding can land here multiple times when
-      // the user has both the original report AND a workspace
-      // export covering it (or two analyzer runs producing the
-      // same id). The bundle Issues tab should still list each
-      // finding once — but we DO track every report it came from
-      // so the Issues tab can list "found in: report-a, report-b".
       const key = findingDedupeKey(f)
-      let reportSet = bucket.reports.get(key)
-      if (!reportSet) {
-        reportSet = new Set()
-        bucket.reports.set(key, reportSet)
-      }
-      const wasNewReport = !reportSet.has(name)
-      reportSet.add(name)
-      if (bucket.keys.has(key)) {
-        // Same finding from a different report — not new content but
-        // we still want subscribers to repaint so the report list
-        // under the issue picks up the additional source.
-        if (wasNewReport) added = true
-        continue
-      }
-      bucket.keys.add(key)
-      bucket.list.push(f)
-      added = true
+      if (f.fileHash && indexFindingByHash(f, key, name)) added = true
+      if (f.file && indexFindingByPackage(f, key, name)) added = true
     }
     return added
   } catch {

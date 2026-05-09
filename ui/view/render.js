@@ -8,7 +8,7 @@ import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
-import { findingsForFileHash, reportsForFinding } from '../../client/bundle-finding-index.js'
+import { ensureBundleFindingsIndexed, findingsForFileHash, getPackagesIndex, reportsForFinding } from '../../client/bundle-finding-index.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { pkgColor } from './graph/utils.js'
@@ -2140,44 +2140,37 @@ function renderBundleDetails(entry, details) {
 // view through state.shownTriage too if that ever wires in;
 // today it surfaces every finding regardless of triage so the
 // page reads as a complete inventory.
-function renderPackagesView(reports) {
-  const allGroups = reports.flatMap((r) => r.groups)
-  // Per-package buckets: { findings: Finding[], files: Map<file, Finding[]> }.
-  const buckets = new Map()
-  for (const g of allGroups) {
-    for (const f of g) {
-      const pkg = packageOf(f.file) ?? '/'
-      let bucket = buckets.get(pkg)
-      if (!bucket) {
-        bucket = { findings: [], files: new Map() }
-        buckets.set(pkg, bucket)
-      }
-      bucket.findings.push(f)
-      if (!bucket.files.has(f.file)) bucket.files.set(f.file, [])
-      bucket.files.get(f.file).push(f)
-    }
-  }
-  // Sort packages by total finding count desc, then by name.
+function renderPackagesView() {
+  // Pulls from the OPFS-wide finding index (populated by the
+  // background scan in bundle-finding-index.js), not state.reports
+  // — so the page reflects every report the user has ever
+  // dropped, not just the one currently loaded. The first call
+  // kicks the scan if it hasn't run yet; the events.js subscriber
+  // re-renders progressively as more reports finish indexing.
+  ensureBundleFindingsIndexed().catch(() => {})
+  const buckets = getPackagesIndex()
   const sortedPkgs = [...buckets.entries()].sort(([a, ba], [b, bb]) => {
     if (bb.findings.length !== ba.findings.length) return bb.findings.length - ba.findings.length
     return a.localeCompare(b)
   })
+  const totalFindings = sortedPkgs.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
+  const totalReports = new Set()
+  for (const [, bucket] of sortedPkgs) for (const r of bucket.reports) totalReports.add(r)
   if (sortedPkgs.length === 0) {
     return html`<div class="packages-view">
       <header class="page-head">
         <div class="page-title"><h1>Packages</h1></div>
       </header>
-      <p style="color:var(--muted)">No findings to aggregate.</p>
+      <p style="color:var(--muted)">Indexing reports… this view populates as the OPFS scan finishes.</p>
     </div>`
   }
-  const totalFindings = allGroups.reduce((n, g) => n + g.length, 0)
   return html`<div class="packages-view">
     <header class="page-head">
       <div class="page-title">
         <h1>Packages</h1>
         <div class="meta-row">
           <span>${sortedPkgs.length} ${sortedPkgs.length === 1 ? 'package' : 'packages'}</span>
-          <span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${reports.length} ${reports.length === 1 ? 'report' : 'reports'}</span>
+          <span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${totalReports.size} ${totalReports.size === 1 ? 'report' : 'reports'}</span>
         </div>
       </div>
     </header>
@@ -2320,29 +2313,21 @@ export function render() {
       return
     }
   }
-  // Packages view — cross-report aggregation by package, derived
-  // from each finding's file path via `packageOf`. Lives outside
-  // the per-report findings render path so it can show data even
-  // when no single report is "selected" — the sidebar entry just
-  // flips state.currentView.
+  // Packages view — cross-report aggregation by package, fed by
+  // the OPFS-wide finding index (bundle-finding-index.js). Doesn't
+  // depend on state.reports — works the moment any report has
+  // landed in OPFS, even if it isn't the currently-loaded one.
   if (state.currentView === 'packages') {
-    if (state.reports.length === 0) {
-      // No reports loaded yet — drop back to findings (which then
-      // falls through to the dropzone below). Same defensive
-      // pattern the bundles branch uses.
-      state.currentView = 'findings'
-    } else {
-      let slot = document.getElementById('packages-slot')
-      if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-        report.innerHTML = '<div id="packages-slot"></div>'
-        slot = document.getElementById('packages-slot')
-      }
-      if (slot) litRender(renderPackagesView(state.reports), slot)
-      report.classList.add('active')
-      dropZone.classList.add('hidden')
-      document.title = 'DeepView results — packages'
-      return
+    let slot = document.getElementById('packages-slot')
+    if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+      report.innerHTML = '<div id="packages-slot"></div>'
+      slot = document.getElementById('packages-slot')
     }
+    if (slot) litRender(renderPackagesView(), slot)
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView results — packages'
+    return
   }
   if (state.reports.length === 0) return
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
