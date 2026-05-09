@@ -880,6 +880,14 @@ function trySendSave(session) {
 // message from poisoning every reconnecting client; only an
 // explicit continuity break (which signature-verified attackers
 // can't cause) can request a full resync.
+//
+// Each skip path bumps `savesSinceKeyframe` to the threshold so
+// the NEXT save this session emits is a keyframe (full state,
+// diff against {}). This heals the cluster for the case where
+// some peers DID apply the bad rev (different verify versions,
+// older clients, etc.) and ended up with a divergent baseState
+// — receiving the keyframe overwrites their baseState wholesale,
+// pulling everyone back into agreement. Audit M5.
 async function applyChainToBase(session, revisions) {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
@@ -918,7 +926,10 @@ async function applyChainToBase(session, revisions) {
     // revisions still has to hold.
     if (!rev.signature || !rev.nonce || !rev.ciphertext || typeof rev.id !== 'string') {
       console.warn('Triage sync: revision missing signature/nonce/ciphertext/id; skipping')
-      if (typeof rev.id === 'string') session.baseRevision = rev.id
+      if (typeof rev.id === 'string') {
+        session.baseRevision = rev.id
+        session.savesSinceKeyframe = keyframeInterval
+      }
       continue
     }
     const payload = {
@@ -941,6 +952,7 @@ async function applyChainToBase(session, revisions) {
     if (rev.id !== expectedId) {
       console.warn('Triage sync: revision id does not match content hash; skipping')
       session.baseRevision = rev.id
+      session.savesSinceKeyframe = keyframeInterval
       continue
     }
     const ok2 = await verifySavePayload(
@@ -952,6 +964,7 @@ async function applyChainToBase(session, revisions) {
     if (!ok2) {
       console.warn('Triage sync: revision signature did not verify; skipping')
       session.baseRevision = rev.id
+      session.savesSinceKeyframe = keyframeInterval
       continue
     }
     let changeset
@@ -961,6 +974,7 @@ async function applyChainToBase(session, revisions) {
     } catch (err) {
       console.warn('Triage sync: decrypt failed; skipping', err)
       session.baseRevision = rev.id
+      session.savesSinceKeyframe = keyframeInterval
       continue
     }
     if (!sessionIsLive(session)) return false

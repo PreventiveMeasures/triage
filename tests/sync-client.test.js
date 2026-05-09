@@ -298,6 +298,15 @@ describe('triage-sync client', () => {
     // revisions in the same chain can build on it), but baseState
     // stays empty since no content was applied.
     assert.equal(triageSync.sessionInfo(wsId).baseRevision, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    // M5: a skipped rev bumps savesSinceKeyframe to the threshold
+    // so the NEXT save this session emits is auto-promoted to a
+    // keyframe. Heals peers who DID apply the bad rev (different
+    // verify versions, etc.) by replacing their baseState wholesale
+    // when they receive the keyframe.
+    assert.ok(
+      (triageSync.sessionInfo(wsId).savesSinceKeyframe ?? 0) >= 100,
+      'skipped rev bumps savesSinceKeyframe so next save is a keyframe',
+    )
     triageSync.closeSession()
     triageSync.setServerUrl('')
     deleteWorkspace(wsId)
