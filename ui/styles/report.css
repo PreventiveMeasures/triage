@@ -696,6 +696,14 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bundle-issues-file-name:hover { color: var(--accent, #60a5fa); }
+/* The repo Issues slide variant — file group header is a link
+   to the file at HEAD on the upstream repo. Reset the default
+   `<a>` underline + color so it reads identically to the bundle
+   button / package static span. */
+.bundle-issues-file-name-link {
+  text-decoration: none;
+  display: block;
+}
 .bundle-issues-file-count {
   flex-shrink: 0;
   color: var(--muted);

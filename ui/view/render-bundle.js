@@ -1369,7 +1369,13 @@ function renderBundleIssuesList(details) {
 // matched file/line) or render as plain labels (package: no source
 // viewer applies — navigation lives in the per-finding report
 // chips on the right). Sort + grouping logic is identical.
-export function renderIssuesGroupedByFile(findingsByFile, { kind }) {
+// `repoUrl` is consumed only when `kind === 'repository'` — it
+// turns each file group's header into a link to that file at
+// HEAD on the upstream repo. Both a `user/repo` slug and a
+// full `https://…` URL are accepted (the slug case prepends the
+// canonical github.com origin); a missing / falsy value leaves
+// the row as a plain static span.
+export function renderIssuesGroupedByFile(findingsByFile, { kind, repoUrl } = {}) {
   // Strip the shared root once for the file headers; the leading
   // prefix is shown in the summary line so each file row reads
   // tighter without it.
@@ -1406,11 +1412,21 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind }) {
           const lb = parseInt(b.line, 10) || 0
           return la - lb
         })
+        // Repository slide gets a HEAD link per file group so the
+        // user can open the matching source on github with one
+        // click. Bundle slide keeps its source-viewer button.
+        // Package + everything else stay as static spans (no
+        // unambiguous upstream to link against).
+        const repoFileUrl = kind === 'repository' && repoUrl
+          ? `${/^https?:/iu.test(repoUrl) ? repoUrl.replace(/\/$/u, '') : `https://github.com/${repoUrl}`}/blob/HEAD/${file}`
+          : null
         return html`<li class="bundle-issues-file-group">
           <header class="bundle-issues-file-header">
             ${kind === 'bundle'
               ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} title=${file}>${bare}</button>`
-              : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" title=${file}>${bare}</span>`}
+              : repoFileUrl
+                ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" title=${file}>${bare}</a>`
+                : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" title=${file}>${bare}</span>`}
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">

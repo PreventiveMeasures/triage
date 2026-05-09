@@ -197,6 +197,11 @@ report.addEventListener('click', (e) => {
     state.selectedPackage = pkg
     state.packageDetailsTab = 'issues'
     state.packageSlideTriage = null
+    // Transient flag — slide-back clears `selectedPackage` too so
+    // the user lands back on the plain list instead of the
+    // row+details state. The row's [Issues →] is a drill-in
+    // shortcut, not a row selection.
+    state.packageSlideTransient = true
     render()
     return
   }
@@ -206,6 +211,7 @@ report.addEventListener('click', (e) => {
     state.selectedRepository = repo
     state.repositoryDetailsTab = 'issues'
     state.repositorySlideTriage = null
+    state.repositorySlideTransient = true
     render()
     return
   }
@@ -222,6 +228,7 @@ report.addEventListener('click', (e) => {
     // prior package's `'invalid'` / `'deleted'` mode would
     // surprise the user.
     state.packageSlideTriage = null
+    state.packageSlideTransient = false
     render()
     return
   }
@@ -252,6 +259,14 @@ report.addEventListener('click', (e) => {
     // Reset the slide's triage sub-view too — re-entering the
     // slide should land on the default `live` bucket.
     state.packageSlideTriage = null
+    // Transient slides (opened via the row's [Issues →] shortcut)
+    // also clear the selection on the way out — the row click
+    // wasn't meant to leave the user on a selected-row+details
+    // state when they back out of the slide.
+    if (state.packageSlideTransient) {
+      state.selectedPackage = null
+      state.packageSlideTransient = false
+    }
     render()
     return
   }
@@ -287,6 +302,7 @@ report.addEventListener('click', (e) => {
     state.selectedRepository = repo
     state.repositoryDetailsTab = 'overview'
     state.repositorySlideTriage = null
+    state.repositorySlideTransient = false
     render()
     return
   }
@@ -307,6 +323,10 @@ report.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="repository-slide-back"]')) {
     state.repositoryDetailsTab = 'overview'
     state.repositorySlideTriage = null
+    if (state.repositorySlideTransient) {
+      state.selectedRepository = null
+      state.repositorySlideTransient = false
+    }
     render()
     return
   }

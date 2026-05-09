@@ -272,14 +272,6 @@ export async function renderSidebar() {
     ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
-    ${workspaceHeaderTemplate(visibleWorkspaces.length)}
-    ${visibleWorkspaces.map((w) => {
-      const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
-      return html`
-        ${workspaceItemTemplate(w, visibleReports.length)}
-        ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
-      `
-    })}
     ${GROUP_ORDER.map((g) => {
       const list = buckets.get(g) ?? []
       const isDefault = g === 'default'
@@ -287,6 +279,14 @@ export async function renderSidebar() {
       return html`
         ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })}
         ${list.map((n) => fileItemTemplate(n))}
+      `
+    })}
+    ${workspaceHeaderTemplate(visibleWorkspaces.length)}
+    ${visibleWorkspaces.map((w) => {
+      const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
+      return html`
+        ${workspaceItemTemplate(w, visibleReports.length)}
+        ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
       `
     })}
   `, fileList)

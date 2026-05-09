@@ -117,6 +117,13 @@ export const state = store({
   // is non-empty. Reset to null when selectedPackage changes or
   // when the slide closes.
   packageSlideTriage: null,
+  // True when the Issues slide was opened via the row's
+  // `[Issues →]` shortcut button (vs. the details panel's Issues
+  // tab). On slide-back, the click handler also clears
+  // `selectedPackage` so the user lands back on the plain list
+  // instead of the row+details panel state — the row button is
+  // meant to be a transient drill-in, not a row selection.
+  packageSlideTransient: false,
   // Packages list — text filter (case-insensitive substring match
   // on the package name) and sort key. Sort options:
   // 'findings-desc' (default — most issues first),
@@ -129,6 +136,7 @@ export const state = store({
   selectedRepository: null,
   repositoryDetailsTab: 'overview',
   repositorySlideTriage: null,
+  repositorySlideTransient: false,
   repositoriesSearchQuery: '',
   repositoriesSortBy: 'findings-desc',
   // Path of the bundle source currently open in the source viewer
