@@ -1357,10 +1357,17 @@ function renderBundleSourceFindingPanel(findings) {
   // even though the bundle still treats it as active.
   const triage = state.triageState.get(tabKey(f))
   const triageLabel = triage === 'fixed' ? 'Fixed' : null
+  // Run meta — analyzer / model / effort / exportsMode chained
+  // with `·`, same shape the report's tab-body uses (see
+  // render-finding.js's `meta`). Surfaces alongside the severity
+  // pill so the user has provenance context without leaving the
+  // viewer. Empty when none of the fields are populated.
+  const meta = [f.type, prettyModel(f.model), f.effort, f.exportsMode].filter(Boolean).join(' · ')
   return html`<aside class="bundle-source-panel">
     <header class="bundle-source-panel-bar">
       <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replace(/_/gu, ' ')}</span>
       ${triageLabel ? html`<span class=${`bundle-source-panel-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
+      ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
       <button
         type="button"
         class="bundle-source-panel-close"

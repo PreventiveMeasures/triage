@@ -1289,7 +1289,7 @@ body.report-fullscreen {
   padding: 1px .4rem;
   border-radius: 3px;
   color: #000;
-  flex: 1;
+  flex-shrink: 0;
   white-space: nowrap;
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
@@ -1298,6 +1298,18 @@ body.report-fullscreen {
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
+}
+/* Run meta — analyzer / model / effort / mode chained with `·`,
+   right-aligned via flex:1 so it sits between the triage badge
+   and the close button without competing with them for prominence.
+   Muted, smaller font; ellipsis-clips when the panel narrows. */
+.bundle-source-panel-meta {
+  flex: 1; min-width: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-left: .25rem;
 }
 /* Display-only triage badge alongside the severity. Outline
    chip style — visually distinct from the severity pill so the
