@@ -1343,15 +1343,17 @@ function renderBundleSourceFindingPanel(findings) {
   const reports = f.fileHash ? reportsForFinding(f.fileHash, f) : []
   // Display-only triage badge in the header. The bundle Issues
   // filter excludes invalid/deleted, and ignored is per-report
-  // (the bundle treats ignored findings as live), so the only
-  // status that surfaces here is 'fixed'. Read-only by design —
+  // (the bundle treats ignored findings as live), so the badge
+  // reads as either "Fixed" (the finding is fixed in some report)
+  // or "Untriaged" (no triage state yet). Read-only by design —
   // the source viewer is for inspection, not triage.
   const triage = state.triageState.get(tabKey(f))
-  const triageLabel = triage === 'fixed' ? 'Fixed' : null
+  const triageLabel = triage === 'fixed' ? 'Fixed' : 'Untriaged'
+  const triageClass = triage === 'fixed' ? 'triage-fixed' : 'triage-none'
   return html`<aside class="bundle-source-panel">
     <header class="bundle-source-panel-bar">
       <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replace(/_/gu, ' ')}</span>
-      ${triageLabel ? html`<span class=${`bundle-source-panel-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
+      <span class=${`bundle-source-panel-triage ${triageClass}`}>${triageLabel}</span>
       <button
         type="button"
         class="bundle-source-panel-close"
