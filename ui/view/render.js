@@ -1888,41 +1888,79 @@ function renderBundleIssuesList(details) {
   if (findingsByFile.size === 0) {
     return html`<div class="bundle-issues-empty">No issues match this bundle's files.</div>`
   }
-  // Flatten into [{file, finding}, ...] for stable severity-desc
-  // sorting. Bundle the stripped (no-prefix) display path so long
-  // shared roots don't dominate every row.
+  // Strip the shared root once for the file headers; the leading
+  // prefix is shown in the summary line so each file row reads
+  // tighter without it.
   const allFiles = [...findingsByFile.keys()]
   const { prefix, stripped } = stripCommonPathPrefix(allFiles)
   const fileToBare = new Map(allFiles.map((f, i) => [f, stripped[i]]))
-  const flat = []
-  for (const [file, findings] of findingsByFile) {
-    for (const f of findings) flat.push({ file, finding: f })
-  }
-  flat.sort((a, b) => {
-    const sa = SEVERITY_ORDER[a.finding.severity] ?? 0
-    const sb = SEVERITY_ORDER[b.finding.severity] ?? 0
-    if (sb !== sa) return sb - sa
-    const fa = fileToBare.get(a.file) ?? a.file
-    const fb = fileToBare.get(b.file) ?? b.file
-    return fa.localeCompare(fb)
+  // Sort files by worst-severity descending, then by stripped name
+  // — surfaces files with critical issues at the top, while
+  // alphabetical tie-breaking keeps the list stable.
+  const fileEntries = [...findingsByFile.entries()].sort(([fa, ga], [fb, gb]) => {
+    const wa = SEVERITY_ORDER[_topSeverityOf(ga)] ?? 0
+    const wb = SEVERITY_ORDER[_topSeverityOf(gb)] ?? 0
+    if (wb !== wa) return wb - wa
+    return (fileToBare.get(fa) ?? fa).localeCompare(fileToBare.get(fb) ?? fb)
   })
+  const totalCount = [...findingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   return html`<div class="bundle-issues">
     <div class="bundle-issues-summary">
-      ${flat.length} ${flat.length === 1 ? 'issue' : 'issues'} across
+      ${totalCount} ${totalCount === 1 ? 'issue' : 'issues'} across
       ${findingsByFile.size} ${findingsByFile.size === 1 ? 'file' : 'files'}
       ${prefix ? html` <span class="mono">${prefix}</span>` : nothing}
     </div>
     <ul class="bundle-issues-list">
-      ${flat.map(({ file, finding }) => {
+      ${fileEntries.map(([file, findings]) => {
         const bare = fileToBare.get(file) ?? file
-        const sev = finding.severity
-        return html`<li>
-          <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
-          <div class="bundle-issue-file-cell">
-            <button type="button" class="bundle-issue-file" data-bundle-view-source=${file} title=${file}>${bare}${finding.line ? html`<span class="bundle-issue-line">:${finding.line}</span>` : nothing}</button>
-            ${bundleIssueReportsTemplate(finding)}
-          </div>
-          <span class="bundle-issue-desc">${finding.description ?? ''}</span>
+        // Sort findings within a file by severity desc → line asc
+        // so the most urgent surfaces first; line ordering helps
+        // when the user scrolls down within the same file.
+        const sortedFindings = [...findings].sort((a, b) => {
+          const sa = SEVERITY_ORDER[a.severity] ?? 0
+          const sb = SEVERITY_ORDER[b.severity] ?? 0
+          if (sb !== sa) return sb - sa
+          const la = parseInt(a.line, 10) || 0
+          const lb = parseInt(b.line, 10) || 0
+          return la - lb
+        })
+        return html`<li class="bundle-issues-file-group">
+          <header class="bundle-issues-file-header">
+            <button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} title=${file}>${bare}</button>
+            <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
+          </header>
+          <ul class="bundle-issues-findings">
+            ${sortedFindings.map((finding) => {
+              // findingIdx is the position in the ORIGINAL per-file
+              // findings array (the one bundleFindingsByFile
+              // returned); the source viewer's
+              // bundleSourceFindingIdx points at that index, so the
+              // sorted display order doesn't break the lookup.
+              const findingIdx = findings.indexOf(finding)
+              const sev = finding.severity
+              const triage = state.triageState.get(tabKey(finding))
+              const triageLabel = triage === 'fixed' ? 'FIXED' : null
+              return html`<li class="bundle-issues-finding">
+                <button
+                  type="button"
+                  class="bundle-issues-finding-link"
+                  data-bundle-view-source=${file}
+                  data-bundle-view-finding-idx=${findingIdx}
+                  data-bundle-view-line=${finding.line ?? ''}
+                  title=${file}
+                >
+                  <div class="bundle-issues-finding-head">
+                    <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+                    ${finding.line ? html`<span class="bundle-issues-finding-line mono">:${finding.line}</span>` : nothing}
+                    ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
+                    <span class="bundle-issues-finding-spacer"></span>
+                    ${bundleIssueReportsTemplate(finding)}
+                  </div>
+                  <div class="bundle-issues-finding-desc">${finding.description ?? ''}</div>
+                </button>
+              </li>`
+            })}
+          </ul>
         </li>`
       })}
     </ul>
