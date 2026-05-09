@@ -2,6 +2,7 @@ import { state } from '../../client/state.js'
 import { saveTriage } from '../../client/triage.js'
 import { render } from './render.js'
 import { triageSync } from '../../client/triage-sync.js'
+import { openTriageExportDialog } from './triage-export-dialog.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups
@@ -121,4 +122,13 @@ window.DeepView = {
   // state (filters, sort, etc.) without going through the
   // triage.set helper above.
   refresh() { render() },
+
+  // Opens the full-triage backup dialog (export + import in one
+  // place). Bundles every persisted-id triage entry plus all
+  // saved repo URLs into a single gzipped JSON; same dialog
+  // imports a previously-exported backup with a choice of merge
+  // modes. Returns a Promise that resolves when the dialog
+  // closes — caller usually doesn't await it (it's a console
+  // command), but doing so is harmless.
+  export() { return openTriageExportDialog() },
 }
