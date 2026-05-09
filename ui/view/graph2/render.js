@@ -166,8 +166,8 @@ function renderTopBar(graph, options) {
       <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
-    ${extraTopRow ? null : triageBtn}
     <div class="g2-spacer"></div>
+    ${extraTopRow ? null : triageBtn}
     <!-- Fullscreen — toggles body.report-fullscreen. With the
          sidebar now spanning both grid rows, the topbar covers only
          the stage column, so the button's right-edge position here

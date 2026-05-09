@@ -234,6 +234,13 @@ report.addEventListener('click', (e) => {
     // deps via the toggle. The setting persists for the duration
     // of this bundle's session; opening a different bundle resets.
     graph2.showAll = true
+    // Default the triage view to live (non-triaged) when opening
+    // a bundle. The setting is shared with the findings tab, so
+    // a user who left findings in Deleted view would otherwise
+    // land here filtered to deletions only — confusing in a
+    // bundle context where they expect to see active issues
+    // first.
+    state.shownTriage = null
     render()
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     if (!entry) return
