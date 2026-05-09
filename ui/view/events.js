@@ -214,6 +214,23 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Packages list — row select. Mirrors the bundles select pattern;
+  // selection is purely UI (no async load — the index is already in
+  // memory), so a plain re-render paints the right-side panel.
+  const selPackage = e.target.closest('[data-select-package]')
+  if (selPackage) {
+    const pkg = selPackage.dataset.selectPackage
+    if (state.selectedPackage === pkg) return
+    state.selectedPackage = pkg
+    render()
+    return
+  }
+  // Packages list — close-details button on the right panel.
+  if (e.target.closest('[data-deselect-package]')) {
+    state.selectedPackage = null
+    render()
+    return
+  }
   // Bundle details — tab switch (Packages / Files / Graph /
   // Issues). Packages/Files render in the regular details panel;
   // Graph and Issues open the full-width slide layout (bundles

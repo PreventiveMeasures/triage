@@ -1536,11 +1536,74 @@ body.report-fullscreen {
    plus a severity-chip strip and a nested file list. Styled like
    the bundle Issues slide so the visual rhythm carries across
    aggregate views. */
+/* Packages view — list of compact package rows on the left, details
+   panel on the right. Mirrors the bundles-view chrome (.bundles-
+   layout / .bundles-list / .bundles-details) so the two cross-
+   report pages read as the same shape. */
 .packages-view {
   max-width: 1200px;
   display: flex; flex-direction: column;
   flex: 1;
   min-height: 0;
+  &.with-details { max-width: 2000px; }
+
+  & .packages-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    flex: 1;
+    min-height: 0;
+    align-items: start;
+
+    &.open {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    }
+    & .packages-list { margin-top: 0; max-width: 1200px; overflow-y: auto; min-height: 0; }
+    &.open .packages-details {
+      max-width: 800px;
+      align-self: stretch;
+      max-height: 100%;
+    }
+  }
+
+  & .packages-details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-glass);
+    display: flex; flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  & .packages-details-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .55rem .75rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  & .packages-details-label {
+    color: var(--muted);
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+  }
+  & .packages-details-close {
+    background: transparent; color: var(--muted);
+    border: 0; border-radius: 4px;
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    cursor: pointer; padding: 0;
+    font-size: 1rem; line-height: 1;
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  }
+  & .packages-details-body {
+    padding: .75rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    font-size: .78rem;
+  }
 }
 /* Triage selector pinned to the top-right of the page header.
    `.page-head` is `align-items: flex-start; justify-content:
@@ -1551,71 +1614,112 @@ body.report-fullscreen {
   flex-shrink: 0;
   align-self: flex-start;
 }
-.packages-list {
+/* List of packages — same row chrome as `.bundles-list` so the two
+   cross-report views share their interaction model (hover bg,
+   selected outline). One row per package, inline metadata. */
+.packages-view .packages-list {
   list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column;
-  gap: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+
+  & li {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .4rem .75rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    transition: background .12s;
+
+    &:last-child { border-bottom: none; }
+    &:hover { background: rgb(from var(--text) r g b / .04); }
+    &.selected {
+      background: rgb(from var(--text) r g b / .06);
+      outline: 1px solid var(--accent);
+      outline-offset: -1px;
+    }
+  }
+  & .packages-dot {
+    flex-shrink: 0;
+    width: .65rem; height: .65rem;
+    border-radius: 50%;
+    border: 1px solid rgb(from var(--text) r g b / .25);
+  }
+  & .packages-row-text {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+  }
+  & .packages-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .82rem;
+    font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & .packages-row-meta {
+    color: var(--muted);
+    font-size: .68rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & .packages-row-chips {
+    flex-shrink: 0;
+    display: flex; flex-wrap: wrap;
+    gap: .2rem;
+    justify-content: flex-end;
+  }
 }
-.packages-row {
-  display: flex; flex-direction: column;
-  gap: .35rem;
+/* Details panel content — meta dl, severity chip strip, file list,
+   reports list. Same visual rhythm as `.bundles-detail-meta`. */
+.packages-detail-meta {
+  margin: 0 0 .5rem;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .25rem .75rem;
+  font-size: .78rem;
+  & dt { color: var(--muted); }
+  & dd { margin: 0; word-break: break-word; }
 }
-.packages-row-head {
-  display: flex; align-items: baseline; gap: .5rem;
-  padding: .35rem .35rem;
-  border-bottom: 1px solid var(--border);
-}
-.packages-dot {
-  flex-shrink: 0;
-  width: .65rem; height: .65rem;
-  border-radius: 50%;
-  align-self: center;
-  border: 1px solid rgb(from var(--text) r g b / .25);
-}
-.packages-name {
-  flex: 1; min-width: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .85rem;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.packages-count {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: .68rem;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
-.packages-chips {
+.packages-detail-chips {
   display: flex; flex-wrap: wrap;
   gap: .25rem;
-  padding: 0 .35rem;
+  margin: 0 0 .75rem;
 }
-.packages-files {
+.packages-detail-section {
+  margin: .75rem 0 .35rem;
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--muted);
+}
+.packages-detail-files,
+.packages-detail-reports {
   list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
 }
-.packages-file {
+.packages-detail-file {
   display: flex; align-items: baseline; gap: .5rem;
-  padding: .2rem .5rem;
+  padding: .25rem .5rem;
   border-bottom: 1px solid var(--border);
   font-size: .72rem;
   &:last-child { border-bottom: none; }
 }
-.packages-file-path {
+.packages-detail-file-path {
   flex: 1; min-width: 0;
   color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.packages-file-count {
+.packages-detail-file-count {
   flex-shrink: 0;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.packages-file-more {
+.packages-detail-reports li {
   padding: .25rem .5rem;
-  color: var(--muted);
-  font-size: .7rem;
-  font-style: italic;
+  border-bottom: 1px solid var(--border);
+  font-size: .72rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  &:last-child { border-bottom: none; }
 }

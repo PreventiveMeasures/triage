@@ -95,6 +95,12 @@ export const state = store({
   // package size visualization from the flat file list across two
   // tabs. Reset to 'packages' when selectedBundle changes.
   bundleDetailsTab: 'packages',
+  // Packages view selection — the package name (string) of the open
+  // row, null when no detail panel is up. Mirrors the selectedBundle
+  // pattern: clicking a row sets it; the deselect button clears it.
+  // Stale selections (against a package that fell out of the
+  // current triage filter) auto-clear at render time.
+  selectedPackage: null,
   // Path of the bundle source currently open in the source viewer
   // modal (null when closed). Reset on bundle change / view switch
   // so an old viewer doesn't reopen against a different bundle.

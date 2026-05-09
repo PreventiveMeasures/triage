@@ -2185,7 +2185,15 @@ function renderPackagesView() {
   const totalFindings = filtered.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
   const totalReports = new Set()
   for (const [, bucket] of filtered) for (const r of bucket.reports) totalReports.add(r)
-  return html`<div class="packages-view">
+  // Selection — clear stale picks when the currently-open package
+  // dropped out of the filtered set (e.g. the user flipped triage
+  // and the row no longer has any findings under the new filter).
+  // Mirrors the bundles-view pattern: selectedBundle stays sticky
+  // across re-renders unless the entry is gone.
+  const selected = state.selectedPackage
+  const selectedEntry = selected ? filtered.find(([pkg]) => pkg === selected) ?? null : null
+  const layoutClass = selectedEntry ? 'packages-layout open' : 'packages-layout'
+  return html`<div class=${`packages-view${selectedEntry ? ' with-details' : ''}`}>
     <header class="page-head">
       <div class="page-title">
         <h1>Packages</h1>
@@ -2202,9 +2210,20 @@ function renderPackagesView() {
           : state.shownTriage
             ? `No ${state.shownTriage} findings in any package.`
             : 'No untriaged findings in any package.'}</p>`
-      : html`<ul class="packages-list">
-          ${filtered.map(([pkg, bucket]) => renderPackageRow(pkg, bucket))}
-        </ul>`}
+      : html`<div class=${layoutClass}>
+          <ul class="packages-list">
+            ${filtered.map(([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
+          </ul>
+          ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
+            <header class="packages-details-bar">
+              <span class="packages-details-label">Details</span>
+              <button type="button" class="packages-details-close" data-deselect-package title="Close details" aria-label="Close details">×</button>
+            </header>
+            <div class="packages-details-body">
+              ${renderPackageDetails(selectedEntry[0], selectedEntry[1])}
+            </div>
+          </aside>` : nothing}
+        </div>`}
   </div>`
 }
 
@@ -2233,9 +2252,35 @@ function packagesTriageSelectorTemplate(triageCounts) {
   </div>`
 }
 
-// Single package row — header (name + dot + total) + severity chip
-// strip + nested file list (sorted by count desc, ellipsis-clipped).
-function renderPackageRow(pkg, bucket) {
+// Single package row in the list — compact (one line + chip strip).
+// Click-to-select via `data-select-package`; the details panel on
+// the right paints the file/report breakdown for the open row.
+function renderPackageRow(pkg, bucket, isSel) {
+  const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
+  for (const f of bucket.findings) {
+    if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
+  }
+  const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
+  const dotColor = pkgColor(pkg)
+  return html`<li
+    class=${isSel ? 'selected' : ''}
+    data-select-package=${pkg}
+  >
+    <span class="packages-dot" style=${`background:${dotColor}`}></span>
+    <div class="packages-row-text">
+      <span class="packages-name">${pkg}</span>
+      <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
+    </div>
+    ${chips.length > 0 ? html`<div class="packages-row-chips">
+      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replace(/_/gu, ' ')}>${sevCounts[s]}</span>`)}
+    </div>` : nothing}
+  </li>`
+}
+
+// Right-panel details for the open package — meta dl + severity
+// chip strip + per-file list (full, no slice cap; the panel has
+// its own scroll) + the OPFS reports the findings came from.
+function renderPackageDetails(pkg, bucket) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
     if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
@@ -2245,27 +2290,30 @@ function renderPackageRow(pkg, bucket) {
     if (b.length !== a.length) return b.length - a.length
     return fa.localeCompare(fb)
   })
-  const dotColor = pkgColor(pkg)
-  return html`<li class="packages-row">
-    <header class="packages-row-head">
-      <span class="packages-dot" style=${`background:${dotColor}`}></span>
-      <span class="packages-name">${pkg}</span>
-      <span class="packages-count">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} in ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'}</span>
-    </header>
-    ${chips.length > 0 ? html`<div class="packages-chips">
-      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
-    </div>` : nothing}
-    <ul class="packages-files">
-      ${sortedFiles.slice(0, 50).map(([file, findings]) => {
-        const stripped = pkgRelativePath(pkg, file)
-        return html`<li class="packages-file">
-          <span class="packages-file-path mono" title=${file}>${stripped}</span>
-          <span class="packages-file-count">${findings.length}</span>
-        </li>`
-      })}
-      ${sortedFiles.length > 50 ? html`<li class="packages-file-more">…and ${sortedFiles.length - 50} more</li>` : nothing}
-    </ul>
-  </li>`
+  const sortedReports = [...bucket.reports].sort((a, b) => a.localeCompare(b))
+  return html`<dl class="packages-detail-meta">
+    <dt>Package</dt><dd class="mono">${pkg}</dd>
+    <dt>Findings</dt><dd>${bucket.findings.length}</dd>
+    <dt>Files</dt><dd>${bucket.files.size}</dd>
+    <dt>Reports</dt><dd>${bucket.reports.size}</dd>
+  </dl>
+  ${chips.length > 0 ? html`<div class="packages-detail-chips">
+    ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+  </div>` : nothing}
+  <h3 class="packages-detail-section">Files</h3>
+  <ul class="packages-detail-files">
+    ${sortedFiles.map(([file, findings]) => {
+      const stripped = pkgRelativePath(pkg, file)
+      return html`<li class="packages-detail-file">
+        <span class="packages-detail-file-path mono" title=${file}>${stripped}</span>
+        <span class="packages-detail-file-count">${findings.length}</span>
+      </li>`
+    })}
+  </ul>
+  <h3 class="packages-detail-section">Reports</h3>
+  <ul class="packages-detail-reports">
+    ${sortedReports.map((r) => html`<li class="mono" title=${r}>${displayName(r)}</li>`)}
+  </ul>`
 }
 
 // Strip the package's `node_modules/<pkg>/` (or `dependencies/<pkg>/`)
