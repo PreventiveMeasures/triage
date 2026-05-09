@@ -21,7 +21,7 @@ import { triageSync } from '../../client/triage-sync.js'
 
 const triage = {
   get markers() { return new Map(state.markers) },
-  get deletedIds() { return new Set(state.deletedIds) },
+  get triageState() { return new Map(state.triageState) },
   get comments() { return new Map(state.comments) },
   get fixes() { return new Map(state.fixes) },
 
@@ -32,7 +32,8 @@ const triage = {
     const out = {}
     const color = state.markers.get(id)
     if (color !== undefined) out.color = color
-    if (state.deletedIds.has(id)) out.deleted = true
+    const triageVal = state.triageState.get(id)
+    if (triageVal) out.triage = triageVal
     const comment = state.comments.get(id)
     if (comment) out.comment = comment
     const fix = state.fixes.get(id)
@@ -44,7 +45,7 @@ const triage = {
   // an `undefined` field is left alone. Returns the boolean "did
   // anything change" so callers can short-circuit. Async because the
   // saveTriage write is async; the UI render fires after persistence.
-  async set(id, { color, deleted, comment, fix } = {}) {
+  async set(id, { color, triage: triageVal, comment, fix } = {}) {
     let changed = false
     if (color !== undefined) {
       if (color === null || color === '') {
@@ -54,11 +55,14 @@ const triage = {
         changed = true
       }
     }
-    if (deleted !== undefined) {
-      if (deleted) {
-        if (!state.deletedIds.has(id)) { state.deletedIds.add(id); changed = true }
-      } else if (state.deletedIds.delete(id)) {
-        changed = true
+    if (triageVal !== undefined) {
+      if (triageVal === null || triageVal === '' || triageVal === false) {
+        if (state.triageState.delete(id)) changed = true
+      } else if (triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted') {
+        if (state.triageState.get(id) !== triageVal) {
+          state.triageState.set(id, triageVal)
+          changed = true
+        }
       }
     }
     if (comment !== undefined) {

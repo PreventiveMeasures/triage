@@ -163,8 +163,24 @@ export const state = store({
   // and persistence rules as `comments`; rendered as a clickable
   // link in the tab body when present.
   fixes: new Map(),
-  deletedIds: new Set(),
-  showDeleted: false,
+  // Triage state per finding — one of 'fixed' / 'invalid' / 'deleted'
+  // (mutually exclusive). Findings without an entry are "active"
+  // (the default live view). Setting any state for a tab clears the
+  // others in the same slot. Persists alongside markers / comments
+  // / fixes in the deepview.triage blob (see triage.js); loaded
+  // entries with the legacy `deleted: true` shape are migrated to
+  // 'deleted' on load.
+  triageState: new Map(),
+  // gid of the finding whose triage-action menu is currently open
+  // (null when none). Single open at a time so the modeless popover
+  // doesn't accumulate. Reset on any state change that re-renders
+  // the row (clicking an action, clicking outside, view switch).
+  openTriageMenuGid: null,
+  // Currently displayed triage bucket — null = live view (no triage
+  // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
+  // only. Replaces the prior boolean showDeleted; the toolbar's
+  // 4-segment selector flips between the four states.
+  shownTriage: null,
   nextFindingId: 0,
   // Ephemeral per-render state — which tab is active within each dedup
   // group. Keyed by `groupKey(g)` (the first member's tabKey), value is

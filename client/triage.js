@@ -35,9 +35,9 @@ export async function saveTriage() {
       if (SESSION_ID_RE.test(k)) continue
       entries[k] = { ...(entries[k] || {}), color }
     }
-    for (const k of state.deletedIds) {
+    for (const [k, triage] of state.triageState) {
       if (SESSION_ID_RE.test(k)) continue
-      entries[k] = { ...(entries[k] || {}), deleted: true }
+      entries[k] = { ...(entries[k] || {}), triage }
     }
     for (const [k, comment] of state.comments) {
       if (SESSION_ID_RE.test(k)) continue
@@ -73,7 +73,13 @@ async function loadTriage() {
     const entries = JSON.parse(new TextDecoder().decode(decompressed))
     for (const [k, v] of Object.entries(entries)) {
       if (v && v.color) state.markers.set(k, v.color)
-      if (v && v.deleted) state.deletedIds.add(k)
+      // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
+      // Legacy entries that only carry `deleted: true` migrate to 'deleted'.
+      if (v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted')) {
+        state.triageState.set(k, v.triage)
+      } else if (v && v.deleted) {
+        state.triageState.set(k, 'deleted')
+      }
       if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
       if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)
     }

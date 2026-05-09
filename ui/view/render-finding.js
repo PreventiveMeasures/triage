@@ -107,13 +107,64 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const commentBtn = html`<button type="button" class=${`mark-comment${activeComment ? ' has-comment' : ''}`} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
   const fixBtn = html`<button type="button" class=${`mark-fix${activeFix ? ' has-fix' : ''}`} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
-  if (state.showDeleted) {
+  // In any non-live triage view (Fixed / Invalid / Deleted), the
+  // primary action is "restore" — clear the bucket on the whole
+  // group so it goes back to the active set. The triage-menu drop-
+  // down is hidden in those views to keep the action focused.
+  if (state.shownTriage) {
     return html`${reportChip}${commentBtn}${fixBtn}${picker}<button class="mark-restore" title="restore whole group">restore</button>`
   }
-  const xTitle = groupSt.hasConflict
-    ? 'delete active tab (colors mismatch — acts per-tab)'
-    : (sortedTabs.length > 1 ? 'delete whole group' : 'delete')
-  return html`${reportChip}${commentBtn}${fixBtn}${picker}<button class="mark-x" title=${xTitle}>×</button>`
+  // Triage menu — replaces the prior delete `×` with a chevron
+  // button that opens a small Fixed / Invalid / Delete menu.
+  // Conflict groups still scope the action to the active tab,
+  // matching the prior delete-active-tab semantic; the title is
+  // updated to reflect the menu instead of "delete".
+  const menuTitle = groupSt.hasConflict
+    ? 'mark active tab (colors mismatch — acts per-tab)'
+    : (sortedTabs.length > 1 ? 'mark whole group' : 'mark')
+  return html`${reportChip}${commentBtn}${fixBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
+}
+
+// Triage menu — a chevron button that toggles a small popover
+// with three actions: Fixed / Invalid / Delete. The button's
+// data-triage-menu attribute is the open/close anchor; events.js
+// toggles state.openTriageMenuGid on click. Each option emits
+// data-triage-action=<state> which events.js writes onto the
+// group's triage state. The popover is rendered as a sibling so
+// CSS positions it relative to the wrapper without affecting the
+// button's height.
+function triageMenuTemplate(group, title) {
+  const gid = tabKey(group[0])
+  const open = state.openTriageMenuGid === gid
+  const groupSt = groupState(group)
+  const activeKey = tabKey(activeTabFor(group))
+  // Reflect the current triage state back as a checkmark on the
+  // active option so a re-open of the menu shows what's set. For
+  // conflict groups we read the active tab's own triage; for
+  // non-conflict, the common one (any annotated member shares it).
+  const current = groupSt.hasConflict
+    ? state.triageState.get(activeKey)
+    : groupSt.commonTriage
+  const actions = [
+    { key: 'fixed',   label: 'Fixed' },
+    { key: 'invalid', label: 'Invalid' },
+    { key: 'deleted', label: 'Delete' },
+  ]
+  return html`<div class="triage-menu-wrap">
+    <button type="button" class=${`mark-triage-menu${open ? ' open' : ''}`} data-triage-menu title=${title} aria-label=${title} aria-expanded=${String(open)}>
+      <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+        <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    ${open ? html`<div class="triage-menu" role="menu">
+      ${actions.map((a) => html`<button
+        type="button"
+        class=${`triage-menu-item triage-menu-${a.key}${current === a.key ? ' active' : ''}`}
+        data-triage-action=${a.key}
+        role="menuitem"
+      >${a.label}</button>`)}
+    </div>` : nothing}
+  </div>`
 }
 
 // One tab button. Carries severity badge + (optional) confidence,
@@ -122,11 +173,11 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
 function tabTemplate(f, isActive) {
   const key = tabKey(f)
   const color = state.markers.get(key)
-  const deleted = state.deletedIds.has(key)
+  const triage = state.triageState.get(key)
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
-  if (deleted) classes.push('tab-deleted')
+  if (triage) classes.push(`tab-${triage}`)
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence !== undefined ? html`<span class="tab-conf">${f.confidence}/10</span>` : nothing}</span></button>`
 }
 
@@ -199,7 +250,7 @@ export function findingCardClasses(g) {
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
-  if (state.showDeleted) classes.push('deleted')
+  if (state.shownTriage) classes.push(`triage-${state.shownTriage}`)
   if (sortedTabs.length > 1) classes.push('multi-case')
   return classes
 }
@@ -259,7 +310,7 @@ export function tableRowClasses(g) {
   if (isCritical) classes.push('is-critical')
   if (groupSt.hasConflict) classes.push('has-conflict')
   else if (groupSt.commonColor) classes.push(`mark-${groupSt.commonColor}`)
-  if (state.showDeleted) classes.push('deleted')
+  if (state.shownTriage) classes.push(`triage-${state.shownTriage}`)
   return classes
 }
 

@@ -420,14 +420,15 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Trash toggle in graph v2's topbar — same body-level effect
-  // as the findings tab's #toggle-trash (flips state.showDeleted),
-  // PLUS canvas teardown / cache invalidation so the graph
-  // rebuilds against the new file set. The findings tab's own
-  // handler still works when the user is over there; this one
-  // adds the v2-specific cleanup.
-  if (e.target.closest('#g2-toggle-trash')) {
-    state.showDeleted = !state.showDeleted
+  // Triage view selector in graph v2's topbar — flips
+  // state.shownTriage to the picked bucket (or back to live when
+  // re-clicking the active button). Same canvas teardown +
+  // cache invalidation the prior trash toggle did so the graph
+  // rebuilds against the new file set.
+  const g2TriageBtn = e.target.closest('.graph2-triage-selector [data-triage-show]')
+  if (g2TriageBtn) {
+    const next = g2TriageBtn.dataset.triageShow
+    state.shownTriage = state.shownTriage === next ? null : next
     graph2.layoutCache = null
     graph2.selected = null
     cleanupGraph2()
@@ -474,25 +475,54 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Delete-x: soft-delete (moved to trash, not discarded).
-  //   - No color conflict → delete the whole group (spec rule 4 exception).
-  //   - Color conflict     → per-tab delete (spec rule 4 general case).
-  // Markers are preserved so restore recovers the full prior state.
-  const xBtn = pathClosest(e, '.mark-x')
-  if (xBtn) {
+  // Triage menu — chevron button on each finding opens a small
+  // popover with Fixed / Invalid / Delete actions. Clicking the
+  // chevron toggles state.openTriageMenuGid (null → on this gid /
+  // gid → null). A click anywhere outside an open menu closes it
+  // (handled at the bottom of this delegate via the catch-all
+  // close below). Conflict groups scope the action to the active
+  // tab; non-conflict groups apply to every tab. Setting any
+  // triage state for a tab clears the others (mutual exclusion is
+  // intrinsic to the Map, since each key has at most one value).
+  const triageMenuBtn = pathClosest(e, '[data-triage-menu]')
+  if (triageMenuBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
+    if (!findingEl) return
+    const gid = findingEl.dataset.gid
+    state.openTriageMenuGid = state.openTriageMenuGid === gid ? null : gid
+    render()
+    return
+  }
+  const triageActionBtn = pathClosest(e, '[data-triage-action]')
+  if (triageActionBtn) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    if (!findingEl) return
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
+    const action = triageActionBtn.dataset.triageAction
+    if (action !== 'fixed' && action !== 'invalid' && action !== 'deleted') return
     const groupSt = groupState(group)
-    if (groupSt.hasConflict) {
-      state.deletedIds.add(tabKey(activeTabFor(group)))
-    } else {
-      for (const f of group) state.deletedIds.add(tabKey(f))
+    const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
+    for (const f of targets) {
+      const key = tabKey(f)
+      // Toggle: clicking the active state clears it (back to live).
+      if (state.triageState.get(key) === action) state.triageState.delete(key)
+      else state.triageState.set(key, action)
     }
+    state.openTriageMenuGid = null
     saveTriage()
     render()
     return
+  }
+  // Click outside any open triage menu — close it. Run before the
+  // generic non-handled click fallthrough so a click that DID hit
+  // a menu's anchor / option above doesn't close before its
+  // handler runs (those returns above prevent reaching here).
+  if (state.openTriageMenuGid) {
+    state.openTriageMenuGid = null
+    render()
+    // Fall through; the click might still be a row-select etc.
   }
   // Comment button — open a prompt with the active tab's existing
   // comment (empty when none). Whitespace-trimmed input; empty
@@ -549,16 +579,19 @@ report.addEventListener('click', (e) => {
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
-    for (const f of group) state.deletedIds.delete(tabKey(f))
+    for (const f of group) state.triageState.delete(tabKey(f))
     saveTriage()
     render()
     return
   }
-  // Trash toggle — switches the render path from "non-deleted" to
-  // "deleted only". Filters (severity, confidence, text match) still
-  // apply, just against the trash rather than the live set.
-  if (e.target.closest('#toggle-trash')) {
-    state.showDeleted = !state.showDeleted
+  // Toolbar triage view selector — flips state.shownTriage to the
+  // picked bucket (or back to live when re-clicking the active
+  // button). Filters (severity, confidence, text match) still apply,
+  // just against the chosen bucket rather than the live set.
+  const triageShowBtn = e.target.closest('[data-triage-show]')
+  if (triageShowBtn && !triageShowBtn.closest('.graph2-triage-selector')) {
+    const next = triageShowBtn.dataset.triageShow
+    state.shownTriage = state.shownTriage === next ? null : next
     render()
     return
   }

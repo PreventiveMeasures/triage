@@ -41,49 +41,66 @@ export function activeTabFor(group) {
 }
 
 // Group-level triage rollup. User spec:
-//   1. A tab is "annotated" if it has a color AND/OR is deleted.
-//      Unannotated tabs are neutral — they don't contribute to the
-//      rollup and can never cause a conflict on their own.
+//   1. A tab is "annotated" if it has a color AND/OR a triage state
+//      (fixed / invalid / deleted). Unannotated tabs are neutral —
+//      they don't contribute to the rollup and can never cause a
+//      conflict on their own.
 //   2. Among annotated tabs, a conflict exists iff they disagree on
-//      color OR on deletion state. "Disagree on color" means two or
+//      color OR on triage state. "Disagree on color" means two or
 //      more distinct non-null colors are present (a tab annotated
-//      only via deletion, with no color, never conflicts with a
-//      colored tab purely on the basis of its missing color). "Disagree
-//      on deletion" means some annotated tabs are deleted and others
-//      are not. Conflict → dashed outline on the card; per-tab colors
-//      still render on each tab button; the group is kept in the main
-//      view (never in trash).
+//      only via triage, with no color, never conflicts with a
+//      colored tab purely on the basis of its missing color).
+//      "Disagree on triage" means the set of triage values across
+//      annotated tabs has size > 1, where an undefined triage on an
+//      annotated (color-only) tab counts as its own value. Conflict
+//      → dashed outline on the card; per-tab colors still render on
+//      each tab button; the group stays in the main (live) view.
 //   3. Otherwise (consistent annotated tabs), the card takes the
 //      common color (if any annotated tab is colored); any annotated
-//      tab being deleted puts the whole group in trash.
+//      tab carrying a triage state puts the whole group in that
+//      bucket (fixed / invalid / deleted).
 //   4. Click handlers enforce the inverse — see events.js.
 // Examples (where A/B/C are tabs in one dedup group):
-//   A(green, deleted), B(), C()            → no conflict, in trash, A is green
-//   A(green, deleted), B(deleted), C()     → no conflict, in trash, A is green
+//   A(green, deleted), B(), C()            → no conflict, deleted, A is green
+//   A(green, deleted), B(deleted), C()     → no conflict, deleted, A is green
 //   A(green, deleted), B(red), C()         → conflict (colors disagree)
 //   A(green), B(blue), C()                 → conflict (colors disagree)
-//   A(green, deleted), B(green), C()       → conflict (deleted disagrees)
+//   A(green, deleted), B(green), C()       → conflict (triage disagrees: deleted vs none)
+//   A(green, fixed), B(green, deleted), C()→ conflict (triage disagrees: fixed vs deleted)
 export function groupState(group) {
   const annotated = group
-    .map((f) => ({ color: state.markers.get(tabKey(f)), deleted: state.deletedIds.has(tabKey(f)) }))
-    .filter((t) => t.color !== undefined || t.deleted)
+    .map((f) => ({ color: state.markers.get(tabKey(f)), triage: state.triageState.get(tabKey(f)) }))
+    .filter((t) => t.color !== undefined || t.triage !== undefined)
   const colors = new Set(annotated.map((t) => t.color).filter((c) => c !== undefined))
-  const deletedStates = new Set(annotated.map((t) => t.deleted))
-  const hasConflict = colors.size > 1 || deletedStates.size > 1
+  // Distinct triage values across annotated tabs. Use a sentinel for
+  // "annotated but no triage" so a colored-only tab disagrees with a
+  // colored-and-triage-bearing sibling — matches the original
+  // deleted-vs-not semantic where an annotated-undeleted tab broke
+  // the consensus with an annotated-deleted one.
+  const NONE = Symbol('none')
+  const triages = new Set(annotated.map((t) => t.triage ?? NONE))
+  const hasConflict = colors.size > 1 || triages.size > 1
   const commonColor = !hasConflict && colors.size === 1 ? [...colors][0] : null
-  const anyDeleted = annotated.some((t) => t.deleted)
-  const allDeleted = annotated.length > 0 && annotated.every((t) => t.deleted)
+  const triageVals = annotated.map((t) => t.triage).filter(Boolean)
+  const anyTriage = triageVals.length > 0
+  const allTriaged = annotated.length > 0 && annotated.every((t) => Boolean(t.triage))
+  // Common triage state when consistent. Conflict groups stay in the
+  // live view; un-conflicting annotated groups roll up to the single
+  // shared triage value.
+  const commonTriage = !hasConflict && triageVals.length > 0 ? triageVals[0] : null
   return {
-    hasConflict, commonColor, anyDeleted, allDeleted,
-    // Conflict groups are NEVER counted as deleted (per spec — the
-    // group stays in the main view until the user resolves the
-    // disagreement per-tab). When non-conflicting, anyDeleted ==
-    // allDeleted on annotated tabs, so either form is equivalent.
-    isDeleted: !hasConflict && anyDeleted,
+    hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
+    // Convenience flags mirroring the original API; downstream code
+    // that asked "is this group in the trash bucket" continues to
+    // work without branching on commonTriage.
+    isFixed:   commonTriage === 'fixed',
+    isInvalid: commonTriage === 'invalid',
+    isDeleted: commonTriage === 'deleted',
   }
 }
 
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
+export function groupTriage(group) { return groupState(group).commonTriage }
 
 export function findGroupById(gid) {
   for (const r of state.reports) {

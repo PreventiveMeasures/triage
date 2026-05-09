@@ -88,6 +88,27 @@
 }
 .toolbar .trash-btn { margin-left: auto; }
 
+/* Triage state selector — Fixed / Invalid / Deleted segmented
+   buttons that replace the prior single Trash button. Visible
+   buttons follow the bucket counts; the active one (matching
+   state.shownTriage) takes the same accent color the trash-btn
+   used. Lives at the right of the toolbar row by default. */
+.triage-selector {
+  display: inline-flex;
+  gap: .25rem;
+}
+.toolbar .triage-selector { margin-left: auto; }
+.triage-state-btn {
+  height: 30px; box-sizing: border-box;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+  font-family: inherit;
+}
+.triage-state-btn:hover { border-color: var(--accent); }
+.triage-state-btn.active.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
+.triage-state-btn.active.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
+.triage-state-btn.active.triage-state-invalid { border-color: var(--muted); color: var(--muted); }
+
 /* `<view-mode-buttons>` styles live outside `.toolbar` so the same
    chrome lands wherever the component is mounted — the findings
    toolbar AND the Files-tab `.tree-toolbar`. `display: contents`

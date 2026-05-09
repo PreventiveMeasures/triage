@@ -99,7 +99,17 @@ async function mergeTriage(triage, findingLookup) {
       state.fixes.set(id, importedFix)
     }
 
-    if (entry.deleted) state.deletedIds.add(id)
+    // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
+    // Legacy exports only carry `deleted: true`; treat as 'deleted'.
+    const importedTriage = (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted')
+      ? entry.triage
+      : (entry.deleted ? 'deleted' : null)
+    const localTriage = state.triageState.get(id) ?? null
+    if (importedTriage && localTriage && localTriage !== importedTriage) {
+      conflicts.push({ id, property: 'triage', local: localTriage, imported: importedTriage })
+    } else if (importedTriage && !localTriage) {
+      state.triageState.set(id, importedTriage)
+    }
   }
   if (conflicts.length > 0) {
     const decisions = await resolveTriageConflicts(conflicts, findingLookup ?? new Map())
@@ -110,6 +120,7 @@ async function mergeTriage(triage, findingLookup) {
         if (c.property === 'color') state.markers.set(c.id, c.imported)
         else if (c.property === 'comment') state.comments.set(c.id, c.imported)
         else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
+        else if (c.property === 'triage') state.triageState.set(c.id, c.imported)
       }
     }
   }
@@ -188,10 +199,16 @@ function fixBlockTemplate(text) {
   return html`<span class="conflict-fix-text"><a href=${text} target="_blank" rel="noopener">${text}</a></span>`
 }
 
+function triageBadgeTemplate(value) {
+  if (!value) return html`<em>none</em>`
+  return html`<span class=${`conflict-triage triage-${value}`}>${value}</span>`
+}
+
 function valueTemplate(property, value) {
   if (property === 'color') return colorSwatchTemplate(value)
   if (property === 'comment') return commentBlockTemplate(value)
   if (property === 'fix') return fixBlockTemplate(value)
+  if (property === 'triage') return triageBadgeTemplate(value)
   return html`${String(value)}`
 }
 
@@ -242,7 +259,7 @@ function resolveTriageConflicts(conflicts, findingLookup) {
     // Sort properties within a card so order is stable: color
     // first, then comment, then fix — matches the action-row
     // ordering in the finding card.
-    const PROP_ORDER = { color: 0, comment: 1, fix: 2 }
+    const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3 }
     for (const list of byId.values()) {
       list.sort((a, b) => (PROP_ORDER[a.property] ?? 99) - (PROP_ORDER[b.property] ?? 99))
     }
@@ -279,6 +296,7 @@ function resolveTriageConflicts(conflicts, findingLookup) {
                 const propLabel = c.property === 'color' ? 'Color'
                   : c.property === 'comment' ? 'Comment'
                   : c.property === 'fix' ? 'Fix'
+                  : c.property === 'triage' ? 'Triage state'
                   : c.property
                 return html`<div class="conflict-row" data-key=${key}>
                   <span class="conflict-row-label">${propLabel}</span>

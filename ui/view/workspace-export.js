@@ -96,9 +96,9 @@ export async function exportWorkspace(workspace) {
     if (!claimedIds.has(id)) continue
     triage[id] = { ...(triage[id] ?? {}), color }
   }
-  for (const id of state.deletedIds) {
+  for (const [id, triageVal] of state.triageState) {
     if (!claimedIds.has(id)) continue
-    triage[id] = { ...(triage[id] ?? {}), deleted: true }
+    triage[id] = { ...(triage[id] ?? {}), triage: triageVal }
   }
   for (const [id, comment] of state.comments) {
     if (!claimedIds.has(id)) continue

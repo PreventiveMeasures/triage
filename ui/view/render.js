@@ -4,7 +4,7 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.js'
 import { dropZone, report } from './dom.js'
 import { prettyModel, fileLink, lineLink, isModule, SEVERITIES, SEVERITY_ORDER, configureDepsDir, formatBytes, stripCommonPathPrefix } from './format.js'
-import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey } from './group.js'
+import { tabKey, primaryTab, activeTabFor, isGroupDeleted, groupKey, groupState } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
 import { findingCardGid } from './render-finding.js'
 import { computeFileHash } from '../../common/finding-id.js'
@@ -49,7 +49,7 @@ export function buildGraph2Data() {
   // BEFORE counting per-file findings, so the layout, statistics,
   // and severity-row counts all reflect the active tab's split.
   const visibleGroups = allGroups.filter((g) =>
-    state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
+    groupState(g).commonTriage === state.shownTriage)
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
   // Per-file Sets that drive the topbar severity / triage chip
@@ -250,24 +250,23 @@ export async function computeBundleFileHashes(details) {
 // Multiple findings can share a fileHash (a single source dropped
 // in one scan may emit several), and a single hash may map to
 // multiple bundle files (rare — duplicate sources).
-// Total number of bundle-matched findings currently in the trash.
-// Walks the same hash → finding index that bundleFindingsByFile
-// uses, but counts deleted entries instead of filtering them out
-// — needed by the graph topbar to decide whether to render the
-// Trash button (and what count to show on it). Re-keys via the
-// bundle's stripped-path hash map when present.
-function countBundleDeletedFindings(details) {
-  if (!details?.fileHashes) return 0
-  let n = 0
+// Per-bucket counts of bundle-matched findings — drives the graph
+// topbar's triage selector visibility / counts. Walks the same
+// hash → finding index that bundleFindingsByFile uses, bucketing
+// each finding by its triage state (or 'live' when none).
+function countBundleTriageBuckets(details) {
+  const counts = { fixed: 0, invalid: 0, deleted: 0 }
+  if (!details?.fileHashes) return counts
   const seen = new Set()
   for (const hash of details.fileHashes.values()) {
     if (seen.has(hash)) continue
     seen.add(hash)
     for (const f of findingsForFileHash(hash)) {
-      if (state.deletedIds.has(tabKey(f))) n++
+      const t = state.triageState.get(tabKey(f))
+      if (t && counts[t] !== undefined) counts[t]++
     }
   }
-  return n
+  return counts
 }
 
 function bundleFindingsByFile(fileHashes) {
@@ -276,11 +275,11 @@ function bundleFindingsByFile(fileHashes) {
   for (const [file, hash] of fileHashes) {
     const found = findingsForFileHash(hash)
     if (found.length === 0) continue
-    // Trash split: live findings by default, deleted-only in trash
-    // mode. Mirrors the findings tab's group-level isGroupDeleted
-    // filter (each bundle finding is treated as a single-member
-    // group, so deletion is per-finding under deletedIds).
-    const filtered = found.filter((f) => state.deletedIds.has(tabKey(f)) === state.showDeleted)
+    // Triage split: each bundle finding is treated as a single-
+    // member group, so its triage state is the per-finding state
+    // map value (or undefined for "live"). Match against the
+    // current state.shownTriage to mirror the findings-tab filter.
+    const filtered = found.filter((f) => (state.triageState.get(tabKey(f)) ?? null) === state.shownTriage)
     if (filtered.length === 0) continue
     if (!result.has(file)) result.set(file, [])
     const arr = result.get(file)
@@ -714,7 +713,37 @@ function triageFilterTemplate(colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCounts, flags) {
+// Triage state selector — replaces the prior single Trash button.
+// Renders as 3 buttons (Fixed / Invalid / Deleted) showing each
+// bucket's count; the active one toggles back to the live view.
+// Hidden entirely when every bucket is empty AND the user isn't
+// already in a triage view (nothing to switch to). Each button
+// carries data-triage-show=<state> so events.js can flip
+// state.shownTriage; the live view (no triage filter) is just the
+// "all unset" mode reached by clicking the active button again.
+function triageSelectorTemplate(triageCounts) {
+  const states = ['fixed', 'invalid', 'deleted']
+  const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
+  if (total === 0 && !state.shownTriage) return nothing
+  return html`<div class="triage-selector" role="group" aria-label="Triage view">
+    ${states.map((s) => {
+      const n = triageCounts[s] ?? 0
+      const active = state.shownTriage === s
+      // Show bucket buttons only when the bucket has entries OR is
+      // the currently-active view (so the user can toggle back).
+      if (n === 0 && !active) return nothing
+      return html`<button
+        type="button"
+        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        data-triage-show=${s}
+        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
+        aria-pressed=${String(active)}
+      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
+    })}
+  </div>`
+}
+
+function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags) {
   const { showSource, showConfidence, showPriority, showGraphMode } = flags
   // The findings tab gains a 4th "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). Switching to it
@@ -768,12 +797,7 @@ function toolbarTemplate(filteredCount, allCount, deletedCount, counts, colorCou
           high=${state.filterConfMax}
           aria-label="Confidence range"></range-slider>
         <span id="conf-range-vals" class="conf-vals">${state.filterConfMin}–${state.filterConfMax}</span>` : nothing}
-      ${(deletedCount > 0 || state.showDeleted) ? html`<button
-        type="button"
-        id="toggle-trash"
-        class=${`trash-btn${state.showDeleted ? ' active' : ''}`}
-        title=${state.showDeleted ? 'exit trash view' : 'show deleted findings'}
-      >${`Trash${deletedCount ? ` (${deletedCount})` : ''}`}</button>` : nothing}
+      ${triageSelectorTemplate(triageCounts)}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1679,8 +1703,8 @@ export function render() {
             // edges to walk (sourcemaps don't carry import info,
             // so the toggle would have nothing to filter against).
             const hideAllFiles = graph.edges.length === 0
-            const deletedCount = countBundleDeletedFindings(state.bundleDetails)
-            litRender(renderGraph2Layout(graph, { hideAllFiles, deletedCount }), graphSlot)
+            const triageCounts = countBundleTriageBuckets(state.bundleDetails)
+            litRender(renderGraph2Layout(graph, { hideAllFiles, triageCounts }), graphSlot)
             refreshBundleGraphSidebar()
             refreshBundleGraphTopPkgs()
             attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
@@ -1700,8 +1724,16 @@ export function render() {
   // applyFilters, so the "X of Y" counter and severity stats reflect
   // the set currently being viewed (live groups, or the trash).
   const mergedGroups = state.reports.flatMap((r) => r.groups)
-  const deletedCount = mergedGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
-  const allGroups = mergedGroups.filter((g) => state.showDeleted ? isGroupDeleted(g) : !isGroupDeleted(g))
+  // Per-bucket counts drive the toolbar's triage-state segmented
+  // selector. Conflict groups stay in the "live" bucket (their
+  // commonTriage is null) regardless of which states their member
+  // tabs carry — matching the original behaviour.
+  const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
+  for (const g of mergedGroups) {
+    const t = groupState(g).commonTriage
+    if (t) triageCounts[t]++
+  }
+  const allGroups = mergedGroups.filter((g) => groupState(g).commonTriage === state.shownTriage)
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(state.reports.map((r) => r.type))]
@@ -1881,7 +1913,7 @@ export function render() {
     // `toolbarTemplate` returns a Lit template — drop a slot here, then
     // litRender into it after innerHTML lands.
     htmlBuf += '<div id="toolbar-slot"></div>'
-    toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, deletedCount, counts, colorCounts, {
+    toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
       showSource: hasAnyModulesPath,
       showConfidence: hasAnyConfidence,
       showPriority: hasAnyPriority,
@@ -1892,8 +1924,8 @@ export function render() {
     // user-controlled analyzer-type strings) flows through Lit's
     // auto-escape rather than a hand-rolled `esc()`. Empty template
     // when none of the empty-state branches matches.
-    if (state.showDeleted && allGroups.length === 0) {
-      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">Trash is empty.</p>`
+    if (state.shownTriage && allGroups.length === 0) {
+      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No ${state.shownTriage} findings.</p>`
     } else if (filtered.length === 0 && allGroups.length > 0) {
       emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
     } else if (allGroups.length === 0) {

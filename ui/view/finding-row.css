@@ -157,6 +157,10 @@
   &.tab-mark-gray.active { border-color: var(--text); }
 
   &.tab-deleted .tab-label { text-decoration: line-through; opacity: .6; }
+  &.tab-fixed .tab-label { opacity: .65; }
+  &.tab-fixed .tab-label::after { content: ' ✓'; opacity: .6; }
+  &.tab-invalid .tab-label { opacity: .65; }
+  &.tab-invalid .tab-label::after { content: ' ⊘'; opacity: .6; }
 
   & .tab-conf { color: var(--muted); font-size: .7rem; }
   &.tab-mark-red .tab-conf,
@@ -205,6 +209,55 @@
   cursor: pointer; margin-left: .25rem;
   &:hover { color: var(--critical); border-color: var(--critical); }
 }
+
+/* Triage menu — chevron button with a popover anchor. The
+   wrap is `position: relative` so the popover floats below the
+   chevron without affecting the row's height. The popover stops
+   pointer events on its surface so a click inside doesn't trip
+   the row-select fallback. */
+.triage-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: .25rem;
+}
+.mark-triage-menu {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mark-triage-menu:hover { color: var(--text); border-color: var(--accent); }
+.mark-triage-menu.open { border-color: var(--accent); color: var(--text); }
+.triage-menu {
+  position: absolute;
+  top: calc(100% + .25rem);
+  right: 0;
+  z-index: 10;
+  min-width: 7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .25rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+  display: flex; flex-direction: column;
+  gap: 1px;
+}
+.triage-menu-item {
+  background: transparent;
+  border: 0;
+  padding: .35rem .5rem;
+  font-size: .78rem;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: inherit;
+}
+.triage-menu-item:hover { background: var(--surface); }
+.triage-menu-item.active::before { content: '✓ '; color: var(--accent); }
+.triage-menu-fixed:hover   { color: var(--green, #4ade80); }
+.triage-menu-invalid:hover { color: var(--muted); }
+.triage-menu-deleted:hover { color: var(--critical); }
 
 .mark-restore {
   background: transparent; border: 1px solid var(--border); color: var(--muted);

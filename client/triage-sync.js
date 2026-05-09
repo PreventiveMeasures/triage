@@ -274,7 +274,8 @@ function snapshotEntry(id) {
   const entry = {}
   const color = state.markers.get(id)
   if (color !== undefined) entry.color = color
-  if (state.deletedIds.has(id)) entry.deleted = true
+  const triage = state.triageState.get(id)
+  if (triage) entry.triage = triage
   const comment = state.comments.get(id)
   if (comment) entry.comment = comment
   const fix = state.fixes.get(id)
@@ -448,8 +449,15 @@ function applyToReactiveState(targetState, ids) {
     const entry = targetState[id] ?? {}
     if (entry.color) state.markers.set(id, entry.color)
     else state.markers.delete(id)
-    if (entry.deleted) state.deletedIds.add(id)
-    else state.deletedIds.delete(id)
+    // Triage state — preferred form `triage: 'fixed'|'invalid'|'deleted'`.
+    // Legacy `deleted: true` from older peers maps to 'deleted'.
+    if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') {
+      state.triageState.set(id, entry.triage)
+    } else if (entry.deleted) {
+      state.triageState.set(id, 'deleted')
+    } else {
+      state.triageState.delete(id)
+    }
     if (entry.comment) state.comments.set(id, entry.comment)
     else state.comments.delete(id)
     if (entry.fix) state.fixes.set(id, entry.fix)

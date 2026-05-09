@@ -4,7 +4,7 @@ import { state } from '../../../client/state.js'
 import { graph2 } from './state.js'
 import { pkgColor } from '../graph/utils.js'
 import { pkgRelative } from './data.js'
-import { isGroupDeleted } from '../group.js'
+import { groupState } from '../group.js'
 
 // Build the entire v2 layout as a Lit template — three columns:
 // left panel (palette / stats / issues / display / options), stage
@@ -37,7 +37,7 @@ export function renderGraph2Layout(graph, options = {}) {
 function renderTopBar(graph, options) {
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
-  const deletedCountOverride = options.deletedCount
+  const triageCountsOverride = options.triageCounts
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -73,36 +73,39 @@ function renderTopBar(graph, options) {
   }
   const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
-  // Trash toggle — same role as the findings tab's trash button.
-  // Visible when there are deleted findings to show OR when the
-  // user is already in trash view (so they can exit without
-  // first un-deleting). Toggling flips state.showDeleted (shared
-  // with findings) and rebuilds the graph data: the file set,
-  // statistics, and per-package issue counts all switch to the
-  // deleted-only view. This is a data-level filter, not a
-  // visual overlay.
-  // Bundle path passes a precomputed `deletedCount` so the topbar
-  // tracks deleted findings within the bundle's matched set, not
-  // state.reports' (which may be empty in bundle-only sessions, or
-  // count deletions from reports unrelated to the open bundle).
-  let deletedCount
-  if (typeof deletedCountOverride === 'number') {
-    deletedCount = deletedCountOverride
+  // Triage state selector — replaces the prior single Trash button.
+  // Three buttons (Fixed / Invalid / Deleted) carry data-triage-show
+  // for the events.js delegate (state.shownTriage flip + canvas
+  // teardown). Counts come either from the bundle path (precomputed
+  // overrides for state.reports-empty bundle-only sessions) or by
+  // walking state.reports' groups for the findings-tab graph.
+  let triageCounts
+  if (triageCountsOverride && typeof triageCountsOverride === 'object') {
+    triageCounts = triageCountsOverride
   } else {
+    triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
     const allGroups = state.reports.flatMap((r) => r.groups)
-    deletedCount = allGroups.reduce((n, g) => n + (isGroupDeleted(g) ? 1 : 0), 0)
+    for (const g of allGroups) {
+      const t = groupState(g).commonTriage
+      if (t) triageCounts[t]++
+    }
   }
-  const showTrash = deletedCount > 0 || state.showDeleted
-  const trashTitle = state.showDeleted ? 'exit trash view' : 'show deleted findings'
-  const trashLabel = `Trash${deletedCount ? ` (${deletedCount})` : ''}`
-
-  const trashBtn = showTrash ? html`<button
-    type="button"
-    class=${`trash-btn${state.showDeleted ? ' active' : ''}`}
-    id="g2-toggle-trash"
-    title=${trashTitle}
-    aria-pressed=${String(state.showDeleted)}
-  >${trashLabel}</button>` : null
+  const triageStates = ['fixed', 'invalid', 'deleted']
+  const triageTotal = triageStates.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
+  const triageBtn = (triageTotal > 0 || state.shownTriage) ? html`<div class="triage-selector graph2-triage-selector" role="group" aria-label="Triage view">
+    ${triageStates.map((s) => {
+      const n = triageCounts[s] ?? 0
+      const active = state.shownTriage === s
+      if (n === 0 && !active) return null
+      return html`<button
+        type="button"
+        class=${`triage-state-btn triage-state-${s}${active ? ' active' : ''}`}
+        data-triage-show=${s}
+        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
+        aria-pressed=${String(active)}
+      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
+    })}
+  </div>` : null
 
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different
@@ -128,7 +131,7 @@ function renderTopBar(graph, options) {
       ${extraTopRow}
       ${allFilesBtn}
       <div class="g2-spacer"></div>
-      ${trashBtn}
+      ${triageBtn}
     </div>` : null}
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${hasAnyVisible ? html`<severity-chips
@@ -163,7 +166,7 @@ function renderTopBar(graph, options) {
       <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" title="Clear filter" aria-label="Clear filter">✕</button>
     </div>
     ${extraTopRow ? null : allFilesBtn}
-    ${extraTopRow ? null : trashBtn}
+    ${extraTopRow ? null : triageBtn}
     <div class="g2-spacer"></div>
     <!-- Fullscreen — toggles body.report-fullscreen. With the
          sidebar now spanning both grid rows, the topbar covers only
