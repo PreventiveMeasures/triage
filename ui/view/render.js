@@ -2128,6 +2128,118 @@ function renderBundleDetails(entry, details) {
   return html`${meta}<div class="bundles-detail-stasis">Bundle contents not parsed.</div>`
 }
 
+// Cross-report packages view. Walks every loaded report's findings,
+// buckets them by `packageOf(file)` (same extractor the graph uses
+// — recognizes `node_modules/foo` / `node_modules/@scope/foo` /
+// `dependencies/foo`, falls back to the top-level dir for own
+// source). Each row shows the package's total finding count, a
+// per-severity chip strip, and a list of files inside the package
+// with their counts. Findings that fall in the same triage bucket
+// the findings tab is currently filtered to are counted together
+// — flipping the toolbar selector elsewhere would re-render this
+// view through state.shownTriage too if that ever wires in;
+// today it surfaces every finding regardless of triage so the
+// page reads as a complete inventory.
+function renderPackagesView(reports) {
+  const allGroups = reports.flatMap((r) => r.groups)
+  // Per-package buckets: { findings: Finding[], files: Map<file, Finding[]> }.
+  const buckets = new Map()
+  for (const g of allGroups) {
+    for (const f of g) {
+      const pkg = packageOf(f.file) ?? '/'
+      let bucket = buckets.get(pkg)
+      if (!bucket) {
+        bucket = { findings: [], files: new Map() }
+        buckets.set(pkg, bucket)
+      }
+      bucket.findings.push(f)
+      if (!bucket.files.has(f.file)) bucket.files.set(f.file, [])
+      bucket.files.get(f.file).push(f)
+    }
+  }
+  // Sort packages by total finding count desc, then by name.
+  const sortedPkgs = [...buckets.entries()].sort(([a, ba], [b, bb]) => {
+    if (bb.findings.length !== ba.findings.length) return bb.findings.length - ba.findings.length
+    return a.localeCompare(b)
+  })
+  if (sortedPkgs.length === 0) {
+    return html`<div class="packages-view">
+      <header class="page-head">
+        <div class="page-title"><h1>Packages</h1></div>
+      </header>
+      <p style="color:var(--muted)">No findings to aggregate.</p>
+    </div>`
+  }
+  const totalFindings = allGroups.reduce((n, g) => n + g.length, 0)
+  return html`<div class="packages-view">
+    <header class="page-head">
+      <div class="page-title">
+        <h1>Packages</h1>
+        <div class="meta-row">
+          <span>${sortedPkgs.length} ${sortedPkgs.length === 1 ? 'package' : 'packages'}</span>
+          <span>${totalFindings} ${totalFindings === 1 ? 'finding' : 'findings'} across ${reports.length} ${reports.length === 1 ? 'report' : 'reports'}</span>
+        </div>
+      </div>
+    </header>
+    <ul class="packages-list">
+      ${sortedPkgs.map(([pkg, bucket]) => renderPackageRow(pkg, bucket))}
+    </ul>
+  </div>`
+}
+
+// Single package row — header (name + dot + total) + severity chip
+// strip + nested file list (sorted by count desc, ellipsis-clipped).
+function renderPackageRow(pkg, bucket) {
+  const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
+  for (const f of bucket.findings) {
+    if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
+  }
+  const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
+  const sortedFiles = [...bucket.files.entries()].sort(([fa, a], [fb, b]) => {
+    if (b.length !== a.length) return b.length - a.length
+    return fa.localeCompare(fb)
+  })
+  const dotColor = pkgColor(pkg)
+  const label = pkg === '/' ? '(repo root)' : pkg
+  return html`<li class="packages-row">
+    <header class="packages-row-head">
+      <span class="packages-dot" style=${`background:${dotColor}`}></span>
+      <span class="packages-name">${label}</span>
+      <span class="packages-count">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} in ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'}</span>
+    </header>
+    ${chips.length > 0 ? html`<div class="packages-chips">
+      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+    </div>` : nothing}
+    <ul class="packages-files">
+      ${sortedFiles.slice(0, 50).map(([file, findings]) => {
+        const stripped = pkgRelativePath(pkg, file)
+        return html`<li class="packages-file">
+          <span class="packages-file-path mono" title=${file}>${stripped}</span>
+          <span class="packages-file-count">${findings.length}</span>
+        </li>`
+      })}
+      ${sortedFiles.length > 50 ? html`<li class="packages-file-more">…and ${sortedFiles.length - 50} more</li>` : nothing}
+    </ul>
+  </li>`
+}
+
+// Strip the package's `node_modules/<pkg>/` (or `dependencies/<pkg>/`)
+// prefix from a file so the row reads as the relative path inside
+// the package (e.g. `lib/index.js` rather than
+// `node_modules/foo/lib/index.js`). For own-source packages the
+// top-level dir + trailing slash gets stripped; for the repo-root
+// bucket ('/') the file is shown as-is.
+function pkgRelativePath(pkg, file) {
+  if (pkg === '/') return file
+  for (const dep of ['node_modules', 'dependencies']) {
+    const anchor = `${dep}/${pkg}/`
+    const idx = file.indexOf(anchor)
+    if (idx >= 0) return file.slice(idx + anchor.length)
+  }
+  if (file.startsWith(`${pkg}/`)) return file.slice(pkg.length + 1)
+  return file
+}
+
 export function render() {
   // Recompute the active deps dir before any helper consults it
   // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
@@ -2205,6 +2317,30 @@ export function render() {
       report.classList.add('active')
       dropZone.classList.add('hidden')
       document.title = 'DeepView results — bundles'
+      return
+    }
+  }
+  // Packages view — cross-report aggregation by package, derived
+  // from each finding's file path via `packageOf`. Lives outside
+  // the per-report findings render path so it can show data even
+  // when no single report is "selected" — the sidebar entry just
+  // flips state.currentView.
+  if (state.currentView === 'packages') {
+    if (state.reports.length === 0) {
+      // No reports loaded yet — drop back to findings (which then
+      // falls through to the dropzone below). Same defensive
+      // pattern the bundles branch uses.
+      state.currentView = 'findings'
+    } else {
+      let slot = document.getElementById('packages-slot')
+      if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
+        report.innerHTML = '<div id="packages-slot"></div>'
+        slot = document.getElementById('packages-slot')
+      }
+      if (slot) litRender(renderPackagesView(state.reports), slot)
+      report.classList.add('active')
+      dropZone.classList.add('hidden')
+      document.title = 'DeepView results — packages'
       return
     }
   }

@@ -1530,3 +1530,83 @@ body.report-fullscreen {
 .bundle-source-code .token.inserted { color: #98c379; }
 .bundle-source-code .token.italic { font-style: italic; }
 .bundle-source-code .token.bold { font-weight: bold; }
+
+/* Packages view — cross-report aggregation by package. Page-level
+   list of rows; each row is a header (dot + name + count summary)
+   plus a severity-chip strip and a nested file list. Styled like
+   the bundle Issues slide so the visual rhythm carries across
+   aggregate views. */
+.packages-view {
+  max-width: 1200px;
+  display: flex; flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.packages-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 1.25rem;
+}
+.packages-row {
+  display: flex; flex-direction: column;
+  gap: .35rem;
+}
+.packages-row-head {
+  display: flex; align-items: baseline; gap: .5rem;
+  padding: .35rem .35rem;
+  border-bottom: 1px solid var(--border);
+}
+.packages-dot {
+  flex-shrink: 0;
+  width: .65rem; height: .65rem;
+  border-radius: 50%;
+  align-self: center;
+  border: 1px solid rgb(from var(--text) r g b / .25);
+}
+.packages-name {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.packages-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.packages-chips {
+  display: flex; flex-wrap: wrap;
+  gap: .25rem;
+  padding: 0 .35rem;
+}
+.packages-files {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+}
+.packages-file {
+  display: flex; align-items: baseline; gap: .5rem;
+  padding: .2rem .5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .72rem;
+  &:last-child { border-bottom: none; }
+}
+.packages-file-path {
+  flex: 1; min-width: 0;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.packages-file-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.packages-file-more {
+  padding: .25rem .5rem;
+  color: var(--muted);
+  font-size: .7rem;
+  font-style: italic;
+}

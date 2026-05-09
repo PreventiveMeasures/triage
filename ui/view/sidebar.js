@@ -11,6 +11,24 @@ import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.js'
+import { packageOf } from './graph/utils.js'
+
+// Distinct package count across every loaded report's findings.
+// Used by the sidebar's PACKAGES header to gate visibility (hide
+// when no reports / no findings) and to caption the count chip.
+// Cheap walk; sidebar renders aren't on the hot path.
+function countLoadedPackages() {
+  const pkgs = new Set()
+  for (const r of state.reports) {
+    for (const g of r.groups) {
+      for (const f of g) {
+        const pkg = packageOf(f.file)
+        if (pkg) pkgs.add(pkg)
+      }
+    }
+  }
+  return pkgs.size
+}
 
 // Default sync endpoint used when the user toggles the sidebar
 // status button on. Only populated for pages served from
@@ -108,6 +126,20 @@ function workspaceHeaderTemplate(count) {
 // bundle stored in OPFS. Hidden entirely when no bundles have been
 // dropped (the user otherwise has nothing to navigate to). The
 // `data-action="show-bundles"` is the click delegate's hook.
+// Packages section header — collapsed to a single "PACKAGES (N)"
+// strip, sitting under the bundles entry. Clicking it switches to
+// a cross-report view that aggregates findings by package
+// (extracted from each finding's file path the way the graph's
+// `packageOf` does). Hidden when no reports are loaded — there's
+// nothing to aggregate. The `data-action="show-packages"` is the
+// click delegate's hook.
+function packagesHeaderTemplate(count) {
+  const cls = `file-group-header packages-header${state.currentView === 'packages' ? ' current' : ''}`
+  return html`<li class=${cls} data-action="show-packages" role="button" tabindex="0" title="Show packages">
+    <span class="group-label">Packages</span><span class="group-count">${count}</span>
+  </li>`
+}
+
 function bundlesHeaderTemplate(count) {
   // Mark the row "current" while the bundles view is up so the
   // sidebar reads as "you're here" — mirrors how a file row picks
@@ -209,6 +241,7 @@ export async function renderSidebar() {
 
   litRender(html`
     ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
+    ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
     ${visibleWorkspaces.map((w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
@@ -264,6 +297,12 @@ sidebar.addEventListener('click', (e) => {
     // Re-render the sidebar too so the BUNDLES header picks up
     // its `.current` highlight (and any previously-highlighted
     // file/workspace row drops back to the muted state).
+    renderSidebar()
+    return
+  }
+  if (e.target.closest('[data-action="show-packages"]')) {
+    state.currentView = 'packages'
+    render()
     renderSidebar()
     return
   }
