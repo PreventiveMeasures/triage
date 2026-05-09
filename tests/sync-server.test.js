@@ -432,4 +432,35 @@ describe('triage-sync server', () => {
     assert.ok(!chain.revisions[1].keyframe, 'subsequent entry is a regular delta')
     writer.ws.close(); reader.ws.close()
   })
+
+  it('subscribe with an unknown `from` id falls back to the keyframe path', async () => {
+    // Bug #4: an unknown `from` (db reset, compaction, malicious
+    // peer) used to return the FULL chain. With keyframes in place,
+    // the unknown-id case should land on the same path the
+    // `from=null` case uses — return from the latest keyframe so
+    // the catch-up cost stays O(keyframe interval).
+    const { sk, tag } = await makeKp()
+    const writer = await connect(serverUrl)
+    await subscribe(writer, sk, tag)
+    const a = await buildSave(sk, tag, null, 'A')
+    writer.ws.send(JSON.stringify(a.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+    const kf = await buildSave(sk, tag, a.id, 'kf', { keyframe: true })
+    writer.ws.send(JSON.stringify(kf.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+    const b = await buildSave(sk, tag, kf.id, 'B')
+    writer.ws.send(JSON.stringify(b.msg))
+    await writer.recv((m) => m.type === 'workspace-save-ack')
+
+    // Subscribe with a fabricated `from` — same length / shape as
+    // a real id, but never inserted. Server should not return
+    // rev_A (which precedes the keyframe).
+    const reader = await connect(serverUrl)
+    const { chain } = await subscribe(reader, sk, tag, 'A'.repeat(43))
+    assert.equal(chain.revisions.length, 2, 'unknown `from` trimmed to keyframe + after')
+    assert.equal(chain.revisions[0].id, kf.id)
+    assert.ok(chain.revisions[0].keyframe)
+    assert.equal(chain.revisions[1].id, b.id)
+    writer.ws.close(); reader.ws.close()
+  })
 })

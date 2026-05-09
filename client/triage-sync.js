@@ -242,6 +242,17 @@ function getSessionByTag(tag) {
   return null
 }
 
+// True iff `session` is still the live entry for its workspaceId in
+// the session map. Handlers that await across boundaries (decrypt,
+// saveTriage, persistence) must re-check before mutating world state
+// — `closeSession(id)` removes the entry, but the handler still
+// holds a reference and would otherwise keep writing to state.* /
+// localStorage / the socket on behalf of a workspace the user has
+// already torn down.
+function sessionIsLive(session) {
+  return sessions.get(session.workspaceId) === session
+}
+
 // ─────────── pure state / changeset helpers ───────────
 
 function snapshotEntry(id) {
@@ -507,6 +518,11 @@ function trySendSave(session) {
     session.pendingSave = true
     return
   }
+  // Refresh `session.ids` against the current workspace membership.
+  // A report dragged into the workspace mid-session would otherwise
+  // never enter `session.ids`, and edits on its findings wouldn't
+  // sync. Cheap — iterates state.reports + workspace.reports once.
+  session.ids = buildWorkspaceIds(session.workspaceId)
   // Refresh localState from the live state.* containers in case
   // saveTriage just persisted edits we haven't snapshotted yet.
   session.localState = effectiveLocalState(session.baseState, session.ids)
@@ -661,6 +677,9 @@ async function applyChainToBase(session, revisions) {
     // keyframe flag is part of the canonical bytes, so a server
     // that flipped it on/off would also fail this check.
     const expectedId = await computeRevisionId(payload)
+    // Session may have been closed during the verify/decrypt awaits
+    // — bail before any further mutation of an orphan.
+    if (!sessionIsLive(session)) return false
     if (rev.id !== expectedId) {
       console.warn('Triage sync: revision id does not match content hash; skipping')
       session.baseRevision = rev.id
@@ -671,6 +690,7 @@ async function applyChainToBase(session, revisions) {
       payload,
       rev.signature,
     )
+    if (!sessionIsLive(session)) return false
     if (!ok2) {
       console.warn('Triage sync: revision signature did not verify; skipping')
       session.baseRevision = rev.id
@@ -685,6 +705,7 @@ async function applyChainToBase(session, revisions) {
       session.baseRevision = rev.id
       continue
     }
+    if (!sessionIsLive(session)) return false
     // Keyframes carry a changeset computed against an EMPTY base,
     // so applying them is a wholesale replace. Reset the
     // since-last-keyframe counter; bump it on regular revs.
@@ -709,6 +730,10 @@ async function applyChainToBase(session, revisions) {
 // and silently discard every remote change. See the bug discussion
 // in the rebase audit.
 async function applyOverlayAndPersist(session, overlay) {
+  // Bail if the session was closed before we got here — applying a
+  // chain to a torn-down workspace would write to the global state.*
+  // / localStorage on its behalf.
+  if (!sessionIsLive(session)) return
   session.localState = applyChangeset(session.baseState, overlay)
   suppressNotify++
   try {
@@ -717,6 +742,8 @@ async function applyOverlayAndPersist(session, overlay) {
   } finally {
     suppressNotify--
   }
+  // saveTriage's await may have crossed a closeSession; re-check.
+  if (!sessionIsLive(session)) return
   // Persist the rebased base + revision so a reload (or workspace
   // switch back) skips the full-chain replay. Scoped by serverUrl
   // — see `loadPersistedSession`.
@@ -741,6 +768,11 @@ async function applyOverlayAndPersist(session, overlay) {
 // baseState; the returned overlay is stable across the mutation
 // and gets re-applied via `applyOverlayAndPersist` afterwards.
 function captureOverlay(session) {
+  // Refresh `session.ids` so a chain landing AFTER a new report was
+  // dragged in pulls the right scope when reading state.* — without
+  // this, the new report's findings would be invisible to the
+  // overlay/apply round-trip until the session is reopened.
+  session.ids = buildWorkspaceIds(session.workspaceId)
   session.localState = effectiveLocalState(session.baseState, session.ids)
   return computeChangeset(session.baseState, session.localState)
 }
@@ -775,6 +807,10 @@ async function handleAck(session, msg) {
       : (session.savesSinceKeyframe ?? 0) + 1
     session.pending = null
     await applyOverlayAndPersist(session, overlay)
+    // applyOverlayAndPersist self-bails if the session was closed
+    // during its awaits, but a follow-up trySendSave on the orphan
+    // would still fire — gate it.
+    if (!sessionIsLive(session)) return
     // The user may have edited during the round-trip; if there's a
     // residual overlay (or pendingSave was raised), flush it.
     if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
@@ -810,7 +846,12 @@ async function handleChain(session, revisions) {
   if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
   const overlay = captureOverlay(session)
-  if (!await applyChainToBase(session, revisions)) {
+  const ok = await applyChainToBase(session, revisions)
+  // applyChainToBase self-bails on a closed session (returns false
+  // without mutating baseRevision); double-check before we touch
+  // anything further.
+  if (!sessionIsLive(session)) return
+  if (!ok) {
     // Continuity break. First try to fill the gap by re-subscribing
     // with `from = current baseRevision`: in the typical case (a
     // broadcast that skipped intermediate revisions, a transient
@@ -849,6 +890,7 @@ async function handleChain(session, revisions) {
     session.pendingSave = true
   }
   await applyOverlayAndPersist(session, overlay)
+  if (!sessionIsLive(session)) return
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false
     trySendSave(session)

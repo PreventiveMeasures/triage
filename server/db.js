@@ -120,24 +120,22 @@ export function headFor(handle, tag) {
 }
 
 export function chainFrom(handle, tag, fromId) {
-  if (fromId == null) {
-    // No base id — the client is either fresh or has lost track of
-    // its position. Skip past everything before the latest keyframe;
-    // the keyframe itself replaces baseState, so anything older is
-    // redundant. Falls back to the full chain when no keyframe has
-    // been emitted yet (workspace small enough that the threshold
-    // hasn't been crossed).
-    const kf = handle.lastKeyframeSeq.get(tag)
-    if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s)
-    return handle.chainAll.all(tag)
+  // No base id, OR a base id the server doesn't recognise (db reset,
+  // chain compaction, malicious peer): in either case the client has
+  // no anchor we can incrementally serve from. Skip past everything
+  // before the latest keyframe — the keyframe replaces baseState, so
+  // anything older is redundant — and fall through to the full chain
+  // only when no keyframe has been emitted yet (small workspace
+  // hasn't crossed the threshold). Keeps the catch-up cost O(keyframe
+  // interval) instead of O(history length) for either entry point.
+  if (fromId != null) {
+    const row = handle.seqOfId.get(tag, fromId)
+    if (row) return handle.chainAfterSeq.all(tag, row.seq)
+    // fall through to the from=null path below
   }
-  const row = handle.seqOfId.get(tag, fromId)
-  // Unknown fromId — server might have lost the revision the
-  // client refers to (db reset, history compaction). Return the
-  // full chain so the client can rebuild from the start. Safer
-  // than returning empty (which would leave them out of sync).
-  if (!row) return handle.chainAll.all(tag)
-  return handle.chainAfterSeq.all(tag, row.seq)
+  const kf = handle.lastKeyframeSeq.get(tag)
+  if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s)
+  return handle.chainAll.all(tag)
 }
 
 export function revisionExists(handle, tag, id) {

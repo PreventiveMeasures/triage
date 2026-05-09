@@ -46,7 +46,7 @@ if (typeof globalThis.localStorage === 'undefined') {
 const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.js')
 const { state } = await import('../client/state.js')
 const { saveTriage } = await import('../client/triage.js')
-const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')
+const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
 
 // ─────────── helpers ───────────
 
@@ -934,6 +934,154 @@ describe('triage-sync client', () => {
     setKeyframeInterval(100)
     triageSync.closeSession(wsId)
     deleteWorkspace(wsId)
+  })
+
+  it('refreshes session.ids when a report is added to the workspace mid-session', async () => {
+    // Bug #2: session.ids was captured once at openSession from
+    // buildWorkspaceIds(workspaceId), so dragging a new report
+    // into the workspace later left its findings outside the
+    // session's tracked id set — edits on them silently never
+    // synced. trySendSave / captureOverlay now re-read the live
+    // workspace membership before computing localState, so a
+    // newly-added report's findings join the next save.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'in-A', _id: 'in-A' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'online')
+
+    // Initial sanity: edit a known finding, save, ack.
+    state.markers.set('in-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'first ack')
+
+    // Add a NEW report mid-session, with a finding the workspace
+    // didn't previously track. Drag-into-workspace updates both
+    // state.reports (so the renderer knows about it) and
+    // workspace.reports (so buildWorkspaceIds includes it).
+    state.reports.push({
+      fileName: 'B.md',
+      groups: [[ { id: 'in-B', _id: 'in-B' } ]],
+    })
+    setReportWorkspace('B.md', wsId)
+
+    // Edit the new report's finding. Without the refresh, the
+    // session's stale `ids` would skip 'in-B' inside
+    // effectiveLocalState → save's changeset would be empty →
+    // the edit never reaches the server.
+    const beforeRev = triageSync.sessionInfo(wsId).baseRevision
+    state.markers.set('in-B', 'green')
+    await saveTriage()
+    await waitFor(
+      () => triageSync.sessionInfo(wsId).baseRevision !== beforeRev,
+      'second ack — new finding synced',
+    )
+
+    // Verify by fetching the chain from a fresh raw client and
+    // applying it: the cumulative state must include in-B = green.
+    const tag = triageSync.sessionInfo(wsId).workspaceTag
+    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    const reader = await new Promise((resolve, reject) => {
+      const s = new WebSocket(serverUrl)
+      s.addEventListener('open', () => resolve(s), { once: true })
+      s.addEventListener('error', (e) => reject(e.error ?? new Error('open failed')), { once: true })
+    })
+    const buffered = []
+    reader.addEventListener('message', (e) => buffered.push(JSON.parse(e.data)))
+    const { privateKey: signKey } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+    const subSig = await cryptoMod.signSubscribePayload(signKey, tag, null)
+    reader.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await waitFor(() => buffered.some((m) => m.type === 'workspace-state'), 'reader chain')
+    const revisions = buffered
+      .filter((m) => m.type === 'workspace-state')
+      .flatMap((s) => s.revisions)
+    const key = await cryptoMod.deriveSessionKey(seed)
+    let cumulative = {}
+    for (const rev of revisions) {
+      const aad = cryptoMod.buildAad(tag, rev.base)
+      const changeset = await cryptoMod.decryptJson(key, rev.nonce, rev.ciphertext, aad)
+      for (const [id, entry] of Object.entries(changeset)) {
+        if (entry === null) delete cumulative[id]
+        else cumulative[id] = entry
+      }
+    }
+    assert.equal(cumulative['in-B']?.color, 'green', 'newly-added report\'s edit reached the chain')
+    reader.close()
+
+    triageSync.closeSession(wsId)
+    deleteWorkspace(wsId)
+  })
+
+  it('chain arriving for a closed session is dropped without touching state.*', async () => {
+    // Bug #1 first line of defense: handleMessage looks the session
+    // up by workspaceTag at handler entry; a tag with no live
+    // session (because closeSession ran) is silently dropped.
+    // Rather than race against a real-server broadcast, drive the
+    // delivery through a fake relay that delays the chain via
+    // setTimeout — closeSession runs synchronously before the
+    // delivery, so the chain lands at a closed-session.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({
+      fileName: 'A.md',
+      groups: [[ { id: 'finding-X', _id: 'finding-X' } ]],
+    })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const seed = randomBase64()
+    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    const key = await cryptoMod.deriveSessionKey(seed)
+    const { privateKey: signKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
+
+    let chainSent = false
+    const relay = await startFakeRelay((sock) => {
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString())
+        if (msg.type !== 'workspace-subscribe') return
+        sock.send(JSON.stringify({ type: 'workspace-subscribed', workspaceTag: msg.workspaceTag }))
+        sock.send(JSON.stringify({ type: 'workspace-state', workspaceTag: msg.workspaceTag, revisions: [] }))
+        // Send the chain after a small delay so the test has time
+        // to call closeSession before the message hits handleMessage.
+        setTimeout(async () => {
+          const aad = cryptoMod.buildAad(workspaceTag, null)
+          const { nonce, ciphertext } = await cryptoMod.encryptJson(key, { 'finding-X': { color: 'purple' } }, aad)
+          const payload = { publicKeyB64: workspaceTag, base: null, nonceB64: nonce, ciphertextB64: ciphertext }
+          const id = await cryptoMod.computeRevisionId(payload)
+          const signature = await cryptoMod.signSavePayload(signKey, payload)
+          sock.send(JSON.stringify({
+            type: 'workspace-state',
+            workspaceTag,
+            revisions: [{ base: null, id, nonce, ciphertext, signature }],
+          }))
+          chainSent = true
+        }, 100)
+      })
+    })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(relay.url)
+    await waitFor(statusOnline, 'online')
+    // Close the session synchronously before the relay's setTimeout
+    // fires — by the time the chain message hits handleMessage,
+    // getSessionByTag returns null and the message is dropped.
+    triageSync.closeSession(wsId)
+    await waitFor(() => chainSent, 'relay sent the chain')
+    // Give the message handler a chance to run.
+    await new Promise((resolve) => { setTimeout(resolve, 100) })
+    assert.equal(state.markers.get('finding-X'), undefined, 'closed-session chain did not pollute state.*')
+
+    triageSync.setServerUrl('')
+    deleteWorkspace(wsId)
+    await relay.close()
   })
 })
 
