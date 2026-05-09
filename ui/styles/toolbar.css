@@ -42,7 +42,7 @@
     min-width: 2.75rem;
   }
 
-  & input[type="text"] {
+  & input[type='text'] {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;
     &:focus { border-color: var(--accent); outline: none; }
@@ -214,7 +214,7 @@ view-mode-buttons { display: contents; }
 
   & svg { color: var(--muted); flex-shrink: 0; }
 
-  & input[type="text"] {
+  & input[type='text'] {
     flex: 1; min-width: 0;
     background: transparent; border: 0; outline: none;
     color: var(--text); font: inherit; font-size: .8rem;
@@ -286,7 +286,7 @@ view-mode-buttons { display: contents; }
   & .sd {
     width: 8px; height: 8px; border-radius: 2px;
     display: inline-block;
-    background: currentColor;  /* per-severity rule below sets the real color */
+    background: currentcolor;  /* per-severity rule below sets the real color */
   }
   & .name { letter-spacing: .03em; }
   & .n {
@@ -366,16 +366,16 @@ view-mode-buttons { display: contents; }
   & .td {
     width: 12px; height: 12px;
     border-radius: 50%;
-    border: 1.5px solid currentColor;
+    border: 1.5px solid currentcolor;
     background: transparent;
     transition: background .12s;
   }
-  & button.active .td { background: currentColor; }
+  & button.active .td { background: currentcolor; }
   & .td.none { border-style: dashed; color: var(--muted); }
-  & .td.r { color: oklch(0.68 0.20 25); }
-  & .td.b { color: oklch(0.72 0.15 240); }
-  & .td.g { color: oklch(0.74 0.15 145); }
-  & .td.x { color: oklch(0.55 0.01 260); }
+  & .td.r { color: oklch(.68 .20 25); }
+  & .td.b { color: oklch(.72 .15 240); }
+  & .td.g { color: oklch(.74 .15 145); }
+  & .td.x { color: oklch(.55 .01 260); }
 
   & .count {
     position: absolute; top: -2px; right: -2px;

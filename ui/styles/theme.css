@@ -23,7 +23,7 @@
      gradient do the chromatic work. The gradient itself stays — that's
      the "glass" hue the design wants. */
   --bg: #121212;
-  --surface: rgba(28, 28, 28, 0.78);
+  --surface: rgba(28, 28, 28, .78);
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
@@ -47,9 +47,9 @@
      reads as a warmer chromatic counterpart to the top-right red and
      doesn't tug the neutral-gray bg toward visibly blue. The red and
      bottom green stops stay where they are. */
-  --gradient-stop-a: rgba(159, 122, 234, 0.07);
-  --gradient-stop-b: rgba(248, 81, 73, 0.05);
-  --gradient-stop-c: rgba(63, 185, 80, 0.04);
+  --gradient-stop-a: rgba(159, 122, 234, .07);
+  --gradient-stop-b: rgba(248, 81, 73, .05);
+  --gradient-stop-c: rgba(63, 185, 80, .04);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .18);
   /* Graph palette — chrome around the canvas (toolbar, info sidebar,
      tooltip, zoom controls) and the canvas's own fill. Lifting it
@@ -58,8 +58,8 @@
      (it can't share CSS vars without a getComputedStyle round-trip
      per draw); the values mirror the ones below. */
   --graph-canvas-bg: #0c0c0c;
-  --graph-hover-bg: rgba(255, 255, 255, 0.04);
-  --graph-divider: rgba(60, 60, 60, 0.5);
+  --graph-hover-bg: rgba(255, 255, 255, .04);
+  --graph-divider: rgba(60, 60, 60, .5);
 
   /* User-applied marker backgrounds — consumed by `<finding-row>` /
      `<finding-card>` / `<finding-table>` shadow DOMs. Custom
@@ -86,8 +86,8 @@
 }
 
 body.theme-light {
-  --bg: #ffffff;
-  --surface: rgba(246, 248, 250, 0.72);
+  --bg: #fff;
+  --surface: rgba(246, 248, 250, .72);
   --border: #d1d9e0;
   --text: #1f2328;
   --muted: #59636e;
@@ -108,13 +108,13 @@ body.theme-light {
   --bug: #6b5e52;
   --info: #218bff;
   --surface-active: #ddf4ff;
-  --gradient-stop-a: rgba(124, 58, 237, 0.10);
-  --gradient-stop-b: rgba(207, 34, 46, 0.06);
-  --gradient-stop-c: rgba(26, 127, 55, 0.05);
+  --gradient-stop-a: rgba(124, 58, 237, .10);
+  --gradient-stop-b: rgba(207, 34, 46, .06);
+  --gradient-stop-c: rgba(26, 127, 55, .05);
   --shadow-glass: 0 1px 2px rgba(0, 0, 0, .04);
   --graph-canvas-bg: #f6f8fa;
-  --graph-hover-bg: rgba(0, 0, 0, 0.04);
-  --graph-divider: rgba(208, 215, 222, 0.7);
+  --graph-hover-bg: rgba(0, 0, 0, .04);
+  --graph-divider: rgba(208, 215, 222, .7);
 
   /* Re-tint user-applied marker backgrounds for light mode. The dark
      palette was sized for `var(--text)`-as-light to remain readable
@@ -178,6 +178,16 @@ a { color: var(--accent); text-decoration: none; }
    shadow DOM (see view/theme.js). */
 #print-btn {
   position: fixed; right: .5rem;
+  /* Sits directly under the theme toggle — its top stacks below
+     the toggle's bottom (.5rem from the viewport top + 30px
+     toggle height + .35rem gap). Hidden by default; render() in
+     view/render.js toggles `body.show-print-btn` based on
+     (state.reports.length > 0 && state.currentView === 'findings')
+     so the button only appears where window.print() makes sense
+     (graph / files tabs strip the canvas / cards in print
+     anyway). */
+  top: calc(.5rem + 30px + .35rem);
+  display: none;
   z-index: 1000;
   width: 30px; height: 30px;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -186,20 +196,13 @@ a { color: var(--accent); text-decoration: none; }
   box-shadow: var(--shadow-glass);
   cursor: pointer; font-size: 1rem; line-height: 1;
   font-family: inherit;
-  display: flex; align-items: center; justify-content: center;
+  align-items: center; justify-content: center;
   transition: border-color .12s, color .12s, background .12s;
 
   &:hover { border-color: var(--accent); color: var(--accent); }
   & svg { display: block; }
 }
 
-/* Print button sits directly under the theme toggle. Hidden by
-   default; render() in view/render.js toggles `body.show-print-btn`
-   based on (state.reports.length > 0 && state.currentView ===
-   'findings') so the button only appears where window.print() makes
-   sense (graph / files tabs strip the canvas / cards in print
-   anyway). */
-#print-btn { top: calc(.5rem + 30px + .35rem); display: none; }
 body.show-print-btn #print-btn { display: flex; }
 
 @media print { #print-btn { display: none !important; } }

@@ -1,0 +1,37 @@
+{
+  "extends": ["stylelint-config-recommended"],
+  "plugins": ["@stylistic/stylelint-plugin"],
+  "rules": {
+    "color-hex-length": "short",
+    "declaration-block-no-redundant-longhand-properties": [
+      true,
+      { "ignoreShorthands": ["grid-template"] }
+    ],
+    "max-nesting-depth": 5,
+    "value-keyword-case": "lower",
+    "value-no-vendor-prefix": true,
+    "declaration-block-no-shorthand-property-overrides": null,
+    "declaration-property-value-keyword-no-deprecated": null,
+    "declaration-property-value-no-unknown": null,
+    "font-family-no-missing-generic-family-keyword": null,
+    "no-descending-specificity": null,
+    "no-duplicate-selectors": true,
+    "selector-pseudo-element-no-unknown": [
+      true,
+      {
+        "ignorePseudoElements": ["/^range-(track|thumb)$/"]
+      }
+    ],
+    "selector-type-no-unknown": null,
+
+    "@stylistic/linebreaks": "unix",
+    "@stylistic/max-empty-lines": 1,
+    "@stylistic/max-line-length": 140,
+    "@stylistic/no-missing-end-of-source-newline": true,
+    "@stylistic/no-empty-first-line": true,
+    "@stylistic/number-leading-zero": "never",
+    "@stylistic/selector-list-comma-newline-after": "always-multi-line",
+    "@stylistic/string-quotes": "single",
+    "@stylistic/unit-case": "lower"
+  }
+}

@@ -23,7 +23,7 @@
 :host(.triage-fixed),
 :host(.triage-invalid),
 :host(.triage-deleted),
-:host(.triage-ignored) { opacity: 0.75; }
+:host(.triage-ignored) { opacity: .75; }
 
 .card {
   padding: .5rem .75rem;
@@ -335,7 +335,7 @@
   :host(.triage-deleted),
   :host(.triage-ignored) { opacity: 1; }
   :host(.multi-case) .card::before {
-    content: "Multiple reports of one finding";
+    content: 'Multiple reports of one finding';
     display: block;
     font-size: .7rem; font-weight: 700; color: #555;
     text-transform: uppercase; letter-spacing: .06em;

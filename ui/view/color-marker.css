@@ -8,10 +8,10 @@ button {
   width: 14px; height: 14px;
   padding: 0;
   background: transparent;
-  border: 1.5px solid currentColor;
+  border: 1.5px solid currentcolor;
   border-radius: 50%;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: .55;
   transition: opacity .12s, transform .12s;
 }
 button:hover { opacity: 1; transform: scale(1.12); }
@@ -23,12 +23,12 @@ button:hover { opacity: 1; transform: scale(1.12); }
    shadow boundary so the gap matches whichever surface this marker
    is rendered on. */
 button.active {
-  background: currentColor;
+  background: currentcolor;
   opacity: 1;
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px currentColor;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px currentcolor;
 }
 
-.color-red   { color: oklch(0.68 0.20 25); }
-.color-blue  { color: oklch(0.72 0.15 240); }
-.color-green { color: oklch(0.74 0.15 145); }
-.color-gray  { color: oklch(0.55 0.01 260); }
+.color-red   { color: oklch(.68 .20 25); }
+.color-blue  { color: oklch(.72 .15 240); }
+.color-green { color: oklch(.74 .15 145); }
+.color-gray  { color: oklch(.55 .01 260); }

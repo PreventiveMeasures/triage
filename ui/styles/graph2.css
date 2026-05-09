@@ -26,8 +26,8 @@
      Saves a row of vertical real estate the sidebar previously
      wasted on bare chrome. */
   grid-template-areas:
-    "topbar right"
-    "stage  right";
+    'topbar right'
+    'stage  right';
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
@@ -256,10 +256,10 @@
   font-weight: 600;
   font-size: 11px;
   line-height: 1;
-  letter-spacing: 0.14em;
+  letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.85;
+  opacity: .85;
   margin: 14px 0 8px;
   display: flex;
   align-items: baseline;
@@ -270,7 +270,7 @@
 
 .g2-count {
   color: var(--muted);
-  opacity: 0.6;
+  opacity: .6;
   font-weight: 400;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   text-transform: none;
@@ -338,7 +338,6 @@
   &:hover { color: var(--text); background: var(--graph-hover-bg); }
   &.on { background: var(--surface-active); color: var(--accent); }
 }
-
 
 /* The .g2-switch class is still used by the topbar's "All files"
    pill (.g2-topbar-toggle .g2-switch); other toggle / collapsible /
@@ -418,9 +417,9 @@
   gap: 2px 14px;
   font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   color: var(--muted);
-  opacity: 0.7;
+  opacity: .7;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: .06em;
   pointer-events: none;
   max-width: calc(100% - 80px);
 
@@ -534,7 +533,7 @@
   font-weight: 600;
   font-size: 9px;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: -.02em;
   text-transform: lowercase;
 }
 
@@ -592,7 +591,7 @@
   color: var(--accent);
   border-radius: 3px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: .08em;
   font-weight: 600;
 }
 
@@ -704,7 +703,7 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   font: 500 9px/1 ui-monospace, monospace;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: .08em;
   flex-shrink: 0;
 }
 
@@ -746,16 +745,16 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   font-weight: 600;
   font-size: 11px;
   line-height: 1;
-  letter-spacing: 0.08em;
+  letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.85;
+  opacity: .85;
   margin-bottom: 5px;
 }
 
 .g2-sel-section-empty {
   color: var(--muted);
-  opacity: 0.55;
+  opacity: .55;
   font-size: 11px;
   font-style: italic;
 }
@@ -893,7 +892,7 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 
 .g2-dist-empty {
   color: var(--muted);
-  opacity: 0.55;
+  opacity: .55;
   font-size: 10px;
   font-style: italic;
   padding: 6px 0;
@@ -943,7 +942,7 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
     color: var(--muted);
     width: 36px;
     text-align: right;
-    opacity: 0.85;
+    opacity: .85;
   }
 }
 

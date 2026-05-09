@@ -55,7 +55,7 @@
 
   & .brand {
     flex: 1; display: flex; align-items: baseline; gap: .4rem;
-    font-size: .95rem; font-weight: 700; letter-spacing: -0.01em;
+    font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
     white-space: nowrap; overflow: hidden;
   }
   & .brand-tag {
@@ -344,9 +344,9 @@
     flex-shrink: 0;
     box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .15);
   }
-  &[data-status="online"]     .sync-dot { background: var(--green); }
-  &[data-status="connecting"] .sync-dot { background: var(--medium); }
-  &[data-status="offline"]    .sync-dot { background: var(--critical); }
+  &[data-status='online']     .sync-dot { background: var(--green); }
+  &[data-status='connecting'] .sync-dot { background: var(--medium); }
+  &[data-status='offline']    .sync-dot { background: var(--critical); }
 }
 /* The bare `#sync-status` rule above carries (1,0,0) specificity
    which beats the user-agent's `[hidden] { display: none }`
@@ -483,7 +483,7 @@
       background: rgb(from var(--accent) r g b / .07);
     }
   }
-  & .conflict-choice input[type="radio"] {
+  & .conflict-choice input[type='radio'] {
     position: absolute;
     opacity: 0; pointer-events: none;
   }

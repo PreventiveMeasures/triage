@@ -142,7 +142,7 @@
   font-size: .68rem;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: .1em;
   font-weight: 600;
 }
 .findings-table-details-close {

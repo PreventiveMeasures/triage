@@ -9,7 +9,7 @@
      / thumbs (which the host typically tints to the page accent). */
   --rs-thumb-size: 14px;
   --rs-track-height: 3px;
-  --rs-rail: rgb(from currentColor r g b / .25);
+  --rs-rail: rgb(from currentcolor r g b / .25);
   --rs-fill: var(--accent, currentColor);
 }
 
@@ -43,7 +43,7 @@
    input itself + pointer-events:auto on the thumb lets the user
    grab whichever thumb is closer without the input's full-width
    hitbox blocking the other. */
-input[type="range"] {
+input[type='range'] {
   appearance: none; -webkit-appearance: none;
   position: absolute;
   left: 0; right: 0; top: 0;
@@ -53,7 +53,7 @@ input[type="range"] {
   margin: 0; padding: 0;
   outline: none;
 }
-input[type="range"]::-webkit-slider-thumb {
+input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   pointer-events: auto;
   width: var(--rs-thumb-size); height: var(--rs-thumb-size);
@@ -63,7 +63,7 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
   cursor: pointer;
 }
-input[type="range"]::-moz-range-thumb {
+input[type='range']::-moz-range-thumb {
   pointer-events: auto;
   width: var(--rs-thumb-size); height: var(--rs-thumb-size);
   border-radius: 50%;
@@ -72,6 +72,6 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
   cursor: pointer;
 }
-input[type="range"]::-webkit-slider-runnable-track {
+input[type='range']::-webkit-slider-runnable-track {
   background: transparent; height: var(--rs-thumb-size);
 }

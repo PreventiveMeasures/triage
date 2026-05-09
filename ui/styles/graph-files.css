@@ -80,7 +80,7 @@
     &:focus-within { border-color: var(--accent); }
 
     & svg { color: var(--muted); flex-shrink: 0; }
-    & input[type="text"] {
+    & input[type='text'] {
       flex: 1; min-width: 0;
       background: transparent; border: 0; outline: none;
       color: var(--text); font: inherit; font-size: .8rem;

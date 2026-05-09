@@ -32,7 +32,7 @@
 
     & .page-title h1 {
       margin: 0 0 .25rem;
-      font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em;
+      font-size: 1.125rem; font-weight: 600; letter-spacing: -.01em;
       display: flex; align-items: center; gap: .625rem; flex-wrap: wrap;
     }
 
@@ -858,7 +858,7 @@
     letter-spacing: .06em;
     padding: 1px .35rem;
     border-radius: 3px;
-    border: 1px solid currentColor;
+    border: 1px solid currentcolor;
     background: transparent;
     white-space: nowrap;
     &.triage-fixed   { color: var(--green, #4ade80); }
@@ -984,8 +984,7 @@
     margin: .5rem 0 0;
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1.5fr) max-content max-content;
-    column-gap: .5rem;
-    row-gap: .25rem;
+    gap: .25rem .5rem;
     align-items: center;
     font-size: .72rem;
 
@@ -1105,7 +1104,6 @@
     & .bundles-report-chip .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
     & .bundles-report-chip .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
   }
-
 
   & .bundles-list {
     list-style: none;
@@ -1326,7 +1324,7 @@ body.report-fullscreen {
   letter-spacing: .08em;
   padding: 1px .4rem;
   border-radius: 3px;
-  border: 1px solid currentColor;
+  border: 1px solid currentcolor;
   background: transparent;
   white-space: nowrap;
   flex-shrink: 0;
