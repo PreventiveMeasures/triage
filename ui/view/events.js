@@ -475,29 +475,20 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Triage menu — chevron button on each finding opens a small
-  // popover with Fixed / Invalid / Delete actions. Clicking the
-  // chevron toggles state.openTriageMenuGid (null → on this gid /
-  // gid → null). A click anywhere outside an open menu closes it
-  // (handled at the bottom of this delegate via the catch-all
-  // close below). Conflict groups scope the action to the active
-  // tab; non-conflict groups apply to every tab. Setting any
-  // triage state for a tab clears the others (mutual exclusion is
-  // intrinsic to the Map, since each key has at most one value).
-  const triageMenuBtn = pathClosest(e, '[data-triage-menu]')
-  if (triageMenuBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    if (!findingEl) return
-    const gid = findingEl.dataset.gid
-    state.openTriageMenuGid = state.openTriageMenuGid === gid ? null : gid
-    render()
-    return
-  }
+  // Triage menu action — clicked option inside the native
+  // `popover="auto"` menu. The popover is in the top layer (escapes
+  // overflow-hidden ancestors), so the data-gid lookup walks UP
+  // from the action button to the popover root rather than the
+  // row's DOM tree. Conflict groups still scope to the active tab;
+  // non-conflict groups apply to every tab. Setting any state for
+  // a tab clears the others (the Map allows at most one value).
+  // Manual hidePopover() after the click since the action button
+  // doesn't carry a popovertarget attribute.
   const triageActionBtn = pathClosest(e, '[data-triage-action]')
   if (triageActionBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    if (!findingEl) return
-    const gid = findingEl.dataset.gid
+    const popover = triageActionBtn.closest('.triage-menu')
+    const gid = popover?.dataset.gid
+    if (!gid) return
     const group = findGroupById(gid)
     if (!group) return
     const action = triageActionBtn.dataset.triageAction
@@ -515,19 +506,10 @@ report.addEventListener('click', (e) => {
         state.triageState.set(key, action)
       }
     }
-    state.openTriageMenuGid = null
+    try { popover.hidePopover() } catch {}
     saveTriage()
     render()
     return
-  }
-  // Click outside any open triage menu — close it. Run before the
-  // generic non-handled click fallthrough so a click that DID hit
-  // a menu's anchor / option above doesn't close before its
-  // handler runs (those returns above prevent reaching here).
-  if (state.openTriageMenuGid) {
-    state.openTriageMenuGid = null
-    render()
-    // Fall through; the click might still be a row-select etc.
   }
   // Comment button — open a prompt with the active tab's existing
   // comment (empty when none). Whitespace-trimmed input; empty
@@ -571,20 +553,6 @@ report.addEventListener('click', (e) => {
     if (trimmed === current) return
     if (trimmed) state.fixes.set(activeKey, trimmed)
     else state.fixes.delete(activeKey)
-    saveTriage()
-    render()
-    return
-  }
-  // Restore: per spec rule 5, applies to EVERY tab in the group — a
-  // user in trash view clicking restore expects the whole entry back,
-  // not just one member left behind.
-  const restoreBtn = pathClosest(e, '.mark-restore')
-  if (restoreBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl.dataset.gid
-    const group = findGroupById(gid)
-    if (!group) return
-    for (const f of group) state.triageState.delete(tabKey(f))
     saveTriage()
     render()
     return
@@ -904,4 +872,42 @@ document.addEventListener('keydown', (e) => {
     state.bundleSourceFile = null
     render()
   }
+})
+
+// Position the per-finding triage menu next to its trigger button
+// when the native popover opens. The popover lives in the top
+// layer (so it escapes the row's overflow-hidden), but the browser
+// otherwise centers it on the viewport — we want it anchored to
+// the chevron button. `beforetoggle` fires before the popover
+// becomes visible; offsetWidth / offsetHeight read the rendered
+// dimensions even at this stage because the popover is already
+// laid out. Right-aligns the menu's right edge to the button's,
+// dropping below by default; flips above when there's no room.
+document.addEventListener('beforetoggle', (e) => {
+  const popover = e.target
+  if (!popover?.matches?.('.triage-menu[popover]')) return
+  if (e.newState !== 'open') return
+  // Anchor button lives in the same scope as the popover (light
+  // DOM for finding-card list/grouped views, shadow DOM for
+  // finding-row table rows). Query the popover's root rather than
+  // `document` so the lookup crosses neither too few nor too many
+  // shadow boundaries.
+  const root = popover.getRootNode()
+  const btn = root.querySelector(`[popovertarget="${popover.id}"]`)
+  if (!btn) return
+  const btnRect = btn.getBoundingClientRect()
+  const menuW = popover.offsetWidth || 110
+  const menuH = popover.offsetHeight || 100
+  const gap = 4
+  let left = btnRect.right - menuW
+  if (left < 4) left = 4
+  if (left + menuW > window.innerWidth - 4) left = window.innerWidth - menuW - 4
+  let top = btnRect.bottom + gap
+  // Flip above when the menu would clip the viewport bottom AND
+  // there's more room above the button.
+  if (top + menuH > window.innerHeight - 4 && btnRect.top > menuH + gap) {
+    top = btnRect.top - menuH - gap
+  }
+  popover.style.top = `${top}px`
+  popover.style.left = `${left}px`
 })

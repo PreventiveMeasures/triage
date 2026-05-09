@@ -171,11 +171,6 @@ export const state = store({
   // entries with the legacy `deleted: true` shape are migrated to
   // 'deleted' on load.
   triageState: new Map(),
-  // gid of the finding whose triage-action menu is currently open
-  // (null when none). Single open at a time so the modeless popover
-  // doesn't accumulate. Reset on any state change that re-renders
-  // the row (clicking an action, clicking outside, view switch).
-  openTriageMenuGid: null,
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
   // only. Replaces the prior boolean showDeleted; the toolbar's

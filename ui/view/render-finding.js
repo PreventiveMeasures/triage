@@ -122,28 +122,28 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   return html`${reportChip}${commentBtn}${fixBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
 }
 
-// Triage menu — chevron button that toggles a small popover.
-// In live view: chevron only, options are Fixed / Invalid / Delete.
-// In a triage view: button reads "<current> ▾" and the menu starts
-// with Restore (clears the state) followed by the other two states
-// so the user can pivot between buckets without an intermediate
-// restore.
+// Triage menu — chevron button that toggles a popover with the
+// Fixed / Invalid / Delete actions (and a Restore entry when the
+// row is in a non-live triage view).
 //
-// `data-triage-menu` is the open/close anchor; events.js toggles
-// state.openTriageMenuGid on click. Options emit either
-// `data-triage-action=<state>` (set/toggle that state) or
-// `data-triage-action=restore` (clear it).
+// Renders the menu using the native `popover="auto"` HTML
+// attribute, which lifts the element into the top layer so it
+// escapes any `overflow: hidden` parents (e.g. `.flat-group`,
+// `.findings-table`) that would otherwise clip the dropdown when
+// it lives next to a row's right edge or the last row in a list.
+// The browser handles open/close (toggle on button click via
+// `popovertarget`, dismissal on outside click / Escape); position
+// is set by a global `beforetoggle` listener (see events.js)
+// reading the anchor button's bounding rect.
+//
+// Each menu has a unique id derived from the group's gid; the
+// data-gid on the popover lets the action handler resolve the
+// target group when the menu has been moved to the top layer
+// (out of the row's DOM scope).
 function triageMenuTemplate(group, title) {
   const gid = tabKey(group[0])
-  const open = state.openTriageMenuGid === gid
   const groupSt = groupState(group)
   const activeKey = tabKey(activeTabFor(group))
-  // Reflect the current triage state on the menu — for conflict
-  // groups read the active tab's own triage; for non-conflict, the
-  // common rollup. The triage view's button label tracks
-  // state.shownTriage rather than `current` so it always reads as
-  // the active bucket the user is filtering by (which matches the
-  // group's commonTriage in non-conflict cases).
   const current = groupSt.hasConflict
     ? state.triageState.get(activeKey)
     : groupSt.commonTriage
@@ -163,23 +163,26 @@ function triageMenuTemplate(group, title) {
         { key: 'deleted', label: 'Delete' },
       ]
   const btnClasses = ['mark-triage-menu']
-  if (open) btnClasses.push('open')
   if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
+  // Stable popover id derived from gid — escape so
+  // `f.id`/`String(f._id)` shapes that include `.` / `:` produce a
+  // valid CSS-selectable id.
+  const popId = `triage-menu-${gid.replace(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} data-triage-menu title=${title} aria-label=${title} aria-expanded=${String(open)}>
+    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" title=${title} aria-label=${title}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
-    ${open ? html`<div class="triage-menu" role="menu">
+    <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu">
       ${actions.map((a) => html`<button
         type="button"
         class=${`triage-menu-item triage-menu-${a.key}${current === a.key ? ' active' : ''}`}
         data-triage-action=${a.key}
         role="menuitem"
       >${a.label}</button>`)}
-    </div>` : nothing}
+    </div>
   </div>`
 }
 

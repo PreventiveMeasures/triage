@@ -57,7 +57,9 @@
 :host(.mark-green) .row { background: var(--mark-green-bg); }
 :host(.mark-gray) .row  { background: var(--mark-gray-bg); }
 :host(.has-conflict) .row { outline: 2px dashed var(--accent); outline-offset: -2px; }
-:host(.deleted) { opacity: .75; }
+:host(.triage-fixed),
+:host(.triage-invalid),
+:host(.triage-deleted) { opacity: .75; }
 :host(.selected) .row { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .row-score {
@@ -249,11 +251,14 @@
 .mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
 .mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
-.triage-menu {
-  position: absolute;
-  top: calc(100% + .25rem);
-  right: 0;
-  z-index: 10;
+/* Native popover — fixed position is set inline by events.js's
+   beforetoggle listener. Override the UA's default centering (the
+   browser auto-positions popover="auto" elements) so our coords
+   take effect: inset:auto + margin:0 zero out the UA layout. */
+.triage-menu[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
   min-width: 7rem;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -263,6 +268,10 @@
   display: flex; flex-direction: column;
   gap: 1px;
 }
+/* Hidden state — the popover API toggles `:popover-open` rather
+   than the legacy display flip. Keep the stack tight when closed. */
+.triage-menu[popover]:not(:popover-open) { display: none; }
+.triage-menu[popover]:popover-open { display: flex; }
 .triage-menu-item {
   background: transparent;
   border: 0;
@@ -311,7 +320,9 @@
   :host(.mark-gray) .row {
     background: transparent !important;
   }
-  :host(.deleted) { opacity: 1; }
+  :host(.triage-fixed),
+  :host(.triage-invalid),
+  :host(.triage-deleted) { opacity: 1; }
   :host(.selected) .row,
   :host(.has-conflict) .row { outline: none !important; }
 

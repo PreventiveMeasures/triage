@@ -781,7 +781,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           ${srcChip('modules', 'Dependencies')}
         </div>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
-        <label for="conf-range">Confidence</label>
+        <span class="conf-range-label">Confidence</span>
         <!-- Dual-thumb slider replaces the prior min / max select
              pair. Lower bound at 0 means "include findings without a
              confidence rating"; upper bound at 10 means "no upper cap

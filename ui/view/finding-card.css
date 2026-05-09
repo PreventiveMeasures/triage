@@ -20,7 +20,9 @@
 
 :host { display: block; }
 :host(.hidden) { display: none; }
-:host(.deleted) { opacity: 0.75; }
+:host(.triage-fixed),
+:host(.triage-invalid),
+:host(.triage-deleted) { opacity: 0.75; }
 
 .card {
   padding: .5rem .75rem;
@@ -246,11 +248,10 @@
 .mark-triage-menu.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
 .mark-triage-menu.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .mark-triage-menu.triage-state-invalid { border-color: var(--muted); color: var(--text); }
-.triage-menu {
-  position: absolute;
-  top: calc(100% + .25rem);
-  right: 0;
-  z-index: 10;
+.triage-menu[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
   min-width: 7rem;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -260,6 +261,8 @@
   display: flex; flex-direction: column;
   gap: 1px;
 }
+.triage-menu[popover]:not(:popover-open) { display: none; }
+.triage-menu[popover]:popover-open { display: flex; }
 .triage-menu-item {
   background: transparent;
   border: 0;
@@ -323,7 +326,9 @@
     break-inside: avoid; page-break-inside: avoid;
     padding: .45rem .25rem;
   }
-  :host(.deleted) { opacity: 1; }
+  :host(.triage-fixed),
+  :host(.triage-invalid),
+  :host(.triage-deleted) { opacity: 1; }
   :host(.multi-case) .card::before {
     content: "Multiple reports of one finding";
     display: block;
