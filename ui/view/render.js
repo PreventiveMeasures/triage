@@ -269,17 +269,36 @@ function countBundleTriageBuckets(details) {
   return counts
 }
 
-function bundleFindingsByFile(fileHashes) {
+// Bundle-side per-finding filter. Two modes:
+//
+//   'graph'  — bundle graph view. Filter follows state.shownTriage
+//              (null = live + ignored, 'fixed'/'invalid'/'deleted'
+//              = exact bucket). Ignore is intentionally NOT
+//              considered here: it's a per-report flag and a
+//              bundle aggregates findings across reports, so an
+//              ignored finding still counts as live in the bundle's
+//              non-triaged view. The selector exposes only the
+//              three triage buckets accordingly.
+//
+//   'issues' — bundle Issues list (and the source viewer's per-line
+//              dots / panel). Always shows live + fixed + ignored;
+//              invalid + deleted are hidden. Rationale: a bundle
+//              built before a fix shipped is still affected; a
+//              per-report ignore signals "anticipated future
+//              removal" but the bundle is still affected today.
+//              Invalid / deleted dismiss the issue entirely so we
+//              drop them from the bundle list.
+function bundleFindingsByFile(fileHashes, mode = 'graph') {
   if (!fileHashes || fileHashes.size === 0) return new Map()
   const result = new Map()
   for (const [file, hash] of fileHashes) {
     const found = findingsForFileHash(hash)
     if (found.length === 0) continue
-    // Triage split: each bundle finding is treated as a single-
-    // member group, so its triage state is the per-finding state
-    // map value (or undefined for "live"). Match against the
-    // current state.shownTriage to mirror the findings-tab filter.
-    const filtered = found.filter((f) => (state.triageState.get(tabKey(f)) ?? null) === state.shownTriage)
+    const filtered = found.filter((f) => {
+      const t = state.triageState.get(tabKey(f)) ?? null
+      if (mode === 'issues') return t !== 'invalid' && t !== 'deleted'
+      return t === state.shownTriage
+    })
     if (filtered.length === 0) continue
     if (!result.has(file)) result.set(file, [])
     const arr = result.get(file)
@@ -1105,7 +1124,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // in.
   const reportCounts = new Map()
   if (state.bundleDetails?.fileHashes) {
-    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes, 'issues')
     for (const findings of matches.values()) {
       for (const f of findings) {
         if (issueSummary[f.severity] !== undefined) issueSummary[f.severity]++
@@ -1364,7 +1383,7 @@ function renderBundleSourceModal() {
   const fileFindings = []
   const lineFindings = new Map()
   if (typeof content === 'string' && state.bundleDetails?.fileHashes) {
-    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes, 'issues')
     const onThisFile = matches.get(path) ?? []
     for (let i = 0; i < onThisFile.length; i++) {
       const f = onThisFile[i]
@@ -1409,7 +1428,7 @@ function renderBundleSlide(entry) {
   // ever reachable via Graph in that case; no switcher needed.
   let hasIssues = false
   if (state.bundleDetails?.fileHashes) {
-    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes)
+    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes, 'issues')
     for (const findings of matches.values()) {
       if (findings.length > 0) { hasIssues = true; break }
     }
@@ -1485,7 +1504,7 @@ function renderBundleIssuesList(details) {
   if (!details.fileHashes) {
     return html`<div class="bundle-issues-empty">Computing file hashes…</div>`
   }
-  const findingsByFile = bundleFindingsByFile(details.fileHashes)
+  const findingsByFile = bundleFindingsByFile(details.fileHashes, 'issues')
   if (findingsByFile.size === 0) {
     return html`<div class="bundle-issues-empty">No issues match this bundle's files.</div>`
   }
