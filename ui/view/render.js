@@ -959,8 +959,20 @@ function findingsBodyTemplate(filtered) {
 // Paths with no remaining directory bucket under the synthetic
 // `__own__` so the chart still has somewhere to put them.
 function bundlePkgOf(path) {
-  const m = path.match(/(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/u)
-  if (m) return m[1]
+  // Bundle paths land under either `node_modules/<pkg>/...` or
+  // `dependencies/<pkg>/...`. pnpm wraps each install in
+  // `node_modules/.pnpm/<name>@<version>/node_modules/<name>/...` —
+  // matching the first occurrence would bucket every dep under
+  // `.pnpm`, so when we hit that synthetic dir we walk past it to
+  // the inner `node_modules/<pkg>` segment that names the actual
+  // package. Fallback (no `node_modules` / `dependencies` anywhere)
+  // takes the first path segment so own-source paths like
+  // `src/foo/a.js` still bucket under `src`.
+  const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
+  let m
+  while ((m = re.exec(path)) !== null) {
+    if (m[1] !== '.pnpm') return m[1]
+  }
   const slash = path.indexOf('/')
   if (slash > 0) return path.slice(0, slash)
   return '__own__'
