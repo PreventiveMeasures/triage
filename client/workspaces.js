@@ -29,6 +29,29 @@ function writeRaw(list) {
   }
 }
 
+// Apply `mutator(list)` to the workspaces blob under the same-origin
+// Web Lock. The list is freshly read inside the lock so a concurrent
+// tab's writes are visible; if the mutator returns `false` the write
+// is skipped. Pattern mirrors `mutateAllSessions` in triage-sync.js.
+//
+// Round-8 follow-up: the read-modify-write pattern in every public
+// mutation function (createWorkspace / deleteWorkspace / etc.) used
+// to do `readRaw → modify → writeRaw` synchronously, so two tabs
+// writing concurrently would each read the pre-write blob, modify
+// independently, and the second writer would clobber the first.
+// Web Locks serialize the RMW across tabs on the same origin so
+// every mutator sees the previous tab's write.
+const WORKSPACE_LOCK = STORAGE_KEY
+function mutateWorkspaces(mutator) {
+  return navigator.locks.request(WORKSPACE_LOCK, async () => {
+    const list = readRaw()
+    const result = await mutator(list)
+    if (result === false) return undefined
+    writeRaw(list)
+    return result
+  })
+}
+
 // Defensive shallow clone of the fields we diff on. Keeps the
 // cache stable even if a caller hands us mutable `reports` arrays.
 function snapshotForCache(w) {
@@ -94,7 +117,7 @@ function sanitizeWorkspaceName(raw) {
   return cleaned || null
 }
 
-export function createWorkspace(name) {
+export async function createWorkspace(name) {
   const cleaned = sanitizeWorkspaceName(name)
   if (!cleaned) return null
   const keyBytes = new Uint8Array(32)
@@ -106,9 +129,9 @@ export function createWorkspace(name) {
     reports: [],
     createdAt: Date.now(),
   }
-  const list = readRaw()
-  list.push(workspace)
-  writeRaw(list)
+  await mutateWorkspaces((list) => {
+    list.push(workspace)
+  })
   // Mark the new workspace as observed so the next propagate
   // handler doesn't fire createListener for it. createWorkspace
   // is a local-only affordance whose UI caller manages the new
@@ -181,11 +204,14 @@ export function onReportMembershipChanged(cb) {
   return () => reportMembershipListeners.delete(cb)
 }
 
-export function deleteWorkspace(id) {
-  const list = readRaw()
-  const next = list.filter((w) => w.id !== id)
-  if (next.length === list.length) return
-  writeRaw(next)
+export async function deleteWorkspace(id) {
+  const removed = await mutateWorkspaces((list) => {
+    const idx = list.findIndex((w) => w.id === id)
+    if (idx < 0) return false
+    list.splice(idx, 1)
+    return true
+  })
+  if (!removed) return
   for (const cb of deleteListeners) {
     try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
   }
@@ -196,19 +222,21 @@ export function deleteWorkspace(id) {
 // rejected (returns false) so the sidebar caller can revert the
 // inline edit; otherwise the trimmed value replaces the existing
 // name and the helper returns true.
-export function renameWorkspace(id, name) {
+export async function renameWorkspace(id, name) {
   const cleaned = sanitizeWorkspaceName(name)
   if (!cleaned) return false
-  const list = readRaw()
-  const ws = list.find((w) => w.id === id)
-  if (!ws || ws.name === cleaned) return false
-  ws.name = cleaned
-  writeRaw(list)
+  const renamed = await mutateWorkspaces((list) => {
+    const ws = list.find((w) => w.id === id)
+    if (!ws || ws.name === cleaned) return false
+    ws.name = cleaned
+    return ws
+  })
+  if (!renamed) return false
   // Names aren't part of the diff (no name listener), but mark the
   // workspace as observed so the privateKey/reports of the rename
   // target are pinned to their post-rename snapshot — defense
   // against a sibling change to the same id getting masked.
-  markObservedFor(ws)
+  markObservedFor(renamed)
   return true
 }
 
@@ -224,28 +252,30 @@ export function renameWorkspace(id, name) {
 //     audit H1: a re-import that adds reports via upsertWorkspace
 //     used to skip the eager hydration / conflict-dialog path the
 //     rest of the membership listeners drive.
-export function upsertWorkspace(workspace) {
-  const list = readRaw()
-  const idx = list.findIndex((w) => w.id === workspace.id)
-  const previous = idx >= 0 ? list[idx] : null
-  // Sanitize the incoming name — `workspace` may come from an
-  // imported bundle whose author put control chars or unbounded
-  // length in `workspace.name`. Fall back to the previous name (on
-  // update) or 'Workspace' (on first insert) when sanitization
-  // empties the string. Audit round-8 L3.
-  const cleanedName = sanitizeWorkspaceName(workspace.name)
-    ?? previous?.name
-    ?? 'Workspace'
-  const next = {
-    id: workspace.id,
-    name: cleanedName,
-    privateKey: workspace.privateKey,
-    reports: Array.isArray(workspace.reports) ? workspace.reports : [],
-    createdAt: workspace.createdAt ?? Date.now(),
-  }
-  if (idx >= 0) list[idx] = next
-  else list.push(next)
-  writeRaw(list)
+export async function upsertWorkspace(workspace) {
+  const result = await mutateWorkspaces((list) => {
+    const idx = list.findIndex((w) => w.id === workspace.id)
+    const previous = idx >= 0 ? list[idx] : null
+    // Sanitize the incoming name — `workspace` may come from an
+    // imported bundle whose author put control chars or unbounded
+    // length in `workspace.name`. Fall back to the previous name
+    // (on update) or 'Workspace' (on first insert) when sanitization
+    // empties the string. Audit round-8 L3.
+    const cleanedName = sanitizeWorkspaceName(workspace.name)
+      ?? previous?.name
+      ?? 'Workspace'
+    const next = {
+      id: workspace.id,
+      name: cleanedName,
+      privateKey: workspace.privateKey,
+      reports: Array.isArray(workspace.reports) ? workspace.reports : [],
+      createdAt: workspace.createdAt ?? Date.now(),
+    }
+    if (idx >= 0) list[idx] = next
+    else list.push(next)
+    return { previous, next }
+  })
+  const { previous, next } = result
   if (previous == null) {
     for (const cb of createListeners) {
       try { cb(next.id) } catch (err) { console.warn('workspace create listener failed:', err) }
@@ -281,24 +311,34 @@ function reportsSetEqual(a, b) {
 // list actually changed (so an attach + detach pair notifies both
 // the old owner and the new one); a no-op call (filename is already
 // where it should be) fires nothing.
-export function setReportWorkspace(filename, workspaceId) {
-  const list = readRaw()
-  const affected = new Set()
-  for (const w of list) {
-    if (!Array.isArray(w.reports)) w.reports = []
-    if (w.reports.includes(filename)) {
-      w.reports = w.reports.filter((r) => r !== filename)
-      affected.add(w.id)
+export async function setReportWorkspace(filename, workspaceId) {
+  const { affected, snapshot } = await mutateWorkspaces((list) => {
+    const aff = new Set()
+    for (const w of list) {
+      if (!Array.isArray(w.reports)) w.reports = []
+      if (w.reports.includes(filename)) {
+        w.reports = w.reports.filter((r) => r !== filename)
+        aff.add(w.id)
+      }
     }
-  }
-  if (workspaceId) {
-    const target = list.find((w) => w.id === workspaceId)
-    if (target && !target.reports.includes(filename)) {
-      target.reports.push(filename)
-      affected.add(target.id)
+    if (workspaceId) {
+      const target = list.find((w) => w.id === workspaceId)
+      if (target && !target.reports.includes(filename)) {
+        target.reports.push(filename)
+        aff.add(target.id)
+      }
     }
-  }
-  writeRaw(list)
+    // Snapshot the affected workspaces' post-mutation state so the
+    // post-lock listener-fire path can call markObservedFor against
+    // the canonical state — without holding the lock for the
+    // listener fires.
+    const snap = new Map()
+    for (const id of aff) {
+      const ws = list.find((w) => w.id === id)
+      if (ws) snap.set(id, ws)
+    }
+    return { affected: aff, snapshot: snap }
+  })
   for (const id of affected) {
     for (const cb of reportMembershipListeners) {
       try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
@@ -308,7 +348,7 @@ export function setReportWorkspace(filename, workspaceId) {
     // M4 round-8: only mark workspaces THIS call modified — sibling
     // changes to OTHER workspaces in the same blob stay unmarked
     // and still get a listener fire on the next handler run.
-    const ws = list.find((w) => w.id === id)
+    const ws = snapshot.get(id)
     if (ws) markObservedFor(ws)
   }
 }

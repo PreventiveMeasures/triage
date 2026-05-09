@@ -105,7 +105,7 @@ describe('migrateLegacyFilenames', () => {
     const target = legacy.replace(/\.deepseek$/u, '.md')
     await saveFile(legacy, '# DeepSec\n\n## HIGH (1)\n\n### F\n')
     const wsId = `ws-${Date.now()}-${nameCounter}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: [legacy] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: [legacy] })
 
     await freshMigrate()
 
@@ -114,7 +114,7 @@ describe('migrateLegacyFilenames', () => {
     assert.equal(ws.reports.includes(legacy), false, 'legacy name removed from workspace.reports')
     assert.equal(ws.reports.includes(target), true, 'renamed name added to workspace.reports')
 
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('rewrites orphan workspace references even when the OPFS file is absent', async () => {
@@ -126,7 +126,7 @@ describe('migrateLegacyFilenames', () => {
     const legacy = `orphan-${Date.now()}-${++nameCounter}.deepseek`
     const target = legacy.replace(/\.deepseek$/u, '.md')
     const wsId = `ws-orphan-${Date.now()}-${nameCounter}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: [legacy] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: [legacy] })
 
     await freshMigrate()
 
@@ -134,7 +134,7 @@ describe('migrateLegacyFilenames', () => {
     assert.equal(ws.reports.includes(legacy), false, 'orphan legacy reference cleared')
     assert.equal(ws.reports.includes(target), true, 'orphan rewritten to .md')
 
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('updates the last-viewed-file pointer', async () => {

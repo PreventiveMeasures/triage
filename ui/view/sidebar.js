@@ -294,7 +294,7 @@ export async function renderSidebar() {
 // match because a workspace header is itself a `<li>` that contains
 // no `data-file` — but the add button still bubbles to the same
 // listener.
-sidebar.addEventListener('click', (e) => {
+sidebar.addEventListener('click', async (e) => {
   // BUNDLES header → switch the main view to the bundles list. Only
   // fires when bundles exist (the header is suppressed otherwise).
   // The bundles list lives off `state.bundles`, freshly populated by
@@ -318,7 +318,7 @@ sidebar.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="new-workspace"]')) {
     const name = window.prompt('Workspace name')
     if (name && name.trim()) {
-      createWorkspace(name)
+      await createWorkspace(name)
       renderSidebar()
     }
     return
@@ -503,10 +503,10 @@ sidebar.addEventListener('dblclick', (e) => {
   input.focus()
   input.select()
   let done = false
-  const finish = (commit) => {
+  const finish = async (commit) => {
     if (done) return
     done = true
-    if (commit) renameWorkspace(id, input.value)
+    if (commit) await renameWorkspace(id, input.value)
     renderSidebar()
   }
   input.addEventListener('keydown', (ev) => {
@@ -583,7 +583,7 @@ sidebar.addEventListener('dragleave', (e) => {
   if (!sidebar.contains(e.relatedTarget)) clearDragOver()
 })
 
-sidebar.addEventListener('drop', (e) => {
+sidebar.addEventListener('drop', async (e) => {
   if (!e.dataTransfer.types.includes(REPORT_DT)) return
   const filename = e.dataTransfer.getData(REPORT_DT)
   if (!filename) {
@@ -595,6 +595,6 @@ sidebar.addEventListener('drop', (e) => {
   clearDragOver()
   const wsTarget = e.target.closest('[data-workspace-id]')
   const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
-  setReportWorkspace(filename, targetId)
+  await setReportWorkspace(filename, targetId)
   renderSidebar()
 })

@@ -33,7 +33,7 @@ export function migrateLegacyFilenames() {
 
 async function run() {
   // Wait for triage to finish loading before mutating workspace
-  // membership. The migration's `setReportWorkspace(...)` calls fire
+  // membership. The migration's `await setReportWorkspace(...)` calls fire
   // `onReportMembershipChanged`, which the sync layer's hydration
   // path treats as "newly attached" — `hydrateStateFromBaseState`
   // would gap-fill from chain baseState BEFORE state.* loaded the
@@ -110,8 +110,8 @@ async function run() {
     for (const r of w.reports) {
       if (!r.toLowerCase().endsWith('.deepseek')) continue
       const renamed = r.slice(0, -'.deepseek'.length) + '.md'
-      setReportWorkspace(r, null)
-      setReportWorkspace(renamed, w.id)
+      await setReportWorkspace(r, null)
+      await setReportWorkspace(renamed, w.id)
     }
   }
 }

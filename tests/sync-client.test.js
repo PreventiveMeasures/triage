@@ -141,7 +141,7 @@ describe('triage-sync client', () => {
     const id = `ws-${Math.random().toString(36).slice(2, 10)}`
     // Workspace must list the synthetic report so buildWorkspaceIds
     // scopes session.ids to those findings.
-    upsertWorkspace({ id, name: id, privateKey: randomBase64(), reports: [fileName] })
+    await upsertWorkspace({ id, name: id, privateKey: randomBase64(), reports: [fileName] })
     triageSync.openSession(id)
     triageSync.setServerUrl(serverUrl)
     await waitFor(statusOnline, 'sync online')
@@ -168,7 +168,7 @@ describe('triage-sync client', () => {
     assert.equal(state.markers.get('finding-A'), 'red')
     assert.equal(state.markers.get('finding-B'), 'green')
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('merges a remote change with an in-progress local edit', async () => {
@@ -190,7 +190,7 @@ describe('triage-sync client', () => {
     assert.equal(state.markers.get('finding-A'), 'red', 'local edit survived')
     assert.equal(state.markers.get('finding-B'), 'green')
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('local-wins on a conflicting id (same finding edited both sides)', async () => {
@@ -222,7 +222,7 @@ describe('triage-sync client', () => {
     // collapse to identity and the user would see the remote value.
     assert.equal(state.markers.get('finding-A'), 'amber')
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('restores baseRevision + baseState across closeSession / openSession', async () => {
@@ -246,7 +246,7 @@ describe('triage-sync client', () => {
     )
     assert.equal(state.markers.get('finding-A'), 'red', 'triage value preserved')
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('skips a revision whose id does not match its content hash', async () => {
@@ -256,7 +256,7 @@ describe('triage-sync client', () => {
     // before signature verification.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
@@ -310,14 +310,14 @@ describe('triage-sync client', () => {
     )
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
   it('skips a revision whose signature does not verify', async () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
@@ -352,7 +352,7 @@ describe('triage-sync client', () => {
     assert.equal(state.markers.get('finding-A'), undefined, 'bad-sig revision did not poison state')
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -366,7 +366,7 @@ describe('triage-sync client', () => {
     // both rounds (otherwise the user loses every triage they made).
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     state.markers.set('finding-A', 'green')
@@ -412,7 +412,7 @@ describe('triage-sync client', () => {
     assert.equal(triageSync.sessionInfo(wsId).baseRevision, null)
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -424,7 +424,7 @@ describe('triage-sync client', () => {
     // never falls through to the full state-push reset.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
@@ -481,7 +481,7 @@ describe('triage-sync client', () => {
     assert.notEqual(triageSync.sessionInfo(wsId).baseRevision, null, 'baseRevision set to valid id, not nuked')
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -491,7 +491,7 @@ describe('triage-sync client', () => {
     // pong-timeout and close the socket; status flips to `offline`
     // and the reconnect path takes over.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
 
@@ -524,7 +524,7 @@ describe('triage-sync client', () => {
     setHeartbeatTimings({ pingMs: 15_000, pongMs: 5_000 })
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -536,7 +536,7 @@ describe('triage-sync client', () => {
     // the heartbeat must still fire and close a dead socket so the
     // reconnect path takes over.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
 
@@ -565,7 +565,7 @@ describe('triage-sync client', () => {
     setHeartbeatTimings({ pingMs: 15_000, pongMs: 5_000 })
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -594,7 +594,7 @@ describe('triage-sync client', () => {
     assert.equal(state.markers.get('finding-A'), 'blue', 'final state visible after keyframe')
     setKeyframeInterval(100)
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('a fresh client subscribed with from=null catches up via the keyframe (no rev_A)', async () => {
@@ -641,7 +641,7 @@ describe('triage-sync client', () => {
     )
     setKeyframeInterval(100)
     triageSync.closeSession()
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('two open sessions sync independently over one socket', async () => {
@@ -654,8 +654,8 @@ describe('triage-sync client', () => {
     state.reports.push({ fileName: 'B.md', groups: [[ { id: 'finding-in-B', _id: 'finding-in-B' } ]] })
     const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
     const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
-    upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
+    await upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
 
     triageSync.openSession(wsA)
     triageSync.openSession(wsB)
@@ -689,8 +689,8 @@ describe('triage-sync client', () => {
 
     triageSync.closeSession(wsA)
     triageSync.closeSession(wsB)
-    deleteWorkspace(wsA)
-    deleteWorkspace(wsB)
+    await deleteWorkspace(wsA)
+    await deleteWorkspace(wsB)
   })
 
   it('closeSession(id) only closes that one; the other keeps syncing', async () => {
@@ -701,8 +701,8 @@ describe('triage-sync client', () => {
     state.reports.push({ fileName: 'B.md', groups: [[ { id: 'fB', _id: 'fB' } ]] })
     const wsA = `ws-A-${Math.random().toString(36).slice(2, 8)}`
     const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
-    upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
+    await upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: ['B.md'] })
 
     triageSync.openSession(wsA)
     triageSync.openSession(wsB)
@@ -718,8 +718,8 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsB), 'B acked after closing A')
 
     triageSync.closeSession(wsB)
-    deleteWorkspace(wsA)
-    deleteWorkspace(wsB)
+    await deleteWorkspace(wsA)
+    await deleteWorkspace(wsB)
   })
 
   it('propagates a chain update across workspaces sharing a finding-id', async () => {
@@ -744,8 +744,8 @@ describe('triage-sync client', () => {
     const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
     const seedA = randomBase64()
     const seedB = randomBase64()
-    upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
-    upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
+    await upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
 
     triageSync.openSession(wsA)
     triageSync.openSession(wsB)
@@ -795,8 +795,8 @@ describe('triage-sync client', () => {
 
     triageSync.closeSession(wsA)
     triageSync.closeSession(wsB)
-    deleteWorkspace(wsA)
-    deleteWorkspace(wsB)
+    await deleteWorkspace(wsA)
+    await deleteWorkspace(wsB)
   })
 
   it('out-of-workspace ids land in baseState but not in state.* (per-workspace scope contract)', async () => {
@@ -825,7 +825,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -866,7 +866,7 @@ describe('triage-sync client', () => {
     assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C in baseState (OOS but stored)')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('attaching R1 to the workspace hydrates state.* with B from baseState (C stays OOS)', async () => {
@@ -888,7 +888,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -914,7 +914,7 @@ describe('triage-sync client', () => {
     // and hydrates state.* from baseState for the newly-in-scope
     // ids — only B in this case (A was already in scope, C still
     // not in any of W's reports).
-    setReportWorkspace('R1.md', wsId)
+    await setReportWorkspace('R1.md', wsId)
 
     assert.equal(state.markers.get('finding-A'), 'red', 'A still set')
     assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from baseState')
@@ -926,7 +926,7 @@ describe('triage-sync client', () => {
     assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C remains in baseState after attach')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('attaching a different report containing only B (not C) hydrates B from baseState', async () => {
@@ -947,7 +947,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -964,13 +964,13 @@ describe('triage-sync client', () => {
     })
     await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
 
-    setReportWorkspace('R3.md', wsId)
+    await setReportWorkspace('R3.md', wsId)
 
     assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from R3')
     assert.equal(state.markers.get('finding-C'), undefined, 'C still OOS')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration on attach with conflict resolver = "imported" overwrites local + propagates to chain', async () => {
@@ -993,7 +993,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1021,7 +1021,7 @@ describe('triage-sync client', () => {
       return decisions
     })
     try {
-      setReportWorkspace('R1.md', wsId)
+      await setReportWorkspace('R1.md', wsId)
       // The listener's IIFE is async — wait for the resolver to
       // run AND the resulting saveTriage round-trip to land.
       await waitFor(() => resolverCalled, 'conflict resolver called')
@@ -1038,7 +1038,7 @@ describe('triage-sync client', () => {
     }
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration on attach with conflict resolver = "local" keeps local + propagates local-wins to chain', async () => {
@@ -1060,7 +1060,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1092,7 +1092,7 @@ describe('triage-sync client', () => {
       return decisions
     })
     try {
-      setReportWorkspace('R1.md', wsId)
+      await setReportWorkspace('R1.md', wsId)
       await waitFor(() => resolverCalled, 'conflict resolver called')
       // Local 'green' stays; chain advances with the local-wins value.
       await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
@@ -1102,7 +1102,7 @@ describe('triage-sync client', () => {
     }
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration on attach with cancelled resolver (returns null) keeps local everywhere', async () => {
@@ -1121,7 +1121,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1149,7 +1149,7 @@ describe('triage-sync client', () => {
       return null
     })
     try {
-      setReportWorkspace('R1.md', wsId)
+      await setReportWorkspace('R1.md', wsId)
       await waitFor(() => resolverCalled, 'resolver invoked')
       await waitFor(() => settledAfterAck(wsId), 'save settled')
       assert.equal(state.markers.get('finding-B'), 'green', 'local kept on cancel')
@@ -1158,7 +1158,7 @@ describe('triage-sync client', () => {
     }
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration on attach without a registered resolver falls back to gap-only (local-wins)', async () => {
@@ -1179,7 +1179,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1201,12 +1201,12 @@ describe('triage-sync client', () => {
     )
     state.markers.set('finding-B', 'green')
 
-    setReportWorkspace('R1.md', wsId)
+    await setReportWorkspace('R1.md', wsId)
     await waitFor(() => settledAfterAck(wsId), 'save settled')
     assert.equal(state.markers.get('finding-B'), 'green', 'gap-only kept local')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration on attach is gap-only: pre-existing local triage value wins, propagates to chain', async () => {
@@ -1231,7 +1231,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1252,7 +1252,7 @@ describe('triage-sync client', () => {
     // restored from the deepview.triage blob at module load).
     state.markers.set('finding-B', 'green')
 
-    setReportWorkspace('R1.md', wsId)
+    await setReportWorkspace('R1.md', wsId)
 
     // Hydration is gap-only — local 'green' is preserved over the
     // chain's 'blue'.
@@ -1289,7 +1289,7 @@ describe('triage-sync client', () => {
     reader.close()
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('attaching a report containing a peer-triaged id does not wipe the chain on the next save', async () => {
@@ -1316,7 +1316,7 @@ describe('triage-sync client', () => {
       groups: [[ { id: 'known', _id: 'known' } ]],
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
 
     // Pre-seed baseState as if a peer's chain had landed for an
     // id this client has no loaded report for. baseRevision must
@@ -1351,7 +1351,7 @@ describe('triage-sync client', () => {
       fileName: 'B.md',
       groups: [[ { id: 'unknown-X', _id: 'unknown-X' } ]],
     })
-    setReportWorkspace('B.md', wsId)
+    await setReportWorkspace('B.md', wsId)
     assert.equal(state.markers.get('unknown-X'), 'red', 'state.* hydrated for newly-in-scope id')
     assert.equal(state.triageState.get('unknown-X'), 'fixed', 'triageState hydrated too')
 
@@ -1369,7 +1369,7 @@ describe('triage-sync client', () => {
     assert.equal(state.triageState.get('unknown-X'), 'fixed', 'unknown-X triage preserved after save')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('regular save does not delete triage for ids the client does not have a report for', async () => {
@@ -1389,7 +1389,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1460,7 +1460,7 @@ describe('triage-sync client', () => {
     reader.close()
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('keyframe preserves triage for ids the client does not have a report for', async () => {
@@ -1482,7 +1482,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1557,7 +1557,7 @@ describe('triage-sync client', () => {
 
     setKeyframeInterval(100)
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('refreshes session.ids when a report is added to the workspace mid-session', async () => {
@@ -1576,7 +1576,7 @@ describe('triage-sync client', () => {
       groups: [[ { id: 'in-A', _id: 'in-A' } ]],
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1595,7 +1595,7 @@ describe('triage-sync client', () => {
       fileName: 'B.md',
       groups: [[ { id: 'in-B', _id: 'in-B' } ]],
     })
-    setReportWorkspace('B.md', wsId)
+    await setReportWorkspace('B.md', wsId)
 
     // Edit the new report's finding. Without the refresh, the
     // session's stale `ids` would skip 'in-B' inside
@@ -1642,7 +1642,7 @@ describe('triage-sync client', () => {
     reader.close()
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('chain arriving for a closed session is dropped without touching state.*', async () => {
@@ -1662,7 +1662,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
     const key = await cryptoMod.deriveSessionKey(seed)
     const { privateKey: signKey, publicKeyB64: workspaceTag } = await cryptoMod.deriveSigningKeypair(seed, wsId)
 
@@ -1704,7 +1704,7 @@ describe('triage-sync client', () => {
     assert.equal(state.markers.get('finding-X'), undefined, 'closed-session chain did not pollute state.*')
 
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -1722,7 +1722,7 @@ describe('triage-sync client', () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     // Malformed privateKey: not 32 bytes after base64 decode.
     // deriveSessionKey throws inside the openSession IIFE.
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
 
     const seenStatuses = []
     const off = triageSync.onStatusChange((s) => seenStatuses.push(s))
@@ -1752,7 +1752,7 @@ describe('triage-sync client', () => {
     off()
     triageSync.closeSession(wsId)
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('dismissError re-runs key derivation when keys never landed', async () => {
@@ -1769,7 +1769,7 @@ describe('triage-sync client', () => {
     state.reports.length = 0
     state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -1784,7 +1784,7 @@ describe('triage-sync client', () => {
 
     // User "fixes" the workspace (e.g. re-imports it with a
     // correct-length key). Same workspace id, fresh privateKey.
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
 
     triageSync.dismissError(wsId)
     // Without the fix, workspaceTag would stay null and the session
@@ -1798,7 +1798,7 @@ describe('triage-sync client', () => {
     assert.equal(triageSync.sessionInfo(wsId).error, null)
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('triage state transitions (fixed/invalid/deleted) round-trip through the chain', async () => {
@@ -1855,7 +1855,7 @@ describe('triage-sync client', () => {
     reader.close()
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('deleteWorkspace tears down the live session and drops persisted base', async () => {
@@ -1873,7 +1873,7 @@ describe('triage-sync client', () => {
     // triage-sync at module init: in-memory session is dropped AND
     // the persisted-base entry is wiped, so the same id can't get
     // reanimated from a stale chain on the next page load.
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
 
     // The in-memory teardown is synchronous (sessions.delete) but
     // the persisted-base wipe goes through navigator.locks.request,
@@ -1905,7 +1905,7 @@ describe('triage-sync client', () => {
     assert.ok(oldPersisted?.baseRevision, 'persisted base existed under old key')
 
     // Rotate the workspace's privateKey via upsertWorkspace.
-    upsertWorkspace({
+    await upsertWorkspace({
       id: wsId,
       name: wsId,
       privateKey: randomBase64(),
@@ -1951,7 +1951,7 @@ describe('triage-sync client', () => {
     assert.notEqual(newPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base reset (or replaced) for new identity')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('cross-tab workspace deletion (storage event) tears down the local session', async () => {
@@ -2012,7 +2012,7 @@ describe('triage-sync client', () => {
     await waitFor(statusOnline, 'online under new identity')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('cross-tab report membership change (storage event) refreshes session.ids', async () => {
@@ -2033,7 +2033,7 @@ describe('triage-sync client', () => {
       groups: [[ { id: 'in-B', _id: 'in-B' } ]],
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md'] })
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
     await waitFor(statusOnline, 'online')
@@ -2054,7 +2054,7 @@ describe('triage-sync client', () => {
     )
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('hydration conflict resolver: M-2 user edit during dialog wins over imported decision', async () => {
@@ -2078,7 +2078,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['R0.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -2109,7 +2109,7 @@ describe('triage-sync client', () => {
       return new Promise((resolve) => { dialogResolve = resolve })
     })
     try {
-      setReportWorkspace('R1.md', wsId)
+      await setReportWorkspace('R1.md', wsId)
       await waitFor(() => resolverArgs != null, 'resolver invoked')
       // While the dialog is open, user re-edits state.markers.
       // (Imagine the user clicked through to that finding's row
@@ -2131,7 +2131,7 @@ describe('triage-sync client', () => {
     }
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('upsertWorkspace with the same privateKey does NOT tear down the session', async () => {
@@ -2150,7 +2150,7 @@ describe('triage-sync client', () => {
     // Re-import with the SAME privateKey.
     const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
     const samePrivateKey = persisted.find((w) => w.id === wsId).privateKey
-    upsertWorkspace({
+    await upsertWorkspace({
       id: wsId,
       name: wsId,
       privateKey: samePrivateKey,
@@ -2165,7 +2165,7 @@ describe('triage-sync client', () => {
     assert.equal(stillPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base unchanged')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('upsertWorkspace with a different reports list fires the membership listener', async () => {
@@ -2188,7 +2188,7 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md'] })
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
     await waitFor(statusOnline, 'online')
@@ -2196,7 +2196,7 @@ describe('triage-sync client', () => {
 
     // Re-import via upsertWorkspace — adds B.md without going
     // through setReportWorkspace.
-    upsertWorkspace({
+    await upsertWorkspace({
       id: wsId,
       name: wsId,
       privateKey: seed,
@@ -2209,7 +2209,7 @@ describe('triage-sync client', () => {
     )
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('upsertWorkspace with reports reordered (set-equal) does NOT fire membership listener', async () => {
@@ -2232,13 +2232,13 @@ describe('triage-sync client', () => {
     })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md', 'B.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['A.md', 'B.md'] })
 
     let firedFor = null
     const off = onReportMembershipChanged((id) => { if (id === wsId) firedFor = id })
     try {
       // Re-import with the SAME set, different order.
-      upsertWorkspace({
+      await upsertWorkspace({
         id: wsId,
         name: wsId,
         privateKey: seed,
@@ -2252,7 +2252,7 @@ describe('triage-sync client', () => {
       off()
     }
 
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('cross-tab workspace creation fires onWorkspaceCreated', async () => {
@@ -2283,7 +2283,7 @@ describe('triage-sync client', () => {
       off()
     }
 
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('chain whose first revision is bad triggers resync and discards the rest of the chain', async () => {
@@ -2297,7 +2297,7 @@ describe('triage-sync client', () => {
     // to trust server-claimed unverified ids.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
@@ -2340,7 +2340,7 @@ describe('triage-sync client', () => {
 
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -2357,7 +2357,7 @@ describe('triage-sync client', () => {
     // baseState with {} so divergent content gets cleared.
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     const seed = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
     const key = await cryptoMod.deriveSessionKey(seed)
@@ -2406,7 +2406,7 @@ describe('triage-sync client', () => {
 
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
     await relay.close()
   })
 
@@ -2446,7 +2446,7 @@ describe('triage-sync client', () => {
     reader.close()
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('three workspaces sharing a finding-id all converge after a chain on one', async () => {
@@ -2462,9 +2462,9 @@ describe('triage-sync client', () => {
     state.reports.push({ fileName: 'C.md', groups: [[ { id: 'shared', _id: 'shared' } ]] })
     const ids = ['A', 'B', 'C'].map((suffix) => `ws-${suffix}-${Math.random().toString(36).slice(2, 6)}`)
     const seeds = [randomBase64(), randomBase64(), randomBase64()]
-    upsertWorkspace({ id: ids[0], name: ids[0], privateKey: seeds[0], reports: ['A.md'] })
-    upsertWorkspace({ id: ids[1], name: ids[1], privateKey: seeds[1], reports: ['B.md'] })
-    upsertWorkspace({ id: ids[2], name: ids[2], privateKey: seeds[2], reports: ['C.md'] })
+    await upsertWorkspace({ id: ids[0], name: ids[0], privateKey: seeds[0], reports: ['A.md'] })
+    await upsertWorkspace({ id: ids[1], name: ids[1], privateKey: seeds[1], reports: ['B.md'] })
+    await upsertWorkspace({ id: ids[2], name: ids[2], privateKey: seeds[2], reports: ['C.md'] })
 
     for (const id of ids) triageSync.openSession(id)
     triageSync.setServerUrl(serverUrl)
@@ -2493,7 +2493,7 @@ describe('triage-sync client', () => {
     }
 
     for (const id of ids) triageSync.closeSession(id)
-    for (const id of ids) deleteWorkspace(id)
+    for (const id of ids) await deleteWorkspace(id)
   })
 
   it('setServerUrl mid-save reaches a healthy state on the new server', async () => {
@@ -2548,7 +2548,7 @@ describe('triage-sync client', () => {
       assert.equal(state.markers.get('finding-X'), 'blue')
 
       triageSync.closeSession(wsId)
-      deleteWorkspace(wsId)
+      await deleteWorkspace(wsId)
     } finally {
       triageSync.setServerUrl(serverUrl)
       serverProc2.kill('SIGTERM')
@@ -2603,7 +2603,7 @@ describe('triage-sync client', () => {
     )
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('two sessions sharing a finding-id receive concurrent chains without a kick storm', async () => {
@@ -2632,8 +2632,8 @@ describe('triage-sync client', () => {
     const wsB = `ws-B-${Math.random().toString(36).slice(2, 8)}`
     const seedA = randomBase64()
     const seedB = randomBase64()
-    upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
-    upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
+    await upsertWorkspace({ id: wsA, name: wsA, privateKey: seedA, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsB, name: wsB, privateKey: seedB, reports: ['B.md'] })
 
     triageSync.openSession(wsA)
     triageSync.openSession(wsB)
@@ -2676,8 +2676,8 @@ describe('triage-sync client', () => {
 
     triageSync.closeSession(wsA)
     triageSync.closeSession(wsB)
-    deleteWorkspace(wsA)
-    deleteWorkspace(wsB)
+    await deleteWorkspace(wsA)
+    await deleteWorkspace(wsB)
   })
 
   it('setEnabled(false) keeps the socket closed across the reconnect window', async () => {
@@ -2708,7 +2708,7 @@ describe('triage-sync client', () => {
     triageSync.setEnabled(true)
     await waitFor(statusOnline, 'reconnected after re-enable')
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('setEnabled(false) clears `encrypting` so re-enable doesn\'t needlessly raise pendingSave', async () => {
@@ -2738,7 +2738,7 @@ describe('triage-sync client', () => {
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'follow-up ack after toggle')
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('setForcedOff(true) takes the session offline; setForcedOff(false) reconnects', async () => {
@@ -2756,7 +2756,7 @@ describe('triage-sync client', () => {
     await waitFor(statusOnline, 'reconnected after setForcedOff(false)')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('ignoredReports round-trips through the sync chain (delivery + apply-side mutex)', async () => {
@@ -2813,7 +2813,7 @@ describe('triage-sync client', () => {
     )
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('dismissError racing initial key derivation does not stale-clobber the new keys', async () => {
@@ -2832,7 +2832,7 @@ describe('triage-sync client', () => {
     state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed1 = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -2853,7 +2853,7 @@ describe('triage-sync client', () => {
     // listener tears down + reopens the session, kicking a fresh
     // derivation under the new key.
     const seed2 = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
     await waitFor(
       () => triageSync.sessionInfo(wsId)?.workspaceTag != null
         && triageSync.sessionInfo(wsId).workspaceTag !== tagOld,
@@ -2867,7 +2867,7 @@ describe('triage-sync client', () => {
     assert.equal(tagNew, expectedNewTag, 'workspaceTag matches the NEW key')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('savesSinceKeyframe is capped at keyframeInterval (audit L3 round-6)', async () => {
@@ -2906,7 +2906,7 @@ describe('triage-sync client', () => {
 
     setKeyframeInterval(100)
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('privateKey rotation disarms old session keys synchronously (audit L2 round-6)', async () => {
@@ -2924,7 +2924,7 @@ describe('triage-sync client', () => {
     state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const seed1 = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed1, reports: ['A.md'] })
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -2938,7 +2938,7 @@ describe('triage-sync client', () => {
     // upsertWorkspace; the keys-null mutation is synchronous, the
     // dropPersistedSession + openSession run in an awaited IIFE.
     const seed2 = randomBase64()
-    upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed2, reports: ['A.md'] })
     // RIGHT after upsertWorkspace returns, the OLD session entry
     // should still be present but with nulled keys / tag.
     const mid = triageSync.sessionInfo(wsId)
@@ -2957,7 +2957,7 @@ describe('triage-sync client', () => {
     assert.equal(tagNew, expectedNewTag, 'workspaceTag matches the NEW key')
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 
   it('persistSession reflects the post-rebase baseRevision (audit M2 round-6)', async () => {
@@ -3009,7 +3009,7 @@ describe('triage-sync client', () => {
     )
 
     triageSync.closeSession(wsId)
-    deleteWorkspace(wsId)
+    await deleteWorkspace(wsId)
   })
 })
 

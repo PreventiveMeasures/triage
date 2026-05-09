@@ -71,7 +71,7 @@ export async function buildWorkspaceExportPayload(workspace) {
       // next export is clean and the next workspace-import on
       // another machine doesn't re-resurrect a name that points at
       // nothing.
-      setReportWorkspace(name, null)
+      await setReportWorkspace(name, null)
       continue
     }
     reports.push({ name, content })

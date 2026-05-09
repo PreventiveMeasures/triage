@@ -262,7 +262,7 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     }
   }
 
-  const ws = upsertWorkspace({
+  const ws = await upsertWorkspace({
     id: data.workspace.id,
     name: data.workspace.name,
     privateKey: data.workspace.privateKey,

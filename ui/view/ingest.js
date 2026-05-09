@@ -294,7 +294,7 @@ export async function deleteCurrent() {
   ++loadGen
   const name = state.currentFile
   await deleteFile(name)
-  setReportWorkspace(name, null)
+  await setReportWorkspace(name, null)
   removeCount(name)
   saveRepoUrlFor(name, '')
   state.currentFile = null
