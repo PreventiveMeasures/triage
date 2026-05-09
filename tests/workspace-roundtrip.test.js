@@ -7,36 +7,13 @@
 // without spinning up a browser.
 //
 // Like sync-client.test.js this needs `Uint8Array.fromBase64` /
-// `.toBase64` (Node 24+ behind `--js-base-64`); the polyfill below
-// fills those in via Buffer when running under older Node so the
-// suite is at least executable.
+// `.toBase64` (Node 24+ behind `--js-base-64`). `npm test` already
+// passes the flag; running this file directly needs `node
+// --js-base-64 --test tests/workspace-roundtrip.test.js`.
 
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { before, beforeEach, describe, it } from 'node:test'
-
-// Polyfill the stage-3 base64 methods when running on a Node that
-// doesn't ship them yet (anything pre-24, or 24 without
-// `--js-base-64`). The runtime spec is "method on Uint8Array.prototype
-// / static on Uint8Array", so the test polyfill mirrors that even
-// though it tickles `no-extend-native` — the rule's there to deter
-// production patching, not stage-3 spec polyfills in tests.
-/* eslint-disable no-extend-native */
-if (typeof Uint8Array.prototype.toBase64 !== 'function') {
-  Object.defineProperty(Uint8Array.prototype, 'toBase64', {
-    value: function toBase64() {
-      return Buffer.from(this.buffer, this.byteOffset, this.byteLength).toString('base64')
-    },
-    writable: true,
-    configurable: true,
-  })
-}
-if (typeof Uint8Array.fromBase64 !== 'function') {
-  Uint8Array.fromBase64 = function fromBase64(s) {
-    return new Uint8Array(Buffer.from(s, 'base64'))
-  }
-}
-/* eslint-enable no-extend-native */
 
 function createLocalStorage() {
   const store = new Map()
