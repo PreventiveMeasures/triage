@@ -660,4 +660,63 @@ describe('triage-sync server', () => {
     assert.equal(broadcast.revisions[0].id, second.id)
     a.ws.close(); b.ws.close()
   })
+
+  it('drops a binary frame silently (wire protocol is text-only)', async () => {
+    // A native `WebSocket.send(Uint8Array)` produces a binary frame.
+    // The handler now gates on `isBinary` and skips before touching
+    // the JSON path; the socket stays usable for subsequent text
+    // frames (verified via a follow-up ping/pong).
+    const c = await connect(serverUrl)
+    c.ws.send(new Uint8Array([0x7b, 0x7d]))
+    await c.expectSilent(150)
+    c.ws.send(JSON.stringify({ type: 'ping' }))
+    const pong = await c.recv((m) => m.type === 'pong')
+    assert.equal(pong.type, 'pong')
+    c.ws.close()
+  })
+})
+
+// Standalone shutdown test: spawns its own server so the SIGTERM
+// doesn't take down the suite-wide instance the other tests share.
+describe('triage-sync server: graceful shutdown', () => {
+  it('sends close code 1001 (going away) to live clients on SIGTERM', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
+    const port = 19000 + Math.floor(Math.random() * 1_000)
+    const url = `ws://127.0.0.1:${port}`
+    const proc = spawn(process.execPath, ['server/index.js'], {
+      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    try {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
+        proc.stdout.on('data', (d) => {
+          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
+        })
+        proc.stderr.on('data', () => {})
+      })
+      const ws = new WebSocket(url)
+      await new Promise((resolve, reject) => {
+        ws.addEventListener('open', resolve, { once: true })
+        ws.addEventListener('error', (e) => reject(e.error ?? new Error('ws error')), { once: true })
+      })
+      // Capture the close event BEFORE issuing SIGTERM so the
+      // 1001 frame the server sends doesn't race past us.
+      const closePromise = new Promise((resolve) => {
+        ws.addEventListener('close', resolve, { once: true })
+      })
+      proc.kill('SIGTERM')
+      const closeEvent = await closePromise
+      // 1001 = going away; the server's `socket.close(1001, …)`
+      // path. A network drop would surface as 1006 (abnormal
+      // closure) or 1005 (no status); pin the explicit 1001 so a
+      // regression that drops the close-frame loop would surface
+      // as a code mismatch here.
+      assert.equal(closeEvent.code, 1001, 'graceful shutdown emits 1001')
+      await new Promise((resolve) => { proc.once('exit', resolve) })
+    } finally {
+      if (proc.exitCode == null) proc.kill('SIGKILL')
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

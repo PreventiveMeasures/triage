@@ -28,6 +28,7 @@
 import { WebSocketServer } from 'ws'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { decodeUtf8 } from '../common/utf8.js'
 import { chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.js'
 import { computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscribeSig } from './sign.js'
 
@@ -277,7 +278,7 @@ let shuttingDown = false
 
 wss.on('connection', (socket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
-  socket.on('message', (data) => {
+  socket.on('message', (data, isBinary) => {
     // Drop new work once shutdown started — `wss.close()` stops new
     // CONNECTIONS but already-open sockets can still send messages.
     // Without this gate a message arriving between `wss.close()`
@@ -285,8 +286,19 @@ wss.on('connection', (socket, req) => {
     // that's NOT in the snapshot, then resume against the just-
     // closed DB and throw inside `insertRevision`. Audit round-9.
     if (shuttingDown) return
+    // Wire protocol is JSON over text frames. A binary frame is
+    // either a buggy client or someone probing — drop without
+    // attempting to interpret it as text.
+    if (isBinary) return
     let msg
-    try { msg = JSON.parse(data.toString()) } catch { return }
+    try {
+      // `decodeUtf8` is fatal on invalid UTF-8 (vs `Buffer.toString`
+      // which silently substitutes U+FFFD). The substitution path
+      // would let mangled bytes pass JSON.parse only to fail
+      // signature verification deeper in the handler — wasted work
+      // and noisier logs. Fail at the gate.
+      msg = JSON.parse(decodeUtf8(data))
+    } catch { return }
     if (!msg || typeof msg !== 'object') return
     const handler = (async () => {
       try {
@@ -333,8 +345,20 @@ async function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
   console.log('Shutting down…')
+  // Send a 1001 (going away) close frame to every open socket BEFORE
+  // shutting the listener. Lets clients distinguish a server-initiated
+  // graceful shutdown from a network drop, so they can skip their
+  // reconnect backoff and reconnect on the operator's schedule
+  // instead. Fire-and-forget — `process.exit(0)` below would
+  // force-kill any in-progress flush anyway, and the close frame
+  // gets one tick to drain through the socket buffer before the
+  // following `await wss.close` resolves. The `try/catch` shrugs at
+  // sockets already in CLOSING / CLOSED.
+  for (const socket of wss.clients) {
+    try { socket.close(1001, 'Server shutting down') } catch {}
+  }
   // Stop accepting new connections; existing sockets stay open
-  // until their close handlers run.
+  // until their close handlers run (driven by the 1001 frames above).
   await new Promise((resolve) => { wss.close(() => resolve()) })
   // Drain in-flight handlers so a save that's mid-`await
   // verifySaveSigAndCanonical` finishes its insertRevision before
