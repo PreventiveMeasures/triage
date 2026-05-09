@@ -71,15 +71,27 @@ async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
   }
 }
 
-// Wrap encoder + verify in a try/catch — `encodeUtf8` throws on
-// non-string or lone-surrogate input (any of which on the wire is
-// already a hostile / malformed message), so we treat any error
-// in the canonical-payload path as a verification failure.
-export function verifySaveSig(msg) {
-  if (typeof msg.signature !== 'string') return false
+// Verify the save signature AND return the canonical bytes the
+// signature was checked against, so a follow-up step (computing the
+// content-addressed revision id) hashes the EXACT bytes the
+// signature covered. The previous shape — separate `verifySaveSig`
+// + `computeRevisionId`, each calling `canonicalSave` independently
+// — was correct today but brittle: a future divergence in either
+// helper would let the stored id drift from the signed bytes,
+// breaking the protocol's content-addressed-id contract for
+// peers who recompute. Returns `{ ok: false, canonical: null }`
+// on bad shape / bad sig; `{ ok: true, canonical: <bytes> }` on
+// success.
+//
+// `encodeUtf8` throws on non-string or lone-surrogate input (any of
+// which on the wire is already a hostile / malformed message), so
+// any error in the canonical-payload path is a verification failure.
+export async function verifySaveSigAndCanonical(msg) {
+  if (typeof msg.signature !== 'string') return { ok: false, canonical: null }
   let payload
-  try { payload = canonicalSave(msg) } catch { return false }
-  return verifyEd25519(msg.workspaceTag, payload, msg.signature)
+  try { payload = canonicalSave(msg) } catch { return { ok: false, canonical: null } }
+  const ok = await verifyEd25519(msg.workspaceTag, payload, msg.signature)
+  return ok ? { ok: true, canonical: payload } : { ok: false, canonical: null }
 }
 
 // Content-addressed revision id — SHA-256 of the canonical save
@@ -87,10 +99,10 @@ export function verifySaveSig(msg) {
 // Server doesn't get to assign ids: it derives the id from received
 // content and stores under that. Mirrors the client's
 // `computeRevisionId` so two ends always land on the same string.
-export async function computeRevisionId(msg) {
-  let payload
-  try { payload = canonicalSave(msg) } catch { return null }
-  const digest = await crypto.subtle.digest('SHA-256', payload)
+// Takes the canonical bytes returned by `verifySaveSigAndCanonical`
+// so the hash is over EXACTLY the bytes the signature covered.
+export async function computeRevisionIdFromCanonical(canonical) {
+  const digest = await crypto.subtle.digest('SHA-256', canonical)
   return Buffer.from(new Uint8Array(digest)).toString('base64url')
 }
 

@@ -352,10 +352,42 @@ describe('triage-sync server', () => {
     assert.equal(ack.id, save.id)
     assert.equal(state.revisions.length, 1)
     assert.equal(state.revisions[0].id, save.id)
-    // Wire flag is truthy (server stores 1, sends 1 — peers treat
-    // it as a boolean via `Boolean(rev.keyframe)`).
-    assert.ok(state.revisions[0].keyframe, 'broadcast carries keyframe flag')
+    // Wire flag is a STRICT boolean — matches the canonical-payload
+    // contract which uses `=== true`. Server stores 1 in SQLite but
+    // normalises on send so peers don't depend on `Boolean()`
+    // coercion at receive time.
+    assert.strictEqual(state.revisions[0].keyframe, true, 'broadcast keyframe is strict true')
     c1.ws.close(); c2.ws.close()
+  })
+
+  it('chain catch-up emits keyframe as a strict boolean', async () => {
+    // The chain-fetch path reads SQLite which stores keyframe as
+    // INTEGER (0/1). The server normalises every wire-out path
+    // through `chainForWire` so receivers see a boolean regardless
+    // of whether the revision came from a fresh broadcast or a
+    // catch-up read. Pin both shapes.
+    const { sk, tag } = await makeKp()
+    const a = await connect(serverUrl)
+    await subscribe(a, sk, tag)
+    const kf = await buildSave(sk, tag, null, 'kf', { keyframe: true })
+    a.ws.send(JSON.stringify(kf.msg))
+    await a.recv((m) => m.type === 'workspace-save-ack')
+    const followup = await buildSave(sk, tag, kf.id, 'next', { keyframe: false })
+    a.ws.send(JSON.stringify(followup.msg))
+    await a.recv((m) => m.type === 'workspace-save-ack')
+    // Fresh subscriber forces the chain-from-DB read path.
+    const b = await connect(serverUrl)
+    const subSig = b64url(new Uint8Array(
+      await crypto.subtle.sign({ name: 'Ed25519' }, sk, encodeUtf8([SUBSCRIBE_DOMAIN, tag, ''].join('\n'))),
+    ))
+    b.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: subSig }))
+    await b.recv((m) => m.type === 'workspace-subscribed')
+    const chain = await b.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    const kfRev = chain.revisions.find((r) => r.id === kf.id)
+    const followupRev = chain.revisions.find((r) => r.id === followup.id)
+    assert.strictEqual(kfRev.keyframe, true, 'chain keyframe is strict true')
+    assert.strictEqual(followupRev.keyframe, false, 'chain non-keyframe is strict false')
+    a.ws.close(); b.ws.close()
   })
 
   it('drops a save with a non-boolean truthy keyframe flag (signed under truthy canonical)', async () => {

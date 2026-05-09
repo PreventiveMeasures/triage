@@ -27,12 +27,16 @@
 
 import { WebSocketServer } from 'ws'
 import { argv, env } from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.js'
-import { computeRevisionId, verifySaveSig, verifySubscribeSig } from './sign.js'
+import { computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscribeSig } from './sign.js'
 
 const PORT = Number(env.PORT ?? 8765)
 const HOST = env.HOST ?? '127.0.0.1'
-const DB_PATH = env.DB_PATH ?? new URL('./data.db', import.meta.url).pathname
+// `fileURLToPath` decodes percent-escapes and handles non-ASCII path
+// segments correctly (the older `new URL(...).pathname` form left
+// `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
+const DB_PATH = env.DB_PATH ?? fileURLToPath(new URL('./data.db', import.meta.url))
 const DEBUG = env.DEBUG === '1'
 
 if (argv.includes('--help') || argv.includes('-h')) {
@@ -88,6 +92,18 @@ function send(socket, msg) {
   try { socket.send(JSON.stringify(msg)) } catch {}
 }
 
+// Normalise `keyframe` on outbound chain entries to a strict boolean.
+// SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
+// raw rows; the wire contract (and the canonical signing payload)
+// uses strict `=== true` to mark keyframes. Forwarding the integer
+// shape works only because every shipping client coerces via
+// `Boolean(rev.keyframe)` before reconstructing the canonical
+// bytes — fragile if a future client (or test harness) ever
+// strict-compares. Convert once on the send side.
+function chainForWire(revisions) {
+  return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 || r.keyframe === true }))
+}
+
 function broadcast(tag, msg, except) {
   const set = subscribers.get(tag)
   if (!set) return
@@ -109,18 +125,19 @@ async function handleSave(socket, msg) {
   if (typeof msg.workspaceTag !== 'string') return
   if (typeof msg.nonce !== 'string') return
   if (typeof msg.ciphertext !== 'string') return
-  const ok = await verifySaveSig(msg)
+  // Verify the signature AND capture the canonical bytes in one
+  // pass — the revision id (below) hashes the EXACT bytes the
+  // signature covered, so the stored id is provably tied to the
+  // signed content. The previous shape recomputed canonical bytes
+  // independently from `computeRevisionId`, leaving room for a
+  // future divergence to drift the stored id away from the signed
+  // payload.
+  const { ok, canonical } = await verifySaveSigAndCanonical(msg)
   if (!ok) {
     if (DEBUG) console.warn('reject save: bad signature', msg.workspaceTag.slice(0, 12) + '…')
     return
   }
-  // Content-addressed id derived from the same canonical bytes the
-  // signature covers. Server doesn't get to assign it — both ends
-  // produce the same string from the same content, so swapping ids
-  // around or duplicating revisions under different ids is
-  // detectable client-side.
-  const id = await computeRevisionId(msg)
-  if (!id) return
+  const id = await computeRevisionIdFromCanonical(canonical)
   const tag = msg.workspaceTag
   // Sender is now an authenticated subscriber for this tag.
   subscribe(socket, tag)
@@ -138,17 +155,17 @@ async function handleSave(socket, msg) {
   if (!matches) {
     // Stale base — send catch-up chain. Client rebases and
     // retries with the fresh head.
-    const revisions = chainFrom(handle, tag, baseNorm)
+    const revisions = chainForWire(chainFrom(handle, tag, baseNorm))
     if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${head}) → chain ${revisions.length}`)
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
     return
   }
-  // `keyframe` is part of the signed canonical bytes — verifySaveSig
-  // already rejected anything where the wire flag didn't match what
-  // the client signed, so a `true` here means the signer intended
-  // a keyframe. Stored as 0/1 in the column; carried through as 1
-  // (truthy) on the broadcast wire so peers don't need a flag-shape
-  // contract beyond truthy/falsy.
+  // `keyframe` is part of the signed canonical bytes —
+  // `verifySaveSigAndCanonical` already rejected anything where the
+  // wire flag didn't match what the client signed (the canonical
+  // payload uses `=== true` strict-equality, see sign.js's
+  // `canonicalSave`), so a `true` here means the signer intended a
+  // keyframe.
   const keyframe = msg.keyframe === true
   insertRevision(handle, {
     tag,
@@ -166,13 +183,20 @@ async function handleSave(socket, msg) {
     base: baseNorm,
     id,
   })
+  // Carry `keyframe` as a strict boolean on the broadcast wire —
+  // peers strict-compare `=== true` (matching the canonical-payload
+  // contract). The previous shape emitted `keyframe ? 1 : 0` which
+  // a strict check would treat as non-keyframe, making a replayed
+  // keyframe look like a regular delta on broadcast paths even
+  // though the chain-fetch path (chainFrom → SQLite integer) DID
+  // round-trip correctly.
   broadcast(tag, {
     type: 'workspace-state',
     workspaceTag: tag,
     revisions: [{
       base: baseNorm,
       id,
-      keyframe: keyframe ? 1 : 0,
+      keyframe,
       nonce: msg.nonce,
       ciphertext: msg.ciphertext,
       signature: msg.signature,
@@ -204,43 +228,75 @@ async function handleSubscribe(socket, msg) {
   // will reveal stale state on the usual base-mismatch path.
   // Null / missing → send the full chain.
   const fromId = typeof msg.from === 'string' ? msg.from : null
-  const revisions = chainFrom(handle, tag, fromId)
+  const revisions = chainForWire(chainFrom(handle, tag, fromId))
   if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
 
 const wss = new WebSocketServer({ port: PORT, host: HOST })
 
+// In-flight async message handlers. `shutdown` awaits this set
+// before closing the DB so a SIGINT mid-save can't resume against
+// a closed handle (which would throw inside `insertRevision` after
+// the client believed its save was committed).
+const inFlight = new Set()
+function track(promise) {
+  inFlight.add(promise)
+  promise.finally(() => inFlight.delete(promise))
+}
+
 wss.on('connection', (socket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
-  socket.on('message', async (data) => {
+  socket.on('message', (data) => {
     let msg
     try { msg = JSON.parse(data.toString()) } catch { return }
     if (!msg || typeof msg !== 'object') return
-    try {
-      if (msg.type === 'workspace-save') await handleSave(socket, msg)
-      else if (msg.type === 'workspace-subscribe') await handleSubscribe(socket, msg)
-      // Heartbeat — application-level alive check the browser
-      // WebSocket API doesn't expose at protocol level. Stateless,
-      // unauthenticated; the security-critical paths (save /
-      // subscribe) still verify signatures.
-      else if (msg.type === 'ping') send(socket, { type: 'pong' })
-    } catch (err) {
-      console.warn('Handler error:', err)
-    }
+    const handler = (async () => {
+      try {
+        if (msg.type === 'workspace-save') await handleSave(socket, msg)
+        else if (msg.type === 'workspace-subscribe') await handleSubscribe(socket, msg)
+        // Heartbeat — application-level alive check the browser
+        // WebSocket API doesn't expose at protocol level. Stateless,
+        // unauthenticated; the security-critical paths (save /
+        // subscribe) still verify signatures.
+        else if (msg.type === 'ping') send(socket, { type: 'pong' })
+      } catch (err) {
+        console.warn('Handler error:', err)
+      }
+    })()
+    track(handler)
   })
   socket.on('close', () => unsubscribeAll(socket))
-  socket.on('error', () => {})
+  // Surface socket-level errors instead of swallowing — these are
+  // the signals operators want under abuse / network flakiness
+  // (TLS handshake failures, frame-decode errors, ws-protocol
+  // violations). The previous `() => {}` left every per-connection
+  // failure invisible. `close` fires after `error` and runs the
+  // unsubscribe cleanup, so logging here doesn't risk leaking.
+  socket.on('error', (err) => { console.warn('Socket error:', err.message ?? err) })
 })
 
 wss.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${PORT} (db: ${DB_PATH})`)
 })
 
-function shutdown() {
+let shuttingDown = false
+async function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
   console.log('Shutting down…')
-  wss.close()
-  try { handle.close() } catch {}
+  // Stop accepting new connections; existing sockets stay open
+  // until their close handlers run.
+  await new Promise((resolve) => { wss.close(() => resolve()) })
+  // Drain in-flight handlers so a save that's mid-`await
+  // verifySaveSigAndCanonical` finishes its insertRevision before
+  // the DB closes. Without this, SIGINT during a save throws into
+  // the connection-level catch (silent log) and the row is lost
+  // even though the client may already have observed an ack from
+  // a separate broadcast path. `Promise.allSettled` so a single
+  // handler rejection doesn't abort the drain.
+  if (inFlight.size > 0) await Promise.allSettled([...inFlight])
+  try { handle.close() } catch (err) { console.warn('DB close error:', err.message ?? err) }
   process.exit(0)
 }
 process.on('SIGINT', shutdown)
