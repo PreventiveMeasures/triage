@@ -2467,7 +2467,20 @@ export function render() {
   // every viewMode (table / list / grouped); the table case still
   // emits a `.finding-table-slot` div inside the template, which
   // the `<finding-table>` reattach below targets.
-  const bodySlot = document.getElementById('findings-body-slot')
+  // The post-render reattach below mutates `.finding-table-slot`
+  // inside the bodyTemplate output (`slot.replaceWith(...)`),
+  // which leaves Lit's part-cache for bodySlot pointing at
+  // orphaned nodes — next render then diffs against a stale tree
+  // and can render the body empty. Recreating bodySlot in the
+  // table-view path resets that cache, while the list / grouped
+  // paths keep the original element so Lit can diff in place.
+  let bodySlot = document.getElementById('findings-body-slot')
+  if (bodySlot && pendingTableItems) {
+    const fresh = document.createElement('div')
+    fresh.id = 'findings-body-slot'
+    bodySlot.replaceWith(fresh)
+    bodySlot = fresh
+  }
   if (bodySlot) litRender(bodyTemplate, bodySlot)
 
   // Graph view-mode: render the graph2 layout into the
