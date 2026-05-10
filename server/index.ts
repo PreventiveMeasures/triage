@@ -196,6 +196,12 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   if (typeof msg.workspaceTag !== 'string') return
   if (typeof msg.nonce !== 'string') return
   if (typeof msg.ciphertext !== 'string') return
+  // Defensive type-check for `signature` even though
+  // `verifySaveSigAndCanonical` rejects non-string sigs internally:
+  // narrows the field to `string` for tsc so the downstream
+  // `insertRevision({ ..., signature: msg.signature })` doesn't
+  // require an `as string` cast.
+  if (typeof msg.signature !== 'string') return
   // `base` is `string | null` per the wire contract. The signed
   // canonical path coerces with `String(base)` while the storage /
   // head-comparison paths use the raw value — a non-string non-null

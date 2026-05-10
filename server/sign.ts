@@ -52,12 +52,22 @@ export type SubscribeMsg = {
 // `verifySaveSigAndCanonical` returns either the validated canonical
 // bytes (for the follow-up content-id hash) or a flat reject. Modeled
 // as a discriminated union so a caller pattern-matches on `ok`.
+// `Uint8Array<ArrayBuffer>` (not `<ArrayBufferLike>`) so the bytes
+// thread directly into `crypto.subtle.digest` — `BufferSource`
+// rejects SharedArrayBuffer-backed views.
 export type VerifyResult =
-  | { ok: true; canonical: Uint8Array }
+  | { ok: true; canonical: Uint8Array<ArrayBuffer> }
   | { ok: false; canonical: null }
 
-function fromB64Url(str: string): Buffer {
-  return Buffer.from(str, 'base64url')
+function fromB64Url(str: string): Uint8Array<ArrayBuffer> {
+  // `Buffer.from(..., 'base64url')` returns `Buffer<ArrayBufferLike>`;
+  // WebCrypto's `BufferSource` (per @types/node:
+  // `NonSharedArrayBufferView | ArrayBuffer`) rejects
+  // SharedArrayBuffer-backed views. Node's Buffer pool is always
+  // regular ArrayBuffer at runtime, so narrowing the return type
+  // is safe — the cast is the only way to thread the value through
+  // `crypto.subtle.importKey` / `verify` without a redundant copy.
+  return Buffer.from(str, 'base64url') as Uint8Array<ArrayBuffer>
 }
 
 // Mirrors client/sync-crypto.js's `canonicalSavePayload`. `keyframe`
@@ -71,7 +81,7 @@ function fromB64Url(str: string): Buffer {
 // can land in the chain unreadable to peers.
 function canonicalSave(
   { workspaceTag, base, keyframe, nonce, ciphertext }: SaveMsg,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   return encodeUtf8([
     SAVE_DOMAIN,
     workspaceTag as string,
@@ -85,14 +95,14 @@ function canonicalSave(
 function canonicalSubscribe(
   { workspaceTag, from }: SubscribeMsg,
   connectionNonce: string,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const fromStr = from == null ? '' : String(from)
   return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag as string, fromStr, connectionNonce].join('\n'))
 }
 
 async function verifyEd25519(
   pubkeyB64Url: string,
-  message: Uint8Array,
+  message: Uint8Array<ArrayBuffer>,
   sigB64Url: string,
 ): Promise<boolean> {
   const pubkeyBytes = fromB64Url(pubkeyB64Url)
@@ -141,7 +151,7 @@ export async function verifySaveSigAndCanonical(msg: SaveMsg): Promise<VerifyRes
   // drop. Audit round-11.
   if (typeof msg.workspaceTag !== 'string') return { ok: false, canonical: null }
   if (typeof msg.signature !== 'string') return { ok: false, canonical: null }
-  let payload: Uint8Array
+  let payload: Uint8Array<ArrayBuffer>
   try { payload = canonicalSave(msg) } catch { return { ok: false, canonical: null } }
   const ok = await verifyEd25519(msg.workspaceTag, payload, msg.signature)
   return ok ? { ok: true, canonical: payload } : { ok: false, canonical: null }
@@ -154,7 +164,7 @@ export async function verifySaveSigAndCanonical(msg: SaveMsg): Promise<VerifyRes
 // `computeRevisionId` so two ends always land on the same string.
 // Takes the canonical bytes returned by `verifySaveSigAndCanonical`
 // so the hash is over EXACTLY the bytes the signature covered.
-export async function computeRevisionIdFromCanonical(canonical: Uint8Array): Promise<string> {
+export async function computeRevisionIdFromCanonical(canonical: Uint8Array<ArrayBuffer>): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', canonical)
   return Buffer.from(new Uint8Array(digest)).toString('base64url')
 }
@@ -180,7 +190,7 @@ export async function verifySubscribeSig(msg: SubscribeMsg, connectionNonce: unk
   if (typeof msg.workspaceTag !== 'string') return false
   if (typeof msg.signature !== 'string') return false
   if (typeof connectionNonce !== 'string') return false
-  let payload: Uint8Array
+  let payload: Uint8Array<ArrayBuffer>
   try { payload = canonicalSubscribe(msg, connectionNonce) } catch { return false }
   return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
