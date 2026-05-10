@@ -33,7 +33,7 @@ if (globalThis.localStorage === undefined) {
 const { saveFile, listFiles, readFile } = await import('../client/storage.js')
 const { setCount, getCount, getKind } = await import('../client/counts.js')
 const { upsertWorkspace, listWorkspaces, deleteWorkspace } = await import('../client/workspaces.js')
-const { saveRepoUrlFor, loadRepoUrlFor } = await import('../client/state.js')
+const { saveRepoUrlFor, loadRepoUrlFor, state } = await import('../client/state.js')
 
 const LAST_FILE_KEY = 'deepview.lastFile'
 
@@ -194,5 +194,68 @@ describe('migrateLegacyFilenames', () => {
     const b = mod.migrateLegacyFilenames()
     assert.equal(a, b, 'concurrent calls return the same promise')
     await Promise.all([a, b])
+  })
+
+  it('rewrites state.ignoredIds keys for the renamed report (audit round-12 M-D)', async () => {
+    // Per-report ignore is stored as `${reportName}\0${id}` in
+    // state.ignoredIds (and the persisted deepview.triage blob's
+    // `ignoredReports` arrays). Pre-fix the migration carried the
+    // count cache + repo URL + last-file pointer but missed
+    // ignoredIds — ignored findings reappeared in the renamed
+    // report. Now the rename loop rewrites matching prefixes and
+    // re-persists via saveTriage.
+    const legacy = uniqueLegacyName('ig')
+    const target = legacy.replace(/\.deepseek$/u, '.md')
+    await saveFile(legacy, '# DeepSec\n\n## HIGH (1)\n\n### F\n')
+
+    // Seed two ignoredIds keys for the legacy name + one unrelated
+    // key that should survive untouched.
+    state.ignoredIds.add(`${legacy}\0finding-a`)
+    state.ignoredIds.add(`${legacy}\0finding-b`)
+    state.ignoredIds.add(`unrelated.json\0finding-c`)
+
+    await freshMigrate()
+
+    assert.equal(state.ignoredIds.has(`${legacy}\0finding-a`), false, 'legacy-prefixed key removed')
+    assert.equal(state.ignoredIds.has(`${legacy}\0finding-b`), false, 'legacy-prefixed key removed')
+    assert.equal(state.ignoredIds.has(`${target}\0finding-a`), true, 'target-prefixed key added')
+    assert.equal(state.ignoredIds.has(`${target}\0finding-b`), true, 'target-prefixed key added')
+    assert.equal(state.ignoredIds.has(`unrelated.json\0finding-c`), true, 'unrelated keys untouched')
+
+    // Cleanup
+    state.ignoredIds.delete(`${target}\0finding-a`)
+    state.ignoredIds.delete(`${target}\0finding-b`)
+    state.ignoredIds.delete(`unrelated.json\0finding-c`)
+  })
+
+  it('skips workspace membership rewrite on collision (audit round-12 M-E)', async () => {
+    // Collision case: a `.md` already exists at the target name.
+    // The per-file rename loop skips this entry. The workspace-
+    // membership rewrite at the end MUST also skip — pre-fix it
+    // unconditionally rewrote `.deepseek` → `.md` in workspace
+    // reports[], silently grafting membership onto an unrelated
+    // existing `.md` while the actual `.deepseek` becomes
+    // workspace-orphaned.
+    const legacy = uniqueLegacyName('col-ws')
+    const target = legacy.replace(/\.deepseek$/u, '.md')
+    await saveFile(legacy, 'legacy content')
+    await saveFile(target, 'pre-existing target content')
+    const wsId = `ws-collide-${Date.now()}-${nameCounter}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: [legacy] })
+
+    await freshMigrate()
+
+    const ws = listWorkspaces().find((w) => w.id === wsId)
+    assert.ok(ws, 'workspace survived')
+    assert.equal(ws.reports.includes(legacy), true,
+      'membership stays at .deepseek when rename was blocked by collision')
+    assert.equal(ws.reports.includes(target), false,
+      'membership NOT silently grafted onto the unrelated existing .md')
+    // Both files still on disk
+    const names = await listFiles()
+    assert.equal(names.includes(legacy), true, 'legacy file still on disk')
+    assert.equal(names.includes(target), true, 'target file still on disk')
+
+    await deleteWorkspace(wsId)
   })
 })

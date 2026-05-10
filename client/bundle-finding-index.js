@@ -297,7 +297,15 @@ function indexFindingByPackage(f, key, name) {
   const wasNewReport = !krSet.has(name)
   krSet.add(name)
   if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file })
-  if (pBucket.keys.has(key)) return false
+  // Same shape as `indexFindingByHash` returns when an existing key
+  // gains a fresh contributing report: signal the caller so a
+  // `notify()` fires and Packages-view subscribers repaint to
+  // reflect the new chip. Without this, re-importing the same
+  // dedupe key from a new report (common for markdown findings
+  // without `fileHash`) silently drops the per-finding report
+  // attribution from the UI until the next unrelated index walk.
+  // Audit round-12 M-A.
+  if (pBucket.keys.has(key)) return wasNewReport
   pBucket.keys.add(key)
   pBucket.findings.push(f)
   if (!pBucket.files.has(f.file)) pBucket.files.set(f.file, [])
@@ -329,7 +337,10 @@ function indexFindingByRepo(f, key, name, reportFallback) {
   const wasNewReport = !krSet.has(name)
   krSet.add(name)
   if (wasNewReport) rememberContribution(name, 'repo', { repo, key, file: f.file })
-  if (rBucket.keys.has(key)) return false
+  // Mirror of indexFindingByPackage's wasNewReport return — a new
+  // contributing report against an existing key still warrants a
+  // Repositories-view repaint. Audit round-12 M-A.
+  if (rBucket.keys.has(key)) return wasNewReport
   rBucket.keys.add(key)
   rBucket.findings.push(f)
   if (!rBucket.files.has(f.file)) rBucket.files.set(f.file, [])
@@ -464,8 +475,27 @@ async function indexOne(name) {
       if (f.file && indexFindingByPackage(f, key, name)) added = true
       if (f.file && indexFindingByRepo(f, key, name, reportFallback)) added = true
     }
+    // Mid-flight `invalidateName` detection (audit round-12 M-B).
+    // `onFileMutated` runs synchronously when `saveFile` /
+    // `deleteFile` fires; if one landed between our
+    // `indexed.add(name)` above and now, `invalidateName(name)`
+    // ran with empty `contributionsByName[name]` and only cleared
+    // the `indexed` marker. The bytes we just bucketed are
+    // therefore stale (the new content hasn't been re-indexed
+    // yet). Roll our just-added contributions back so the next
+    // `ensureBundleFindingsIndexed` walk re-indexes against the
+    // fresh content (saveFile case) or leaves the buckets clean
+    // (deleteFile case — listFiles won't return the name).
+    if (!indexed.has(name)) {
+      invalidateName(name)
+      return false
+    }
     return added
   } catch {
+    // Transient read / parse error. Drop the `indexed` marker so
+    // the next walk retries instead of memoizing the failure for
+    // the rest of the page session. Audit round-12 M-B.
+    indexed.delete(name)
     return false
   }
 }

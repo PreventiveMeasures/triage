@@ -423,3 +423,62 @@ describe('bundle-finding-index — subscribe', () => {
     unsubGood()
   })
 })
+
+// Round-12 audit M-A: indexFindingByPackage / indexFindingByRepo used
+// to return `false` when a key already existed, even when the call
+// had just registered a NEW contributing report against that key.
+// `indexOne`'s `added` flag stayed false → no `notify()` fired →
+// Packages / Repositories subscribers didn't repaint to reflect the
+// new chip. Now both functions return `wasNewReport` (mirroring the
+// hash-keyed path's contract) so a fresh contribution surfaces in
+// the UI on the next walk.
+describe('bundle-finding-index — re-import notifies subscribers (audit round-12 M-A)', () => {
+  it('a new report contributing the same dedupe key in a package fires notify', async () => {
+    const tag = `pkg-renotify-${Date.now()}`
+    // First report — populates the bucket.
+    await seedReport({
+      findings: [
+        { id: `${tag}-shared`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+
+    // Second report — same dedupe key (id), different report name.
+    // Pre-fix `indexFindingByPackage` returned false on the existing
+    // key, suppressing notify() for the new contribution.
+    let calls = 0
+    const unsub = subscribeToBundleFindingIndex(() => { calls += 1 })
+    const before = calls
+    await seedReport({
+      findings: [
+        { id: `${tag}-shared`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(calls > before, 'new contribution to existing package key notifies subscribers')
+    unsub()
+  })
+
+  it('a new report contributing the same dedupe key in a repo fires notify', async () => {
+    const tag = `repo-renotify-${Date.now()}`
+    const repo = `acme/${tag}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-shared`, severity: 'high', file: 'src/a.js', description: 'd', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+
+    let calls = 0
+    const unsub = subscribeToBundleFindingIndex(() => { calls += 1 })
+    const before = calls
+    await seedReport({
+      findings: [
+        { id: `${tag}-shared`, severity: 'high', file: 'src/a.js', description: 'd', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(calls > before, 'new contribution to existing repo key notifies subscribers')
+    unsub()
+  })
+})

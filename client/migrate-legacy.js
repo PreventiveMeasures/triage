@@ -16,8 +16,8 @@
 import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
 import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { listWorkspaces, setReportWorkspace } from './workspaces.js'
-import { loadRepoUrlFor, saveRepoUrlFor } from './state.js'
-import { loadPromise as triageLoadPromise } from './triage.js'
+import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.js'
+import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -27,7 +27,16 @@ const LAST_FILE_KEY = 'deepview.lastFile'
 let migrationPromise = null
 
 export function migrateLegacyFilenames() {
-  if (!migrationPromise) migrationPromise = run()
+  if (!migrationPromise) {
+    migrationPromise = run()
+    // Clear the memo on rejection so transient OPFS failures don't
+    // poison the page session — next call retries rather than
+    // resolving immediately as "complete". Run() itself catches
+    // expected per-file errors; only an unhandled throw (e.g.
+    // listFiles failure on a flaky OPFS) reaches here. Audit
+    // round-12 M-C.
+    migrationPromise.catch(() => { migrationPromise = null })
+  }
   return migrationPromise
 }
 
@@ -41,9 +50,23 @@ async function run() {
   // local-wins resolution. Awaiting `triageLoadPromise` here closes
   // that boot-time race. Audit round-8 H4.
   try { await triageLoadPromise } catch {}
-  let names
-  try { names = await listFiles() } catch { return }
+  // Don't catch a `listFiles()` failure inside `run()`. The
+  // `migrateLegacyFilenames` wrapper clears `migrationPromise` on
+  // rejection so the next call retries; catching here would
+  // memoize a "successful" no-op and strand the user with stale
+  // .deepseek buckets for the rest of the page session.
+  // Audit round-12 M-C.
+  const names = await listFiles()
   const nameSet = new Set(names)
+  // Pre-rename snapshot of the OPFS file list. Used by the
+  // workspace-membership rewrite at the end to distinguish
+  // "rename succeeded" / "true orphan" (rewrite to .md) from
+  // "collision" / "rename-fail" (leave membership pointed at the
+  // still-extant .deepseek). Audit round-12 M-E.
+  const filesOnDiskAtStart = new Set(names)
+  // Tracks `.deepseek` names that the per-file loop successfully
+  // renamed to .md. Same membership-rewrite predicate input.
+  const renamed = new Set()
   for (const name of names) {
     if (!name.toLowerCase().endsWith('.deepseek')) continue
     const target = name.slice(0, -'.deepseek'.length) + '.md'
@@ -66,6 +89,7 @@ async function run() {
     }
     nameSet.delete(name)
     nameSet.add(target)
+    renamed.add(name)
 
     // Carry over the count cache. If nothing was cached, populate
     // the new entry from the file content so the sidebar bucket and
@@ -88,6 +112,20 @@ async function run() {
       saveRepoUrlFor(target, repoUrl)
     }
 
+    // Per-report ignore is also filename-keyed: state.ignoredIds
+    // entries shape `${reportName}\0${id}`. Without rewriting these
+    // (and re-persisting via saveTriage), ignored findings reappear
+    // in the renamed report. Audit round-12 M-D.
+    const oldPrefix = `${name}\0`
+    const renamedKeys = []
+    for (const key of state.ignoredIds) {
+      if (!key.startsWith(oldPrefix)) continue
+      state.ignoredIds.delete(key)
+      renamedKeys.push(`${target}\0${key.slice(oldPrefix.length)}`)
+    }
+    for (const k of renamedKeys) state.ignoredIds.add(k)
+    if (renamedKeys.length > 0) await saveTriage()
+
     // Last-viewed-file pointer — update so the next reload restores
     // the renamed entry rather than failing to find it.
     try {
@@ -97,21 +135,27 @@ async function run() {
     } catch {}
   }
 
-  // Workspace memberships keyed by filename — rewrite every
-  // `.deepseek`-suffixed entry to its `.md` counterpart, regardless
-  // of whether the corresponding OPFS file was renamed by the loop
-  // above. That catches orphan references the user can't otherwise
-  // shake (e.g. the `.deepseek` file is gone but the workspace JSON
-  // still pins the old name), and is a no-op when the workspace
-  // list is already clean. Done in one batch via the workspaces
-  // module's setReportWorkspace API so persistence stays in one
-  // code path.
+  // Workspace memberships keyed by filename. Three cases for a
+  // `.deepseek` entry in `w.reports`:
+  //   (a) we renamed it just now             → rewrite to .md
+  //   (b) it's NOT on disk (true orphan)     → rewrite to .md
+  //   (c) collision / rename-fail (still on
+  //       disk as .deepseek)                 → leave alone
+  //
+  // The pre-fix shape rewrote (c) too, silently moving membership
+  // off the still-extant `.deepseek` and (in the collision case)
+  // grafting it onto an unrelated existing `.md`, or (in the
+  // rename-fail case) pointing the workspace at a `.md` that
+  // doesn't exist on disk while the actual `.deepseek` becomes
+  // workspace-orphaned. Audit round-12 M-E.
   for (const w of listWorkspaces()) {
     for (const r of w.reports) {
       if (!r.toLowerCase().endsWith('.deepseek')) continue
-      const renamed = r.slice(0, -'.deepseek'.length) + '.md'
+      // Skip case (c): still on disk as `.deepseek`, didn't rename.
+      if (!renamed.has(r) && filesOnDiskAtStart.has(r)) continue
+      const newName = r.slice(0, -'.deepseek'.length) + '.md'
       await setReportWorkspace(r, null)
-      await setReportWorkspace(renamed, w.id)
+      await setReportWorkspace(newName, w.id)
     }
   }
 }
