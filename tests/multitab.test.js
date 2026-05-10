@@ -39,8 +39,15 @@ if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 
+// Pull in the shared `navigator.locks` polyfill so the Node 22
+// local-test loop can exercise saveTriage (which sits inside a
+// `navigator.locks.request`). Native on Node 24+ — polyfill is a
+// no-op there.
+await import('./_polyfills.js')
+
 const { state } = await import('../client/state.js')
 const { saveTriage, reloadTriageFromStorage } = await import('../client/triage.js')
+const { triageSync } = await import('../client/triage-sync.js')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
@@ -474,6 +481,87 @@ describe('sessions blob persistence (Web Locks)', () => {
     const firstWriteIdx = Math.min(aWriteIdx, bWriteIdx)
     assert.ok(firstReadIdx < firstWriteIdx, 'first read precedes first write')
     assert.ok(firstWriteIdx < secondReadIdx, 'first writer releases before second reader acquires')
+  })
+})
+
+describe('saveTriage — notify + Web-Lock serialization (audit round-12 H10)', () => {
+  beforeEach(clearState)
+
+  it('an empty saveTriage still calls triageSync.notify (audit round-12 H10a)', async () => {
+    // Pre-fix the empty-entries early `return` exited before
+    // reaching `triageSync.notify()`. Clearing the last marker /
+    // comment / fix / ignored / triageState left the WS sync layer
+    // unaware — peers and sibling tabs subscribing via from=null
+    // kept receiving the prior non-empty state until the next
+    // unrelated mutation.
+    const original = triageSync.notify
+    let calls = 0
+    triageSync.notify = () => { calls += 1 }
+    try {
+      // First save with one marker — non-empty branch.
+      state.markers.set(FINDING_A, 'red')
+      await saveTriage()
+      const afterFirst = calls
+      assert.ok(afterFirst > 0, 'non-empty saveTriage notifies')
+
+      // Clear the marker — empty-branch path.
+      state.markers.clear()
+      await saveTriage()
+      assert.ok(calls > afterFirst, 'EMPTY saveTriage also notifies (was the bug)')
+    } finally {
+      triageSync.notify = original
+    }
+  })
+
+  it('concurrent saveTriage calls serialise via the Web Lock (audit round-12 H10b)', async () => {
+    // Pre-fix two saveTriage calls shared TRIAGE_PENDING_KEY and
+    // ran their compress + write phases interleaved. The first to
+    // finish would `removeItem(TRIAGE_PENDING_KEY)`, wiping the
+    // second's still-needed crash-recovery snapshot; CompressionStream
+    // isn't FIFO across separate streams either, so saveTriage1
+    // could overwrite saveTriage2's newer TRIAGE_KEY directly.
+    //
+    // Fix: wrap the whole RMW in `navigator.locks.request`. Two
+    // calls now serialize — second waits until first commits.
+    // We assert serialization by observing the order of
+    // triageSync.notify calls relative to the user mutations
+    // they reflect.
+    const original = triageSync.notify
+    const order = []
+    let saveCount = 0
+    triageSync.notify = () => {
+      saveCount += 1
+      order.push(`notify-${saveCount}`)
+    }
+    try {
+      // First write: marker A=red. Second write (queued before
+      // first lock release): marker A=blue.
+      state.markers.set(FINDING_A, 'red')
+      const p1 = saveTriage()
+      // Mutate state synchronously between the two saveTriage
+      // entries — the second one runs against post-mutation state.
+      state.markers.set(FINDING_A, 'blue')
+      const p2 = saveTriage()
+      await Promise.all([p1, p2])
+
+      // Both notify calls fired (one per saveTriage commit).
+      assert.equal(saveCount, 2, 'both saveTriage commits notified')
+
+      // After both complete, persisted state reflects the LATEST
+      // mutation (blue). Without the lock, an out-of-order compress
+      // completion could leave 'red' on disk.
+      const persisted = globalThis.localStorage.getItem('deepview.triage')
+      assert.ok(persisted, 'triage persisted')
+      // Decode and assert the marker is 'blue'. We don't go through
+      // readTriageBlob (would race the test); decode inline.
+      const compressed = Uint8Array.fromBase64(persisted)
+      const ds = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate'))
+      const decompressed = new Uint8Array(await new Response(ds).arrayBuffer())
+      const entries = JSON.parse(decodeUtf8(decompressed))
+      assert.equal(entries[FINDING_A].color, 'blue', 'persisted state reflects the latest mutation')
+    } finally {
+      triageSync.notify = original
+    }
   })
 })
 

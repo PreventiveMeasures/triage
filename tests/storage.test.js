@@ -174,6 +174,48 @@ describe('storage — readFile error path', () => {
   })
 })
 
+// Round-12 S4: parity between OPFS and LS branches on UTF-8 input.
+// Pre-fix the OPFS branch used raw `new TextEncoder().encode()`
+// (silent U+FFFD substitution on lone surrogates); the LS branch
+// went through `gzipString` → `encodeUtf8` (which throws). Same
+// input failed loudly on one backend and corrupted silently on
+// the other. Now both go through `encodeUtf8`. Tests run on the
+// LS backend (no OPFS in node:test); the OPFS path's parity is
+// pinned by code review.
+describe('storage — saveFile rejects lone surrogates (audit round-12 S4)', () => {
+  it('a string with an unpaired high surrogate throws on saveFile', async () => {
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?surr=${Date.now()}`)
+    let threw = false
+    try {
+      await fresh.saveFile('bad-utf8.json', '\uD83D')  // lone high-surrogate
+    } catch {
+      threw = true
+    }
+    assert.equal(threw, true, 'lone surrogate is rejected at the encode boundary')
+  })
+
+  it('a string with an unpaired low surrogate throws on saveFile', async () => {
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?surr2=${Date.now()}`)
+    let threw = false
+    try {
+      await fresh.saveFile('bad-utf8b.json', '\uDC00')
+    } catch {
+      threw = true
+    }
+    assert.equal(threw, true, 'lone low-surrogate is rejected at the encode boundary')
+  })
+
+  it('well-formed UTF-8 still saves successfully', async () => {
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?surr-ok=${Date.now()}`)
+    // Full surrogate pair (😀 = U+1F600) works fine.
+    await fresh.saveFile('emoji.json', '😀')
+    assert.equal(await fresh.readFile('emoji.json'), '😀')
+  })
+})
+
 describe('storage — readFile/saveFile race (audit round-9 H1)', () => {
   it('a saveFile during an in-flight readFile does not get clobbered', async () => {
     // Pre-fix: `readFile` started, async OPFS / LS read in flight.

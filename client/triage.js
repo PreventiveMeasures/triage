@@ -37,95 +37,125 @@ async function decompressBrotli(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-// Web Lock that serializes the saveTriage RMW. Two concurrent
-// saveTriage calls used to race on TRIAGE_PENDING_KEY +
-// TRIAGE_KEY: the first to compress would removeItem(pending),
-// wiping the second's still-needed crash-recovery snapshot;
-// CompressionStream isn't FIFO across separate streams, so an
-// out-of-order completion could even have saveTriage1 overwrite
-// saveTriage2's newer TRIAGE_KEY write directly. Audit round-12
-// H10.
+// Web Lock + per-tab "latest snapshot wins" generation counter
+// that together close the audit round-12 H10b race (two
+// concurrent saveTriages racing on TRIAGE_KEY +
+// TRIAGE_PENDING_KEY) without holding the lock across the
+// compress await:
+//
+//   1. M3 round-5: the synchronous TRIAGE_PENDING_KEY write
+//      happens BEFORE any await, so a tab crash mid-compress
+//      still recovers the uncompressed snapshot. Any code path
+//      that blocks for I/O sits AFTER the sync write.
+//
+//   2. Compress runs OUTSIDE the lock. A stuck `CompressionStream`
+//      (browser bug, hostile peer content, test stub) can't pin
+//      the lock indefinitely and starve every subsequent
+//      saveTriage call.
+//
+//   3. The lock-protected commit checks `gen === saveGen` — only
+//      the LATEST saveTriage in this tab actually writes. Slower
+//      compresses (out-of-order completion) skip cleanly. This
+//      replaces the FIFO-compress assumption the PR-#172 shape
+//      depended on.
 const TRIAGE_LOCK = 'deepview.triage.save'
+let saveGen = 0
 
 export function saveTriage() {
-  // Serialize the entire RMW under a Web Lock — entries snapshot,
-  // compress, pending + main write all run inside the lock so a
-  // second call queues until the first commits. Same pattern as
-  // `mutateAllSessions` / `mutateWorkspaces`.
-  return navigator.locks.request(TRIAGE_LOCK, async () => {
-    try {
-      const entries = {}
-      for (const [k, color] of state.markers) {
-        if (SESSION_ID_RE.test(k)) continue
-        entries[k] = { ...entries[k], color }
-      }
-      for (const [k, triage] of state.triageState) {
-        if (SESSION_ID_RE.test(k)) continue
-        entries[k] = { ...entries[k], triage }
-      }
-      // Per-report ignore is persisted as `ignoredReports: ['nameA',
-      // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
-      // (`${reportName}\0${id}`) back by id, drop session-scoped
-      // numeric ids, and stamp the report list. Empty arrays are
-      // omitted so a clean entry doesn't leave a trace.
-      const ignoredByid = new Map()
-      for (const key of state.ignoredIds) {
-        const sep = key.indexOf('\0')
-        if (sep < 0) continue
-        const reportName = key.slice(0, sep)
-        const id = key.slice(sep + 1)
-        if (SESSION_ID_RE.test(id)) continue
-        if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-        ignoredByid.get(id).push(reportName)
-      }
-      for (const [id, ignoredIn] of ignoredByid) {
-        if (ignoredIn.length === 0) continue
-        entries[id] = { ...entries[id], ignoredReports: ignoredIn }
-      }
-      for (const [k, comment] of state.comments) {
-        if (SESSION_ID_RE.test(k)) continue
-        if (comment) entries[k] = { ...entries[k], comment }
-      }
-      for (const [k, fix] of state.fixes) {
-        if (SESSION_ID_RE.test(k)) continue
-        if (fix) entries[k] = { ...entries[k], fix }
-      }
-      if (Object.keys(entries).length === 0) {
-        localStorage.removeItem(TRIAGE_KEY)
-        localStorage.removeItem(TRIAGE_PENDING_KEY)
-        // Fall through to triageSync.notify() below — without it,
-        // clearing the last marker / comment / fix would leave the
-        // sync chain broadcasting the prior non-empty state to peers
-        // until the next unrelated mutation called saveTriage with
-        // non-empty entries. Audit round-12 H10b.
-      } else {
-        const json = JSON.stringify(entries)
-        // Synchronous belt-and-suspenders write: a tab crash during
-        // the compressBrotli await would otherwise lose this edit
-        // (in-memory state.* gone with the process, compressed key
-        // still stale, triageSync.notify hasn't fired yet). The
-        // pending key holds the uncompressed JSON; readTriageBlob
-        // prefers it on next load. Wrapped in its own try so a
-        // localStorage quota failure here doesn't abort the compress
-        // + main write below. Audit M3 round-5.
-        try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
+  const gen = ++saveGen
+  // Build entries synchronously so the M3 round-5 pending-key
+  // write reflects the user's mutation BEFORE any await (a crash
+  // during the compress await still recovers).
+  const entries = {}
+  for (const [k, color] of state.markers) {
+    if (SESSION_ID_RE.test(k)) continue
+    entries[k] = { ...entries[k], color }
+  }
+  for (const [k, triage] of state.triageState) {
+    if (SESSION_ID_RE.test(k)) continue
+    entries[k] = { ...entries[k], triage }
+  }
+  // Per-report ignore is persisted as `ignoredReports: ['nameA',
+  // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
+  // (`${reportName}\0${id}`) back by id, drop session-scoped
+  // numeric ids, and stamp the report list. Empty arrays are
+  // omitted so a clean entry doesn't leave a trace.
+  const ignoredByid = new Map()
+  for (const key of state.ignoredIds) {
+    const sep = key.indexOf('\0')
+    if (sep < 0) continue
+    const reportName = key.slice(0, sep)
+    const id = key.slice(sep + 1)
+    if (SESSION_ID_RE.test(id)) continue
+    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
+    ignoredByid.get(id).push(reportName)
+  }
+  for (const [id, ignoredIn] of ignoredByid) {
+    if (ignoredIn.length === 0) continue
+    entries[id] = { ...entries[id], ignoredReports: ignoredIn }
+  }
+  for (const [k, comment] of state.comments) {
+    if (SESSION_ID_RE.test(k)) continue
+    if (comment) entries[k] = { ...entries[k], comment }
+  }
+  for (const [k, fix] of state.fixes) {
+    if (SESSION_ID_RE.test(k)) continue
+    if (fix) entries[k] = { ...entries[k], fix }
+  }
+  const isEmpty = Object.keys(entries).length === 0
+  const json = isEmpty ? null : JSON.stringify(entries)
+  // Synchronous M3 round-5 belt-and-suspenders: pending key holds
+  // the uncompressed JSON in case a tab crash during the compress
+  // await would otherwise lose this edit (in-memory state.* gone,
+  // compressed key still stale). readTriageBlob prefers pending
+  // on next load. Wrapped in its own try so a localStorage quota
+  // failure doesn't abort the compress + main write below.
+  if (json != null) {
+    try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
+  }
+  return (async () => {
+    let b64 = null
+    if (json != null) {
+      try {
         const bytes = encodeUtf8(json)
         const compressed = await compressBrotli(bytes)
-        localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
-        try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+        b64 = compressed.toBase64()
+      } catch (err) {
+        console.warn('Failed to save triage:', err)
+        triageSync.notify()
+        return
       }
-    } catch (err) {
-      console.warn('Failed to save triage:', err)
     }
+    // Lock-protected commit. `gen !== saveGen` means a NEWER
+    // saveTriage call started in this tab while we were
+    // compressing — its snapshot supersedes ours, so we skip
+    // both the TRIAGE_KEY write AND the pending-key clear (the
+    // newer call's pending is already in localStorage and
+    // mustn't be clobbered by our older commit).
+    await navigator.locks.request(TRIAGE_LOCK, () => {
+      try {
+        if (gen !== saveGen) return
+        if (isEmpty) {
+          localStorage.removeItem(TRIAGE_KEY)
+          localStorage.removeItem(TRIAGE_PENDING_KEY)
+        } else {
+          localStorage.setItem(TRIAGE_KEY, b64)
+          try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+        }
+      } catch (err) {
+        console.warn('Failed to save triage:', err)
+      }
+    })
     // Notify the WS sync client (no-op when disabled / not yet
-    // configured). Outside the try/catch above so a sync send error
-    // doesn't suppress the localStorage warning, and a localStorage
-    // failure doesn't suppress the network notification. Reached
-    // from BOTH the empty-entries and non-empty branches now —
-    // the previous early `return` in the empty-entries branch
-    // skipped this and stranded the chain on stale state.
+    // configured). Outside the lock + outside the inner catch so
+    // a sync send error doesn't suppress the localStorage warning,
+    // and a localStorage failure doesn't suppress the network
+    // notification. Reached from BOTH the empty-entries and
+    // non-empty branches now — the previous early `return` in the
+    // empty-entries branch (audit round-12 H10a) skipped this and
+    // stranded the chain on stale state.
     triageSync.notify()
-  })
+  })()
 }
 
 // Decode the persisted blob into `{ id: entry }` form. Returns
