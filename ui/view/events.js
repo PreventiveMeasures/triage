@@ -857,6 +857,37 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
+  // Copy button — write the active tab's file / line /
+  // description / confidence to the clipboard as a labeled
+  // block. Per-active-tab so a multi-tab group copies the
+  // member the user is currently looking at. Briefly toggles a
+  // `.copied` class so the button's icon pulses to acknowledge
+  // the click; the class is dropped after 1s so the next click
+  // pulses again. Failure (no clipboard permission, no secure
+  // context) silently no-ops — the button is a convenience, not
+  // load-bearing.
+  const copyBtn = pathClosest(e, '.mark-copy')
+  if (copyBtn) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    const gid = findingEl?.dataset?.gid
+    const group = gid ? findGroupById(gid) : null
+    if (!group) return
+    const f = activeTabFor(group)
+    const lines = []
+    if (f.file) lines.push(`File: ${f.file}`)
+    if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
+    if (f.description) lines.push(`Description: ${f.description}`)
+    if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
+    const text = lines.join('\n')
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.classList.add('copied')
+        setTimeout(() => copyBtn.classList.remove('copied'), 1000)
+        return null
+      }).catch(() => {})
+    } catch {}
+    return
+  }
   // Fix-link button — mirrors the comment flow but stores into
   // state.fixes. Typically a PR URL (also accepts plain text).
   // Empty input clears the entry. Per-active-tab so a multi-tab

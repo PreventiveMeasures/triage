@@ -78,6 +78,16 @@ const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidde
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Two stacked rectangles — clipboard / copy glyph for the
+// `[copy]` shortcut button. Matches the size + stroke weight of
+// the comment / fix icons so the row reads as a uniform action
+// strip. The events.js handler writes a labeled `File / Line /
+// Description / Confidence` block to the clipboard when clicked.
+const COPY_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+  <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+
 // Workspace-merged views show which report a finding came from.
 // The chip mirrors the sidebar's file row (brand sticker + display
 // name) and lives at the start of the action row. Single-file
@@ -108,6 +118,11 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
   const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
   const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
+  // Copy button — writes a labeled `File / Line / Description /
+  // Confidence` block for the active tab to the clipboard.
+  // Click handler lives in events.js; it picks the active tab via
+  // the same gid lookup the comment / fix flows use.
+  const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
@@ -121,7 +136,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}${commentBtn}${fixBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
+  return html`${reportChip}${commentBtn}${fixBtn}${copyBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
 }
 
 // Triage menu — chevron button that toggles a popover with the
