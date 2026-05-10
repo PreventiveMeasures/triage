@@ -13,8 +13,8 @@
 // `keyframe` is `1` for a revision the client emits with the full
 // state baked in (rather than just a delta). The wire-level flag
 // is also covered by the signature, so the column value MUST match
-// what the signed canonical bytes claim — verifySaveSig in
-// server/sign.ts enforces this. Client-driven: the server only
+// what the signed canonical bytes claim — `verifySaveSigAndCanonical`
+// in server/sign.ts enforces this. Client-driven: the server only
 // stores what the client sent and treats keyframes as catch-up
 // roots when a from=null subscriber arrives.
 //

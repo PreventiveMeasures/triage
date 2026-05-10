@@ -372,6 +372,12 @@ function track(promise: Promise<unknown>): void {
 // `if (shuttingDown) return` reads from a defined binding even if
 // the closure runs in the same tick the variable is declared.
 let shuttingDown = false
+// Live exit code the in-progress shutdown will pass to
+// `process.exit`. Re-entry can ESCALATE it from 0 → 1 (e.g. a
+// `wss.error` firing during a SIGTERM-driven graceful shutdown
+// shouldn't leave the launcher seeing a clean exit code) but
+// can never DE-escalate. Audit round-13.
+let pendingExitCode = 0
 
 wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
@@ -427,9 +433,11 @@ wss.on('connection', (socket: WebSocket, req) => {
     unsubscribeAll(socket)
     // WeakMap entries clear via GC once the socket is unreachable,
     // but `wss.clients` (and the `ws` library's internals) hold the
-    // socket strongly until well after `close` — explicit delete
-    // keeps the nonce out of memory immediately. Audit round-10.
+    // socket strongly until well after `close` — explicit delete on
+    // BOTH WeakMaps keeps the nonce + tag-set out of memory
+    // immediately. Audit round-10 + round-13.
     socketChallenge.delete(socket)
+    socketTags.delete(socket)
   })
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness
@@ -463,8 +471,17 @@ wss.on('error', (err: Error) => {
 })
 
 async function shutdown(exitCode: number = 0): Promise<void> {
-  if (shuttingDown) return
+  // Re-entry: don't restart the teardown, but escalate the pending
+  // exit code if the new caller is non-zero (e.g. a wss.error during
+  // a SIGTERM-driven graceful shutdown). Without this, an error
+  // arriving mid-shutdown would silently exit 0 and the launcher
+  // would record a clean stop.
+  if (shuttingDown) {
+    if (exitCode !== 0 && pendingExitCode === 0) pendingExitCode = exitCode
+    return
+  }
   shuttingDown = true
+  pendingExitCode = exitCode
   console.log('Shutting down…')
   // Send a 1001 (going away) close frame to every open socket BEFORE
   // shutting the listener. Lets clients distinguish a server-initiated
@@ -510,7 +527,10 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
   try { handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
-  process.exit(exitCode)
+  // Read `pendingExitCode` (not the parameter) so a re-entrant
+  // `shutdown(1)` that landed during the drain wins over the
+  // original `shutdown(0)`. See round-13 escalation note.
+  process.exit(pendingExitCode)
 }
 // Wrap signal handlers so the signal name (passed as the listener's
 // first arg) doesn't bleed into shutdown's `exitCode` parameter and
