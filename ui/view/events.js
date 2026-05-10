@@ -143,7 +143,13 @@ report.addEventListener('click', (e) => {
       if (!Number.isFinite(line)) return
       queueMicrotask(() => {
         const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
-        if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        // `instant` (not `smooth`) — the modal pops over the
+        // current view, so a smooth scroll from the modal's
+        // initial natural position would visibly drift the line
+        // into place. Instant scroll lands the matching line at
+        // the top of the viewport in the same frame the modal
+        // appears.
+        if (row) row.scrollIntoView({ block: 'start', behavior: 'instant' })
       })
     }
     if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
