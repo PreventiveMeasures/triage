@@ -231,7 +231,7 @@ view-mode-buttons { display: contents; }
    wrapper (search + result count, grouped in render.js) to
    `flex-basis: 100%` makes it claim a full row and wrap as a unit.
    Above 1200px the strip stays inline. */
-@media (max-width: 1200px) {
+@media (width <= 1200px) {
   .toolbar-row.sev-row .search-row { flex-basis: 100%; }
 }
 
@@ -372,10 +372,10 @@ view-mode-buttons { display: contents; }
   }
   & button.active .td { background: currentcolor; }
   & .td.none { border-style: dashed; color: var(--muted); }
-  & .td.r { color: oklch(.68 .20 25); }
-  & .td.b { color: oklch(.72 .15 240); }
-  & .td.g { color: oklch(.74 .15 145); }
-  & .td.x { color: oklch(.55 .01 260); }
+  & .td.r { color: oklch(.68 .20 25deg); }
+  & .td.b { color: oklch(.72 .15 240deg); }
+  & .td.g { color: oklch(.74 .15 145deg); }
+  & .td.x { color: oklch(.55 .01 260deg); }
 
   & .count {
     position: absolute; top: -2px; right: -2px;

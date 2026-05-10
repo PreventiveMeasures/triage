@@ -1,12 +1,12 @@
 /* Entry point — @imports are resolved at load time.
    `print.css` is last so its `!important` palette overrides anything
    above on paper. */
-@import url('./styles/theme.css');
-@import url('./styles/sidebar.css');
-@import url('./styles/drop-zone.css');
-@import url('./styles/report.css');
-@import url('./styles/toolbar.css');
-@import url('./styles/findings.css');
-@import url('./styles/graph-files.css');
-@import url('./styles/graph2.css');
-@import url('./styles/print.css');
+@import './styles/theme.css';
+@import './styles/sidebar.css';
+@import './styles/drop-zone.css';
+@import './styles/report.css';
+@import './styles/toolbar.css';
+@import './styles/findings.css';
+@import './styles/graph-files.css';
+@import './styles/graph2.css';
+@import './styles/print.css';

@@ -23,7 +23,7 @@
      gradient do the chromatic work. The gradient itself stays — that's
      the "glass" hue the design wants. */
   --bg: #121212;
-  --surface: rgba(28, 28, 28, .78);
+  --surface: rgb(28 28 28 / .78);
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
@@ -33,10 +33,10 @@
      the global `.workspace-conflict-dialog` swatches resolve to
      the same hue. Mirrored under `body.theme-light` (below) when
      the light theme needs to retune values. */
-  --marker-red:   oklch(.68 .20 25);
-  --marker-blue:  oklch(.72 .15 240);
-  --marker-green: oklch(.74 .15 145);
-  --marker-gray:  oklch(.55 .01 260);
+  --marker-red:   oklch(.68 .20 25deg);
+  --marker-blue:  oklch(.72 .15 240deg);
+  --marker-green: oklch(.74 .15 145deg);
+  --marker-gray:  oklch(.55 .01 260deg);
   /* Bug-class severities (DeepSec HIGH_BUG / BUG — non-vuln defects).
      Earthy tones distinguish them from the saturated red/orange/amber
      vuln palette: terracotta for high_bug (still draws attention),
@@ -57,10 +57,10 @@
      reads as a warmer chromatic counterpart to the top-right red and
      doesn't tug the neutral-gray bg toward visibly blue. The red and
      bottom green stops stay where they are. */
-  --gradient-stop-a: rgba(159, 122, 234, .07);
-  --gradient-stop-b: rgba(248, 81, 73, .05);
-  --gradient-stop-c: rgba(63, 185, 80, .04);
-  --shadow-glass: 0 1px 2px rgba(0, 0, 0, .18);
+  --gradient-stop-a: rgb(159 122 234 / .07);
+  --gradient-stop-b: rgb(248 81 73 / .05);
+  --gradient-stop-c: rgb(63 185 80 / .04);
+  --shadow-glass: 0 1px 2px rgb(0 0 0 / .18);
   /* Graph palette — chrome around the canvas (toolbar, info sidebar,
      tooltip, zoom controls) and the canvas's own fill. Lifting it
      into vars lets the light theme override in one place. The canvas
@@ -68,8 +68,8 @@
      (it can't share CSS vars without a getComputedStyle round-trip
      per draw); the values mirror the ones below. */
   --graph-canvas-bg: #0c0c0c;
-  --graph-hover-bg: rgba(255, 255, 255, .04);
-  --graph-divider: rgba(60, 60, 60, .5);
+  --graph-hover-bg: rgb(255 255 255 / .04);
+  --graph-divider: rgb(60 60 60 / .5);
 
   /* User-applied marker backgrounds — consumed by `<finding-row>` /
      `<finding-card>` / `<finding-table>` shadow DOMs. Custom
@@ -97,7 +97,7 @@
 
 body.theme-light {
   --bg: #fff;
-  --surface: rgba(246, 248, 250, .72);
+  --surface: rgb(246 248 250 / .72);
   --border: #d1d9e0;
   --text: #1f2328;
   --muted: #59636e;
@@ -118,13 +118,13 @@ body.theme-light {
   --bug: #6b5e52;
   --info: #218bff;
   --surface-active: #ddf4ff;
-  --gradient-stop-a: rgba(124, 58, 237, .10);
-  --gradient-stop-b: rgba(207, 34, 46, .06);
-  --gradient-stop-c: rgba(26, 127, 55, .05);
-  --shadow-glass: 0 1px 2px rgba(0, 0, 0, .04);
+  --gradient-stop-a: rgb(124 58 237 / .10);
+  --gradient-stop-b: rgb(207 34 46 / .06);
+  --gradient-stop-c: rgb(26 127 55 / .05);
+  --shadow-glass: 0 1px 2px rgb(0 0 0 / .04);
   --graph-canvas-bg: #f6f8fa;
-  --graph-hover-bg: rgba(0, 0, 0, .04);
-  --graph-divider: rgba(208, 215, 222, .7);
+  --graph-hover-bg: rgb(0 0 0 / .04);
+  --graph-divider: rgb(208 215 222 / .7);
 
   /* Re-tint user-applied marker backgrounds for light mode. The dark
      palette was sized for `var(--text)`-as-light to remain readable

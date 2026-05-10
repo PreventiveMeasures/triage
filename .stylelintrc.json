@@ -2,18 +2,28 @@
   "extends": ["stylelint-config-recommended"],
   "plugins": ["@stylistic/stylelint-plugin"],
   "rules": {
+    "alpha-value-notation": "number",
+    "color-function-notation": "modern",
     "color-hex-length": "short",
     "declaration-block-no-redundant-longhand-properties": [
       true,
       { "ignoreShorthands": ["grid-template"] }
     ],
+    "display-notation": "short",
+    "function-no-unknown": true,
+    "hue-degree-notation": "angle",
+    "import-notation": "string",
+    "keyframe-selector-notation": "percentage",
+    "length-zero-no-unit": true,
     "max-nesting-depth": 5,
+    "media-feature-range-notation": "context",
+    "selector-no-deprecated": true,
+    "selector-no-invalid": true,
+    "selector-not-notation": "complex",
+    "shorthand-property-no-redundant-values": true,
     "value-keyword-case": "lower",
     "value-no-vendor-prefix": true,
-    "declaration-block-no-shorthand-property-overrides": null,
-    "declaration-property-value-keyword-no-deprecated": null,
     "declaration-property-value-no-unknown": null,
-    "font-family-no-missing-generic-family-keyword": null,
     "no-descending-specificity": null,
     "no-duplicate-selectors": true,
     "selector-pseudo-element-no-unknown": [
@@ -22,7 +32,6 @@
         "ignorePseudoElements": ["/^range-(track|thumb)$/"]
       }
     ],
-    "selector-type-no-unknown": null,
 
     "@stylistic/linebreaks": "unix",
     "@stylistic/max-empty-lines": 1,

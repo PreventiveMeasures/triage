@@ -529,7 +529,7 @@
     overflow: hidden;
     color: var(--text);
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
 
     & em { color: var(--muted); font-style: italic; }
   }
