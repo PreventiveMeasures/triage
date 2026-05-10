@@ -325,6 +325,76 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('idempotent stale-base catch-up does not re-fire the conflict dialog (Keep-current double-popup)', async () => {
+    // Reproduces the user-reported "Keep current causes the popup to
+    // be shown twice" bug. On reconnect, the open-handler's
+    // trySendSave kicks an encrypt IIFE in parallel with
+    // trySendSubscribe; if the save (with `base = our last known
+    // baseRevision`) reaches a server whose head moved past while
+    // we were offline, the server replies with a stale-base
+    // workspace-state catch-up containing the SAME revisions the
+    // subscribe response just delivered. applyChainToBase's
+    // idempotent skip (`rev.id === session.baseRevision`) makes
+    // that second chain a no-op — but the pre-fix code re-ran
+    // collectChainConflicts against the unchanged overlay /
+    // baseState and fired the dialog again with the same
+    // conflicts. Now handleChain short-circuits when the chain
+    // didn't advance baseRevision.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const wsId = await startSession(['finding-A'])
+    // Sync up to a known baseline so baseRevision is set.
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    const { workspaceTag } = triageSync.sessionInfo(wsId)
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+
+    // Take Tab A offline, mutate state.* locally (creating an
+    // unsynced overlay), let a peer push past us while we're down,
+    // then come back online.
+    triageSync.setEnabled(false)
+    await waitFor(() => triageSync.status === 'off', 'sync off')
+    state.markers.set('finding-A', 'amber')
+    await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
+
+    let resolverCalls = 0
+    setHydrationConflictResolver((conflicts) => {
+      resolverCalls += 1
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'local'
+      return decisions
+    })
+    try {
+      // Reconnect. The open handler kicks both trySendSubscribe
+      // (queued waiting for the challenge) and trySendSave (encrypt
+      // IIFE). Once the challenge arrives the subscribe ships; the
+      // save's encrypt may finish either before or after the
+      // server's subscribe response — either way the server returns
+      // a workspace-state for the subscribe AND a workspace-state
+      // catch-up for the stale-base save. Both contain the peer's
+      // chain2 revision. The first applies; the second is a no-op.
+      triageSync.setEnabled(true)
+      // Wait for at least one resolver call (= the dialog fired
+      // for the first, content-bearing chain) and for the save to
+      // settle. Then assert no further resolver calls land — give
+      // microtasks a generous window to drain in case a second
+      // workspace-state was queued behind the first.
+      await waitFor(() => resolverCalls >= 1, 'resolver fired for the first chain')
+      await waitFor(() => triageSync.sessionInfo(wsId)?.pending == null && !triageSync.sessionInfo(wsId)?.encrypting, 'save round-trip settled')
+      // Drain ~250 ms so any post-settle workspace-state catch-up
+      // would have arrived + been processed by now.
+      await new Promise((resolve) => { setTimeout(resolve, 250) })
+      assert.equal(resolverCalls, 1, 'resolver fired exactly once despite the redundant stale-base catch-up')
+      assert.equal(state.markers.get('finding-A'), 'amber', 'local value preserved after Keep-current')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
   it('restores baseRevision + baseState across closeSession / openSession', async () => {
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')

@@ -1621,6 +1621,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
   const overlay = captureOverlay(session)
+  const beforeBaseRevision = session.baseRevision
   const ok = await applyChainToBase(session, revisions as WireRevision[])
   // applyChainToBase self-bails on a closed session (returns false
   // without mutating baseRevision); double-check before we touch
@@ -1663,6 +1664,27 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   if (session.pending) {
     session.pending = null
     session.pendingSave = true
+  }
+  // Skip the conflict-check + apply pass when the chain didn't move
+  // baseRevision (every revision was an idempotent skip via the
+  // `rev.id === session.baseRevision` short-circuit in
+  // applyChainToBase). Server stale-base catch-ups echo the
+  // already-applied chain back when the open-handler trySendSave
+  // fires before subscribe-ack — its save with `base = old
+  // baseRevision` arrives at a server whose head moved past, the
+  // server returns the gap chain, the client applies it, and the
+  // SAME chain comes back as the stale-base catch-up after the
+  // out-of-band save. Without this short-circuit, the user picks
+  // "Keep current" on the first dialog and the second
+  // (content-identical) chain re-fires the dialog with the same
+  // conflicts even though nothing actually changed.
+  if (session.baseRevision === beforeBaseRevision) {
+    if (!sessionIsLive(session)) return
+    if (session.pendingSave) {
+      session.pendingSave = false
+      trySendSave(session)
+    }
+    return
   }
   // Chain-conflict detection: if the user's pre-rebase overlay
   // disagrees per-property with the chain's new baseState, surface
