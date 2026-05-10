@@ -54,7 +54,20 @@ export function matchesFilters(f) {
     if (f.confidence < state.filterConfMin) return false
     if (state.filterConfMax < 10 && f.confidence > state.filterConfMax) return false
   }
-  if (inc) { const text = findingText(f); if (!text.includes(inc)) return false }
+  if (inc) {
+    if (findingText(f).includes(inc)) return true
+    // URL-shaped queries (must start with `https://` AND have at
+    // least one character past the prefix) opt into matching the
+    // user-typed fix reference (PR URL / free-text note) from
+    // `state.fixes`. Plain keyword searches stay out of the fix
+    // field so a substring like "pull" doesn't pull in every
+    // finding whose user added a github PR fix link.
+    if (inc.startsWith('https://') && inc.length > 'https://'.length) {
+      const fix = (state.fixes.get(tabKey(f)) ?? '').toLowerCase()
+      if (fix.includes(inc)) return true
+    }
+    return false
+  }
   return true
 }
 

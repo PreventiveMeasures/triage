@@ -132,15 +132,17 @@ export function stripExportMarker(text, exportName) {
 // reasoning, discovery context) plus the per-finding `repo.github`
 // slug — the latter so the search field can match findings by their
 // upstream repo (`lodash/lodash`), useful when a merged report mixes
-// findings from many node_modules dependencies. Also joins the
-// user-typed fix reference (PR URL or note), keyed by `tabKey(f)`
-// — same key the rest of the triage state uses (uuid `id` when
-// the analyzer stamped one, else the session-local `_id`); inlined
-// here to avoid a cycle through group.js.
+// findings from many node_modules dependencies.
+//
+// The user-typed fix reference (`state.fixes`) is NOT in this base
+// set — fix entries are typically full PR URLs and would dilute
+// regular keyword searches against the description / file fields
+// with noise (e.g. typing "lib" matching every fix URL containing
+// the substring). filters.js opts in for fix-field matching only
+// when the query itself looks like a URL (`https://…`); see
+// matchesFilters there.
 export function findingText(f) {
-  const fixKey = f.id ?? String(f._id)
-  const fix = state.fixes.get(fixKey) ?? ''
-  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github, fix].filter(Boolean).join('\n').toLowerCase()
+  return [f.file, f.description, f.recommendation, f.confidenceReason, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
 export function prettyModel(model) {
