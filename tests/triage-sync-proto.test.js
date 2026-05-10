@@ -29,7 +29,7 @@ if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 
-const { applyChangeset } = await import('../client/triage-sync.js')
+const { applyChangeset } = await import('../client/triage-sync.ts')
 
 describe('triage-sync — applyChangeset prototype-pollution defense', () => {
   it('a `__proto__` key in the changeset does not mutate the returned out\'s prototype chain', () => {

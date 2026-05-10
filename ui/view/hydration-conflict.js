@@ -1,4 +1,4 @@
-import { setHydrationConflictResolver } from '../../client/triage-sync.js'
+import { setHydrationConflictResolver } from '../../client/triage-sync.ts'
 import { buildFindingLookupForLoadedReports } from '../../client/finding-lookup.js'
 import { resolveTriageConflicts } from './triage-conflict-dialog.js'
 

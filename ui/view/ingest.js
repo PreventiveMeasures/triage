@@ -5,7 +5,7 @@ import { deleteFile, readFile, saveBundle, saveFile } from '../../client/storage
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from '../../client/triage.js'
-import { triageSync } from '../../client/triage-sync.js'
+import { triageSync } from '../../client/triage-sync.ts'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph2/state.js'

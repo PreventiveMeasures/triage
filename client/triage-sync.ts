@@ -1,7 +1,8 @@
-import { state } from './state.ts'
+import { type TriageBucket, state } from './state.ts'
 import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import {
+  type SavePayload,
   buildAad,
   computeRevisionId,
   decryptJson,
@@ -56,7 +57,7 @@ import {
 // against base" to "full state" — the client emits one every
 // `keyframeInterval` non-keyframe revisions, and the server uses
 // it as the catch-up root for `from=null` subscribers. Bound into
-// the signed canonical bytes (see sync-crypto.js's
+// the signed canonical bytes (see sync-crypto.ts's
 // `canonicalSavePayload`), so the wire flag MUST match the signed
 // flag — the server can't relabel a normal save as a keyframe.
 //
@@ -67,7 +68,7 @@ import {
 // determines whether broadcasts will actually reach us.
 //
 // `workspaceTag` is the base64url-encoded Ed25519 public key derived
-// from the workspace's private key + UUID — see sync-crypto.js's
+// from the workspace's private key + UUID — see sync-crypto.ts's
 // `deriveSigningKeypair`. The server uses it to route messages and
 // to verify each save's `signature` before accepting it as a
 // revision. Receivers verify the same way. Holders of the workspace's
@@ -96,6 +97,123 @@ import {
 // captured before swapping baseState, and re-applied after, so
 // unsynced edits survive any server push.
 
+// ─────────── types ───────────
+
+export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix'
+
+export type Conflict = {
+  id: string
+  property: ConflictProperty
+  local: string
+  imported: string
+}
+
+// One persisted triage value for a single finding-id. The shape on
+// the wire and in baseState matches what `state.markers` /
+// `state.triageState` / `state.comments` / `state.fixes` /
+// `state.ignoredIds` collectively encode for that id.
+export type TriageEntry = {
+  color?: string
+  triage?: TriageBucket
+  comment?: string
+  fix?: string
+  ignoredReports?: string[]
+  // Legacy boolean form — older peers / pre-bucket persisted blobs.
+  // Migrated to `triage: 'deleted'` on apply / load.
+  deleted?: boolean
+}
+
+export type TriageStateMap = { [id: string]: TriageEntry | undefined }
+export type Changeset = { [id: string]: TriageEntry | null | undefined }
+
+type PendingSave = {
+  base: string | null
+  id: string
+  changeset: Changeset
+  keyframe: boolean
+}
+
+// One workspace's per-tab sync state. All session mutations happen
+// on the singleton entries in the `sessions` map; handlers that
+// await across boundaries `sessionIsLive(session)` before mutating
+// world state.
+type Session = {
+  workspaceId: string
+  workspaceTag: string | null
+  signingKey: CryptoKey | null
+  verifyingKey: Uint8Array<ArrayBuffer> | null
+  ids: Set<string>
+  baseRevision: string | null
+  baseState: TriageStateMap
+  savesSinceKeyframe: number
+  localState: TriageStateMap
+  pending: PendingSave | null
+  pendingSave: boolean
+  key: Uint8Array<ArrayBuffer> | null
+  encrypting: boolean
+  subscribed: boolean
+  subscribeAcked: boolean
+  resyncAttempted: boolean
+  consecutiveFailures: number
+  error: string | null
+  keyDerivationGen?: number
+}
+
+// Per-workspace-id persisted blob — what `loadAllSessions` hands
+// out and `mutateAllSessions`'s mutator manipulates. Untrusted
+// (loaded from localStorage / cross-tab writes), so every reader
+// re-validates the shape it cares about.
+type PersistedSession = {
+  serverUrl?: unknown
+  baseRevision?: unknown
+  baseState?: unknown
+  savesSinceKeyframe?: unknown
+}
+type PersistedSessionsMap = { [workspaceId: string]: PersistedSession | undefined }
+
+type StatusListener = (status: SyncStatus) => void
+type ConflictResolver = (
+  conflicts: Conflict[],
+  baseState: TriageStateMap,
+) => Promise<{ [key: string]: 'local' | 'imported' } | null | undefined>
+
+export type SyncStatus = 'off' | 'offline' | 'connecting' | 'online' | 'error'
+
+// Wire-message shapes that arrive via the `message` event. JSON-
+// parsed payload comes in as `unknown`; every consumer narrows
+// before reading fields.
+type WireRevision = {
+  base?: unknown
+  id?: unknown
+  keyframe?: unknown
+  nonce?: unknown
+  ciphertext?: unknown
+  signature?: unknown
+}
+type WireMessage = {
+  type?: unknown
+  workspaceTag?: unknown
+  base?: unknown
+  id?: unknown
+  nonce?: unknown
+  revisions?: unknown
+}
+
+// Public sessionInfo shape — read-only inspection used by the UI
+// status bar / debug consoles.
+export type SessionInfo = {
+  workspaceId: string
+  workspaceTag: string | null
+  baseRevision: string | null
+  pending: { base: string | null, keyframe: boolean } | null
+  pendingSave: boolean
+  keyReady: boolean
+  encrypting: boolean
+  tracked: number
+  savesSinceKeyframe: number
+  error: string | null
+}
+
 const STORAGE_KEY = 'deepview.triageSyncUrl'
 // Persisted user toggle — flips between true / false when the user
 // clicks the sidebar status button (or via the public API). Stored
@@ -117,7 +235,7 @@ const SESSION_ID_RE = /^\d+$/u
 // the wrong direction: client → ui). Defaults to a no-op so a
 // triage-sync update outside a UI context (tests, console scripts)
 // doesn't blow up.
-let redraw = () => {}
+let redraw: () => void = () => {}
 
 // Hydration conflict resolver — installed once at app boot via
 // `setHydrationConflictResolver(...)`. Called from the
@@ -128,7 +246,7 @@ let redraw = () => {}
 // decisions (`{ '<id>:<property>': 'local' | 'imported' }`) or
 // `null` to keep all locals (cancel). Defaults to null → no dialog,
 // gap-only hydration (local-wins).
-let hydrationConflictResolver = null
+let hydrationConflictResolver: ConflictResolver | null = null
 
 let serverUrl = ''
 // User-driven enable/disable, persisted. The sidebar status button
@@ -143,7 +261,7 @@ let userEnabled = true
 // flips it back. Not persisted: visibility recomputes on every
 // load, so the runtime state can rebuild itself from scratch.
 let forcedOff = false
-let socket = null
+let socket: WebSocket | null = null
 // Per-connection challenge nonce issued by the server in a
 // `challenge` frame on socket open (round-9 H2). The client signs
 // this nonce into every subscribe so a captured subscribe frame
@@ -151,8 +269,8 @@ let socket = null
 // frame arrives; `trySendSubscribe` bails when null and is re-kicked
 // from the `challenge` handler. Reset on every socket close /
 // teardown so a new connection picks up the new nonce.
-let connectionNonce = null
-let reconnectTimer = null
+let connectionNonce: string | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectDelayMs = 1_000
 const MAX_RECONNECT_DELAY = 30_000
 
@@ -170,12 +288,12 @@ const MAX_RECONNECT_DELAY = 30_000
 // dead-connection detection within ~20 s without spamming the wire.
 let pingIntervalMs = 15_000
 let pongTimeoutMs = 5_000
-let pingIntervalId = null
-let pongTimeoutId = null
+let pingIntervalId: ReturnType<typeof setInterval> | null = null
+let pongTimeoutId: ReturnType<typeof setTimeout> | null = null
 
 // Keyframe cadence. Client decides — server can't fake the flag
 // because it's bound into the signed canonical bytes (see
-// sync-crypto.js's `canonicalSavePayload`). A keyframe carries the
+// sync-crypto.ts's `canonicalSavePayload`). A keyframe carries the
 // FULL state instead of a delta; a `from=null` subscribe returns
 // the chain from the most recent keyframe (inclusive), so a fresh
 // client catches up by applying just the keyframe + everything
@@ -202,7 +320,7 @@ let maxConsecutiveFailures = 5
 
 // True only when all gates align: a URL exists, the user hasn't
 // flipped off, and the sidebar isn't suppressing.
-function isActive() {
+function isActive(): boolean {
   return userEnabled && !forcedOff && Boolean(serverUrl)
 }
 
@@ -216,8 +334,8 @@ function isActive() {
 // no broadcasts will reach the client even though the WS layer
 // looks fine. `online` requires the ack OR no active session
 // (the empty state, where there's nothing to subscribe to).
-const statusListeners = new Set()
-function currentStatus() {
+const statusListeners = new Set<StatusListener>()
+function currentStatus(): SyncStatus {
   if (!isActive()) return 'off'
   // Any session in a non-recoverable error state (key derivation
   // failed; encrypt/sign repeatedly threw) takes precedence — the
@@ -237,8 +355,8 @@ function currentStatus() {
   }
   return 'online'
 }
-let lastEmittedStatus = 'off'
-function emitStatusIfChanged() {
+let lastEmittedStatus: SyncStatus = 'off'
+function emitStatusIfChanged(): void {
   const status = currentStatus()
   if (status === lastEmittedStatus) return
   lastEmittedStatus = status
@@ -258,13 +376,13 @@ let suppressNotify = 0
 // shared between them except the socket and the heartbeat. Sessions
 // are added by `openSession(id)` and removed by `closeSession(id)`;
 // `openSession` is additive, not replace-the-current.
-const sessions = new Map()
+const sessions = new Map<string, Session>()
 
 // Find the session whose derived public key matches an inbound
 // message's `workspaceTag`. Returns null if no session has finished
 // key derivation under that tag yet (the wire never sees the UUID,
 // so the tag is the only routing identifier we have for inbound).
-function getSessionByTag(tag) {
+function getSessionByTag(tag: string): Session | null {
   for (const session of sessions.values()) {
     if (session.workspaceTag === tag) return session
   }
@@ -278,7 +396,7 @@ function getSessionByTag(tag) {
 // holds a reference and would otherwise keep writing to state.* /
 // localStorage / the socket on behalf of a workspace the user has
 // already torn down.
-function sessionIsLive(session) {
+function sessionIsLive(session: Session): boolean {
   return sessions.get(session.workspaceId) === session
 }
 
@@ -292,8 +410,8 @@ function sessionIsLive(session) {
 // in via `ignoredByid` to drop the per-call cost to O(1) — closes
 // the symmetric L1 round-4 perf gap that round-3 fixed for the
 // apply side.
-function snapshotEntry(id, ignoredByid = null) {
-  const entry = {}
+function snapshotEntry(id: string, ignoredByid: Map<string, string[]> | null = null): TriageEntry {
+  const entry: TriageEntry = {}
   const color = state.markers.get(id)
   if (color !== undefined) entry.color = color
   const triage = state.triageState.get(id)
@@ -309,8 +427,8 @@ function snapshotEntry(id, ignoredByid = null) {
   return entry
 }
 
-function ignoredReportsForId(id) {
-  const out = []
+function ignoredReportsForId(id: string): string[] {
+  const out: string[] = []
   for (const key of state.ignoredIds) {
     const sep = key.indexOf('\0')
     if (sep < 0) continue
@@ -323,8 +441,8 @@ function ignoredReportsForId(id) {
 // Pre-bucket `state.ignoredIds` by id, optionally filtered to a set
 // of ids of interest. Used by `effectiveLocalState` (and any future
 // many-id snapshotter) so per-id `ignoredReports` lookup is O(1).
-function bucketIgnoredByid(idsScope = null) {
-  const map = new Map()
+function bucketIgnoredByid(idsScope: Set<string> | null = null): Map<string, string[]> {
+  const map = new Map<string, string[]>()
   for (const key of state.ignoredIds) {
     const sep = key.indexOf('\0')
     if (sep < 0) continue
@@ -344,12 +462,12 @@ function bucketIgnoredByid(idsScope = null) {
 // would let any session sync changes for ids in another
 // workspace's reports — narrowing here is what keeps each
 // session's chain to its own findings.
-function buildWorkspaceIds(workspaceId) {
-  const ids = new Set()
+function buildWorkspaceIds(workspaceId: string): Set<string> {
+  const ids = new Set<string>()
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return ids
   const memberFiles = new Set(ws.reports ?? [])
-  for (const r of state.reports) {
+  for (const r of state.reports as Array<{ fileName: string, groups: Array<Array<{ id?: string, _id?: string | number }>> }>) {
     if (!memberFiles.has(r.fileName)) continue
     for (const g of r.groups) {
       for (const f of g) {
@@ -374,7 +492,7 @@ function buildWorkspaceIds(workspaceId) {
 // state we sign and ship under `compute({}, localState)` must
 // carry every id we've ever seen in the chain, not just the ones
 // in our current session.ids scope.
-function effectiveLocalState(baseState, ids) {
+function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> | Iterable<string>): TriageStateMap {
   // `Object.create(null)` so a `__proto__` own key on the incoming
   // baseState (via prior `applyChangeset` of a peer-controlled
   // changeset) doesn't trigger the Object.prototype setter when
@@ -382,8 +500,8 @@ function effectiveLocalState(baseState, ids) {
   // prototype chain and propagate attacker entries into localState
   // → computeChangeset's `target[id]` lookups → emitted changesets.
   // Audit round-12 H6.
-  const out = Object.assign(Object.create(null), baseState)
-  const idsSet = ids instanceof Set ? ids : new Set(ids)
+  const out: TriageStateMap = Object.assign(Object.create(null), baseState)
+  const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
   const ignoredByid = bucketIgnoredByid(idsSet)
   for (const id of idsSet) {
     const entry = snapshotEntry(id, ignoredByid)
@@ -407,8 +525,8 @@ function effectiveLocalState(baseState, ids) {
 // view for that id. The `ignoredReports` mutex with triage is
 // honored — skipped when the entry already carries any triage
 // state, mirroring `applyToReactiveState`'s rule.
-function hydrateStateFromBaseState(baseState, ids) {
-  const conflicts = []
+function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<string>): Conflict[] {
+  const conflicts: Conflict[] = []
   for (const id of ids) {
     const entry = baseState[id]
     if (!entry || typeof entry !== 'object') continue
@@ -419,7 +537,7 @@ function hydrateStateFromBaseState(baseState, ids) {
       else if (local !== entry.color) conflicts.push({ id, property: 'color', local, imported: entry.color })
     }
 
-    let triageNext = null
+    let triageNext: TriageBucket | null = null
     if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') triageNext = entry.triage
     else if (entry.deleted) triageNext = 'deleted'
     if (triageNext) {
@@ -475,7 +593,10 @@ function hydrateStateFromBaseState(baseState, ids) {
 // peer's chain) has effectively voted "local" again. Without this
 // guard the dialog's `imported` choice would silently overwrite
 // fresh local edits made during the dialog window. Audit M-2.
-function applyHydrationDecisions(conflicts, decisions) {
+function applyHydrationDecisions(
+  conflicts: Conflict[],
+  decisions: { [key: string]: 'local' | 'imported' },
+): void {
   for (const c of conflicts) {
     const key = `${c.id}:${c.property}`
     if (decisions[key] !== 'imported') continue
@@ -484,7 +605,7 @@ function applyHydrationDecisions(conflicts, decisions) {
     else if (c.property === 'comment') state.comments.set(c.id, c.imported)
     else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
     else if (c.property === 'triage') {
-      state.triageState.set(c.id, c.imported)
+      state.triageState.set(c.id, c.imported as TriageBucket)
       for (const k of [...state.ignoredIds]) {
         const sep = k.indexOf('\0')
         if (sep >= 0 && k.slice(sep + 1) === c.id) state.ignoredIds.delete(k)
@@ -493,7 +614,7 @@ function applyHydrationDecisions(conflicts, decisions) {
   }
 }
 
-function currentLocalValue(id, property) {
+function currentLocalValue(id: string, property: ConflictProperty): string | undefined {
   if (property === 'color') return state.markers.get(id)
   if (property === 'triage') return state.triageState.get(id)
   if (property === 'comment') return state.comments.get(id)
@@ -506,13 +627,13 @@ function currentLocalValue(id, property) {
 // Returns `{ conflicts, hydrated }` so the caller can decide to
 // surface a dialog (eager listener path) or fall back to local-
 // wins (lazy paths in trySendSave / captureOverlay).
-function refreshSessionIds(session) {
+function refreshSessionIds(session: Session): { conflicts: Conflict[], hydrated: boolean } {
   const newIds = buildWorkspaceIds(session.workspaceId)
-  const newlyAdded = []
+  const newlyAdded: string[] = []
   for (const id of newIds) {
     if (!session.ids.has(id)) newlyAdded.push(id)
   }
-  let conflicts = []
+  let conflicts: Conflict[] = []
   if (newlyAdded.length > 0) conflicts = hydrateStateFromBaseState(session.baseState, newlyAdded)
   session.ids = newIds
   return { conflicts, hydrated: newlyAdded.length > 0 }
@@ -524,9 +645,9 @@ function refreshSessionIds(session) {
 // order), and an applied chain may produce them in a different
 // order, so a positional compare would falsely report changes
 // and produce empty-but-nonzero changesets.
-function ignoredReportsEqual(a, b) {
-  const la = Array.isArray(a) ? a : []
-  const lb = Array.isArray(b) ? b : []
+function ignoredReportsEqual(a: unknown, b: unknown): boolean {
+  const la: string[] = Array.isArray(a) ? a : []
+  const lb: string[] = Array.isArray(b) ? b : []
   if (la.length !== lb.length) return false
   if (la.length === 0) return true
   const seen = new Set(la)
@@ -534,7 +655,7 @@ function ignoredReportsEqual(a, b) {
   return true
 }
 
-function entriesEqual(a, b) {
+function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
   // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'`
   // or absent). Legacy `deleted: true` from older peers / stored
   // chains is treated as 'deleted' for comparison purposes — the
@@ -550,7 +671,7 @@ function entriesEqual(a, b) {
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
 }
 
-function statesEqual(a, b) {
+function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
   const ids = new Set([...Object.keys(a), ...Object.keys(b)])
   for (const id of ids) {
     if (!entriesEqual(a[id] ?? {}, b[id] ?? {})) return false
@@ -562,7 +683,7 @@ function statesEqual(a, b) {
 // in the changeset means "delete this id from the state".
 // Exported for unit-test access (round-12 H6 prototype-pollution
 // regression). Pure function — no module state, no side effects.
-export function applyChangeset(baseState, changeset) {
+export function applyChangeset(baseState: TriageStateMap, changeset: Changeset): TriageStateMap {
   // `Object.create(null)` (not `{}`) so a peer-controlled changeset
   // can't pollute the prototype chain. JSON.parse turns `{"__proto__":
   // …}` into an OWN property; `out[id] = entry` for id='__proto__' on
@@ -573,23 +694,23 @@ export function applyChangeset(baseState, changeset) {
   // attacker-controlled triage values. Null-prototype out has no
   // setter to trigger; the key just becomes an inert own property.
   // Audit round-12 H6.
-  const out = Object.assign(Object.create(null), baseState)
+  const out: TriageStateMap = Object.assign(Object.create(null), baseState)
   for (const [id, entry] of Object.entries(changeset)) {
     if (entry === null) delete out[id]
-    else out[id] = entry
+    else if (entry !== undefined) out[id] = entry
   }
   return out
 }
 
 // Compute the changeset that turns `base` into `target`. Mirrors
 // `applyChangeset` — `null` entries clear, present entries overwrite.
-function computeChangeset(base, target) {
+function computeChangeset(base: TriageStateMap, target: TriageStateMap): Changeset {
   // `Object.create(null)` mirrors `applyChangeset` / `effectiveLocalState`.
   // Without this, `changeset['__proto__'] = entry` (when an id of
   // `__proto__` shows up in base.keys / target.keys) would trigger
   // the Object.prototype setter on changeset and pollute the
   // outbound payload's prototype chain. Audit round-12 H6.
-  const changeset = Object.create(null)
+  const changeset: Changeset = Object.create(null)
   const ids = new Set([...Object.keys(base), ...Object.keys(target)])
   for (const id of ids) {
     const b = base[id] ?? {}
@@ -599,7 +720,7 @@ function computeChangeset(base, target) {
   return changeset
 }
 
-function changesetEmpty(cs) {
+function changesetEmpty(cs: Changeset): boolean {
   for (const _ in cs) return false
   return true
 }
@@ -625,29 +746,30 @@ const SESSION_STATE_LOCK = SESSION_STATE_KEY
 // `writeAllSessionsRaw` rewrites in the versioned form.
 const SESSIONS_VERSION = 1
 
-function loadAllSessions() {
+function loadAllSessions(): PersistedSessionsMap {
   try {
     const raw = localStorage.getItem(SESSION_STATE_KEY)
     if (!raw) return {}
-    const parsed = JSON.parse(raw)
+    const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return {}
+    const obj = parsed as { version?: unknown, sessions?: unknown }
     // Versioned shape: { version, sessions }. Forward-compat: a
     // future version still gives us the inner map; the next write
     // downgrades to v1 (acceptable for v1 freeze, revisit when v2
     // exists).
-    if (parsed.sessions && typeof parsed.sessions === 'object' && !Array.isArray(parsed.sessions)) {
-      return parsed.sessions
+    if (obj.sessions && typeof obj.sessions === 'object' && !Array.isArray(obj.sessions)) {
+      return obj.sessions as PersistedSessionsMap
     }
     // Pre-version legacy shape: bare object keyed by workspaceId.
     // The legacy entries had a `serverUrl` field on each value, so
     // we can sanity-check the shape isn't accidentally the
     // versioned wrapper missing its `sessions` key.
-    if (!('version' in parsed)) return parsed
+    if (!('version' in obj)) return obj as PersistedSessionsMap
     return {}
   } catch { return {} }
 }
 
-function writeAllSessionsRaw(map) {
+function writeAllSessionsRaw(map: PersistedSessionsMap): void {
   try {
     localStorage.setItem(SESSION_STATE_KEY, JSON.stringify({
       version: SESSIONS_VERSION,
@@ -660,17 +782,23 @@ function writeAllSessionsRaw(map) {
   }
 }
 
+type RestoredSession = {
+  baseRevision: string | null
+  baseState: TriageStateMap
+  savesSinceKeyframe: number
+}
+
 // Read-only — used by `openSession` to restore on module load /
 // re-open. No lock: the read alone can't corrupt anything, and a
 // concurrent writer's blob is whatever it serialized atomically
 // anyway. Callers that read-then-write go through `mutateAllSessions`.
-function loadPersistedSession(workspaceId, currentServerUrl) {
+function loadPersistedSession(workspaceId: string, currentServerUrl: string): RestoredSession | null {
   if (!currentServerUrl) return null
   const all = loadAllSessions()
   const entry = all[workspaceId]
   if (!entry || entry.serverUrl !== currentServerUrl) return null
   return {
-    baseRevision: entry.baseRevision ?? null,
+    baseRevision: typeof entry.baseRevision === 'string' ? entry.baseRevision : null,
     // Round-12 H6 defense-in-depth: normalise the persisted blob's
     // baseState into a null-prototype object so a `__proto__` own
     // key (from a prior version's polluted save) doesn't trigger
@@ -684,12 +812,14 @@ function loadPersistedSession(workspaceId, currentServerUrl) {
   }
 }
 
+type SessionsMutator = (all: PersistedSessionsMap) => Promise<unknown> | unknown
+
 // Apply `mutator(map)` to the persisted-sessions blob under the
 // SESSION_STATE_LOCK Web Lock. The mutator runs on a freshly-read
 // copy so a concurrent tab's writes are visible. Setting `false` as
 // the mutator's return value skips the write (no-op when the mutator
 // didn't actually change anything).
-export async function mutateAllSessions(mutator) {
+export async function mutateAllSessions(mutator: SessionsMutator): Promise<void> {
   await navigator.locks.request(SESSION_STATE_LOCK, async () => {
     const all = loadAllSessions()
     const result = await mutator(all)
@@ -698,7 +828,7 @@ export async function mutateAllSessions(mutator) {
   })
 }
 
-function persistSession(target) {
+function persistSession(target: Session): void {
   if (!target || !serverUrl) return
   // Capture serverUrl by value — the mutator runs inside the Web
   // Locks callback (potentially after a few microtasks of queueing)
@@ -727,7 +857,7 @@ function persistSession(target) {
 // workspaces that no longer exist (deleted but their session state
 // stayed). Cheap; runs once per page load. Same fire-and-forget
 // rejection guard as `persistSession`.
-function prunePersistedSessions() {
+function prunePersistedSessions(): void {
   mutateAllSessions((all) => {
     const ids = Object.keys(all)
     if (ids.length === 0) return false
@@ -750,10 +880,11 @@ function prunePersistedSessions() {
 // observe the wipe before they read the blob (e.g. the privateKey-
 // rotation listener, before reopening the session — audit H2)
 // can `await` it. Other callers can fire-and-forget.
-function dropPersistedSession(workspaceId) {
+function dropPersistedSession(workspaceId: string): Promise<void> {
   return mutateAllSessions((all) => {
     if (!(workspaceId in all)) return false
     delete all[workspaceId]
+    return undefined
   })
 }
 
@@ -765,7 +896,7 @@ function dropPersistedSession(workspaceId) {
 // `dismissError` (retry path when derivation failed and the user
 // asked to retry — without this the no-keys session would clear its
 // error but stay silently keyless forever).
-function kickKeyDerivation(session) {
+function kickKeyDerivation(session: Session): void {
   // Re-look-up the workspace each time so a re-import (same id, fresh
   // privateKey) on retry actually picks up the corrected key. The
   // initial-derivation caller already validated the workspace exists,
@@ -819,7 +950,7 @@ function kickKeyDerivation(session) {
       // cause: a corrupt / wrong-length privateKey on the workspace
       // record).
       if (sessions.get(session.workspaceId) === session && session.keyDerivationGen === gen) {
-        session.error = `key derivation failed: ${err?.message ?? err}`
+        session.error = `key derivation failed: ${err instanceof Error ? err.message : String(err)}`
         emitStatusIfChanged()
       }
     }
@@ -834,9 +965,9 @@ function kickKeyDerivation(session) {
 // a `[...state.ignoredIds]` scan inside the per-id loop — is
 // O(|state.ignoredIds| · |ids|); pre-bucket once per call so the
 // total cost is O(|state.ignoredIds| + |ids|). Audit M5 round-3.
-function applyToReactiveState(targetState, ids) {
-  const idsSet = ids instanceof Set ? ids : new Set(ids)
-  const existingIgnoredByid = new Map()
+function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | Iterable<string>): void {
+  const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
+  const existingIgnoredByid = new Map<string, string[]>()
   for (const key of state.ignoredIds) {
     const sep = key.indexOf('\0')
     if (sep < 0) continue
@@ -847,7 +978,7 @@ function applyToReactiveState(targetState, ids) {
     else existingIgnoredByid.set(id, [key])
   }
   for (const id of idsSet) {
-    const entry = targetState[id] ?? {}
+    const entry: TriageEntry = targetState[id] ?? {}
     if (entry.color) state.markers.set(id, entry.color)
     else state.markers.delete(id)
     // Triage state — preferred form `triage: 'fixed'|'invalid'|'deleted'`.
@@ -887,7 +1018,7 @@ function applyToReactiveState(targetState, ids) {
 
 // ─────────── transport / wire ───────────
 
-function send(msg) {
+function send(msg: unknown): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) return false
   try {
     socket.send(JSON.stringify(msg))
@@ -910,7 +1041,7 @@ function send(msg) {
 // re-asking with the current `baseRevision` returns the gap-filling
 // catch-up chain, which is the same primitive the initial subscribe
 // uses.
-function trySendSubscribe(session, force = false) {
+function trySendSubscribe(session: Session, force = false): void {
   if (!session) return
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (!force && session.subscribed) return
@@ -927,13 +1058,23 @@ function trySendSubscribe(session, force = false) {
   // reconnect could swap the nonce.
   const fromBase = session.baseRevision
   const nonce = connectionNonce
+  const signingKey = session.signingKey
+  const workspaceTag = session.workspaceTag
   ;(async () => {
     try {
-      const signature = await signSubscribePayload(session.signingKey, session.workspaceTag, fromBase, nonce)
+      const signature = await signSubscribePayload(signingKey, workspaceTag, fromBase, nonce)
       // Bail if the session was removed (closeSession) during the
       // sign await. Looking it up by id again is cheap and
       // forgery-proof — workspaceId only resolves to one entry.
       if (sessions.get(session.workspaceId) !== session) return
+      // Bail if the captured workspaceTag no longer matches the
+      // session's — the privateKey-rotation handler nulls signing
+      // material synchronously to poison concurrent IIFEs (audit
+      // L2 round-6). Capture-into-locals (forced by TS narrowing
+      // across the await boundary) bypasses that null-poisoning,
+      // so re-check the tag identity here to keep the original
+      // safety property.
+      if (session.workspaceTag !== workspaceTag) return
       // Bail if the connection nonce moved while we were signing
       // (socket close + reconnect during the sign await). The
       // signed canonical is bound to the OLD nonce; sending it now
@@ -946,7 +1087,7 @@ function trySendSubscribe(session, force = false) {
       session.subscribed = true
       send({
         type: 'workspace-subscribe',
-        workspaceTag: session.workspaceTag,
+        workspaceTag,
         from: fromBase,
         signature,
       })
@@ -962,13 +1103,13 @@ function trySendSubscribe(session, force = false) {
 // still cooking its ciphertext. Subsequent calls during that
 // window raise pendingSave just like in-flight; the first call's
 // completion drains the queue.
-function trySendSave(session) {
+function trySendSave(session: Session): void {
   if (!session) return
   if (session.pending || session.encrypting) {
     session.pendingSave = true
     return
   }
-  if (!session.key || !session.signingKey) {
+  if (!session.key || !session.signingKey || !session.workspaceTag) {
     // Key / keypair derivation hasn't finished yet (or it failed).
     // Mark the intent so when keys arrive we send.
     session.pendingSave = true
@@ -996,7 +1137,7 @@ function trySendSave(session) {
   // server uses this to answer `from=null` subscribers without
   // replaying the whole chain). Falsy => regular delta save.
   const isKeyframe = (session.savesSinceKeyframe ?? 0) >= keyframeInterval
-  const sourceBase = isKeyframe ? Object.create(null) : session.baseState
+  const sourceBase: TriageStateMap = isKeyframe ? Object.create(null) : session.baseState
   const changeset = computeChangeset(sourceBase, session.localState)
   // Skip the wire round-trip when there's nothing to send — UNLESS
   // we're in a keyframe slot. The skip-bumped keyframe (audit M5
@@ -1008,11 +1149,14 @@ function trySendSave(session) {
   // closes the empty-local gap audit M1 round-5 called out.
   if (changesetEmpty(changeset) && !isKeyframe) return
   const sentBase = session.baseRevision
+  const sessionKey = session.key
+  const signingKey = session.signingKey
+  const workspaceTag = session.workspaceTag
   session.encrypting = true
   ;(async () => {
     try {
-      const aad = buildAad(session.workspaceTag, sentBase)
-      const { nonce, ciphertext } = await encryptJson(session.key, changeset, aad)
+      const aad = buildAad(workspaceTag, sentBase)
+      const { nonce, ciphertext } = await encryptJson(sessionKey, changeset, aad)
       // Sign the (workspaceTag, base, keyframe, nonce, ciphertext)
       // tuple — the same canonical bytes any verifier (server or
       // peer) will reconstruct from the wire fields. Holding the
@@ -1021,14 +1165,14 @@ function trySendSave(session) {
       // Including keyframe in the signed payload binds the wire
       // flag to the signature so the server can't promote /
       // demote a revision after the fact.
-      const payload = {
-        publicKeyB64: session.workspaceTag,
+      const payload: SavePayload = {
+        publicKeyB64: workspaceTag,
         base: sentBase,
         keyframe: isKeyframe,
         nonceB64: nonce,
         ciphertextB64: ciphertext,
       }
-      const signature = await signSavePayload(session.signingKey, payload)
+      const signature = await signSavePayload(signingKey, payload)
       // Pre-compute the content-addressed revision id (SHA-256 of
       // the canonical bytes). The server derives the same id from
       // received content; the ack carries it back, and we use it
@@ -1039,16 +1183,28 @@ function trySendSave(session) {
       // await chain — drop the result if so. baseRevision may
       // have moved if a chain landed during encryption; in that
       // case the ciphertext is bound to a stale base, so requeue.
+      //
+      // Also bail when the workspaceTag we captured at IIFE entry
+      // no longer matches `session.workspaceTag` — the privateKey-
+      // rotation handler synchronously nulls signing material to
+      // poison concurrent IIFEs (audit L2 round-6); the JS version
+      // got that for free by reading session.key/signingKey at the
+      // crypto call site, but capturing-into-locals (forced by
+      // strict TS narrowing across the await boundary) bypasses
+      // that protection. Re-checking the captured tag against the
+      // current value catches the rotation case without re-reading
+      // the signing material at every use site.
       if (sessions.get(session.workspaceId) !== session) return
+      if (session.workspaceTag !== workspaceTag) return
       if (session.baseRevision !== sentBase) {
         session.pendingSave = true
         return
       }
       session.pending = { base: sentBase, id: revisionId, changeset, keyframe: isKeyframe }
       session.pendingSave = false
-      const wireMsg = {
+      const wireMsg: { [k: string]: unknown } = {
         type: 'workspace-save',
-        workspaceTag: session.workspaceTag,
+        workspaceTag,
         base: sentBase,
         nonce,
         ciphertext,
@@ -1057,7 +1213,7 @@ function trySendSave(session) {
       // Only set the wire flag when truthy — the server treats
       // missing/false the same way, and keeping the message
       // minimal in the common case keeps the wire trace cleaner.
-      if (isKeyframe) wireMsg.keyframe = true
+      if (isKeyframe) wireMsg['keyframe'] = true
       send(wireMsg)
       // Crypto round-trip succeeded — clear any prior error /
       // failure-counter state so the UI moves out of `error` once
@@ -1077,7 +1233,7 @@ function trySendSave(session) {
       if (sessions.get(session.workspaceId) === session) {
         session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
         if (session.consecutiveFailures >= maxConsecutiveFailures) {
-          session.error = `encrypt/sign failed: ${err?.message ?? err}`
+          session.error = `encrypt/sign failed: ${err instanceof Error ? err.message : String(err)}`
           emitStatusIfChanged()
         }
       }
@@ -1123,7 +1279,7 @@ function trySendSave(session) {
 // older clients, etc.) and ended up with a divergent baseState
 // — receiving the keyframe overwrites their baseState wholesale,
 // pulling everyone back into agreement. Audit M5.
-async function applyChainToBase(session, revisions) {
+async function applyChainToBase(session: Session, revisions: WireRevision[]): Promise<boolean> {
   for (const rev of revisions) {
     if (!rev || typeof rev !== 'object') continue
     // Idempotent skip — the chain from a re-subscribe might begin
@@ -1167,14 +1323,17 @@ async function applyChainToBase(session, revisions) {
     // emit our next save, it goes out as a keyframe — peers that
     // applied the bad rev (different verify versions, future
     // protocol bug) get a wholesale replace. Audit M5 round-3.
-    if (!rev.signature || !rev.nonce || !rev.ciphertext || typeof rev.id !== 'string') {
+    if (typeof rev.signature !== 'string' || typeof rev.nonce !== 'string'
+      || typeof rev.ciphertext !== 'string' || typeof rev.id !== 'string') {
       console.warn('Triage sync: revision missing signature/nonce/ciphertext/id; resyncing')
       session.savesSinceKeyframe = keyframeInterval
       return false
     }
-    const payload = {
+    if (!session.workspaceTag || !session.verifyingKey || !session.key) return false
+    const revBase = typeof rev.base === 'string' ? rev.base : null
+    const payload: SavePayload = {
       publicKeyB64: session.workspaceTag,
-      base: rev.base,
+      base: revBase,
       keyframe: isKeyframe,
       nonceB64: rev.nonce,
       ciphertextB64: rev.ciphertext,
@@ -1206,10 +1365,10 @@ async function applyChainToBase(session, revisions) {
       session.savesSinceKeyframe = keyframeInterval
       return false
     }
-    let changeset
+    let changeset: Changeset
     try {
-      const aad = buildAad(session.workspaceTag, rev.base)
-      changeset = await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)
+      const aad = buildAad(session.workspaceTag, revBase)
+      changeset = (await decryptJson(session.key, rev.nonce, rev.ciphertext, aad)) as Changeset
     } catch (err) {
       console.warn('Triage sync: decrypt failed; resyncing', err)
       session.savesSinceKeyframe = keyframeInterval
@@ -1219,7 +1378,7 @@ async function applyChainToBase(session, revisions) {
     // Keyframes carry a changeset computed against an EMPTY base,
     // so applying them is a wholesale replace. Reset the
     // since-last-keyframe counter; bump it on regular revs.
-    const applyTo = isKeyframe ? Object.create(null) : session.baseState
+    const applyTo: TriageStateMap = isKeyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
     if (isKeyframe) session.savesSinceKeyframe = 0
@@ -1245,7 +1404,7 @@ async function applyChainToBase(session, revisions) {
 // mutated would collapse to identity (apply(B, compute(B, T)) ≡ T)
 // and silently discard every remote change. See the bug discussion
 // in the rebase audit.
-async function applyOverlayAndPersist(session, overlay) {
+async function applyOverlayAndPersist(session: Session, overlay: Changeset): Promise<void> {
   // Bail if the session was closed before we got here — applying a
   // chain to a torn-down workspace would write to the global state.*
   // / localStorage on its behalf.
@@ -1289,7 +1448,7 @@ async function applyOverlayAndPersist(session, overlay) {
 // (= state.* − current baseState). Call this BEFORE mutating
 // baseState; the returned overlay is stable across the mutation
 // and gets re-applied via `applyOverlayAndPersist` afterwards.
-function captureOverlay(session) {
+function captureOverlay(session: Session): Changeset {
   // Refresh `session.ids` so a chain landing AFTER a new report was
   // dragged in pulls the right scope when reading state.* — without
   // this, the new report's findings would be invisible to the
@@ -1299,7 +1458,7 @@ function captureOverlay(session) {
   return computeChangeset(session.baseState, session.localState)
 }
 
-async function handleAck(session, msg) {
+async function handleAck(session: Session, msg: WireMessage): Promise<void> {
   // The pending save was accepted as revision `msg.id`, built on
   // `msg.base`. Verify the base matches what we sent and fold the
   // pending changeset into baseState so it becomes the new agreed
@@ -1311,7 +1470,7 @@ async function handleAck(session, msg) {
   if (
     session.pending
     && msg.base === session.pending.base
-    && msg.id === session.pending.id
+    && typeof msg.id === 'string' && msg.id === session.pending.id
   ) {
     // Capture overlay BEFORE folding pending into baseState. The
     // overlay also catches edits the user made AFTER the pending
@@ -1321,7 +1480,7 @@ async function handleAck(session, msg) {
     // Keyframes carry a changeset computed against an EMPTY base
     // (= full state); applying them is a wholesale replace.
     // Regular saves stack on the current baseState.
-    const applyTo = session.pending.keyframe ? Object.create(null) : session.baseState
+    const applyTo: TriageStateMap = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
     // Same cap as the chain-apply path — see audit L3 round-6.
@@ -1343,7 +1502,8 @@ async function handleAck(session, msg) {
     return
   }
   if (session.pending) {
-    console.warn(`Triage sync: ack mismatch (pending ${session.pending.base}/${session.pending.id?.slice(0, 8)}, ack ${msg.base}/${msg.id?.slice(0, 8)})`)
+    const ackIdHint = typeof msg.id === 'string' ? msg.id.slice(0, 8) : String(msg.id)
+    console.warn(`Triage sync: ack mismatch (pending ${session.pending.base}/${session.pending.id.slice(0, 8)}, ack ${msg.base}/${ackIdHint})`)
     return
   }
   // Late ack — pending was already cleared by something else
@@ -1356,20 +1516,21 @@ async function handleAck(session, msg) {
   // including our committed revision, and we end up at the same
   // place via rebase.
   if (msg.id !== session.baseRevision) {
-    console.warn(`Triage sync: late ack for base=${msg.base} id=${msg.id?.slice(0, 8)}…; pending was already cleared`)
+    const ackIdHint = typeof msg.id === 'string' ? msg.id.slice(0, 8) : String(msg.id)
+    console.warn(`Triage sync: late ack for base=${msg.base} id=${ackIdHint}…; pending was already cleared`)
     session.pendingSave = true
     trySendSave(session)
   }
 }
 
-async function handleChain(session, revisions) {
+async function handleChain(session: Session, revisions: unknown): Promise<void> {
   if (!Array.isArray(revisions) || revisions.length === 0) return
   // Key not derived yet — bail; a future open will retry once
   // deriveSessionKey lands and trySendSave re-runs.
   if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
   const overlay = captureOverlay(session)
-  const ok = await applyChainToBase(session, revisions)
+  const ok = await applyChainToBase(session, revisions as WireRevision[])
   // applyChainToBase self-bails on a closed session (returns false
   // without mutating baseRevision); double-check before we touch
   // anything further.
@@ -1420,14 +1581,15 @@ async function handleChain(session, revisions) {
   }
 }
 
-async function handleMessage(data) {
-  let msg
-  try { msg = JSON.parse(data) } catch { return }
+async function handleMessage(data: unknown): Promise<void> {
+  let msg: unknown
+  try { msg = JSON.parse(data as string) } catch { return }
   if (!msg || typeof msg !== 'object') return
+  const wire = msg as WireMessage
   // Heartbeat — stateless, no per-session match needed. Cancel the
   // outstanding pong-deadline timer; the next interval will start a
   // fresh round.
-  if (msg.type === 'pong') {
+  if (wire.type === 'pong') {
     if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
     return
   }
@@ -1435,9 +1597,9 @@ async function handleMessage(data) {
   // socket, before any subscribes can be signed. Store and re-kick
   // every session's subscribe attempt so the queued subscribe-once-
   // keys-derived sessions can finally fire.
-  if (msg.type === 'challenge') {
-    if (typeof msg.nonce !== 'string') return
-    connectionNonce = msg.nonce
+  if (wire.type === 'challenge') {
+    if (typeof wire.nonce !== 'string') return
+    connectionNonce = wire.nonce
     for (const session of sessions.values()) trySendSubscribe(session)
     return
   }
@@ -1445,14 +1607,14 @@ async function handleMessage(data) {
   // every open session. A tag we don't recognise means the message
   // is for a session we've already closed (or for a workspace this
   // client never opened); drop silently.
-  if (typeof msg.workspaceTag !== 'string') return
-  const session = getSessionByTag(msg.workspaceTag)
+  if (typeof wire.workspaceTag !== 'string') return
+  const session = getSessionByTag(wire.workspaceTag)
   if (!session) return
-  if (msg.type === 'workspace-save-ack') {
-    await handleAck(session, msg)
-  } else if (msg.type === 'workspace-state') {
-    await handleChain(session, msg.revisions)
-  } else if (msg.type === 'workspace-subscribed') {
+  if (wire.type === 'workspace-save-ack') {
+    await handleAck(session, wire)
+  } else if (wire.type === 'workspace-state') {
+    await handleChain(session, wire.revisions)
+  } else if (wire.type === 'workspace-subscribed') {
     // Server confirmed our subscribe was accepted — we're a
     // peer now and broadcasts will reach us. Flip the status
     // out of `connecting`. The chain that follows arrives as
@@ -1464,7 +1626,7 @@ async function handleMessage(data) {
 
 // ─────────── connection lifecycle ───────────
 
-function startHeartbeat() {
+function startHeartbeat(): void {
   stopHeartbeat()
   pingIntervalId = setInterval(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return
@@ -1481,19 +1643,19 @@ function startHeartbeat() {
   }, pingIntervalMs)
 }
 
-function stopHeartbeat() {
+function stopHeartbeat(): void {
   if (pingIntervalId) { clearInterval(pingIntervalId); pingIntervalId = null }
   if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
 }
 
-function clearReconnect() {
+function clearReconnect(): void {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(): void {
   clearReconnect()
   if (!serverUrl) return
   reconnectTimer = setTimeout(() => {
@@ -1503,9 +1665,9 @@ function scheduleReconnect() {
   reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY)
 }
 
-function openSocket() {
+function openSocket(): void {
   if (!serverUrl || socket) return
-  let ws
+  let ws: WebSocket
   try {
     ws = new WebSocket(serverUrl)
   } catch (err) {
@@ -1553,8 +1715,8 @@ function openSocket() {
   // processing so each message sees a settled state before the
   // next runs. Errors are swallowed (logged) so one bad message
   // doesn't break the chain.
-  let queue = Promise.resolve()
-  ws.addEventListener('message', (e) => {
+  let queue: Promise<void> = Promise.resolve()
+  ws.addEventListener('message', (e: MessageEvent) => {
     queue = queue.then(() => handleMessage(e.data)).catch((err) => {
       console.warn('Triage sync handler error:', err)
     })
@@ -1610,7 +1772,7 @@ function openSocket() {
   })
 }
 
-function closeSocket() {
+function closeSocket(): void {
   clearReconnect()
   reconnectDelayMs = 1_000
   // Same reasoning as the close-event handler: drop the
@@ -1637,7 +1799,7 @@ function closeSocket() {
 // Called once from the app entry; using a setter (instead of an
 // import from this file) keeps the dependency arrow pointing
 // ui → client, not the other way.
-export function setRedraw(fn) {
+export function setRedraw(fn: () => void): void {
   redraw = typeof fn === 'function' ? fn : () => {}
 }
 
@@ -1649,14 +1811,15 @@ export function setRedraw(fn) {
 // before the next save propagates them to the chain. Same shape
 // as workspace-import's resolver. Defaults to "no dialog,
 // local-wins" (gap-only hydration) when not set.
-export function setHydrationConflictResolver(fn) {
+export function setHydrationConflictResolver(fn: ConflictResolver | null): void {
   hydrationConflictResolver = typeof fn === 'function' ? fn : null
 }
 
 // Test-only knob: shortens the heartbeat windows so a unit test
 // doesn't have to wait the production 15s/5s. No-op for any field
 // that isn't a positive number.
-export function setHeartbeatTimings({ pingMs, pongMs } = {}) {
+export function setHeartbeatTimings(opts: { pingMs?: number, pongMs?: number } = {}): void {
+  const { pingMs, pongMs } = opts
   if (typeof pingMs === 'number' && pingMs > 0) pingIntervalMs = pingMs
   if (typeof pongMs === 'number' && pongMs > 0) pongTimeoutMs = pongMs
   // If a heartbeat is already running (i.e. the socket is open),
@@ -1666,19 +1829,19 @@ export function setHeartbeatTimings({ pingMs, pongMs } = {}) {
 
 // Test-only knob: lower the keyframe interval so a test can trigger
 // the keyframe path with a handful of saves. Production stays at 100.
-export function setKeyframeInterval(n) {
+export function setKeyframeInterval(n: number): void {
   if (typeof n === 'number' && n >= 1) keyframeInterval = n
 }
 
 // Test-only knob: lower the consecutive-failure threshold so a test
 // can drive a session into the `error` state with one fault rather
 // than five. Production stays at 5.
-export function setMaxConsecutiveFailures(n) {
+export function setMaxConsecutiveFailures(n: number): void {
   if (typeof n === 'number' && n >= 1) maxConsecutiveFailures = n
 }
 
 export const triageSync = {
-  setServerUrl(url) {
+  setServerUrl(url: string | null | undefined): void {
     const next = (url ?? '').trim()
     if (next === serverUrl) return
     serverUrl = next
@@ -1719,7 +1882,7 @@ export const triageSync = {
   // Persisted user-driven toggle. URL stays put — re-enabling
   // resumes against the same endpoint. closeSocket() bypasses
   // reconnect because `isActive()` is now false.
-  setEnabled(value) {
+  setEnabled(value: boolean): void {
     const next = Boolean(value)
     if (next === userEnabled) return
     userEnabled = next
@@ -1746,14 +1909,14 @@ export const triageSync = {
     emitStatusIfChanged()
   },
 
-  isEnabled() { return userEnabled },
+  isEnabled(): boolean { return userEnabled },
 
   // Runtime gate driven by the sidebar's visibility logic. Same
   // close-without-touching-URL semantics as setEnabled, but isn't
   // persisted — the sidebar re-derives visibility on every render
   // from workspace state, so on next load this resets to false
   // and `setForcedOff(true/false)` runs again as appropriate.
-  setForcedOff(value) {
+  setForcedOff(value: boolean): void {
     const next = Boolean(value)
     if (next === forcedOff) return
     forcedOff = next
@@ -1774,9 +1937,9 @@ export const triageSync = {
     emitStatusIfChanged()
   },
 
-  getServerUrl() { return serverUrl },
+  getServerUrl(): string { return serverUrl },
 
-  get connected() { return socket?.readyState === WebSocket.OPEN },
+  get connected(): boolean { return socket?.readyState === WebSocket.OPEN },
 
   // Status flag for connection-state indicators. One of:
   //   'off'         no server URL / user disabled / no live workspace
@@ -1786,13 +1949,13 @@ export const triageSync = {
   //   'error'       a session has a non-recoverable error (key
   //                 derivation, persistent crypto failure); cleared
   //                 by `dismissError()`
-  get status() { return currentStatus() },
+  get status(): SyncStatus { return currentStatus() },
 
   // Subscribe to status transitions. Returns an unsubscribe
   // function. Listeners only fire when the status string changes,
   // so transient open → close → open during a reconnect storm
   // doesn't replay the same value back-to-back.
-  onStatusChange(listener) {
+  onStatusChange(listener: StatusListener): () => void {
     statusListeners.add(listener)
     return () => statusListeners.delete(listener)
   },
@@ -1802,7 +1965,7 @@ export const triageSync = {
   // path already owns persistence. Otherwise schedule a save for
   // every open session; trySendSave's empty-changeset short-circuit
   // means sessions with no local changes turn into a cheap no-op.
-  notify() {
+  notify(): void {
     if (suppressNotify > 0) return
     for (const session of sessions.values()) trySendSave(session)
   },
@@ -1812,7 +1975,7 @@ export const triageSync = {
   // socket; calling with an already-open id is idempotent. The
   // single-workspace UI's "switch workspaces" path explicitly calls
   // `closeSession(oldId)` before `openSession(newId)`.
-  openSession(workspaceId) {
+  openSession(workspaceId: string): void {
     if (!workspaceId) return
     if (sessions.has(workspaceId)) return
     const ws = listWorkspaces().find((w) => w.id === workspaceId)
@@ -1845,7 +2008,7 @@ export const triageSync = {
     // them unresolved here — the conflict dialog drives only the
     // eager attach path; boot keeps local values.
     hydrateStateFromBaseState(restoredBaseState, ids)
-    const newSession = {
+    const newSession: Session = {
       // `workspaceId` is the local UUID — used inside the app
       // (state.currentWorkspace, etc.). `workspaceTag` is the
       // base64url Ed25519 public key derived from the workspace's
@@ -1911,7 +2074,7 @@ export const triageSync = {
   // session. The single-workspace UI's "switch workspace" path
   // calls `closeSession(oldId)` before `openSession(newId)`; the
   // page-unload / "log out of sync" paths call it with no arg.
-  closeSession(workspaceId) {
+  closeSession(workspaceId?: string | null): void {
     if (workspaceId == null) {
       sessions.clear()
     } else {
@@ -1924,7 +2087,7 @@ export const triageSync = {
   // shape the single-session API used to expose, just one entry
   // per open session. `null` for a missing id keeps the test /
   // debug ergonomics that the old getter had.
-  sessionInfo(workspaceId) {
+  sessionInfo(workspaceId: string): SessionInfo | null {
     const session = sessions.get(workspaceId)
     if (!session) return null
     return {
@@ -1944,8 +2107,8 @@ export const triageSync = {
   // Snapshot of all open sessions — array of `sessionInfo`-shaped
   // entries. Useful for status bars / debug consoles that want to
   // surface the multi-session state at a glance.
-  get openSessions() {
-    return [...sessions.keys()].map((id) => this.sessionInfo(id))
+  get openSessions(): SessionInfo[] {
+    return [...sessions.keys()].map((id) => this.sessionInfo(id)).filter((info): info is SessionInfo => info !== null)
   },
 
   // User-driven retry after a non-recoverable failure. Clears the
@@ -1960,7 +2123,7 @@ export const triageSync = {
   // `key === null` / `signingKey === null` and `trySendSave` /
   // `trySendSubscribe` silently bail, leaving the user with a
   // "retried, looks fine" status that secretly never syncs again.
-  dismissError(workspaceId) {
+  dismissError(workspaceId?: string | null): void {
     const ids = workspaceId == null ? [...sessions.keys()] : [workspaceId]
     let changed = false
     for (const id of ids) {
@@ -2104,7 +2267,7 @@ onReportMembershipChanged((workspaceId) => {
       return
     }
     // Conflicts surfaced. The resolver is async (UI dialog).
-    let decisions = null
+    let decisions: { [key: string]: 'local' | 'imported' } | null | undefined = null
     if (hydrationConflictResolver) {
       try {
         decisions = await hydrationConflictResolver(conflicts, session.baseState)
@@ -2127,4 +2290,3 @@ onReportMembershipChanged((workspaceId) => {
 // any synchronous deletion during init wouldn't bypass the live
 // handler (audit L5).
 prunePersistedSessions()
-

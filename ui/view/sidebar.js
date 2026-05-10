@@ -11,7 +11,7 @@ import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } 
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
-import { triageSync } from '../../client/triage-sync.js'
+import { triageSync } from '../../client/triage-sync.ts'
 import { ensureBundleFindingsIndexed, getPackagesIndex, getRepositoriesIndex } from '../../client/bundle-finding-index.js'
 
 // Distinct package count across every report the OPFS finding

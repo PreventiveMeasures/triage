@@ -1,5 +1,5 @@
 import { state } from './state.ts'
-import { triageSync } from './triage-sync.js'
+import { triageSync } from './triage-sync.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 
 // Markers + deletions + comments + fix-links survive page reload

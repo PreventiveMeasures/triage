@@ -1,7 +1,7 @@
 import { state } from '../../client/state.ts'
 import { saveTriage } from '../../client/triage.js'
 import { render } from './render.js'
-import { triageSync } from '../../client/triage-sync.js'
+import { triageSync } from '../../client/triage-sync.ts'
 import { openTriageExportDialog } from './triage-export-dialog.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory

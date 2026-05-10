@@ -43,7 +43,7 @@ if (globalThis.localStorage === undefined) {
 
 // ─────────── client modules ───────────
 
-const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.js')
+const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
@@ -984,7 +984,7 @@ describe('triage-sync client', () => {
     // the chain's value, the next save's diff against the
     // (already-matching) baseState is empty, and the chain stays
     // on the imported value.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1051,7 +1051,7 @@ describe('triage-sync client', () => {
     // value wins; the diff against baseState produces a save that
     // pushes the local value to the chain (the gap-only behaviour
     // that this PR's resolver layer is built on).
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1113,7 +1113,7 @@ describe('triage-sync client', () => {
 
   it('hydration on attach with cancelled resolver (returns null) keeps local everywhere', async () => {
     // Cancel = same outcome as picking "local" for every conflict.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1171,7 +1171,7 @@ describe('triage-sync client', () => {
   it('hydration on attach without a registered resolver falls back to gap-only (local-wins)', async () => {
     // No resolver wired (the triage-sync default). Conflicts are
     // silently resolved to local-wins; no dialog shows.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     setHydrationConflictResolver(null)
     triageSync.closeSession()
     clearTriageState()
@@ -2091,7 +2091,7 @@ describe('triage-sync client', () => {
     // their fresh edit. applyHydrationDecisions re-checks current
     // state.* against `c.local` and skips the imported assignment
     // when they no longer match.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -2759,7 +2759,7 @@ describe('triage-sync client', () => {
     // that hasn't returned. (Capturing the real race deterministically
     // would need encryptJson stubbing; the explicit set is the same
     // observable.)
-    const sessions = (await import('../client/triage-sync.js')).triageSync.openSessions
+    const sessions = (await import('../client/triage-sync.ts')).triageSync.openSessions
     void sessions  // touch import; we read via sessionInfo below
     // sessionInfo doesn't expose `encrypting` directly, but `setEnabled`
     // is the documented reset point — invoke it and verify state.
@@ -2860,7 +2860,7 @@ describe('triage-sync client', () => {
     // privateKey via openSession), then immediately rotate the
     // privateKey + dismissError; verify the resulting workspaceTag
     // is the NEW key's, not the old.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.js')
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
     setHydrationConflictResolver(null)
     triageSync.closeSession()
     clearTriageState()
