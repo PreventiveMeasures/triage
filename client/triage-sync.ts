@@ -172,9 +172,20 @@ type PersistedSession = {
 type PersistedSessionsMap = { [workspaceId: string]: PersistedSession | undefined }
 
 type StatusListener = (status: SyncStatus) => void
+
+// Context tag the resolver receives so the dialog wiring can vary
+// the title / intro between the two callers:
+//   * 'attach' — onReportMembershipChanged (report dragged into a
+//                workspace whose chain already had triage for the
+//                report's findings)
+//   * 'chain'  — handleChain (a peer's broadcast — or our own
+//                first-sync catch-up — disagrees per-property with
+//                the user's unsynced overlay)
+export type ConflictResolverContext = 'attach' | 'chain'
 type ConflictResolver = (
   conflicts: Conflict[],
   baseState: TriageStateMap,
+  context: ConflictResolverContext,
 ) => Promise<{ [key: string]: 'local' | 'imported' } | null | undefined>
 
 export type SyncStatus = 'off' | 'offline' | 'connecting' | 'online' | 'error'
@@ -612,6 +623,57 @@ function applyHydrationDecisions(
       }
     }
   }
+}
+
+// Per-property comparison between the user's pre-rebase overlay
+// (= unsynced state.* edits captured before the chain landed) and
+// the chain's new baseState. Surfaced to the resolver so a peer's
+// view that a chain just changed doesn't silently flip — and
+// symmetrically, the joining client's local-wins overlay doesn't
+// silently overwrite an already-agreed chain value when the user
+// might prefer to accept it. Mirrors the per-property semantics
+// `hydrateStateFromBaseState` uses on the report-attach path.
+function collectChainConflicts(overlay: Changeset, newBaseState: TriageStateMap): Conflict[] {
+  const conflicts: Conflict[] = []
+  for (const id of Object.keys(overlay)) {
+    const localEntry = overlay[id]
+    const chainEntry = newBaseState[id]
+    // Skip overlay deletes (user wants the id gone) and ids the
+    // chain doesn't carry — neither produces a per-property
+    // disagreement we can model in the dialog.
+    if (!localEntry || !chainEntry) continue
+
+    if (typeof localEntry.color === 'string' && localEntry.color
+      && typeof chainEntry.color === 'string' && chainEntry.color
+      && localEntry.color !== chainEntry.color) {
+      conflicts.push({ id, property: 'color', local: localEntry.color, imported: chainEntry.color })
+    }
+
+    // Triage — accept both the new shape (`triage: 'fixed' | 'invalid' | 'deleted'`)
+    // and the legacy `deleted: true` migration on either side.
+    const localTriage = (localEntry.triage === 'fixed' || localEntry.triage === 'invalid' || localEntry.triage === 'deleted')
+      ? localEntry.triage
+      : (localEntry.deleted ? 'deleted' : null)
+    const chainTriage = (chainEntry.triage === 'fixed' || chainEntry.triage === 'invalid' || chainEntry.triage === 'deleted')
+      ? chainEntry.triage
+      : (chainEntry.deleted ? 'deleted' : null)
+    if (localTriage && chainTriage && localTriage !== chainTriage) {
+      conflicts.push({ id, property: 'triage', local: localTriage, imported: chainTriage })
+    }
+
+    if (typeof localEntry.comment === 'string' && localEntry.comment
+      && typeof chainEntry.comment === 'string' && chainEntry.comment
+      && localEntry.comment !== chainEntry.comment) {
+      conflicts.push({ id, property: 'comment', local: localEntry.comment, imported: chainEntry.comment })
+    }
+
+    if (typeof localEntry.fix === 'string' && localEntry.fix
+      && typeof chainEntry.fix === 'string' && chainEntry.fix
+      && localEntry.fix !== chainEntry.fix) {
+      conflicts.push({ id, property: 'fix', local: localEntry.fix, imported: chainEntry.fix })
+    }
+  }
+  return conflicts
 }
 
 function currentLocalValue(id: string, property: ConflictProperty): string | undefined {
@@ -1404,7 +1466,20 @@ async function applyChainToBase(session: Session, revisions: WireRevision[]): Pr
 // mutated would collapse to identity (apply(B, compute(B, T)) ≡ T)
 // and silently discard every remote change. See the bug discussion
 // in the rebase audit.
-async function applyOverlayAndPersist(session: Session, overlay: Changeset): Promise<void> {
+//
+// Conflict resolution: when the chain advances and the user's
+// overlay disagrees per-property with the new baseState, the
+// caller passes pre-computed `decisions` (from the
+// hydrationConflictResolver) so the user's "imported" picks
+// override the local-wins overlay merge. Without this, a peer's
+// view silently flips when another tab joins with conflicting
+// unsynced edits.
+async function applyOverlayAndPersist(
+  session: Session,
+  overlay: Changeset,
+  conflicts: Conflict[] = [],
+  decisions: { [key: string]: 'local' | 'imported' } | null = null,
+): Promise<void> {
   // Bail if the session was closed before we got here — applying a
   // chain to a torn-down workspace would write to the global state.*
   // / localStorage on its behalf.
@@ -1413,6 +1488,22 @@ async function applyOverlayAndPersist(session: Session, overlay: Changeset): Pro
   suppressNotify++
   try {
     applyToReactiveState(session.localState, session.ids)
+    // Apply the user's per-property "imported" picks AFTER the
+    // overlay-wins merge landed in state.*. applyHydrationDecisions
+    // writes per-property to the state.* containers, so the chain
+    // value selectively replaces the user's local on the picked
+    // properties without losing the user's local on properties the
+    // user kept (per-property merge). The M-2 round-4 stale-check
+    // inside applyHydrationDecisions also skips writes whose
+    // captured `local` no longer matches the live value (a
+    // saveTriage / action that landed during the dialog window).
+    if (decisions && conflicts.length > 0) {
+      applyHydrationDecisions(conflicts, decisions)
+      // Re-derive localState from the freshly-updated state.* so
+      // the changeset diff the next save computes reflects the
+      // merged result.
+      session.localState = effectiveLocalState(session.baseState, session.ids)
+    }
     // Kick persistSession (lock-RMW, fire-and-forget) BEFORE the
     // saveTriage await. Both writes land under separate localStorage
     // keys and there's no atomic cross-key write available, but
@@ -1573,7 +1664,25 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
     session.pending = null
     session.pendingSave = true
   }
-  await applyOverlayAndPersist(session, overlay)
+  // Chain-conflict detection: if the user's pre-rebase overlay
+  // disagrees per-property with the chain's new baseState, surface
+  // the conflict so the user can pick "keep my local" (default —
+  // the overlay-wins merge) or "apply from chain" (the imported
+  // value overrides the local). Without this, a peer's view
+  // silently flips when another tab joins with a conflicting
+  // unsynced edit, and the joining client's local-wins overlay
+  // silently propagates back through the chain.
+  const conflicts = collectChainConflicts(overlay, session.baseState)
+  let decisions: { [key: string]: 'local' | 'imported' } | null = null
+  if (conflicts.length > 0 && hydrationConflictResolver) {
+    try {
+      decisions = (await hydrationConflictResolver(conflicts, session.baseState, 'chain')) ?? null
+    } catch (err) {
+      console.warn('Triage sync: chain-conflict resolver failed:', err)
+    }
+    if (!sessionIsLive(session)) return
+  }
+  await applyOverlayAndPersist(session, overlay, conflicts, decisions)
   if (!sessionIsLive(session)) return
   if (session.pendingSave || !statesEqual(session.localState, session.baseState)) {
     session.pendingSave = false
@@ -2270,7 +2379,7 @@ onReportMembershipChanged((workspaceId) => {
     let decisions: { [key: string]: 'local' | 'imported' } | null | undefined = null
     if (hydrationConflictResolver) {
       try {
-        decisions = await hydrationConflictResolver(conflicts, session.baseState)
+        decisions = await hydrationConflictResolver(conflicts, session.baseState, 'attach')
       } catch (err) {
         console.warn('Triage sync: hydration conflict resolver failed:', err)
       }

@@ -227,6 +227,104 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('chain-receive surfaces conflicts to the resolver and honors "imported" picks', async () => {
+    // Pre-fix: a peer's broadcast that disagreed per-property with
+    // the user's unsynced overlay was silently overwritten by the
+    // overlay-wins merge, and the user's local value then propagated
+    // back through the chain — peers' views silently flipped without
+    // any UI prompt. Now a resolver registered via
+    // setHydrationConflictResolver fires on chain-receive too, with
+    // a `'chain'` context tag.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    // User locally re-marks to amber WITHOUT saving — this is the
+    // "unsynced overlay" the chain-receive code path captures.
+    state.markers.set('finding-A', 'amber')
+
+    let resolverCalled = false
+    let seenContext = null
+    let seenConflicts = []
+    setHydrationConflictResolver((conflicts, _baseState, context) => {
+      resolverCalled = true
+      seenContext = context
+      seenConflicts = conflicts
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    })
+    try {
+      const beforeRev = triageSync.sessionInfo(wsId).baseRevision
+      const { workspaceTag } = triageSync.sessionInfo(wsId)
+      const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+      const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
+      const seed = persisted.find((w) => w.id === wsId).privateKey
+      await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
+      await waitFor(
+        () => triageSync.sessionInfo(wsId).baseRevision !== beforeRev,
+        'remote chain processed',
+      )
+      await waitFor(() => resolverCalled, 'chain-conflict resolver fired')
+      assert.equal(seenContext, 'chain', 'context tag identifies chain-receive')
+      assert.equal(seenConflicts.length, 1)
+      assert.deepEqual(seenConflicts[0], {
+        id: 'finding-A',
+        property: 'color',
+        local: 'amber',
+        imported: 'blue',
+      })
+      // "imported" decision applied: local amber → chain's blue.
+      await waitFor(() => state.markers.get('finding-A') === 'blue', 'imported decision landed in state.*')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
+  it('chain-receive resolver = "local" preserves local + propagates back to chain', async () => {
+    // The pre-fix local-wins-silently behavior is preserved when the
+    // user picks "local" (or cancels — null decisions). The local
+    // value then propagates to the chain on the next save (audit
+    // round-1 rebase semantics).
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    state.markers.set('finding-A', 'amber')
+
+    setHydrationConflictResolver((conflicts) => {
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'local'
+      return decisions
+    })
+    try {
+      const beforeRev = triageSync.sessionInfo(wsId).baseRevision
+      const { workspaceTag } = triageSync.sessionInfo(wsId)
+      const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+      const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
+      const seed = persisted.find((w) => w.id === wsId).privateKey
+      await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
+      await waitFor(
+        () => triageSync.sessionInfo(wsId).baseRevision !== beforeRev,
+        'remote chain processed',
+      )
+      // Local amber stays — overlay-wins merge (the explicit "local"
+      // decision matches the default, so applyHydrationDecisions is
+      // a no-op for it).
+      assert.equal(state.markers.get('finding-A'), 'amber')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
   it('restores baseRevision + baseState across closeSession / openSession', async () => {
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
