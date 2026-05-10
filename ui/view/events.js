@@ -114,35 +114,35 @@ report.addEventListener('click', (e) => {
   // selectable row container; without the early return, the
   // generic row-select would fire too and we'd race the slide
   // setup against bundleDetails landing.
-  // Finding card's "Code →" shortcut — same shape as the
-  // bundle row's [Code →] button but seeded with both an
-  // integrity and a specific file path. Switches to the
-  // bundles view, opens the matching bundle's Code tab, and
-  // selects the file in the source viewer so the user lands
-  // exactly on the code that produced the finding. The button
-  // lives inside `<finding-card>`'s shadow root, so we walk
-  // composedPath rather than `e.target.closest`.
+  // Finding card's `[Code]` shortcut — pops the bundle source
+  // viewer modal as an overlay on top of the current view
+  // (findings, packages, etc.) without navigating away. Same
+  // pattern the graph-tab "View source" link uses inside the
+  // bundles view, lifted to the global overlay slot
+  // (`#bundle-source-overlay-slot` — render.js mounts the
+  // modal there on every render). The button lives inside
+  // `<finding-card>`'s shadow root, so we walk composedPath
+  // rather than `e.target.closest`.
   const findingCode = pathClosest(e, '[data-finding-code-bundle]')
   if (findingCode) {
     const integrity = findingCode.dataset.findingCodeBundle
     const file = findingCode.dataset.findingCodeFile
-    state.currentView = 'bundles'
-    state.selectedBundle = integrity
     state.bundleSourceFile = file || null
     state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    state.bundleDetailsTab = 'code'
-    graph2.showAll = true
-    state.shownTriage = null
-    if (state.bundleDetails?.integrity === integrity) {
+    // The modal suppresses itself when we're in the Code tab of
+    // the bundles view (the slide renders the source inline);
+    // flip the tab back to the default so the modal surfaces
+    // even if the user happens to be parked on Code right now.
+    if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'packages'
+    if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
+      // Already parsed — nothing to load. Just render so the
+      // overlay slot picks up the new bundleSourceFile.
       render()
-      renderSidebar()
       return
     }
+    state.selectedBundle = integrity
     state.bundleDetails = null
     render()
-    renderSidebar()
     openBundle(integrity)
     return
   }

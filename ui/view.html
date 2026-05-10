@@ -58,5 +58,12 @@
   <div id="report"></div>
 </main>
 
+<!-- Bundle source viewer overlay — rendered globally (sibling of
+     #main-content) so the [Code →] shortcut on a finding can pop
+     the same modal regardless of which view the user is on,
+     without having to switch them to the bundles view first.
+     Kept empty until render() puts the modal HTML in. -->
+<div id="bundle-source-overlay-slot"></div>
+
 </body>
 </html>

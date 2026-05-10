@@ -731,7 +731,12 @@ function renderBundleSourceFindingPanel(findings) {
   </aside>`
 }
 
-function renderBundleSourceModal() {
+// Public so render.js can mount it into the global overlay slot
+// (`#bundle-source-overlay-slot` in view.html). The modal needs
+// to overlay any view — the finding-card's [Code] shortcut
+// pops it from the findings view without switching the user to
+// the bundles view first.
+export function renderBundleSourceModal() {
   const path = state.bundleSourceFile
   if (!path) return nothing
   // In the Code slide the source already renders inline in the
@@ -1517,7 +1522,9 @@ export function renderBundlesList(bundles) {
   // Packages / Files tab) renders the regular list + details.
   const inSlide = selectedEntry
     && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
-  if (inSlide) return html`${renderBundleSlide(selectedEntry)}${renderBundleSourceModal()}`
+  // Source modal mounts at the global overlay slot via render.js;
+  // no need to inline it here.
+  if (inSlide) return renderBundleSlide(selectedEntry)
   const layoutClass = selectedEntry ? 'bundles-layout open' : 'bundles-layout'
   return html`<div class=${classMap({ 'bundles-view': true, 'with-details': !!selectedEntry })}>
     <header class="page-head">
@@ -1565,7 +1572,6 @@ export function renderBundlesList(bundles) {
         </div>
       </aside>` : nothing}
     </div>
-    ${renderBundleSourceModal()}
   </div>`
 }
 

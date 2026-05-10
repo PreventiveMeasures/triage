@@ -295,7 +295,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
         data-finding-code-bundle=${match.integrity}
         data-finding-code-file=${match.file}
         title=${`Open ${match.file} in bundle source viewer`}
-      >Code →</button>`
+      >Code</button>`
     }
   }
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>

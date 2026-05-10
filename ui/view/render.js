@@ -26,6 +26,7 @@ import {
   countBundleTriageBuckets,
   refreshBundleGraphSidebar,
   refreshBundleGraphTopPkgs,
+  renderBundleSourceModal,
   renderBundlesList,
   setCurrentBundleGraph,
 } from './render-bundle.js'
@@ -744,7 +745,21 @@ function findingsBodyTemplate(filtered) {
 // 'packages'`. They got lifted out because they touch no
 // findings-tab state and read cleaner as a coherent neighbor.
 
+// Bundle source viewer overlay — rendered into a top-level slot
+// (see view.html) so it can pop over any view: bundles list,
+// findings table, packages, repositories. The finding-card's
+// `[Code]` shortcut piggybacks on this — set
+// `state.bundleSourceFile` + load `state.bundleDetails`, render
+// runs, and the overlay picks it up. Keeping the slot outside
+// `#report` means the modal survives the report's `innerHTML`
+// rebuilds the dispatch branches do.
+function mountBundleSourceOverlay() {
+  const slot = document.getElementById('bundle-source-overlay-slot')
+  if (slot) litRender(renderBundleSourceModal(), slot)
+}
+
 export function render() {
+  mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
   // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
   // detection scans paths in the loaded reports + tree blobs to
