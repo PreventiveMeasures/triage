@@ -647,6 +647,51 @@ describe('triage-sync server', () => {
     c.ws.close()
   })
 
+  it('socket closing mid-subscribe-verify does not register the dead socket (audit round-12)', async () => {
+    // Race scenario: handleSubscribe awaits the Ed25519 verify, and
+    // during that await the TCP closes. The close handler runs
+    // `unsubscribeAll(socket)` (no-op — nothing to remove yet).
+    // Without the post-await readyState recheck, the resumed handler
+    // calls `subscribe(socket, tag)` and registers the closed socket
+    // in `subscribers[tag]`, where it lives forever — broadcasts
+    // no-op via `send`'s readyState gate but the Set entry holds a
+    // strong ref to the socket.
+    //
+    // Indirect observable: after the race, the dead socket would be
+    // a phantom subscriber. If a later peer subscribes to the same
+    // tag and a third writer pushes a save, the broadcast loop
+    // iterates over (1 phantom + 1 live). Both `send` calls are
+    // safe (the phantom no-ops), so the live peer's receive is
+    // unaffected. This test exercises the race path and verifies
+    // the live peer still receives the broadcast — pinning that
+    // the fix doesn't regress normal cleanup OR break the live
+    // delivery path.
+    const { sk, tag } = await makeKp()
+    // Racer: subscribe, then immediately destroy the TCP without
+    // sending a close frame. `_socket.destroy()` triggers a TCP RST,
+    // which the server sees as a 'close' event; the timing of when
+    // that event lands relative to the verify await's resolution is
+    // exactly the race we're testing.
+    const racer = await connect(serverUrl)
+    const sig = await signSubscribe(sk, tag, null, racer.connectionNonce)
+    racer.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
+    racer.ws._socket?.destroy?.()
+    // Give the server a moment to process the close event + the
+    // queued subscribe handler in either order.
+    await new Promise((resolve) => { setTimeout(resolve, 100) })
+    // Live peer + writer: standard happy-path subscribe + save.
+    const live = await connect(serverUrl)
+    await subscribe(live, sk, tag)
+    const writer = await connect(serverUrl)
+    await subscribe(writer, sk, tag)
+    const save = await buildSave(sk, tag, null, 'after-race')
+    writer.ws.send(JSON.stringify(save.msg))
+    const state = await live.recv((m) => m.type === 'workspace-state' && m.revisions.length > 0)
+    assert.equal(state.revisions[0].id, save.id, 'live peer received the broadcast')
+    live.ws.close()
+    writer.ws.close()
+  })
+
   it('cleans up subscribers when a socket closes (broadcast survives the dead peer)', async () => {
     // Three subscribers; one closes. A subsequent save's broadcast
     // must reach the remaining two without throwing inside the

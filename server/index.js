@@ -298,6 +298,16 @@ async function handleSubscribe(socket, msg) {
     if (DEBUG) console.warn('reject subscribe: bad signature', msg.workspaceTag.slice(0, 12) + '…')
     return
   }
+  // Bail if the socket closed during the verify await. The close
+  // handler's `unsubscribeAll(socket)` already ran (when there was
+  // nothing to remove yet), and `subscribe()` below would add the
+  // dead socket to `subscribers[tag]` — a permanent leak: broadcasts
+  // no-op via `send`'s readyState gate, but the Set entry pins the
+  // socket reference past close, blocking GC. Audit round-12.
+  if (socket.readyState !== socket.OPEN) {
+    if (DEBUG) console.warn('reject subscribe: socket closed mid-verify', msg.workspaceTag.slice(0, 12) + '…')
+    return
+  }
   const tag = msg.workspaceTag
   subscribe(socket, tag)
   // Explicit ack — distinguishes "the server processed my
@@ -400,7 +410,7 @@ wss.on('connection', (socket, req) => {
   // violations). The previous `() => {}` left every per-connection
   // failure invisible. `close` fires after `error` and runs the
   // unsubscribe cleanup, so logging here doesn't risk leaking.
-  socket.on('error', (err) => { console.warn('Socket error:', err.message ?? err) })
+  socket.on('error', (err) => { console.warn('Socket error:', err?.message ?? err) })
 })
 
 wss.on('listening', () => {
@@ -472,7 +482,7 @@ async function shutdown(exitCode = 0) {
   // a separate broadcast path. `Promise.allSettled` so a single
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-  try { handle.close() } catch (err) { console.warn('DB close error:', err.message ?? err) }
+  try { handle.close() } catch (err) { console.warn('DB close error:', err?.message ?? err) }
   process.exit(exitCode)
 }
 // Wrap signal handlers so the signal name (passed as the listener's
