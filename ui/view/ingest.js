@@ -175,11 +175,25 @@ export async function addFiles(files) {
 // `content` skips a redundant OPFS read (drop path passes it through).
 export async function switchToFile(name, content) {
   const gen = ++loadGen
-  // Single-file mode is workspace-sync's off-state; close any open
-  // session before we drop the workspace selection so a stale
-  // session doesn't try to push edits the user makes against the
-  // single-file view.
-  triageSync.closeSession()
+  // Subscribe-on-report-open: a single-file view of a workspace
+  // member should still ride the workspace's chain, so the user
+  // sees peer edits and pushes their own without having to switch
+  // to the workspace tab first. A report can sit in more than one
+  // workspace (cross-workspace finding share); open a session for
+  // each. Sessions for OTHER workspaces close — the smarter
+  // intersection (vs. the previous `closeSession()`-all-then-open)
+  // keeps existing same-workspace sessions in memory across file
+  // switches so we don't pay key derivation again.
+  const desiredWorkspaceIds = new Set(
+    listWorkspaces()
+      .filter((w) => Array.isArray(w.reports) && w.reports.includes(name))
+      .map((w) => w.id),
+  )
+  for (const info of triageSync.openSessions) {
+    if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
+      triageSync.closeSession(info.workspaceId)
+    }
+  }
   state.reports = []
   state.currentFile = name
   state.currentWorkspace = null
@@ -225,6 +239,14 @@ export async function switchToFile(name, content) {
   }
   await ingestReport(name, content, gen)
   if (isStaleLoad(gen)) return
+  // Open the session(s) AFTER ingest so buildWorkspaceIds sees the
+  // freshly-loaded findings (without this it'd run against the
+  // empty state.reports we just reset above and the session's
+  // initial id-set would be empty until the next save). openSession
+  // is idempotent on already-open ids; same-workspace file switches
+  // re-use the existing session — its `ids` self-refreshes via
+  // `refreshSessionIds` on the next notify / chain.
+  for (const id of desiredWorkspaceIds) triageSync.openSession(id)
   await renderSidebar()
 }
 
