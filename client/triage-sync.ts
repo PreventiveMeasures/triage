@@ -604,6 +604,13 @@ function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<stri
 // peer's chain) has effectively voted "local" again. Without this
 // guard the dialog's `imported` choice would silently overwrite
 // fresh local edits made during the dialog window. Audit M-2.
+function dropIgnoredEntriesFor(id: string): void {
+  for (const k of [...state.ignoredIds]) {
+    const sep = k.indexOf('\0')
+    if (sep >= 0 && k.slice(sep + 1) === id) state.ignoredIds.delete(k)
+  }
+}
+
 function applyHydrationDecisions(
   conflicts: Conflict[],
   decisions: { [key: string]: 'local' | 'imported' },
@@ -612,17 +619,45 @@ function applyHydrationDecisions(
     const key = `${c.id}:${c.property}`
     if (decisions[key] !== 'imported') continue
     if (currentLocalValue(c.id, c.property) !== c.local) continue
-    if (c.property === 'color') state.markers.set(c.id, c.imported)
-    else if (c.property === 'comment') state.comments.set(c.id, c.imported)
-    else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
-    else if (c.property === 'triage') {
-      state.triageState.set(c.id, c.imported as TriageBucket)
-      for (const k of [...state.ignoredIds]) {
-        const sep = k.indexOf('\0')
-        if (sep >= 0 && k.slice(sep + 1) === c.id) state.ignoredIds.delete(k)
+    if (c.property === 'color') {
+      if (c.imported) state.markers.set(c.id, c.imported)
+      else state.markers.delete(c.id)
+    } else if (c.property === 'comment') {
+      if (c.imported) state.comments.set(c.id, c.imported)
+      else state.comments.delete(c.id)
+    } else if (c.property === 'fix') {
+      if (c.imported) state.fixes.set(c.id, c.imported)
+      else state.fixes.delete(c.id)
+    } else if (c.property === 'triage') {
+      if (c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted') {
+        state.triageState.set(c.id, c.imported)
+        dropIgnoredEntriesFor(c.id)
+      } else {
+        state.triageState.delete(c.id)
       }
     }
   }
+}
+
+// Per-property normalisers — collapse "no value" of any shape
+// (missing entry, empty string, legacy `deleted: true` for triage)
+// to the empty string '' so the conflict-detection three-way
+// compare (oldBase / local / chain) doesn't get tricked into
+// reporting `'red'` vs `undefined` as a conflict when one side
+// just doesn't carry the property at all.
+function normColor(entry: TriageEntry | null | undefined): string {
+  return typeof entry?.color === 'string' ? entry.color : ''
+}
+function normTriage(entry: TriageEntry | null | undefined): string {
+  if (entry?.triage === 'fixed' || entry?.triage === 'invalid' || entry?.triage === 'deleted') return entry.triage
+  if (entry?.deleted) return 'deleted'
+  return ''
+}
+function normComment(entry: TriageEntry | null | undefined): string {
+  return typeof entry?.comment === 'string' ? entry.comment : ''
+}
+function normFix(entry: TriageEntry | null | undefined): string {
+  return typeof entry?.fix === 'string' ? entry.fix : ''
 }
 
 // Per-property comparison between the user's pre-rebase overlay
@@ -633,55 +668,71 @@ function applyHydrationDecisions(
 // silently overwrite an already-agreed chain value when the user
 // might prefer to accept it. Mirrors the per-property semantics
 // `hydrateStateFromBaseState` uses on the report-attach path.
-function collectChainConflicts(overlay: Changeset, newBaseState: TriageStateMap): Conflict[] {
+//
+// Three-way compare against `oldBaseState` so an "unset" intent
+// (overlay = null OR overlay's entry omits a property the user
+// previously had) is detected as a conflict against a chain that
+// re-assigned the property — and vice versa, when the user set a
+// value and a peer deleted it. Without the three-way, both
+// silent-loss directions sail past:
+//   * we disconnect, peer changes color, we unset, reconnect →
+//     overlay says `{X: null}`, chain says `{X: {color: blue}}`,
+//     two-way (overlay vs chain) sees no per-property
+//     disagreement, applyChangeset replays the delete and the
+//     peer's blue is lost.
+//   * we disconnect, peer unsets color, we change ours, reconnect →
+//     overlay has color, chain doesn't, two-way again sees no
+//     disagreement, the user's set wins and the peer's delete is
+//     lost.
+// The three-way says "both sides changed FROM oldBase, both
+// changes disagree, surface a conflict". `local` / `imported`
+// values are the empty string '' for the unset side; the dialog
+// renders that as `<em>none</em>`.
+function collectChainConflicts(
+  overlay: Changeset,
+  oldBaseState: TriageStateMap,
+  newBaseState: TriageStateMap,
+): Conflict[] {
   const conflicts: Conflict[] = []
+  // Only check ids the user touched (= ids in overlay). Chain-only
+  // changes for ids the user didn't touch are gap-fills handled
+  // automatically by `applyChangeset(newBaseState, overlay)` —
+  // ids missing from the overlay get the chain's value through.
   for (const id of Object.keys(overlay)) {
-    const localEntry = overlay[id]
+    const overlayValue = overlay[id]
+    const oldEntry = oldBaseState[id]
     const chainEntry = newBaseState[id]
-    // Skip overlay deletes (user wants the id gone) and ids the
-    // chain doesn't carry — neither produces a per-property
-    // disagreement we can model in the dialog.
-    if (!localEntry || !chainEntry) continue
+    // `overlay[id] === null` is the explicit "user deleted" signal;
+    // the effective local entry is then null (every property reads
+    // as ''). Otherwise the overlay's entry IS the user's view.
+    const localEntry = overlayValue ?? null
 
-    if (typeof localEntry.color === 'string' && localEntry.color
-      && typeof chainEntry.color === 'string' && chainEntry.color
-      && localEntry.color !== chainEntry.color) {
-      conflicts.push({ id, property: 'color', local: localEntry.color, imported: chainEntry.color })
-    }
-
-    // Triage — accept both the new shape (`triage: 'fixed' | 'invalid' | 'deleted'`)
-    // and the legacy `deleted: true` migration on either side.
-    const localTriage = (localEntry.triage === 'fixed' || localEntry.triage === 'invalid' || localEntry.triage === 'deleted')
-      ? localEntry.triage
-      : (localEntry.deleted ? 'deleted' : null)
-    const chainTriage = (chainEntry.triage === 'fixed' || chainEntry.triage === 'invalid' || chainEntry.triage === 'deleted')
-      ? chainEntry.triage
-      : (chainEntry.deleted ? 'deleted' : null)
-    if (localTriage && chainTriage && localTriage !== chainTriage) {
-      conflicts.push({ id, property: 'triage', local: localTriage, imported: chainTriage })
-    }
-
-    if (typeof localEntry.comment === 'string' && localEntry.comment
-      && typeof chainEntry.comment === 'string' && chainEntry.comment
-      && localEntry.comment !== chainEntry.comment) {
-      conflicts.push({ id, property: 'comment', local: localEntry.comment, imported: chainEntry.comment })
-    }
-
-    if (typeof localEntry.fix === 'string' && localEntry.fix
-      && typeof chainEntry.fix === 'string' && chainEntry.fix
-      && localEntry.fix !== chainEntry.fix) {
-      conflicts.push({ id, property: 'fix', local: localEntry.fix, imported: chainEntry.fix })
+    const props = [
+      { name: 'color' as const, norm: normColor },
+      { name: 'triage' as const, norm: normTriage },
+      { name: 'comment' as const, norm: normComment },
+      { name: 'fix' as const, norm: normFix },
+    ]
+    for (const { name, norm } of props) {
+      const oldVal = norm(oldEntry)
+      const localVal = norm(localEntry)
+      const chainVal = norm(chainEntry)
+      const localChanged = localVal !== oldVal
+      const chainChanged = chainVal !== oldVal
+      if (localChanged && chainChanged && localVal !== chainVal) {
+        conflicts.push({ id, property: name, local: localVal, imported: chainVal })
+      }
     }
   }
   return conflicts
 }
 
-function currentLocalValue(id: string, property: ConflictProperty): string | undefined {
-  if (property === 'color') return state.markers.get(id)
-  if (property === 'triage') return state.triageState.get(id)
-  if (property === 'comment') return state.comments.get(id)
-  if (property === 'fix') return state.fixes.get(id)
-  return undefined
+function currentLocalValue(id: string, property: ConflictProperty): string {
+  if (property === 'color') return state.markers.get(id) ?? ''
+  if (property === 'triage') return state.triageState.get(id) ?? ''
+  if (property === 'comment') return state.comments.get(id) ?? ''
+  if (property === 'fix') return state.fixes.get(id) ?? ''
+  return ''
 }
 
 // Recompute `session.ids` from current workspace membership and
@@ -1620,8 +1671,13 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   // deriveSessionKey lands and trySendSave re-runs.
   if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
+  // Also stash the OLD baseState reference (applyChainToBase
+  // reassigns `session.baseState`, so this captures a stable
+  // pre-rebase view for the three-way conflict-detection compare
+  // below).
   const overlay = captureOverlay(session)
   const beforeBaseRevision = session.baseRevision
+  const oldBaseState = session.baseState
   const ok = await applyChainToBase(session, revisions as WireRevision[])
   // applyChainToBase self-bails on a closed session (returns false
   // without mutating baseRevision); double-check before we touch
@@ -1694,7 +1750,7 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   // silently flips when another tab joins with a conflicting
   // unsynced edit, and the joining client's local-wins overlay
   // silently propagates back through the chain.
-  const conflicts = collectChainConflicts(overlay, session.baseState)
+  const conflicts = collectChainConflicts(overlay, oldBaseState, session.baseState)
   let decisions: { [key: string]: 'local' | 'imported' } | null = null
   if (conflicts.length > 0 && hydrationConflictResolver) {
     try {

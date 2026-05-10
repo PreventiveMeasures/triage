@@ -24,6 +24,13 @@ import { LitElement, html, nothing } from 'lit'
 // One source for the four marker colors — change theme.css and
 // both the in-app picker and these swatches follow.
 function colorSwatchTemplate(color) {
+  // Empty string = "unset". The conflict-detection three-way
+  // compare in triage-sync.ts uses '' for the absent side of an
+  // unset-vs-set disagreement (we cleared color locally, peer set
+  // one — or vice versa); render that as a `<em>none</em>` chip
+  // so the dialog can show both sides side-by-side without an
+  // empty / undefined-named swatch.
+  if (!color) return html`<em>none</em>`
   return html`<span class="conflict-color">
     <span class=${`conflict-color-dot marker-${color}`}></span>
     <span class="conflict-color-name">${color}</span>

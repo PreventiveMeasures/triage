@@ -325,6 +325,110 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('user unsets locally + peer sets on chain → conflict surfaced (was silent loss of peer\'s value)', async () => {
+    // Three-way compare in collectChainConflicts: oldBase had a
+    // value, the user cleared it locally (overlay = `{X: null}`),
+    // the peer assigned a new value on the chain. Pre-fix the
+    // two-way (overlay vs newBaseState) path skipped because
+    // `localEntry` was null — applyChangeset replayed the delete on
+    // top of the new chain value and the peer's change disappeared.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    // Take Tab A offline, peer pushes a different color, Tab A
+    // unsets its local color, Tab A reconnects.
+    triageSync.setEnabled(false)
+    await waitFor(() => triageSync.status === 'off', 'sync off')
+    const { workspaceTag } = triageSync.sessionInfo(wsId)
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
+    state.markers.delete('finding-A')
+
+    let resolverCalls = 0
+    const seenConflicts = []
+    setHydrationConflictResolver((conflicts) => {
+      resolverCalls += 1
+      for (const c of conflicts) seenConflicts.push(c)
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    })
+    try {
+      triageSync.setEnabled(true)
+      await waitFor(() => resolverCalls >= 1, 'resolver fired')
+      assert.equal(seenConflicts.length, 1)
+      assert.deepEqual(seenConflicts[0], {
+        id: 'finding-A',
+        property: 'color',
+        local: '',
+        imported: 'blue',
+      })
+      // "imported" decision applied: peer's blue lands in state.*.
+      await waitFor(() => state.markers.get('finding-A') === 'blue', 'imported decision applied')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
+  it('user sets locally + peer unsets on chain → conflict surfaced (was silent override of peer\'s delete)', async () => {
+    // Symmetric to the test above. oldBase had a value, the user
+    // changed it locally (overlay = `{X: {color: green}}`), the
+    // peer deleted the entry on the chain. Pre-fix the two-way
+    // path skipped because `chainEntry` was undefined — the
+    // overlay-wins merge replayed the user's value on top of the
+    // empty chain entry and the peer's delete disappeared.
+    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+
+    triageSync.setEnabled(false)
+    await waitFor(() => triageSync.status === 'off', 'sync off')
+    const { workspaceTag } = triageSync.sessionInfo(wsId)
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
+    const seed = persisted.find((w) => w.id === wsId).privateKey
+    // Peer pushes an explicit delete (changeset entry = null).
+    await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': null })
+    state.markers.set('finding-A', 'green')
+
+    let resolverCalls = 0
+    const seenConflicts = []
+    setHydrationConflictResolver((conflicts) => {
+      resolverCalls += 1
+      for (const c of conflicts) seenConflicts.push(c)
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    })
+    try {
+      triageSync.setEnabled(true)
+      await waitFor(() => resolverCalls >= 1, 'resolver fired')
+      assert.equal(seenConflicts.length, 1)
+      assert.deepEqual(seenConflicts[0], {
+        id: 'finding-A',
+        property: 'color',
+        local: 'green',
+        imported: '',
+      })
+      // "imported" decision applied: empty `c.imported` deletes
+      // the local marker, matching the peer's chain delete.
+      await waitFor(() => state.markers.get('finding-A') === undefined, 'imported (empty) deleted local marker')
+    } finally {
+      setHydrationConflictResolver(null)
+    }
+    triageSync.closeSession()
+    await deleteWorkspace(wsId)
+  })
+
   it('idempotent stale-base catch-up does not re-fire the conflict dialog (Keep-current double-popup)', async () => {
     // Reproduces the user-reported "Keep current causes the popup to
     // be shown twice" bug. On reconnect, the open-handler's
