@@ -1528,7 +1528,16 @@ function openSocket() {
     })
   })
   ws.addEventListener('close', () => {
-    if (socket === ws) socket = null
+    // STALE CLOSE GUARD. If `socket` already moved on to a new ws
+    // (e.g. setServerUrl swapped servers and the OLD ws's close
+    // event is firing late), every clear below would step on the
+    // NEW ws's state — connectionNonce, subscribed, the reconnect
+    // schedule. Without this guard, a late old-ws close could wipe
+    // the new ws's just-installed challenge nonce, leaving every
+    // session's `trySendSubscribe` bailing on `nonce == null` with
+    // nothing left to re-kick. Audit round-11.
+    if (socket !== ws) return
+    socket = null
     // Drop the per-connection challenge nonce — a reconnect issues
     // a fresh one in the new socket's `challenge` frame, and any
     // session that tries to subscribe before that frame arrives
@@ -1577,6 +1586,12 @@ function closeSocket() {
   // frame doesn't race a stale-nonce subscribe attempt. Audit
   // round-9 H2.
   connectionNonce = null
+  // The close-event handler bails when `socket !== ws` (audit
+  // round-11 stale-close guard), so the heartbeat would otherwise
+  // outlive a `closeSocket()` that isn't followed by `openSocket()`
+  // (setEnabled(false), setForcedOff(true), setServerUrl('')).
+  // Stop it here to keep the timer counts honest.
+  stopHeartbeat()
   if (socket) {
     const ws = socket
     socket = null
