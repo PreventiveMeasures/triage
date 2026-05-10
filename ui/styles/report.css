@@ -1444,15 +1444,20 @@ body.report-fullscreen {
   font: inherit;
   display: flex; flex-direction: column;
 }
-/* Per-line gutter row — fixed height matching the code's
-   line-height so the row aligns with the source `<pre>` line.
+/* Per-line gutter row — height comes from the natural text-flow
+   line-box (`.bundle-source-lineno-num` is a span inheriting the
+   parent's `line-height: 1.45`), same path the source `<pre>`
+   uses for its own lines. Earlier we set `height: 1.45em`
+   explicitly to "match" the line-height, but explicit-height
+   layout and natural-text-flow layout round subpixels along
+   different paths — over hundreds of lines the gutter drifted
+   ~1% against the code column. Letting the line-num span size
+   its row keeps both columns on identical line-box arithmetic.
    Dot + line-number live side by side, both right-aligned
-   relative to the column edge so the column reads as a single
-   right-flush block. */
+   relative to the column edge. */
 .bundle-source-lineno-row {
   display: flex; align-items: center; justify-content: flex-end;
   gap: .35rem;
-  height: 1.45em; /* matches .bundle-source-lines line-height */
 }
 .bundle-source-lineno-num {
   color: var(--muted);
