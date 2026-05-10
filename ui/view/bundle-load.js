@@ -8,6 +8,7 @@
 // `events.js` + `ingest.js`; consolidating here means the next
 // fix to e.g. error handling lands in one place.
 import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
+import { hasBundleFileHashes, recordBundleFileHashes } from '../../client/bundle-hash-index.js'
 import { readBundle } from '../../client/storage.js'
 import { state } from '../../client/state.js'
 import { decodeUtf8 } from '../../common/utf8.js'
@@ -58,11 +59,37 @@ function kickFileHashes(details) {
   ;(async () => {
     try {
       const fileHashes = await computeBundleFileHashes(details)
+      // Cross-bundle hash index always gets the result, even
+      // when the user has navigated away — the data is useful
+      // to the report-card's "Code →" lookup regardless of
+      // the bundle panel's visibility.
+      recordBundleFileHashes(details.integrity, fileHashes)
       if (state.selectedBundle !== details.integrity) return
       details.fileHashes = fileHashes
       render()
     } catch {}
   })()
+}
+
+// State-free variant of the open path — parses the bundle and
+// computes its per-file hashes, recording them in the hash
+// index, without touching `state.bundleDetails` /
+// `state.selectedBundle`. Used to seed the index for findings
+// in a freshly-loaded report so the "Code →" shortcut surfaces
+// without the user having to manually open every bundle.
+// Idempotent + cheap: skipped if we already have hashes for
+// this integrity; otherwise the same buildBundleDetails +
+// computeBundleFileHashes pipeline.
+export async function prefetchBundleHashes(integrity) {
+  if (hasBundleFileHashes(integrity)) return
+  const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+  if (!entry) return
+  const details = await buildBundleDetails(integrity, entry)
+  if (!details?.json) return
+  try {
+    const fileHashes = await computeBundleFileHashes(details)
+    recordBundleFileHashes(integrity, fileHashes)
+  } catch {}
 }
 
 // Full open-bundle pipeline. Caller is responsible for the

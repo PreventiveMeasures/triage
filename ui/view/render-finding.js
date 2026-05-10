@@ -2,6 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
+import { bundlesForFileHash } from '../../client/bundle-hash-index.js'
 import { commitUrl, fileUrl, formatRunMeta, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -275,6 +276,28 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
     ? html`<span class="line-num">${locLink}, ${exportName}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
+  // "Code →" shortcut — when this finding's `fileHash` is present
+  // in any bundle the analyzer was run against (per-finding
+  // `_bundleHashes`, stamped by ingest), the button points at the
+  // first matching bundle's Code view at that file. The
+  // bundle-hash index populates lazily — initially via the
+  // ingest-time prefetch, and live as new bundles drop. Findings
+  // without a hash, or hashes the analyzer didn't list any
+  // bundle for, never get a button.
+  let codeButton = nothing
+  if (f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
+    const allowed = new Set(f._bundleHashes)
+    const match = bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity))
+    if (match) {
+      codeButton = html`<button
+        type="button"
+        class="finding-code-btn"
+        data-finding-code-bundle=${match.integrity}
+        data-finding-code-file=${match.file}
+        title=${`Open ${match.file} in bundle source viewer`}
+      >Code →</button>`
+    }
+  }
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -287,6 +310,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
         ${lineRowMain}
         ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
+        ${codeButton}
       </div>
       <div class="desc">${stripExportMarker(f.description, f.exportName)}</div>
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}

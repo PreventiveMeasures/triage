@@ -90,6 +90,25 @@
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 
+/* "Code →" shortcut in the line-row — surfaces when the
+   finding's `fileHash` matches a source in one of the bundles
+   the analyzer was run against. Click jumps to that bundle's
+   Code view at the matching file. Same visual weight as the
+   row chips elsewhere (pill, hairline border, accent on
+   hover); flex pushes it to the right edge of the line-row
+   via auto margin. */
+.finding-code-btn {
+  margin-left: auto;
+  padding: .1rem .55rem;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted);
+  font: inherit; font-size: .68rem; font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.finding-code-btn:hover { border-color: var(--accent); color: var(--accent); }
+
 .marks {
   display: flex; gap: .35rem; justify-content: flex-end;
   margin-top: .4rem; align-items: center;

@@ -9,7 +9,7 @@ import { triageSync } from '../../client/triage-sync.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 import { cleanupGraph2, graph2 } from './graph2/state.js'
-import { openBundle } from './bundle-load.js'
+import { openBundle, prefetchBundleHashes } from './bundle-load.js'
 import { parseMarkdownFindings } from '../../common/parse-md.js'
 import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
@@ -73,6 +73,13 @@ function bundleKind(name) {
 export async function addFiles(files) {
   let last = null
   let lastBundleIntegrity = null
+  // Track every newly-saved bundle integrity in this drop so we
+  // can prefetch their per-file hashes after `renderSidebar()`
+  // refreshes `state.bundles` — the prefetch helper looks up
+  // the entry there. Lets existing reports' "Code →" buttons
+  // surface as soon as the matching bundle lands, without the
+  // user having to manually open it.
+  const newBundleIntegrities = new Set()
   for (const file of files) {
     try {
       // .gz drops are routed to the workspace-import pipeline. Reading
@@ -94,6 +101,7 @@ export async function addFiles(files) {
         const buf = new Uint8Array(await file.arrayBuffer())
         const { integrity } = await saveBundle(file.name, buf)
         lastBundleIntegrity = integrity
+        newBundleIntegrities.add(integrity)
         continue
       }
       const content = await file.text()
@@ -128,6 +136,14 @@ export async function addFiles(files) {
   // renderSidebar refreshes state.bundles from OPFS so the bundle
   // we just imported is visible to the bundles view path below.
   await renderSidebar()
+  // Now that state.bundles is fresh, kick a background hash
+  // pre-parse for every bundle this drop saved. The hash index
+  // populates the cross-bundle map the finding-card's "Code →"
+  // button consults, so existing reports' findings can resolve
+  // matches without the user manually opening every bundle.
+  for (const integrity of newBundleIntegrities) {
+    prefetchBundleHashes(integrity).catch(() => {})
+  }
   if (last) {
     // Single-report drop wins over a bundle when both happen in
     // the same drop — the user's primary intent was the report.
@@ -433,7 +449,18 @@ export async function ingestReport(name, content, gen = null) {
       const stamped = []
       for (const f of members) {
         if (f.id) seenIds.add(f.id)
-        const filled = { ...f, _id: state.nextFindingId++, _repoFallback: repoFallback, _reportName: name }
+        // `_bundleHashes` is the report-level array of integrities
+        // the analyzer was run against. Stamped per-finding so the
+        // finding-card's "Code →" button lookup can constrain its
+        // search to bundles this report is actually about. Empty
+        // array when the report didn't carry the field.
+        const filled = {
+          ...f,
+          _id: state.nextFindingId++,
+          _repoFallback: repoFallback,
+          _reportName: name,
+          _bundleHashes: data.bundleHashes ?? [],
+        }
         if (!data.source) {
           const hasOwnMeta = META_FIELDS.some((k) => filled[k] !== undefined)
           if (!hasOwnMeta) {
@@ -459,7 +486,22 @@ export async function ingestReport(name, content, gen = null) {
       // (stamped at JSON-export time). The renderer surfaces this as
       // a separate "Tree" tab when more than one file is present.
       tree: data.tree ?? null,
+      bundleHashes: data.bundleHashes ?? [],
     })
+    // Pre-parse bundles the analyzer ran against so the
+    // finding-card's "Code →" shortcut resolves without the
+    // user having to manually open every bundle first. Only
+    // bundles we actually have stored locally get prefetched
+    // (mismatched integrities just no-op inside
+    // prefetchBundleHashes). Fire-and-forget — the buttons
+    // surface progressively as each bundle's hash compute
+    // completes; no need to block render on it.
+    if (Array.isArray(data.bundleHashes) && data.bundleHashes.length > 0) {
+      const stored = new Set((state.bundles ?? []).map((b) => b.integrity))
+      for (const integrity of data.bundleHashes) {
+        if (stored.has(integrity)) prefetchBundleHashes(integrity).catch(() => {})
+      }
+    }
     if (isFirst) {
       resetFilters()
       // Auto-tune the confidence floor so the initial view fits

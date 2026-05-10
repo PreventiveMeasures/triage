@@ -79,6 +79,7 @@ function renderPreservingScrollOf(selector) {
   if (after) after.scrollTop = top
 }
 import { deleteBundle, listBundles } from '../../client/storage.js'
+import { dropBundleFromHashIndex } from '../../client/bundle-hash-index.js'
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { switchToFile } from './ingest.js'
@@ -113,6 +114,38 @@ report.addEventListener('click', (e) => {
   // selectable row container; without the early return, the
   // generic row-select would fire too and we'd race the slide
   // setup against bundleDetails landing.
+  // Finding card's "Code →" shortcut — same shape as the
+  // bundle row's [Code →] button but seeded with both an
+  // integrity and a specific file path. Switches to the
+  // bundles view, opens the matching bundle's Code tab, and
+  // selects the file in the source viewer so the user lands
+  // exactly on the code that produced the finding. The button
+  // lives inside `<finding-card>`'s shadow root, so we walk
+  // composedPath rather than `e.target.closest`.
+  const findingCode = pathClosest(e, '[data-finding-code-bundle]')
+  if (findingCode) {
+    const integrity = findingCode.dataset.findingCodeBundle
+    const file = findingCode.dataset.findingCodeFile
+    state.currentView = 'bundles'
+    state.selectedBundle = integrity
+    state.bundleSourceFile = file || null
+    state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
+    state.bundleDetailsTab = 'code'
+    graph2.showAll = true
+    state.shownTriage = null
+    if (state.bundleDetails?.integrity === integrity) {
+      render()
+      renderSidebar()
+      return
+    }
+    state.bundleDetails = null
+    render()
+    renderSidebar()
+    openBundle(integrity)
+    return
+  }
   const codeBundle = e.target.closest('[data-bundle-row-code]')
   if (codeBundle) {
     const integrity = codeBundle.dataset.bundleRowCode
@@ -163,6 +196,9 @@ report.addEventListener('click', (e) => {
         state.bundleSourceFile = null
         state.bundleSourceFindingIdx = null
       }
+      // Prune the cross-bundle hash index so the finding-card's
+      // "Code →" lookup stops surfacing this bundle as a match.
+      dropBundleFromHashIndex(integrity)
       state.bundles = await listBundles()
       render()
       await renderSidebar()
