@@ -227,10 +227,11 @@ function currentStatus() {
     if (session.error) return 'error'
   }
   if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
-  // Any session that's been registered (`subscribed`) but hasn't
-  // received the server's ack yet keeps the whole status in
-  // `connecting`. Zero sessions = `online` (nothing to subscribe
-  // to; the socket is just sitting open).
+  // Any session that has sent its subscribe but hasn't received the
+  // `workspace-subscribed` ack from the server stays in `connecting`.
+  // Sessions still deriving keys (`subscribed === false`) don't
+  // contribute to the gate — they pass through `connecting` only as
+  // they actually attempt to subscribe.
   for (const session of sessions.values()) {
     if (session.subscribed && !session.subscribeAcked) return 'connecting'
   }
@@ -591,18 +592,43 @@ function changesetEmpty(cs) {
 // localStorage instance and the lock manager).
 const SESSION_STATE_LOCK = SESSION_STATE_KEY
 
+// Persisted shape (round-10 — pre-v1 freeze):
+//   { version: 1, sessions: { [workspaceId]: { serverUrl, ... } } }
+//
+// Pre-version blobs were a bare object keyed by workspaceId;
+// `loadAllSessions` accepts both shapes so a user upgrading from a
+// pre-version build doesn't lose their persisted bases. The next
+// `writeAllSessionsRaw` rewrites in the versioned form.
+const SESSIONS_VERSION = 1
+
 function loadAllSessions() {
   try {
     const raw = localStorage.getItem(SESSION_STATE_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw)
-    return (parsed && typeof parsed === 'object') ? parsed : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+    // Versioned shape: { version, sessions }. Forward-compat: a
+    // future version still gives us the inner map; the next write
+    // downgrades to v1 (acceptable for v1 freeze, revisit when v2
+    // exists).
+    if (parsed.sessions && typeof parsed.sessions === 'object' && !Array.isArray(parsed.sessions)) {
+      return parsed.sessions
+    }
+    // Pre-version legacy shape: bare object keyed by workspaceId.
+    // The legacy entries had a `serverUrl` field on each value, so
+    // we can sanity-check the shape isn't accidentally the
+    // versioned wrapper missing its `sessions` key.
+    if (!('version' in parsed)) return parsed
+    return {}
   } catch { return {} }
 }
 
 function writeAllSessionsRaw(map) {
   try {
-    localStorage.setItem(SESSION_STATE_KEY, JSON.stringify(map))
+    localStorage.setItem(SESSION_STATE_KEY, JSON.stringify({
+      version: SESSIONS_VERSION,
+      sessions: map,
+    }))
   } catch (err) {
     // Likely QuotaExceededError — sync just falls back to the
     // "always start from null base" path on next reload.

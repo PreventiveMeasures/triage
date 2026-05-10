@@ -360,7 +360,14 @@ wss.on('connection', (socket, req) => {
     })()
     track(handler)
   })
-  socket.on('close', () => unsubscribeAll(socket))
+  socket.on('close', () => {
+    unsubscribeAll(socket)
+    // WeakMap entries clear via GC once the socket is unreachable,
+    // but `wss.clients` (and the `ws` library's internals) hold the
+    // socket strongly until well after `close` — explicit delete
+    // keeps the nonce out of memory immediately. Audit round-10.
+    socketChallenge.delete(socket)
+  })
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness
   // (TLS handshake failures, frame-decode errors, ws-protocol

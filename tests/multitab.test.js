@@ -460,7 +460,9 @@ describe('sessions blob persistence (Web Locks)', () => {
         order.push('B write')
       }),
     ])
-    const final = JSON.parse(globalThis.localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    // Round-10 freeze added a versioned wrapper: { version, sessions }.
+    const wrapper = JSON.parse(globalThis.localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    const final = wrapper.sessions ?? wrapper
     assert.ok(final.A, 'workspace A persisted')
     assert.ok(final.B, 'workspace B persisted')
     // Lock invariant: the second mutator's READ must see the first's

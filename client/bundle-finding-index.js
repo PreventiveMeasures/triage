@@ -270,18 +270,18 @@ function indexFindingByPackage(f, key, name) {
   if (!pkg) return false
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
-    // `keyReports` tracks which reports contributed each key so
+    // `_keyReports` tracks which reports contributed each key so
     // `invalidateName` can prune precisely. `reports` (Set) is the
     // public summary; we keep both forms because callers iterate
     // `reports` directly. Audit round-8 H1.
-    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), keyReports: new Map() }
+    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
     byPackage.set(pkg, pBucket)
   }
   pBucket.reports.add(name)
-  let krSet = pBucket.keyReports.get(key)
+  let krSet = pBucket._keyReports.get(key)
   if (!krSet) {
     krSet = new Set()
-    pBucket.keyReports.set(key, krSet)
+    pBucket._keyReports.set(key, krSet)
   }
   const wasNewReport = !krSet.has(name)
   krSet.add(name)
@@ -306,14 +306,14 @@ function indexFindingByRepo(f, key, name, reportFallback) {
   if (!repo) return false
   let rBucket = byRepo.get(repo)
   if (!rBucket) {
-    rBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), keyReports: new Map() }
+    rBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
     byRepo.set(repo, rBucket)
   }
   rBucket.reports.add(name)
-  let krSet = rBucket.keyReports.get(key)
+  let krSet = rBucket._keyReports.get(key)
   if (!krSet) {
     krSet = new Set()
-    rBucket.keyReports.set(key, krSet)
+    rBucket._keyReports.set(key, krSet)
   }
   const wasNewReport = !krSet.has(name)
   krSet.add(name)
@@ -354,11 +354,11 @@ function invalidateName(name) {
   for (const { pkg, key, file } of contrib.pkg) {
     const pBucket = byPackage.get(pkg)
     if (!pBucket) continue
-    const krSet = pBucket.keyReports.get(key)
+    const krSet = pBucket._keyReports.get(key)
     if (!krSet) continue
     if (krSet.delete(name)) dirty = true
     if (krSet.size === 0) {
-      pBucket.keyReports.delete(key)
+      pBucket._keyReports.delete(key)
       pBucket.keys.delete(key)
       const idx = pBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
       if (idx >= 0) pBucket.findings.splice(idx, 1)
@@ -370,13 +370,13 @@ function invalidateName(name) {
       }
     }
     // Recompute the public `reports` set: any report still appearing
-    // in any keyReports entry stays. Cheaper to recompute on prune
+    // in any _keyReports entry stays. Cheaper to recompute on prune
     // than to maintain a refcount.
-    if (pBucket.keyReports.size === 0) {
+    if (pBucket._keyReports.size === 0) {
       byPackage.delete(pkg)
     } else {
       const stillContributing = new Set()
-      for (const set of pBucket.keyReports.values()) {
+      for (const set of pBucket._keyReports.values()) {
         for (const r of set) stillContributing.add(r)
       }
       pBucket.reports = stillContributing
@@ -387,11 +387,11 @@ function invalidateName(name) {
   for (const { repo, key, file } of contrib.repo) {
     const rBucket = byRepo.get(repo)
     if (!rBucket) continue
-    const krSet = rBucket.keyReports.get(key)
+    const krSet = rBucket._keyReports.get(key)
     if (!krSet) continue
     if (krSet.delete(name)) dirty = true
     if (krSet.size === 0) {
-      rBucket.keyReports.delete(key)
+      rBucket._keyReports.delete(key)
       rBucket.keys.delete(key)
       const idx = rBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
       if (idx >= 0) rBucket.findings.splice(idx, 1)
@@ -402,11 +402,11 @@ function invalidateName(name) {
         if (fileList.length === 0) rBucket.files.delete(file)
       }
     }
-    if (rBucket.keyReports.size === 0) {
+    if (rBucket._keyReports.size === 0) {
       byRepo.delete(repo)
     } else {
       const stillContributing = new Set()
-      for (const set of rBucket.keyReports.values()) {
+      for (const set of rBucket._keyReports.values()) {
         for (const r of set) stillContributing.add(r)
       }
       rBucket.reports = stillContributing

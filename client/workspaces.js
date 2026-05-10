@@ -1,21 +1,41 @@
 // Workspaces — named scopes a user creates from the sidebar. Each
 // workspace gets a uuid (`crypto.randomUUID`) and a freshly generated
-// 32-byte private key on creation. The list is persisted as a single
-// JSON array under `deepview.workspaces` in localStorage; the private
+// 32-byte private key on creation. Persisted as a versioned JSON
+// object under `deepview.workspaces` in localStorage; the private
 // key rides along base64-encoded so the JSON stays a string.
+//
+// Persisted shape (round-10 — pre-v1 freeze):
+//   { version: 1, workspaces: [...] }
+//
+// Pre-version blobs were a bare JSON array; `readRaw` accepts both
+// shapes so a user upgrading from a pre-version build doesn't lose
+// their workspaces on first load. The next `writeRaw` rewrites in
+// the versioned form.
 //
 // Storage is small and synchronous-friendly (a handful of entries, a
 // few hundred bytes each), so localStorage is the right tier — same
 // pattern as triage / view-mode state. OPFS is reserved for the
 // per-report blobs.
 const STORAGE_KEY = 'deepview.workspaces'
+const WORKSPACES_VERSION = 1
 
 function readRaw() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    // Versioned shape: { version, workspaces }. Read forward-compat:
+    // a future version we don't recognise still hands us the array
+    // (callers operate on `workspaces` only); the next `writeRaw`
+    // would downgrade it back to v1, so callers running an older
+    // build can lose newer fields. Acceptable for v1; revisit when
+    // a v2 actually exists.
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.workspaces)) {
+      return parsed.workspaces
+    }
+    // Pre-version legacy shape: bare array of workspace records.
+    if (Array.isArray(parsed)) return parsed
+    return []
   } catch {
     return []
   }
@@ -23,7 +43,10 @@ function readRaw() {
 
 function writeRaw(list) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: WORKSPACES_VERSION,
+      workspaces: list,
+    }))
   } catch (err) {
     console.warn('Failed to save workspaces:', err)
   }

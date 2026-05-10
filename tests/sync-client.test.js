@@ -182,7 +182,8 @@ describe('triage-sync client', () => {
     // change to finding-B = green. Local A = red must survive; the
     // remote B = green must land.
     const { workspaceTag } = triageSync.sessionInfo(wsId)
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-B': { color: 'green' } })
 
@@ -207,7 +208,8 @@ describe('triage-sync client', () => {
 
     const beforeRev = triageSync.sessionInfo(wsId).baseRevision
     const { workspaceTag } = triageSync.sessionInfo(wsId)
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     // Remote pushes A = blue. Server appends, broadcasts to client A.
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
@@ -627,9 +629,12 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     clearTriageState()
     // Wipe persisted session so re-open starts at baseRevision=null.
-    const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    // Round-10 freeze: sessions blob is now `{ version, sessions }`;
+    // legacy bare-object shape still tolerated by loadAllSessions.
+    const wrapper = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    const all = wrapper.sessions ?? wrapper
     delete all[wsId]
-    localStorage.setItem('deepview.sync.sessions', JSON.stringify(all))
+    localStorage.setItem('deepview.sync.sessions', JSON.stringify({ version: 1, sessions: all }))
     triageSync.openSession(wsId)
     await waitFor(statusOnline, 'reader online')
     // Server returns the chain starting at the keyframe; client
@@ -860,7 +865,7 @@ describe('triage-sync client', () => {
     // baseState carries all three — verified via the persisted-session
     // blob, which mirrors session.baseState. This is what guarantees a
     // future keyframe preserves OOS triage for fresh subscribers.
-    const persisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const persisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
     assert.equal(persisted?.baseState?.['finding-A']?.color, 'red', 'A in baseState')
     assert.equal(persisted?.baseState?.['finding-B']?.color, 'blue', 'B in baseState (OOS but stored)')
     assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C in baseState (OOS but stored)')
@@ -922,7 +927,7 @@ describe('triage-sync client', () => {
 
     // baseState still carries all three (hydration reads, doesn't
     // remove). Future keyframes preserve C for fresh subscribers.
-    const persisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const persisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
     assert.equal(persisted?.baseState?.['finding-C']?.color, 'green', 'C remains in baseState after attach')
 
     triageSync.closeSession(wsId)
@@ -1077,7 +1082,8 @@ describe('triage-sync client', () => {
     // baseState.
     await waitFor(
       () => {
-        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const _wrapper = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const all = _wrapper.sessions ?? _wrapper
         return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
       },
       'B in baseState',
@@ -1136,7 +1142,8 @@ describe('triage-sync client', () => {
     })
     await waitFor(
       () => {
-        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const _wrapper = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const all = _wrapper.sessions ?? _wrapper
         return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
       },
       'B in baseState',
@@ -1194,7 +1201,8 @@ describe('triage-sync client', () => {
     })
     await waitFor(
       () => {
-        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const _wrapper = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const all = _wrapper.sessions ?? _wrapper
         return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
       },
       'B in baseState',
@@ -1326,11 +1334,14 @@ describe('triage-sync client', () => {
     // builds a delta against it; the value itself is opaque to
     // this test.
     localStorage.setItem('deepview.sync.sessions', JSON.stringify({
-      [wsId]: {
-        serverUrl,
-        baseRevision: 'a'.repeat(43),
-        savesSinceKeyframe: 0,
-        baseState: { 'unknown-X': { color: 'red', triage: 'fixed' } },
+      version: 1,
+      sessions: {
+        [wsId]: {
+          serverUrl,
+          baseRevision: 'a'.repeat(43),
+          savesSinceKeyframe: 0,
+          baseState: { 'unknown-X': { color: 'red', triage: 'fixed' } },
+        },
       },
     }))
 
@@ -1618,7 +1629,8 @@ describe('triage-sync client', () => {
     // Verify by fetching the chain from a fresh raw client and
     // applying it: the cumulative state must include in-B = green.
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     const reader = await new Promise((resolve, reject) => {
       const s = new WebSocket(serverUrl)
@@ -1833,7 +1845,8 @@ describe('triage-sync client', () => {
 
     // Verify the chain on the server reflects the latest value.
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     const reader = await new Promise((resolve, reject) => {
       const s = new WebSocket(serverUrl)
@@ -1876,7 +1889,8 @@ describe('triage-sync client', () => {
 
     // Sanity: session is live and a persisted entry exists.
     assert.notEqual(triageSync.sessionInfo(wsId), null)
-    const persistedBefore = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    const _wrapperBefore = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+    const persistedBefore = _wrapperBefore.sessions ?? _wrapperBefore
     assert.ok(persistedBefore[wsId], 'persisted session entry exists pre-delete')
 
     // Workspace deletion goes through the listener wired up in
@@ -1891,7 +1905,7 @@ describe('triage-sync client', () => {
     // briefly for it to land.
     assert.equal(triageSync.sessionInfo(wsId), null, 'session removed in-memory')
     await waitFor(
-      () => JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId] === undefined,
+      () => (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId] === undefined,
       'persisted session entry dropped',
     )
   })
@@ -1911,7 +1925,7 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsId), 'baseline ack under old key')
     const oldTag = triageSync.sessionInfo(wsId).workspaceTag
     assert.ok(oldTag, 'workspaceTag derived under old key')
-    const oldPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const oldPersisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
     assert.ok(oldPersisted?.baseRevision, 'persisted base existed under old key')
 
     // Rotate the workspace's privateKey via upsertWorkspace.
@@ -1957,7 +1971,7 @@ describe('triage-sync client', () => {
     // Persisted base for the OLD identity was dropped; the new
     // session, syncing under the new tag, may re-persist its own
     // (different) baseRevision, but never the old one.
-    const newPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const newPersisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
     assert.notEqual(newPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base reset (or replaced) for new identity')
 
     triageSync.closeSession(wsId)
@@ -1981,7 +1995,8 @@ describe('triage-sync client', () => {
     // localStorage blob directly (NOT via this tab's deleteWorkspace
     // — that path already fires the local listener), then drive the
     // diff handler that the storage-event listener would call.
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const remaining = persisted.filter((w) => w.id !== wsId)
     localStorage.setItem('deepview.workspaces', JSON.stringify(remaining))
     propagateWorkspaceChangesFromStorage()
@@ -1989,7 +2004,7 @@ describe('triage-sync client', () => {
     // Triage-sync's onWorkspaceDeleted listener tears down the session.
     assert.equal(triageSync.sessionInfo(wsId), null, 'sibling delete tore down session')
     await waitFor(
-      () => JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId] === undefined,
+      () => (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId] === undefined,
       'sibling delete dropped persisted base',
     )
   })
@@ -2008,7 +2023,8 @@ describe('triage-sync client', () => {
 
     // Sibling tab rotates: rewrite the localStorage blob with a new
     // privateKey for the same id, then drive the diff handler.
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const idx = persisted.findIndex((w) => w.id === wsId)
     persisted[idx] = { ...persisted[idx], privateKey: randomBase64() }
     localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
@@ -2050,7 +2066,8 @@ describe('triage-sync client', () => {
     assert.equal(triageSync.sessionInfo(wsId).tracked, 1, 'A.md only')
 
     // Sibling tab attaches B.md: rewrite the blob, drive the diff.
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const idx = persisted.findIndex((w) => w.id === wsId)
     persisted[idx] = { ...persisted[idx], reports: ['A.md', 'B.md'] }
     localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
@@ -2103,7 +2120,8 @@ describe('triage-sync client', () => {
     })
     await waitFor(
       () => {
-        const all = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const _wrapper = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+        const all = _wrapper.sessions ?? _wrapper
         return all[wsId]?.baseState?.['finding-B']?.color === 'blue'
       },
       'B in baseState',
@@ -2155,10 +2173,11 @@ describe('triage-sync client', () => {
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const oldTag = triageSync.sessionInfo(wsId).workspaceTag
-    const oldPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const oldPersisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
 
     // Re-import with the SAME privateKey.
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const samePrivateKey = persisted.find((w) => w.id === wsId).privateKey
     await upsertWorkspace({
       id: wsId,
@@ -2171,7 +2190,7 @@ describe('triage-sync client', () => {
     // teardown is in flight.
     await new Promise((r) => { setTimeout(r, 50) })
     assert.equal(triageSync.sessionInfo(wsId).workspaceTag, oldTag, 'workspaceTag unchanged')
-    const stillPersisted = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')[wsId]
+    const stillPersisted = (JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}').sessions ?? JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}'))[wsId]
     assert.equal(stillPersisted?.baseRevision, oldPersisted.baseRevision, 'persisted base unchanged')
 
     triageSync.closeSession(wsId)
@@ -2277,7 +2296,10 @@ describe('triage-sync client', () => {
     let firedFor = null
     const off = onWorkspaceCreated((id) => { firedFor = id })
     try {
-      const persisted = JSON.parse(localStorage.getItem('deepview.workspaces') ?? '[]')
+      // Round-10 freeze: workspaces blob is now `{ version, workspaces }`.
+      // Read forward-compat (legacy bare array still tolerated by readRaw).
+      const _wrapper = JSON.parse(localStorage.getItem('deepview.workspaces') ?? '{}')
+      const persisted = Array.isArray(_wrapper) ? _wrapper : (_wrapper.workspaces ?? [])
       persisted.push({
         id: wsId,
         name: wsId,
@@ -2285,7 +2307,7 @@ describe('triage-sync client', () => {
         reports: [],
         createdAt: Date.now(),
       })
-      localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+      localStorage.setItem('deepview.workspaces', JSON.stringify({ version: 1, workspaces: persisted }))
       propagateWorkspaceChangesFromStorage()
 
       assert.equal(firedFor, wsId, 'create listener fired with new workspace id')
@@ -2429,7 +2451,8 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsId), 'save acked')
 
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     const reader = await new Promise((resolve, reject) => {
       const s = new WebSocket(serverUrl)
@@ -2788,7 +2811,8 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
 
     // Half 1: ignoredReports delivery via chain.
@@ -2897,7 +2921,8 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
 
     // Push 6 peer chains — twice the interval. Without the cap,
@@ -2994,7 +3019,8 @@ describe('triage-sync client', () => {
     const baselineRev = triageSync.sessionInfo(wsId).baseRevision
 
     const tag = triageSync.sessionInfo(wsId).workspaceTag
-    const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     // Peer pushes a non-conflicting change; client's chain handler
     // routes through applyOverlayAndPersist (overlay is empty, but
@@ -3014,7 +3040,8 @@ describe('triage-sync client', () => {
       () => {
         const blobRaw = localStorage.getItem('deepview.sync.sessions')
         if (!blobRaw) return false
-        const blob = JSON.parse(blobRaw)
+        const wrapper = JSON.parse(blobRaw)
+        const blob = wrapper.sessions ?? wrapper
         return blob[wsId]?.baseRevision === rebasedRev
       },
       'persisted-sessions baseRevision tracks live session',
@@ -3085,7 +3112,8 @@ async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   // deriveSigningKeypair takes the workspaceId as an HKDF info
   // string; we only have the seed + tag here, so look the id up by
   // matching the seed against the persisted workspace record.
-  const persisted = JSON.parse(localStorage.getItem('deepview.workspaces'))
+  const _persistedRaw = JSON.parse(localStorage.getItem('deepview.workspaces'))
+    const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
   const candidate = persisted.find((w) => w.privateKey === seedB64)
   const { privateKey: signingKey } = await cryptoMod.deriveSigningKeypair(seedB64, candidate.id)
 
