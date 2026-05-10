@@ -30,7 +30,11 @@ async function reportFindingIds(content) {
   } catch {
     data = parseDeepsecFindings(content) ?? parseMarkdownFindings(content)
   }
-  if (!data?.findings) return ids
+  // `findings` must be an array — a malformed report (object,
+  // string, number) would throw `flatMap is not a function` and
+  // abort the whole export. Skip gracefully so one bad report
+  // doesn't strand the rest. Audit round-13 W-Export-2.
+  if (!Array.isArray(data?.findings)) return ids
   const all = data.findings.flatMap(toGroup)
   for (const f of all) {
     if (f.id) ids.add(f.id)
@@ -63,15 +67,22 @@ export async function buildWorkspaceExportPayload(workspace) {
     try {
       content = await readFile(name)
     } catch (err) {
-      console.warn(`Workspace export: skipping ${name}: ${err.message}`)
+      console.warn(`Workspace export: skipping ${name}: ${err?.message ?? err}`)
       // Defensive prune: stale references from before deleteCurrent
       // started cleaning up workspaces (or from external OPFS
       // tampering) live in the workspace JSON forever otherwise.
-      // Remove the ghost from any workspace that pins it so the
-      // next export is clean and the next workspace-import on
-      // another machine doesn't re-resurrect a name that points at
-      // nothing.
-      await setReportWorkspace(name, null)
+      //
+      // Only prune on the GENUINE "file not found" case
+      // (`storage.readFile` throws `Error: File not found: <name>`
+      // when the entry is missing from OPFS / localStorage).
+      // Other error classes — UTF-8 decode failures on corrupt
+      // OPFS bytes, transient I/O hiccups, future error types —
+      // are not deterministic indicators that the file is gone,
+      // and we mustn't permanently detach the workspace-report
+      // association on a transient. Audit round-13 W-Export-3.
+      if (typeof err?.message === 'string' && err.message.startsWith('File not found:')) {
+        await setReportWorkspace(name, null)
+      }
       continue
     }
     reports.push({ name, content })
@@ -92,6 +103,15 @@ export async function buildWorkspaceExportPayload(workspace) {
   }
   // Per-report ignore — group by id and stamp `ignoredReports`
   // on the entry. Same shape triage.js / triage-sync.js use.
+  //
+  // Filter `reportName` against the workspace's reports too: the
+  // same content-derived id can carry ignore entries from reports
+  // OUTSIDE this workspace (when the user opens multiple workspaces
+  // referencing shared findings). Without the filter, those foreign
+  // report names leak into the export's `ignoredReports` array,
+  // breaking the "clean self-contained slice" guarantee. Audit
+  // round-13 W-Export-1.
+  const workspaceReportSet = new Set(workspace.reports ?? [])
   const ignoredByid = new Map()
   for (const key of state.ignoredIds) {
     const sep = key.indexOf('\0')
@@ -99,6 +119,7 @@ export async function buildWorkspaceExportPayload(workspace) {
     const reportName = key.slice(0, sep)
     const id = key.slice(sep + 1)
     if (!claimedIds.has(id)) continue
+    if (!workspaceReportSet.has(reportName)) continue
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
     ignoredByid.get(id).push(reportName)
   }

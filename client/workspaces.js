@@ -42,14 +42,23 @@ function readRaw() {
 }
 
 function writeRaw(list) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: WORKSPACES_VERSION,
-      workspaces: list,
-    }))
-  } catch (err) {
-    console.warn('Failed to save workspaces:', err)
-  }
+  // Don't swallow quota / storage errors. Pre-fix, a failed
+  // setItem (QuotaExceeded, security policy) was caught and only
+  // logged — `mutateWorkspaces` then continued, the caller called
+  // `markObservedFor` on the would-have-persisted entry, and
+  // `lastSeen` recorded a workspace that doesn't exist in storage.
+  // The next sibling-tab `storage` event would diff lastSeen
+  // (has the entry) against readRaw (doesn't have it) and fire a
+  // phantom `deleteListener`; a page reload would silently lose
+  // the workspace with no error surfaced to the user. Propagating
+  // the throw lets `mutateWorkspaces` skip the post-write
+  // `markObservedFor` and surfaces the failure to the public
+  // mutation function's caller (createWorkspace, etc.) so a UI
+  // layer can warn the user. Audit round-13 W-7.
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    version: WORKSPACES_VERSION,
+    workspaces: list,
+  }))
 }
 
 // Apply `mutator(list)` to the workspaces blob under the same-origin
@@ -322,18 +331,30 @@ export async function upsertWorkspace(workspace) {
     else list.push(next)
     return { previous, next }
   })
-  const { previous, next } = result
-  if (previous == null) {
+  const { next } = result
+  // Fire decisions compare against `lastSeen` (what the local
+  // listeners have actually observed), NOT the in-blob `previous`.
+  // Pre-fix, `previous` was read inside the lock — so it could
+  // already incorporate a sibling tab's just-committed change that
+  // the queued storage event hasn't surfaced locally yet. If our
+  // upsert's privateKey happens to match the sibling's (re-import
+  // of the same re-keyed bundle), `previous.privateKey ===
+  // next.privateKey` → no fire here, then `markObservedFor(next)`
+  // pins it as observed → the queued storage event sees prev ==
+  // next and silently drops its own fire too. Net: privateKey
+  // change never reaches local listeners. Audit round-13 W-6.
+  const observed = lastSeen.find((w) => w.id === next.id) ?? null
+  if (observed == null) {
     for (const cb of createListeners) {
       try { cb(next.id) } catch (err) { console.warn('workspace create listener failed:', err) }
     }
   } else {
-    if (previous.privateKey !== next.privateKey) {
+    if (observed.privateKey !== next.privateKey) {
       for (const cb of privateKeyChangeListeners) {
         try { cb(next.id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
       }
     }
-    if (!reportsSetEqual(previous.reports ?? [], next.reports)) {
+    if (!reportsSetEqual(observed.reports ?? [], next.reports)) {
       for (const cb of reportMembershipListeners) {
         try { cb(next.id) } catch (err) { console.warn('workspace membership listener failed:', err) }
       }
@@ -344,9 +365,19 @@ export async function upsertWorkspace(workspace) {
 }
 
 function reportsSetEqual(a, b) {
-  if (a.length !== b.length) return false
-  const set = new Set(a)
-  for (const x of b) if (!set.has(x)) return false
+  // Use Set sizes (deduped) AND set-membership. Pre-fix the
+  // length-then-one-direction-membership compare was a false-
+  // positive on duplicates: ['F','G'] vs ['F','F'] passed as
+  // equal (same length, all of b's items in a's set) even
+  // though the deduped sets differ. `reports` is supposed to be
+  // unique-by-filename, but `upsertWorkspace` trusts caller-
+  // supplied imports — a malformed bundle can plant duplicates
+  // that bypass the propagate handler's membership-change
+  // detection. Audit round-13 W-8.
+  const setA = new Set(a)
+  const setB = new Set(b)
+  if (setA.size !== setB.size) return false
+  for (const x of setA) if (!setB.has(x)) return false
   return true
 }
 
@@ -360,6 +391,28 @@ function reportsSetEqual(a, b) {
 // where it should be) fires nothing.
 export async function setReportWorkspace(filename, workspaceId) {
   const { affected, snapshot } = await mutateWorkspaces((list) => {
+    // Find the current owner (if any) and short-circuit when the
+    // target matches. Pre-fix, `setReportWorkspace(F, currentOwner)`
+    // (filename already at target) executed remove-then-push and
+    // fired the membership listener for an effective no-op,
+    // contradicting the doc-block "a no-op call (filename is
+    // already where it should be) fires nothing." Audit round-13 W-4.
+    const currentOwnerId = list.find(
+      (w) => Array.isArray(w.reports) && w.reports.includes(filename),
+    )?.id ?? null
+    if (currentOwnerId === (workspaceId ?? null)) {
+      return { affected: new Set(), snapshot: new Map() }
+    }
+    // Validate target before detaching the source. Pre-fix, the
+    // source-loop unconditionally detached, then the target lookup
+    // failed silently when `workspaceId` was unknown — leaving the
+    // report orphaned (detached without re-attachment). Doc says
+    // "No-ops cleanly when the target workspace doesn't exist" —
+    // make it true. Audit round-13 W-5.
+    if (workspaceId != null) {
+      const target = list.find((w) => w.id === workspaceId)
+      if (!target) return { affected: new Set(), snapshot: new Map() }
+    }
     const aff = new Set()
     for (const w of list) {
       if (!Array.isArray(w.reports)) w.reports = []

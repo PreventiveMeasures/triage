@@ -360,3 +360,82 @@ describe('export → import round-trip', () => {
     assert.equal(wsList.filter((w) => w.id === ws.id).length, 1)
   })
 })
+
+describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', () => {
+  beforeEach(clearState)
+
+  it('ignoredReports is filtered against this workspace\'s reports (audit round-13 W-Export-1)', async () => {
+    // Pre-fix the loop only checked `claimedIds.has(id)` and
+    // pushed `reportName` straight from `state.ignoredIds`. When a
+    // shared finding id existed in reports owned by DIFFERENT
+    // workspaces, the foreign workspace's report names leaked into
+    // the export. Audit round-13 W-Export-1.
+    const ownReportName = 'own-report.json'
+    const foreignReportName = 'foreign-report.json'
+    const { saveFile } = await import(`../client/storage.js?leak=${Date.now()}`)
+    await saveFile(ownReportName, reportContent([FINDING_A]))
+    await saveFile(foreignReportName, reportContent([FINDING_A]))
+
+    state.ignoredIds.add(`${ownReportName}\0${FINDING_A}`)
+    state.ignoredIds.add(`${foreignReportName}\0${FINDING_A}`)
+
+    const ws = makeWorkspace({ reports: [ownReportName] })
+    const payload = await buildWorkspaceExportPayload(ws)
+    assert.deepEqual(
+      payload.triage[FINDING_A].ignoredReports,
+      [ownReportName],
+      'foreign-workspace report name not leaked into ignoredReports',
+    )
+  })
+
+  it('a malformed report (non-array `findings`) does not abort the entire export (audit round-13 W-Export-2)', async () => {
+    // Pre-fix `data.findings.flatMap(toGroup)` threw `TypeError:
+    // flatMap is not a function` when `findings` was a non-array
+    // (string, number, plain object). The throw escaped
+    // reportFindingIds + buildWorkspaceExportPayload (no try/catch
+    // around reportFindingIds), aborting the export.
+    const goodName = 'good.json'
+    const malformedName = 'malformed.json'
+    const { saveFile } = await import(`../client/storage.js?malformed=${Date.now()}`)
+    await saveFile(goodName, reportContent([FINDING_A]))
+    // `findings` is an OBJECT, not an array — pre-fix would crash.
+    await saveFile(malformedName, JSON.stringify({ findings: { id: 'broken' } }))
+
+    state.markers.set(FINDING_A, 'red')
+    const ws = makeWorkspace({ reports: [malformedName, goodName] })
+    const payload = await buildWorkspaceExportPayload(ws)
+
+    // Export completed despite the malformed report. The good
+    // report's claimed ids still surface in triage.
+    assert.equal(payload.triage[FINDING_A]?.color, 'red',
+      'export survived a malformed sibling report')
+  })
+
+  it('genuine "File not found" still prunes the workspace membership (audit round-13 W-Export-3 positive control)', async () => {
+    // Pre-fix `readFile` failing for ANY reason triggered the
+    // prune. Now only the genuine `File not found:` case prunes —
+    // transient I/O errors / decode failures leave the membership
+    // intact. This positive-control test exercises the file-
+    // missing path; the transient-error negative case is verified
+    // by code review (monkey-patching `readFile` from outside
+    // the module isn't possible — ESM bindings are read-only).
+    const reportName = `gone-${Date.now()}.json`
+    const stamp = `${Date.now()}-${Math.random()}`
+    const storageMod = await import(`../client/storage.js?prune-pos=${stamp}`)
+    const wsMod = await import(`../client/workspaces.js?prune-pos=${stamp}`)
+    const exportMod = await import(`../client/workspace-export.js?prune-pos=${stamp}`)
+
+    await storageMod.saveFile(reportName, reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: [reportName] })
+    await wsMod.upsertWorkspace(ws)
+
+    // Genuinely remove the file so readFile throws
+    // `Error: File not found: <name>`.
+    await storageMod.deleteFile(reportName)
+
+    await exportMod.buildWorkspaceExportPayload(ws)
+    const wsAfter = wsMod.listWorkspaces().find((w) => w.id === ws.id)
+    assert.equal(wsAfter?.reports?.includes(reportName), false,
+      'genuine file-missing pruned the workspace-report association')
+  })
+})
