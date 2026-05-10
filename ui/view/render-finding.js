@@ -294,6 +294,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
         class="finding-code-btn"
         data-finding-code-bundle=${match.integrity}
         data-finding-code-file=${match.file}
+        data-finding-code-line=${f.line ?? ''}
         title=${`Open ${match.file} in bundle source viewer`}
       >Code</button>`
     }

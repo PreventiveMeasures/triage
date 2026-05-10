@@ -127,6 +127,8 @@ report.addEventListener('click', (e) => {
   if (findingCode) {
     const integrity = findingCode.dataset.findingCodeBundle
     const file = findingCode.dataset.findingCodeFile
+    const lineAttr = findingCode.dataset.findingCodeLine
+    const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = file || null
     state.bundleSourceFindingIdx = null
     // The modal suppresses itself when we're in the Code tab of
@@ -134,16 +136,31 @@ report.addEventListener('click', (e) => {
     // flip the tab back to the default so the modal surfaces
     // even if the user happens to be parked on Code right now.
     if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'packages'
+    // After the modal lands in the DOM, scroll its line-row for
+    // this finding into view at the top of the viewport. Same
+    // shape the Code-search hits use.
+    const scrollToFindingLine = () => {
+      if (!Number.isFinite(line)) return
+      queueMicrotask(() => {
+        const row = document.querySelector(`.bundle-source-lineno-row[data-line="${line}"]`)
+        if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      })
+    }
     if (state.selectedBundle === integrity && state.bundleDetails?.integrity === integrity) {
-      // Already parsed — nothing to load. Just render so the
-      // overlay slot picks up the new bundleSourceFile.
+      // Already parsed — render to mount the modal, then scroll.
       render()
+      scrollToFindingLine()
       return
     }
     state.selectedBundle = integrity
     state.bundleDetails = null
     render()
-    openBundle(integrity)
+    // Wait for openBundle to finish parsing + render so the
+    // line-row is actually in the DOM before we look it up.
+    ;(async () => {
+      await openBundle(integrity)
+      scrollToFindingLine()
+    })()
     return
   }
   const codeBundle = e.target.closest('[data-bundle-row-code]')
@@ -924,6 +941,47 @@ report.addEventListener('click', (e) => {
   // owns row selection and dispatches a `row-select` CustomEvent
   // (handled below) on clicks that aren't on a button / link / label.
 })
+
+// Bundle source modal lives in `#bundle-source-overlay-slot`
+// (sibling of `#main-content`, not inside `#report`), so its
+// clicks don't reach the report listener above. The handlers
+// here cover the modal-specific interactions: close button,
+// backdrop click, side-panel close, and per-line gutter dots.
+const bundleSourceOverlaySlot = document.getElementById('bundle-source-overlay-slot')
+if (bundleSourceOverlaySlot) {
+  bundleSourceOverlaySlot.addEventListener('click', (e) => {
+    // Backdrop click (`.bundle-source-overlay` itself, not a
+    // descendant) or × button → close.
+    if (e.target.classList?.contains('bundle-source-overlay')
+        || e.target.closest('[data-action="bundle-source-close"]')) {
+      if (state.bundleSourceFile) {
+        state.bundleSourceFile = null
+        state.bundleSourceFindingIdx = null
+        render()
+      }
+      return
+    }
+    // Side panel close — clears the selected finding but leaves
+    // the modal open.
+    if (e.target.closest('[data-action="bundle-source-panel-close"]')) {
+      if (state.bundleSourceFindingIdx != null) {
+        state.bundleSourceFindingIdx = null
+        renderPreservingSourceScroll()
+      }
+      return
+    }
+    // Gutter dot — selects a finding on this line and opens the
+    // side panel. Re-clicking the same dot dismisses.
+    const sourceFinding = e.target.closest('[data-bundle-source-finding]')
+    if (sourceFinding) {
+      const idx = parseInt(sourceFinding.dataset.bundleSourceFinding, 10)
+      if (Number.isFinite(idx)) {
+        state.bundleSourceFindingIdx = state.bundleSourceFindingIdx === idx ? null : idx
+        renderPreservingSourceScroll()
+      }
+    }
+  })
+}
 
 // row-select fires from inside `<finding-table>`'s shadow DOM with
 // composed:true, so it bubbles up to the report element. Re-clicking
