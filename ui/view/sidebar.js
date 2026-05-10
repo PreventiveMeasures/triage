@@ -31,17 +31,24 @@ function countLoadedRepositories() {
 }
 
 // Default sync endpoint used when the user toggles the sidebar
-// status button on. Only populated for pages served from
-// `127.0.0.1` — production origins keep this empty so the button
-// can't accidentally point at a localhost server that isn't
-// reachable from there. A user who wants to point a non-localhost
-// page at some other server can still call
+// status button on. Resolved per-origin:
+//   - `127.0.0.1` → the dev server on :8765.
+//   - any other origin not ending in `.github.io` → `${origin}/sync`
+//     on the matching ws/wss scheme, so a self-hosted deploy can
+//     terminate sync at the same host serving the UI.
+//   - `.github.io` (and the `typeof location` guard for SSR-style
+//     loads) stays empty — GitHub Pages can't host a WebSocket
+//     endpoint, so the button would only ever read as broken.
+// A user who wants to override either default can still call
 // `DeepView.triageSync.setServerUrl('wss://…')` from the console;
-// the `null`-default just means there's no toggle-on target by
-// default.
-const DEFAULT_SYNC_URL = (typeof location !== 'undefined' && location.hostname === '127.0.0.1')
-  ? 'ws://127.0.0.1:8765'
-  : ''
+// the empty default just means there's no toggle-on target.
+const DEFAULT_SYNC_URL = (() => {
+  if (typeof location === 'undefined') return ''
+  if (location.hostname === '127.0.0.1') return 'ws://127.0.0.1:8765'
+  if (location.hostname.endsWith('.github.io')) return ''
+  const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${wsScheme}//${location.host}/sync`
+})()
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is
 // the report's filename. We carry both this private mime AND
@@ -399,9 +406,8 @@ sidebar.addEventListener('click', async (e) => {
     // Click toggles the persisted user-enabled flag rather than
     // the URL itself — disable then re-enable should resume against
     // the same endpoint, not lose a console-set URL. If no URL is
-    // configured yet, prime it with the per-origin default
-    // (currently only set for 127.0.0.1; production defaults to
-    // empty and the button stays hidden until something sets one).
+    // configured yet, prime it with the per-origin default (see
+    // `DEFAULT_SYNC_URL` above for the resolution rules).
     if (triageSync.status === 'error') {
       // Distinct affordance: "I see the error, retry" — clears
       // every session's error + failure-counter and kicks the
@@ -442,9 +448,9 @@ if (searchInput) {
 // point in showing it before any workspace actually carries
 // content — AND (b) a usable server URL existing, either because
 // the user previously configured one or because the page's origin
-// has a sensible default (only 127.0.0.1 today; see
-// `DEFAULT_SYNC_URL` above). When either condition fails the
-// button is hidden so it doesn't read as a broken affordance.
+// has a sensible default (see `DEFAULT_SYNC_URL` above for the
+// resolution rules). When either condition fails the button is
+// hidden so it doesn't read as a broken affordance.
 const SYNC_LABELS = {
   off: 'Sync off',
   online: 'Online',
