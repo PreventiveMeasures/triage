@@ -147,7 +147,7 @@ describe('triage-sync server', () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-'))
     const port = 19000 + Math.floor(Math.random() * 1_000)
     serverUrl = `ws://127.0.0.1:${port}`
-    serverProc = spawn(process.execPath, ['server/index.js'], {
+    serverProc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -825,7 +825,7 @@ describe('triage-sync server: graceful shutdown', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
     const port = 19000 + Math.floor(Math.random() * 1_000)
     const url = `ws://127.0.0.1:${port}`
-    const proc = spawn(process.execPath, ['server/index.js'], {
+    const proc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -875,7 +875,7 @@ describe('triage-sync server: graceful shutdown', () => {
     const { createHash } = await import('node:crypto')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-stuck-'))
     const port = 19000 + Math.floor(Math.random() * 1_000)
-    const proc = spawn(process.execPath, ['server/index.js'], {
+    const proc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

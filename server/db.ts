@@ -14,7 +14,7 @@
 // state baked in (rather than just a delta). The wire-level flag
 // is also covered by the signature, so the column value MUST match
 // what the signed canonical bytes claim — verifySaveSig in
-// server/sign.js enforces this. Client-driven: the server only
+// server/sign.ts enforces this. Client-driven: the server only
 // stores what the client sent and treats keyframes as catch-up
 // roots when a from=null subscriber arrives.
 //
@@ -24,7 +24,7 @@
 // JS event-loop atomicity guarantees head + insert can't interleave
 // with another save's head + insert.
 
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS workspace_revision (
@@ -45,7 +45,52 @@ const SCHEMA = `
     ON workspace_revision (workspace_tag, id);
 `
 
-export function openDb(path) {
+// Bag of pre-prepared statements + the underlying connection. Held
+// for the process lifetime; `close()` runs from `shutdown()`. Pre-
+// preparing once means call sites read as `handle.headFor.get(tag)`
+// rather than re-preparing every call.
+export type Handle = {
+  db: DatabaseSync
+  headFor: StatementSync
+  headSeq: StatementSync
+  seqOfId: StatementSync
+  lastKeyframeSeq: StatementSync
+  chainAll: StatementSync
+  chainAfterSeq: StatementSync
+  chainFromSeq: StatementSync
+  revisionExists: StatementSync
+  insertRevision: StatementSync
+  close: () => void
+}
+
+// Row shape returned by the chain queries. SQLite stores `keyframe`
+// as INTEGER (0 / 1); `chainForWire` in server/index.ts normalises
+// to a strict boolean before broadcasting, but the raw row carries
+// the integer. `base` is nullable on the very first revision.
+export type RevisionRow = {
+  base: string | null
+  id: string
+  keyframe: number
+  nonce: string
+  ciphertext: string
+  signature: string
+}
+
+// Input to `insertRevision`. `keyframe` is a strict boolean here —
+// the canonical-payload contract uses `=== true`, and the storage
+// path coerces to 0 / 1 via `keyframe ? 1 : 0` before hitting the
+// STRICT INTEGER column.
+export type RevisionInsert = {
+  tag: string
+  id: string
+  base: string | null
+  keyframe: boolean
+  nonce: string
+  ciphertext: string
+  signature: string
+}
+
+export function openDb(path: string): Handle {
   const db = new DatabaseSync(path)
   // WAL gives concurrent readers + faster writes and survives
   // crashes between commits without corrupting the file. Foreign
@@ -73,7 +118,7 @@ export function openDb(path) {
   // ALTER when the column is genuinely missing, and any failure of
   // the ALTER itself bubbles up as an open-time crash where the
   // operator can act on it.
-  const columns = db.prepare(`PRAGMA table_info(workspace_revision)`).all()
+  const columns = db.prepare(`PRAGMA table_info(workspace_revision)`).all() as Array<{ name: string }>
   if (!columns.some((c) => c.name === 'keyframe')) {
     db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
   }
@@ -126,12 +171,12 @@ export function openDb(path) {
   }
 }
 
-export function headFor(handle, tag) {
-  const row = handle.headFor.get(tag)
+export function headFor(handle: Handle, tag: string): string | null {
+  const row = handle.headFor.get(tag) as { id: string } | undefined
   return row?.id ?? null
 }
 
-export function chainFrom(handle, tag, fromId) {
+export function chainFrom(handle: Handle, tag: string, fromId: string | null): RevisionRow[] {
   // No base id, OR a base id the server doesn't recognise (db reset,
   // chain compaction, malicious peer): in either case the client has
   // no anchor we can incrementally serve from. Skip past everything
@@ -141,21 +186,24 @@ export function chainFrom(handle, tag, fromId) {
   // hasn't crossed the threshold). Keeps the catch-up cost O(keyframe
   // interval) instead of O(history length) for either entry point.
   if (fromId != null) {
-    const row = handle.seqOfId.get(tag, fromId)
-    if (row) return handle.chainAfterSeq.all(tag, row.seq)
+    const row = handle.seqOfId.get(tag, fromId) as { seq: number } | undefined
+    if (row) return handle.chainAfterSeq.all(tag, row.seq) as RevisionRow[]
     // fall through to the from=null path below
   }
-  const kf = handle.lastKeyframeSeq.get(tag)
-  if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s)
-  return handle.chainAll.all(tag)
+  const kf = handle.lastKeyframeSeq.get(tag) as { s: number | null } | undefined
+  if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s) as RevisionRow[]
+  return handle.chainAll.all(tag) as RevisionRow[]
 }
 
-export function revisionExists(handle, tag, id) {
+export function revisionExists(handle: Handle, tag: string, id: string): boolean {
   return Boolean(handle.revisionExists.get(tag, id))
 }
 
-export function insertRevision(handle, { tag, id, base, keyframe, nonce, ciphertext, signature }) {
-  const row = handle.headSeq.get(tag)
+export function insertRevision(
+  handle: Handle,
+  { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
+): void {
+  const row = handle.headSeq.get(tag) as { s: number | null } | undefined
   const seq = (row?.s ?? 0) + 1
   handle.insertRevision.run(tag, seq, id, base ?? null, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
 }

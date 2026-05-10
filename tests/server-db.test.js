@@ -1,4 +1,4 @@
-// `server/db.js` — sqlite-backed revision storage. Integration is
+// `server/db.ts` — sqlite-backed revision storage. Integration is
 // covered via tests/sync-server.test.js (full WS round-trips); this
 // file targets the DB module directly: schema migration from the
 // pre-keyframe column shape, `chainFrom` cutoff semantics (stale
@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { chainFrom, headFor, insertRevision, openDb, revisionExists } from '../server/db.js'
+import { chainFrom, headFor, insertRevision, openDb, revisionExists } from '../server/db.ts'
 
 let tmpCounter = 0
 function freshDb() {

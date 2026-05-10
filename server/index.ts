@@ -1,6 +1,6 @@
 // DeepView triage-sync relay server. WebSocket front-end, SQLite
 // backing store. Implements the protocol described in
-// `client/triage-sync.js` (and `server/sign.js` for the canonical
+// `client/triage-sync.js` (and `server/sign.ts` for the canonical
 // signature payloads):
 //
 //   server → client  challenge           { nonce } — emitted on every
@@ -51,13 +51,33 @@
 // tag (save or subscribe). It leaves on disconnect. Broadcasts go
 // to every subscriber for the workspaceTag except the originator.
 
-import { WebSocketServer } from 'ws'
+import { type WebSocket, WebSocketServer } from 'ws'
 import { randomBytes } from 'node:crypto'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { decodeUtf8 } from '../common/utf8.js'
-import { chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.js'
-import { computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscribeSig } from './sign.js'
+import { type RevisionRow, chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.ts'
+import { type SaveMsg, type SubscribeMsg, computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscribeSig } from './sign.ts'
+
+// Wire-message envelope as it lands post-`JSON.parse`. Every field is
+// `unknown` until a handler narrows it; the type just documents the
+// dispatch surface so call sites can pattern-match on `msg.type`.
+type IncomingMessage = {
+  type?: unknown
+  [k: string]: unknown
+}
+
+// `chainForWire` accepts the row shape from `chainFrom` (where
+// `keyframe` is the SQLite INTEGER 0 / 1) and returns the same fields
+// with `keyframe` normalised to a strict boolean for the wire.
+type WireRevision = {
+  base: string | null
+  id: string
+  keyframe: boolean
+  nonce: string
+  ciphertext: string
+  signature: string
+}
 
 const PORT = Number(env.PORT ?? 8765)
 const HOST = env.HOST ?? '127.0.0.1'
@@ -76,7 +96,7 @@ const DB_PATH = env.DB_PATH ?? fileURLToPath(new URL('./data.db', import.meta.ur
 const DEBUG = env.DEBUG === '1'
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  console.log(`Usage: node server/index.js
+  console.log(`Usage: node server/index.ts
 Environment:
   PORT     listen port (default 8765)
   HOST     bind host (default 127.0.0.1)
@@ -97,17 +117,17 @@ const handle = openDb(DB_PATH)
 // has a NEW nonce; the canonical bytes differ; signature verify
 // fails). 16 bytes (128 bits) is enough for collision-free
 // uniqueness; base64url so the wire stays JSON-text.
-const socketChallenge = new WeakMap()
-function newChallenge() {
+const socketChallenge = new WeakMap<WebSocket, string>()
+function newChallenge(): string {
   return randomBytes(16).toString('base64url')
 }
 
 // workspaceTag → Set<WebSocket>
-const subscribers = new Map()
+const subscribers = new Map<string, Set<WebSocket>>()
 // WebSocket → Set<workspaceTag> — for cleanup on disconnect
-const socketTags = new WeakMap()
+const socketTags = new WeakMap<WebSocket, Set<string>>()
 
-function subscribe(socket, tag) {
+function subscribe(socket: WebSocket, tag: string): void {
   let set = subscribers.get(tag)
   if (!set) {
     set = new Set()
@@ -122,7 +142,7 @@ function subscribe(socket, tag) {
   tags.add(tag)
 }
 
-function unsubscribeAll(socket) {
+function unsubscribeAll(socket: WebSocket): void {
   const tags = socketTags.get(socket)
   if (!tags) return
   for (const tag of tags) {
@@ -133,7 +153,7 @@ function unsubscribeAll(socket) {
   }
 }
 
-function send(socket, msg) {
+function send(socket: WebSocket, msg: object): void {
   if (socket.readyState !== socket.OPEN) return
   // Wrap send() in try/catch — readyState can transition from OPEN
   // to CLOSING between the check above and the send() call (TOCTOU
@@ -151,11 +171,11 @@ function send(socket, msg) {
 // `Boolean(rev.keyframe)` before reconstructing the canonical
 // bytes — fragile if a future client (or test harness) ever
 // strict-compares. Convert once on the send side.
-function chainForWire(revisions) {
-  return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 || r.keyframe === true }))
+function chainForWire(revisions: RevisionRow[]): WireRevision[] {
+  return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 }))
 }
 
-function broadcast(tag, msg, except) {
+function broadcast(tag: string, msg: object, except: WebSocket): void {
   const set = subscribers.get(tag)
   if (!set) return
   // Snapshot before iterating — `send`'s try/catch swallows
@@ -172,7 +192,7 @@ function broadcast(tag, msg, except) {
   }
 }
 
-async function handleSave(socket, msg) {
+async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   if (typeof msg.workspaceTag !== 'string') return
   if (typeof msg.nonce !== 'string') return
   if (typeof msg.ciphertext !== 'string') return
@@ -276,7 +296,7 @@ async function handleSave(socket, msg) {
   }, socket)
 }
 
-async function handleSubscribe(socket, msg) {
+async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<void> {
   if (typeof msg.workspaceTag !== 'string') return
   // Same `string | null` contract as `base` in handleSave. The
   // signed canonical uses `String(from)`, but the chain-lookup path
@@ -336,8 +356,8 @@ const wss = new WebSocketServer({ port: PORT, host: HOST })
 // before closing the DB so a SIGINT mid-save can't resume against
 // a closed handle (which would throw inside `insertRevision` after
 // the client believed its save was committed).
-const inFlight = new Set()
-function track(promise) {
+const inFlight = new Set<Promise<unknown>>()
+function track(promise: Promise<unknown>): void {
   inFlight.add(promise)
   promise.finally(() => inFlight.delete(promise))
 }
@@ -347,19 +367,19 @@ function track(promise) {
 // the closure runs in the same tick the variable is declared.
 let shuttingDown = false
 
-wss.on('connection', (socket, req) => {
+wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
   // Issue a per-connection challenge nonce BEFORE the client can
   // send anything that needs it. The client signs this nonce into
   // every `workspace-subscribe` (see canonicalSubscribe in
-  // server/sign.js); a captured subscribe frame can't be replayed
+  // server/sign.ts); a captured subscribe frame can't be replayed
   // from a different connection because that connection's nonce
   // is different and the signature won't verify against the new
   // canonical bytes. Audit round-9 H2.
   const nonce = newChallenge()
   socketChallenge.set(socket, nonce)
   send(socket, { type: 'challenge', nonce })
-  socket.on('message', (data, isBinary) => {
+  socket.on('message', (data: Buffer, isBinary: boolean) => {
     // Drop new work once shutdown started — `wss.close()` stops new
     // CONNECTIONS but already-open sockets can still send messages.
     // Without this gate a message arriving between `wss.close()`
@@ -371,25 +391,26 @@ wss.on('connection', (socket, req) => {
     // either a buggy client or someone probing — drop without
     // attempting to interpret it as text.
     if (isBinary) return
-    let msg
+    let msg: IncomingMessage | null = null
     try {
       // `decodeUtf8` is fatal on invalid UTF-8 (vs `Buffer.toString`
       // which silently substitutes U+FFFD). The substitution path
       // would let mangled bytes pass JSON.parse only to fail
       // signature verification deeper in the handler — wasted work
       // and noisier logs. Fail at the gate.
-      msg = JSON.parse(decodeUtf8(data))
+      msg = JSON.parse(decodeUtf8(data)) as IncomingMessage
     } catch { return }
     if (!msg || typeof msg !== 'object') return
+    const parsed: IncomingMessage = msg
     const handler = (async () => {
       try {
-        if (msg.type === 'workspace-save') await handleSave(socket, msg)
-        else if (msg.type === 'workspace-subscribe') await handleSubscribe(socket, msg)
+        if (parsed.type === 'workspace-save') await handleSave(socket, parsed as SaveMsg)
+        else if (parsed.type === 'workspace-subscribe') await handleSubscribe(socket, parsed as SubscribeMsg)
         // Heartbeat — application-level alive check the browser
         // WebSocket API doesn't expose at protocol level. Stateless,
         // unauthenticated; the security-critical paths (save /
         // subscribe) still verify signatures.
-        else if (msg.type === 'ping') send(socket, { type: 'pong' })
+        else if (parsed.type === 'ping') send(socket, { type: 'pong' })
       } catch (err) {
         console.warn('Handler error:', err)
       }
@@ -410,7 +431,7 @@ wss.on('connection', (socket, req) => {
   // violations). The previous `() => {}` left every per-connection
   // failure invisible. `close` fires after `error` and runs the
   // unsubscribe cleanup, so logging here doesn't risk leaking.
-  socket.on('error', (err) => { console.warn('Socket error:', err?.message ?? err) })
+  socket.on('error', (err: Error) => { console.warn('Socket error:', err?.message ?? err) })
 })
 
 wss.on('listening', () => {
@@ -430,12 +451,12 @@ wss.on('listening', () => {
 // already-acked WAL frames. shutdown() is re-entrancy-safe and
 // exits with code 1 when invoked from this path so systemd /
 // docker still see a failure exit. Audit round-9 M2.
-wss.on('error', (err) => {
+wss.on('error', (err: Error) => {
   console.error('Server error:', err?.message ?? err)
   shutdown(1)
 })
 
-async function shutdown(exitCode = 0) {
+async function shutdown(exitCode: number = 0): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
   console.log('Shutting down…')
@@ -472,7 +493,7 @@ async function shutdown(exitCode = 0) {
   // Stop accepting new connections; existing sockets stay open
   // until their close handlers run (driven by the 1001 frames above
   // or the terminate fallback below).
-  await new Promise((resolve) => { wss.close(() => resolve()) })
+  await new Promise<void>((resolve) => { wss.close(() => resolve()) })
   clearTimeout(terminateTimer)
   // Drain in-flight handlers so a save that's mid-`await
   // verifySaveSigAndCanonical` finishes its insertRevision before
@@ -482,7 +503,7 @@ async function shutdown(exitCode = 0) {
   // a separate broadcast path. `Promise.allSettled` so a single
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-  try { handle.close() } catch (err) { console.warn('DB close error:', err?.message ?? err) }
+  try { handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
   process.exit(exitCode)
 }
 // Wrap signal handlers so the signal name (passed as the listener's

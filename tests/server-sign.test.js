@@ -1,4 +1,4 @@
-// `server/sign.js` direct unit tests. The end-to-end paths through
+// `server/sign.ts` direct unit tests. The end-to-end paths through
 // `verifySaveSigAndCanonical` / `verifySubscribeSig` /
 // `computeRevisionIdFromCanonical` are exercised via
 // `tests/sync-server.test.js` (full WS round-trips) and the wire-
@@ -16,7 +16,7 @@ import {
   computeRevisionIdFromCanonical,
   verifySaveSigAndCanonical,
   verifySubscribeSig,
-} from '../server/sign.js'
+} from '../server/sign.ts'
 
 const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'

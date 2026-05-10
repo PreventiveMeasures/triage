@@ -108,7 +108,7 @@ describe('triage-sync client', () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-client-'))
     const port = 19500 + Math.floor(Math.random() * 500)
     serverUrl = `ws://127.0.0.1:${port}`
-    serverProc = spawn(process.execPath, ['server/index.js'], {
+    serverProc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -2545,7 +2545,7 @@ describe('triage-sync client', () => {
     const port2 = 19500 + Math.floor(Math.random() * 500) + 500
     const serverDir2 = mkdtempSync(path.join(tmpdir(), 'deepview-client-2-'))
     const serverUrl2 = `ws://127.0.0.1:${port2}`
-    const serverProc2 = spawn(process.execPath, ['server/index.js'], {
+    const serverProc2 = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port2), HOST: '127.0.0.1', DB_PATH: path.join(serverDir2, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -3070,7 +3070,7 @@ const cryptoMod = await import('../client/sync-crypto.js')
 const { WebSocketServer } = await import('ws')
 
 // In-process WebSocket server the test fully controls. Used for
-// scenarios the real server (server/index.js) won't ever produce —
+// scenarios the real server (server/index.ts) won't ever produce —
 // content-id mismatches, bad signatures, bogus continuity in the
 // chain — so we can exercise the client's defensive skip / resync
 // paths without altering the relay.

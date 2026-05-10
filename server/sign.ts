@@ -29,7 +29,34 @@ import { encodeUtf8 } from '../common/utf8.js'
 const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 
-function fromB64Url(str) {
+// Wire-message shapes the verifiers accept. Fields land here
+// post-`JSON.parse`, so every value starts life as `unknown` —
+// strict type checks (`typeof x === 'string'`) inside the
+// verifiers are the trust boundary, and call sites can pass any
+// `Record<string, unknown>` shape without casts.
+export type SaveMsg = {
+  workspaceTag?: unknown
+  base?: unknown
+  keyframe?: unknown
+  nonce?: unknown
+  ciphertext?: unknown
+  signature?: unknown
+}
+
+export type SubscribeMsg = {
+  workspaceTag?: unknown
+  from?: unknown
+  signature?: unknown
+}
+
+// `verifySaveSigAndCanonical` returns either the validated canonical
+// bytes (for the follow-up content-id hash) or a flat reject. Modeled
+// as a discriminated union so a caller pattern-matches on `ok`.
+export type VerifyResult =
+  | { ok: true; canonical: Uint8Array }
+  | { ok: false; canonical: null }
+
+function fromB64Url(str: string): Buffer {
   return Buffer.from(str, 'base64url')
 }
 
@@ -42,23 +69,32 @@ function fromB64Url(str) {
 // rule. Without strict matching the canonical and the storage
 // disagree on which inputs are keyframes, and a malformed save
 // can land in the chain unreadable to peers.
-function canonicalSave({ workspaceTag, base, keyframe, nonce, ciphertext }) {
+function canonicalSave(
+  { workspaceTag, base, keyframe, nonce, ciphertext }: SaveMsg,
+): Uint8Array {
   return encodeUtf8([
     SAVE_DOMAIN,
-    workspaceTag,
+    workspaceTag as string,
     base == null ? '' : String(base),
     keyframe === true ? '1' : '',
-    nonce,
-    ciphertext,
+    nonce as string,
+    ciphertext as string,
   ].join('\n'))
 }
 
-function canonicalSubscribe({ workspaceTag, from }, connectionNonce) {
+function canonicalSubscribe(
+  { workspaceTag, from }: SubscribeMsg,
+  connectionNonce: string,
+): Uint8Array {
   const fromStr = from == null ? '' : String(from)
-  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, fromStr, connectionNonce].join('\n'))
+  return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag as string, fromStr, connectionNonce].join('\n'))
 }
 
-async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
+async function verifyEd25519(
+  pubkeyB64Url: string,
+  message: Uint8Array,
+  sigB64Url: string,
+): Promise<boolean> {
   const pubkeyBytes = fromB64Url(pubkeyB64Url)
   const sigBytes = fromB64Url(sigB64Url)
   if (pubkeyBytes.length !== 32) return false
@@ -92,7 +128,7 @@ async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
 // `encodeUtf8` throws on non-string or lone-surrogate input (any of
 // which on the wire is already a hostile / malformed message), so
 // any error in the canonical-payload path is a verification failure.
-export async function verifySaveSigAndCanonical(msg) {
+export async function verifySaveSigAndCanonical(msg: SaveMsg): Promise<VerifyResult> {
   // Type-check `workspaceTag` here (alongside `signature`) so a
   // non-string slips reach `fromB64Url(msg.workspaceTag)` inside
   // `verifyEd25519` — `fromB64Url` is `Buffer.from(s, 'base64url')`,
@@ -105,7 +141,7 @@ export async function verifySaveSigAndCanonical(msg) {
   // drop. Audit round-11.
   if (typeof msg.workspaceTag !== 'string') return { ok: false, canonical: null }
   if (typeof msg.signature !== 'string') return { ok: false, canonical: null }
-  let payload
+  let payload: Uint8Array
   try { payload = canonicalSave(msg) } catch { return { ok: false, canonical: null } }
   const ok = await verifyEd25519(msg.workspaceTag, payload, msg.signature)
   return ok ? { ok: true, canonical: payload } : { ok: false, canonical: null }
@@ -118,18 +154,18 @@ export async function verifySaveSigAndCanonical(msg) {
 // `computeRevisionId` so two ends always land on the same string.
 // Takes the canonical bytes returned by `verifySaveSigAndCanonical`
 // so the hash is over EXACTLY the bytes the signature covered.
-export async function computeRevisionIdFromCanonical(canonical) {
+export async function computeRevisionIdFromCanonical(canonical: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', canonical)
   return Buffer.from(new Uint8Array(digest)).toString('base64url')
 }
 
 // `connectionNonce` is the per-socket challenge the server issued
 // to the originating connection (see `socketChallenge` in
-// server/index.js). The client signs a canonical that includes the
+// server/index.ts). The client signs a canonical that includes the
 // nonce; verifying against the SAME nonce here is what blocks
 // cross-connection replay of a captured subscribe frame. Audit
 // round-9 H2.
-export async function verifySubscribeSig(msg, connectionNonce) {
+export async function verifySubscribeSig(msg: SubscribeMsg, connectionNonce: unknown): Promise<boolean> {
   // `async` + `await` the verifyEd25519 result. Without `async` the
   // function's verify path returned a `Promise<boolean>` while its
   // type-check / canonical-throw paths returned the literal `false`
@@ -144,7 +180,7 @@ export async function verifySubscribeSig(msg, connectionNonce) {
   if (typeof msg.workspaceTag !== 'string') return false
   if (typeof msg.signature !== 'string') return false
   if (typeof connectionNonce !== 'string') return false
-  let payload
+  let payload: Uint8Array
   try { payload = canonicalSubscribe(msg, connectionNonce) } catch { return false }
   return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
