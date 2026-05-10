@@ -304,13 +304,13 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
       <div class="value-label">Severity</div>
       ${f.confidence === undefined ? nothing : html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div><div class="value-label">Confidence</div>`}
+      ${codeButton}
     </div>
     <div>
       <div class="line-row">
         ${lineRowMain}
         ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
-        ${codeButton}
       </div>
       <div class="desc">${stripExportMarker(f.description, f.exportName)}</div>
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}

@@ -90,20 +90,20 @@
 }
 .run-meta { color: var(--muted); font-size: .65rem; }
 
-/* "Code →" shortcut in the line-row — surfaces when the
-   finding's `fileHash` matches a source in one of the bundles
-   the analyzer was run against. Click jumps to that bundle's
-   Code view at the matching file. Same visual weight as the
-   row chips elsewhere (pill, hairline border, accent on
-   hover); flex pushes it to the right edge of the line-row
-   via auto margin. */
+/* "Code →" shortcut — surfaces in the `.finding-left` rail
+   when the finding's `fileHash` matches a source in one of
+   the bundles the analyzer was run against. Click jumps to
+   that bundle's Code view at the matching file. Sits below
+   the Confidence stack; same pill chrome the marker chips
+   elsewhere use, sized to fit the 4rem left column. */
 .finding-code-btn {
-  margin-left: auto;
-  padding: .1rem .55rem;
+  display: inline-block;
+  margin-top: .35rem;
+  padding: .1rem .45rem;
   background: transparent;
   border: 1px solid var(--border); border-radius: 999px;
   color: var(--muted);
-  font: inherit; font-size: .68rem; font-weight: 500;
+  font: inherit; font-size: .65rem; font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -349,6 +349,9 @@
     break-inside: avoid; page-break-inside: avoid;
     padding: .45rem .25rem;
   }
+  /* Pure on-screen affordance — the bundle source viewer is an
+     interactive surface that doesn't have a paper analogue. */
+  .finding-code-btn { display: none !important; }
   :host(.triage-fixed),
   :host(.triage-invalid),
   :host(.triage-deleted),
