@@ -233,7 +233,7 @@ function renderPackageSlide(pkg, bucket) {
   const rawBucket = getPackagesIndex().get(pkg)
   const counts = packageBucketCounts(rawBucket)
   const mode = state.packageSlideTriage ?? 'live'
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, mode) : new Map()
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, mode) : new Map()
   const total = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   const noun = mode === 'live'
     ? (total === 1 ? 'issue' : 'issues')
@@ -341,7 +341,7 @@ function renderPackageDetails(pkg, bucket) {
   // so the count doesn't shrink to 0 when the page's triage
   // selector flips off the live findings.
   const rawBucket = getPackagesIndex().get(pkg)
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket) : new Map()
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg) : new Map()
   const issuesCount = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   return html`<div class="bundles-tabs" role="tablist">
     <button
@@ -372,8 +372,14 @@ function renderPackageDetails(pkg, bucket) {
 // Operates on the RAW bucket from `getPackagesIndex()` so the
 // list reflects the package's full inventory, independent of the
 // page's triage selector. The slide's [Invalid | Deleted] tabs
-// switch the mode via `state.packageSlideTriage`.
-function packageFindingsByFile(rawBucket, mode = 'live') {
+// switch the mode via `state.packageSlideTriage`. Returned Map
+// is keyed by `pkgRelativePath(pkg, file)` so duplicate file
+// paths from different installations of the same package
+// (`node_modules/ws/lib/x.js` vs
+// `node_modules/.pnpm/ws@.../node_modules/ws/lib/x.js`) merge
+// into a single file group instead of rendering as separate
+// rows.
+function packageFindingsByFile(rawBucket, pkg, mode = 'live') {
   const result = new Map()
   for (const [file, findings] of rawBucket.files) {
     const filtered = findings.filter((f) => {
@@ -382,7 +388,11 @@ function packageFindingsByFile(rawBucket, mode = 'live') {
       if (mode === 'deleted') return t === 'deleted'
       return t !== 'invalid' && t !== 'deleted'
     })
-    if (filtered.length > 0) result.set(file, filtered)
+    if (filtered.length === 0) continue
+    const rel = pkgRelativePath(pkg, file)
+    if (!result.has(rel)) result.set(rel, [])
+    const arr = result.get(rel)
+    for (const f of filtered) arr.push(f)
   }
   return result
 }
