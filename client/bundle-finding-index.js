@@ -274,10 +274,21 @@ function indexFindingByPackage(f, key, name) {
     // `invalidateName` can prune precisely. `reports` (Set) is the
     // public summary; we keep both forms because callers iterate
     // `reports` directly. Audit round-8 H1.
-    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
+    //
+    // `repos` is the Set of every analyzer-stamped `f.repo.github`
+    // value seen across the package's findings. The Packages
+    // overview surfaces it as an upstream link when the set
+    // collapses to a single non-conflicting entry; multiple entries
+    // (rare — would mean the analyzer disagreed on which repo
+    // owns the package across reports) suppress the link rather
+    // than guess. Pruned alongside the rest in `invalidateName`.
+    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), repos: new Set(), _keyReports: new Map() }
     byPackage.set(pkg, pBucket)
   }
   pBucket.reports.add(name)
+  if (typeof f.repo?.github === 'string' && f.repo.github) {
+    pBucket.repos.add(f.repo.github)
+  }
   let krSet = pBucket._keyReports.get(key)
   if (!krSet) {
     krSet = new Set()

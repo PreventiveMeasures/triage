@@ -411,8 +411,22 @@ function renderPackageOverview(pkg, bucket) {
     return fa.localeCompare(fb)
   })
   const sortedReports = [...bucket.reports].sort((a, b) => a.localeCompare(b))
+  // `repos` lives on the RAW bucket (the page-filtered slice
+  // doesn't propagate it — the field is per-package metadata,
+  // not triage-filterable). Surface the upstream URL only when
+  // every analyzer that stamped a `f.repo.github` agreed on the
+  // same value; multiple entries mean we don't have a single
+  // canonical link to point at, so the row is omitted entirely
+  // rather than guessing.
+  const rawBucket = getPackagesIndex().get(pkg)
+  const repoSet = rawBucket?.repos
+  const repoSlug = repoSet && repoSet.size === 1 ? [...repoSet][0] : null
+  const repoUrl = repoSlug
+    ? (/^https?:/iu.test(repoSlug) ? repoSlug : `https://github.com/${repoSlug}`)
+    : null
   return html`<dl class="packages-detail-meta">
     <dt>Package</dt><dd class="mono">${pkg}</dd>
+    ${repoUrl ? html`<dt>Repository</dt><dd class="mono"><a href=${repoUrl} target="_blank" rel="noopener">${repoSlug}</a></dd>` : nothing}
     <dt>Findings</dt><dd>${bucket.findings.length}</dd>
     <dt>Files</dt><dd>${bucket.files.size}</dd>
     <dt>Reports</dt><dd>${bucket.reports.size}</dd>
