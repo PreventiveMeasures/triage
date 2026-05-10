@@ -123,6 +123,37 @@ describe('isWorkspaceExport', () => {
     assert.equal(isWorkspaceExport({ version: 1, reports: [] }), false)
     assert.equal(isWorkspaceExport({ version: 1, workspace: { id: 'a', name: 'b', privateKey: 'c' }, reports: 'x' }), false)
   })
+
+  it('rejects a non-numeric `createdAt` (audit round-14 WI-2)', () => {
+    // Pre-fix `createdAt` had no shape check — the field rode through
+    // `applyWorkspaceImport` straight into `upsertWorkspace`, then into
+    // the persisted workspaces blob. A crafted bundle could embed any
+    // value (function-shape string, nested object, NaN). Now only
+    // `number` (or omitted) is accepted.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: 'evil' },
+      reports: [],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: { x: 1 } },
+      reports: [],
+    }), false)
+    // Numeric still accepted.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: 12345 },
+      reports: [],
+    }), true)
+    // Omitted (undefined) still accepted — upsertWorkspace falls back
+    // to Date.now().
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+    }), true)
+  })
 })
 
 describe('parseWorkspaceJson', () => {
@@ -409,6 +440,88 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     // report's claimed ids still surface in triage.
     assert.equal(payload.triage[FINDING_A]?.color, 'red',
       'export survived a malformed sibling report')
+  })
+
+  it('mergeTriage rejects an array `triage` (audit round-14 WI-1)', async () => {
+    // Pre-fix the shape guard `if (!triage || typeof triage !== 'object')`
+    // admitted arrays (typeof [] === 'object'). Object.entries([])
+    // yielded stringified indices that got persisted as bogus finding
+    // ids in state.markers / state.comments / state.fixes.
+    const data = {
+      version: 1,
+      workspace: { id: 'ws-arr', name: 'A', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      // An array with one entry that LOOKS like valid triage —
+      // pre-fix would write it under id="0".
+      triage: [{ color: 'red', triage: 'fixed' }],
+    }
+    state.markers.clear()
+    state.triageState.clear()
+    await applyWorkspaceImport(data)
+    assert.equal(state.markers.has('0'), false, 'no entry persisted under stringified array index')
+    assert.equal(state.triageState.has('0'), false, 'no triage persisted under stringified array index')
+    // The valid finding id from reports[] also shouldn't end up
+    // marked — the array path returned early before any merge.
+    assert.equal(state.markers.has(FINDING_A), false, 'valid id untouched: bogus payload skipped entirely')
+  })
+
+  it('mergeTriage skips spurious `.set` calls when imported equals local (audit round-14 WI-3)', async () => {
+    // Pre-fix `else if (importedColor)` ran whenever an importedColor
+    // was present, regardless of whether it equalled localColor —
+    // calling state.markers.set with the SAME value still wakes every
+    // reactive observer (sidebar / table / triage-sync subscriber).
+    // Now the call only fires when the value actually differs.
+    state.markers.set(FINDING_A, 'red')
+    state.comments.set(FINDING_A, 'note')
+    state.fixes.set(FINDING_A, 'patch')
+    let markerSets = 0
+    let commentSets = 0
+    let fixSets = 0
+    const origMarkerSet = state.markers.set.bind(state.markers)
+    const origCommentSet = state.comments.set.bind(state.comments)
+    const origFixSet = state.fixes.set.bind(state.fixes)
+    state.markers.set = function spy(...args) { markerSets += 1; return origMarkerSet(...args) }
+    state.comments.set = function spy(...args) { commentSets += 1; return origCommentSet(...args) }
+    state.fixes.set = function spy(...args) { fixSets += 1; return origFixSet(...args) }
+    try {
+      const data = {
+        version: 1,
+        workspace: { id: 'ws-noop', name: 'N', privateKey: 'k' },
+        reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+        triage: { [FINDING_A]: { color: 'red', comment: 'note', fix: 'patch' } },
+      }
+      await applyWorkspaceImport(data)
+      assert.equal(markerSets, 0, 'no marker.set when imported color === local')
+      assert.equal(commentSets, 0, 'no comment.set when imported comment === local')
+      assert.equal(fixSets, 0, 'no fix.set when imported fix === local')
+    } finally {
+      state.markers.set = origMarkerSet
+      state.comments.set = origCommentSet
+      state.fixes.set = origFixSet
+    }
+  })
+
+  it('setCount preserves the cached source when bundle content lacks one (audit round-14 WI-4)', async () => {
+    // Pre-fix `setCount(name, count, source)` was called with whatever
+    // `analyzeContent` returned — `source` would be `undefined` for
+    // analyzer-native JSON dumps that don't carry the source field.
+    // setCount then wrote `{ count }` only, dropping any
+    // previously-cached source field. The sidebar bucketing for that
+    // file would silently regress to "unknown".
+    const { setCount, getKind } = await import('../client/counts.js')
+    const reportName = `wi4-${Date.now()}.json`
+    // Pre-cache a source for this report name (mimics a prior ingest).
+    setCount(reportName, 0, 'deepsec')
+    assert.equal(getKind(reportName), 'deepsec', 'precondition: source cached')
+    const data = {
+      version: 1,
+      workspace: { id: 'ws-src', name: 'S', privateKey: 'k' },
+      // Plain analyzer-native JSON with no `source` field on the data.
+      reports: [{ name: reportName, content: reportContent([FINDING_A]) }],
+      triage: {},
+    }
+    await applyWorkspaceImport(data)
+    assert.equal(getKind(reportName), 'deepsec', 'cached source preserved when bundle lacks one')
   })
 
   it('genuine "File not found" still prunes the workspace membership (audit round-13 W-Export-3 positive control)', async () => {

@@ -136,6 +136,21 @@ export async function applyTriageImport(payload, mode) {
   if (!['replace', 'prefer-imported', 'prefer-current'].includes(mode)) {
     throw new Error(`Unknown merge mode: ${mode}`)
   }
+  // Re-validate payload shape: callers may hand us a programmatically
+  // built object that bypassed `parseTriageExportGzip`. Without this,
+  // a missing/null `triage` or `repoUrls` would mutate state in
+  // `replace` mode and then crash on `Object.entries(undefined)` —
+  // half-applied import in memory; the persisted blob diverges. Audit
+  // round-14 TE-1.
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid payload: not an object')
+  }
+  if (!payload.triage || typeof payload.triage !== 'object' || Array.isArray(payload.triage)) {
+    throw new Error('Invalid payload: missing or non-object `triage`')
+  }
+  if (!payload.repoUrls || typeof payload.repoUrls !== 'object' || Array.isArray(payload.repoUrls)) {
+    throw new Error('Invalid payload: missing or non-object `repoUrls`')
+  }
   const imported = payload.triage
 
   if (mode === 'replace') {

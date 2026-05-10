@@ -2,7 +2,7 @@ import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.js'
 import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
-import { analyzeContent, setCount } from './counts.js'
+import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
@@ -45,6 +45,13 @@ export function isWorkspaceExport(data) {
     && typeof data.workspace.id === 'string'
     && typeof data.workspace.name === 'string'
     && typeof data.workspace.privateKey === 'string'
+    // `createdAt` rides through `applyWorkspaceImport` straight to
+    // `upsertWorkspace`, then into the persisted workspaces blob. A
+    // crafted bundle could otherwise embed any value (function-shape
+    // string, nested object, NaN). `undefined` stays accepted because
+    // `upsertWorkspace` falls back to `Date.now()` for missing fields.
+    // Audit round-14 WI-2.
+    && (data.workspace.createdAt === undefined || typeof data.workspace.createdAt === 'number')
     && Array.isArray(data.reports),
   )
 }
@@ -137,16 +144,28 @@ export async function buildImportedFindingLookup(reportEntries) {
 // `conflictResolver` — when omitted (or when it returns null), the
 // local side wins on every conflict.
 async function mergeTriage(triage, conflictResolver, findingLookup) {
-  if (!triage || typeof triage !== 'object') return
+  // Reject arrays: `typeof [] === 'object'` so the lone-typeof guard
+  // would let an array through, and `Object.entries([])` then yields
+  // stringified indices that get persisted as bogus finding ids in
+  // `state.markers` / `state.comments` / `state.fixes`. Audit round-14
+  // WI-1.
+  if (!triage || typeof triage !== 'object' || Array.isArray(triage)) return
   const conflicts = []
   for (const [id, entry] of Object.entries(triage)) {
     if (!entry || typeof entry !== 'object') continue
 
+    // Skip the `.set` calls when the imported value equals the local
+    // one — the reactive observers (sidebar / table re-render, M-2
+    // hydration listeners, triage-sync.js subscribers) all fire on
+    // every Map mutation regardless of whether the value actually
+    // changed. A bundle that re-imports the user's own state would
+    // otherwise spam every listener for every entry. Audit round-14
+    // WI-3.
     const localColor = state.markers.get(id)
     const importedColor = typeof entry.color === 'string' ? entry.color : undefined
     if (importedColor && localColor && localColor !== importedColor) {
       conflicts.push({ id, property: 'color', local: localColor, imported: importedColor })
-    } else if (importedColor) {
+    } else if (importedColor && importedColor !== localColor) {
       state.markers.set(id, importedColor)
     }
 
@@ -154,7 +173,7 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     const importedComment = typeof entry.comment === 'string' ? entry.comment : ''
     if (importedComment && localComment && localComment !== importedComment) {
       conflicts.push({ id, property: 'comment', local: localComment, imported: importedComment })
-    } else if (importedComment) {
+    } else if (importedComment && importedComment !== localComment) {
       state.comments.set(id, importedComment)
     }
 
@@ -162,7 +181,7 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     const importedFix = typeof entry.fix === 'string' ? entry.fix : ''
     if (importedFix && localFix && localFix !== importedFix) {
       conflicts.push({ id, property: 'fix', local: localFix, imported: importedFix })
-    } else if (importedFix) {
+    } else if (importedFix && importedFix !== localFix) {
       state.fixes.set(id, importedFix)
     }
 
@@ -255,7 +274,14 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     try {
       await saveFile(r.name, r.content)
       const { count, source } = analyzeContent(r.content)
-      setCount(r.name, count, source)
+      // Preserve the cached source when `analyzeContent` couldn't
+      // detect one — the bundle's `r.content` may be JSON-formatted
+      // findings without a `source` field, but our local cache
+      // already knows what kind of report this name is. Without the
+      // fallback, `setCount(name, n, undefined)` overwrites
+      // `{count, source}` with `{count}` only, breaking the sidebar
+      // bucketing for that file. Audit round-14 WI-4.
+      setCount(r.name, count, source ?? getKind(r.name))
       savedNames.push(r.name)
     } catch (err) {
       console.warn(`Workspace import: failed to save ${r.name}: ${err.message}`)
