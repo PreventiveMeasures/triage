@@ -146,7 +146,7 @@ describe('triage-sync server', () => {
   before(async () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-'))
     const port = 19000 + Math.floor(Math.random() * 1_000)
-    serverUrl = `ws://127.0.0.1:${port}`
+    serverUrl = `ws://127.0.0.1:${port}/api/sync`
     serverProc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -816,6 +816,52 @@ describe('triage-sync server', () => {
     await c.expectSilent(200)
     a.ws.close(); c.ws.close(); subscriber.ws.close()
   })
+
+  // URL routing — both rejection paths return the same 404 JSON
+  // shape so a misconfigured client (e.g. one still pointed at
+  // pre-PR `/sync`) sees something readable instead of ECONNRESET.
+  it('plain HTTP outside /api/sync → 404 not-found JSON with Connection: close', async () => {
+    const httpUrl = serverUrl.replace(/^ws:/u, 'http:').replace('/api/sync', '/random/path')
+    const res = await fetch(httpUrl)
+    assert.equal(res.status, 404)
+    assert.equal(res.headers.get('content-type'), 'application/json')
+    // Keep-alive on a WS-only relay would let an idle client hold
+    // the socket open through SIGTERM; assert the header is set so
+    // shutdown stays bounded.
+    assert.equal(res.headers.get('connection'), 'close')
+    assert.deepEqual(await res.json(), { error: 'not-found' })
+  })
+
+  it('WS upgrade outside /api/sync → 404 with JSON body (not just socket destroy)', async () => {
+    // Raw HTTP/1.1 upgrade request to a non-sync path. Asserts the
+    // full response writes BEFORE FIN — a regression to bare
+    // `socket.destroy()` (or `write + destroy`) on a slow platform
+    // would surface here as a truncated buffer.
+    const { default: net } = await import('node:net')
+    const port = Number(new URL(serverUrl).port)
+    const tcp = net.connect({ host: '127.0.0.1', port })
+    const chunks = []
+    tcp.on('data', (b) => { chunks.push(b) })
+    await new Promise((resolve, reject) => {
+      tcp.once('connect', resolve)
+      tcp.once('error', reject)
+    })
+    tcp.write(
+      'GET /not-the-sync-path HTTP/1.1\r\n' +
+      `Host: 127.0.0.1:${port}\r\n` +
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      'Sec-WebSocket-Version: 13\r\n' +
+      'Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n' +
+      '\r\n',
+    )
+    await new Promise((resolve) => { tcp.once('close', resolve) })
+    const text = Buffer.concat(chunks).toString('utf8')
+    assert.match(text, /^HTTP\/1\.1 404 Not Found\r\n/u)
+    assert.match(text, /\r\nContent-Type: application\/json\r\n/u)
+    assert.match(text, /\r\nConnection: close\r\n/u)
+    assert.match(text, /\r\n\r\n\{"error":"not-found"\}$/u)
+  })
 })
 
 // Standalone shutdown test: spawns its own server so the SIGTERM
@@ -824,7 +870,7 @@ describe('triage-sync server: graceful shutdown', () => {
   it('sends close code 1001 (going away) to live clients on SIGTERM', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
     const port = 19000 + Math.floor(Math.random() * 1_000)
-    const url = `ws://127.0.0.1:${port}`
+    const url = `ws://127.0.0.1:${port}/api/sync`
     const proc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -905,8 +951,10 @@ describe('triage-sync server: graceful shutdown', () => {
         .update(wsKey + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
         .digest('base64')
       void accept  // server doesn't echo this back to us; we just need the upgrade to succeed server-side
+      // `/api/sync` — anywhere else is rejected by the upgrade
+      // gate, so this test would pass vacuously.
       tcp.write(
-        `GET / HTTP/1.1\r\n` +
+        `GET /api/sync HTTP/1.1\r\n` +
         `Host: 127.0.0.1:${port}\r\n` +
         `Upgrade: websocket\r\n` +
         `Connection: Upgrade\r\n` +
@@ -923,11 +971,60 @@ describe('triage-sync server: graceful shutdown', () => {
       proc.kill('SIGTERM')
       await new Promise((resolve) => { proc.once('exit', resolve) })
       const elapsed = Date.now() - sigtermAt
-      // The close-grace timer is 1 s. Allow generous slack for child-
-      // process scheduling but stay well under the ws-library default
-      // closeTimeout of 30 s — anything in that range would mean the
-      // fallback regressed.
+      // 1 s grace timer fires; bound both sides — < 5 s catches the
+      // ws-library 30 s closeTimeout regression, ≥ 800 ms catches a
+      // silent-bypass regression that skips wss.clients entirely.
       assert.ok(elapsed < 5_000, `expected shutdown < 5 s with fallback; got ${elapsed} ms`)
+      assert.ok(elapsed >= 800, `expected shutdown ≥ 800 ms (grace fired); got ${elapsed} ms`)
+    } finally {
+      try { tcp?.destroy() } catch {}
+      if (proc.exitCode == null) proc.kill('SIGKILL')
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('idle keep-alive HTTP connection does not stall SIGTERM beyond the grace', async () => {
+    // A misbehaving HTTP/1.1 client that ignores `Connection: close`
+    // and holds the keep-alive socket open would otherwise pin
+    // `httpServer.close()` on its slow OS-level timeout. Verify the
+    // shutdown's `closeAllConnections()` fallback inside the
+    // terminate timer kicks in within the same 1 s grace.
+    const { default: net } = await import('node:net')
+    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-keepalive-'))
+    const port = 19000 + Math.floor(Math.random() * 1_000)
+    const proc = spawn(process.execPath, ['server/index.ts'], {
+      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let tcp
+    try {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
+        proc.stdout.on('data', (d) => {
+          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
+        })
+        proc.stderr.on('data', () => {})
+      })
+      tcp = net.connect({ host: '127.0.0.1', port })
+      tcp.on('error', () => {})
+      tcp.on('data', () => {})  // consume + ignore server response
+      await new Promise((resolve, reject) => {
+        tcp.once('connect', resolve)
+        tcp.once('error', reject)
+      })
+      // Issue a plain HTTP/1.1 GET; the server replies 404 +
+      // Connection: close, but pretend to be a buggy client that
+      // ignores the header and keeps the socket open.
+      tcp.write(`GET /idle-keep-alive HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`)
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+      const sigtermAt = Date.now()
+      proc.kill('SIGTERM')
+      await new Promise((resolve) => { proc.once('exit', resolve) })
+      const elapsed = Date.now() - sigtermAt
+      // Bounded by the WS terminate grace (1 s) + small overhead.
+      // Without `closeAllConnections()` in the timer, this would
+      // either stall on the OS-level keep-alive timeout (~60 s+).
+      assert.ok(elapsed < 5_000, `expected shutdown < 5 s with HTTP fallback; got ${elapsed} ms`)
     } finally {
       try { tcp?.destroy() } catch {}
       if (proc.exitCode == null) proc.kill('SIGKILL')

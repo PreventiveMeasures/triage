@@ -52,6 +52,7 @@
 // to every subscriber for the workspaceTag except the originator.
 
 import { type WebSocket, WebSocketServer } from 'ws'
+import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -356,7 +357,47 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
 
-const wss = new WebSocketServer({ port: PORT, host: HOST })
+// `/api/*` is reserved for backend traffic so a fronting nginx
+// (or similar) can route `/api/*` → this process and `/*` → the
+// static UI bundle with a single location block.
+const WS_UPGRADE_PATH = '/api/sync'
+function isUpgradePath(url: string | undefined): boolean {
+  if (typeof url !== 'string') return false
+  // Strip `?…` so clients can carry build / debug tags. Exact
+  // match otherwise — `/api/sync/` (trailing slash) doesn't pass.
+  return url.split('?', 1)[0] === WS_UPGRADE_PATH
+}
+
+const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
+
+const httpServer = createServer((_req: HttpRequest, res: ServerResponse) => {
+  // `Connection: close` so an HTTP/1.1 keep-alive client doesn't
+  // hold the socket open expecting more requests on a server that
+  // only serves the WS upgrade — same reason `socket.end(...)`
+  // below sends FIN immediately after the upgrade-rejection body.
+  res.writeHead(404, { 'content-type': 'application/json', 'connection': 'close' })
+  res.end(NOT_FOUND_BODY)
+})
+const wss = new WebSocketServer({ noServer: true })
+httpServer.on('upgrade', (req, socket, head) => {
+  // RFC 6455: the WS upgrade IS an HTTP request; reject with a
+  // normal HTTP response so a misconfigured client sees the JSON
+  // body instead of ECONNRESET. `socket.end(body)` flushes before
+  // sending FIN — `socket.write(...) + socket.destroy()` can
+  // truncate the body when destroy() doesn't wait for the write
+  // buffer to drain.
+  if (!isUpgradePath(req.url)) {
+    socket.end(
+      'HTTP/1.1 404 Not Found\r\n' +
+      'Content-Type: application/json\r\n' +
+      `Content-Length: ${Buffer.byteLength(NOT_FOUND_BODY)}\r\n` +
+      'Connection: close\r\n\r\n' +
+      NOT_FOUND_BODY,
+    )
+    return
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => { wss.emit('connection', ws, req) })
+})
 
 // In-flight async message handlers. `shutdown` awaits this set
 // before closing the DB so a SIGINT mid-save can't resume against
@@ -448,27 +489,32 @@ wss.on('connection', (socket: WebSocket, req) => {
   socket.on('error', (err: Error) => { console.warn('Socket error:', err?.message ?? err) })
 })
 
-wss.on('listening', () => {
-  console.log(`DeepView triage-sync server: ws://${HOST}:${PORT} (db: ${DB_PATH})`)
+httpServer.on('listening', () => {
+  console.log(`DeepView triage-sync server: ws://${HOST}:${PORT}${WS_UPGRADE_PATH} (db: ${DB_PATH})`)
 })
 
-// Surface server-level errors (EADDRINUSE on bind, EACCES, the rare
-// post-listen socket fault). Without this handler `ws` re-emits the
-// underlying error as an uncaughtException, which the launcher sees
-// as a confusing crash rather than "this port was taken." Exit
-// cleanly on bind failure so systemd / docker can apply its retry
-// policy; for post-listen errors there's no clean way to recover, so
-// crash too.
-// Route through `shutdown()` rather than calling `process.exit(1)`
-// directly: the previous shape skipped the in-flight handler drain
-// and the DB close, so a non-bind error after listen could lose
-// already-acked WAL frames. shutdown() is re-entrancy-safe and
-// exits with code 1 when invoked from this path so systemd /
-// docker still see a failure exit. Audit round-9 M2.
-wss.on('error', (err: Error) => {
+// Route bind / post-listen failures through `shutdown` so the
+// in-flight handler drain + DB close still run before exit.
+// Without this, `ws` re-emits the error as uncaughtException and
+// the launcher sees a confusing crash rather than the bind
+// failure. Audit round-9 M2.
+httpServer.on('error', (err: Error) => {
   console.error('Server error:', err?.message ?? err)
-  shutdown(1)
+  fireShutdown(1)
 })
+wss.on('error', (err: Error) => {
+  console.warn('WS server error:', err?.message ?? err)
+})
+
+// `.catch` defends against an unguarded `await` slipping into
+// `shutdown` later: an unhandled rejection here would skip the
+// non-zero exit the launcher relies on.
+function fireShutdown(code: number): void {
+  shutdown(code).catch((err) => {
+    console.warn('shutdown error:', (err as Error)?.message ?? err)
+    process.exit(code === 0 ? 1 : code)
+  })
+}
 
 async function shutdown(exitCode: number = 0): Promise<void> {
   // Re-entry: don't restart the teardown, but escalate the pending
@@ -509,13 +555,25 @@ async function shutdown(exitCode: number = 0): Promise<void> {
         try { socket.terminate() } catch {}
       }
     }
+    // Same grace for HTTP keep-alive sockets that didn't respect the
+    // `Connection: close` hint. Without this, an idle keep-alive
+    // connection can hold `httpServer.close()` until its TCP timeout.
+    try { httpServer.closeAllConnections() } catch {}
   }, TERMINATE_GRACE_MS)
   // Don't keep the event loop alive solely for the grace timer —
   // wss.close resolution already drives shutdown progress.
   terminateTimer.unref?.()
-  // Stop accepting new connections; existing sockets stay open
-  // until their close handlers run (driven by the 1001 frames above
-  // or the terminate fallback below).
+  // Free idle HTTP keep-alive sockets up front so the close()
+  // below doesn't wait on them. Active in-flight requests still
+  // get to finish; only sockets sitting in keep-alive limbo go.
+  try { httpServer.closeIdleConnections() } catch {}
+  // Close http.Server first to stop accepting new upgrades + HTTP
+  // requests. Guard with `.listening` because `close()` throws
+  // ERR_SERVER_NOT_RUNNING when bind never succeeded (the http
+  // error handler is the path that invoked shutdown in that case).
+  if (httpServer.listening) {
+    await new Promise<void>((resolve) => { httpServer.close(() => resolve()) })
+  }
   await new Promise<void>((resolve) => { wss.close(() => resolve()) })
   clearTimeout(terminateTimer)
   // Drain in-flight handlers so a save that's mid-`await
@@ -533,7 +591,8 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   process.exit(pendingExitCode)
 }
 // Wrap signal handlers so the signal name (passed as the listener's
-// first arg) doesn't bleed into shutdown's `exitCode` parameter and
-// trip `process.exit` into rejecting a non-numeric code.
-process.on('SIGINT', () => shutdown(0))
-process.on('SIGTERM', () => shutdown(0))
+// first arg) doesn't bleed into shutdown's `exitCode` parameter.
+process.on('SIGINT', () => fireShutdown(0))
+process.on('SIGTERM', () => fireShutdown(0))
+
+httpServer.listen(PORT, HOST)

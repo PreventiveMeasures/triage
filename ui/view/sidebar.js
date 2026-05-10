@@ -32,10 +32,15 @@ function countLoadedRepositories() {
 
 // Default sync endpoint used when the user toggles the sidebar
 // status button on. Resolved per-origin:
-//   - `127.0.0.1` → the dev server on :8765.
-//   - any other origin not ending in `.github.io` → `${origin}/sync`
-//     on the matching ws/wss scheme, so a self-hosted deploy can
-//     terminate sync at the same host serving the UI.
+//   - `127.0.0.1` → the dev server on :8765, at the relay's
+//     canonical `/api/sync` upgrade path.
+//   - any other origin not ending in `.github.io` →
+//     `${origin}/api/sync` on the matching ws/wss scheme, so a
+//     self-hosted deploy can terminate sync at the same host
+//     serving the UI. The `/api/` prefix matches the relay's
+//     reserved backend namespace — a fronting nginx routes
+//     `/api/*` → relay, `/*` → the static UI bundle, no
+//     upgrade-header gymnastics.
 //   - `.github.io` (and the `typeof location` guard for SSR-style
 //     loads) stays empty — GitHub Pages can't host a WebSocket
 //     endpoint, so the button would only ever read as broken.
@@ -44,10 +49,10 @@ function countLoadedRepositories() {
 // the empty default just means there's no toggle-on target.
 const DEFAULT_SYNC_URL = (() => {
   if (typeof location === 'undefined') return ''
-  if (location.hostname === '127.0.0.1') return 'ws://127.0.0.1:8765'
+  if (location.hostname === '127.0.0.1') return 'ws://127.0.0.1:8765/api/sync'
   if (location.hostname.endsWith('.github.io')) return ''
   const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${wsScheme}//${location.host}/sync`
+  return `${wsScheme}//${location.host}/api/sync`
 })()
 
 // dataTransfer mime used by intra-sidebar drag-and-drop. The value is

@@ -10,7 +10,7 @@ sees opaque ciphertexts and routes them.
 
 ```
 pnpm install
-pnpm server                # listens on ws://127.0.0.1:8765
+pnpm server                # listens on ws://127.0.0.1:8765/api/sync
 PORT=9000 pnpm server      # custom port
 DEBUG=1 pnpm server        # log every message
 DB_PATH=./mydb.db pnpm server
@@ -18,6 +18,19 @@ DB_PATH=./mydb.db pnpm server
 
 Defaults: `PORT=8765`, `HOST=127.0.0.1`, `DB_PATH=server/data.db`.
 The SQLite file is created on first run; nothing else is needed.
+
+## URL layout
+
+The relay shares one `http.Server` for everything under `/api/*`,
+keeping the namespace reserved for backend traffic so a fronting
+proxy can route with a single location block (`/api/*` → relay,
+`/*` → static UI bundle, no upgrade-header gymnastics).
+
+- `ws://${host}/api/sync` — WebSocket upgrade. Triage-sync wire
+  protocol (described below) flows over it.
+- Any other URL — `404 not-found` (JSON body). Future feature work
+  (e.g. a REST byte-transfer plane) lands under `/api/...` without
+  changing this contract.
 
 Requires Node ≥ 24 (uses the built-in `node:sqlite`, WebCrypto
 Ed25519, and `--experimental-strip-types` for the `.ts` sources —

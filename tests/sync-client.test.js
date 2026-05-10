@@ -107,7 +107,7 @@ describe('triage-sync client', () => {
   before(async () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-client-'))
     const port = 19500 + Math.floor(Math.random() * 500)
-    serverUrl = `ws://127.0.0.1:${port}`
+    serverUrl = `ws://127.0.0.1:${port}/api/sync`
     serverProc = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -2816,7 +2816,7 @@ describe('triage-sync client', () => {
     // server's chain. Pin the high-level outcome.
     const port2 = 19500 + Math.floor(Math.random() * 500) + 500
     const serverDir2 = mkdtempSync(path.join(tmpdir(), 'deepview-client-2-'))
-    const serverUrl2 = `ws://127.0.0.1:${port2}`
+    const serverUrl2 = `ws://127.0.0.1:${port2}/api/sync`
     const serverProc2 = spawn(process.execPath, ['server/index.ts'], {
       env: { ...process.env, PORT: String(port2), HOST: '127.0.0.1', DB_PATH: path.join(serverDir2, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
