@@ -28,6 +28,7 @@
 //     surgical canvas redraw + chip property update only, no full
 //     re-render).
 import { LitElement, html } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 
 const TIERS = [
   ['critical',      'Critical'],
@@ -77,7 +78,7 @@ class SeverityChips extends LitElement {
         const active = selected.has(sev)
         return html`<button
           type="button"
-          class=${`sev-chip ${sev}${active ? ' active' : ''}`}
+          class=${classMap({ 'sev-chip': true, [sev]: true, active })}
           aria-pressed=${String(active)}
           @click=${() => this._toggle(sev)}
         ><span class="sd"></span><span class="name">${label}</span><span class="n">${count}</span></button>`

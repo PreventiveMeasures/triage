@@ -1,4 +1,5 @@
 import { html, render as litRender, nothing } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
 import { fileList, sidebar } from './dom.js'
@@ -273,7 +274,7 @@ export async function renderSidebar() {
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
-    ${visibleWorkspaces.map((w) => {
+    ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
       return html`
         ${workspaceItemTemplate(w, visibleReports.length)}

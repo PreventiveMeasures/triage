@@ -19,6 +19,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
+import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
@@ -118,7 +119,7 @@ export function renderPackagesView() {
         ? html`<p style="color:var(--muted)">No packages match "${state.packagesSearchQuery}".</p>`
         : html`<div class=${layoutClass}>
           <ul class="packages-list">
-            ${visible.map(([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
+            ${repeat(visible, ([pkg]) => pkg, ([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
           </ul>
           ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
             <header class="packages-details-bar">
@@ -150,7 +151,7 @@ function packagesToolbarTemplate(triageCounts) {
       aria-label="Filter packages"
       .value=${live(state.packagesSearchQuery)}
     >
-    <select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${state.packagesSortBy}>
+    <select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${live(state.packagesSortBy)}>
       <option value="findings-desc">Findings ↓</option>
       <option value="files-desc">Files ↓</option>
       <option value="reports-desc">Reports ↓</option>

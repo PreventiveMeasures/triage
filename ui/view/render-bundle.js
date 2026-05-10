@@ -26,6 +26,7 @@
 // `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
 // from this module.
 import { html, render as litRender, nothing } from 'lit'
+import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -1221,11 +1222,11 @@ function renderBundleCodeView(details) {
         </div>
       </div>
       <div class="bundle-code-rail-body">
-        ${searchMode === 'files'
-          ? renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)
-          : searchMode === 'code'
-            ? renderBundleCodeContentResults(sources, query, path, prefix)
-            : renderBundleCodeIssuesResults(details, query, path, prefix)}
+        ${choose(searchMode, [
+          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)],
+          ['code', () => renderBundleCodeContentResults(sources, query, path, prefix)],
+          ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
+        ])}
       </div>
     </aside>
     <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
@@ -1298,11 +1299,11 @@ function renderBundleSlide(entry) {
       </div>
     </header>
     <div class="bundles-slide-body">
-      ${tab === 'graph'
-        ? html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`
-        : tab === 'code'
-          ? renderBundleCodeView(state.bundleDetails)
-          : renderBundleIssuesList(state.bundleDetails)}
+      ${choose(tab, [
+        ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+        ['code', () => renderBundleCodeView(state.bundleDetails)],
+        ['issues', () => renderBundleIssuesList(state.bundleDetails)],
+      ])}
     </div>
   </div>`
 }
@@ -1535,7 +1536,7 @@ export function renderBundlesList(bundles) {
     </header>
     <div class=${layoutClass}>
       <ul class="bundles-list">
-        ${bundles.map(({ integrity, name }) => {
+        ${repeat(bundles, (b) => b.integrity, ({ integrity, name }) => {
           const isSel = integrity === selected
           return html`<li
             class=${isSel ? 'selected' : ''}

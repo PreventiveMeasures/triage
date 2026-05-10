@@ -22,6 +22,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
+import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.js'
@@ -107,7 +108,7 @@ export function renderRepositoriesView() {
         ? html`<p style="color:var(--muted)">No repositories match "${state.repositoriesSearchQuery}".</p>`
         : html`<div class=${layoutClass}>
           <ul class="packages-list">
-            ${visible.map(([repo, bucket]) => renderRepositoryRow(repo, bucket, repo === selected))}
+            ${repeat(visible, ([repo]) => repo, ([repo, bucket]) => renderRepositoryRow(repo, bucket, repo === selected))}
           </ul>
           ${selectedEntry ? html`<aside class="packages-details" id="repositories-details">
             <header class="packages-details-bar">
@@ -132,7 +133,7 @@ function repositoriesToolbarTemplate(triageCounts) {
       aria-label="Filter repositories"
       .value=${live(state.repositoriesSearchQuery)}
     >
-    <select id="repositories-sort-select" class="packages-sort" aria-label="Sort repositories" .value=${state.repositoriesSortBy}>
+    <select id="repositories-sort-select" class="packages-sort" aria-label="Sort repositories" .value=${live(state.repositoriesSortBy)}>
       <option value="findings-desc">Findings ↓</option>
       <option value="files-desc">Files ↓</option>
       <option value="reports-desc">Reports ↓</option>

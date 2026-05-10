@@ -20,6 +20,7 @@
 //   * `view-mode-change(detail.mode)` — fired on click. The host
 //     persists the value to localStorage and re-renders.
 import { LitElement, html } from 'lit'
+import { classMap } from 'lit/directives/class-map.js'
 
 const VIEW_ICONS = {
   // table   — four dense rows, like a spreadsheet
@@ -93,7 +94,7 @@ class ViewModeButtons extends LitElement {
       <div class="view-mode-group" role="group" aria-label="View mode">
         ${list.map((m) => html`<button
           type="button"
-          class=${`view-mode-btn${this.mode === m ? ' active' : ''}`}
+          class=${classMap({ 'view-mode-btn': true, active: this.mode === m })}
           title=${VIEW_TITLES[m]}
           aria-label=${VIEW_TITLES[m]}
           aria-pressed=${String(this.mode === m)}
