@@ -6,7 +6,7 @@ import { resetFilters } from './filters.js'
 import { saveTriage } from '../../client/triage.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
-import { subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
+import { getPackagesIndex, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 
 // Subscribe once to the bundle-finding index. Any time another
 // OPFS report finishes parsing, re-render IF the user is currently
@@ -879,7 +879,32 @@ report.addEventListener('click', (e) => {
     const group = gid ? findGroupById(gid) : null
     if (!group) return
     const f = activeTabFor(group)
+    // Repo header — surfaces upstream context above the file path.
+    // Two paths:
+    //   * The finding lives inside a package (`bucket.files.has(f.file)`
+    //     in some package bucket): use that package's repo IF every
+    //     analyzer agreed on a single value (`bucket.repos.size ===
+    //     1`). Conflicting or absent → no header for this finding.
+    //   * The finding is OWN-source (no package bucket contains its
+    //     file): fall through to the per-finding `repo.github`,
+    //     then the per-report `_repoFallback` stamped at ingest, then
+    //     the global `state.repoUrl` typed via the page chip in
+    //     single-file mode.
+    let inPackage = false
+    let repo = null
+    for (const bucket of getPackagesIndex().values()) {
+      if (bucket.files.has(f.file)) {
+        inPackage = true
+        if (bucket.repos && bucket.repos.size === 1) repo = [...bucket.repos][0]
+        break
+      }
+    }
+    if (!inPackage) {
+      repo = f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
+      if (!repo) repo = null
+    }
     const lines = []
+    if (repo) lines.push(`Repo: ${repo}`)
     if (f.file) lines.push(`File: ${f.file}`)
     if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
     if (f.description) lines.push(`Description: ${f.description}`)
