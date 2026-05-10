@@ -79,21 +79,21 @@ type WireRevision = {
   signature: string
 }
 
-const PORT = Number(env.PORT ?? 8765)
-const HOST = env.HOST ?? '127.0.0.1'
+const PORT = Number(env['PORT'] ?? 8765)
+const HOST = env['HOST'] ?? '127.0.0.1'
 // Fail fast on a malformed PORT — `Number("abc")` is NaN, and
 // `WebSocketServer({ port: NaN })` throws deep inside `node:net`
 // with a confusing trace. A clear up-front error lets the operator
 // fix the env var without trawling the stack.
 if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
-  console.error(`Invalid PORT: ${env.PORT}`)
+  console.error(`Invalid PORT: ${env['PORT']}`)
   process.exit(1)
 }
 // `fileURLToPath` decodes percent-escapes and handles non-ASCII path
 // segments correctly (the older `new URL(...).pathname` form left
 // `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
-const DB_PATH = env.DB_PATH ?? fileURLToPath(new URL('./data.db', import.meta.url))
-const DEBUG = env.DEBUG === '1'
+const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data.db', import.meta.url))
+const DEBUG = env['DEBUG'] === '1'
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: node server/index.ts

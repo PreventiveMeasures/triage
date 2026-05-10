@@ -8,6 +8,14 @@
     "noImplicitOverride": true,
     "useUnknownInCatchVariables": true,
     "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedSideEffectImports": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "forceConsistentCasingInFileNames": true,
 
     "target": "es2024",
     "lib": ["es2024"],
@@ -17,6 +25,7 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    "erasableSyntaxOnly": true,
     "esModuleInterop": true,
 
     "skipLibCheck": true,
