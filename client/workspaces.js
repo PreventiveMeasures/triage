@@ -106,6 +106,27 @@ function markObservedFor(workspace) {
   lastSeen = lastSeen.filter((w) => w.id !== workspace.id)
   lastSeen.push(snapshotForCache(workspace))
 }
+// Pin only the `reports` field of an existing observed snapshot,
+// leaving `privateKey` at its previously-observed value. Used by
+// `setReportWorkspace`, which only mutates `reports` — without the
+// field-scoped variant, a sibling tab's concurrent privateKey
+// rotation would be absorbed into lastSeen by the full-snapshot
+// `markObservedFor` and its listener fire silently dropped on the
+// next storage-event handler run (`prev == next` for privateKey).
+// Audit round-12 H5.
+function markObservedReportsFor(workspace) {
+  const reports = Array.isArray(workspace.reports) ? [...workspace.reports] : []
+  const existing = lastSeen.find((w) => w.id === workspace.id)
+  if (existing) {
+    existing.reports = reports
+    return
+  }
+  // No prior snapshot — push a fresh one. setReportWorkspace operates
+  // on workspaces already in the blob (so lastSeen has them via
+  // createWorkspace / upsertWorkspace / propagate), but cover the
+  // no-existing case for defense in depth.
+  lastSeen.push(snapshotForCache(workspace))
+}
 function markObservedDeleted(id) {
   lastSeen = lastSeen.filter((w) => w.id !== id)
 }
@@ -255,11 +276,14 @@ export async function renameWorkspace(id, name) {
     return ws
   })
   if (!renamed) return false
-  // Names aren't part of the diff (no name listener), but mark the
-  // workspace as observed so the privateKey/reports of the rename
-  // target are pinned to their post-rename snapshot — defense
-  // against a sibling change to the same id getting masked.
-  markObservedFor(renamed)
+  // No `markObservedFor` here — `name` isn't part of the diff (no
+  // name listener; `snapshotForCache` excludes the field), so the
+  // rename has nothing to advance lastSeen for. The pre-fix shape
+  // pinned the FULL post-rename snapshot, which absorbed any
+  // sibling-introduced privateKey / reports change that arrived via
+  // readRaw inside the lock — the queued storage event then
+  // computed prev == next and silently dropped the listener fire.
+  // Audit round-12 H4.
   return true
 }
 
@@ -366,13 +390,21 @@ export async function setReportWorkspace(filename, workspaceId) {
     for (const cb of reportMembershipListeners) {
       try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
     }
-    // Mark the post-mutation snapshot of this workspace as observed
-    // so the propagate handler doesn't re-fire for the same change.
-    // M4 round-8: only mark workspaces THIS call modified — sibling
-    // changes to OTHER workspaces in the same blob stay unmarked
-    // and still get a listener fire on the next handler run.
+    // Mark only the `reports` field of this workspace as observed
+    // so the propagate handler doesn't re-fire the membership
+    // listener for the local change. `markObservedFor` (full
+    // snapshot) would also pin the post-mutation `privateKey`,
+    // absorbing a concurrent sibling privateKey rotation that
+    // arrived via readRaw inside the lock — the queued storage
+    // event would then compute prev == next on privateKey and
+    // silently drop its listener fire. Audit round-12 H5.
+    //
+    // M4 round-8 still applies: only mark workspaces THIS call
+    // modified — sibling changes to OTHER workspaces in the same
+    // blob stay unmarked and still get a listener fire on the next
+    // handler run.
     const ws = snapshot.get(id)
-    if (ws) markObservedFor(ws)
+    if (ws) markObservedReportsFor(ws)
   }
 }
 

@@ -37,7 +37,10 @@ const {
   ensureBundleFindingsIndexed,
   findingsForFileHash,
   getPackagesIndex,
+  getRepositoriesIndex,
   reportsForFinding,
+  reportsForFindingByPackage,
+  reportsForFindingByRepo,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
 
@@ -142,6 +145,79 @@ describe('bundle-finding-index — reportsForFinding (cross-report attribution)'
 
   it('returns an empty array for an unknown hash', () => {
     assert.deepEqual(reportsForFinding('never-indexed', { id: 'whatever' }), [])
+  })
+})
+
+// Hash-free attribution paths used by the Packages and Repositories
+// Issues views — markdown-parsed findings (Codex / Claude Security)
+// don't carry `fileHash`, so `reportsForFinding` returns nothing. The
+// per-package / per-repo buckets carry their own `_keyReports` map
+// (mirror of byHash's `reports`); these two helpers walk that map.
+//
+// Regression for the round-12 audit H1+H2: an earlier shape read
+// `bucket.keyReports` instead of the actual underscore-prefixed
+// `_keyReports`, throwing `TypeError: Cannot read properties of
+// undefined (reading 'get')` on the first non-empty lookup.
+describe('bundle-finding-index — reportsForFindingByPackage', () => {
+  it('returns every report name that contributed a finding to a package', async () => {
+    const tag = `pkg-attr-${Date.now()}`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'shared' },
+      ],
+    })
+    const r2 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'shared' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const finding = getPackagesIndex().get(tag).findings.find((f) => f.id === `${tag}-f1`)
+    const reports = reportsForFindingByPackage(tag, finding)
+    assert.deepEqual(reports.sort(), [r1, r2].sort())
+  })
+
+  it('returns an empty array for an unknown package', () => {
+    assert.deepEqual(reportsForFindingByPackage('never-indexed', { id: 'x' }), [])
+  })
+
+  it('returns an empty array when the finding has no matching dedupe key', async () => {
+    const tag = `pkg-empty-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-real`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    // The package exists but the finding shape doesn't match anything we indexed.
+    assert.deepEqual(reportsForFindingByPackage(tag, { id: `${tag}-fictional`, file: 'nope.js' }), [])
+  })
+})
+
+describe('bundle-finding-index — reportsForFindingByRepo', () => {
+  it('returns every report name that contributed an own-source finding to a repo', async () => {
+    const tag = `repo-attr-${Date.now()}`
+    const repo = `acme/${tag}`
+    const r1 = await seedReport({
+      findings: [
+        // own source (no node_modules / dependencies prefix), repo
+        // signal via `repo.github`.
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'shared', repo: { github: repo } },
+      ],
+    })
+    const r2 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'shared', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const finding = getRepositoriesIndex().get(repo).findings.find((f) => f.id === `${tag}-f1`)
+    const reports = reportsForFindingByRepo(repo, finding)
+    assert.deepEqual(reports.sort(), [r1, r2].sort())
+  })
+
+  it('returns an empty array for an unknown repo', () => {
+    assert.deepEqual(reportsForFindingByRepo('never-indexed', { id: 'x' }), [])
   })
 })
 

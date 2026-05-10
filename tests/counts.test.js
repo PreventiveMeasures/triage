@@ -208,4 +208,45 @@ describe('ensureCounts multi-caller (audit round-9 L1)', () => {
       'first caller\'s onUpdate does NOT fire for second caller\'s names',
     )
   })
+
+  it('a fully-cached ensureCounts does not poison subsequent calls', async () => {
+    // Audit follow-up: when every name passed to `ensureCounts` is
+    // already cached, the async IIFE used to drain its `while` loop
+    // synchronously (no `await readFile` ever firing). Body ran to
+    // completion → finally cleared `activeRun`/`activePending`/
+    // `activeCallbacks` → THEN the outer `activeRun = (...)()`
+    // assignment overwrote `activeRun` with the resolved promise.
+    // The next `ensureCounts` call saw truthy `activeRun` but null
+    // `activeCallbacks` and crashed on `activeCallbacks.push(...)`.
+    //
+    // The fix (commit 659f074) inserts `await Promise.resolve()`
+    // at the top of the IIFE so the body yields once before any
+    // work — the outer assignment lands first, then the finally
+    // clears state cleanly. Pin the regression so a future
+    // refactor that drops the yield breaks here, not in
+    // production.
+    globalThis.localStorage.clear()
+    const stamp = `${Date.now()}-${Math.random()}`
+    const storageMod = await import(`../client/storage.js?ec-${stamp}`)
+    const countsMod = await import(`../client/counts.js?ec-${stamp}`)
+
+    // Seed + populate the cache so every subsequent ensureCounts
+    // hits the `c[n] !== undefined` continue and never awaits.
+    await storageMod.saveFile(`a-${stamp}.json`, JSON.stringify({ findings: [{ id: '1' }] }))
+    countsMod.setCount(`a-${stamp}.json`, 1)
+
+    // First call: fully cached. With the pre-fix shape this corrupts
+    // module state silently.
+    await countsMod.ensureCounts([`a-${stamp}.json`])
+
+    // Second call: must NOT throw. This is the call that crashed
+    // pre-fix, both with and without onUpdate.
+    const calls = []
+    await countsMod.ensureCounts([`a-${stamp}.json`], (n, c) => calls.push({ n, c }))
+
+    // Sanity — we never went through readFile, so onUpdate
+    // legitimately doesn't fire (only fires for fresh fetches).
+    // The point is that NEITHER call threw.
+    assert.equal(calls.length, 0, 'all-cached call doesn\'t fire onUpdate')
+  })
 })
