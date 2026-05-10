@@ -25,7 +25,7 @@ if (globalThis.localStorage === undefined) {
   })()
 }
 
-const { computeRevisionId, buildAad } = await import('../client/sync-crypto.js')
+const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync-crypto.js')
 
 async function sha256b64url(str) {
   const digest = await crypto.subtle.digest('SHA-256', encodeUtf8(str))
@@ -109,5 +109,57 @@ describe('triage-sync v1 canonical formulas (golden)', () => {
   it('AAD: `<workspaceTag>|<base>` with empty string for null base', () => {
     assert.deepEqual(buildAad('TAG', null), encodeUtf8('TAG|'))
     assert.deepEqual(buildAad('TAG', 'rev-id'), encodeUtf8('TAG|rev-id'))
+  })
+})
+
+// Round-12 H9 regression: `verifySavePayload` used to call
+// `Uint8Array.fromBase64(signatureB64)` outside its try / catch.
+// A peer or relay-supplied non-base64 signature string threw
+// SyntaxError instead of returning `false`, propagating up out of
+// `applyChainToBase` mid-loop and leaving session.baseState /
+// baseRevision partially advanced — the captured user overlay
+// was lost for that round and the structured recovery path never
+// ran. Fix wraps the entire verify (including base64 decode +
+// canonical-payload encode) in one try / catch.
+describe('verifySavePayload — must not throw on malformed inputs (round-12 H9)', () => {
+  // 32-byte zero pubkey — valid Ed25519 length but `verify` will
+  // reject. The point of this test is that no path THROWS; either
+  // returns false (any rejection) or true (would need a real key).
+  const zeroPubkey = new Uint8Array(32)
+  const validPayload = {
+    publicKeyB64: 'pk',
+    base: null,
+    keyframe: false,
+    nonceB64: 'n',
+    ciphertextB64: 'c',
+  }
+
+  it('returns false on a malformed (non-base64) signature string', async () => {
+    const result = await verifySavePayload(zeroPubkey, validPayload, '!!!not-base64!!!')
+    assert.equal(result, false, 'non-base64 signature surfaces as a clean reject')
+  })
+
+  it('returns false on a non-string signature', async () => {
+    const result = await verifySavePayload(zeroPubkey, validPayload, /* @ts-ignore */ 42)
+    assert.equal(result, false, 'non-string signature surfaces as a clean reject')
+  })
+
+  it('returns false on a signature whose decoded length is wrong', async () => {
+    // 16 bytes (base64url) — valid base64 but wrong length for Ed25519.
+    const tooShort = Buffer.from(new Uint8Array(16)).toString('base64url')
+    const result = await verifySavePayload(zeroPubkey, validPayload, tooShort)
+    assert.equal(result, false, 'wrong-length signature surfaces as a clean reject')
+  })
+
+  it('returns false when canonical payload encoding throws (lone surrogate)', async () => {
+    // `encodeUtf8` inside `canonicalSavePayload` throws on a lone
+    // surrogate. Pre-fix that throw escaped verifySavePayload; now
+    // the outer try / catch catches it.
+    const sig = Buffer.from(new Uint8Array(64)).toString('base64url')
+    const result = await verifySavePayload(zeroPubkey, {
+      ...validPayload,
+      ciphertextB64: '\uD83D',  // unpaired high-surrogate
+    }, sig)
+    assert.equal(result, false, 'canonical encode throw surfaces as a clean reject')
   })
 })

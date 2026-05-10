@@ -231,21 +231,27 @@ export async function signSubscribePayload(privateKey, publicKeyB64, fromBase, c
 }
 
 export async function verifySavePayload(publicKey, payload, signatureB64) {
-  let key
+  // Wrap the entire verify in one try / catch — `Uint8Array.fromBase64`
+  // throws SyntaxError on a malformed `signatureB64` (e.g. a peer or
+  // relay-supplied non-base64 string), and `canonicalSavePayload`
+  // throws via `encodeUtf8` on a lone surrogate or non-string field.
+  // The previous shape only caught `importKey` and `verify` errors,
+  // letting fromBase64 throw unhandled out of `applyChainToBase` —
+  // a bad sig from a peer would unwind the chain mid-loop, leaving
+  // session.baseState / baseRevision partially advanced and the
+  // captured user overlay lost. Treating any throw as `ok=false`
+  // routes through the existing structured `applyChainToBase`
+  // recovery (skip + bump savesSinceKeyframe). Audit round-12 H9.
   try {
-    key = await crypto.subtle.importKey(
+    const key = await crypto.subtle.importKey(
       'raw',
       publicKey,
       { name: 'Ed25519' },
       false,
       ['verify'],
     )
-  } catch {
-    return false
-  }
-  const sig = Uint8Array.fromBase64(signatureB64, { alphabet: 'base64url' })
-  const message = canonicalSavePayload(payload)
-  try {
+    const sig = Uint8Array.fromBase64(signatureB64, { alphabet: 'base64url' })
+    const message = canonicalSavePayload(payload)
     return await crypto.subtle.verify({ name: 'Ed25519' }, key, sig, message)
   } catch {
     return false

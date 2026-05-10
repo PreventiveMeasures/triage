@@ -375,7 +375,14 @@ function buildWorkspaceIds(workspaceId) {
 // carry every id we've ever seen in the chain, not just the ones
 // in our current session.ids scope.
 function effectiveLocalState(baseState, ids) {
-  const out = { ...baseState }
+  // `Object.create(null)` so a `__proto__` own key on the incoming
+  // baseState (via prior `applyChangeset` of a peer-controlled
+  // changeset) doesn't trigger the Object.prototype setter when
+  // spread into a normal `{}` — that path would re-pollute out's
+  // prototype chain and propagate attacker entries into localState
+  // → computeChangeset's `target[id]` lookups → emitted changesets.
+  // Audit round-12 H6.
+  const out = Object.assign(Object.create(null), baseState)
   const idsSet = ids instanceof Set ? ids : new Set(ids)
   const ignoredByid = bucketIgnoredByid(idsSet)
   for (const id of idsSet) {
@@ -553,8 +560,20 @@ function statesEqual(a, b) {
 
 // Walk a state through a changeset, producing a new state. `null`
 // in the changeset means "delete this id from the state".
-function applyChangeset(baseState, changeset) {
-  const out = { ...baseState }
+// Exported for unit-test access (round-12 H6 prototype-pollution
+// regression). Pure function — no module state, no side effects.
+export function applyChangeset(baseState, changeset) {
+  // `Object.create(null)` (not `{}`) so a peer-controlled changeset
+  // can't pollute the prototype chain. JSON.parse turns `{"__proto__":
+  // …}` into an OWN property; `out[id] = entry` for id='__proto__' on
+  // a normal `{}` would trigger Object.prototype's `__proto__` setter
+  // and mutate out's prototype to the attacker-supplied entry. Every
+  // subsequent `baseState[id]` lookup (hydrateStateFromBaseState,
+  // statesEqual, etc.) would then walk the polluted chain and return
+  // attacker-controlled triage values. Null-prototype out has no
+  // setter to trigger; the key just becomes an inert own property.
+  // Audit round-12 H6.
+  const out = Object.assign(Object.create(null), baseState)
   for (const [id, entry] of Object.entries(changeset)) {
     if (entry === null) delete out[id]
     else out[id] = entry
@@ -565,7 +584,12 @@ function applyChangeset(baseState, changeset) {
 // Compute the changeset that turns `base` into `target`. Mirrors
 // `applyChangeset` — `null` entries clear, present entries overwrite.
 function computeChangeset(base, target) {
-  const changeset = {}
+  // `Object.create(null)` mirrors `applyChangeset` / `effectiveLocalState`.
+  // Without this, `changeset['__proto__'] = entry` (when an id of
+  // `__proto__` shows up in base.keys / target.keys) would trigger
+  // the Object.prototype setter on changeset and pollute the
+  // outbound payload's prototype chain. Audit round-12 H6.
+  const changeset = Object.create(null)
   const ids = new Set([...Object.keys(base), ...Object.keys(target)])
   for (const id of ids) {
     const b = base[id] ?? {}
@@ -647,7 +671,15 @@ function loadPersistedSession(workspaceId, currentServerUrl) {
   if (!entry || entry.serverUrl !== currentServerUrl) return null
   return {
     baseRevision: entry.baseRevision ?? null,
-    baseState: (entry.baseState && typeof entry.baseState === 'object') ? entry.baseState : {},
+    // Round-12 H6 defense-in-depth: normalise the persisted blob's
+    // baseState into a null-prototype object so a `__proto__` own
+    // key (from a prior version's polluted save) doesn't trigger
+    // the Object.prototype setter when downstream code spreads or
+    // assigns from it. JSON.parse always returns Object.prototype-
+    // having objects; convert here at the trust boundary.
+    baseState: (entry.baseState && typeof entry.baseState === 'object')
+      ? Object.assign(Object.create(null), entry.baseState)
+      : Object.create(null),
     savesSinceKeyframe: typeof entry.savesSinceKeyframe === 'number' ? entry.savesSinceKeyframe : 0,
   }
 }
@@ -964,7 +996,7 @@ function trySendSave(session) {
   // server uses this to answer `from=null` subscribers without
   // replaying the whole chain). Falsy => regular delta save.
   const isKeyframe = (session.savesSinceKeyframe ?? 0) >= keyframeInterval
-  const sourceBase = isKeyframe ? {} : session.baseState
+  const sourceBase = isKeyframe ? Object.create(null) : session.baseState
   const changeset = computeChangeset(sourceBase, session.localState)
   // Skip the wire round-trip when there's nothing to send — UNLESS
   // we're in a keyframe slot. The skip-bumped keyframe (audit M5
@@ -1187,7 +1219,7 @@ async function applyChainToBase(session, revisions) {
     // Keyframes carry a changeset computed against an EMPTY base,
     // so applying them is a wholesale replace. Reset the
     // since-last-keyframe counter; bump it on regular revs.
-    const applyTo = isKeyframe ? {} : session.baseState
+    const applyTo = isKeyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, changeset ?? {})
     session.baseRevision = rev.id
     if (isKeyframe) session.savesSinceKeyframe = 0
@@ -1289,7 +1321,7 @@ async function handleAck(session, msg) {
     // Keyframes carry a changeset computed against an EMPTY base
     // (= full state); applying them is a wholesale replace.
     // Regular saves stack on the current baseState.
-    const applyTo = session.pending.keyframe ? {} : session.baseState
+    const applyTo = session.pending.keyframe ? Object.create(null) : session.baseState
     session.baseState = applyChangeset(applyTo, session.pending.changeset)
     session.baseRevision = msg.id
     // Same cap as the chain-apply path — see audit L3 round-6.
@@ -1362,7 +1394,7 @@ async function handleChain(session, revisions) {
     // catch-up rebuild the chain.
     console.warn('Triage sync: catch-up also broke continuity; full state push')
     session.baseRevision = null
-    session.baseState = {}
+    session.baseState = Object.create(null)
     session.pending = null
     session.pendingSave = false
     session.resyncAttempted = false
@@ -1676,7 +1708,7 @@ export const triageSync = {
       session.resyncAttempted = false
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
-      session.baseState = restored?.baseState ?? {}
+      session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
     }
@@ -1793,7 +1825,7 @@ export const triageSync = {
     // serverUrl returns null (revision IDs don't carry across
     // servers).
     const restored = loadPersistedSession(workspaceId, serverUrl)
-    const restoredBaseState = restored?.baseState ?? {}
+    const restoredBaseState = restored?.baseState ?? Object.create(null)
     // Gap-fill state.* from the restored baseState for in-scope ids
     // BEFORE computing localState. Without this, an id whose chain
     // value was set by a peer (persisted in baseState) but whose

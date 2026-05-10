@@ -77,16 +77,26 @@ async function gunzipBytes(bytes) {
 const cache = new Map()
 const inFlight = new Map()
 // Per-name write-generation token. Bumped synchronously by every
-// `saveFile` and `deleteFile` call BEFORE its async I/O. `readFile`
-// captures the token at the start of its read; if the token changed
-// by the time the read resolves (a saveFile / deleteFile landed in
-// the meantime), the read result is stale relative to the current
-// view and we skip the `cache.set(name, content)` step. Without
-// this guard, an in-flight read that started before a saveFile
-// could resolve AFTER saveFile's `cache.set(name, NEW)` ran and
-// overwrite the cache with the OLD bytes — subsequent reads serve
-// stale content with no invalidation path until the next saveFile.
-// Audit round-9 H1.
+// `saveFile` and `deleteFile` call BOTH before AND after its async
+// I/O. `readFile` captures the token at the start of its read; if
+// the token changed by the time the read resolves (a saveFile /
+// deleteFile landed in the meantime), the read result is stale
+// relative to the current view and we skip the
+// `cache.set(name, content)` step. Without this guard, an in-flight
+// read that started before a saveFile could resolve AFTER
+// saveFile's `cache.set(name, NEW)` ran and overwrite the cache
+// with the OLD bytes — subsequent reads serve stale content with
+// no invalidation path until the next saveFile.
+//
+// The two-bump design closes BOTH directions of the race:
+//   1. read started BEFORE the write — captured the pre-bump gen,
+//      sees gen advanced after the await, skips cache.set. (Pre-
+//      bump audit round-9 H1.)
+//   2. read started AFTER the start-bump but read the pre-commit
+//      File snapshot (OPFS createWritable doesn't commit until
+//      close) — captured the start-bumped gen, sees gen advanced
+//      again after writable.close + cache.set, skips cache.set.
+//      (Audit round-12 H8.)
 const writeGen = new Map()
 function bumpWriteGen(name) {
   writeGen.set(name, (writeGen.get(name) ?? 0) + 1)
@@ -148,7 +158,7 @@ export async function saveFile(name, content) {
     // click) could land in the window where the entry was gone,
     // which made the just-clicked file vanish from the sidebar
     // until reload.
-    const bytes = await gzipBytes(new TextEncoder().encode(content))
+    const bytes = await gzipBytes(encodeUtf8(content))
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
     try {
@@ -164,9 +174,18 @@ export async function saveFile(name, content) {
       // the failure) instead of silently serving the OLD content.
       // Audit M2 round-8.
       cache.delete(name)
+      // Bump again so a concurrent in-flight readFile that observed
+      // the pre-bump gen treats its result as stale. Audit round-12 H8.
+      bumpWriteGen(name)
       throw err
     }
     cache.set(name, content)
+    // Post-commit bump so any readFile in flight that captured the
+    // start-bumped gen but read the pre-commit File snapshot (OPFS
+    // createWritable doesn't commit until close) sees the gen
+    // advance and skips cache.set with its now-stale bytes. Audit
+    // round-12 H8.
+    bumpWriteGen(name)
     notifyFileMutated(name, 'save')
     return
   }
@@ -174,10 +193,12 @@ export async function saveFile(name, content) {
   try {
     localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
     cache.set(name, content)
+    bumpWriteGen(name)
     notifyFileMutated(name, 'save')
   } catch (err) {
     // Most likely QuotaExceededError. Re-throw so the drop handler can
     // surface a useful message to the user instead of silently dropping.
+    bumpWriteGen(name)
     throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
   }
 }
@@ -239,10 +260,16 @@ export async function deleteFile(name) {
   const dir = await getOpfsDir()
   if (dir) {
     try { await dir.removeEntry(name) } catch {}
+    // Post-commit bump — a readFile that started AFTER our pre-bump
+    // but captured the File snapshot before `removeEntry` resolved
+    // would otherwise observe a matching gen and re-cache the
+    // doomed bytes. Audit round-12 H8.
+    bumpWriteGen(name)
     notifyFileMutated(name, 'delete')
     return
   }
   localStorage.removeItem(LS_REPORT_PREFIX + name)
+  bumpWriteGen(name)
   notifyFileMutated(name, 'delete')
 }
 
@@ -292,6 +319,20 @@ async function writeBundleMeta(dir, meta) {
   await w.close()
 }
 
+// `_meta.json` is read-modify-written by `saveBundle` and
+// `deleteBundle`. The pair is non-atomic — two concurrent calls
+// can each readBundleMeta the same prior array, mutate locally,
+// and the second writeBundleMeta clobbers the first. Worst case:
+// one bundle's bytes land in OPFS under their integrity key but
+// the metadata entry is lost (listBundles can't surface it), or
+// a delete-based-on-stale-meta resurrects unrelated entries.
+// Serialize the entire RMW behind a Web Lock so the second caller
+// sees the first caller's persisted result. Audit round-12 H7.
+const BUNDLE_META_LOCK = `${OPFS_BUNDLES_DIR}/${BUNDLE_META_FILE}`
+function lockBundleMeta(work) {
+  return navigator.locks.request(BUNDLE_META_LOCK, work)
+}
+
 export async function listBundles() {
   const dir = await getOpfsBundlesDir()
   if (!dir) return []
@@ -329,11 +370,16 @@ export async function saveBundle(name, content) {
   const w = await fh.createWritable()
   await w.write(storeBytes)
   await w.close()
-  const meta = await readBundleMeta(dir)
-  const idx = meta.findIndex((e) => e.integrity === integrity)
-  if (idx >= 0) meta[idx] = { integrity, name }
-  else meta.push({ integrity, name })
-  await writeBundleMeta(dir, meta)
+  // RMW the metadata under the same-origin Web Lock so a concurrent
+  // saveBundle / deleteBundle can't clobber the entry we just
+  // persisted. Audit round-12 H7.
+  await lockBundleMeta(async () => {
+    const meta = await readBundleMeta(dir)
+    const idx = meta.findIndex((e) => e.integrity === integrity)
+    if (idx >= 0) meta[idx] = { integrity, name }
+    else meta.push({ integrity, name })
+    await writeBundleMeta(dir, meta)
+  })
   return { integrity, name }
 }
 
@@ -341,9 +387,15 @@ export async function deleteBundle(integrity) {
   const dir = await getOpfsBundlesDir()
   if (!dir) return
   try { await dir.removeEntry(integrityToOpfsKey(integrity)) } catch {}
-  const meta = await readBundleMeta(dir)
-  const filtered = meta.filter((e) => e.integrity !== integrity)
-  await writeBundleMeta(dir, filtered)
+  // Same RMW lock as saveBundle — without it, a deleteBundle whose
+  // readBundleMeta predates a concurrent saveBundle would
+  // writeBundleMeta a meta array missing the freshly-saved entry,
+  // silently undoing the save's metadata insertion. Audit round-12 H7.
+  await lockBundleMeta(async () => {
+    const meta = await readBundleMeta(dir)
+    const filtered = meta.filter((e) => e.integrity !== integrity)
+    await writeBundleMeta(dir, filtered)
+  })
 }
 
 export async function readBundle(integrity) {

@@ -37,71 +37,95 @@ async function decompressBrotli(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-export async function saveTriage() {
-  try {
-    const entries = {}
-    for (const [k, color] of state.markers) {
-      if (SESSION_ID_RE.test(k)) continue
-      entries[k] = { ...entries[k], color }
+// Web Lock that serializes the saveTriage RMW. Two concurrent
+// saveTriage calls used to race on TRIAGE_PENDING_KEY +
+// TRIAGE_KEY: the first to compress would removeItem(pending),
+// wiping the second's still-needed crash-recovery snapshot;
+// CompressionStream isn't FIFO across separate streams, so an
+// out-of-order completion could even have saveTriage1 overwrite
+// saveTriage2's newer TRIAGE_KEY write directly. Audit round-12
+// H10.
+const TRIAGE_LOCK = 'deepview.triage.save'
+
+export function saveTriage() {
+  // Serialize the entire RMW under a Web Lock — entries snapshot,
+  // compress, pending + main write all run inside the lock so a
+  // second call queues until the first commits. Same pattern as
+  // `mutateAllSessions` / `mutateWorkspaces`.
+  return navigator.locks.request(TRIAGE_LOCK, async () => {
+    try {
+      const entries = {}
+      for (const [k, color] of state.markers) {
+        if (SESSION_ID_RE.test(k)) continue
+        entries[k] = { ...entries[k], color }
+      }
+      for (const [k, triage] of state.triageState) {
+        if (SESSION_ID_RE.test(k)) continue
+        entries[k] = { ...entries[k], triage }
+      }
+      // Per-report ignore is persisted as `ignoredReports: ['nameA',
+      // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
+      // (`${reportName}\0${id}`) back by id, drop session-scoped
+      // numeric ids, and stamp the report list. Empty arrays are
+      // omitted so a clean entry doesn't leave a trace.
+      const ignoredByid = new Map()
+      for (const key of state.ignoredIds) {
+        const sep = key.indexOf('\0')
+        if (sep < 0) continue
+        const reportName = key.slice(0, sep)
+        const id = key.slice(sep + 1)
+        if (SESSION_ID_RE.test(id)) continue
+        if (!ignoredByid.has(id)) ignoredByid.set(id, [])
+        ignoredByid.get(id).push(reportName)
+      }
+      for (const [id, ignoredIn] of ignoredByid) {
+        if (ignoredIn.length === 0) continue
+        entries[id] = { ...entries[id], ignoredReports: ignoredIn }
+      }
+      for (const [k, comment] of state.comments) {
+        if (SESSION_ID_RE.test(k)) continue
+        if (comment) entries[k] = { ...entries[k], comment }
+      }
+      for (const [k, fix] of state.fixes) {
+        if (SESSION_ID_RE.test(k)) continue
+        if (fix) entries[k] = { ...entries[k], fix }
+      }
+      if (Object.keys(entries).length === 0) {
+        localStorage.removeItem(TRIAGE_KEY)
+        localStorage.removeItem(TRIAGE_PENDING_KEY)
+        // Fall through to triageSync.notify() below — without it,
+        // clearing the last marker / comment / fix would leave the
+        // sync chain broadcasting the prior non-empty state to peers
+        // until the next unrelated mutation called saveTriage with
+        // non-empty entries. Audit round-12 H10b.
+      } else {
+        const json = JSON.stringify(entries)
+        // Synchronous belt-and-suspenders write: a tab crash during
+        // the compressBrotli await would otherwise lose this edit
+        // (in-memory state.* gone with the process, compressed key
+        // still stale, triageSync.notify hasn't fired yet). The
+        // pending key holds the uncompressed JSON; readTriageBlob
+        // prefers it on next load. Wrapped in its own try so a
+        // localStorage quota failure here doesn't abort the compress
+        // + main write below. Audit M3 round-5.
+        try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
+        const bytes = encodeUtf8(json)
+        const compressed = await compressBrotli(bytes)
+        localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
+        try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+      }
+    } catch (err) {
+      console.warn('Failed to save triage:', err)
     }
-    for (const [k, triage] of state.triageState) {
-      if (SESSION_ID_RE.test(k)) continue
-      entries[k] = { ...entries[k], triage }
-    }
-    // Per-report ignore is persisted as `ignoredReports: ['nameA',
-    // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
-    // (`${reportName}\0${id}`) back by id, drop session-scoped
-    // numeric ids, and stamp the report list. Empty arrays are
-    // omitted so a clean entry doesn't leave a trace.
-    const ignoredByid = new Map()
-    for (const key of state.ignoredIds) {
-      const sep = key.indexOf('\0')
-      if (sep < 0) continue
-      const reportName = key.slice(0, sep)
-      const id = key.slice(sep + 1)
-      if (SESSION_ID_RE.test(id)) continue
-      if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-      ignoredByid.get(id).push(reportName)
-    }
-    for (const [id, ignoredIn] of ignoredByid) {
-      if (ignoredIn.length === 0) continue
-      entries[id] = { ...entries[id], ignoredReports: ignoredIn }
-    }
-    for (const [k, comment] of state.comments) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (comment) entries[k] = { ...entries[k], comment }
-    }
-    for (const [k, fix] of state.fixes) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (fix) entries[k] = { ...entries[k], fix }
-    }
-    if (Object.keys(entries).length === 0) {
-      localStorage.removeItem(TRIAGE_KEY)
-      localStorage.removeItem(TRIAGE_PENDING_KEY)
-      return
-    }
-    const json = JSON.stringify(entries)
-    // Synchronous belt-and-suspenders write: a tab crash during the
-    // compressBrotli await would otherwise lose this edit (in-memory
-    // state.* gone with the process, compressed key still stale,
-    // triageSync.notify hasn't fired yet). The pending key holds
-    // the uncompressed JSON; readTriageBlob prefers it on next load.
-    // Wrapped in its own try so a localStorage quota failure here
-    // doesn't abort the compress + main write below. Audit M3
-    // round-5.
-    try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
-    const bytes = encodeUtf8(json)
-    const compressed = await compressBrotli(bytes)
-    localStorage.setItem(TRIAGE_KEY, compressed.toBase64())
-    try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
-  } catch (err) {
-    console.warn('Failed to save triage:', err)
-  }
-  // Notify the WS sync client (no-op when disabled / not yet
-  // configured). Outside the try/catch above so a sync send error
-  // doesn't suppress the localStorage warning, and a localStorage
-  // failure doesn't suppress the network notification.
-  triageSync.notify()
+    // Notify the WS sync client (no-op when disabled / not yet
+    // configured). Outside the try/catch above so a sync send error
+    // doesn't suppress the localStorage warning, and a localStorage
+    // failure doesn't suppress the network notification. Reached
+    // from BOTH the empty-entries and non-empty branches now —
+    // the previous early `return` in the empty-entries branch
+    // skipped this and stranded the chain on stale state.
+    triageSync.notify()
+  })
 }
 
 // Decode the persisted blob into `{ id: entry }` form. Returns
