@@ -346,7 +346,7 @@
    the shadow root anyway. */
 @media print {
   .card {
-    break-inside: avoid; page-break-inside: avoid;
+    break-inside: avoid;
     padding: .45rem .25rem;
   }
   /* Pure on-screen affordance — the bundle source viewer is an

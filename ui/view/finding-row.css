@@ -338,7 +338,7 @@
   :host(.selected) .row,
   :host(.has-conflict) .row { outline: none !important; }
 
-  .row { break-inside: avoid; page-break-inside: avoid; }
+  .row { break-inside: avoid; }
 
   .marks { display: none !important; }
   .mark-x, .mark-restore { display: none !important; }

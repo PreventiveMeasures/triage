@@ -78,14 +78,14 @@
      the row reflows without a phantom 200×8 gap). */
   .page-head .meta-row .repo-chip.empty,
   .page-head .meta-row .status-bar { display: none !important; }
-  .page-head { break-after: avoid; page-break-after: avoid; }
+  .page-head { break-after: avoid; }
 
   /* Per-finding card print rules (break-inside: avoid, multi-case
      banner, stacked tab bodies, .marks suppression, .badge palette
      overrides) live inside `<finding-card>`'s shadow DOM. See the
      `@media print` block in view/finding-card.css. */
 
-  .file-header { break-after: avoid; page-break-after: avoid; font-size: .85rem; }
+  .file-header { break-after: avoid; font-size: .85rem; }
 
   /* List view (flat, ungrouped) wraps each finding in a `.flat-group`
      whose first child is `.flat-group-loc` — the filename + line +
@@ -94,5 +94,5 @@
      the filename and the finding body. The card itself can still
      break across pages (long descriptions stay readable) — we only
      guard the header-to-body seam. */
-  .flat-group-loc { break-after: avoid; page-break-after: avoid; }
+  .flat-group-loc { break-after: avoid; }
 }
