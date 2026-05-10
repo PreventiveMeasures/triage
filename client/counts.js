@@ -125,6 +125,18 @@ export function ensureCounts(names, onUpdate) {
   activePending = new Set(names)
   activeCallbacks = onUpdate ? [{ names: new Set(names), onUpdate }] : []
   activeRun = (async () => {
+    // Yield once so the outer `activeRun = (...)()` assignment
+    // lands BEFORE the body runs to its `finally`. Without this,
+    // a fully-cached call drains the `while` loop synchronously
+    // (no `await readFile` ever fires), the finally clears
+    // `activeRun = null` + `activeCallbacks = null`, and then
+    // the outer assignment overwrites `activeRun` with the
+    // already-resolved promise — leaving the next caller with
+    // a truthy `activeRun` but a null `activeCallbacks`, so the
+    // re-entrant push throws. `Promise.resolve()` is the
+    // explicit form of the "yield once" idiom (oxlint's
+    // `no-unnecessary-await` rejects the `await null` shorthand).
+    await Promise.resolve()
     try {
       const c = load()
       // Walk-and-drain: pull from `activePending` until empty, since
