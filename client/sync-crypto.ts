@@ -36,12 +36,37 @@ const ED25519_PKCS8_HEADER = new Uint8Array([
   0x04, 0x20,
 ])
 
-let webCryptoChaChaCheck = null
-function detectWebCryptoChaCha() {
+// Canonical save payload — fields the signature covers and the
+// content-addressed revision id hashes. `base` is the parent
+// revision id (string) once the chain has rolled past genesis,
+// nullable on the very first save. `keyframe === true` exactly is
+// what the canonical bytes serialize as `'1'`; anything else
+// becomes `''` (matches server/sign.ts's `canonicalSave`).
+export type SavePayload = {
+  publicKeyB64: string
+  base: string | number | null | undefined
+  keyframe: boolean
+  nonceB64: string
+  ciphertextB64: string
+}
+
+export type SigningKeypair = {
+  privateKey: CryptoKey
+  publicKey: Uint8Array<ArrayBuffer>
+  publicKeyB64: string
+}
+
+export type EncryptedJson = {
+  nonce: string
+  ciphertext: string
+}
+
+let webCryptoChaChaCheck: Promise<boolean> | null = null
+function detectWebCryptoChaCha(): Promise<boolean> {
   // Cache the probe — one importKey is cheap but every send /
   // receive shouldn't pay for it. Returns a Promise either way.
   if (webCryptoChaChaCheck) return webCryptoChaChaCheck
-  webCryptoChaChaCheck = (async () => {
+  webCryptoChaChaCheck = (async (): Promise<boolean> => {
     try {
       await crypto.subtle.importKey(
         'raw',
@@ -64,7 +89,7 @@ function detectWebCryptoChaCha() {
 // info string — same private key + same info = same key, so two
 // clients on the same workspace agree without a key-exchange
 // step.
-export async function deriveSessionKey(privateKeyBase64) {
+export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8Array<ArrayBuffer>> {
   const secret = Uint8Array.fromBase64(privateKeyBase64)
   if (secret.length !== 32) {
     throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
@@ -102,7 +127,7 @@ export async function deriveSessionKey(privateKeyBase64) {
 // material is also returned (raw + base64url) — the wire layer
 // uses it as the workspace's server-facing identifier (the
 // "workspaceTag" field is the public key).
-export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
+export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId: string): Promise<SigningKeypair> {
   const secret = Uint8Array.fromBase64(privateKeyBase64)
   if (secret.length !== 32) {
     throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
@@ -177,7 +202,9 @@ export async function deriveSigningKeypair(privateKeyBase64, workspaceId) {
 // server from relabeling a normal save as a keyframe (or vice
 // versa) — the wire flag the server uses for routing/storage
 // MUST match the signed flag, or the signature fails.
-function canonicalSavePayload({ publicKeyB64, base, keyframe, nonceB64, ciphertextB64 }) {
+function canonicalSavePayload(
+  { publicKeyB64, base, keyframe, nonceB64, ciphertextB64 }: SavePayload,
+): Uint8Array<ArrayBuffer> {
   return encodeUtf8([
     SIGN_DOMAIN,
     publicKeyB64,
@@ -188,7 +215,7 @@ function canonicalSavePayload({ publicKeyB64, base, keyframe, nonceB64, cipherte
   ].join('\n'))
 }
 
-export async function signSavePayload(privateKey, payload) {
+export async function signSavePayload(privateKey: CryptoKey, payload: SavePayload): Promise<string> {
   const message = canonicalSavePayload(payload)
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
@@ -201,7 +228,7 @@ export async function signSavePayload(privateKey, payload) {
 // a revision under a different id without mismatching the hash
 // (or breaking the upstream signature). Used as the wire `id` for
 // `workspace-save-ack` and chain entries.
-export async function computeRevisionId(payload) {
+export async function computeRevisionId(payload: SavePayload): Promise<string> {
   const message = canonicalSavePayload(payload)
   const digest = await crypto.subtle.digest('SHA-256', message)
   return new Uint8Array(digest).toBase64({ alphabet: 'base64url', omitPadding: true })
@@ -219,18 +246,31 @@ export async function computeRevisionId(payload) {
 // won't verify against the new canonical bytes. Different domain
 // prefix from save so a save signature can't be replayed as a
 // subscribe and vice versa.
-function canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce) {
+function canonicalSubscribePayload(
+  publicKeyB64: string,
+  fromBase: string | number | null | undefined,
+  connectionNonce: string,
+): Uint8Array<ArrayBuffer> {
   const fromStr = fromBase == null ? '' : String(fromBase)
   return encodeUtf8([SUBSCRIBE_DOMAIN, publicKeyB64, fromStr, connectionNonce].join('\n'))
 }
 
-export async function signSubscribePayload(privateKey, publicKeyB64, fromBase, connectionNonce) {
+export async function signSubscribePayload(
+  privateKey: CryptoKey,
+  publicKeyB64: string,
+  fromBase: string | number | null | undefined,
+  connectionNonce: string,
+): Promise<string> {
   const message = canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce)
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
 }
 
-export async function verifySavePayload(publicKey, payload, signatureB64) {
+export async function verifySavePayload(
+  publicKey: Uint8Array<ArrayBuffer>,
+  payload: SavePayload,
+  signatureB64: string,
+): Promise<boolean> {
   // Wrap the entire verify in one try / catch — `Uint8Array.fromBase64`
   // throws SyntaxError on a malformed `signatureB64` (e.g. a peer or
   // relay-supplied non-base64 string), and `canonicalSavePayload`
@@ -258,7 +298,7 @@ export async function verifySavePayload(publicKey, payload, signatureB64) {
   }
 }
 
-function randomNonce() {
+function randomNonce(): Uint8Array<ArrayBuffer> {
   const nonce = new Uint8Array(NONCE_LEN)
   crypto.getRandomValues(nonce)
   return nonce
@@ -272,12 +312,19 @@ function randomNonce() {
 // straight from the message header without needing to look the
 // local workspace up. Format: ASCII bytes of `<tag>|<base>` (base
 // = '' when the session has no base yet, e.g. the very first save).
-export function buildAad(workspaceTag, base) {
+export function buildAad(
+  workspaceTag: string,
+  base: string | number | null | undefined,
+): Uint8Array<ArrayBuffer> {
   const baseStr = base == null ? '' : String(base)
   return encodeUtf8(`${workspaceTag}|${baseStr}`)
 }
 
-async function encryptBytes(keyBytes, plaintext, aad) {
+async function encryptBytes(
+  keyBytes: Uint8Array<ArrayBuffer>,
+  plaintext: Uint8Array<ArrayBuffer>,
+  aad: Uint8Array<ArrayBuffer>,
+): Promise<{ nonce: Uint8Array<ArrayBuffer>, ciphertext: Uint8Array<ArrayBuffer> }> {
   const nonce = randomNonce()
   if (await detectWebCryptoChaCha()) {
     const cryptoKey = await crypto.subtle.importKey(
@@ -295,10 +342,15 @@ async function encryptBytes(keyBytes, plaintext, aad) {
     return { nonce, ciphertext: ct }
   }
   const cipher = chacha20poly1305(keyBytes, nonce, aad)
-  return { nonce, ciphertext: cipher.encrypt(plaintext) }
+  return { nonce, ciphertext: cipher.encrypt(plaintext) as Uint8Array<ArrayBuffer> }
 }
 
-async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
+async function decryptBytes(
+  keyBytes: Uint8Array<ArrayBuffer>,
+  nonce: Uint8Array<ArrayBuffer>,
+  ciphertext: Uint8Array<ArrayBuffer>,
+  aad: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
   if (await detectWebCryptoChaCha()) {
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
@@ -314,7 +366,7 @@ async function decryptBytes(keyBytes, nonce, ciphertext, aad) {
     ))
   }
   const cipher = chacha20poly1305(keyBytes, nonce, aad)
-  return cipher.decrypt(ciphertext)
+  return cipher.decrypt(ciphertext) as Uint8Array<ArrayBuffer>
 }
 
 // Compress + pad before encrypting so the wire ciphertext size
@@ -336,12 +388,12 @@ const PAD_FLOOR = 64
 // would crash `new Uint8Array(target)`. The frameAndPad guard
 // below rejects compressed payloads > 0x3FFFFFFC, keeping the
 // (4 + compressed.length) bucketing within the safe range.
-function nextPow2AtLeast(n, floor) {
+function nextPow2AtLeast(n: number, floor: number): number {
   if (n <= floor) return floor
   return 2 ** (32 - Math.clz32(n - 1))
 }
 
-async function gzip(bytes) {
+async function gzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const cs = new CompressionStream('gzip')
   const writer = cs.writable.getWriter()
   writer.write(bytes)
@@ -349,7 +401,7 @@ async function gzip(bytes) {
   return new Uint8Array(await new Response(cs.readable).arrayBuffer())
 }
 
-async function gunzip(bytes) {
+async function gunzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const ds = new DecompressionStream('gzip')
   const writer = ds.writable.getWriter()
   writer.write(bytes)
@@ -357,7 +409,7 @@ async function gunzip(bytes) {
   return new Uint8Array(await new Response(ds.readable).arrayBuffer())
 }
 
-async function frameAndPad(value) {
+async function frameAndPad(value: unknown): Promise<Uint8Array<ArrayBuffer>> {
   const json = encodeUtf8(JSON.stringify(value))
   const compressed = await gzip(json)
   // 4-byte length prefix + bucketing to next pow2 (capped at 2^30
@@ -370,12 +422,12 @@ async function frameAndPad(value) {
   return out
 }
 
-async function unframeAndUngzip(plaintext) {
+async function unframeAndUngzip(plaintext: Uint8Array<ArrayBuffer>): Promise<unknown> {
   if (plaintext.length < 4) throw new Error('plaintext too short')
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
   const len = view.getUint32(0, false)
   if (len + 4 > plaintext.length) throw new Error('length prefix exceeds buffer')
-  const compressed = plaintext.subarray(4, 4 + len)
+  const compressed = plaintext.subarray(4, 4 + len) as Uint8Array<ArrayBuffer>
   const json = await gunzip(compressed)
   return JSON.parse(decodeUtf8(json))
 }
@@ -384,13 +436,22 @@ async function unframeAndUngzip(plaintext) {
 // value to `{ nonce, ciphertext }` (both base64) and reverse on the
 // way back. Tag is appended to the ciphertext by the AEAD; we ship
 // it as one blob.
-export async function encryptJson(keyBytes, value, aad) {
+export async function encryptJson(
+  keyBytes: Uint8Array<ArrayBuffer>,
+  value: unknown,
+  aad: Uint8Array<ArrayBuffer>,
+): Promise<EncryptedJson> {
   const plaintext = await frameAndPad(value)
   const { nonce, ciphertext } = await encryptBytes(keyBytes, plaintext, aad)
   return { nonce: nonce.toBase64(), ciphertext: ciphertext.toBase64() }
 }
 
-export async function decryptJson(keyBytes, nonceB64, ciphertextB64, aad) {
+export async function decryptJson(
+  keyBytes: Uint8Array<ArrayBuffer>,
+  nonceB64: string,
+  ciphertextB64: string,
+  aad: Uint8Array<ArrayBuffer>,
+): Promise<unknown> {
   const nonce = Uint8Array.fromBase64(nonceB64)
   const ciphertext = Uint8Array.fromBase64(ciphertextB64)
   const plaintext = await decryptBytes(keyBytes, nonce, ciphertext, aad)

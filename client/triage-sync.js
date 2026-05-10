@@ -11,7 +11,7 @@ import {
   signSavePayload,
   signSubscribePayload,
   verifySavePayload,
-} from './sync-crypto.js'
+} from './sync-crypto.ts'
 
 // Triage sync — per-workspace WebSocket protocol with revision-tracked
 // changesets. Disabled by default. `setServerUrl(url)` enables; the

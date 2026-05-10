@@ -3060,7 +3060,7 @@ describe('triage-sync client', () => {
 // produced — just driven from outside the active session so the
 // arriving chain looks like another peer's edit.
 
-const cryptoMod = await import('../client/sync-crypto.js')
+const cryptoMod = await import('../client/sync-crypto.ts')
 // Native WebSocket on the client side — same API surface as the
 // browser, which is the production environment the client actually
 // runs against. The `ws` package is kept strictly to the server side

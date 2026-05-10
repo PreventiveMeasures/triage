@@ -25,7 +25,7 @@ if (globalThis.localStorage === undefined) {
   })()
 }
 
-const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync-crypto.js')
+const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync-crypto.ts')
 
 async function sha256b64url(str) {
   const digest = await crypto.subtle.digest('SHA-256', encodeUtf8(str))
