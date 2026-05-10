@@ -203,11 +203,9 @@ describe('verifySubscribeSig', () => {
     assert.equal(await verifySubscribeSig(msg, NONCE_A), true)
   })
 
-  it('returns false synchronously for a non-string signature', async () => {
+  it('returns false for a non-string signature', async () => {
     const { tag } = await makeKp()
-    const result = verifySubscribeSig({ workspaceTag: tag, from: null, signature: null }, NONCE_A)
-    // Sync false (not a Promise); awaiting a non-thenable yields the value.
-    assert.equal(result, false)
+    assert.equal(await verifySubscribeSig({ workspaceTag: tag, from: null, signature: null }, NONCE_A), false)
   })
 
   it('returns false for a signature with wrong byte length', async () => {
@@ -258,6 +256,61 @@ describe('verifySubscribeSig', () => {
     const signature = b64url(new Uint8Array(64))
     const msg = { workspaceTag: '\uD83D', from: null, signature }
     assert.equal(await verifySubscribeSig(msg, NONCE_A), false)
+  })
+})
+
+describe('verify functions reject malformed wire shapes cleanly', () => {
+  // Audit round-11 F5/F6. Internal `fromB64Url` is `Buffer.from(s,
+  // 'base64url')` — it throws TypeError on non-string non-array-like
+  // input. The throw lives in `verifyEd25519` BEFORE the WebCrypto
+  // try/catch, so without an explicit type-check at the verify-fn
+  // entry, a non-string `workspaceTag` on the wire would reject the
+  // verify promise instead of returning the documented sentinel.
+  it('verifySaveSigAndCanonical returns { ok: false, canonical: null } for a non-string workspaceTag', async () => {
+    const fields = { signature: 'AA', base: null, nonce: 'a', ciphertext: 'b' }
+    for (const bad of [123, null, undefined, {}, [], true]) {
+      const result = await verifySaveSigAndCanonical({ ...fields, workspaceTag: bad })
+      assert.deepEqual(result, { ok: false, canonical: null }, `workspaceTag=${typeof bad}/${bad}`)
+    }
+  })
+
+  it('verifySubscribeSig returns false for a non-string workspaceTag', async () => {
+    for (const bad of [123, null, undefined, {}, [], true]) {
+      const result = await verifySubscribeSig({ workspaceTag: bad, from: null, signature: 'AA' }, 'NONCE')
+      assert.equal(result, false, `workspaceTag=${typeof bad}/${bad}`)
+    }
+  })
+
+  // Audit round-11 F1. Without `async` + `await`, the verify path
+  // returned `Promise<boolean>` while error paths returned the
+  // literal `false` — a synchronous predicate (`if (verify(...))`)
+  // would treat the truthy Promise as "valid" and accept any forged
+  // signature on a well-formed message. Pin the consistent shape:
+  // every code path through `verifySubscribeSig` returns a Promise.
+  it('verifySubscribeSig consistently returns a Promise (every branch)', async () => {
+    const { sk, tag } = await makeKp()
+    const NONCE = 'consistent-nonce'
+    const goodSig = await signSubscribeMsg(sk, { tag, from: null, nonce: NONCE })
+
+    // Verify path
+    const p1 = verifySubscribeSig({ workspaceTag: tag, from: null, signature: goodSig }, NONCE)
+    assert.ok(p1 instanceof Promise, 'verify path returns Promise')
+    assert.equal(await p1, true)
+
+    // Type-check fail (non-string signature)
+    const p2 = verifySubscribeSig({ workspaceTag: tag, from: null, signature: null }, NONCE)
+    assert.ok(p2 instanceof Promise, 'non-string signature returns Promise')
+    assert.equal(await p2, false)
+
+    // Type-check fail (non-string workspaceTag)
+    const p3 = verifySubscribeSig({ workspaceTag: 123, from: null, signature: goodSig }, NONCE)
+    assert.ok(p3 instanceof Promise, 'non-string workspaceTag returns Promise')
+    assert.equal(await p3, false)
+
+    // Type-check fail (non-string connectionNonce)
+    const p4 = verifySubscribeSig({ workspaceTag: tag, from: null, signature: goodSig }, null)
+    assert.ok(p4 instanceof Promise, 'non-string nonce returns Promise')
+    assert.equal(await p4, false)
   })
 })
 

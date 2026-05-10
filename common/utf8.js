@@ -44,5 +44,14 @@ export function encodeUtf8(str) {
 }
 
 export function decodeUtf8(bytes) {
+  // Reject non-BufferSource so a missed destructure / optional field /
+  // misnamed property surfaces here instead of silently defaulting to
+  // `decoder.decode(undefined)` → `""`. The empty string then JSON-
+  // parses to `""` and hashes to the empty-string digest — exactly
+  // the "fail late" class of bug this module exists to prevent.
+  // Mirrors `encodeUtf8`'s explicit type-check.
+  if (!ArrayBuffer.isView(bytes) && !(bytes instanceof ArrayBuffer)) {
+    throw new TypeError(`decodeUtf8 expects a BufferSource, got ${bytes === null ? 'null' : typeof bytes}`)
+  }
   return decoder.decode(bytes)
 }

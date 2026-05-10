@@ -3,13 +3,39 @@
 // `client/triage-sync.js` (and `server/sign.js` for the canonical
 // signature payloads):
 //
+//   server → client  challenge           { nonce } — emitted on every
+//                                          accept, BEFORE any client
+//                                          frame; per-socket random
+//                                          128-bit value the client
+//                                          must bind into every
+//                                          `workspace-subscribe`
+//                                          signature (round-9 H2)
 //   client → server  workspace-save      { workspaceTag, base,
-//                                          nonce, ciphertext, signature }
-//   client → server  workspace-subscribe { workspaceTag, signature }
+//                                          keyframe, nonce, ciphertext,
+//                                          signature } — `keyframe` is
+//                                          a boolean (`true` exactly,
+//                                          else falsy), bound into the
+//                                          signed canonical
+//   client → server  workspace-subscribe { workspaceTag, from,
+//                                          signature } — `from` is the
+//                                          last revision id the client
+//                                          claims to have applied (or
+//                                          null for fresh)
+//   client → server  ping                 — heartbeat
+//   server → client  pong                 — heartbeat reply
 //   server → client  workspace-save-ack  { workspaceTag, base, id }
+//   server → client  workspace-subscribed { workspaceTag } — explicit
+//                                          handshake-complete ack so
+//                                          the client can flip its
+//                                          status from `connecting` to
+//                                          `online` only after the
+//                                          server registered it as a
+//                                          peer (not just on socket
+//                                          open)
 //   server → client  workspace-state     { workspaceTag, revisions:
-//                                          [{ base, id, nonce,
-//                                             ciphertext, signature }, ...] }
+//                                          [{ base, id, keyframe,
+//                                             nonce, ciphertext,
+//                                             signature }, ...] }
 //
 // Authentication: every signed message is checked against the
 // `workspaceTag` (= base64url Ed25519 public key) before any
@@ -415,9 +441,29 @@ async function shutdown(exitCode = 0) {
   for (const socket of wss.clients) {
     try { socket.close(1001, 'Server shutting down') } catch {}
   }
+  // Force-terminate any client that doesn't ack the close frame
+  // within a short grace window. `wss.close()` waits for every client
+  // to emit `'close'`, and the `ws` library only TCP-RSTs unresponsive
+  // peers after its own ~30 s `closeTimeout`. A single dead/blackholed
+  // peer would otherwise stretch SIGTERM/SIGINT response by that
+  // full timeout. Audit round-11.
+  const TERMINATE_GRACE_MS = 1_000
+  const terminateTimer = setTimeout(() => {
+    for (const socket of wss.clients) {
+      const rs = socket.readyState
+      if (rs === socket.OPEN || rs === socket.CLOSING) {
+        try { socket.terminate() } catch {}
+      }
+    }
+  }, TERMINATE_GRACE_MS)
+  // Don't keep the event loop alive solely for the grace timer —
+  // wss.close resolution already drives shutdown progress.
+  terminateTimer.unref?.()
   // Stop accepting new connections; existing sockets stay open
-  // until their close handlers run (driven by the 1001 frames above).
+  // until their close handlers run (driven by the 1001 frames above
+  // or the terminate fallback below).
   await new Promise((resolve) => { wss.close(() => resolve()) })
+  clearTimeout(terminateTimer)
   // Drain in-flight handlers so a save that's mid-`await
   // verifySaveSigAndCanonical` finishes its insertRevision before
   // the DB closes. Without this, SIGINT during a save throws into

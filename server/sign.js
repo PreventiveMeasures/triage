@@ -93,6 +93,17 @@ async function verifyEd25519(pubkeyB64Url, message, sigB64Url) {
 // which on the wire is already a hostile / malformed message), so
 // any error in the canonical-payload path is a verification failure.
 export async function verifySaveSigAndCanonical(msg) {
+  // Type-check `workspaceTag` here (alongside `signature`) so a
+  // non-string slips reach `fromB64Url(msg.workspaceTag)` inside
+  // `verifyEd25519` — `fromB64Url` is `Buffer.from(s, 'base64url')`,
+  // which throws TypeError on non-string non-array-like input.
+  // Without this gate, the throw escapes verifyEd25519 (it lives
+  // BEFORE the try/catch around the WebCrypto calls) and the function
+  // rejects with TypeError instead of honouring its `{ ok: false,
+  // canonical: null }` contract — a malformed wire message would
+  // bubble out as a connection-handler exception rather than a clean
+  // drop. Audit round-11.
+  if (typeof msg.workspaceTag !== 'string') return { ok: false, canonical: null }
   if (typeof msg.signature !== 'string') return { ok: false, canonical: null }
   let payload
   try { payload = canonicalSave(msg) } catch { return { ok: false, canonical: null } }
@@ -118,10 +129,22 @@ export async function computeRevisionIdFromCanonical(canonical) {
 // nonce; verifying against the SAME nonce here is what blocks
 // cross-connection replay of a captured subscribe frame. Audit
 // round-9 H2.
-export function verifySubscribeSig(msg, connectionNonce) {
+export async function verifySubscribeSig(msg, connectionNonce) {
+  // `async` + `await` the verifyEd25519 result. Without `async` the
+  // function's verify path returned a `Promise<boolean>` while its
+  // type-check / canonical-throw paths returned the literal `false`
+  // — a caller using it as a synchronous predicate (`if
+  // (verifySubscribeSig(...))`) would treat the truthy Promise as
+  // "valid" and accept arbitrary forged signatures. Production's
+  // only call site already `await`s, but the inconsistency was a
+  // footgun for any future caller. Audit round-11.
+  // Same workspaceTag type-check as `verifySaveSigAndCanonical` —
+  // see that function for the rationale (fromB64Url throws TypeError
+  // on non-string and the throw escapes verifyEd25519's try/catch).
+  if (typeof msg.workspaceTag !== 'string') return false
   if (typeof msg.signature !== 'string') return false
   if (typeof connectionNonce !== 'string') return false
   let payload
   try { payload = canonicalSubscribe(msg, connectionNonce) } catch { return false }
-  return verifyEd25519(msg.workspaceTag, payload, msg.signature)
+  return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }

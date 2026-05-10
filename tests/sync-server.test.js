@@ -816,4 +816,77 @@ describe('triage-sync server: graceful shutdown', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('force-terminates an unresponsive client (audit round-11 F4)', async () => {
+    // Without the explicit `socket.terminate()` fallback, a client
+    // that doesn't ack the 1001 close frame holds `wss.close()` for
+    // the `ws` library default `closeTimeout` of ~30 s — a single
+    // dead/blackholed peer would stretch SIGTERM response by that
+    // entire window. Simulate by hijacking the raw TCP socket: do
+    // the WebSocket Upgrade handshake by hand and then never
+    // respond to any frame the server sends (no close ack, no
+    // pong). The server must still exit within a small grace.
+    const { default: net } = await import('node:net')
+    const { createHash } = await import('node:crypto')
+    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-stuck-'))
+    const port = 19000 + Math.floor(Math.random() * 1_000)
+    const proc = spawn(process.execPath, ['server/index.js'], {
+      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let tcp
+    try {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
+        proc.stdout.on('data', (d) => {
+          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
+        })
+        proc.stderr.on('data', () => {})
+      })
+      // Manual WebSocket handshake — `ws`-library client sockets
+      // auto-respond to close frames, which is exactly what we need
+      // to NOT do here.
+      tcp = net.connect({ host: '127.0.0.1', port })
+      tcp.on('error', () => {})  // a server-initiated TCP RST surfaces as 'error'; tolerate
+      // Sink incoming bytes without responding — this is the whole
+      // point: a peer that ignores the server's close frame.
+      tcp.on('data', () => {})
+      await new Promise((resolve, reject) => {
+        tcp.once('connect', resolve)
+        tcp.once('error', reject)
+      })
+      const wsKey = Buffer.from('0123456789abcdef').toString('base64')
+      const accept = createHash('sha1')
+        .update(wsKey + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+        .digest('base64')
+      void accept  // server doesn't echo this back to us; we just need the upgrade to succeed server-side
+      tcp.write(
+        `GET / HTTP/1.1\r\n` +
+        `Host: 127.0.0.1:${port}\r\n` +
+        `Upgrade: websocket\r\n` +
+        `Connection: Upgrade\r\n` +
+        `Sec-WebSocket-Version: 13\r\n` +
+        `Sec-WebSocket-Key: ${wsKey}\r\n` +
+        `\r\n`,
+      )
+      // Give the server a tick to upgrade and add the socket to
+      // wss.clients before we SIGTERM it. Without this, the
+      // shutdown's `for (socket of wss.clients)` loop runs before
+      // our connection is in the set and the test no-ops.
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+      const sigtermAt = Date.now()
+      proc.kill('SIGTERM')
+      await new Promise((resolve) => { proc.once('exit', resolve) })
+      const elapsed = Date.now() - sigtermAt
+      // The close-grace timer is 1 s. Allow generous slack for child-
+      // process scheduling but stay well under the ws-library default
+      // closeTimeout of 30 s — anything in that range would mean the
+      // fallback regressed.
+      assert.ok(elapsed < 5_000, `expected shutdown < 5 s with fallback; got ${elapsed} ms`)
+    } finally {
+      try { tcp?.destroy() } catch {}
+      if (proc.exitCode == null) proc.kill('SIGKILL')
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

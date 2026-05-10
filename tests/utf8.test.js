@@ -43,6 +43,31 @@ describe('decodeUtf8', () => {
     assert.equal(text, 'é😀')
   })
 
+  it('throws on non-BufferSource inputs (audit round-11 F2)', () => {
+    // `TextDecoder.prototype.decode`'s argument is optional and
+    // defaults to an empty buffer, so without an explicit type
+    // check `decodeUtf8(undefined)` (missed destructure, optional
+    // field, misnamed property) silently returns `""` — which then
+    // JSON.parses to `""` and hashes to the empty-string digest.
+    // Mirror `encodeUtf8`'s fail-fast contract.
+    assert.throws(() => decodeUtf8(undefined), /decodeUtf8 expects a BufferSource, got undefined/u)
+    assert.throws(() => decodeUtf8(null), /decodeUtf8 expects a BufferSource, got null/u)
+    assert.throws(() => decodeUtf8(), /decodeUtf8 expects a BufferSource, got undefined/u)
+    assert.throws(() => decodeUtf8('plain string'), /decodeUtf8 expects a BufferSource, got string/u)
+    assert.throws(() => decodeUtf8(42), /decodeUtf8 expects a BufferSource, got number/u)
+    assert.throws(() => decodeUtf8({}), /decodeUtf8 expects a BufferSource, got object/u)
+    assert.throws(() => decodeUtf8([0x68, 0x69]), /decodeUtf8 expects a BufferSource, got object/u)
+  })
+
+  it('accepts both Uint8Array and bare ArrayBuffer', () => {
+    // The TextDecoder API documents both as valid BufferSources.
+    // Pin both so the type-check above doesn't accidentally tighten
+    // beyond the helper's contract.
+    assert.equal(decodeUtf8(new Uint8Array([104, 105])), 'hi')
+    const buf = new Uint8Array([104, 105]).buffer
+    assert.equal(decodeUtf8(buf), 'hi')
+  })
+
   it('throws on invalid UTF-8 sequences (fatal mode)', () => {
     // 0xC3 0x28 — 0xC3 starts a 2-byte sequence but 0x28 is not a
     // valid continuation. Default decoder would silently substitute
