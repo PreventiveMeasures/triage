@@ -13,7 +13,7 @@ import { beforeEach, describe, it } from 'node:test'
 
 await import('./_polyfills.js')
 
-const { state, REPO_URLS_KEY } = await import('../client/state.js')
+const { state, REPO_URLS_KEY } = await import('../client/state.ts')
 const {
   applyTriageImport,
   buildTriageExportPayload,

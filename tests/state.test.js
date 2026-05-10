@@ -28,7 +28,7 @@ const {
   propagateRepoUrlChangesFromStorage,
   saveRepoUrlFor,
   state,
-} = await import('../client/state.js')
+} = await import('../client/state.ts')
 
 function clearState() {
   globalThis.localStorage.clear()

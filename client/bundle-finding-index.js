@@ -24,7 +24,7 @@
 // progressively as findings come in.
 
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { loadRepoUrlFor } from './state.js'
+import { loadRepoUrlFor } from './state.ts'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
 

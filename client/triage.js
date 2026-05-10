@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state } from './state.ts'
 import { triageSync } from './triage-sync.js'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 

@@ -16,7 +16,7 @@
 import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
 import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { listWorkspaces, setReportWorkspace } from './workspaces.js'
-import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.js'
+import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js

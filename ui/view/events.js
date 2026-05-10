@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, saveRepoUrlFor, state } from '../../client/state.js'
+import { VIEW_MODE_KEY, saveRepoUrlFor, state } from '../../client/state.ts'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'

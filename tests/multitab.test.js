@@ -45,7 +45,7 @@ if (globalThis.localStorage === undefined) {
 // no-op there.
 await import('./_polyfills.js')
 
-const { state } = await import('../client/state.js')
+const { state } = await import('../client/state.ts')
 const { saveTriage, reloadTriageFromStorage } = await import('../client/triage.js')
 const { triageSync } = await import('../client/triage-sync.js')
 

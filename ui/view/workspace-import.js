@@ -1,4 +1,4 @@
-import { state } from '../../client/state.js'
+import { state } from '../../client/state.ts'
 import {
   applyWorkspaceImport,
   buildImportedFindingLookup,

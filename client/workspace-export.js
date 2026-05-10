@@ -1,4 +1,4 @@
-import { loadRepoUrlFor, state } from './state.js'
+import { loadRepoUrlFor, state } from './state.ts'
 import { readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
 import { deriveFindingId } from '../common/finding-id.js'

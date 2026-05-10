@@ -1,5 +1,5 @@
 import { encodeUtf8 } from '../common/utf8.js'
-import { REPO_URLS_KEY, state } from './state.js'
+import { REPO_URLS_KEY, state } from './state.ts'
 import { saveTriage } from './triage.js'
 
 // Pure-logic side of the global triage backup. The DOM-touching

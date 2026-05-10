@@ -1,7 +1,7 @@
 import { html, render as litRender, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { state } from '../../client/state.js'
+import { state } from '../../client/state.ts'
 import { fileList, sidebar } from './dom.js'
 import { listBundles, listFiles } from '../../client/storage.js'
 import { render } from './render.js'

@@ -1,4 +1,4 @@
-import { state } from '../../client/state.js'
+import { state } from '../../client/state.ts'
 import { saveTriage } from '../../client/triage.js'
 import { render } from './render.js'
 import { triageSync } from '../../client/triage-sync.js'

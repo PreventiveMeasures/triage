@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { state } from '../../client/state.js'
+import { state } from '../../client/state.ts'
 import { bundlesForFileHash } from '../../client/bundle-hash-index.js'
 import { commitUrl, fileUrl, formatRunMeta, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'

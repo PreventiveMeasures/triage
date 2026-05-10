@@ -1,4 +1,4 @@
-import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.js'
+import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'

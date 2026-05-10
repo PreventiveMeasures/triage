@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit'
-import { state } from '../../client/state.js'
+import { state } from '../../client/state.ts'
 
 // Severity ranking — higher = more severe. The ladder splits into
 // two stacks: vulnerabilities on top (critical → low) and bug-class

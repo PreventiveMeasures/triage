@@ -4,14 +4,73 @@ export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
 const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
 
+export type ViewMode = 'table' | 'list' | 'grouped'
+export type CurrentView = 'findings' | 'files' | 'bundles'
+export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
+
+// Deepview state schema. Fields with ad-hoc / nested shapes (parsed
+// bundle metadata, ingested findings) stay `unknown` for now — they
+// can be tightened as their consumers convert to TypeScript. The
+// goal here is to type the surface accurately enough for the next
+// conversion step (importers in `ui/view/` and the rest of `client/`)
+// without forcing every caller to change in this PR.
+export interface State {
+  reports: unknown[]
+  currentFile: string | null
+  currentWorkspace: string | null
+  currentView: CurrentView
+  bundles: unknown[]
+  selectedBundle: string | null
+  bundleDetails: unknown
+  bundleDetailsTab: string
+  selectedPackage: string | null
+  packageDetailsTab: 'overview' | 'issues'
+  packageSlideTriage: 'invalid' | 'deleted' | null
+  packageSlideTransient: boolean
+  packagesSearchQuery: string
+  packagesSortBy: string
+  selectedRepository: string | null
+  repositoryDetailsTab: 'overview' | 'issues'
+  repositorySlideTriage: 'invalid' | 'deleted' | null
+  repositorySlideTransient: boolean
+  repositoriesSearchQuery: string
+  repositoriesSortBy: string
+  bundleSourceFile: string | null
+  bundleSourceFindingIdx: number | null
+  bundleCodeSearchMode: string
+  bundleCodeSearchQuery: string
+  filterSeverities: Set<string>
+  filterColors: Set<string>
+  filterSources: Set<string>
+  filterConfMin: number
+  filterConfMax: number
+  filterInclude: string
+  repoUrl: string
+  repoEditing: boolean
+  sortBy: string
+  viewMode: ViewMode
+  markers: Map<string, string>
+  comments: Map<string, string>
+  fixes: Map<string, string>
+  triageState: Map<string, TriageBucket>
+  ignoredIds: Set<string>
+  shownTriage: TriageBucket | null
+  nextFindingId: number
+  activeTabByGroup: Map<string, string>
+  tableSelectedGid: string | null
+  filesViewMode: 'table' | 'list'
+  filesSearch: string
+  filesSelectedFile: string | null
+}
+
 // Hoisted so the `state` object literal below can call it during its
 // own initialization. Reads localStorage and validates against the
 // known set — anything else (missing, corrupted, future-only value)
 // returns null and the default kicks in.
-function readSavedViewMode() {
+function readSavedViewMode(): ViewMode | null {
   try {
     const v = localStorage.getItem(VIEW_MODE_KEY)
-    return VALID_VIEW_MODES.has(v) ? v : null
+    return v !== null && VALID_VIEW_MODES.has(v) ? (v as ViewMode) : null
   } catch { return null }
 }
 
@@ -23,17 +82,17 @@ function readSavedViewMode() {
 // to empty string. Exported so `switchToFile` can populate
 // `state.repoUrl` on every file switch and the events.js input
 // handler can write back without re-deriving the key.
-function readRepoUrlMap() {
+function readRepoUrlMap(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch { return {} }
 }
-function writeRepoUrlMap(map) {
+function writeRepoUrlMap(map: Record<string, string>): void {
   try { localStorage.setItem(REPO_URLS_KEY, JSON.stringify(map)) } catch {}
 }
-export function loadRepoUrlFor(name) {
+export function loadRepoUrlFor(name: string | null | undefined): string {
   if (!name) return ''
   return readRepoUrlMap()[name] ?? ''
 }
-export function saveRepoUrlFor(name, url) {
+export function saveRepoUrlFor(name: string | null | undefined, url: string): void {
   if (!name) return
   const map = readRepoUrlMap()
   if (url) map[name] = url
@@ -51,7 +110,7 @@ export function saveRepoUrlFor(name, url) {
 //
 // Graph-tab state lives separately in `./graph2/state.js` because it
 // has its own teardown semantics tied to the canvas lifecycle.
-export const state = store({
+export const state: State = store<State>({
   // Exactly one OPFS-backed report is active at a time — the sidebar
   // switches between them; merging is gone. Headless callers
   // (`window.__loadFile` from src/print.js) bypass OPFS and may call
@@ -161,14 +220,14 @@ export const state = store({
   // "all" sentinel. `filterColors` stores mark colors
   // (`red|blue|green|gray`) plus the literal `'none'` for unmarked
   // findings.
-  filterSeverities: new Set(),
-  filterColors: new Set(),
+  filterSeverities: new Set<string>(),
+  filterColors: new Set<string>(),
   // Source filter — Set<'own' | 'modules'>. Empty (default) = no
   // filter; single member = restrict to that side. The toolbar
   // chips behave as a single-select with toggle-off: clicking a
   // chip switches to it (clearing the other), clicking the active
   // chip again clears the set entirely.
-  filterSources: new Set(),
+  filterSources: new Set<string>(),
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when
@@ -201,18 +260,18 @@ export const state = store({
   // single `deepview.triage` localStorage entry; numeric-_id keys do
   // not. Both PER-TAB (per individual finding even within a dedup
   // group). Group-level rollup is computed on demand in groupState().
-  markers: new Map(),
+  markers: new Map<string, string>(),
   // Per-finding free-text annotation, keyed the same way as markers
   // (uuid `f.id` when present, else session `String(f._id)`). Round-
   // trips alongside color / deleted in the `deepview.triage` blob —
   // see triage.js. Empty / cleared comments are removed from the map
   // so saveTriage doesn't persist a stale `comment: ""`.
-  comments: new Map(),
+  comments: new Map<string, string>(),
   // Per-finding "fix" reference — typically a PR URL, but anything
   // string-shaped works (commit hash, ticket link, etc.). Same key
   // and persistence rules as `comments`; rendered as a clickable
   // link in the tab body when present.
-  fixes: new Map(),
+  fixes: new Map<string, string>(),
   // Triage state per finding — one of 'fixed' / 'invalid' / 'deleted'
   // (mutually exclusive). Findings without an entry are "active"
   // (the default live view). Setting any state for a tab clears the
@@ -220,7 +279,7 @@ export const state = store({
   // / fixes in the deepview.triage blob (see triage.js); loaded
   // entries with the legacy `deleted: true` shape are migrated to
   // 'deleted' on load.
-  triageState: new Map(),
+  triageState: new Map<string, TriageBucket>(),
   // Per-report ignore set — keyed by `${reportName}\0${tabKey}` so
   // ignoring a finding in report A doesn't ignore the same finding
   // when it shows up in report B. Mutually exclusive with the
@@ -228,7 +287,7 @@ export const state = store({
   // tab; setting ignore clears the triage). Lives next to triage
   // in the deepview.triage blob, persisted as `ignoredReports:
   // ['nameA', 'nameB']` on each id-keyed entry — see triage.js.
-  ignoredIds: new Set(),
+  ignoredIds: new Set<string>(),
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
   // only. Replaces the prior boolean showDeleted; the toolbar's
@@ -240,7 +299,7 @@ export const state = store({
   // a tabKey within the group. Falls back to the sorted-primary tab
   // when absent or when the stored tab no longer exists. Session-only;
   // NOT persisted (it's a pure UI focus state, not triage).
-  activeTabByGroup: new Map(),
+  activeTabByGroup: new Map<string, string>(),
   // Table view: gid of the currently-selected row. Null when no row
   // is selected (the details panel is hidden and the list takes the
   // full width). Set by clicking a row in the table view; cleared by
@@ -278,12 +337,12 @@ export const state = store({
 // Exported so node:test environments can invoke the handler
 // directly — `window` doesn't exist in tests and the storage
 // event never fires there.
-export function propagateRepoUrlChangesFromStorage() {
+export function propagateRepoUrlChangesFromStorage(): void {
   if (state.repoEditing) return
   if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
 }
 if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
+  window.addEventListener('storage', (e: StorageEvent) => {
     if (e.key !== REPO_URLS_KEY) return
     propagateRepoUrlChangesFromStorage()
   })

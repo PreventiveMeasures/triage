@@ -18,7 +18,7 @@
     "forceConsistentCasingInFileNames": true,
 
     "target": "es2024",
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
 

@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { loadRepoUrlFor, saveRepoUrlFor, state } from '../../client/state.js'
+import { loadRepoUrlFor, saveRepoUrlFor, state } from '../../client/state.ts'
 import { dropZone, report } from './dom.js'
 import { deleteFile, readFile, saveBundle, saveFile } from '../../client/storage.js'
 import { toGroup } from './group.js'

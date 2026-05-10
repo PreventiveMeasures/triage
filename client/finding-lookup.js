@@ -1,4 +1,4 @@
-import { state } from './state.js'
+import { state } from './state.ts'
 
 // Helpers that build per-finding metadata maps for conflict-resolution
 // dialogs (workspace-import + the report-attach hydration path). The

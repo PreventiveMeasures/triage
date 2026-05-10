@@ -44,7 +44,7 @@ if (globalThis.localStorage === undefined) {
 // ─────────── client modules ───────────
 
 const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.js')
-const { state } = await import('../client/state.js')
+const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
 

@@ -33,7 +33,7 @@ if (globalThis.localStorage === undefined) {
 const { saveFile, listFiles, readFile } = await import('../client/storage.js')
 const { setCount, getCount, getKind } = await import('../client/counts.js')
 const { upsertWorkspace, listWorkspaces, deleteWorkspace } = await import('../client/workspaces.js')
-const { saveRepoUrlFor, loadRepoUrlFor, state } = await import('../client/state.js')
+const { saveRepoUrlFor, loadRepoUrlFor, state } = await import('../client/state.ts')
 
 const LAST_FILE_KEY = 'deepview.lastFile'
 

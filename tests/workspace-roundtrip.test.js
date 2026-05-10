@@ -31,7 +31,7 @@ if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 
-const { state } = await import('../client/state.js')
+const { state } = await import('../client/state.ts')
 const {
   parseWorkspaceJson,
   applyWorkspaceImport,
