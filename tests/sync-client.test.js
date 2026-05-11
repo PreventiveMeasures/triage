@@ -1531,6 +1531,17 @@ describe('triage-sync client', () => {
     // console API while R1 was in a different workspace, or it was
     // restored from the deepview.triage blob at module load).
     state.markers.set('finding-B', 'green')
+    // Snapshot the pre-attach baseRevision so the wait below pins to
+    // "the membership-listener-driven save acked". `settledAfterAck`
+    // alone is trivially true at this point — there's no save in
+    // flight yet. The membership listener at triage-sync.ts goes
+    // through `await saveTriage()` (which awaits compressBrotli +
+    // navigator.locks.request) BEFORE reaching `trySendSave`, so
+    // `encrypting=false` is the default state observable on
+    // `waitFor`'s sync first-predicate-check. Without this pin,
+    // waitFor returns immediately, the reader subscribes, and the
+    // chain only contains pushRemoteChange's revision.
+    const preAttachRev = triageSync.sessionInfo(wsId).baseRevision
 
     await setReportWorkspace('R1.md', wsId)
 
@@ -1538,11 +1549,15 @@ describe('triage-sync client', () => {
     // chain's 'blue'.
     assert.equal(state.markers.get('finding-B'), 'green', 'local value preserved')
 
-    // The membership listener also kicked a save; local 'green'
-    // diffs against baseState's 'blue' and goes out as a save. Wait
-    // for the chain to advance, then read it back via a fresh raw
-    // subscriber to confirm.
-    await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
+    // Wait for the membership-listener-driven save to ACTUALLY
+    // advance the chain past `preAttachRev`. `baseRevision` only
+    // moves via `handleAck` in this scenario (no peer pushes during
+    // the window), so the predicate firing is a positive proof a
+    // save round-tripped.
+    await waitFor(
+      () => settledAfterAck(wsId) && triageSync.sessionInfo(wsId).baseRevision !== preAttachRev,
+      'follow-up save acked',
+    )
     const reader = await new Promise((resolve, reject) => {
       const s = new WebSocket(serverUrl)
       s.addEventListener('open', () => resolve(s), { once: true })
