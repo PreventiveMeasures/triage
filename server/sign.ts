@@ -79,7 +79,7 @@ function fromB64Url(str: string): Uint8Array<ArrayBuffer> {
 // rule. Without strict matching the canonical and the storage
 // disagree on which inputs are keyframes, and a malformed save
 // can land in the chain unreadable to peers.
-function canonicalSave(
+export function canonicalSave(
   { workspaceTag, base, keyframe, nonce, ciphertext }: SaveMsg,
 ): Uint8Array<ArrayBuffer> {
   return encodeUtf8([
@@ -100,7 +100,12 @@ function canonicalSubscribe(
   return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag as string, fromStr, connectionNonce].join('\n'))
 }
 
-async function verifyEd25519(
+// Exported because the v1.objstore signing module (server/objstore/sign.ts)
+// reuses it for its four verifiers — same workspaceTag-as-pubkey contract,
+// same domain-separated canonical bytes. Keeping the WebCrypto plumbing
+// in one place avoids drift between the triage-sync and objstore verify
+// implementations.
+export async function verifyEd25519(
   pubkeyB64Url: string,
   message: Uint8Array<ArrayBuffer>,
   sigB64Url: string,

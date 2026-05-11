@@ -66,9 +66,13 @@ import { type IncomingMessage as HttpRequest, type ServerResponse, createServer 
 import { randomBytes } from 'node:crypto'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { type RevisionRow, chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.ts'
-import { type SaveMsg, type SubscribeMsg, computeRevisionIdFromCanonical, verifySaveSigAndCanonical, verifySubscribeSig } from './sign.ts'
+import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
+import { handleRest, matchRoute } from './objstore/rest.ts'
+import { initObjstore } from './objstore/init.ts'
+import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
 // Wire-message envelope as it lands post-`JSON.parse`. Every field is
 // `unknown` until a handler narrows it; the type just documents the
@@ -104,15 +108,27 @@ if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
 // segments correctly (the older `new URL(...).pathname` form left
 // `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
 const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data.db', import.meta.url))
+// `path.join` so a Windows DB_PATH (`C:\srv\foo\data.db` → dirname
+// returns backslash-separated) doesn't get a mixed-separator child
+// (`C:\srv\foo/objstore`). Cosmetic on POSIX, real bug on win32.
+const OBJSTORE_DIR = env['OBJSTORE_DIR'] ?? join(dirname(DB_PATH), 'objstore')
+// `Number('abc')` is NaN and `setInterval(…, NaN)` runs a 0-ms loop;
+// reject up front like PORT does.
+const OBJSTORE_REAP_INTERVAL_MS = Number(env['OBJSTORE_REAP_INTERVAL_MS'] ?? 10 * 60 * 1000)
+if (!Number.isSafeInteger(OBJSTORE_REAP_INTERVAL_MS) || OBJSTORE_REAP_INTERVAL_MS <= 0) {
+  console.error(`Invalid OBJSTORE_REAP_INTERVAL_MS: ${env['OBJSTORE_REAP_INTERVAL_MS']}`); process.exit(1)
+}
 const DEBUG = env['DEBUG'] === '1'
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: node server/index.ts
 Environment:
-  PORT     listen port (default 8765)
-  HOST     bind host (default 127.0.0.1)
-  DB_PATH  sqlite file (default server/data.db)
-  DEBUG=1  log every message`)
+  PORT                       listen port (default 8765)
+  HOST                       bind host (default 127.0.0.1)
+  DB_PATH                    sqlite file (default server/data.db)
+  OBJSTORE_DIR               object store root (default: ./objstore next to DB_PATH)
+  OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
+  DEBUG=1                    log every message`)
   process.exit(0)
 }
 
@@ -165,14 +181,25 @@ function unsubscribeAll(socket: WebSocket): void {
 }
 
 function send(socket: WebSocket, msg: object): void {
+  sendRaw(socket, JSON.stringify(msg))
+}
+
+// Lower-level send for when the JSON payload is already serialised
+// (e.g. broadcast fan-out — stringify once, send N times).
+function sendRaw(socket: WebSocket, payload: string): void {
   if (socket.readyState !== socket.OPEN) return
   // Wrap send() in try/catch — readyState can transition from OPEN
   // to CLOSING between the check above and the send() call (TOCTOU
   // window in `ws`'s event loop). Without this, a socket dying
   // mid-broadcast would throw and abort the broadcast loop, skipping
   // every subscriber after the dead one. Audit M4.
-  try { socket.send(JSON.stringify(msg)) } catch {}
+  try { socket.send(payload) } catch {}
 }
+
+// Truncate a base64url tag for `DEBUG=1` logging. Full workspaceTag
+// is an Ed25519 public key; operator logs shouldn't carry it
+// verbatim. Same convention as objstore/handlers.ts.
+function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 
 // Normalise `keyframe` on outbound chain entries to a strict boolean.
 // SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
@@ -186,9 +213,17 @@ function chainForWire(revisions: RevisionRow[]): WireRevision[] {
   return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 }))
 }
 
-function broadcast(tag: string, msg: object, except: WebSocket): void {
+// `except: null` is the REST-originated path — byte transfer
+// landed via HTTP, not via a particular WS socket; broadcast hits
+// every subscriber. WS-originated broadcasts pass the originator's
+// socket so the sender doesn't see its own message echoed back.
+function broadcast(tag: string, msg: object, except: WebSocket | null): void {
   const set = subscribers.get(tag)
   if (!set) return
+  // Stringify ONCE outside the fan-out loop. For a workspace-state
+  // catch-up with a multi-MB ciphertext × N subscribers, per-recipient
+  // JSON.stringify would dominate CPU; this is the cheap win.
+  const payload = JSON.stringify(msg)
   // Snapshot before iterating — `send`'s try/catch swallows
   // socket.send errors, but a socket transitioning to CLOSED
   // mid-broadcast triggers `unsubscribeAll` from the 'close'
@@ -199,7 +234,7 @@ function broadcast(tag: string, msg: object, except: WebSocket): void {
   // skipping subscribers. Audit M4 round-3.
   for (const s of [...set]) {
     if (s === except) continue
-    send(s, msg)
+    sendRaw(s, payload)
   }
 }
 
@@ -208,36 +243,75 @@ function broadcast(tag: string, msg: object, except: WebSocket): void {
 // `nonce = "AAA\nBBB"` + `ciphertext = "CCC"` produces the same
 // canonical bytes as `nonce = "AAA"` + `ciphertext = "BBB\nCCC"`
 // (canonicalSave newline-joins), causing same-id collisions across
-// distinct stored fields. Client uses standard base64 (`+/=`) for
-// nonce/ciphertext and base64url for tag/sig/base — union alphabet
-// covers both. Short-field length caps bound the canonical and
-// `MAX_CIPHERTEXT_LEN` bounds chain-bloat; the ciphertext size
-// check runs post-sig so the error response (`workspace-save-error`)
-// only reaches a legit signer.
-const SAVE_FIELD_RE = /^[\w+/=-]+$/u
+// distinct stored fields. Two alphabets:
+//
+//   - workspaceTag / signature / base — base64url-no-padding only.
+//     Clients always emit these via `toBase64({ alphabet: 'base64url',
+//     omitPadding: true })` (client/sync-crypto.ts), and the same
+//     workspaceTag must round-trip through objstore's TAG_RE (also
+//     base64url-no-padding) for cross-protocol consistency. Accepting
+//     `+/=` here would let a buggy or hostile client split its data
+//     across two encodings of the same workspace.
+//   - nonce / ciphertext — base64 OR base64url (union alphabet).
+//     Clients emit these via `toBase64()` with no alphabet hint
+//     (standard base64 with `+/=` padding), and the bytes are opaque
+//     to the server — no cross-protocol identity is bound to the
+//     encoding. The newline-collision guard is the only invariant
+//     here; the wider alphabet is acceptable.
+//
+// Short-field length caps bound the canonical and `MAX_CIPHERTEXT_LEN`
+// bounds chain-bloat; the ciphertext size check runs post-sig so the
+// error response (`workspace-save-error`) only reaches a legit signer.
+const TAG_SIG_BASE_RE = /^[\w-]+$/u
+const NONCE_CIPHER_RE = /^[\w+/=-]+$/u
 const MAX_FIELD_LEN = 128
 const MAX_CIPHERTEXT_LEN = 2 * 1024 * 1024
 
-const validSaveField = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && SAVE_FIELD_RE.test(s)
-// Ciphertext: same alphabet but the size cap is checked POST-sig (to
-// avoid leaking the cap to unauthenticated probes). Pre-sig only the
-// shape gates apply; `maxPayload` (4 MiB) already bounds the total
-// frame, so the worst-case bytes are still bounded.
-const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && SAVE_FIELD_RE.test(s)
+const validTagSigBase = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && TAG_SIG_BASE_RE.test(s)
+const validNonce = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && NONCE_CIPHER_RE.test(s)
+// Ciphertext: same alphabet as nonce but the size cap is checked
+// POST-sig (to avoid leaking the cap to unauthenticated probes).
+// Pre-sig only the shape gate applies; `maxPayload` (4 MiB) already
+// bounds the total frame, so the worst-case bytes are still bounded.
+const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && NONCE_CIPHER_RE.test(s)
+
+const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
+  db: handle.db, dir: OBJSTORE_DIR, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
+  send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
+})
 
 async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // `base` is `string | null`; null is the keyframe-root marker.
-  if (!validSaveField(msg.workspaceTag, MAX_FIELD_LEN) || !validSaveField(msg.nonce, MAX_FIELD_LEN) || !validCiphertextShape(msg.ciphertext) || !validSaveField(msg.signature, MAX_FIELD_LEN) || (msg.base != null && !validSaveField(msg.base, MAX_FIELD_LEN))) return
-  // Verify the signature AND capture the canonical bytes in one
-  // pass — the revision id (below) hashes the EXACT bytes the
-  // signature covered, so the stored id is provably tied to the
-  // signed content. The previous shape recomputed canonical bytes
-  // independently from `computeRevisionId`, leaving room for a
-  // future divergence to drift the stored id away from the signed
-  // payload.
-  const { ok, canonical } = await verifySaveSigAndCanonical(msg)
-  if (!ok) {
-    if (DEBUG) console.warn('reject save: bad signature', msg.workspaceTag.slice(0, 12) + '…')
+  if (!validTagSigBase(msg.workspaceTag, MAX_FIELD_LEN) || !validNonce(msg.nonce, MAX_FIELD_LEN) || !validCiphertextShape(msg.ciphertext) || !validTagSigBase(msg.signature, MAX_FIELD_LEN) || (msg.base != null && !validTagSigBase(msg.base, MAX_FIELD_LEN))) return
+  // Compute canonical bytes + content-addressed id ONCE, then thread
+  // both through the precheck → sig verify → post-sig dedup → insert
+  // pipeline. Previously this paid 2× canonicalSave + 2× SHA-256 (the
+  // F1 precheck recomputed both inside `verifySaveSigAndCanonical`),
+  // and the second hash was wasteful even on the success path. Now:
+  //   1. canonicalSave (sync, throws on lone-surrogate input)
+  //   2. SHA-256 → id
+  //   3. precheck: revisionExists → short-circuit ack on replay
+  //      (skips Ed25519 verify; closes the round-9 H1 CPU-DoS vector
+  //      where a passive observer floods captured saves)
+  //   4. verifyEd25519 against the SAME canonical bytes the id was
+  //      hashed from — provably tied
+  //   5. ciphertext size policy (post-sig so the explicit error only
+  //      reaches a legit signer)
+  //   6. post-sig dedup re-check: between precheck and here, a
+  //      concurrent same-id save could've inserted; emit ack rather
+  //      than letting UNIQUE constraint silently throw
+  //   7. base match + insert
+  let canonical: Uint8Array<ArrayBuffer>
+  try { canonical = canonicalSave(msg) } catch { return }
+  const id = await computeRevisionIdFromCanonical(canonical)
+  const tag = msg.workspaceTag
+  if (revisionExists(handle, tag, id)) {
+    if (DEBUG) console.log(`save (precheck dup ${id.slice(0, 8)}…) → ack-only`)
+    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
+    return
+  }
+  if (!await verifyEd25519(tag, canonical, msg.signature)) {
+    if (DEBUG) console.warn('reject save: bad signature', debugTag(tag))
     return
   }
   // Size policy — emit an explicit error so the client can surface
@@ -245,11 +319,9 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // forever in the client's `pending` slot (no ack, no rebase).
   if (msg.ciphertext.length > MAX_CIPHERTEXT_LEN) {
     if (DEBUG) console.warn(`reject save: ciphertext too large (${msg.ciphertext.length} > ${MAX_CIPHERTEXT_LEN})`)
-    send(socket, { type: 'workspace-save-error', workspaceTag: msg.workspaceTag, base: msg.base ?? null, reason: 'too-large' })
+    send(socket, { type: 'workspace-save-error', workspaceTag: tag, base: msg.base ?? null, reason: 'too-large' })
     return
   }
-  const id = await computeRevisionIdFromCanonical(canonical)
-  const tag = msg.workspaceTag
   // NOTE: Earlier revisions auto-subscribed the sending socket here.
   // That created a replay vector — a passive observer who captured
   // any single valid `workspace-save` frame could replay it from any
@@ -264,9 +336,10 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // socket open, on continuity-break recovery, on dismissError).
   // The subscribe path remains the only way to attach as a
   // broadcast subscriber.
-  // Idempotent retransmit: a save with the same content (same id)
-  // arriving more than once gets a fresh ack but doesn't grow the
-  // chain. Useful when a client times out mid-ack and re-sends.
+  // Post-sig dedup re-check: covers the race where a concurrent save
+  // for the same id slipped in during our `await verifyEd25519`.
+  // Without this, the next `insertRevision` call hits the UNIQUE
+  // constraint, throws, and the originator never sees an ack.
   if (revisionExists(handle, tag, id)) {
     if (DEBUG) console.log(`save (duplicate id ${id.slice(0, 8)}…) → ack-only`)
     send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
@@ -283,12 +356,8 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
     return
   }
-  // `keyframe` is part of the signed canonical bytes —
-  // `verifySaveSigAndCanonical` already rejected anything where the
-  // wire flag didn't match what the client signed (the canonical
-  // payload uses `=== true` strict-equality, see sign.js's
-  // `canonicalSave`), so a `true` here means the signer intended a
-  // keyframe.
+  // `keyframe === true` is what canonicalSave bound the signature
+  // to (strict equality); the signer's intent is unambiguous here.
   const keyframe = msg.keyframe === true
   insertRevision(handle, {
     tag,
@@ -299,7 +368,7 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
     ciphertext: msg.ciphertext,
     signature: msg.signature,
   })
-  if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${tag.slice(0, 12)}…`)
+  if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${debugTag(tag)}`)
   send(socket, {
     type: 'workspace-save-ack',
     workspaceTag: tag,
@@ -346,7 +415,7 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   if (typeof nonce !== 'string') return
   const ok = await verifySubscribeSig(msg, nonce)
   if (!ok) {
-    if (DEBUG) console.warn('reject subscribe: bad signature', msg.workspaceTag.slice(0, 12) + '…')
+    if (DEBUG) console.warn('reject subscribe: bad signature', debugTag(msg.workspaceTag))
     return
   }
   // Bail if the socket closed during the verify await. The close
@@ -356,7 +425,7 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   // no-op via `send`'s readyState gate, but the Set entry pins the
   // socket reference past close, blocking GC. Audit round-12.
   if (socket.readyState !== socket.OPEN) {
-    if (DEBUG) console.warn('reject subscribe: socket closed mid-verify', msg.workspaceTag.slice(0, 12) + '…')
+    if (DEBUG) console.warn('reject subscribe: socket closed mid-verify', debugTag(msg.workspaceTag))
     return
   }
   const tag = msg.workspaceTag
@@ -377,7 +446,7 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   // Null / missing → send the full chain.
   const fromId = typeof msg.from === 'string' ? msg.from : null
   const revisions = chainForWire(chainFrom(handle, tag, fromId))
-  if (DEBUG) console.log(`subscribe ${tag.slice(0, 12)}… from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
+  if (DEBUG) console.log(`subscribe ${debugTag(tag)} from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
 
@@ -394,10 +463,31 @@ function isUpgradePath(url: string | undefined): boolean {
 
 const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
 
-const httpServer = createServer((_req: HttpRequest, res: ServerResponse) => {
+const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
+  if (matchRoute(req.url) != null) {
+    // Track so SIGTERM mid-upload/download awaits handleRest before
+    // handle.close(). `httpServer.close()` waits for active requests
+    // too, but the WS plane's track() pattern is the canonical drain.
+    //
+    // Outer `.catch` is the unhandled-rejection guard for a stray
+    // throw OUTSIDE handleRest's internal PUT/GET try/catch blocks —
+    // e.g. a `deny()` write to an already-destroyed response, or a
+    // future code path the inner catches don't cover. Node 20+
+    // defaults `--unhandled-rejections=throw`, which would crash the
+    // server. Same pattern as the WS message handler's IIFE catch
+    // above. Logs and ensures the response is terminated so the TCP
+    // socket doesn't dangle.
+    const p = handleRest(objstoreRestDeps, req, res).catch((err) => {
+      console.warn('REST handler error:', (err as Error)?.stack ?? err)
+      if (res.headersSent) { try { res.destroy() } catch {} }
+      else { try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'internal' })) } catch {} }
+    })
+    track(p)
+    return
+  }
   // `Connection: close` so an HTTP/1.1 keep-alive client doesn't
   // hold the socket open expecting more requests on a server that
-  // only serves the WS upgrade — same reason `socket.end(...)`
+  // only serves a small REST surface — same reason `socket.end(...)`
   // below sends FIN immediately after the upgrade-rejection body.
   res.writeHead(404, { 'content-type': 'application/json', 'connection': 'close' })
   res.end(NOT_FOUND_BODY)
@@ -488,13 +578,28 @@ wss.on('connection', (socket: WebSocket, req) => {
       try {
         if (parsed.type === 'workspace-save') await handleSave(socket, parsed as SaveMsg)
         else if (parsed.type === 'workspace-subscribe') await handleSubscribe(socket, parsed as SubscribeMsg)
+        // Objstore control plane — bytes ride the REST plane via
+        // tokens these handlers mint. The Objstore*Msg types are
+        // weak shapes (every field `unknown`); the handlers narrow
+        // each field through their own validators on entry.
+        else if (parsed.type === 'objstore-put-begin') await objstore.handlePutBegin(socket, parsed as ObjstorePutBeginMsg)
+        else if (parsed.type === 'objstore-delete') await objstore.handleDelete(socket, parsed as ObjstoreDeleteMsg)
+        else if (parsed.type === 'objstore-list') await objstore.handleList(socket, parsed as ObjstoreListMsg)
+        else if (parsed.type === 'objstore-fetch') await objstore.handleFetch(socket, parsed as ObjstoreFetchMsg)
         // Heartbeat — application-level alive check the browser
         // WebSocket API doesn't expose at protocol level. Stateless,
         // unauthenticated; the security-critical paths (save /
         // subscribe) still verify signatures.
         else if (parsed.type === 'ping') send(socket, { type: 'pong' })
       } catch (err) {
-        console.warn('Handler error:', err)
+        // Forensic logging for unexpected throws — the handlers all
+        // have internal narrow catches (e.g. signature reject paths);
+        // anything reaching here is unexpected. Include the wire
+        // `type` so an operator can correlate to a specific code
+        // path, and prefer `.stack` over `.message` so the post-
+        // mortem has the throw site.
+        const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
+        console.warn(`Handler error (type=${typeStr}):`, (err as Error)?.stack ?? err)
       }
     })()
     track(handler)
@@ -519,7 +624,15 @@ wss.on('connection', (socket: WebSocket, req) => {
 })
 
 httpServer.on('listening', () => {
-  console.log(`DeepView triage-sync server: ws://${HOST}:${PORT}${WS_UPGRADE_PATH} (db: ${DB_PATH})`)
+  // Read the actual bound port from `httpServer.address()` rather
+  // than the `PORT` env constant. Operators (and the test harness)
+  // can boot with `PORT=0` to get an OS-assigned ephemeral port;
+  // the log line then carries the real bound number, not `0`.
+  // Server-side bind failure took the error path above, so
+  // `address()` is always a populated AddressInfo here.
+  const addr = httpServer.address()
+  const boundPort = typeof addr === 'object' && addr ? addr.port : PORT
+  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (db: ${DB_PATH}, objstore: ${OBJSTORE_DIR})`)
 })
 
 // Route bind / post-listen failures through `shutdown` so the
@@ -528,11 +641,19 @@ httpServer.on('listening', () => {
 // the launcher sees a confusing crash rather than the bind
 // failure. Audit round-9 M2.
 httpServer.on('error', (err: Error) => {
-  console.error('Server error:', err?.message ?? err)
+  console.error('Server error:', err?.stack ?? err)
   fireShutdown(1)
 })
 wss.on('error', (err: Error) => {
-  console.warn('WS server error:', err?.message ?? err)
+  // Symmetric with the http.Server error handler above — route
+  // through `fireShutdown(1)` so the launcher sees a non-zero exit.
+  // The re-entry escalation in `shutdown()` (round-13 audit) takes
+  // a `wss.error` arriving mid-graceful-SIGTERM and bumps
+  // `pendingExitCode` from 0 → 1; without `fireShutdown`, a pre-
+  // shutdown `wss.error` would log + drop and the launcher would
+  // never know to treat the process as failed.
+  console.error('WS server error:', err?.stack ?? err)
+  fireShutdown(1)
 })
 
 // `.catch` defends against an unguarded `await` slipping into
@@ -540,7 +661,7 @@ wss.on('error', (err: Error) => {
 // non-zero exit the launcher relies on.
 function fireShutdown(code: number): void {
   shutdown(code).catch((err) => {
-    console.warn('shutdown error:', (err as Error)?.message ?? err)
+    console.warn('shutdown error:', (err as Error)?.stack ?? err)
     process.exit(code === 0 ? 1 : code)
   })
 }
@@ -592,6 +713,10 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   // Don't keep the event loop alive solely for the grace timer —
   // wss.close resolution already drives shutdown progress.
   terminateTimer.unref?.()
+  // Stop the periodic reaper AND wait for any in-flight sweep
+  // (incl. the startup sweep) to finish before `handle.close()`
+  // below — otherwise a readdir / unlink would race a closed DB.
+  await stopReaper()
   // Free idle HTTP keep-alive sockets up front so the close()
   // below doesn't wait on them. Active in-flight requests still
   // get to finish; only sockets sitting in keep-alive limbo go.
@@ -624,4 +749,28 @@ async function shutdown(exitCode: number = 0): Promise<void> {
 process.on('SIGINT', () => fireShutdown(0))
 process.on('SIGTERM', () => fireShutdown(0))
 
+// Process-level catchalls so a stray rejection or uncaught exception
+// doesn't bypass `shutdown()` — Node 20+ defaults exit-on-unhandled-
+// rejection which would skip the in-flight handler drain and the DB
+// close. Log forensically (full stack), route through `fireShutdown(1)`
+// so the launcher records a non-zero exit and the same teardown path
+// runs as on a SIGTERM. Audit round-11 observability.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', (reason as Error)?.stack ?? reason)
+  fireShutdown(1)
+})
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err?.stack ?? err)
+  fireShutdown(1)
+})
+
+// Bind only after the startup orphan sweep finishes — otherwise a
+// fresh boot could serve traffic against tags whose on-disk state
+// still has residue from a prior crash. Top-level await is fine
+// for an entry-point ESM module (no other module imports this for
+// its exports — the side effect IS the program). `startupReap`
+// already resolves on any error (the reaper's own catch logs the
+// failure unconditionally and returns void), so no outer `.catch`
+// is needed here.
+await startupReap
 httpServer.listen(PORT, HOST)

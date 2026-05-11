@@ -29,6 +29,47 @@ const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 
 function b64url(bytes) { return Buffer.from(bytes).toString('base64url') }
 
+// Boot a spawned `server/index.ts` and resolve the OS-assigned port
+// from the listening banner. Accumulates stdout across `data` chunks
+// (child_process can split lines arbitrarily, so regex-per-chunk
+// misses a fragmented banner and times out). Removes the data
+// listeners on resolve/reject so no leaks survive the boot phase.
+function awaitListeningPort(proc, timeoutMs = 5_000) {
+  return new Promise((resolve, reject) => {
+    let buf = ''
+    let stderrBuf = ''
+    let settled = false
+    function onData(d) {
+      buf += String(d)
+      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
+      if (m) finish(null, Number(m[1]))
+    }
+    function onErrData(d) { stderrBuf += String(d) }
+    function onExit(code, signal) {
+      // Child died before printing the listening banner — surface the
+      // real reason (stderr first 400 chars) instead of timing out.
+      const detail = stderrBuf.slice(0, 400).trim() || `exit ${code}, signal ${signal}`
+      finish(new Error(`server exited during boot: ${detail}`))
+    }
+    function onError(err) { finish(err) }
+    function finish(err, port) {
+      if (settled) return
+      settled = true
+      clearTimeout(t)
+      proc.stdout.removeListener('data', onData)
+      proc.stderr.removeListener('data', onErrData)
+      proc.removeListener('exit', onExit)
+      proc.removeListener('error', onError)
+      if (err) reject(err); else resolve(port)
+    }
+    const t = setTimeout(() => finish(new Error('server boot timeout')), timeoutMs)
+    proc.stdout.on('data', onData)
+    proc.stderr.on('data', onErrData)
+    proc.once('exit', onExit)
+    proc.once('error', onError)
+  })
+}
+
 async function makeKp() {
   const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
   const jwk = await crypto.subtle.exportKey('jwk', kp.publicKey)
@@ -145,19 +186,16 @@ describe('triage-sync server', () => {
 
   before(async () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-'))
-    const port = 19000 + Math.floor(Math.random() * 1_000)
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
+    // `PORT: '0'` → OS-assigned ephemeral. Avoids collisions when
+    // `node --test` runs this file in parallel with others that spawn
+    // their own server (e.g. tests/sync-server-objstore.test.js).
+    // The actual port arrives via stdout in the listening-banner.
     serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-      serverProc.stdout.on('data', (d) => {
-        if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-      })
-      serverProc.stderr.on('data', () => {})
-    })
+    const port = await awaitListeningPort(serverProc)
+    serverUrl = `ws://127.0.0.1:${port}/api/sync`
   })
 
   after(async () => {
@@ -208,6 +246,66 @@ describe('triage-sync server', () => {
     // Sender doesn't see its own save echoed back.
     await c1.expectSilent(150)
     c1.ws.close(); c2.ws.close()
+  })
+
+  it('broadcast stringify-once: every subscriber receives byte-equal frame', async () => {
+    // Pins the `sendRaw(socket, payload)` path in server/index.ts's
+    // `broadcast()`: stringify ONCE, send the same string N times.
+    // A regression that calls `send(s, msg)` per subscriber would
+    // still parse-equal but could differ in key order or whitespace
+    // under a future V8 change; a regression that re-serialises
+    // would have a meaningful CPU + GC cost on a large catch-up
+    // broadcast. Direct byte equality is the cheap pin.
+    const { sk, tag } = await makeKp()
+    const c1 = await connect(serverUrl)
+    // 3 raw subscribers — attach the queue listener IMMEDIATELY after
+    // `new WebSocket()` (same pattern as `connect()` above), since
+    // the challenge frame can arrive concurrently with 'open' and a
+    // listener attached after `await open` may miss it.
+    const subs = [new WebSocket(serverUrl), new WebSocket(serverUrl), new WebSocket(serverUrl)]
+    const queues = subs.map((w) => {
+      const q = []
+      w.addEventListener('message', (event) => { q.push(event.data) })
+      return q
+    })
+    await Promise.all(subs.map((w) => new Promise((res, rej) => {
+      w.addEventListener('open', res, { once: true })
+      w.addEventListener('error', (e) => rej(e.error ?? new Error('ws error')), { once: true })
+    })))
+    async function awaitFrame(qi, predicate, timeoutMs = 5_000) {
+      const start = Date.now()
+      while (Date.now() - start < timeoutMs) {
+        for (let i = 0; i < queues[qi].length; i++) {
+          const data = queues[qi][i]
+          if (predicate(JSON.parse(data))) { queues[qi].splice(i, 1); return data }
+        }
+        await new Promise((r) => { setTimeout(r, 5) })
+      }
+      throw new Error(`awaitFrame[${qi}] timeout`)
+    }
+    // Grab each subscriber's per-connection challenge nonce.
+    const nonces = await Promise.all(queues.map(async (_, i) => {
+      const data = await awaitFrame(i, (m) => m.type === 'challenge')
+      return JSON.parse(data).nonce
+    }))
+    for (let i = 0; i < subs.length; i++) {
+      const sig = await signSubscribe(sk, tag, null, nonces[i])
+      subs[i].send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
+    }
+    // Drive a save on c1 (a 4th connection, not in `subs`).
+    await subscribe(c1, sk, tag)
+    const { msg } = await buildSave(sk, tag, null, 'broadcast-byte-equal')
+    c1.ws.send(JSON.stringify(msg))
+    // Wait for the non-empty workspace-state broadcast on each
+    // subscriber. The initial empty `workspace-state` after their
+    // own subscribe is filtered out by `revisions.length > 0`.
+    const [aData, bData, cData] = await Promise.all([0, 1, 2].map(
+      (i) => awaitFrame(i, (m) => m.type === 'workspace-state' && m.revisions && m.revisions.length > 0),
+    ))
+    // The critical assertion: byte-equal across all three subscribers.
+    assert.strictEqual(aData, bData, 'subscriber A and B receive byte-equal broadcast')
+    assert.strictEqual(bData, cData, 'subscriber B and C receive byte-equal broadcast')
+    c1.ws.close(); subs.forEach((w) => w.close())
   })
 
   it('stale base triggers a catch-up chain instead of an ack', async () => {
@@ -318,6 +416,26 @@ describe('triage-sync server', () => {
     c.ws.send(JSON.stringify({
       type: 'workspace-save', workspaceTag: tag, base: null,
       nonce: newlineNonce, ciphertext: b64url(new Uint8Array(16)),
+      signature: b64url(new Uint8Array(64)),
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
+  it('drops a save with `+/=` in workspaceTag (base64url-no-padding gate)', async () => {
+    // Audit round-9: workspaceTag is shared between triage-sync and
+    // objstore. objstore's TAG_RE accepts only base64url-no-padding
+    // (`[\w-]`). The save gate was accepting standard-base64 chars
+    // (`+/=`) too — a buggy or hostile client emitting a tag like
+    // `"AAA+BBB"` would pass the save gate, store its data under
+    // that exact string, but then be unable to use objstore for the
+    // same workspace (TAG_RE rejects `+`). Server now drops at the
+    // wire gate before the sig check, forcing clients onto the
+    // documented base64url-no-padding shape.
+    const c = await connect(serverUrl)
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: 'AAA+BBB', base: null,
+      nonce: b64url(new Uint8Array(12)), ciphertext: b64url(new Uint8Array(16)),
       signature: b64url(new Uint8Array(64)),
     }))
     await c.expectSilent(200)
@@ -937,20 +1055,13 @@ describe('triage-sync server', () => {
 describe('triage-sync server: graceful shutdown', () => {
   it('sends close code 1001 (going away) to live clients on SIGTERM', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
-    const port = 19000 + Math.floor(Math.random() * 1_000)
-    const url = `ws://127.0.0.1:${port}/api/sync`
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     try {
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-        proc.stdout.on('data', (d) => {
-          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-        })
-        proc.stderr.on('data', () => {})
-      })
+      const port = await awaitListeningPort(proc)
+      const url = `ws://127.0.0.1:${port}/api/sync`
       const ws = new WebSocket(url)
       await new Promise((resolve, reject) => {
         ws.addEventListener('open', resolve, { once: true })
@@ -988,20 +1099,13 @@ describe('triage-sync server: graceful shutdown', () => {
     const { default: net } = await import('node:net')
     const { createHash } = await import('node:crypto')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-stuck-'))
-    const port = 19000 + Math.floor(Math.random() * 1_000)
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tcp
     try {
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-        proc.stdout.on('data', (d) => {
-          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-        })
-        proc.stderr.on('data', () => {})
-      })
+      const port = await awaitListeningPort(proc)
       // Manual WebSocket handshake — `ws`-library client sockets
       // auto-respond to close frames, which is exactly what we need
       // to NOT do here.
@@ -1059,20 +1163,13 @@ describe('triage-sync server: graceful shutdown', () => {
     // terminate timer kicks in within the same 1 s grace.
     const { default: net } = await import('node:net')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-keepalive-'))
-    const port = 19000 + Math.floor(Math.random() * 1_000)
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tcp
     try {
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-        proc.stdout.on('data', (d) => {
-          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-        })
-        proc.stderr.on('data', () => {})
-      })
+      const port = await awaitListeningPort(proc)
       tcp = net.connect({ host: '127.0.0.1', port })
       tcp.on('error', () => {})
       tcp.on('data', () => {})  // consume + ignore server response

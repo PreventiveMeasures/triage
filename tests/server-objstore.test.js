@@ -1,0 +1,836 @@
+// `server/objstore/` — DB + filesystem layer for the v1.objstore
+// extension. WS-round-trip coverage lives in
+// tests/sync-server-objstore.test.js; this file targets the
+// storage module directly.
+
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+
+import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, lockKey, openObjstore } from '../server/objstore/store.ts'
+import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
+import { reapOrphans } from '../server/objstore/reaper.ts'
+
+let counter = 0
+function freshHandle() {
+  const dir = mkdtempSync(path.join(tmpdir(), `deepview-obj-${++counter}-`))
+  const db = new DatabaseSync(path.join(dir, 'data.db'))
+  const objDir = path.join(dir, 'objstore')
+  const handle = openObjstore(db, objDir)
+  return {
+    handle,
+    objDir,
+    cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }) },
+  }
+}
+
+// 8-byte b64url, 11 chars no padding (NONCE_PREFIX_RE)
+function b64u8() { return 'aaaaaaaaaaa' }
+// 32-byte b64url, 43 chars no padding (CONTENT_HASH_RE)
+function b64u32() { return 'a'.repeat(43) }
+// 64-byte b64url, 86 chars no padding (SIG_RE)
+function b64u64() { return 'a'.repeat(86) }
+
+function fakeBegin(over = {}) {
+  return {
+    workspaceTag: 'workspace-tag-1',
+    resourceTag: 'resource-tag-1',
+    prevVersion: null,
+    expectedChunks: 1,
+    expectedLength: 16,
+    contentHash: b64u32(),
+    noncePrefix: b64u8(),
+    signature: b64u64(),
+    ...over,
+  }
+}
+
+function writeStaging(filePath, bytes) {
+  const fd = openSync(filePath, 'a')
+  try { writeSync(fd, bytes) } finally { closeSync(fd) }
+}
+
+describe('openObjstore — schema', () => {
+  it('creates both tables on a fresh DB', () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      // No rows yet — listLive returns [], getLive returns null.
+      assert.deepEqual(listLive(handle, 'workspace-tag-1'), [])
+      assert.equal(getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
+    } finally { cleanup() }
+  })
+})
+
+describe('beginPut → commitPut happy path', () => {
+  it('produces a live row, version 1, file at the canonical path', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const begin = await beginPut(handle, fakeBegin())
+      assert.equal(begin.ok, true)
+      // Staging file path matches the layout — tests pin the on-disk
+      // shape so a future refactor can't silently change the path.
+      assert.equal(begin.filePath, stagingFilePath(objDir, 'workspace-tag-1', begin.stagingId))
+      writeStaging(begin.filePath, Buffer.alloc(16))
+      const commit = await commitPut(handle, {
+        workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin.stagingId,
+      })
+      assert.equal(commit.ok, true)
+      assert.equal(commit.row.version, 1)
+      assert.equal(commit.row.contentLength, 16)
+      // Live file exists at the canonical path; staging file gone.
+      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      assert.equal(statSync(live).size, 16)
+      assert.equal(existsSync(begin.filePath), false)
+      // listLive sees the row.
+      const rows = listLive(handle, 'workspace-tag-1')
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0].resourceTag, 'resource-tag-1')
+      assert.equal(rows[0].version, 1)
+    } finally { cleanup() }
+  })
+
+  it('a second PUT with prevVersion=1 bumps version to 2 and overwrites the file', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const begin1 = await beginPut(handle, fakeBegin({ expectedLength: 8 }))
+      writeStaging(begin1.filePath, Buffer.alloc(8))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin1.stagingId })
+      // Second PUT with the right prevVersion succeeds.
+      const begin2 = await beginPut(handle, fakeBegin({ prevVersion: 1, expectedLength: 24 }))
+      assert.equal(begin2.ok, true)
+      writeStaging(begin2.filePath, Buffer.alloc(24))
+      const commit2 = await commitPut(handle, {
+        workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin2.stagingId,
+      })
+      assert.equal(commit2.ok, true)
+      assert.equal(commit2.row.version, 2)
+      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      assert.equal(statSync(live).size, 24)
+    } finally { cleanup() }
+  })
+})
+
+describe('beginPut — version preconditions', () => {
+  it('rejects a fresh PUT with prevVersion=N when the row is missing', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const begin = await beginPut(handle, fakeBegin({ prevVersion: 1 }))
+      assert.equal(begin.ok, false)
+      assert.equal(begin.conflict, null)
+    } finally { cleanup() }
+  })
+
+  it('rejects a stale PUT after a successful overwrite — conflict echoes the live row', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b1 = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(b1.filePath, Buffer.alloc(4))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b1.stagingId })
+      // Now try to PUT against prevVersion=null again — should conflict.
+      const b2 = await beginPut(handle, fakeBegin({ prevVersion: null }))
+      assert.equal(b2.ok, false)
+      assert.equal(b2.conflict.version, 1)
+      assert.equal(b2.conflict.resourceTag, 'resource-tag-1')
+    } finally { cleanup() }
+  })
+})
+
+describe('beginPut — per-workspace resource cap (H1)', () => {
+  it('rejects the (MAX+1)th NEW resource with reason=workspace-full', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      // Fill the workspace up to the cap with distinct resourceTags.
+      // 4-byte body keeps each commit cheap; we only care about the
+      // row count here, not the bytes.
+      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
+        const tag = `r-${i.toString().padStart(4, '0')}`
+        const b = await beginPut(handle, fakeBegin({ resourceTag: tag, expectedLength: 4 }))
+        assert.equal(b.ok, true, `setup row #${i} should accept`)
+        writeStaging(b.filePath, Buffer.alloc(4))
+        const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
+        assert.equal(c.ok, true, `setup row #${i} should commit`)
+      }
+      assert.equal(listLive(handle, 'workspace-tag-1').length, MAX_RESOURCES_PER_WORKSPACE)
+      // The (MAX+1)th NEW resource must be rejected at begin — before
+      // any staging row / staging file lands on disk.
+      const over = await beginPut(handle, fakeBegin({ resourceTag: 'one-too-many', expectedLength: 4 }))
+      assert.equal(over.ok, false)
+      assert.equal(over.reason, 'workspace-full')
+    } finally { cleanup() }
+  })
+
+  it('allows re-uploads (new versions) of existing resources at the cap', async () => {
+    // The cap is on the live-row COUNT, not on the total writes. An
+    // existing resource can still receive new versions even when the
+    // workspace is full — no count change.
+    const { handle, cleanup } = freshHandle()
+    try {
+      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
+        const tag = `r-${i.toString().padStart(4, '0')}`
+        const b = await beginPut(handle, fakeBegin({ resourceTag: tag, expectedLength: 4 }))
+        writeStaging(b.filePath, Buffer.alloc(4))
+        await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
+      }
+      // Re-upload r-0000 as version 2 — should pass the cap check.
+      const reup = await beginPut(handle, fakeBegin({ resourceTag: 'r-0000', prevVersion: 1, expectedLength: 8 }))
+      assert.equal(reup.ok, true)
+      writeStaging(reup.filePath, Buffer.alloc(8))
+      const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'r-0000', stagingId: reup.stagingId })
+      assert.equal(c.ok, true)
+      assert.equal(c.row.version, 2)
+      assert.equal(listLive(handle, 'workspace-tag-1').length, MAX_RESOURCES_PER_WORKSPACE)
+    } finally { cleanup() }
+  })
+
+  it('caps are per-workspace, not global — a second workspace still has full headroom', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
+        const tag = `r-${i.toString().padStart(4, '0')}`
+        const b = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-A', resourceTag: tag, expectedLength: 4 }))
+        writeStaging(b.filePath, Buffer.alloc(4))
+        await commitPut(handle, { workspaceTag: 'ws-A', resourceTag: tag, stagingId: b.stagingId })
+      }
+      // ws-A is full; ws-B should accept a fresh new resource.
+      const b = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-B', resourceTag: 'r-0000', expectedLength: 4 }))
+      assert.equal(b.ok, true)
+    } finally { cleanup() }
+  })
+})
+
+describe('truncation invariant (M1) — a partial upload never becomes live', () => {
+  it('size-mismatch commitPut leaves live unchanged; same-resourceTag retry uses retry bytes', async () => {
+    // Audit M1 scenario: client uploads "foo", PUT truncates mid-stream
+    // (handler aborts → staging row + file cleaned). Client retries
+    // "foo" under the same resourceTag; the second attempt's bytes —
+    // and ONLY those bytes — become the live row.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      // Attempt 1: truncated.
+      const b1 = await beginPut(handle, fakeBegin({ resourceTag: 'foo', expectedLength: 100 }))
+      writeStaging(b1.filePath, Buffer.alloc(50))
+      const c1 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'foo', stagingId: b1.stagingId })
+      assert.equal(c1.ok, false)
+      assert.equal(c1.reason, 'size-mismatch')
+      // Critical invariant: no live row, no live file.
+      assert.equal(getLive(handle, 'workspace-tag-1', 'foo'), null)
+      assert.equal(existsSync(liveFilePath(objDir, 'workspace-tag-1', 'foo')), false)
+      // Cleanup the failed attempt (production path: REST handler calls
+      // abortPut on the size-mismatch return; we replicate that here).
+      await abortPut(handle, 'workspace-tag-1', 'foo', b1.stagingId)
+
+      // Attempt 2: same resourceTag, fresh stagingId, FULL upload with
+      // distinctive bytes so we can prove the live file is from the
+      // retry — not the truncated original's 50 zero bytes.
+      const retryBytes = Buffer.from('R'.repeat(100))
+      const b2 = await beginPut(handle, fakeBegin({ resourceTag: 'foo', expectedLength: 100 }))
+      assert.notEqual(b2.stagingId, b1.stagingId, 'retry gets a fresh stagingId')
+      writeStaging(b2.filePath, retryBytes)
+      const c2 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'foo', stagingId: b2.stagingId })
+      assert.equal(c2.ok, true)
+      assert.equal(c2.row.version, 1)
+      assert.equal(c2.row.contentLength, 100)
+      // Live file exists and contains the RETRY's bytes — not the
+      // truncated original's bytes.
+      const liveContent = readFileSync(liveFilePath(objDir, 'workspace-tag-1', 'foo'))
+      assert.equal(liveContent.length, 100)
+      assert.equal(Buffer.compare(liveContent, retryBytes), 0)
+    } finally { cleanup() }
+  })
+
+  it('staging files for distinct attempts under the same resourceTag have distinct paths', async () => {
+    // Reinforces the invariant: even if a truncated staging file is
+    // leaked (e.g. unlinkIfExists raced with the reaper), it cannot
+    // collide with the retry's staging file — paths are keyed by
+    // stagingId (which is randomly minted each begin), not by
+    // resourceTag.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b1 = await beginPut(handle, fakeBegin({ resourceTag: 'foo', expectedLength: 8 }))
+      const b2 = await beginPut(handle, fakeBegin({ resourceTag: 'foo', expectedLength: 8 }))
+      assert.notEqual(b1.stagingId, b2.stagingId)
+      assert.equal(b1.filePath, stagingFilePath(objDir, 'workspace-tag-1', b1.stagingId))
+      assert.equal(b2.filePath, stagingFilePath(objDir, 'workspace-tag-1', b2.stagingId))
+      assert.notEqual(b1.filePath, b2.filePath)
+    } finally { cleanup() }
+  })
+})
+
+describe('commitPut — size + race checks', () => {
+  it('rejects size-mismatch when the staged file is shorter than expected', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 100 }))
+      writeStaging(b.filePath, Buffer.alloc(50))
+      const c = await commitPut(handle, {
+        workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId,
+      })
+      assert.equal(c.ok, false)
+      assert.equal(c.reason, 'size-mismatch')
+      // The row is NOT created — listLive stays empty.
+      assert.equal(listLive(handle, 'workspace-tag-1').length, 0)
+    } finally { cleanup() }
+  })
+
+  it('rejects on conflict: a competing commit landed between our begin and commit', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      // Two concurrent beginPuts (same prevVersion=null), commit the
+      // first; the second must see a conflict at commit time.
+      const a = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(a.filePath, Buffer.alloc(4))
+      writeStaging(b.filePath, Buffer.alloc(4))
+      const c1 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: a.stagingId })
+      assert.equal(c1.ok, true)
+      const c2 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      assert.equal(c2.ok, false)
+      assert.equal(c2.reason, 'conflict')
+      assert.equal(c2.conflict.version, 1)
+    } finally { cleanup() }
+  })
+
+  it('returns no-staging for an unknown stagingId', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const c = await commitPut(handle, {
+        workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: 'never-seen-before',
+      })
+      assert.equal(c.ok, false)
+      assert.equal(c.reason, 'no-staging')
+    } finally { cleanup() }
+  })
+
+  it('maps a vanished staging file (raced abort / reaper) to io-error, not size-mismatch', async () => {
+    // PR #4 review: a stat / rename failure inside commitPut is a
+    // server-side fault (EACCES / EIO / racing abort), not a
+    // client length mismatch — REST maps `io-error` to HTTP 500
+    // while `size-mismatch` would map to HTTP 400.
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 8 }))
+      writeStaging(b.filePath, Buffer.alloc(8))
+      // Simulate a racing abort / reaper unlinking the staging
+      // file after the staging row was written.
+      rmSync(b.filePath)
+      const c = await commitPut(handle, {
+        workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId,
+      })
+      assert.equal(c.ok, false)
+      assert.equal(c.reason, 'io-error')
+      // Still no live row.
+      assert.equal(listLive(handle, 'workspace-tag-1').length, 0)
+    } finally { cleanup() }
+  })
+})
+
+describe('abortPut — cleanup', () => {
+  it('drops the staging row and unlinks the staging file; idempotent on re-call', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      assert.equal(existsSync(b.filePath), true)
+      await abortPut(handle, 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.equal(existsSync(b.filePath), false)
+      // Re-call is a no-op (no throw).
+      await abortPut(handle, 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+    } finally { cleanup() }
+  })
+})
+
+describe('deleteObject', () => {
+  it('drops the row + file when prevVersion matches', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(b.filePath, Buffer.alloc(4))
+      const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      assert.equal(c.ok, true)
+      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      assert.equal(existsSync(live), true)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1)
+      assert.equal(d.ok, true)
+      assert.equal(d.deletedVersion, 1)
+      assert.equal(existsSync(live), false)
+      assert.equal(getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
+    } finally { cleanup() }
+  })
+
+  it('returns a conflict when prevVersion mismatches', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(b.filePath, Buffer.alloc(4))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 99)
+      assert.equal(d.ok, false)
+      assert.equal(d.reason, 'conflict')
+      assert.equal(d.conflict.version, 1)
+    } finally { cleanup() }
+  })
+
+  it('idempotent: prevVersion=null on a missing row succeeds with sentinel deletedVersion=0', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', null)
+      assert.equal(d.ok, true)
+      assert.equal(d.deletedVersion, 0)
+    } finally { cleanup() }
+  })
+})
+
+describe('reapOrphans', () => {
+  it('unlinks committed-name files whose row was dropped', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      // Manufacture a stranded committed file: PUT + commit, then
+      // simulate a delete that crashed pre-unlink by dropping the
+      // row directly.
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(b.filePath, Buffer.alloc(4))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      handle.deleteLive.run('workspace-tag-1', 'resource-tag-1') // direct row drop
+      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      assert.equal(existsSync(live), true)
+      await reapOrphans(handle)
+      assert.equal(existsSync(live), false)
+    } finally { cleanup() }
+  })
+
+  it('drops staging rows older than the TTL and unlinks their files', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      // Backdate the staging row 2h.
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
+        Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
+      )
+      await reapOrphans(handle)
+      const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      assert.equal(existsSync(stagingFile), false)
+      // Row dropped too.
+      const stagingRow = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.equal(stagingRow, undefined)
+    } finally { cleanup() }
+  })
+
+  it('reaper re-checks begun_at inside the lock: refresh landing during a reap-acquire wins (F1)', async () => {
+    // Audit F1: the reaper's TTL check used the pre-lock snapshot. A
+    // REST PUT that finished a slow body, called refreshStagingBegunAt
+    // (outside lock), and queued behind the reaper for the commit
+    // lock would lose: reaper acquires lock first, sees row exists,
+    // unlinks + drops the row → commit gets 410. The fix re-evaluates
+    // the row's `begun_at` against current time INSIDE the lock so a
+    // refresh that landed between snapshot and lock-acquire is
+    // honored.
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      // Backdate to past TTL so the snapshot tags this as stale.
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
+        Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
+      )
+      // Pre-acquire the per-resource lock — reaper queues behind us.
+      let release
+      const acquired = handle.lock.run(lockKey('workspace-tag-1', 'resource-tag-1'), () => new Promise((r) => { release = r }))
+      const sweep = reapOrphans(handle)
+      // Yield so reaper progresses to its lock.run() call.
+      await new Promise((r) => { setImmediate(r) })
+      // Refresh while we still hold the lock — exactly the REST
+      // PUT's last action before queuing for the commit lock.
+      handle.refreshStagingBegunAt.run(Date.now(), 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      release()
+      await acquired
+      await sweep
+      // Row + file MUST survive: reaper's inside-lock re-check saw
+      // the fresh begun_at and bailed.
+      assert.equal(existsSync(b.filePath), true, 'reaper must not unlink a row whose refresh landed mid-sweep')
+      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.ok(row, 'staging row preserved by the inside-lock TTL re-check')
+    } finally { cleanup() }
+  })
+
+  it('refreshStagingBegunAt restamps the row so a slow upload that crosses TTL still commits', async () => {
+    // Audit H4: a long upload could cross the 1h staging TTL during
+    // body-streaming. The REST handler calls `refreshStagingBegunAt`
+    // right after the on-disk size check passes but before entering
+    // the commit lock, so the TTL effectively counts from upload-
+    // done, not begin-issued.
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      // Backdate to past the 1h TTL — without a refresh, the reaper
+      // would treat this as stale and drop it.
+      const stale = Date.now() - 2 * 60 * 60 * 1000
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
+        stale, b.stagingId,
+      )
+      // Refresh — mimics what handleRestPutLocked does right before
+      // the commit lock acquire.
+      const fresh = Date.now()
+      handle.refreshStagingBegunAt.run(fresh, 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      // Reaper sees a non-stale row → preserves both row + file.
+      await reapOrphans(handle)
+      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.ok(row, 'refresh restamps begun_at past the TTL boundary')
+      // begun_at is now fresh, not stale.
+      const begunAt = handle.db.prepare(`SELECT begun_at FROM workspace_object_staging WHERE staging_id = ?`).get(b.stagingId).begun_at
+      assert.ok(begunAt >= fresh, 'begun_at reflects the refresh time, not the original begin time')
+    } finally { cleanup() }
+  })
+
+  it('preserves staging rows newer than the TTL', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      await reapOrphans(handle) // immediately — should be no-op
+      const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      assert.equal(existsSync(stagingFile), true)
+    } finally { cleanup() }
+  })
+
+  it('sweeps orphan staging files whose row is gone', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      // Drop the row but leave the file — simulates commit that
+      // dropped the staging row but crashed before rename.
+      handle.db.prepare(`DELETE FROM workspace_object_staging WHERE staging_id = ?`).run(b.stagingId)
+      await reapOrphans(handle)
+      const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      assert.equal(existsSync(stagingFile), false)
+    } finally { cleanup() }
+  })
+
+  it('skips unlinking a freshly-committed file when a commit lands mid-sweep (lock + recheck)', async () => {
+    // Audit finding: the reaper used to read the live-row set then
+    // unlink across an await boundary. A concurrent delete →
+    // put-begin → commit could land a fresh row + file between the
+    // snapshot and the unlink, and the reaper would unlink the
+    // freshly-committed live file. The fix: re-check `selectLiveOne`
+    // inside the per-resource lock before each unlink.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      // Drop a stranded `.bin` file (no row yet) — the shape the
+      // reaper would normally unlink.
+      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      mkdirSync(path.dirname(live), { recursive: true })
+      writeFileSync(live, Buffer.from('would-be-committed'))
+      // Pre-acquire the per-resource lock to model an in-flight
+      // commit holding it. Reaper will queue behind us.
+      let release
+      const acquired = handle.lock.run(lockKey('workspace-tag-1', 'resource-tag-1'), () => new Promise((r) => { release = r }))
+      // Kick the sweep — reaper observes no live row, queues on the
+      // lock for the unlink-step.
+      const sweep = reapOrphans(handle)
+      // Yield so the reaper progresses to the lock.run() call.
+      await new Promise((r) => { setImmediate(r) })
+      // Simulate the commit landing its row while we still hold the
+      // lock — the upsertLive insert is exactly what commitPut does
+      // atomically inside the same lock.
+      handle.upsertLive.run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, 1, b64u8(), b64u64(), Date.now())
+      release()
+      await acquired
+      await sweep
+      // The file MUST still exist — reaper's re-check saw the row
+      // and skipped the unlink.
+      assert.equal(existsSync(live), true, 'reaper must not unlink a file whose row landed mid-sweep')
+      const row = handle.selectLiveOne.get('workspace-tag-1', 'resource-tag-1')
+      assert.ok(row, 'live row still present')
+    } finally { cleanup() }
+  })
+
+  it('preserves a freshly-begun staging file when beginPut races the orphan-file sweep (per-file row lookup)', async () => {
+    // Audit H1: between the orphan-file sweep's readdir and unlink,
+    // a concurrent beginPut could insert a row + the REST PUT could
+    // create the staging file. A snapshot-based check would miss
+    // the just-inserted row and unlink the file mid-upload. The fix
+    // is a per-file row lookup right before the unlink.
+    const { handle, cleanup } = freshHandle()
+    try {
+      // Stage a beginPut: row inserted, file created at staging path.
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      // Sanity: file exists, row exists (well within TTL).
+      assert.equal(existsSync(b.filePath), true)
+      // Run the reaper. The orphan-file sweep should see the file,
+      // look up the row by (ws, sid), find it, and skip the unlink.
+      await reapOrphans(handle)
+      assert.equal(existsSync(b.filePath), true, 'reaper must not unlink the file of a live staging row')
+      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.ok(row, 'staging row still present')
+    } finally { cleanup() }
+  })
+
+  it('preserves the staging file of a row whose resource_tag is malformed (valid ws+sid pin the file)', async () => {
+    // PR #4 review: a malformed `resource_tag` shouldn't make the
+    // orphan-file sweep unlink the staging file that the (still
+    // present) row points at. The path is built from (ws_tag,
+    // staging_id) only; the row stays in the DB (logged), and the
+    // file's staging_id IS bucketed so the file sweep skips it.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const sid = 'a'.repeat(22) // valid base64url sid shape
+      // Hand-insert a row with a valid ws+sid but a malformed
+      // resource_tag (slash forbidden in base64url).
+      handle.db.prepare(`
+        INSERT INTO workspace_object_staging
+          (workspace_tag, resource_tag, staging_id, prev_version,
+           expected_chunks, expected_length, content_hash,
+           nonce_prefix, signature, begun_at)
+        VALUES (?, ?, ?, NULL, 1, 1, ?, ?, ?, ?)
+      `).run('workspace-tag-1', 'bad/resource', sid, b64u32(), b64u8(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
+      // Drop a staging file that the row points at.
+      const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', sid)
+      mkdirSync(path.dirname(stagingFile), { recursive: true })
+      writeFileSync(stagingFile, Buffer.from('would-be-corrupted'))
+      await reapOrphans(handle)
+      // Row stays — reapStaleStagingRows skips malformed; we don't
+      // delete from the DB. File stays — the orphan-file sweep saw
+      // the staging_id in the bucketed known set.
+      assert.equal(existsSync(stagingFile), true, 'reaper must preserve staging files pinned by a (malformed-other-field) row')
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE staging_id = ?`).get(sid)
+      assert.ok(row, 'malformed-resource_tag row should not be deleted by the reaper')
+    } finally { cleanup() }
+  })
+
+  it('skips a staging row with a malformed staging_id (path-traversal guard)', async () => {
+    // PR #4 review: every row field that flows into a filesystem
+    // path is re-validated. A tampered row with `../etc/passwd`
+    // shouldn't lead the reaper into unlinking outside OBJSTORE_DIR.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      // Hand-insert a row with a path-bearing staging_id and a
+      // begun_at well past the TTL so the reaper would unlink if
+      // the validator weren't there.
+      handle.db.prepare(`
+        INSERT INTO workspace_object_staging
+          (workspace_tag, resource_tag, staging_id, prev_version,
+           expected_chunks, expected_length, content_hash,
+           nonce_prefix, signature, begun_at)
+        VALUES (?, ?, ?, NULL, 1, 1, ?, ?, ?, ?)
+      `).run('workspace-tag-1', 'resource-tag-1', '../../etc/passwd',
+        b64u32(), b64u8(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
+      // Drop a canary file outside objDir to prove we wouldn't
+      // touch it even if the path resolved through `..`.
+      const canary = path.join(objDir, '..', 'reaper-canary')
+      writeStaging(canary, Buffer.from('do not delete'))
+      await reapOrphans(handle)
+      assert.equal(existsSync(canary), true, 'reaper must not traverse outside its dir')
+      // Row stays in place (skipped rather than acted on).
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE staging_id = ?`).get('../../etc/passwd')
+      assert.ok(row, 'malformed-staging_id row should not be deleted by the reaper')
+      rmSync(canary)
+    } finally { cleanup() }
+  })
+})
+
+describe('readFileSync end-to-end', () => {
+  it('round-trips a payload byte-for-byte across put → commit → file read', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const payload = Buffer.from('the bytes that the relay never decrypts', 'utf8')
+      const b = await beginPut(handle, fakeBegin({ expectedLength: payload.byteLength }))
+      writeStaging(b.filePath, payload)
+      const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      assert.equal(c.ok, true)
+      const stored = readFileSync(liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1'))
+      assert.deepEqual(stored, payload)
+    } finally { cleanup() }
+  })
+})
+
+describe('input validation', () => {
+  it('rejects non-base64url tag shapes at the wire boundary', async () => {
+    // Spot-check the validator regexes by importing them.
+    const { isValidTag, isValidContentHash, isValidNoncePrefix, isValidSignature, isValidStagingId } = await import('../server/objstore/store.ts')
+    assert.equal(isValidTag(''), false)
+    assert.equal(isValidTag('a'.repeat(257)), false, 'caps at 256 chars')
+    assert.equal(isValidTag('a/b'), false, 'no `/` in base64url')
+    assert.equal(isValidTag('valid_tag-1'), true)
+    assert.equal(isValidContentHash('a'.repeat(43)), true)
+    assert.equal(isValidContentHash('a'.repeat(42)), false)
+    assert.equal(isValidNoncePrefix('a'.repeat(11)), true)
+    assert.equal(isValidNoncePrefix('a'.repeat(10)), false)
+    assert.equal(isValidSignature('a'.repeat(86)), true)
+    assert.equal(isValidSignature('a'.repeat(85)), false)
+    assert.equal(isValidStagingId('a'.repeat(22)), true)
+    assert.equal(isValidStagingId('a'.repeat(21)), false)
+    assert.equal(isValidStagingId('../../etc/passwd'), false, 'path-bearing staging_id rejected')
+  })
+})
+
+describe('token payload validation', () => {
+  it('rejects a token whose `len` is past 2^53-1 (unsafe-integer round-trip)', async () => {
+    // PR #4 audit: token payload `len` / `ver` need `Number.isSafeInteger`,
+    // not `Number.isInteger` — an unsafe-but-integer value round-trips
+    // through IEEE-754 (e.g. `2 ** 53 + 1 === 2 ** 53`) and could
+    // spoof equality against a different actual Content-Length /
+    // live row version.
+    const { newTokenSecret, signToken, verifyToken } = await import('../server/objstore/tokens.ts')
+    const secret = newTokenSecret()
+    const okPayload = { op: 'put', tag: 't', res: 'r', sid: 's', len: 1024, exp: Date.now() + 60_000 }
+    assert.ok(verifyToken(secret, signToken(secret, okPayload)))
+    // Past the safe-integer ceiling — must reject.
+    const badLen = signToken(secret, { ...okPayload, len: Number.MAX_SAFE_INTEGER + 1 })
+    assert.equal(verifyToken(secret, badLen), null)
+    const badVer = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: Number.MAX_SAFE_INTEGER + 1, exp: Date.now() + 60_000 })
+    assert.equal(verifyToken(secret, badVer), null)
+  })
+
+  it('verifyToken rejects a forged signature even when payload shape is valid', async () => {
+    const { newTokenSecret, signToken, verifyToken } = await import('../server/objstore/tokens.ts')
+    const secret = newTokenSecret()
+    const otherSecret = newTokenSecret()
+    const tok = signToken(otherSecret, { op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: Date.now() + 60_000 })
+    assert.equal(verifyToken(secret, tok), null)
+  })
+
+  it('verifyToken rejects an expired token', async () => {
+    const { newTokenSecret, signToken, verifyToken } = await import('../server/objstore/tokens.ts')
+    const secret = newTokenSecret()
+    const exp = Date.now() - 1
+    const tok = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: 1, exp })
+    assert.equal(verifyToken(secret, tok), null)
+  })
+
+  it('extractBearer is case-insensitive on scheme but strict on shape', async () => {
+    const { extractBearer } = await import('../server/objstore/tokens.ts')
+    assert.equal(extractBearer('Bearer abc.def'), 'abc.def')
+    assert.equal(extractBearer('bearer abc.def'), 'abc.def')
+    assert.equal(extractBearer('Bearer  abc.def  '), 'abc.def', 'trailing whitespace tolerated')
+    assert.equal(extractBearer('Basic abc.def'), null)
+    assert.equal(extractBearer('Bearer'), null, 'no token component')
+    assert.equal(extractBearer(undefined), null)
+    assert.equal(extractBearer(null), null)
+    // `\s+` accepts tab + multiple-space separators (RFC 7235 §2.1
+    // allows tab between scheme + token). Pin so a future tightening
+    // to `[ ]+` would fail the test rather than break clients.
+    assert.equal(extractBearer('Bearer\tabc.def'), 'abc.def', 'tab separator allowed by \\s+')
+    assert.equal(extractBearer('Bearer \t abc.def'), 'abc.def', 'mixed whitespace allowed')
+    // Whitespace-only after `Bearer` → no token captured by `(\S+)`.
+    assert.equal(extractBearer('Bearer   '), null, 'whitespace-only after scheme')
+    assert.equal(extractBearer(''), null, 'empty header')
+  })
+
+  it('verifyToken rejects payloads with bad op / negative len / negative ver / non-finite exp', async () => {
+    const { newTokenSecret, signToken, verifyToken } = await import('../server/objstore/tokens.ts')
+    const secret = newTokenSecret()
+    const now = Date.now() + 60_000
+    // Helper: sign whatever payload shape we pass (signToken doesn't
+    // validate; verifyToken does).
+    const sign = (payload) => signToken(secret, payload)
+    // Missing op.
+    assert.equal(verifyToken(secret, sign({ tag: 't', res: 'r', exp: now })), null)
+    // Unknown op.
+    assert.equal(verifyToken(secret, sign({ op: 'patch', tag: 't', res: 'r', exp: now })), null)
+    // Negative len (put).
+    assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: -1, exp: now })), null)
+    // Negative ver (get).
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: -1, exp: now })), null)
+    // Non-safe-int exp.
+    assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: Number.MAX_SAFE_INTEGER + 1 })), null)
+    // NaN exp.
+    assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: NaN })), null)
+    // Non-string sid (put).
+    assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 123, len: 1, exp: now })), null)
+    // Non-number ver (get).
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 'v1', exp: now })), null)
+    // Sanity: well-formed put + get still pass.
+    const okPut = verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: now }))
+    assert.equal(okPut?.op, 'put')
+    const okGet = verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 1, exp: now }))
+    assert.equal(okGet?.op, 'get')
+  })
+})
+
+describe('KeyedAsyncLock', () => {
+  // The async mutex is the only thing keeping `commitPut` /
+  // `deleteObject` race-free across their `await` boundaries
+  // (PR #4 audit, sub-agent finding #2). Tested transitively via
+  // the WS+REST round-trips, but the integration tests can't pin
+  // ordering reliably enough to catch a subtle regression in the
+  // tail-chaining or refcount-GC. Cover the contract directly.
+  it('serialises operations on the same key (FIFO of acquire order)', async () => {
+    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
+    const lock = new KeyedAsyncLock()
+    const order = []
+    const a = lock.run('k', async () => {
+      order.push('a-start')
+      await new Promise((r) => { setTimeout(r, 30) })
+      order.push('a-end')
+    })
+    const b = lock.run('k', async () => {
+      order.push('b-start')
+      await new Promise((r) => { setTimeout(r, 5) })
+      order.push('b-end')
+    })
+    await Promise.all([a, b])
+    assert.deepEqual(order, ['a-start', 'a-end', 'b-start', 'b-end'])
+  })
+
+  it('does not block operations on different keys', async () => {
+    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
+    const lock = new KeyedAsyncLock()
+    let releaseA, releaseB
+    const gateA = new Promise((r) => { releaseA = r })
+    const gateB = new Promise((r) => { releaseB = r })
+    const a = lock.run('ka', async () => { await gateA; return 'a' })
+    const b = lock.run('kb', async () => { await gateB; return 'b' })
+    // Resolve B first — if the keys serialised through a single
+    // queue, B would block on A forever and we'd time out.
+    releaseB()
+    assert.equal(await b, 'b')
+    releaseA()
+    assert.equal(await a, 'a')
+  })
+
+  it('GCs the entry after refcount drops to zero', async () => {
+    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
+    const lock = new KeyedAsyncLock()
+    await lock.run('k', async () => {})
+    // Probe internal state to pin the cleanup contract — left
+    // unbounded the Map grows by every distinct key ever seen.
+    assert.equal(lock.size, 0)
+  })
+
+  it('survives an inner fn rejection without poisoning the queue', async () => {
+    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
+    const lock = new KeyedAsyncLock()
+    await assert.rejects(() => lock.run('k', () => { throw new Error('boom') }), /boom/u)
+    const after = await lock.run('k', () => Promise.resolve(42))
+    assert.equal(after, 42)
+    assert.equal(lock.size, 0, 'failed acquirer must release its slot')
+  })
+})
+
+describe('directory layout', () => {
+  it('places committed files under ${OBJSTORE_DIR}/${tag}/${resourceTag}.bin', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(b.filePath, Buffer.alloc(4))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      const tagDir = path.join(objDir, 'workspace-tag-1')
+      const entries = readdirSync(tagDir).filter((n) => n.endsWith('.bin'))
+      assert.deepEqual(entries, ['resource-tag-1.bin'])
+    } finally { cleanup() }
+  })
+
+  it('places staging files under ${OBJSTORE_DIR}/${tag}/.staging/${stagingId}.bin', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      assert.equal(path.dirname(b.filePath), path.join(objDir, 'workspace-tag-1', '.staging'))
+      assert.equal(path.basename(b.filePath), `${b.stagingId}.bin`)
+    } finally { cleanup() }
+  })
+})
