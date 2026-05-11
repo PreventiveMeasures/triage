@@ -11,6 +11,7 @@ import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js
 import { listWorkspaces } from '../client/workspaces.js'
 import { setRedraw } from '../client/triage-sync.ts'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
+import { runLegacyOriginCheck } from './view/origin-check.js'
 import { render } from './view/render.js'
 import './view/events.js'
 import './view/theme.js'
@@ -44,6 +45,13 @@ setRedraw(render)
 installHydrationConflictResolver()
 
 ;(async () => {
+  // Legacy-origin redirect: deepaudit.dev users with no local data
+  // bounce silently to triage.space; users with data get a confirm
+  // dialog. Either resolves to a navigation that supersedes the rest
+  // of this boot, so a `true` return short-circuits the file-restore
+  // path below — running it would re-touch OPFS / state.* in a tab
+  // that's about to unload.
+  if (await runLegacyOriginCheck()) return
   try {
     if (localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
   } catch {}

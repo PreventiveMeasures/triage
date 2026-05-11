@@ -668,6 +668,72 @@
   }
 }
 
+/* `<origin-migration-dialog>` — boot-time prompt for legacy hosts
+   (deepaudit.dev, chalker.github.io/deepview/) telling the user
+   the view has moved to triage.space. Same frame look as the
+   other deepview dialogs. Light DOM so these rules apply directly. */
+.origin-migration-dialog {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 560px; width: min(94vw, 560px);
+  margin-inline: auto;
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+
+  & .om-head h3 {
+    margin: 0 0 .35rem; font-size: 1rem; font-weight: 600;
+  }
+  & .om-head p {
+    margin: 0 0 .9rem; color: var(--muted); font-size: .82rem;
+  }
+  & .om-body p {
+    margin: 0 0 .7rem; font-size: .85rem; line-height: 1.45;
+  }
+  & code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .82em;
+    padding: 1px .3rem;
+    background: rgb(from var(--text) r g b / .06);
+    border-radius: 3px;
+    word-break: break-all;
+  }
+  /* Link to triage.space — keep the same monospace chip framing as
+     <code>, plus an accent colour and underline so it reads as a
+     link. Hover bumps brightness slightly to mirror the primary
+     button affordance. */
+  & .om-link {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .82em;
+    padding: 1px .3rem;
+    background: rgb(from var(--accent) r g b / .1);
+    border-radius: 3px;
+    word-break: break-all;
+    color: var(--accent);
+    text-decoration: underline;
+
+    &:hover { filter: brightness(1.15); }
+  }
+  & .om-actions {
+    display: flex; justify-content: flex-end; gap: .5rem;
+    flex-wrap: wrap;
+    margin-top: .9rem;
+    padding-top: .8rem;
+    border-top: 1px solid var(--border);
+  }
+  & .om-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 5px;
+    padding: .35rem .9rem; cursor: pointer;
+    font: inherit; font-size: .8rem;
+
+    &:hover { border-color: var(--accent); color: var(--accent); }
+    &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    &.primary:hover { filter: brightness(1.08); }
+  }
+}
+
 /* `<comment-dialog>` — multi-line editor for the per-finding
    .mark-comment button. Same frame look as the other deepview
    dialogs (border, shadow, centered, blurred backdrop) plus a
