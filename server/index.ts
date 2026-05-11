@@ -24,6 +24,16 @@
 //   client → server  ping                 — heartbeat
 //   server → client  pong                 — heartbeat reply
 //   server → client  workspace-save-ack  { workspaceTag, base, id }
+//   server → client  workspace-save-error { workspaceTag, base, reason }
+//                                          — explicit failure surface for
+//                                          the legit-signer case where
+//                                          the server rejects a signed
+//                                          save (e.g. `too-large` past
+//                                          MAX_CIPHERTEXT_LEN). Sent
+//                                          AFTER sig verify so the
+//                                          response only reaches a
+//                                          legitimate seed holder; shape
+//                                          attacks still drop silently.
 //   server → client  workspace-subscribed { workspaceTag } — explicit
 //                                          handshake-complete ack so
 //                                          the client can flip its
@@ -193,25 +203,31 @@ function broadcast(tag: string, msg: object, except: WebSocket): void {
   }
 }
 
+// Save-message field gate: base64-or-base64url alphabet, length-
+// bounded. Critical guarantee is "no newlines" — without it,
+// `nonce = "AAA\nBBB"` + `ciphertext = "CCC"` produces the same
+// canonical bytes as `nonce = "AAA"` + `ciphertext = "BBB\nCCC"`
+// (canonicalSave newline-joins), causing same-id collisions across
+// distinct stored fields. Client uses standard base64 (`+/=`) for
+// nonce/ciphertext and base64url for tag/sig/base — union alphabet
+// covers both. Short-field length caps bound the canonical and
+// `MAX_CIPHERTEXT_LEN` bounds chain-bloat; the ciphertext size
+// check runs post-sig so the error response (`workspace-save-error`)
+// only reaches a legit signer.
+const SAVE_FIELD_RE = /^[\w+/=-]+$/u
+const MAX_FIELD_LEN = 128
+const MAX_CIPHERTEXT_LEN = 2 * 1024 * 1024
+
+const validSaveField = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && SAVE_FIELD_RE.test(s)
+// Ciphertext: same alphabet but the size cap is checked POST-sig (to
+// avoid leaking the cap to unauthenticated probes). Pre-sig only the
+// shape gates apply; `maxPayload` (4 MiB) already bounds the total
+// frame, so the worst-case bytes are still bounded.
+const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && SAVE_FIELD_RE.test(s)
+
 async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
-  if (typeof msg.workspaceTag !== 'string') return
-  if (typeof msg.nonce !== 'string') return
-  if (typeof msg.ciphertext !== 'string') return
-  // Defensive type-check for `signature` even though
-  // `verifySaveSigAndCanonical` rejects non-string sigs internally:
-  // narrows the field to `string` for tsc so the downstream
-  // `insertRevision({ ..., signature: msg.signature })` doesn't
-  // require an `as string` cast.
-  if (typeof msg.signature !== 'string') return
-  // `base` is `string | null` per the wire contract. The signed
-  // canonical path coerces with `String(base)` while the storage /
-  // head-comparison paths use the raw value — a non-string non-null
-  // value from a legit signer would canonicalise to one shape (e.g.
-  // `'[object Object]'`) but fail the SQLite STRICT TEXT insert,
-  // throwing inside `insertRevision` after the signature check
-  // succeeded. Reject at the wire gate so the symptom is "save
-  // dropped silently" rather than a swallowed handler exception.
-  if (msg.base != null && typeof msg.base !== 'string') return
+  // `base` is `string | null`; null is the keyframe-root marker.
+  if (!validSaveField(msg.workspaceTag, MAX_FIELD_LEN) || !validSaveField(msg.nonce, MAX_FIELD_LEN) || !validCiphertextShape(msg.ciphertext) || !validSaveField(msg.signature, MAX_FIELD_LEN) || (msg.base != null && !validSaveField(msg.base, MAX_FIELD_LEN))) return
   // Verify the signature AND capture the canonical bytes in one
   // pass — the revision id (below) hashes the EXACT bytes the
   // signature covered, so the stored id is provably tied to the
@@ -222,6 +238,14 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   const { ok, canonical } = await verifySaveSigAndCanonical(msg)
   if (!ok) {
     if (DEBUG) console.warn('reject save: bad signature', msg.workspaceTag.slice(0, 12) + '…')
+    return
+  }
+  // Size policy — emit an explicit error so the client can surface
+  // the failure to the user. Without this, an oversized save hangs
+  // forever in the client's `pending` slot (no ack, no rebase).
+  if (msg.ciphertext.length > MAX_CIPHERTEXT_LEN) {
+    if (DEBUG) console.warn(`reject save: ciphertext too large (${msg.ciphertext.length} > ${MAX_CIPHERTEXT_LEN})`)
+    send(socket, { type: 'workspace-save-error', workspaceTag: msg.workspaceTag, base: msg.base ?? null, reason: 'too-large' })
     return
   }
   const id = await computeRevisionIdFromCanonical(canonical)
@@ -378,7 +402,12 @@ const httpServer = createServer((_req: HttpRequest, res: ServerResponse) => {
   res.writeHead(404, { 'content-type': 'application/json', 'connection': 'close' })
   res.end(NOT_FOUND_BODY)
 })
-const wss = new WebSocketServer({ noServer: true })
+// 4 MiB cap leaves headroom above MAX_CIPHERTEXT_LEN (2 MiB) for
+// the JSON envelope + base64 overhead. `ws` defaults to 100 MiB
+// which any unauthenticated peer could spam — every connection
+// accepts and JSON.parses up to that before the signature-fail drops
+// the frame.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 httpServer.on('upgrade', (req, socket, head) => {
   // RFC 6455: the WS upgrade IS an HTTP request; reject with a
   // normal HTTP response so a misconfigured client sees the JSON

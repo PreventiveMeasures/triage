@@ -299,6 +299,74 @@ describe('triage-sync server', () => {
     c.ws.close()
   })
 
+  it('drops a save whose nonce contains a newline (canonical-collision guard)', async () => {
+    // canonicalSave newline-joins fields. Without an alphabet gate,
+    // `nonce = "AAA\nBBB"` + `ciphertext = "CCC"` produces the same
+    // canonical bytes (and thus the same revision id + signature) as
+    // `nonce = "AAA"` + `ciphertext = "BBB\nCCC"`. Two distinct
+    // stored revisions could share the same id; the duplicate-id
+    // dedup path would accept whichever landed first and silently
+    // desync the other client's local state. The gate restricts to
+    // base64-or-base64url alphabet (no newlines).
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    // Structurally valid frame whose nonce has a \n. Server drops
+    // silently at the wire-gate BEFORE the signature check (so the
+    // sig doesn't need to validate).
+    const newlineNonce = 'AAA\nBBB'
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: tag, base: null,
+      nonce: newlineNonce, ciphertext: b64url(new Uint8Array(16)),
+      signature: b64url(new Uint8Array(64)),
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
+  it('drops an UNSIGNED oversize save silently (sig check runs before the size cap)', async () => {
+    // The size check sits AFTER sig verify so the explicit error
+    // response doesn't leak the cap to unauthenticated probes. A
+    // bad-sig oversize frame is a probe / DoS attempt — silent drop.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    const huge = 'A'.repeat(3 * 1024 * 1024)
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: tag, base: null,
+      nonce: b64url(new Uint8Array(12)), ciphertext: huge,
+      signature: b64url(new Uint8Array(64)),
+    }))
+    await c.expectSilent(500)
+    c.ws.close()
+  })
+
+  it('rejects a SIGNED oversize save with workspace-save-error { reason: "too-large" }', async () => {
+    // Legit signer path: the client has the seed and produced a
+    // valid signature over an oversize ciphertext. Without an
+    // explicit error response the client's `pending` slot stalls
+    // forever (no ack, no rebase) and the UI looks online while
+    // edits silently fail. Server emits the error post-sig so the
+    // client can clear pending + surface the failure to the user.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribe(c, sk, tag)
+    // 3 MiB ciphertext, well past MAX_CIPHERTEXT_LEN (2 MiB) but
+    // under the WSS maxPayload (4 MiB) so the frame reaches the
+    // handler.
+    const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
+    const ciphertext = 'A'.repeat(3 * 1024 * 1024)
+    const { signature } = await signSave(sk, { tag, base: null, keyframe: false, nonce, ciphertext })
+    c.ws.send(JSON.stringify({
+      type: 'workspace-save', workspaceTag: tag, base: null,
+      nonce, ciphertext, signature,
+    }))
+    const err = await c.recv((m) => m.type === 'workspace-save-error' && m.workspaceTag === tag)
+    assert.equal(err.reason, 'too-large')
+    assert.equal(err.base, null)
+    c.ws.close()
+  })
+
   it('drops a save with a non-string nonce / ciphertext silently', async () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)

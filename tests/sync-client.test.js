@@ -2062,6 +2062,126 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('setServerUrl re-runs key derivation when keys never landed (PR #10 audit F1)', async () => {
+    // Same regression class as `dismissError re-runs key derivation`,
+    // but for the server-URL lifecycle path. setServerUrl clears
+    // `session.error` and `session.error` can carry FOUR classes —
+    // three of which are LOCAL (workspace gone, key derivation
+    // failed, encrypt/sign failed). Clearing without re-running
+    // key derivation leaves the session "looks online, silently
+    // fails to sync".
+    //
+    // Test design subtlety (round-6 audit F6): the bad-key + retry
+    // pattern is the natural way to surface a key-derivation failure,
+    // but `upsertWorkspace(... fresh key ...)` fires
+    // `onWorkspacePrivateKeyChanged` which separately re-derives —
+    // masking whether F1's own kick fired. To pin F1 uniquely: do
+    // NOT fix the privateKey. Instead, observe that the SAME bad-key
+    // failure re-surfaces AFTER the lifecycle handler. With F1 the
+    // kick re-runs (error cleared → derivation fails again → error
+    // re-set). Without F1 the error stays cleared (no kick → no
+    // derivation → no re-failure).
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'initial key-derivation failure surfaced',
+    )
+    assert.equal(triageSync.sessionInfo(wsId).workspaceTag, null)
+
+    // Call setServerUrl with a DIFFERENT URL so the early-return
+    // at the top (`if (next === serverUrl) return`) doesn't skip the
+    // body. The server's upgrade handler strips `?…` so this still
+    // hits `/api/sync`.
+    triageSync.setServerUrl(`${serverUrl}?retry=1`)
+
+    // F1 fix: setServerUrl's body runs kickKeyDerivation when keys
+    // are missing AND error was present. With the SAME bad key still
+    // in localStorage, derivation fails again and re-sets the error.
+    // Without F1, the error stays cleared (no kick → no re-failure).
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'kick re-fired (error re-surfaced after lifecycle handler)',
+    )
+
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('setEnabled(true) re-runs key derivation when keys never landed (PR #10 audit F1)', async () => {
+    // Same pin shape as the setServerUrl test above — observe that
+    // the bad-key error RE-SURFACES after the lifecycle handler,
+    // proving the kick fired. Doesn't fix the key so the change
+    // can't be masked by `onWorkspacePrivateKeyChanged`.
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'initial key-derivation failure surfaced',
+    )
+
+    triageSync.setEnabled(false)
+    triageSync.setEnabled(true)
+
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'kick re-fired after setEnabled(false) + setEnabled(true)',
+    )
+
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('setForcedOff(false) re-runs key derivation when keys never landed (PR #10 audit round-8 F1)', async () => {
+    // Third F1 path — server/README.md's error-handling matrix lists
+    // setForcedOff(false) alongside setServerUrl and setEnabled(true)
+    // as a lifecycle handler that clears `session.error` AND re-kicks
+    // key derivation. The other two paths have F1 regression tests
+    // above; this one pins setForcedOff so a future refactor that
+    // drops `kickKeyDerivation` from its body fails loudly. Same
+    // pin shape: error must RE-SURFACE after the handler, proving
+    // the kick fired (a no-op clear-only would leave the error
+    // cleared).
+    triageSync.closeSession()
+    clearTriageState()
+    state.reports.length = 0
+    state.reports.push({ fileName: 'A.md', groups: [[ { id: 'in-A', _id: 'in-A' } ]] })
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: 'AAAA', reports: ['A.md'] })
+
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'initial key-derivation failure surfaced',
+    )
+
+    triageSync.setForcedOff(true)
+    triageSync.setForcedOff(false)
+
+    await waitFor(
+      () => triageSync.sessionInfo(wsId)?.error?.startsWith('key derivation failed'),
+      'kick re-fired after setForcedOff(true) + setForcedOff(false)',
+    )
+
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
   it('dismissError re-runs key derivation when keys never landed', async () => {
     // Regression: dismissError used to just clear `session.error`
     // and call trySendSubscribe / trySendSave. Both silently bail

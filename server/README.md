@@ -90,6 +90,16 @@ workspace-save-ack { workspaceTag, base, id }
                        // bytes, base64url no padding) — same id the
                        // client computes from its own canonical
 
+workspace-save-error { workspaceTag, base, reason }
+                       // Explicit reject for a SIGNED save the server
+                       // chose not to commit. Sent AFTER sig verify, so
+                       // only a legit seed-holder receives it (shape /
+                       // sig attacks still drop silently). Current
+                       // reasons: `too-large` (ciphertext > 2 MiB). The
+                       // `base` field echoes the save's base so the
+                       // client can attribute the error to the correct
+                       // pending save (mismatches are dropped).
+
 workspace-state {
   workspaceTag,
   revisions: [
@@ -130,6 +140,26 @@ A subscribe's signature is bound to the per-socket
 can't be replayed from a different TCP connection (the new
 connection's nonce is different; the canonical bytes differ;
 verify fails).
+
+## Error handling
+
+The socket is shared across every workspace open in the client.
+Per-message errors are scoped to a session; they DO NOT close the
+WS. Only transport-level failures trigger reconnects. Summary:
+
+| Failure mode | Server action | Socket | Client recovery |
+|---|---|---|---|
+| Bad signature on `workspace-save` / `workspace-subscribe` | Silent drop | Stays open | Legit signer retries; persistent bad-sig surfaces client-side as `'encrypt/sign failed: …'` after the IIFE's `maxConsecutiveFailures` (5). |
+| `workspace-save` with shape-invalid field (newline, non-base64 alphabet) | Silent drop | Stays open | Same as bad sig — silent (legit clients never produce these). |
+| `workspace-save` ciphertext &gt; 2 MiB (`MAX_CIPHERTEXT_LEN`) | Emits `workspace-save-error { reason: 'too-large' }` AFTER sig verify | Stays open | Client clears `pending`, sets `session.error`. Recovery via `dismissError(wsId)` or any of the lifecycle handlers (`setServerUrl`, `setEnabled(true)`, `setForcedOff(false)`) — those clear the error AND re-kick key derivation if the session never had usable keys. |
+| `workspace-save` `base` doesn't match server head | Server sends a `workspace-state` catch-up chain | Stays open | Client rebases against the chain and retries. |
+| Total WS frame &gt; 4 MiB (`maxPayload`) | `ws` library closes with code 1009 | **Closed** | Client reconnects; on reconnect the same oversize state will retry, so this should not happen in practice — the 2 MiB ciphertext cap keeps frames well under 4 MiB. |
+| Heartbeat: client `ping` → no `pong` within timeout | n/a | **Closed by client** | Client reconnects (exponential backoff from 1 s). Per-session `pending`/`pendingSave`/`encrypting`/subscribed flags reset; `session.error` is preserved across reconnect. |
+| Graceful server shutdown (SIGTERM) | Sends close code 1001 "going away" to every client | **Closed by server** | Client reconnects per its backoff. |
+
+Server-side errors that prevent the relay from booting at all
+(invalid `PORT` env var, non-STRICT pre-existing `workspace_revision`
+table, etc.) fail loud at startup so the operator can act on them.
 
 ## Storage
 

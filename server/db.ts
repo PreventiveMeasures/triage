@@ -92,6 +92,20 @@ export type RevisionInsert = {
 
 export function openDb(path: string): Handle {
   const db = new DatabaseSync(path)
+  // Any throw between the DatabaseSync constructor and the return
+  // would otherwise leak the underlying file / WAL / shm locks until
+  // process exit — close before re-raising so the operator can fix
+  // the underlying issue (failed STRICT check, ALTER TABLE error,
+  // …) and re-run without a stale lock pinning the file.
+  try {
+    return openDbInner(db)
+  } catch (err) {
+    try { db.close() } catch {}
+    throw err
+  }
+}
+
+function openDbInner(db: DatabaseSync): Handle {
   // WAL gives concurrent readers + faster writes and survives
   // crashes between commits without corrupting the file. Foreign
   // keys aren't strictly needed here (single-table schema) but
@@ -110,6 +124,23 @@ export function openDb(path: string): Handle {
   db.exec('PRAGMA synchronous = FULL;')
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
+  // Fail-loud on a pre-existing non-STRICT table — `CREATE TABLE IF
+  // NOT EXISTS … STRICT` is a no-op when the table already exists,
+  // so a deployment that predates the STRICT marker would silently
+  // keep its non-STRICT shape. Without STRICT, an operator with
+  // direct DB write access could insert mis-typed rows (e.g. a
+  // `keyframe = "1\nfoo"` text value in the INTEGER column) and
+  // poison the chain — the signed canonical the client originally
+  // hashed says `keyframe = 1`, but the stored `keyframe = "1\nfoo"`
+  // round-trips back into the canonical as a different string,
+  // making every subsequent verify fail. Operator must migrate
+  // before this server boots.
+  const meta = db.prepare(
+    `SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = 'workspace_revision'`,
+  ).get() as { strict: number } | undefined
+  if (meta && meta.strict !== 1) {
+    throw new Error('workspace_revision is non-STRICT — migrate via rename+create+copy before booting')
+  }
   // Idempotent migration for DBs created before the keyframe column
   // existed. Inspect the column list rather than catching every
   // ALTER error — the previous shape swallowed `try { ALTER } catch

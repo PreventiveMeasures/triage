@@ -208,6 +208,7 @@ type WireMessage = {
   id?: unknown
   nonce?: unknown
   revisions?: unknown
+  reason?: unknown
 }
 
 // Public sessionInfo shape — read-only inspection used by the UI
@@ -1062,6 +1063,11 @@ function kickKeyDerivation(session: Session): void {
       // workspace. Surface it so the UI can warn the user (typical
       // cause: a corrupt / wrong-length privateKey on the workspace
       // record).
+      //
+      // The `'key derivation failed:'` prefix is the contract the
+      // F1-regression tests in tests/sync-client.test.js pin via
+      // `startsWith` to verify the lifecycle handlers re-kick. If
+      // this prefix changes, update those tests too.
       if (sessions.get(session.workspaceId) === session && session.keyDerivationGen === gen) {
         session.error = `key derivation failed: ${err instanceof Error ? err.message : String(err)}`
         emitStatusIfChanged()
@@ -1218,6 +1224,13 @@ function trySendSubscribe(session: Session, force = false): void {
 // completion drains the queue.
 function trySendSave(session: Session): void {
   if (!session) return
+  // A session in `error` state must not auto-retry — a deterministic
+  // server reject (e.g. `workspace-save-error: too-large`) would
+  // otherwise re-encrypt + re-send on every keystroke, burning CPU
+  // and bandwidth while the status flickers `error → online → error`.
+  // Recovery is explicit via `dismissError()` (presumably after the
+  // user reduces state size or the operator lifts the cap).
+  if (session.error) return
   if (session.pending || session.encrypting) {
     session.pendingSave = true
     return
@@ -1801,6 +1814,8 @@ async function handleMessage(data: unknown): Promise<void> {
     await handleAck(session, wire)
   } else if (wire.type === 'workspace-state') {
     await handleChain(session, wire.revisions)
+  } else if (wire.type === 'workspace-save-error') {
+    handleSaveError(session, wire)
   } else if (wire.type === 'workspace-subscribed') {
     // Server confirmed our subscribe was accepted — we're a
     // peer now and broadcasts will reach us. Flip the status
@@ -1809,6 +1824,33 @@ async function handleMessage(data: unknown): Promise<void> {
     session.subscribeAcked = true
     emitStatusIfChanged()
   }
+}
+
+// Server rejected a signed save after sig verify (e.g. ciphertext
+// past the relay's size cap). Without this branch the save sits in
+// `session.pending` forever — the server can never ack it, the
+// client never rebases. Clear the pending slot and surface the
+// reason via session.error so the UI can warn the user instead of
+// looking online while edits silently fail to sync.
+//
+// Mirror `handleAck`'s base-match check so a STALE error response
+// for a save that's already been rebased past doesn't clobber a
+// fresh pending. Reason is sanitised to a short alphanumeric
+// token — a compromised relay can't pump arbitrary bytes into
+// `session.error`.
+const SAVE_ERROR_REASON_RE = /^[\w-]+$/u
+function handleSaveError(session: Session, wire: WireMessage): void {
+  if (!session.pending) return
+  if (typeof wire.base !== 'string' && wire.base !== null) return
+  if (wire.base !== session.pending.base) return
+  const rawReason = wire.reason
+  const reason = typeof rawReason === 'string' && rawReason.length > 0 && rawReason.length <= 64 && SAVE_ERROR_REASON_RE.test(rawReason)
+    ? rawReason
+    : 'rejected'
+  session.pending = null
+  session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
+  session.error = `server rejected save: ${reason}`
+  emitStatusIfChanged()
 }
 
 // ─────────── connection lifecycle ───────────
@@ -2030,6 +2072,16 @@ export function setMaxConsecutiveFailures(n: number): void {
 export const triageSync = {
   setServerUrl(url: string | null | undefined): void {
     const next = (url ?? '').trim()
+    // Same-URL re-apply is intentionally a no-op — this entry point
+    // is "switch server", not "retry against current server". The
+    // dedicated retry paths are `dismissError(wsId)` for a single
+    // session, or the `setEnabled(false)` → `setEnabled(true)`
+    // toggle for all sessions. (`setForcedOff(true)` →
+    // `setForcedOff(false)` mirrors the same kick logic but is
+    // sidebar-visibility driven, not user-triggerable.) Without this
+    // guard, every UI re-render that passes the current URL would
+    // pointlessly closeSocket + reset every session's `pending` /
+    // `pendingSave` / `subscribed`.
     if (next === serverUrl) return
     serverUrl = next
     try {
@@ -2053,6 +2105,25 @@ export const triageSync = {
       // raise `pendingSave` even though no encryption is racing.
       // Audit M2 round-4.
       session.encrypting = false
+      // Server-URL change is a user-initiated reconfiguration —
+      // equivalent to a `dismissError()` call. Without this, a
+      // session that hit `workspace-save-error: too-large` against
+      // the old server stays wedged in `error` state, and
+      // `trySendSave` bails at its error-gate even when the new
+      // server might accept the same payload. Audit finding M1.
+      //
+      // The error string can carry FOUR classes: server-reject
+      // (M1's motivating case), `'workspace no longer exists'`,
+      // `'key derivation failed: …'`, `'encrypt/sign failed: …'`.
+      // Classes 2–4 are LOCAL faults — clearing the error here
+      // without re-attempting key derivation leaves the session in
+      // the "looks online but silently fails to sync" state that
+      // `dismissError`'s kickKeyDerivation guards against. Mirror
+      // that branch so all four classes are handled symmetrically.
+      // Audit round-5 F1.
+      const hadError = session.error != null
+      session.error = null
+      session.consecutiveFailures = 0
       session.subscribed = false
       session.subscribeAcked = false
       session.resyncAttempted = false
@@ -2061,6 +2132,9 @@ export const triageSync = {
       session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
+      if (hadError && (!session.key || !session.signingKey)) {
+        kickKeyDerivation(session)
+      }
     }
     if (isActive()) openSocket()
     emitStatusIfChanged()
@@ -2077,6 +2151,20 @@ export const triageSync = {
       localStorage.setItem(USER_ENABLED_KEY, next ? '1' : '0')
     } catch {}
     if (isActive()) {
+      // Re-enabling sync is equivalent to a user-initiated retry —
+      // clear any sticky `error` from a previous server reject so
+      // `trySendSave` isn't wedged at its error-gate. Audit
+      // finding M1. Local-error classes (key derivation, encrypt
+      // failure) require kickKeyDerivation to actually recover —
+      // see setServerUrl for the four error classes. Round-5 F1.
+      for (const session of sessions.values()) {
+        const hadError = session.error != null
+        session.error = null
+        session.consecutiveFailures = 0
+        if (hadError && (!session.key || !session.signingKey)) {
+          kickKeyDerivation(session)
+        }
+      }
       if (!socket) openSocket()
     } else {
       closeSocket()
@@ -2108,6 +2196,18 @@ export const triageSync = {
     if (next === forcedOff) return
     forcedOff = next
     if (isActive()) {
+      // Un-force-off is equivalent to a user-initiated retry —
+      // clear any sticky `error` from a previous server reject.
+      // Local-error classes require kickKeyDerivation to recover;
+      // see setServerUrl. Audit findings M1 + round-5 F1.
+      for (const session of sessions.values()) {
+        const hadError = session.error != null
+        session.error = null
+        session.consecutiveFailures = 0
+        if (hadError && (!session.key || !session.signingKey)) {
+          kickKeyDerivation(session)
+        }
+      }
       if (!socket) openSocket()
     } else {
       closeSocket()

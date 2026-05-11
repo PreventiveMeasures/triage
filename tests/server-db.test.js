@@ -374,3 +374,79 @@ describe('revisionExists', () => {
     } finally { cleanup() }
   })
 })
+
+describe('openDb — STRICT migration guard', () => {
+  // `CREATE TABLE IF NOT EXISTS … STRICT` is a no-op when the table
+  // already exists, so a deployment upgraded from a pre-STRICT
+  // version would silently keep its non-STRICT shape. openDb must
+  // detect this and fail-loud so the operator runs a migration.
+  it('throws when an existing workspace_revision is non-STRICT', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-db-strict-${++tmpCounter}-`))
+    const file = path.join(dir, 'data.db')
+    try {
+      // Pre-create the table WITHOUT the STRICT marker, simulating a
+      // legacy deployment.
+      const seed = new DatabaseSync(file)
+      seed.exec(`
+        CREATE TABLE workspace_revision (
+          workspace_tag TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          id TEXT NOT NULL,
+          base TEXT,
+          keyframe INTEGER NOT NULL DEFAULT 0,
+          nonce TEXT NOT NULL,
+          ciphertext TEXT NOT NULL,
+          signature TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workspace_tag, seq),
+          UNIQUE (workspace_tag, id)
+        );
+      `)
+      seed.close()
+      assert.throws(() => openDb(file), /non-STRICT/u)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('closes the underlying DB handle when init throws (counts close() via spy)', () => {
+    // Regression test for the close-on-throw path. WAL mode allows
+    // concurrent connections, so opening the file again from a fresh
+    // DatabaseSync wouldn't fail even if the original handle leaked.
+    // The only reliable test is to count `close()` invocations on
+    // the prototype: the production code must close BEFORE re-
+    // throwing, otherwise the catch-and-cleanup is unreachable.
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-db-leak-${++tmpCounter}-`))
+    const file = path.join(dir, 'data.db')
+    const originalClose = DatabaseSync.prototype.close
+    let closeCalls = 0
+    DatabaseSync.prototype.close = function spyClose(...args) {
+      closeCalls++
+      return originalClose.apply(this, args)
+    }
+    try {
+      const seed = new DatabaseSync(file)
+      seed.exec(`
+        CREATE TABLE workspace_revision (
+          workspace_tag TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL,
+          base TEXT, keyframe INTEGER NOT NULL DEFAULT 0,
+          nonce TEXT NOT NULL, ciphertext TEXT NOT NULL, signature TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workspace_tag, seq), UNIQUE (workspace_tag, id)
+        );
+      `)
+      seed.close() // counted: 1
+      const before = closeCalls
+      assert.throws(() => openDb(file), /non-STRICT/u)
+      // openDb's catch must have called close() exactly once on its
+      // internal DatabaseSync before rethrowing.
+      assert.equal(closeCalls - before, 1, 'openDb closed its internal handle on throw')
+    } finally {
+      DatabaseSync.prototype.close = originalClose
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts a freshly-created (STRICT) DB without throwing', () => {
+    const { cleanup } = freshDb()
+    cleanup()
+  })
+})
