@@ -100,7 +100,7 @@ const HOST = env['HOST'] ?? '127.0.0.1'
 // `WebSocketServer({ port: NaN })` throws deep inside `node:net`
 // with a confusing trace. A clear up-front error lets the operator
 // fix the env var without trawling the stack.
-if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
+if (!Number.isSafeInteger(PORT) || PORT < 0 || PORT > 65535) {
   console.error(`Invalid PORT: ${env['PORT']}`)
   process.exit(1)
 }
