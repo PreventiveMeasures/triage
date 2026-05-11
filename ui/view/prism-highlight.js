@@ -1,5 +1,5 @@
 // Lazy loader for prismjs syntax highlighting. Mirrors the brotli
-// pattern: a runtime-string dynamic import keeps `prism-fallback.js`
+// pattern: a runtime-string dynamic import keeps `prism.js`
 // (and the prismjs grammar packs) out of the main view.js bundle.
 // First call kicks the import; subsequent calls share the same
 // promise so prism only downloads + parses once per session.
@@ -17,7 +17,7 @@ function loadPrism() {
     // it — keeps prismjs out of the main bundle. The browser
     // resolves the URL relative to the page; works at any deploy
     // path (root or subdirectory).
-    const path = './prism-fallback.js'
+    const path = './prism.js'
     return await import(path)
   })()
   return loadPromise
