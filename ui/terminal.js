@@ -63,12 +63,21 @@ class BundleTerminal extends LitElement {
     this.#lastSources = this.sources
   }
 
-  firstUpdated() {
-    this.#focusInput()
-    // Initial paint: stick to the bottom so the banner sits where
-    // the prompt is. Subsequent scrolls are gated on output growth.
-    this.#scrollToBottom()
+  // Reconnecting after detach (tab flip Terminal → Code → Terminal,
+  // and similar paths through terminal-attach.js's element cache)
+  // resets the inner .output scrollTop — the browser clears it on
+  // element removal, and no Lit update fires on reattach because
+  // no reactive property changed. `updated()` therefore can't
+  // restore it. Scroll to the latest output explicitly here;
+  // updateComplete waits for the pending first render so
+  // scrollHeight is meaningful, and on subsequent reconnects (no
+  // pending update) it resolves immediately.
+  connectedCallback() {
+    super.connectedCallback()
+    this.updateComplete.then(() => this.#scrollToBottom())
   }
+
+  firstUpdated() { this.#focusInput() }
 
   // Only follow the bottom when output actually grew (a new command
   // ran, or the bundle / banner reset). Typing into the input
