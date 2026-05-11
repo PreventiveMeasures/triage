@@ -398,16 +398,16 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Bundle details — tab switch (Packages / Files / Graph /
-  // Issues). Packages/Files render in the regular details panel;
-  // Graph and Issues open the full-width slide layout (bundles
-  // list + details both step aside). State is purely UI; the
-  // parsed bundleDetails stays cached so flipping tabs is
-  // paint-only.
+  // Bundle details — tab switch. Packages / Files / Reports
+  // render in the regular details panel next to the bundles list;
+  // Terminal / Graph / Issues / Code open the full-width slide
+  // layout (bundles list + details both step aside). State is
+  // purely UI; the parsed bundleDetails stays cached so flipping
+  // tabs is paint-only.
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'issues' || tab === 'code') {
+    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.

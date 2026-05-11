@@ -1,0 +1,92 @@
+/* `<bundle-terminal>` shadow-DOM styles. Imported as text by
+   ui/terminal.js and wrapped with unsafeCSS() so the bytes ship
+   inside the component's shadow root. Theme custom properties
+   (--bg, --text, --muted, --accent, --critical, --border) cascade
+   into the shadow boundary, so the terminal picks up dark/light
+   mode automatically from the page. */
+
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg, #0c0c0c);
+  color: var(--text, #e6edf3);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.output {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 14px 6px;
+  cursor: text;
+}
+
+.banner {
+  color: var(--muted, #8b949e);
+  margin-bottom: 8px;
+}
+
+.line {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.cwd { color: var(--accent, #58a6ff); }
+.sigil { color: var(--muted, #8b949e); margin: 0 6px 0 4px; }
+
+.stdout,
+.stderr {
+  margin: 0 0 4px;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.stderr { color: var(--critical, #d8413a); }
+
+.form {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border, #2c2c2c);
+}
+
+/* Visible focus indicator. The input strips its default outline
+   for the bare-prompt aesthetic, so the form's top border
+   brightens to the accent color while focus is anywhere inside
+   the row — that satisfies WCAG 2.4.7 without putting a box
+   around the input itself. */
+.form:focus-within {
+  border-top-color: var(--accent, #58a6ff);
+}
+
+/* Prompt-row cwd shrinks with ellipsis: a deep `cd` shouldn't
+   push the input off the right edge. min-width: 0 overrides the
+   flex-item default of `min-width: auto`, which would otherwise
+   keep the span at content width. Output-line `.cwd` stays
+   unstyled (the line's pre-wrap container handles wrapping). */
+.form .cwd {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.form .sigil { flex: 0 0 auto; }
+
+.input {
+  flex: 1 1 auto;
+  /* Same min-width override — without it, a long cwd plus the
+     input's content width could exceed the row width. */
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}

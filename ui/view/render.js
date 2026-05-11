@@ -18,6 +18,7 @@ import { buildGraph } from './graph2/data.js'
 import { listWorkspaces } from '../../client/workspaces.js'
 import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
+import { attachTerminal } from './terminal-attach.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
@@ -832,6 +833,19 @@ export function render() {
             attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
           }
         }
+      }
+      // Terminal tab — lazy-load `ui/terminal.js` into the slot.
+      // The attach helper is idempotent for the same bundle
+      // (matched by `integrity`), so flipping tabs in and out
+      // preserves the running shell session.
+      if (
+        state.selectedBundle &&
+        state.bundleDetailsTab === 'terminal' &&
+        state.bundleDetails &&
+        state.bundleDetails.json
+      ) {
+        const terminalSlot = document.getElementById('bundle-terminal-slot')
+        if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
       report.classList.add('active')
       dropZone.classList.add('hidden')

@@ -245,7 +245,8 @@
   overflow: hidden;
 }
 
-.bundles-slide-body > .bundle-graph-slot {
+.bundles-slide-body > .bundle-graph-slot,
+.bundles-slide-body > .bundle-terminal-slot {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -936,7 +937,8 @@
      which reuses the same `.bundle-issues-*` class names, picks
      up the same chrome — those slides aren't nested under
      `.bundles-view`. */
-  & .bundle-graph-slot {
+  & .bundle-graph-slot,
+  & .bundle-terminal-slot {
     display: flex;
     flex-direction: column;
     flex: 1;

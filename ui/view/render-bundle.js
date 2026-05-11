@@ -35,6 +35,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { state } from '../../client/state.ts'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
+import { bundleSourcesAsMap } from './bundle-sources.js'
 import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo } from '../../client/bundle-finding-index.js'
@@ -59,27 +60,6 @@ import { render } from './render.js'
 // can render against either data source: each call uses the cached
 // `_currentBundleGraph` reference to feed the right-panel templates.
 let _currentBundleGraph = null
-
-// Per-file content map for the open bundle. Stasis's `json.sources`
-// is `{ file: content }` directly; sourcemaps shred sources and
-// sourcesContent across two parallel arrays. Returns Map<file,
-// content-string>; non-string content is skipped.
-function bundleSourcesAsMap(details) {
-  const result = new Map()
-  if (!details || !details.json) return result
-  if (details.kind === 'stasis') {
-    for (const [file, content] of Object.entries(details.json.sources ?? {})) {
-      if (typeof content === 'string') result.set(file, content)
-    }
-  } else if (details.kind === 'sourcemap') {
-    const srcs = details.json.sources ?? []
-    const contents = details.json.sourcesContent ?? []
-    for (let i = 0; i < srcs.length; i++) {
-      if (typeof contents[i] === 'string') result.set(srcs[i], contents[i])
-    }
-  }
-  return result
-}
 
 // File → set of resolved import paths. Stasis carries imports under
 // `json.imports['<type>']['<file>']['<spec>']`; we union across all
@@ -1277,6 +1257,13 @@ function renderBundleSlide(entry) {
       <div class="bundles-slide-tabs" role="tablist">
         <button
           type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}
+          data-bundle-tab="terminal"
+          aria-selected=${String(tab === 'terminal')}
+          role="tab"
+        >Terminal</button>
+        <button
+          type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
           data-bundle-tab="graph"
           aria-selected=${String(tab === 'graph')}
@@ -1300,6 +1287,7 @@ function renderBundleSlide(entry) {
     </header>
     <div class="bundles-slide-body">
       ${choose(tab, [
+        ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
         ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
         ['code', () => renderBundleCodeView(state.bundleDetails)],
         ['issues', () => renderBundleIssuesList(state.bundleDetails)],
@@ -1516,13 +1504,13 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
 export function renderBundlesList(bundles) {
   const selected = state.selectedBundle
   const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
-  // Graph and Issues open as a full-width "slide" — the bundles
-  // list and details panel both step aside, replaced by a header
-  // bar (back button + bundle name) and the active sub-tab's
-  // content edge to edge. Anything else (no bundle open, or
-  // Packages / Files tab) renders the regular list + details.
+  // Terminal, Graph, Issues, and Code open as a full-width "slide"
+  // — the bundles list and details panel both step aside, replaced
+  // by a header bar (back button + bundle name) and the active
+  // sub-tab's content edge to edge. The other tabs (no bundle
+  // open, or Packages / Files) render the regular list + details.
   const inSlide = selectedEntry
-    && (state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
+    && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
   // Source modal mounts at the global overlay slot via render.js;
   // no need to inline it here.
   if (inSlide) return renderBundleSlide(selectedEntry)
