@@ -667,3 +667,99 @@
     &:hover { border-color: var(--accent); color: var(--accent); }
   }
 }
+
+/* `<comment-dialog>` — multi-line editor for the per-finding
+   .mark-comment button. Same frame look as the other deepview
+   dialogs (border, shadow, centered, blurred backdrop) plus a
+   finding-context header and a roomy textarea. Light DOM so
+   these rules apply directly. */
+.comment-dialog {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 640px; width: min(94vw, 640px);
+  margin-inline: auto;
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+
+  & .cd-head h3 {
+    margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
+  }
+  & .cd-finding {
+    display: flex; align-items: center; gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: .35rem;
+  }
+  & .cd-loc {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .76rem; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; flex: 1;
+  }
+  & .cd-desc {
+    font-size: .78rem; color: var(--muted);
+    margin: 0 0 .7rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Severity badge — reuses the same palette as the conflict
+     dialog (themed via theme.css per-severity custom properties).
+     Selector matches `.conflict-sev` shape so future palette
+     tweaks land in one place. */
+  & .conflict-sev {
+    display: inline-block;
+    padding: 1px .4rem;
+    border-radius: 3px;
+    font-size: .62rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .08em;
+    color: #fff; flex-shrink: 0;
+
+    &.sev-critical      { background: var(--critical); }
+    &.sev-high          { background: var(--high); }
+    &.sev-medium        { background: var(--medium); }
+    &.sev-low           { background: var(--low); }
+    &.sev-high_bug      { background: var(--high-bug); }
+    &.sev-bug           { background: var(--bug); }
+    &.sev-informational { background: var(--info); }
+  }
+
+  & .cd-textarea {
+    display: block; width: 100%; box-sizing: border-box;
+    min-height: 9rem; max-height: 50vh; resize: vertical;
+    padding: .55rem .65rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg, var(--surface));
+    color: var(--text);
+    font: inherit; font-size: .88rem; line-height: 1.4;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .18);
+    }
+    &::placeholder { color: var(--muted); }
+  }
+
+  & .cd-actions {
+    display: flex; align-items: center; gap: .4rem;
+    margin-top: .8rem;
+    padding-top: .7rem;
+    border-top: 1px solid var(--border);
+  }
+  & .cd-spacer { flex: 1; }
+  & .cd-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 5px;
+    padding: .35rem .9rem; cursor: pointer;
+    font: inherit; font-size: .8rem;
+
+    &:hover { border-color: var(--accent); color: var(--accent); }
+    &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    &.primary:hover { filter: brightness(1.08); }
+    &.danger { color: var(--critical, #f87171); border-color: var(--border); }
+    &.danger:hover { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
+  }
+}

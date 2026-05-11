@@ -7,6 +7,7 @@ import { saveTriage } from '../../client/triage.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
 import { getPackagesIndex, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
+import { openCommentDialog } from './comment-dialog.js'
 
 // Subscribe once to the bundle-finding index. Any time another
 // OPFS report finishes parsing, re-render IF the user is currently
@@ -839,28 +840,31 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Comment button — open a prompt with the active tab's existing
-  // comment (empty when none). Whitespace-trimmed input; empty
-  // strings clear the entry from state.comments so saveTriage
-  // doesn't persist a "" placeholder. The comment is per-active-tab
-  // (matching mark-color semantics — a multi-tab group can hold
-  // distinct comments per member tab).
+  // Comment button — open the multi-line <comment-dialog> with
+  // the active tab's existing comment (empty when none).
+  // Whitespace-trimmed input; empty strings clear the entry from
+  // state.comments so saveTriage doesn't persist a "" placeholder.
+  // The comment is per-active-tab (matching mark-color semantics —
+  // a multi-tab group can hold distinct comments per member tab).
+  // The dialog resolves to null when the user cancelled or saved
+  // an unchanged value, so the early-return covers both.
   const commentBtn = pathClosest(e, '.mark-comment')
   if (commentBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
-    const activeKey = tabKey(activeTabFor(group))
+    const activeTab = activeTabFor(group)
+    const activeKey = tabKey(activeTab)
     const current = state.comments.get(activeKey) ?? ''
-    const next = window.prompt('Comment for this finding (leave blank to clear):', current)
-    if (next === null) return
-    const trimmed = next.trim()
-    if (trimmed === current) return
-    if (trimmed) state.comments.set(activeKey, trimmed)
-    else state.comments.delete(activeKey)
-    saveTriage()
-    render()
+    openCommentDialog({ initial: current, finding: activeTab }).then((next) => {
+      if (next === null) return null
+      if (next) state.comments.set(activeKey, next)
+      else state.comments.delete(activeKey)
+      saveTriage()
+      render()
+      return null
+    }).catch(() => {})
     return
   }
   // Copy button — write the active tab's file / line /
