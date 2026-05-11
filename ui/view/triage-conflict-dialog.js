@@ -16,6 +16,7 @@
 // DOM render so the existing `.workspace-conflict-dialog` rules
 // in the global stylesheet apply directly.
 import { LitElement, html, nothing } from 'lit'
+import { isHttpUrl } from './format.js'
 
 // Swatch reads its hue from the global `--marker-*` custom
 // properties (see theme.css); the matching `.conflict-color-dot`
@@ -43,7 +44,11 @@ function commentBlockTemplate(text) {
 
 function fixBlockTemplate(text) {
   if (!text) return html`<span class="conflict-comment-text"><em>empty</em></span>`
-  return html`<span class="conflict-fix-text"><a href=${text} target="_blank" rel="noopener">${text}</a></span>`
+  // Only http(s) values get a clickable link — plain-text fix
+  // references ("internal ticket #42") render as text inside the
+  // same `.conflict-fix-text` span so the layout stays put.
+  if (!isHttpUrl(text)) return html`<span class="conflict-fix-text">${text}</span>`
+  return html`<span class="conflict-fix-text"><a href=${text} target="_blank" rel="noopener noreferrer">${text}</a></span>`
 }
 
 function triageBadgeTemplate(value) {

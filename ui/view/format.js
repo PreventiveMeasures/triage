@@ -216,6 +216,19 @@ export function fileLink(file, githubRepo, repoFallback) {
   return url ? html`<a href=${url} target="_blank" rel="noopener">${file}</a>` : file
 }
 
+// Returns true only for parseable http:// / https:// URLs. User-
+// provided fix values can be plain text ("internal ticket #42",
+// "see Slack"), and other schemes (file://, javascript:, data:)
+// are either useless or a security footgun — gate the rendered
+// `<a>` on this check so non-URL text renders as plain text.
+export function isHttpUrl(s) {
+  if (typeof s !== 'string' || s.length === 0) return false
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch { return false }
+}
+
 // Returns a "line N" template (linkified when a fileUrl is available)
 // or `nothing` when `line` isn't a finite integer — codex /
 // claude-security imports don't carry line numbers and stub them as

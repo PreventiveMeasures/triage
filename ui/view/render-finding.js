@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '../../client/state.ts'
 import { bundlesForFileHash } from '../../client/bundle-hash-index.js'
-import { commitUrl, fileUrl, formatRunMeta, stripExportMarker } from './format.js'
+import { commitUrl, fileUrl, formatRunMeta, isHttpUrl, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -332,7 +332,11 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
       ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}
       ${f.confidenceReason ? html`<div class="conf-reason">${stripExportMarker(f.confidenceReason, f.exportName)}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
-      ${fix ? html`<div class="fix-block"><span class="fix-label">Fix:</span> <a href=${fix} target="_blank" rel="noopener">${fix}</a></div>` : nothing}
+      ${fix
+        ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
+          ? html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
+          : fix}</div>`
+        : nothing}
     </div>
   </div>`
 }

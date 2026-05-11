@@ -11,23 +11,12 @@
 // a Promise that resolves to the trimmed new value, or null on
 // cancel (= no change).
 import { LitElement, html, nothing } from 'lit'
+import { isHttpUrl } from './format.js'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing
   const label = sev.replace(/_/gu, ' ')
   return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
-}
-
-// Only http(s) URLs get an Open affordance — file:// / javascript:
-// would either no-op or be a security footgun. The dialog accepts
-// any text the user types (some flows store a plain string like
-// "internal ticket #42"); the chip is just a hint when the value
-// looks like a real web URL.
-function isOpenableUrl(s) {
-  try {
-    const u = new URL(s)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch { return false }
 }
 
 class FixLinkDialog extends LitElement {
@@ -103,7 +92,7 @@ class FixLinkDialog extends LitElement {
     const loc = f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
     const hasInitial = (this.initial ?? '').length > 0
     const trimmed = (this._value ?? '').trim()
-    const openable = isOpenableUrl(trimmed)
+    const openable = isHttpUrl(trimmed)
     return html`<dialog class="fix-link-dialog" @close=${this._onClose}>
       <header class="fl-head">
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
@@ -128,7 +117,7 @@ class FixLinkDialog extends LitElement {
           @keydown=${this._onKeydown}
         >
         ${openable
-          ? html`<a class="fl-open" href=${trimmed} target="_blank" rel="noopener" title="Open in a new tab">Open ↗</a>`
+          ? html`<a class="fl-open" href=${trimmed} target="_blank" rel="noopener noreferrer" title="Open in a new tab">Open ↗</a>`
           : nothing}
       </div>
       <p class="fl-hint">PR URL, issue link, commit, or any free-form reference. Enter to save, Esc to cancel.</p>
