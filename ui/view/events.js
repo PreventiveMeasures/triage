@@ -8,6 +8,7 @@ import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } f
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
 import { getPackagesIndex, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 import { openCommentDialog } from './comment-dialog.js'
+import { openFixLinkDialog } from './fix-link-dialog.js'
 
 // Subscribe once to the bundle-finding index. Any time another
 // OPFS report finishes parsing, re-render IF the user is currently
@@ -926,23 +927,25 @@ report.addEventListener('click', (e) => {
   // Fix-link button — mirrors the comment flow but stores into
   // state.fixes. Typically a PR URL (also accepts plain text).
   // Empty input clears the entry. Per-active-tab so a multi-tab
-  // group can hold distinct fix references per member.
+  // group can hold distinct fix references per member. The
+  // dialog resolves to null on cancel / Esc / unchanged save.
   const fixBtn = pathClosest(e, '.mark-fix')
   if (fixBtn) {
     const findingEl = pathClosest(e, '[data-gid]')
     const gid = findingEl.dataset.gid
     const group = findGroupById(gid)
     if (!group) return
-    const activeKey = tabKey(activeTabFor(group))
+    const activeTab = activeTabFor(group)
+    const activeKey = tabKey(activeTab)
     const current = state.fixes.get(activeKey) ?? ''
-    const next = window.prompt('Fix link for this finding (PR URL, leave blank to clear):', current)
-    if (next === null) return
-    const trimmed = next.trim()
-    if (trimmed === current) return
-    if (trimmed) state.fixes.set(activeKey, trimmed)
-    else state.fixes.delete(activeKey)
-    saveTriage()
-    render()
+    openFixLinkDialog({ initial: current, finding: activeTab }).then((next) => {
+      if (next === null) return null
+      if (next) state.fixes.set(activeKey, next)
+      else state.fixes.delete(activeKey)
+      saveTriage()
+      render()
+      return null
+    }).catch(() => {})
     return
   }
   // Toolbar triage view selector — flips state.shownTriage to the
