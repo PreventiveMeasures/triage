@@ -8,8 +8,10 @@
 //      whose row is older than `stagingTtlMs` → unlink + drop row.
 //
 // Async (fs/promises) so a periodic sweep over a large filesystem
-// doesn't block the event loop. DB queries stay sync (node:sqlite)
-// and are sub-ms; the readdir / unlink costs are what scale.
+// doesn't block the event loop. DB calls are async-shaped wrappers
+// over the sync `node:sqlite` driver — they resolve in the current
+// microtask and stay sub-ms; the readdir / unlink costs are what
+// scale.
 
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -39,9 +41,8 @@ async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
   const wsDir = join(handle.dir, tag)
   const entries = await safeReaddir(wsDir)
   if (entries.length === 0) return
-  const live = new Set(
-    (handle.selectLive.all(tag) as Array<{ resource_tag: string }>).map((r) => r.resource_tag),
-  )
+  const liveRows = await handle.selectLive.all(tag)
+  const live = new Set(liveRows.map((r) => r.resource_tag))
   for (const name of entries) {
     if (name === '.staging' || !name.endsWith('.bin')) continue
     const resourceTag = name.slice(0, -4)
@@ -54,7 +55,7 @@ async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
       // Recheck under the lock — a commit that raced past our snapshot
       // landed a fresh row + file; the file we're about to unlink IS
       // that fresh commit's live file. Skip.
-      if (handle.selectLiveOne.get(tag, resourceTag)) return
+      if (await handle.selectLiveOne.get(tag, resourceTag)) return
       await unlinkIfExists(join(wsDir, name))
     })
   }
@@ -66,7 +67,7 @@ async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
 // column shouldn't be able to trick the reaper into unlinking
 // outside `handle.dir`. PR #4 review.
 async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: number): Promise<void> {
-  const staging = handle.listAllStaging.all() as StagingRow[]
+  const staging = await handle.listAllStaging.all() as StagingRow[]
   for (const s of staging) {
     if (!isValidTag(s.workspace_tag) || !isValidTag(s.resource_tag) || !isValidStagingId(s.staging_id)) {
       // Truncate fields — the full workspace_tag is an Ed25519 public
@@ -87,11 +88,11 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
     // yet → client gets 410 after streaming the whole body. PR #4
     // review F1.
     await handle.lock.run(lockKey(s.workspace_tag, s.resource_tag), async () => {
-      const fresh = handle.selectStaging.get(s.workspace_tag, s.resource_tag, s.staging_id) as { begun_at: number } | undefined
+      const fresh = await handle.selectStaging.get(s.workspace_tag, s.resource_tag, s.staging_id)
       if (!fresh) return
       if (Date.now() - fresh.begun_at < stagingTtlMs) return
       await unlinkIfExists(stagingFilePath(handle.dir, s.workspace_tag, s.staging_id))
-      handle.deleteStaging.run(s.workspace_tag, s.resource_tag, s.staging_id)
+      await handle.deleteStaging.run(s.workspace_tag, s.resource_tag, s.staging_id)
     })
   }
 }
@@ -117,7 +118,7 @@ async function reapOrphanedStagingFiles(handle: Handle, tag: string): Promise<vo
     const stagingId = name.slice(0, -4)
     // Same on-disk-foreign-file guard as reapCommittedForTag.
     if (!isValidStagingId(stagingId)) continue
-    if (handle.selectStagingByWsSid.get(tag, stagingId)) continue
+    if (await handle.selectStagingByWsSid.get(tag, stagingId)) continue
     await unlinkIfExists(join(stagingDir, name))
   }
 }
@@ -126,7 +127,8 @@ export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING
   const now = Date.now()
   // Pass 1: tags the live table knows about — cross-check committed
   // files against live rows.
-  const liveTags = (handle.listLiveTags.all() as Array<{ workspace_tag: string }>).map((r) => r.workspace_tag)
+  const liveTagsRows = await handle.listLiveTags.all()
+  const liveTags = liveTagsRows.map((r) => r.workspace_tag)
   for (const tag of liveTags) await reapCommittedForTag(handle, tag)
   // Whole-workspace deletes leave dirs that the live table doesn't
   // list. Walk the top-level dir to find them; unlink any orphaned
@@ -144,7 +146,7 @@ export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING
       const resourceTag = name.slice(0, -4)
       if (!isValidTag(resourceTag)) continue
       await handle.lock.run(lockKey(tag, resourceTag), async () => {
-        if (handle.selectLiveOne.get(tag, resourceTag)) return
+        if (await handle.selectLiveOne.get(tag, resourceTag)) return
         await unlinkIfExists(join(wsDir, name))
       })
     }

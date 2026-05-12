@@ -78,10 +78,11 @@ import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
-import { type RevisionRow, chainFrom, headFor, insertRevision, openDb, revisionExists } from './db.ts'
+import { type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
 import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
+import { openObjstore } from './objstore/store.ts'
 import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
 // Wire-message envelope as it lands post-`JSON.parse`. Every field is
@@ -143,6 +144,7 @@ Environment:
 }
 
 const handle = openDb(DB_PATH)
+const objstoreHandle = openObjstore(handle.db, OBJSTORE_DIR)
 
 // Per-connection challenge nonce (round-9 H2). Issued in a
 // `challenge` frame the moment the socket opens; the client signs
@@ -286,7 +288,7 @@ const validNonce = (s: unknown, max: number): s is string => typeof s === 'strin
 const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && NONCE_CIPHER_RE.test(s)
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
-  db: handle.db, dir: OBJSTORE_DIR, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
+  handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
   send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
 })
 
@@ -294,10 +296,7 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // `base` is `string | null`; null is the keyframe-root marker.
   if (!validTagSigBase(msg.workspaceTag, MAX_FIELD_LEN) || !validNonce(msg.nonce, MAX_FIELD_LEN) || !validCiphertextShape(msg.ciphertext) || !validTagSigBase(msg.signature, MAX_FIELD_LEN) || (msg.base != null && !validTagSigBase(msg.base, MAX_FIELD_LEN))) return
   // Compute canonical bytes + content-addressed id ONCE, then thread
-  // both through the precheck → sig verify → post-sig dedup → insert
-  // pipeline. Previously this paid 2× canonicalSave + 2× SHA-256 (the
-  // F1 precheck recomputed both inside `verifySaveSigAndCanonical`),
-  // and the second hash was wasteful even on the success path. Now:
+  // both through the precheck → sig verify → commit pipeline:
   //   1. canonicalSave (sync, throws on lone-surrogate input)
   //   2. SHA-256 → id
   //   3. precheck: revisionExists → short-circuit ack on replay
@@ -307,15 +306,20 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   //      hashed from — provably tied
   //   5. ciphertext size policy (post-sig so the explicit error only
   //      reaches a legit signer)
-  //   6. post-sig dedup re-check: between precheck and here, a
-  //      concurrent same-id save could've inserted; emit ack rather
-  //      than letting UNIQUE constraint silently throw
-  //   7. base match + insert
+  //   6. commitRevision — re-checks dup + base + inserts, all under
+  //      one per-workspace_tag lock. The previously-separate dup
+  //      recheck, headFor, base-match, insertRevision calls all
+  //      collapse here. Without the lock, two concurrent saves with
+  //      the same `base` and different ids would both pass an
+  //      out-of-lock base check, both insert, and FORK THE CHAIN
+  //      (two rows with the same base — UNIQUE is on id, not base);
+  //      and two concurrent same-id retransmits would have one of
+  //      them throw on UNIQUE with no ack reaching the originator.
   let canonical: Uint8Array<ArrayBuffer>
   try { canonical = canonicalSave(msg) } catch { return }
   const id = await computeRevisionIdFromCanonical(canonical)
   const tag = msg.workspaceTag
-  if (revisionExists(handle, tag, id)) {
+  if (await revisionExists(handle, tag, id)) {
     if (DEBUG) console.log(`save (precheck dup ${id.slice(0, 8)}…) → ack-only`)
     send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
     return
@@ -346,38 +350,30 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // socket open, on continuity-break recovery, on dismissError).
   // The subscribe path remains the only way to attach as a
   // broadcast subscriber.
-  // Post-sig dedup re-check: covers the race where a concurrent save
-  // for the same id slipped in during our `await verifyEd25519`.
-  // Without this, the next `insertRevision` call hits the UNIQUE
-  // constraint, throws, and the originator never sees an ack.
-  if (revisionExists(handle, tag, id)) {
-    if (DEBUG) console.log(`save (duplicate id ${id.slice(0, 8)}…) → ack-only`)
-    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
-    return
-  }
-  const head = headFor(handle, tag)
   const baseNorm = msg.base ?? null
-  const matches = baseNorm == null ? head == null : baseNorm === head
-  if (!matches) {
-    // Stale base — send catch-up chain. Client rebases and
-    // retries with the fresh head.
-    const revisions = chainForWire(chainFrom(handle, tag, baseNorm))
-    if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${head}) → chain ${revisions.length}`)
-    send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
-    return
-  }
   // `keyframe === true` is what canonicalSave bound the signature
   // to (strict equality); the signer's intent is unambiguous here.
   const keyframe = msg.keyframe === true
-  insertRevision(handle, {
-    tag,
-    id,
-    base: baseNorm,
-    keyframe,
-    nonce: msg.nonce,
-    ciphertext: msg.ciphertext,
-    signature: msg.signature,
+  const commit = await commitRevision(handle, {
+    tag, id, base: baseNorm, keyframe,
+    nonce: msg.nonce, ciphertext: msg.ciphertext, signature: msg.signature,
   })
+  if (commit.kind === 'duplicate') {
+    if (DEBUG) console.log(`save (duplicate id ${id.slice(0, 8)}…) → ack-only`)
+    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: baseNorm, id })
+    return
+  }
+  if (commit.kind === 'stale-base') {
+    // Client claimed a base that's no longer head. Catch-up chain
+    // is computed OUTSIDE the lock — a concurrent commit landing
+    // between lock-release and `chainFrom` only means the catch-up
+    // is fresher than the recheck saw, which is benign (clients
+    // tolerate extra revisions in the chain).
+    const revisions = chainForWire(await chainFrom(handle, tag, baseNorm))
+    if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${commit.head}) → chain ${revisions.length}`)
+    send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+    return
+  }
   if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${debugTag(tag)}`)
   send(socket, {
     type: 'workspace-save-ack',
@@ -455,7 +451,7 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   // will reveal stale state on the usual base-mismatch path.
   // Null / missing → send the full chain.
   const fromId = typeof msg.from === 'string' ? msg.from : null
-  const revisions = chainForWire(chainFrom(handle, tag, fromId))
+  const revisions = chainForWire(await chainFrom(handle, tag, fromId))
   if (DEBUG) console.log(`subscribe ${debugTag(tag)} from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
   send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
 }
@@ -748,7 +744,9 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   // a separate broadcast path. `Promise.allSettled` so a single
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-  try { handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
+  // objstoreHandle has no `close()` — the underlying connection is
+  // owned by `handle` below; closing it once does both planes.
+  try { await handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
   // Read `pendingExitCode` (not the parameter) so a re-entrant
   // `shutdown(1)` that landed during the drain wins over the
   // original `shutdown(0)`. See round-13 escalation note.

@@ -187,7 +187,7 @@ async function handleRestPutLocked(
   // MAX_CONTENT_LENGTH bytes for a replayed / expired token. The
   // row could still vanish before commit (reaper / abort) but the
   // commit recheck catches that. PR #4 review.
-  if (!deps.handle.selectStaging.get(route.tag, route.resourceTag, payload.sid)) {
+  if (!await deps.handle.selectStaging.get(route.tag, route.resourceTag, payload.sid)) {
     deny(res, 410, 'gone'); return
   }
   const key = lockKey(route.tag, route.resourceTag)
@@ -256,7 +256,7 @@ async function handleRestPutLocked(
     // Step 1 (lock-protected): refresh begun_at so the reaper's
     // next freshness check inside its own lock-block sees us as
     // fresh — bounded by the lock against other readers.
-    deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
+    await deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
     // Step 2 (still under the lock): commit. Precondition recheck
     // + durable rename + DB write are serialised against concurrent
     // commits / deletes / begins on the same (tag, resourceTag).
@@ -322,9 +322,7 @@ function openLiveUnderLock(
   // is pinned even if the path is later overwritten/unlinked — the
   // bytes we stream are the snapshot the token was issued for.
   return deps.handle.lock.run<GetOpened>(lockKey(route.tag, route.resourceTag), async (): Promise<GetOpened> => {
-    const live = deps.handle.selectLiveOne.get(route.tag, route.resourceTag) as {
-      version: number; content_length: number
-    } | undefined
+    const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
     if (!live || live.version !== payload.ver) return { reason: 'not-found' }
     const path = liveFilePath(deps.handle.dir, route.tag, route.resourceTag)
     let fh: FileHandle

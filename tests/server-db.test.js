@@ -1,9 +1,8 @@
-// `server/db.ts` — sqlite-backed revision storage. Integration is
-// covered via tests/sync-server.test.js (full WS round-trips); this
-// file targets the DB module directly: schema migration from the
+// `server/db.ts` — revision storage. Schema migration from the
 // pre-keyframe column shape, `chainFrom` cutoff semantics (stale
 // `from`, last-keyframe-as-root, full chain pre-keyframe), and the
-// UNIQUE constraint that makes retransmits idempotent.
+// inserted / duplicate / stale-base outcomes of `commitRevision`.
+// All DB helpers are async — tests `await` accordingly.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -12,7 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { chainFrom, headFor, insertRevision, openDb, revisionExists } from '../server/db.ts'
+import { chainFrom, commitRevision, headFor, openDb, revisionExists } from '../server/db.ts'
 
 let tmpCounter = 0
 function freshDb() {
@@ -21,8 +20,8 @@ function freshDb() {
   const handle = openDb(file)
   return {
     handle,
-    cleanup: () => {
-      handle.close()
+    cleanup: async () => {
+      await handle.close()
       rmSync(dir, { recursive: true, force: true })
     },
   }
@@ -42,16 +41,16 @@ function rev(over = {}) {
 }
 
 describe('openDb — schema + migration', () => {
-  it('creates the workspace_revision table on a fresh DB', () => {
+  it('creates the workspace_revision table on a fresh DB', async () => {
     const { handle, cleanup } = freshDb()
     try {
       // Insert one revision to verify the table is queryable.
-      insertRevision(handle, rev({ id: 'r1' }))
-      assert.equal(revisionExists(handle, 'tag-A', 'r1'), true)
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ id: 'r1' }))
+      assert.equal(await revisionExists(handle, 'tag-A', 'r1'), true)
+    } finally { await cleanup() }
   })
 
-  it('migrates a legacy DB created before the keyframe column existed', () => {
+  it('migrates a legacy DB created before the keyframe column existed', async () => {
     // Build a pre-migration schema by hand: same columns minus
     // `keyframe`. openDb's idempotent ALTER TABLE adds the column.
     const dir = mkdtempSync(path.join(tmpdir(), `deepview-legacy-${++tmpCounter}-`))
@@ -84,162 +83,166 @@ describe('openDb — schema + migration', () => {
       try {
         // Pre-migration row should still be readable; new column
         // defaults to 0 (= non-keyframe).
-        const head = headFor(handle, 'tag-A')
+        const head = await headFor(handle, 'tag-A')
         assert.equal(head, 'pre-migration')
-        const chain = chainFrom(handle, 'tag-A', null)
+        const chain = await chainFrom(handle, 'tag-A', null)
         assert.equal(chain.length, 1)
         assert.equal(chain[0].keyframe, 0, 'legacy revs default to non-keyframe')
 
-        // New revs going in carry the keyframe flag.
-        insertRevision(handle, rev({ id: 'post-migration', keyframe: true }))
-        const chainAfter = chainFrom(handle, 'tag-A', null)
+        // New revs going in carry the keyframe flag. Thread base
+        // onto the existing pre-migration row — commitRevision rejects
+        // a stale base inside its lock.
+        await commitRevision(handle, rev({ id: 'post-migration', base: 'pre-migration', keyframe: true }))
+        const chainAfter = await chainFrom(handle, 'tag-A', null)
         // After a keyframe lands, chainFrom(null) returns from the
         // most-recent keyframe forward — so just the keyframe rev.
         assert.equal(chainAfter.length, 1)
         assert.equal(chainAfter[0].id, 'post-migration')
         assert.equal(chainAfter[0].keyframe, 1)
-      } finally { handle.close() }
+      } finally { await handle.close() }
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('survives a second openDb call on the same file (idempotent migration)', () => {
+  it('survives a second openDb call on the same file (idempotent migration)', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), `deepview-reopen-${++tmpCounter}-`))
     const file = path.join(dir, 'data.db')
     try {
       const h1 = openDb(file)
-      insertRevision(h1, rev({ id: 'r1' }))
-      h1.close()
+      await commitRevision(h1, rev({ id: 'r1' }))
+      await h1.close()
       // Re-open — the schema CREATE-IF-NOT-EXISTS is idempotent, and
-      // the ALTER TABLE in openDb is wrapped in try/catch so the
-      // duplicate-column-name path doesn't escape.
+      // openDb's `keyframe` migration inspects PRAGMA table_info and
+      // only runs `ALTER TABLE ADD COLUMN` when the column is genuinely
+      // missing, so a re-open on an already-migrated DB is a no-op
+      // for the migration step.
       const h2 = openDb(file)
       try {
         // Pre-existing data is still readable.
-        assert.equal(headFor(h2, 'tag-A'), 'r1')
-      } finally { h2.close() }
+        assert.equal(await headFor(h2, 'tag-A'), 'r1')
+      } finally { await h2.close() }
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
 
 describe('headFor', () => {
-  it('returns null for an unknown workspace tag', () => {
+  it('returns null for an unknown workspace tag', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      assert.equal(headFor(handle, 'never-seen'), null)
-    } finally { cleanup() }
+      assert.equal(await headFor(handle, 'never-seen'), null)
+    } finally { await cleanup() }
   })
 
-  it('returns the most recent revision id', () => {
+  it('returns the most recent revision id', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'first' }))
-      insertRevision(handle, rev({ id: 'second', base: 'first' }))
-      insertRevision(handle, rev({ id: 'third', base: 'second' }))
-      assert.equal(headFor(handle, 'tag-A'), 'third')
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ id: 'first' }))
+      await commitRevision(handle, rev({ id: 'second', base: 'first' }))
+      await commitRevision(handle, rev({ id: 'third', base: 'second' }))
+      assert.equal(await headFor(handle, 'tag-A'), 'third')
+    } finally { await cleanup() }
   })
 
-  it('scopes by workspace tag', () => {
+  it('scopes by workspace tag', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ tag: 'A', id: 'a1' }))
-      insertRevision(handle, rev({ tag: 'B', id: 'b1' }))
-      insertRevision(handle, rev({ tag: 'A', id: 'a2', base: 'a1' }))
-      assert.equal(headFor(handle, 'A'), 'a2')
-      assert.equal(headFor(handle, 'B'), 'b1')
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ tag: 'A', id: 'a1' }))
+      await commitRevision(handle, rev({ tag: 'B', id: 'b1' }))
+      await commitRevision(handle, rev({ tag: 'A', id: 'a2', base: 'a1' }))
+      assert.equal(await headFor(handle, 'A'), 'a2')
+      assert.equal(await headFor(handle, 'B'), 'b1')
+    } finally { await cleanup() }
   })
 })
 
 describe('chainFrom — cutoff semantics', () => {
-  it('returns the full chain when from=null and no keyframe has landed', () => {
+  it('returns the full chain when from=null and no keyframe has landed', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      insertRevision(handle, rev({ id: 'r3', base: 'r2' }))
-      const chain = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r3', base: 'r2' }))
+      const chain = await chainFrom(handle, 'tag-A', null)
       assert.deepEqual(chain.map((r) => r.id), ['r1', 'r2', 'r3'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns from the latest keyframe forward when from=null and a keyframe exists', () => {
+  it('returns from the latest keyframe forward when from=null and a keyframe exists', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      insertRevision(handle, rev({ id: 'kf1', base: 'r2', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r4', base: 'kf1' }))
-      insertRevision(handle, rev({ id: 'r5', base: 'r4' }))
-      const chain = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      await commitRevision(handle, rev({ id: 'kf1', base: 'r2', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r4', base: 'kf1' }))
+      await commitRevision(handle, rev({ id: 'r5', base: 'r4' }))
+      const chain = await chainFrom(handle, 'tag-A', null)
       assert.deepEqual(chain.map((r) => r.id), ['kf1', 'r4', 'r5'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns only newer revisions when from=<known id>', () => {
+  it('returns only newer revisions when from=<known id>', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      insertRevision(handle, rev({ id: 'r3', base: 'r2' }))
-      insertRevision(handle, rev({ id: 'r4', base: 'r3' }))
-      const chain = chainFrom(handle, 'tag-A', 'r2')
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r3', base: 'r2' }))
+      await commitRevision(handle, rev({ id: 'r4', base: 'r3' }))
+      const chain = await chainFrom(handle, 'tag-A', 'r2')
       assert.deepEqual(chain.map((r) => r.id), ['r3', 'r4'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns an empty chain when from=<head> (caller is up-to-date)', () => {
+  it('returns an empty chain when from=<head> (caller is up-to-date)', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      assert.deepEqual(chainFrom(handle, 'tag-A', 'r2'), [])
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      assert.deepEqual(await chainFrom(handle, 'tag-A', 'r2'), [])
+    } finally { await cleanup() }
   })
 
-  it('falls back to the keyframe path when from=<unknown id>', () => {
+  it('falls back to the keyframe path when from=<unknown id>', async () => {
     // A client supplies a `from` the server doesn't recognise (DB
     // reset / chain compaction / malicious peer). chainFrom skips
     // past everything before the latest keyframe, same as from=null.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'kf1', base: 'r1', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r3', base: 'kf1' }))
-      const chain = chainFrom(handle, 'tag-A', 'never-existed')
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'kf1', base: 'r1', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r3', base: 'kf1' }))
+      const chain = await chainFrom(handle, 'tag-A', 'never-existed')
       assert.deepEqual(chain.map((r) => r.id), ['kf1', 'r3'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns full chain on from=<unknown id> when no keyframe ever landed', () => {
+  it('returns full chain on from=<unknown id> when no keyframe ever landed', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      const chain = chainFrom(handle, 'tag-A', 'never-existed')
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      const chain = await chainFrom(handle, 'tag-A', 'never-existed')
       assert.deepEqual(chain.map((r) => r.id), ['r1', 'r2'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('uses the most recent keyframe when multiple keyframes exist', () => {
+  it('uses the most recent keyframe when multiple keyframes exist', async () => {
     // `lastKeyframeSeq` returns MAX(seq) across keyframe rows. A
     // workspace with kf1 → reg → kf2 → reg → kf3 → reg should anchor
     // catch-up at kf3, dropping everything before. Pin so a
     // refactor that switched to "first keyframe" wouldn't regress.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'kf1', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r2', base: 'kf1' }))
-      insertRevision(handle, rev({ id: 'kf2', base: 'r2', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r4', base: 'kf2' }))
-      insertRevision(handle, rev({ id: 'kf3', base: 'r4', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r6', base: 'kf3' }))
-      const chain = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'kf1', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'kf1' }))
+      await commitRevision(handle, rev({ id: 'kf2', base: 'r2', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r4', base: 'kf2' }))
+      await commitRevision(handle, rev({ id: 'kf3', base: 'r4', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r6', base: 'kf3' }))
+      const chain = await chainFrom(handle, 'tag-A', null)
       assert.deepEqual(chain.map((r) => r.id), ['kf3', 'r6'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns post-keyframe revisions only when from=<keyframe id>', () => {
+  it('returns post-keyframe revisions only when from=<keyframe id>', async () => {
     // The known-from path: seqOfId(kf) → chainAfterSeq(kf.seq)
     // returns rows with seq STRICTLY greater than kf.seq. The
     // keyframe itself isn't echoed back — the client already has it
@@ -248,15 +251,15 @@ describe('chainFrom — cutoff semantics', () => {
     // would surface here.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'kf', base: 'r1', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r3', base: 'kf' }))
-      const chain = chainFrom(handle, 'tag-A', 'kf')
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'kf', base: 'r1', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r3', base: 'kf' }))
+      const chain = await chainFrom(handle, 'tag-A', 'kf')
       assert.deepEqual(chain.map((r) => r.id), ['r3'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('returns the in-between revisions when from=<id BEFORE the keyframe>', () => {
+  it('returns the in-between revisions when from=<id BEFORE the keyframe>', async () => {
     // The known-from path is purely "everything after row.seq" — it
     // does NOT promote the catch-up to the keyframe even when one
     // exists in between. The client expects continuity (each rev's
@@ -266,112 +269,378 @@ describe('chainFrom — cutoff semantics', () => {
     // here as a continuity break.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2', base: 'r1' }))
-      insertRevision(handle, rev({ id: 'kf', base: 'r2', keyframe: true }))
-      insertRevision(handle, rev({ id: 'r4', base: 'kf' }))
-      const chain = chainFrom(handle, 'tag-A', 'r1')
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      await commitRevision(handle, rev({ id: 'kf', base: 'r2', keyframe: true }))
+      await commitRevision(handle, rev({ id: 'r4', base: 'kf' }))
+      const chain = await chainFrom(handle, 'tag-A', 'r1')
       assert.deepEqual(chain.map((r) => r.id), ['r2', 'kf', 'r4'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('chain entries carry every signed-payload field for re-verification', () => {
+  it('chain entries carry every signed-payload field for re-verification', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1', nonce: 'NN', ciphertext: 'CT', signature: 'SG' }))
-      const [row] = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'r1', nonce: 'NN', ciphertext: 'CT', signature: 'SG' }))
+      const [row] = await chainFrom(handle, 'tag-A', null)
       assert.equal(row.id, 'r1')
       assert.equal(row.base, null)
       assert.equal(row.keyframe, 0)
       assert.equal(row.nonce, 'NN')
       assert.equal(row.ciphertext, 'CT')
       assert.equal(row.signature, 'SG')
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 })
 
-describe('insertRevision', () => {
-  it('assigns monotonic seq starting from 1', () => {
+describe('commitRevision', () => {
+  it('assigns monotonic seq starting from 1', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      insertRevision(handle, rev({ id: 'r2' }))
-      insertRevision(handle, rev({ id: 'r3' }))
-      const ordered = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r3', base: 'r2' }))
+      const ordered = await chainFrom(handle, 'tag-A', null)
       assert.deepEqual(ordered.map((r) => r.id), ['r1', 'r2', 'r3'])
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('UNIQUE (workspace_tag, id) blocks the same id from being inserted twice', () => {
+  it('a same-id retransmit returns { kind: "duplicate" } — no throw, no extra row', async () => {
     // The protocol relies on this for retransmit idempotency: a
-    // client retrying a save under the same (tag, id) must NOT
-    // create a duplicate row, even if the seq would be different.
+    // client retrying a save under the same (tag, id) gets an ack-
+    // shaped result (not a thrown UNIQUE error), and the chain is
+    // unchanged. The lock-protected dup check inside commitRevision
+    // turns a would-be SQLite UNIQUE-constraint throw into a
+    // structured `duplicate` outcome the handler can short-circuit
+    // cleanly.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'dup' }))
-      assert.throws(
-        () => insertRevision(handle, rev({ id: 'dup' })),
-        /UNIQUE constraint failed/iu,
-      )
-      // Chain is unchanged: the second insert was rejected.
-      const chain = chainFrom(handle, 'tag-A', null)
+      const first = await commitRevision(handle, rev({ id: 'dup' }))
+      assert.equal(first.kind, 'inserted')
+      const second = await commitRevision(handle, rev({ id: 'dup' }))
+      assert.equal(second.kind, 'duplicate')
+      const chain = await chainFrom(handle, 'tag-A', null)
       assert.equal(chain.length, 1)
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('different tags can share the same revision id (per-tag scope)', () => {
+  it('a save with a stale base returns { kind: "stale-base", head } without inserting', async () => {
+    // commitRevision's base-equality check sits inside the same
+    // lock as the INSERT. Pre-fix, two concurrent saves with the
+    // same base and different ids would both pass an out-of-lock
+    // base check and both insert, forking the chain. Tested
+    // sequentially here — the first commit advances the head; the
+    // second is forced to use the (now stale) original base and
+    // must bail.
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ tag: 'A', id: 'shared' }))
-      insertRevision(handle, rev({ tag: 'B', id: 'shared' }))
-      assert.equal(headFor(handle, 'A'), 'shared')
-      assert.equal(headFor(handle, 'B'), 'shared')
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ id: 'r1' }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1' }))
+      const stale = await commitRevision(handle, rev({ id: 'r2b', base: 'r1' }))
+      assert.equal(stale.kind, 'stale-base')
+      assert.equal(stale.head, 'r2')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      // Only r1, r2 — the stale `r2b` did NOT insert.
+      assert.deepEqual(chain.map((r) => r.id), ['r1', 'r2'])
+    } finally { await cleanup() }
   })
 
-  it('keyframe boolean is stored as 1 / 0', () => {
+  it('different tags can share the same revision id (per-tag scope)', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1', keyframe: false }))
-      insertRevision(handle, rev({ id: 'r2', keyframe: true }))
+      await commitRevision(handle, rev({ tag: 'A', id: 'shared' }))
+      await commitRevision(handle, rev({ tag: 'B', id: 'shared' }))
+      assert.equal(await headFor(handle, 'A'), 'shared')
+      assert.equal(await headFor(handle, 'B'), 'shared')
+    } finally { await cleanup() }
+  })
+
+  it('keyframe boolean is stored as 1 / 0', async () => {
+    const { handle, cleanup } = freshDb()
+    try {
+      await commitRevision(handle, rev({ id: 'r1', keyframe: false }))
+      await commitRevision(handle, rev({ id: 'r2', base: 'r1', keyframe: true }))
       // chainFrom(null) skips past everything before the latest
       // keyframe — so only `r2` (the keyframe) comes back. To inspect
       // r1's flag too, ask from r1 forward.
-      const fromR1 = chainFrom(handle, 'tag-A', 'r1')
+      const fromR1 = await chainFrom(handle, 'tag-A', 'r1')
       assert.equal(fromR1.length, 1)
       assert.equal(fromR1[0].id, 'r2')
       assert.equal(fromR1[0].keyframe, 1, 'keyframe rev stored as 1')
 
-      const fromHeadBack = chainFrom(handle, 'tag-A', null)
+      const fromHeadBack = await chainFrom(handle, 'tag-A', null)
       assert.equal(fromHeadBack.length, 1, 'keyframe-cutoff returns only kf forward')
       assert.equal(fromHeadBack[0].keyframe, 1)
 
       // Insert a non-keyframe AFTER and verify it stores 0.
-      insertRevision(handle, rev({ id: 'r3', base: 'r2', keyframe: false }))
-      const post = chainFrom(handle, 'tag-A', 'r2')
+      await commitRevision(handle, rev({ id: 'r3', base: 'r2', keyframe: false }))
+      const post = await chainFrom(handle, 'tag-A', 'r2')
       assert.equal(post[0].keyframe, 0, 'non-keyframe rev stored as 0')
-    } finally { cleanup() }
+    } finally { await cleanup() }
   })
 
-  it('null base is preserved (first revision in a chain)', () => {
+  it('null base is preserved (first revision in a chain)', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1', base: null }))
-      const [row] = chainFrom(handle, 'tag-A', null)
+      await commitRevision(handle, rev({ id: 'r1', base: null }))
+      const [row] = await chainFrom(handle, 'tag-A', null)
       assert.equal(row.base, null)
-    } finally { cleanup() }
+    } finally { await cleanup() }
+  })
+})
+
+describe('commitRevision — concurrency under the per-workspace_tag lock', () => {
+  // The async refactor moved every DB op behind an `await`. The lock
+  // is the only thing keeping the dup-recheck / base-check / MAX(seq)
+  // / INSERT quartet atomic against concurrent saves on the same
+  // workspace. These tests exercise the lock contract end-to-end by
+  // firing concurrent `commitRevision` calls via Promise.all and
+  // pinning the post-conditions.
+
+  it('two concurrent same-id retransmits: one inserts, one duplicates; chain has one row', async () => {
+    // Pre-fix, the post-sig dup recheck sat OUTSIDE the lock — two
+    // concurrent same-id retransmits could both pass the recheck and
+    // both reach INSERT, with the second throwing on UNIQUE and the
+    // originator never seeing an ack. Lock-protected dup recheck
+    // turns the loser into a clean `duplicate` outcome.
+    const { handle, cleanup } = freshDb()
+    try {
+      const input = rev({ id: 'same-id' })
+      const [ra, rb] = await Promise.all([
+        commitRevision(handle, input),
+        commitRevision(handle, { ...input }),
+      ])
+      assert.deepEqual([ra.kind, rb.kind].sort(), ['duplicate', 'inserted'])
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.equal(chain.length, 1, 'exactly one row landed')
+    } finally { await cleanup() }
+  })
+
+  it('two concurrent same-base different-id saves: one inserts, one stale-base; chain does NOT fork', async () => {
+    // The chain-fork bug the audit found. Without the lock-protected
+    // base check, BOTH saves would have inserted (UNIQUE is on id,
+    // not on base) and the chain would have two distinct rows with
+    // the same base — clients would see a continuity break. With the
+    // fix, the loser's base check (under the lock) sees the new head
+    // and returns stale-base.
+    const { handle, cleanup } = freshDb()
+    try {
+      const a = rev({ id: 'a-id' })   // base: null
+      const b = rev({ id: 'b-id' })   // base: null
+      const [ra, rb] = await Promise.all([
+        commitRevision(handle, a),
+        commitRevision(handle, b),
+      ])
+      assert.deepEqual([ra.kind, rb.kind].sort(), ['inserted', 'stale-base'])
+      const chain = await chainFrom(handle, 'tag-A', null)
+      // Critical invariant: ONE row, not two. Pin against a future
+      // regression that scopes the lock too narrowly again.
+      assert.equal(chain.length, 1, 'chain MUST NOT fork')
+    } finally { await cleanup() }
+  })
+
+  it('N concurrent same-base saves: exactly one inserts, N-1 return stale-base', async () => {
+    // Scale the same-base race up to stress the lock's FIFO contract
+    // under load. Each subsequent acquirer's base check (under its
+    // own lock-protected critical section) must see the head the
+    // first winner advanced to, so every loser returns stale-base —
+    // not duplicate (different ids) and not inserted (would re-fork).
+    const { handle, cleanup } = freshDb()
+    try {
+      const N = 10
+      const inputs = Array.from({ length: N }, (_, i) => rev({ id: `r-${i}` }))
+      const results = await Promise.all(inputs.map((r) => commitRevision(handle, r)))
+      const inserted = results.filter((r) => r.kind === 'inserted')
+      const stale = results.filter((r) => r.kind === 'stale-base')
+      assert.equal(inserted.length, 1, 'exactly one save wins')
+      assert.equal(stale.length, N - 1, 'all others see the advanced head')
+      // Every stale-base outcome carries the winner's id as `head`.
+      const winnerIdx = results.indexOf(inserted[0])
+      const winnerId = inputs[winnerIdx].id
+      for (const s of stale) assert.equal(s.head, winnerId, 'losers see the same head')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.equal(chain.length, 1, 'only the winner is persisted')
+    } finally { await cleanup() }
+  })
+
+  it('different workspaces do not serialise through the same queue (per-key lock)', async () => {
+    // KeyedAsyncLock keys on workspace_tag. Concurrent commits on
+    // distinct tags must run in parallel — otherwise a slow save on
+    // one workspace would head-of-line block every other workspace.
+    const { handle, cleanup } = freshDb()
+    try {
+      const [ra, rb] = await Promise.all([
+        commitRevision(handle, rev({ tag: 'ws-A', id: 'a1' })),
+        commitRevision(handle, rev({ tag: 'ws-B', id: 'b1' })),
+      ])
+      assert.equal(ra.kind, 'inserted')
+      assert.equal(rb.kind, 'inserted')
+      assert.equal(await headFor(handle, 'ws-A'), 'a1')
+      assert.equal(await headFor(handle, 'ws-B'), 'b1')
+    } finally { await cleanup() }
+  })
+
+  it('pipelined saves on the same workspace: r2 with base=r1.id lands in FIFO order, both insert', async () => {
+    // Real-world case: a client emits two revisions back-to-back
+    // before the first ack arrives. Promise.all kicks both off; the
+    // lock serialises r1 first (it enters the queue first), advances
+    // the head; r2's base check then matches against the freshly
+    // landed head. Both succeed.
+    const { handle, cleanup } = freshDb()
+    try {
+      const [r1, r2] = await Promise.all([
+        commitRevision(handle, rev({ id: 'r1' })),
+        commitRevision(handle, rev({ id: 'r2', base: 'r1' })),
+      ])
+      assert.equal(r1.kind, 'inserted')
+      assert.equal(r2.kind, 'inserted')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['r1', 'r2'])
+    } finally { await cleanup() }
+  })
+
+  it('mixed concurrent: same-id retransmit + two same-base different-id saves', async () => {
+    // Three concurrent commits against a pre-existing head r1:
+    //   • a same-id retransmit of r1 — must return duplicate
+    //   • two same-base (r1) competing different-id saves — exactly
+    //     one wins (inserted), the other gets stale-base
+    // Chain ends up with two rows total.
+    const { handle, cleanup } = freshDb()
+    try {
+      await commitRevision(handle, rev({ id: 'r1' }))
+      const dup = rev({ id: 'r1' })
+      const b = rev({ id: 'b', base: 'r1' })
+      const c = rev({ id: 'c', base: 'r1' })
+      const results = await Promise.all([
+        commitRevision(handle, dup),
+        commitRevision(handle, b),
+        commitRevision(handle, c),
+      ])
+      const kinds = results.map((r) => r.kind).sort()
+      assert.deepEqual(kinds, ['duplicate', 'inserted', 'stale-base'])
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.equal(chain.length, 2)
+    } finally { await cleanup() }
+  })
+
+  it('lock body executes serially: critical sections do not overlap', async () => {
+    // Direct check that the lock is doing what the contract claims —
+    // monkey-patch one of the DB awaits inside commitRevision's
+    // critical section to count concurrent entries, with an
+    // artificial setImmediate yield so a hypothetical non-serialised
+    // implementation would have ample opportunity to interleave.
+    const { handle, cleanup } = freshDb()
+    try {
+      let inside = 0
+      let maxInside = 0
+      const originalGet = handle.headSeq.get.bind(handle.headSeq)
+      handle.headSeq.get = async (tag) => {
+        inside += 1
+        if (inside > maxInside) maxInside = inside
+        await new Promise((resolve) => { setImmediate(resolve) })
+        const result = await originalGet(tag)
+        inside -= 1
+        return result
+      }
+      const N = 5
+      // Pipeline the saves so each one's base matches the prior winner —
+      // this means every save lands as 'inserted' (not stale-base),
+      // and we get N distinct lock acquisitions to observe overlap on.
+      // FIFO ordering of the lock guarantees the chain is r-0 → r-1 → …
+      const inputs = Array.from({ length: N }, (_, i) =>
+        rev({ id: `r-${i}`, base: i === 0 ? null : `r-${i - 1}` }))
+      const results = await Promise.all(inputs.map((r) => commitRevision(handle, r)))
+      for (const r of results) assert.equal(r.kind, 'inserted')
+      assert.equal(maxInside, 1, 'lock body MUST execute serially')
+    } finally { await cleanup() }
+  })
+
+  it('a thrown error inside commitRevision releases the lock for the next commit', async () => {
+    // KeyedAsyncLock's `finally` releases on throw. Plumb a failure
+    // through `insertRevision.run` once, then verify the next call
+    // on the same workspace acquires cleanly and inserts.
+    const { handle, cleanup } = freshDb()
+    try {
+      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      let injected = false
+      handle.insertRevision.run = (...args) => {
+        if (!injected) { injected = true; return Promise.reject(new Error('synthetic failure')) }
+        return originalRun(...args)
+      }
+      await assert.rejects(
+        () => commitRevision(handle, rev({ id: 'r1' })),
+        /synthetic failure/u,
+      )
+      // The lock must have released. A subsequent commit on the same
+      // workspace acquires cleanly.
+      const next = await commitRevision(handle, rev({ id: 'r2' }))
+      assert.equal(next.kind, 'inserted')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['r2'])
+    } finally { await cleanup() }
+  })
+
+  it('throws when invoked on a Handle not created by openDb (no lock found)', async () => {
+    // The lock is stored in a module-private WeakMap keyed by
+    // Handle. A hand-constructed Handle literal has no lock entry,
+    // so commitRevision fails loud rather than silently bypassing
+    // serialisation.
+    await assert.rejects(
+      () => commitRevision({}, rev({ id: 'x' })),
+      /handle not opened via openDb/u,
+    )
+  })
+
+  it('chainFrom is safe to call alongside concurrent commits — no torn reads, no inserts seen mid-write', async () => {
+    // chainFrom does NOT acquire the writeLock (reads do not need
+    // serialisation against writes). It may return a snapshot from
+    // before or after a concurrent commit, but never a torn snapshot.
+    // Stress-check by interleaving N commits with N chain reads and
+    // asserting every observed chain is a valid prefix of the final
+    // chain (no skipped seqs, no broken parent pointers).
+    const { handle, cleanup } = freshDb()
+    try {
+      const N = 8
+      // Sequential setup of a linear chain so chainFrom has something
+      // to read; concurrent commits append fresh rows.
+      const writers = []
+      let prev = null
+      for (let i = 0; i < N; i++) {
+        const id = `r-${i}`
+        // eslint-disable-next-line @typescript-eslint/no-loop-func
+        writers.push(commitRevision(handle, rev({ id, base: prev })))
+        prev = id
+      }
+      const readers = Array.from({ length: N }, () => chainFrom(handle, 'tag-A', null))
+      const [writeResults, ...readSnapshots] = await Promise.all([
+        Promise.all(writers),
+        ...readers,
+      ])
+      // Every writer inserted (pipelined chain).
+      for (const r of writeResults) assert.equal(r.kind, 'inserted')
+      // Every reader observed a valid prefix: ids in order r-0, r-1,
+      // …, and each row's base points at its predecessor.
+      for (const snapshot of readSnapshots) {
+        let expectedBase = null
+        for (let i = 0; i < snapshot.length; i++) {
+          assert.equal(snapshot[i].id, `r-${i}`, 'chain ids in order')
+          assert.equal(snapshot[i].base, expectedBase, 'base points at predecessor')
+          expectedBase = snapshot[i].id
+        }
+      }
+    } finally { await cleanup() }
   })
 })
 
 describe('revisionExists', () => {
-  it('returns true for an inserted revision, false otherwise', () => {
+  it('returns true for an inserted revision, false otherwise', async () => {
     const { handle, cleanup } = freshDb()
     try {
-      insertRevision(handle, rev({ id: 'r1' }))
-      assert.equal(revisionExists(handle, 'tag-A', 'r1'), true)
-      assert.equal(revisionExists(handle, 'tag-A', 'nope'), false)
-      assert.equal(revisionExists(handle, 'tag-B', 'r1'), false, 'scoped by tag')
-    } finally { cleanup() }
+      await commitRevision(handle, rev({ id: 'r1' }))
+      assert.equal(await revisionExists(handle, 'tag-A', 'r1'), true)
+      assert.equal(await revisionExists(handle, 'tag-A', 'nope'), false)
+      assert.equal(await revisionExists(handle, 'tag-B', 'r1'), false, 'scoped by tag')
+    } finally { await cleanup() }
   })
 })
 
@@ -445,8 +714,8 @@ describe('openDb — STRICT migration guard', () => {
     }
   })
 
-  it('accepts a freshly-created (STRICT) DB without throwing', () => {
+  it('accepts a freshly-created (STRICT) DB without throwing', async () => {
     const { cleanup } = freshDb()
-    cleanup()
+    await cleanup()
   })
 })

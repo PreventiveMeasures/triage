@@ -151,7 +151,7 @@ async function handleList(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreLi
     return
   }
   if (socket.readyState !== socket.OPEN) return
-  const rows = listLive(deps.handle, msg.workspaceTag)
+  const rows = await listLive(deps.handle, msg.workspaceTag)
   deps.send(socket, {
     type: 'objstore-list-result',
     workspaceTag: msg.workspaceTag,
@@ -176,7 +176,7 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
   // Direct (workspace_tag, resource_tag) lookup — `listLive(...).find()`
   // is O(n) per fetch and gets expensive for workspaces with many
   // resources. PR #4 review.
-  const row = getLive(deps.handle, tag, resourceTag)
+  const row = await getLive(deps.handle, tag, resourceTag)
   if (!row) {
     deps.send(socket, { type: 'objstore-fetch-not-found', workspaceTag: tag, resourceTag })
     return

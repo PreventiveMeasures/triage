@@ -54,12 +54,12 @@ function writeStaging(filePath, bytes) {
 }
 
 describe('openObjstore — schema', () => {
-  it('creates both tables on a fresh DB', () => {
+  it('creates both tables on a fresh DB', async () => {
     const { handle, cleanup } = freshHandle()
     try {
       // No rows yet — listLive returns [], getLive returns null.
-      assert.deepEqual(listLive(handle, 'workspace-tag-1'), [])
-      assert.equal(getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
+      assert.deepEqual(await listLive(handle, 'workspace-tag-1'), [])
+      assert.equal(await getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
     } finally { cleanup() }
   })
 })
@@ -85,7 +85,7 @@ describe('beginPut → commitPut happy path', () => {
       assert.equal(statSync(live).size, 16)
       assert.equal(existsSync(begin.filePath), false)
       // listLive sees the row.
-      const rows = listLive(handle, 'workspace-tag-1')
+      const rows = (await listLive(handle, 'workspace-tag-1'))
       assert.equal(rows.length, 1)
       assert.equal(rows[0].resourceTag, 'resource-tag-1')
       assert.equal(rows[0].version, 1)
@@ -153,7 +153,7 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
         const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
         assert.equal(c.ok, true, `setup row #${i} should commit`)
       }
-      assert.equal(listLive(handle, 'workspace-tag-1').length, MAX_RESOURCES_PER_WORKSPACE)
+      assert.equal((await listLive(handle, 'workspace-tag-1')).length, MAX_RESOURCES_PER_WORKSPACE)
       // The (MAX+1)th NEW resource must be rejected at begin — before
       // any staging row / staging file lands on disk.
       const over = await beginPut(handle, fakeBegin({ resourceTag: 'one-too-many', expectedLength: 4 }))
@@ -181,7 +181,7 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
       const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'r-0000', stagingId: reup.stagingId })
       assert.equal(c.ok, true)
       assert.equal(c.row.version, 2)
-      assert.equal(listLive(handle, 'workspace-tag-1').length, MAX_RESOURCES_PER_WORKSPACE)
+      assert.equal((await listLive(handle, 'workspace-tag-1')).length, MAX_RESOURCES_PER_WORKSPACE)
     } finally { cleanup() }
   })
 
@@ -216,7 +216,7 @@ describe('truncation invariant (M1) — a partial upload never becomes live', ()
       assert.equal(c1.ok, false)
       assert.equal(c1.reason, 'size-mismatch')
       // Critical invariant: no live row, no live file.
-      assert.equal(getLive(handle, 'workspace-tag-1', 'foo'), null)
+      assert.equal(await getLive(handle, 'workspace-tag-1', 'foo'), null)
       assert.equal(existsSync(liveFilePath(objDir, 'workspace-tag-1', 'foo')), false)
       // Cleanup the failed attempt (production path: REST handler calls
       // abortPut on the size-mismatch return; we replicate that here).
@@ -271,7 +271,7 @@ describe('commitPut — size + race checks', () => {
       assert.equal(c.ok, false)
       assert.equal(c.reason, 'size-mismatch')
       // The row is NOT created — listLive stays empty.
-      assert.equal(listLive(handle, 'workspace-tag-1').length, 0)
+      assert.equal((await listLive(handle, 'workspace-tag-1')).length, 0)
     } finally { cleanup() }
   })
 
@@ -322,7 +322,7 @@ describe('commitPut — size + race checks', () => {
       assert.equal(c.ok, false)
       assert.equal(c.reason, 'io-error')
       // Still no live row.
-      assert.equal(listLive(handle, 'workspace-tag-1').length, 0)
+      assert.equal((await listLive(handle, 'workspace-tag-1')).length, 0)
     } finally { cleanup() }
   })
 })
@@ -356,7 +356,7 @@ describe('deleteObject', () => {
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 1)
       assert.equal(existsSync(live), false)
-      assert.equal(getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
+      assert.equal(await getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
     } finally { cleanup() }
   })
 
@@ -393,7 +393,7 @@ describe('reapOrphans', () => {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
-      handle.deleteLive.run('workspace-tag-1', 'resource-tag-1') // direct row drop
+      handle.db.prepare(`DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?`).run('workspace-tag-1', 'resource-tag-1') // direct row drop
       const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
       assert.equal(existsSync(live), true)
       await reapOrphans(handle)
@@ -414,7 +414,7 @@ describe('reapOrphans', () => {
       const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
       assert.equal(existsSync(stagingFile), false)
       // Row dropped too.
-      const stagingRow = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      const stagingRow = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
       assert.equal(stagingRow, undefined)
     } finally { cleanup() }
   })
@@ -444,14 +444,14 @@ describe('reapOrphans', () => {
       await new Promise((r) => { setImmediate(r) })
       // Refresh while we still hold the lock — exactly the REST
       // PUT's last action before queuing for the commit lock.
-      handle.refreshStagingBegunAt.run(Date.now(), 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).run(Date.now(), 'workspace-tag-1', 'resource-tag-1', b.stagingId)
       release()
       await acquired
       await sweep
       // Row + file MUST survive: reaper's inside-lock re-check saw
       // the fresh begun_at and bailed.
       assert.equal(existsSync(b.filePath), true, 'reaper must not unlink a row whose refresh landed mid-sweep')
-      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
       assert.ok(row, 'staging row preserved by the inside-lock TTL re-check')
     } finally { cleanup() }
   })
@@ -474,10 +474,10 @@ describe('reapOrphans', () => {
       // Refresh — mimics what handleRestPutLocked does right before
       // the commit lock acquire.
       const fresh = Date.now()
-      handle.refreshStagingBegunAt.run(fresh, 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).run(fresh, 'workspace-tag-1', 'resource-tag-1', b.stagingId)
       // Reaper sees a non-stale row → preserves both row + file.
       await reapOrphans(handle)
-      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
       assert.ok(row, 'refresh restamps begun_at past the TTL boundary')
       // begun_at is now fresh, not stale.
       const begunAt = handle.db.prepare(`SELECT begun_at FROM workspace_object_staging WHERE staging_id = ?`).get(b.stagingId).begun_at
@@ -536,14 +536,19 @@ describe('reapOrphans', () => {
       // Simulate the commit landing its row while we still hold the
       // lock — the upsertLive insert is exactly what commitPut does
       // atomically inside the same lock.
-      handle.upsertLive.run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, 1, b64u8(), b64u64(), Date.now())
+      handle.db.prepare(`
+        INSERT INTO workspace_object
+          (workspace_tag, resource_tag, version, content_hash, content_length,
+           chunk_count, nonce_prefix, signature, put_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, 1, b64u8(), b64u64(), Date.now())
       release()
       await acquired
       await sweep
       // The file MUST still exist — reaper's re-check saw the row
       // and skipped the unlink.
       assert.equal(existsSync(live), true, 'reaper must not unlink a file whose row landed mid-sweep')
-      const row = handle.selectLiveOne.get('workspace-tag-1', 'resource-tag-1')
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?`).get('workspace-tag-1', 'resource-tag-1')
       assert.ok(row, 'live row still present')
     } finally { cleanup() }
   })
@@ -565,7 +570,7 @@ describe('reapOrphans', () => {
       // look up the row by (ws, sid), find it, and skip the unlink.
       await reapOrphans(handle)
       assert.equal(existsSync(b.filePath), true, 'reaper must not unlink the file of a live staging row')
-      const row = handle.selectStaging.get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
       assert.ok(row, 'staging row still present')
     } finally { cleanup() }
   })

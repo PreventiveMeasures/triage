@@ -19,12 +19,24 @@
 // roots when a from=null subscriber arrives.
 //
 // `node:sqlite` is the built-in driver (Node ≥ 22 experimental,
-// stable in 24+). Synchronous API — fine here because the server
-// is single-process and the WebSocket handler is the only writer.
-// JS event-loop atomicity guarantees head + insert can't interleave
-// with another save's head + insert.
+// stable in 24+). The driver is synchronous under the hood; the
+// Handle wraps each prepared statement so call sites `await`
+// uniformly. This is async-ready surface for a future async DB
+// backend — every operation today resolves in the current microtask
+// off a sync `node:sqlite` call.
+//
+// Because operations are now async, two handlers can interleave
+// across an `await`. `commitRevision` (below) collapses the entire
+// post-signature critical section — dup recheck, base-equality
+// check, MAX(seq) + INSERT — into a single `KeyedAsyncLock.run` per
+// workspace_tag. The lock instance is module-private (stored in
+// `writeLocks`, a `WeakMap<Handle, …>`), so only this module's
+// `commitRevision` can serialise against itself; no caller can
+// accidentally over- or under-serialise the wrong region.
 
-import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { DatabaseSync } from 'node:sqlite'
+import { KeyedAsyncLock } from './objstore/lock.ts'
+import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from './db-stmt.ts'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS workspace_revision (
@@ -45,24 +57,6 @@ const SCHEMA = `
     ON workspace_revision (workspace_tag, id);
 `
 
-// Bag of pre-prepared statements + the underlying connection. Held
-// for the process lifetime; `close()` runs from `shutdown()`. Pre-
-// preparing once means call sites read as `handle.headFor.get(tag)`
-// rather than re-preparing every call.
-export type Handle = {
-  db: DatabaseSync
-  headFor: StatementSync
-  headSeq: StatementSync
-  seqOfId: StatementSync
-  lastKeyframeSeq: StatementSync
-  chainAll: StatementSync
-  chainAfterSeq: StatementSync
-  chainFromSeq: StatementSync
-  revisionExists: StatementSync
-  insertRevision: StatementSync
-  close: () => void
-}
-
 // Row shape returned by the chain queries. SQLite stores `keyframe`
 // as INTEGER (0 / 1); `chainForWire` in server/index.ts normalises
 // to a strict boolean before broadcasting, but the raw row carries
@@ -76,7 +70,7 @@ export type RevisionRow = {
   signature: string
 }
 
-// Input to `insertRevision`. `keyframe` is a strict boolean here —
+// Input to `commitRevision`. `keyframe` is a strict boolean here —
 // the canonical-payload contract uses `=== true`, and the storage
 // path coerces to 0 / 1 via `keyframe ? 1 : 0` before hitting the
 // STRICT INTEGER column.
@@ -89,6 +83,43 @@ export type RevisionInsert = {
   ciphertext: string
   signature: string
 }
+
+// Outcome of `commitRevision`. `duplicate` means the id is already
+// in the chain (a retransmit landed during our await window).
+// `stale-base` means a concurrent save advanced the head past the
+// caller's claimed base — the caller renders this as a
+// `workspace-state` catch-up. `inserted` is the success path.
+export type CommitResult =
+  | { kind: 'inserted' }
+  | { kind: 'duplicate' }
+  | { kind: 'stale-base'; head: string | null }
+
+// Bag of pre-prepared statements + the underlying connection.
+// Held for the process lifetime; `close()` runs from `shutdown()`.
+// The per-(workspace_tag) write lock is kept OFF this type and
+// stored in a module-private WeakMap — only `commitRevision` here
+// touches it, so no caller can accidentally acquire a lock for the
+// wrong scope.
+export type Handle = {
+  db: DatabaseSync
+  headFor: GetStmt<[string], { id: string }>
+  headSeq: GetStmt<[string], { s: number | null }>
+  seqOfId: GetStmt<[string, string], { seq: number }>
+  lastKeyframeSeq: GetStmt<[string], { s: number | null }>
+  chainAll: AllStmt<[string], RevisionRow>
+  chainAfterSeq: AllStmt<[string, number], RevisionRow>
+  chainFromSeq: AllStmt<[string, number], RevisionRow>
+  revisionExists: GetStmt<[string, string], unknown>
+  insertRevision: RunStmt<[string, number, string, string | null, number, string, string, string, number]>
+  close: () => Promise<void>
+}
+
+// Module-private per-handle write lock. `commitRevision` is the
+// sole caller; exposing it on the Handle would invite a future
+// caller to grab it for an unrelated operation and either over- or
+// under-serialise the wrong critical section. WeakMap so a closed
+// handle's lock is GC'd alongside it without a manual delete.
+const writeLocks = new WeakMap<Handle, KeyedAsyncLock<string>>()
 
 export function openDb(path: string): Handle {
   const db = new DatabaseSync(path)
@@ -113,7 +144,7 @@ function openDbInner(db: DatabaseSync): Handle {
   // tables later without revisiting init.
   db.exec('PRAGMA journal_mode = WAL;')
   // FULL (not NORMAL): the server emits `workspace-save-ack` BEFORE
-  // returning to the event loop after `insertRevision`. With NORMAL,
+  // returning to the event loop after `commitRevision`. With NORMAL,
   // SQLite only fsyncs at WAL checkpoint, so a power loss between
   // ack and the next checkpoint loses the row even though the
   // originator and broadcast peers were told the revision committed.
@@ -153,61 +184,68 @@ function openDbInner(db: DatabaseSync): Handle {
   if (!columns.some((c) => c.name === 'keyframe')) {
     db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
   }
-  return {
+  const handle: Handle = {
     db,
-    headFor: db.prepare(`
+    headFor: wrapGet<[string], { id: string }>(db.prepare(`
       SELECT id FROM workspace_revision
       WHERE workspace_tag = ?
       ORDER BY seq DESC LIMIT 1
-    `),
-    headSeq: db.prepare(`
+    `)),
+    headSeq: wrapGet<[string], { s: number | null }>(db.prepare(`
       SELECT MAX(seq) AS s FROM workspace_revision WHERE workspace_tag = ?
-    `),
-    seqOfId: db.prepare(`
+    `)),
+    seqOfId: wrapGet<[string, string], { seq: number }>(db.prepare(`
       SELECT seq FROM workspace_revision
       WHERE workspace_tag = ? AND id = ?
-    `),
-    lastKeyframeSeq: db.prepare(`
+    `)),
+    lastKeyframeSeq: wrapGet<[string], { s: number | null }>(db.prepare(`
       SELECT MAX(seq) AS s FROM workspace_revision
       WHERE workspace_tag = ? AND keyframe = 1
-    `),
-    chainAll: db.prepare(`
+    `)),
+    chainAll: wrapAll<[string], RevisionRow>(db.prepare(`
       SELECT base, id, keyframe, nonce, ciphertext, signature
       FROM workspace_revision
       WHERE workspace_tag = ?
       ORDER BY seq ASC
-    `),
-    chainAfterSeq: db.prepare(`
+    `)),
+    chainAfterSeq: wrapAll<[string, number], RevisionRow>(db.prepare(`
       SELECT base, id, keyframe, nonce, ciphertext, signature
       FROM workspace_revision
       WHERE workspace_tag = ? AND seq > ?
       ORDER BY seq ASC
-    `),
-    chainFromSeq: db.prepare(`
+    `)),
+    chainFromSeq: wrapAll<[string, number], RevisionRow>(db.prepare(`
       SELECT base, id, keyframe, nonce, ciphertext, signature
       FROM workspace_revision
       WHERE workspace_tag = ? AND seq >= ?
       ORDER BY seq ASC
-    `),
-    revisionExists: db.prepare(`
+    `)),
+    revisionExists: wrapGet<[string, string], unknown>(db.prepare(`
       SELECT 1 FROM workspace_revision
       WHERE workspace_tag = ? AND id = ?
-    `),
-    insertRevision: db.prepare(`
+    `)),
+    insertRevision: wrapRun<[string, number, string, string | null, number, string, string, string, number]>(db.prepare(`
       INSERT INTO workspace_revision
         (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `),
-    close: () => db.close(),
+    `)),
+    // Match the wrap{Get,All,Run} contract: async-wrapped so a sync
+    // throw from `db.close()` (already closed, locked transaction, …)
+    // surfaces as a Promise rejection rather than escaping the
+    // wrapper synchronously.
+    // eslint-disable-next-line require-await
+    close: async () => { db.close() },
   }
+  writeLocks.set(handle, new KeyedAsyncLock<string>())
+  return handle
 }
 
-export function headFor(handle: Handle, tag: string): string | null {
-  const row = handle.headFor.get(tag) as { id: string } | undefined
+export async function headFor(handle: Handle, tag: string): Promise<string | null> {
+  const row = await handle.headFor.get(tag)
   return row?.id ?? null
 }
 
-export function chainFrom(handle: Handle, tag: string, fromId: string | null): RevisionRow[] {
+export async function chainFrom(handle: Handle, tag: string, fromId: string | null): Promise<RevisionRow[]> {
   // No base id, OR a base id the server doesn't recognise (db reset,
   // chain compaction, malicious peer): in either case the client has
   // no anchor we can incrementally serve from. Skip past everything
@@ -217,24 +255,54 @@ export function chainFrom(handle: Handle, tag: string, fromId: string | null): R
   // hasn't crossed the threshold). Keeps the catch-up cost O(keyframe
   // interval) instead of O(history length) for either entry point.
   if (fromId != null) {
-    const row = handle.seqOfId.get(tag, fromId) as { seq: number } | undefined
-    if (row) return handle.chainAfterSeq.all(tag, row.seq) as RevisionRow[]
+    const row = await handle.seqOfId.get(tag, fromId)
+    if (row) return handle.chainAfterSeq.all(tag, row.seq)
     // fall through to the from=null path below
   }
-  const kf = handle.lastKeyframeSeq.get(tag) as { s: number | null } | undefined
-  if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s) as RevisionRow[]
-  return handle.chainAll.all(tag) as RevisionRow[]
+  const kf = await handle.lastKeyframeSeq.get(tag)
+  if (kf?.s != null) return handle.chainFromSeq.all(tag, kf.s)
+  return handle.chainAll.all(tag)
 }
 
-export function revisionExists(handle: Handle, tag: string, id: string): boolean {
-  return Boolean(handle.revisionExists.get(tag, id))
+export async function revisionExists(handle: Handle, tag: string, id: string): Promise<boolean> {
+  return Boolean(await handle.revisionExists.get(tag, id))
 }
 
-export function insertRevision(
+// Atomic commit of a single revision. Dup-id check, base-equality
+// check, MAX(seq) computation, and INSERT all run inside one
+// `writeLock.run(tag, …)` block — the previously sync-atomic span
+// in `handleSave`'s post-signature path. Without this:
+//
+//   • Concurrent saves with the same `base` and DIFFERENT id would
+//     both pass an out-of-lock base-match check, both insert, and
+//     fork the chain (two rows with the same `base`). The schema
+//     allows it — UNIQUE is on (workspace_tag, id), not on `base`.
+//   • Concurrent retransmits with the same id would both pass an
+//     out-of-lock dup recheck, both reach INSERT, and the second
+//     would throw on UNIQUE — the originator never sees an ack.
+//
+// Both manifestations are closed here.
+export function commitRevision(
   handle: Handle,
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
-): void {
-  const row = handle.headSeq.get(tag) as { s: number | null } | undefined
-  const seq = (row?.s ?? 0) + 1
-  handle.insertRevision.run(tag, seq, id, base ?? null, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
+): Promise<CommitResult> {
+  const lock = writeLocks.get(handle)
+  // The WeakMap is populated by `openDbInner`; the only way to hit
+  // this is to construct a `Handle` literal by hand (e.g. a test
+  // mock). Surface as a rejection rather than a sync throw so the
+  // function's Promise-returning contract holds for every caller —
+  // an unawaited write would otherwise leak an uncaught exception.
+  if (!lock) return Promise.reject(new Error('commitRevision: handle not opened via openDb'))
+  return lock.run(tag, async () => {
+    if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
+    const headRow = await handle.headFor.get(tag)
+    const head = headRow?.id ?? null
+    const baseNorm = base ?? null
+    const matches = baseNorm == null ? head == null : baseNorm === head
+    if (!matches) return { kind: 'stale-base', head }
+    const seqRow = await handle.headSeq.get(tag)
+    const seq = (seqRow?.s ?? 0) + 1
+    await handle.insertRevision.run(tag, seq, id, baseNorm, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
+    return { kind: 'inserted' }
+  })
 }

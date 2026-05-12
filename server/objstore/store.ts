@@ -18,7 +18,7 @@
 //   PUT commit:  fsync(staging) → rename → fsync(parent) → DB write
 //   DELETE:      DB write → unlink (best-effort; ENOENT ok)
 
-import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
@@ -30,6 +30,7 @@ import {
   unlinkIfExists,
 } from './fs.ts'
 import { KeyedAsyncLock } from './lock.ts'
+import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from '../db-stmt.ts'
 
 // Default 1h, comfortably over a 50 MiB upload on a slow line. The
 // reaper walks the staging table on this cadence; rows older than
@@ -121,6 +122,17 @@ export type DeleteResult =
   | { ok: true; deletedVersion: number }
   | { ok: false; reason: 'not-found' | 'conflict'; conflict?: ObjectRow }
 
+// Async statement shapes are shared with server/db.ts via
+// ../db-stmt.ts — same `.get/.all/.run` → Promise contract across
+// both planes.
+
+// Row shape coming back from SELECTs (snake_case columns). The
+// public `ObjectRow` is camelCased by `rowFromDb` at the call site.
+type DbRow = {
+  resource_tag: string; version: number; content_hash: string; content_length: number
+  chunk_count: number; nonce_prefix: string; signature: string; put_at: number
+}
+
 // Pre-prepared statements + the underlying connection + the
 // per-resource lock that serialises commit / delete / reaper.
 // Held for process lifetime, closed from `shutdown()`. Bundling
@@ -131,18 +143,26 @@ export type Handle = {
   db: DatabaseSync
   dir: string
   lock: KeyedAsyncLock<string>
-  insertStaging: StatementSync
-  selectStaging: StatementSync
-  selectStagingByWsSid: StatementSync
-  refreshStagingBegunAt: StatementSync
-  deleteStaging: StatementSync
-  selectLive: StatementSync
-  selectLiveOne: StatementSync
-  upsertLive: StatementSync
-  deleteLive: StatementSync
-  listAllStaging: StatementSync
-  listLiveTags: StatementSync
-  countLive: StatementSync
+  insertStaging: RunStmt<[string, string, string, number | null, number, number, string, string, string, number]>
+  selectStaging: GetStmt<[string, string, string], {
+    prev_version: number | null
+    expected_chunks: number
+    expected_length: number
+    content_hash: string
+    nonce_prefix: string
+    signature: string
+    begun_at: number
+  }>
+  selectStagingByWsSid: GetStmt<[string, string], unknown>
+  refreshStagingBegunAt: RunStmt<[number, string, string, string]>
+  deleteStaging: RunStmt<[string, string, string]>
+  selectLive: AllStmt<[string], DbRow>
+  selectLiveOne: GetStmt<[string, string], DbRow>
+  upsertLive: RunStmt<[string, string, number, string, number, number, string, string, number]>
+  deleteLive: RunStmt<[string, string]>
+  listAllStaging: AllStmt<[], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
+  listLiveTags: AllStmt<[], { workspace_tag: string }>
+  countLive: GetStmt<[string], { c: number }>
 }
 
 // Per-workspace resource cap. Caps the live row count for a single
@@ -201,10 +221,6 @@ export function isValidStagingId(s: unknown): s is string {
   return typeof s === 'string' && STAGING_ID_RE.test(s)
 }
 
-type DbRow = {
-  resource_tag: string; version: number; content_hash: string; content_length: number
-  chunk_count: number; nonce_prefix: string; signature: string; put_at: number
-}
 function rowFromDb(r: DbRow): ObjectRow {
   return {
     resourceTag: r.resource_tag, version: r.version, contentHash: r.content_hash,
@@ -227,51 +243,59 @@ export function openObjstore(db: DatabaseSync, dir: string): Handle {
     const meta = db.prepare(`SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?`).get(name) as { strict: number } | undefined
     if (meta && meta.strict !== 1) throw new Error(`${name} is non-STRICT — migrate before booting`)
   }
+  // No `close` method on the returned Handle: the underlying
+  // `DatabaseSync` is owned by the caller (in production, the
+  // workspace_revision handle in `server/db.ts`, which closes it
+  // from `shutdown()`). Exposing `close()` here was misleading —
+  // a callsite reading `await objstoreHandle.close()` would
+  // reasonably assume it closes something, when in practice it
+  // either no-op'd (production) or left the connection open
+  // (tests construct their own DB and `db.close()` separately).
   return {
     db,
     dir,
     lock: new KeyedAsyncLock<string>(),
-    insertStaging: db.prepare(`
+    insertStaging: wrapRun(db.prepare(`
       INSERT INTO workspace_object_staging
         (workspace_tag, resource_tag, staging_id, prev_version,
          expected_chunks, expected_length, content_hash, nonce_prefix,
          signature, begun_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `),
-    selectStaging: db.prepare(`
+    `)),
+    selectStaging: wrapGet(db.prepare(`
       SELECT prev_version, expected_chunks, expected_length, content_hash,
              nonce_prefix, signature, begun_at
       FROM workspace_object_staging
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
-    `),
+    `)),
     // Reaper orphan-file sweep: lookup by (ws, sid) only, no resource_tag
     // (the staging filename doesn't carry it). PR #4 review H1.
-    selectStagingByWsSid: db.prepare(
+    selectStagingByWsSid: wrapGet(db.prepare(
       `SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND staging_id = ?`,
-    ),
+    )),
     // Restamp `begun_at` post-upload so TTL counts from upload-done.
     // PR #4 review H4.
-    refreshStagingBegunAt: db.prepare(
+    refreshStagingBegunAt: wrapRun(db.prepare(
       `UPDATE workspace_object_staging SET begun_at = ? WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`,
-    ),
-    deleteStaging: db.prepare(`
+    )),
+    deleteStaging: wrapRun(db.prepare(`
       DELETE FROM workspace_object_staging
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
-    `),
-    selectLive: db.prepare(`
+    `)),
+    selectLive: wrapAll(db.prepare(`
       SELECT resource_tag, version, content_hash, content_length, chunk_count,
              nonce_prefix, signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ?
       ORDER BY resource_tag ASC
-    `),
-    selectLiveOne: db.prepare(`
+    `)),
+    selectLiveOne: wrapGet(db.prepare(`
       SELECT resource_tag, version, content_hash, content_length, chunk_count,
              nonce_prefix, signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
-    `),
-    upsertLive: db.prepare(`
+    `)),
+    upsertLive: wrapRun(db.prepare(`
       INSERT INTO workspace_object
         (workspace_tag, resource_tag, version, content_hash, content_length,
          chunk_count, nonce_prefix, signature, put_at)
@@ -284,41 +308,41 @@ export function openObjstore(db: DatabaseSync, dir: string): Handle {
         nonce_prefix   = excluded.nonce_prefix,
         signature      = excluded.signature,
         put_at         = excluded.put_at
-    `),
-    deleteLive: db.prepare(`
+    `)),
+    deleteLive: wrapRun(db.prepare(`
       DELETE FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
-    `),
-    listAllStaging: db.prepare(`
+    `)),
+    listAllStaging: wrapAll(db.prepare(`
       SELECT workspace_tag, resource_tag, staging_id, begun_at
       FROM workspace_object_staging
-    `),
-    listLiveTags: db.prepare(`
+    `)),
+    listLiveTags: wrapAll(db.prepare(`
       SELECT DISTINCT workspace_tag FROM workspace_object
-    `),
-    countLive: db.prepare(`
+    `)),
+    countLive: wrapGet(db.prepare(`
       SELECT COUNT(*) AS c FROM workspace_object WHERE workspace_tag = ?
-    `),
+    `)),
   }
 }
 
-export function getLive(handle: Handle, tag: string, resourceTag: string): ObjectRow | null {
-  const row = handle.selectLiveOne.get(tag, resourceTag) as Parameters<typeof rowFromDb>[0] | undefined
+export async function getLive(handle: Handle, tag: string, resourceTag: string): Promise<ObjectRow | null> {
+  const row = await handle.selectLiveOne.get(tag, resourceTag)
   return row ? rowFromDb(row) : null
 }
 
-export function listLive(handle: Handle, tag: string): ObjectRow[] {
-  const rows = handle.selectLive.all(tag) as Array<Parameters<typeof rowFromDb>[0]>
+export async function listLive(handle: Handle, tag: string): Promise<ObjectRow[]> {
+  const rows = await handle.selectLive.all(tag)
   return rows.map(rowFromDb)
 }
 
 // Mints a staging id, validates the prev_version precondition,
-// inserts the staging row. Async because `ensureStagingDir` is
-// async; the DB writes themselves are sync (node:sqlite).
-// Callers should serialise per-(tag, resourceTag) with the
-// KeyedAsyncLock — see handlers.ts.
+// inserts the staging row. Async — `ensureStagingDir` is genuinely
+// async; the DB calls are async-shaped wrappers around the sync
+// `node:sqlite` driver. Callers MUST serialise
+// per-(tag, resourceTag) with the KeyedAsyncLock — see handlers.ts.
 export async function beginPut(handle: Handle, input: BeginPutInput): Promise<BeginPutResult> {
-  const live = getLive(handle, input.workspaceTag, input.resourceTag)
+  const live = await getLive(handle, input.workspaceTag, input.resourceTag)
   const liveVersion = live?.version ?? null
   if (liveVersion !== input.prevVersion) {
     return { ok: false, reason: 'conflict', conflict: live }
@@ -329,14 +353,14 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
   // inside the per-resource lock (caller-acquired), so it's
   // consistent with the live-row read above.
   if (!live) {
-    const count = handle.countLive.get(input.workspaceTag) as { c: number }
-    if (count.c >= MAX_RESOURCES_PER_WORKSPACE) {
+    const count = await handle.countLive.get(input.workspaceTag) as { c: number } | undefined
+    if ((count?.c ?? 0) >= MAX_RESOURCES_PER_WORKSPACE) {
       return { ok: false, reason: 'workspace-full' }
     }
   }
   const stagingId = randomBytes(16).toString('base64url')
   await ensureStagingDir(handle.dir, input.workspaceTag)
-  handle.insertStaging.run(
+  await handle.insertStaging.run(
     input.workspaceTag,
     input.resourceTag,
     stagingId,
@@ -354,26 +378,15 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
 // Re-checks prev_version (a concurrent commit/delete may have raced
 // past us between begin and commit), validates the on-disk staged
 // size, runs the durable rename. The upsertLive + deleteStaging
-// pair runs in a single JS sync block (no interleaving with other
-// JS) — this is CONCURRENCY atomicity, not crash atomicity. A crash
-// between upsertLive and deleteStaging leaves the staging row
-// alongside the new live row; the reaper's stale-staging sweep
-// cleans the orphan row + (already-renamed-away) staging file on
-// its next pass, matching the README's "stranded state, reaper-
-// cleaned, never row-pointing-at-nothing" crash-safety contract.
-// Callers MUST hold the per-resource lock across the whole call so
-// two concurrent commits don't both pass the version recheck before
-// either writes.
+// pair runs under the per-resource lock the caller already holds —
+// concurrency atomicity, not crash atomicity. A crash between
+// upsertLive and deleteStaging leaves the staging row alongside the
+// new live row; the reaper's stale-staging sweep cleans the orphan
+// row + (already-renamed-away) staging file on its next pass,
+// matching the README's "stranded state, reaper-cleaned, never
+// row-pointing-at-nothing" crash-safety contract.
 export async function commitPut(handle: Handle, input: CommitPutInput): Promise<CommitPutResult> {
-  const staging = handle.selectStaging.get(input.workspaceTag, input.resourceTag, input.stagingId) as {
-    prev_version: number | null
-    expected_chunks: number
-    expected_length: number
-    content_hash: string
-    nonce_prefix: string
-    signature: string
-    begun_at: number
-  } | undefined
+  const staging = await handle.selectStaging.get(input.workspaceTag, input.resourceTag, input.stagingId)
   if (!staging) return { ok: false, reason: 'no-staging' }
   const stagingPath = stagingFilePath(handle.dir, input.workspaceTag, input.stagingId)
   let stagedSize: number
@@ -395,7 +408,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // this guarantees the live file's bytes are always a complete
   // signed payload.
   if (stagedSize !== staging.expected_length) return { ok: false, reason: 'size-mismatch' }
-  const live = getLive(handle, input.workspaceTag, input.resourceTag)
+  const live = await getLive(handle, input.workspaceTag, input.resourceTag)
   const liveVersion = live?.version ?? null
   if (liveVersion !== staging.prev_version) {
     // Don't unlink the staging file here — the caller routes
@@ -413,7 +426,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   }
   const nextVersion = (liveVersion ?? 0) + 1
   const putAt = Date.now()
-  handle.upsertLive.run(
+  await handle.upsertLive.run(
     input.workspaceTag,
     input.resourceTag,
     nextVersion,
@@ -424,7 +437,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     staging.signature,
     putAt,
   )
-  handle.deleteStaging.run(input.workspaceTag, input.resourceTag, input.stagingId)
+  await handle.deleteStaging.run(input.workspaceTag, input.resourceTag, input.stagingId)
   return {
     ok: true,
     row: {
@@ -445,7 +458,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
 // event loop.
 export async function abortPut(handle: Handle, tag: string, resourceTag: string, stagingId: string): Promise<void> {
   await unlinkIfExists(stagingFilePath(handle.dir, tag, stagingId))
-  handle.deleteStaging.run(tag, resourceTag, stagingId)
+  await handle.deleteStaging.run(tag, resourceTag, stagingId)
 }
 
 // `prevVersion = null` + missing row = already-deleted-or-never-
@@ -455,13 +468,13 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 export async function deleteObject(
   handle: Handle, tag: string, resourceTag: string, prevVersion: number | null,
 ): Promise<DeleteResult> {
-  const live = getLive(handle, tag, resourceTag)
+  const live = await getLive(handle, tag, resourceTag)
   if (!live) {
     if (prevVersion == null) return { ok: true, deletedVersion: 0 }
     return { ok: false, reason: 'not-found' }
   }
   if (live.version !== prevVersion) return { ok: false, reason: 'conflict', conflict: live }
-  handle.deleteLive.run(tag, resourceTag)
+  await handle.deleteLive.run(tag, resourceTag)
   await unlinkIfExists(liveFilePath(handle.dir, tag, resourceTag))
   return { ok: true, deletedVersion: live.version }
 }

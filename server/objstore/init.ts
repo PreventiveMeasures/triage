@@ -5,16 +5,16 @@
 // closing the shared DB handle.
 
 import type { WebSocket } from 'ws'
-import type { DatabaseSync } from 'node:sqlite'
-import { openObjstore } from './store.ts'
+import type { Handle } from './store.ts'
 import { reapOrphans } from './reaper.ts'
 import { type ObjstoreHandlers, createObjstoreHandlers } from './handlers.ts'
 import { type ObjstoreRestDeps } from './rest.ts'
 import { newTokenSecret } from './tokens.ts'
 
 export type ObjstoreInitDeps = {
-  db: DatabaseSync
-  dir: string
+  // Pre-opened storage handle, sharing the SQLite connection with
+  // the workspace_revision handle in server/db.ts.
+  handle: Handle
   reapIntervalMs: number
   send: (socket: WebSocket, msg: object) => void
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
@@ -34,7 +34,7 @@ export type ObjstoreInit = {
 }
 
 export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
-  const handle = openObjstore(deps.db, deps.dir)
+  const handle = deps.handle
   const secret = newTokenSecret()
   const handlers = createObjstoreHandlers({
     handle, secret,
