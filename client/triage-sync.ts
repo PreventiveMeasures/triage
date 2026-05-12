@@ -226,12 +226,15 @@ export type SessionInfo = {
   error: string | null
 }
 
-const STORAGE_KEY = 'deepview.triageSyncUrl'
+// Legacy key for the user-configured server URL. The URL is no
+// longer persisted — only the per-origin detected default + an
+// optional console override are used — so this key only exists here
+// for one-shot cleanup at module load (see the load block below).
+const LEGACY_URL_KEY = 'deepview.triageSyncUrl'
 // Persisted user toggle — flips between true / false when the user
-// clicks the sidebar status button (or via the public API). Stored
-// separately from the URL so toggling sync off doesn't forget the
-// configured endpoint. Default true: an unconfigured user starts
-// "ready to sync the moment a URL exists".
+// clicks the sidebar status button (or via the public API). Default
+// true: an unconfigured user starts "ready to sync the moment a URL
+// exists".
 const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 // Per-workspace sync state — `{ [workspaceId]: { serverUrl,
 // baseRevision, baseState } }`. Scoped by `serverUrl` because
@@ -2084,10 +2087,6 @@ export const triageSync = {
     // `pendingSave` / `subscribed`.
     if (next === serverUrl) return
     serverUrl = next
-    try {
-      if (next) localStorage.setItem(STORAGE_KEY, next)
-      else localStorage.removeItem(STORAGE_KEY)
-    } catch {}
     closeSocket()
     // Server changed — revision IDs are per-server, so every
     // active session's tracking is stale. Reset each one; if
@@ -2430,14 +2429,15 @@ export const triageSync = {
   },
 }
 
-// Restore the user's persisted enable flag + saved server URL on
-// module load. Sync only auto-starts when both gates open: the URL
-// is set AND the user hasn't toggled off.
+// Restore the user's persisted enable flag on module load. The
+// server URL is NOT persisted — the per-origin detected default
+// (see `DEFAULT_SYNC_URL` in ui/view/sidebar.js) primes `serverUrl`
+// via `setServerUrl`, so any previously-stored URL is purged here
+// to avoid resurrecting stale endpoints from older builds.
 try {
+  localStorage.removeItem(LEGACY_URL_KEY)
   const savedEnabled = localStorage.getItem(USER_ENABLED_KEY)
   if (savedEnabled === '0') userEnabled = false
-  const saved = localStorage.getItem(STORAGE_KEY) ?? ''
-  if (saved) serverUrl = saved
   if (isActive()) openSocket()
 } catch {}
 
