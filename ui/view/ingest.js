@@ -747,3 +747,41 @@ dropZone.addEventListener('drop', (e) => {
   dropZone.classList.remove('hover')
   addFiles(e.dataTransfer.files)
 })
+
+// Click-to-browse: clicking anywhere on the drop zone (or
+// activating it with Enter / Space when it's keyboard-focused —
+// the host element carries `role="button" tabindex="0"`) opens
+// a native file picker. Routes the chosen files through the same
+// `addFiles` pipeline as a drop, so the JSON / markdown / CSV /
+// .gz / bundle classification all reuses the existing routing.
+//
+// The `<input type="file">` is created lazily on first activation
+// and parked on document.body — keeping it out of view.html
+// means the static markup stays focused on the visible chrome,
+// and the `hidden` attribute keeps it off the layout. Resetting
+// `.value = ''` after each change lets the user re-pick the same
+// file on a subsequent click (browsers suppress the change event
+// otherwise).
+let filePickerInput = null
+function openFilePicker() {
+  if (!filePickerInput) {
+    filePickerInput = document.createElement('input')
+    filePickerInput.type = 'file'
+    filePickerInput.multiple = true
+    filePickerInput.hidden = true
+    filePickerInput.addEventListener('change', () => {
+      const files = filePickerInput.files
+      if (files && files.length > 0) addFiles(files)
+      filePickerInput.value = ''
+    })
+    document.body.appendChild(filePickerInput)
+  }
+  filePickerInput.click()
+}
+dropZone.addEventListener('click', openFilePicker)
+dropZone.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    openFilePicker()
+  }
+})

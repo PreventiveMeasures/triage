@@ -1,7 +1,24 @@
 #drop-zone {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   flex: 1; padding: 2rem;
+  /* Drop zone doubles as a click-to-browse target — `cursor:
+     pointer` + the accent-highlighted "click to browse" span in
+     `.drop-prompt` signal that the whole surface is interactive
+     without painting a full-viewport highlight on mouse hover
+     (the bare cursor change is signal enough; the prior
+     `:hover` background read as too eager on idle mouse-over).
+     `:focus-visible` still paints an accent ring when the zone
+     is reached via keyboard (role="button" + tabindex="0") so
+     the Enter / Space activator is discoverable. The
+     pre-existing `.hover` class is the dragover affordance —
+     same surface tint, different trigger. */
+  cursor: pointer;
+  transition: background .12s ease-out;
 
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -8px;
+  }
   &.hover { background: var(--surface-active); }
   &.hidden { display: none; }
 }
@@ -11,4 +28,12 @@
 
   & h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
   & p { font-size: .95rem; }
+  /* "click to browse" inline accent — makes the click
+     affordance pop out of the otherwise muted prompt copy so
+     the user sees it before scanning the rest of the line. */
+  & .drop-prompt-action {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
