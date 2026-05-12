@@ -201,7 +201,8 @@
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .file-item.workspace-item .workspace-count { align-self: center; }
 
-.workspace-export {
+.workspace-export,
+.workspace-leave {
   flex-shrink: 0;
   width: 22px; align-self: center;
   height: 22px;
@@ -212,11 +213,20 @@
   opacity: 0;
   transition: opacity .12s ease-out;
 
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
+  &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
   &:focus-visible { opacity: 1; }
 }
+/* Leave button reads as the destructive-but-local action — picks
+   up the same critical hue as the bottom-of-sidebar "Delete
+   current" button on hover so the user pauses before clicking. */
+.workspace-leave:hover:not(:disabled) {
+  color: var(--critical, #f87171);
+  border-color: var(--critical, #f87171);
+}
 .file-item.workspace-item:hover .workspace-export,
-.file-item.workspace-item:focus-within .workspace-export { opacity: 1; }
+.file-item.workspace-item:hover .workspace-leave,
+.file-item.workspace-item:focus-within .workspace-export,
+.file-item.workspace-item:focus-within .workspace-leave { opacity: 1; }
 
 /* Inline rename input — swapped in over the label span on dblclick.
    Inherits the label's monospace font so the row height doesn't
@@ -335,6 +345,18 @@
   }
 }
 
+/* "Delete current" lives in the actions row above; the trash
+   glyph sits to the left of the text so the destructive nature
+   reads at a glance before the user parses the label. The
+   button's :hover rule above (.sidebar-actions button.danger)
+   already swaps the colour to var(--critical); the icon
+   inherits via `currentColor`. */
+#delete-current {
+  display: inline-flex; align-items: center; gap: .35rem;
+
+  & .trash-icon { flex-shrink: 0; }
+}
+
 /* Sync-status indicator. Three states drive the dot color via
    `data-status` on the button:
      off      grey  — no server URL configured
@@ -364,6 +386,19 @@
    visibility gate is a no-op and "Sync off" stays painted on
    workspaces / origins where the button shouldn't be reachable. */
 #sync-status[hidden] { display: none; }
+
+/* Top offset for every modal dialog in the app. The UA stylesheet
+   centers showModal() dialogs vertically via `margin: auto`; the
+   explicit `margin-top` here drops the bottom auto-margin's share
+   to the difference, shifting the dialog down by ~5rem so the
+   chrome doesn't punch through the viewport's vertical centerline
+   on tall screens (and gives more visual room at the top edge).
+   Element selector keeps it scoped to native <dialog>s without
+   having to enumerate every class — future dialogs inherit the
+   offset by virtue of being a <dialog>. */
+dialog {
+  margin-top: 5rem;
+}
 
 /* Workspace import: triage conflict dialog. The native <dialog>
    handles focus trap + Esc-to-close; this is just the visual shell.
@@ -999,6 +1034,109 @@
       background: var(--accent); color: var(--surface); border-color: var(--accent);
 
       &:hover:not(:disabled) { filter: brightness(1.08); }
+    }
+    &:disabled { opacity: .5; cursor: not-allowed; }
+  }
+}
+
+/* `<leave-workspace-dialog>` — confirmation prompt for the
+   per-workspace Leave button. Same frame chrome as the
+   new-workspace dialog so the two read as a pair, but with a
+   destructive-action footer (a critical-hued Leave on the right)
+   to underscore that the action wipes local state. */
+.leave-workspace-dialog {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 480px; width: min(94vw, 480px);
+  margin-inline: auto;
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+
+  & .lwd-head h3 {
+    margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
+  }
+  & .lwd-body {
+    margin: .2rem 0 .55rem;
+    color: var(--text); font-size: .86rem; line-height: 1.5;
+  }
+  & .lwd-empty {
+    margin: .2rem 0 .55rem;
+    color: var(--muted); font-size: .78rem;
+  }
+  /* Triage-section informational note (used by both the leave-
+     workspace dialog and the delete-report dialog). Same muted
+     palette as `.lwd-empty` but a bit more breathing room around
+     it since it can stand in for what would otherwise be a
+     radio fieldset — keeping its block size similar avoids the
+     dialog jumping height when the user toggles delete/detach. */
+  & .lwd-note {
+    margin: .2rem 0 .65rem;
+    padding: .55rem .7rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: rgb(from var(--text) r g b / .03);
+    color: var(--muted); font-size: .78rem; line-height: 1.45;
+  }
+  & .lwd-choice {
+    margin: .2rem 0 .65rem;
+    padding: .55rem .7rem .6rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: rgb(from var(--text) r g b / .03);
+
+    & legend {
+      padding: 0 .35rem;
+      color: var(--text); font-size: .78rem; font-weight: 500;
+
+      & strong { font-weight: 600; }
+    }
+  }
+  & .lwd-option {
+    display: flex; align-items: flex-start; gap: .5rem;
+    padding: .3rem .15rem;
+    cursor: pointer;
+
+    & input[type='radio'] {
+      margin: .15rem 0 0;
+      accent-color: var(--accent);
+    }
+    & .lwd-option-text {
+      display: flex; flex-direction: column; gap: .1rem;
+      min-width: 0;
+    }
+    & .lwd-option-title {
+      color: var(--text); font-size: .82rem; line-height: 1.35;
+    }
+    & .lwd-option-hint {
+      color: var(--muted); font-size: .72rem; line-height: 1.4;
+    }
+  }
+  & .lwd-list {
+    margin: 0; padding-left: 1.1rem;
+    color: var(--muted); font-size: .76rem; line-height: 1.5;
+
+    & li + li { margin-top: .2rem; }
+    & strong { color: var(--text); font-weight: 600; }
+  }
+
+  & .lwd-actions {
+    display: flex; align-items: center; gap: .4rem;
+    margin-top: .8rem;
+    padding-top: .7rem;
+    border-top: 1px solid var(--border);
+  }
+  & .lwd-spacer { flex: 1; }
+  & .lwd-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 5px;
+    padding: .35rem .9rem; cursor: pointer;
+    font: inherit; font-size: .8rem;
+
+    &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    &.danger {
+      color: var(--critical, #f87171); border-color: var(--border);
+
+      &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
     }
     &:disabled { opacity: .5; cursor: not-allowed; }
   }

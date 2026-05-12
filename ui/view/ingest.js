@@ -5,6 +5,7 @@ import { deleteFile, readFile, saveBundle, saveFile } from '../../client/storage
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
 import { loadPromise } from '../../client/triage.js'
+import { pruneOrphanTriage } from '../../client/triage-gc.js'
 import { triageSync } from '../../client/triage-sync.ts'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
@@ -16,7 +17,7 @@ import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { analyzeContent, removeCount, setCount } from '../../client/counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
-import { listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
+import { deleteWorkspace, listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -323,7 +324,18 @@ export async function switchToWorkspace(workspaceId) {
 // been moved into; render skips ghosts but `workspace-export`
 // would otherwise log skip-warnings forever and the next workspace
 // import on another machine would re-resurrect the stale entry.
-export async function deleteCurrent() {
+//
+// `triage` ('keep' | 'wipe', default 'keep') controls whether
+// `pruneOrphanTriage` runs after the OPFS removal. The sidebar
+// click handler precomputes the orphan count via
+// `analyzeTriageImpact` and surfaces the destructive action
+// through `<delete-report-dialog>` on every click — the dialog's
+// triage section adapts to the precomputed counts (terse note
+// when nothing's attached, terse note when everything's also
+// reachable from a kept report, keep-vs-wipe radio when orphans
+// exist). The default 'keep' is the no-op path and is what the
+// dialog resolves with when there are no orphans to ask about.
+export async function deleteCurrent({ triage = 'keep' } = {}) {
   if (!state.currentFile) return
   // Bump the load generation so any switchTo* / ingestReport
   // already in flight bails before pushing into the cleared
@@ -335,6 +347,17 @@ export async function deleteCurrent() {
   await setReportWorkspace(name, null)
   removeCount(name)
   saveRepoUrlFor(name, '')
+  // GC orphan triage entries only when the user picked "wipe"
+  // in the dialog. Default ('keep') leaves them in localStorage
+  // so a future re-import of the same report resurfaces the
+  // triage automatically. A GC error (round-1 review #1: now
+  // propagated rather than silently wiping everything) is
+  // warned and swallowed — the OPFS removal already landed and
+  // the orphans get to stay until the next clean prune.
+  if (triage === 'wipe') {
+    try { await pruneOrphanTriage() }
+    catch (err) { console.warn('Skipped orphan-triage GC:', err) }
+  }
   state.currentFile = null
   state.reports = []
   state.repoUrl = ''
@@ -355,6 +378,119 @@ export async function deleteCurrent() {
   dropZone.classList.remove('hidden')
   document.title = 'deepview results'
   document.body.classList.remove('show-print-btn')
+  await renderSidebar()
+}
+
+// Leave a workspace from THIS browser. Always drops the workspace
+// entry in localStorage and the persisted triage base (the latter
+// via triage-sync's `onWorkspaceDeleted` listener); what happens
+// to attached reports depends on `mode`:
+//   - 'detach' (default): the OPFS bytes stay in place — reports
+//     reappear in the sidebar's unattached list under their format
+//     bucket. Their cached counts and saved repo URLs survive.
+//   - 'delete': the OPFS bytes go too, alongside their cached
+//     counts + per-report repo URLs.
+// `triage` controls the persisted-triage GC (only meaningful in
+// delete mode):
+//   - 'keep' (default): orphaned triage stays in localStorage so a
+//     future re-import of a matching report can resurface it.
+//   - 'wipe': run `pruneOrphanTriage` after the OPFS removal so
+//     any triage entry whose finding-id isn't reachable from a
+//     remaining report gets dropped.
+// In both modes the server's workspace chain is left untouched —
+// peers still subscribed keep their copy, and a future re-import
+// of the same workspace bundle resumes against the same chain.
+// The UI layer's responsibility: if the active view was this
+// workspace (merged-mode) — or, in delete mode, one of its
+// reports — clear `state.currentFile` / `state.currentWorkspace`
+// and drop back to the drop zone so the renderer doesn't trip
+// over an active reference to gone data.
+export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'keep' } = {}) {
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  if (!ws) return
+  // Bump the load generation so any switchTo* / ingestReport
+  // already in flight (e.g. a click on the workspace that started
+  // a merged-view load) bails before pushing into the cleared
+  // state.reports — mirrors the guard in `deleteCurrent`.
+  ++loadGen
+  const reports = Array.isArray(ws.reports) ? [...ws.reports] : []
+  // Tear down the live sync session BEFORE we touch the workspace
+  // entry. `deleteWorkspace`'s listener does the same teardown
+  // (and drops the persisted base), but a manual `closeSession`
+  // here also stops the in-flight save loop from picking up a
+  // mid-deletion view of state.reports and emitting a doomed
+  // save against a chain whose identity is about to vanish.
+  triageSync.closeSession(workspaceId)
+  if (mode === 'delete') {
+    // Drop each report's OPFS bytes and its localStorage sidekicks
+    // (counts, repo URL). The reports array on a workspace owns the
+    // files exclusively (a report belongs to at most one workspace),
+    // so no other view will be left dangling by these deletes.
+    for (const name of reports) {
+      try { await deleteFile(name) } catch {}
+      removeCount(name)
+      saveRepoUrlFor(name, '')
+    }
+    // GC orphan triage entries only when the user explicitly
+    // picked "wipe" in the dialog. Default ('keep') leaves
+    // orphans in localStorage so a future re-import of a matching
+    // report can resurface the triage automatically. Same
+    // single-source-of-truth as `deleteCurrent`: any marker /
+    // triage state / comment / fix / per-report ignore whose
+    // finding-id no longer matches a finding in any remaining
+    // OPFS report gets dropped. Triage that's also reachable
+    // from a report we still have (cross-workspace, or in an
+    // unattached report) survives either way. A GC error
+    // (round-1 review #1: now propagated rather than silently
+    // wiping) is warned and swallowed — the reports are
+    // already gone; orphans get to stay until the next clean
+    // prune.
+    if (triage === 'wipe') {
+      try { await pruneOrphanTriage() }
+      catch (err) { console.warn('Skipped orphan-triage GC:', err) }
+    }
+  }
+  // In detach mode the reports become unfiled — no per-report
+  // mutation is needed here because `deleteWorkspace` below drops
+  // the whole workspace entry, taking the `reports` array with it.
+  // The OPFS bytes stay where they are, and the sidebar's unfiled
+  // bucket re-claims them on the next renderSidebar pass.
+  //
+  // Reset the active view if it pointed at the leaving workspace
+  // (merged-mode) or — in delete mode only — at one of its
+  // reports. In detach mode the report files survive, so a
+  // single-file view of one of them is still valid: leaving the
+  // user looking at the same report under the unfiled bucket is
+  // less disruptive than slamming them back to the drop zone.
+  const wasActiveWorkspace = state.currentWorkspace === workspaceId
+  const wasActiveFile = mode === 'delete'
+    && state.currentFile != null
+    && reports.includes(state.currentFile)
+  if (wasActiveWorkspace || wasActiveFile) {
+    state.currentFile = null
+    state.currentWorkspace = null
+    state.reports = []
+    state.repoUrl = ''
+    graph2.selected = null
+    graph2.focusedPkg = null
+    graph2.layoutCache = null
+    graph2.solo = null
+    graph2.hidden.clear()
+    graph2.pathFilter = ''
+    cleanupGraph2()
+    try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
+    report.classList.remove('active')
+    litRender(nothing, report)
+    dropZone.classList.remove('hidden')
+    document.title = 'deepview results'
+    document.body.classList.remove('show-print-btn')
+  }
+  // Finally drop the workspace entry. Fires `onWorkspaceDeleted`,
+  // which is where the persisted triage base for this workspace
+  // gets wiped (see triage-sync.ts). No server message is sent —
+  // the relay retains the workspace's chain until a future
+  // operator-side delete (not exposed yet).
+  await deleteWorkspace(workspaceId)
   await renderSidebar()
 }
 

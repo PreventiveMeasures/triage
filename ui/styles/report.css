@@ -1169,11 +1169,12 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     /* Per-row delete — hairline outline matches the sidebar's
-       "Delete current" button. Active state recolors on hover so
-       the action surface reads as destructive without dominating
-       the row. */
+       "Delete current" button. The trash glyph sits to the left
+       of the text so the destructive nature reads at a glance;
+       the icon inherits the hover colour via `currentColor`. */
     & .bundles-delete {
       flex-shrink: 0;
+      display: inline-flex; align-items: center; gap: .35rem;
       background: var(--bg); color: var(--muted);
       border: 1px solid var(--border); border-radius: 4px;
       padding: .2rem .55rem;
@@ -1181,6 +1182,8 @@
       cursor: pointer;
       transition: border-color .12s, color .12s;
       &:hover { border-color: var(--critical); color: var(--critical); }
+
+      & .trash-icon { flex-shrink: 0; }
     }
     /* Code shortcut — same chrome as the Delete button so the row
        reads as a tidy pair of trailing actions; accent hover hue

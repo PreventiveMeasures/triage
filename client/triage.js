@@ -25,7 +25,13 @@ const TRIAGE_KEY = 'deepview.triage'
 // readTriageBlob prefers this key when present — it's strictly newer
 // than the compressed one. Audit M3 round-5.
 const TRIAGE_PENDING_KEY = 'deepview.triage.pending'
-const SESSION_ID_RE = /^\d+$/u
+// Exported because the triage-gc helpers in `./triage-gc.js` need
+// to share the same "session-only id" predicate the
+// save/load/apply paths use — without identical filtering the
+// GC could either wipe live in-memory session ids (numeric
+// fallbacks for findings without a uuid) or, conversely, leave
+// orphans behind on a report that did carry uuids.
+export const SESSION_ID_RE = /^\d+$/u
 
 async function compressBrotli(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))
@@ -339,3 +345,4 @@ if (typeof window !== 'undefined') {
 // this before rendering so the first drop already shows stored marks
 // and deletions for matching findings.
 export const loadPromise = loadTriage()
+

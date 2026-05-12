@@ -139,6 +139,18 @@ export async function listFiles() {
 }
 
 export async function saveFile(name, content) {
+  // Reject names containing NUL. `\0` is the separator inside
+  // `state.ignoredIds` keys (`${reportName}\0${id}`) and inside
+  // the persisted triage entries' `ignoredReports` round-trip; a
+  // report name carrying its own NUL would split keys at the
+  // wrong byte and either GC the wrong ignore entry or pin
+  // (reportName, id) pairs that never resolve. The OPFS spec
+  // doesn't enforce this on its side, so guard at the storage
+  // boundary — drop names with NUL before they land on disk.
+  // Audit round-2 review #5.
+  if (typeof name !== 'string' || name.includes('\0')) {
+    throw new Error(`Invalid report name: contains NUL byte or is not a string`)
+  }
   // Bump synchronously BEFORE the async I/O so a concurrent readFile
   // that already started can detect that its result is stale and
   // skip overwriting the cache. Audit round-9 H1.

@@ -5,12 +5,15 @@ import { state } from '../../client/state.ts'
 import { fileList, sidebar } from './dom.js'
 import { listBundles, listFiles } from '../../client/storage.js'
 import { render } from './render.js'
-import { deleteCurrent, switchToFile, switchToWorkspace } from './ingest.js'
+import { deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
 import { ensureCounts, getCount } from '../../client/counts.js'
 import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } from '../../client/workspaces.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
+import { openLeaveWorkspaceDialog } from './leave-workspace-dialog.js'
+import { openDeleteReportDialog } from './delete-report-dialog.js'
+import { analyzeTriageImpact } from '../../client/triage-gc.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.ts'
 import { ensureBundleFindingsIndexed, getPackagesIndex, getRepositoriesIndex } from '../../client/bundle-finding-index.js'
@@ -181,6 +184,13 @@ const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14
 // downward arrow over a tray. Sized to match the "+" affordance in
 // the section header.
 const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>`
+// Door-with-arrow glyph for the per-workspace Leave button —
+// reads as "step out", distinct from a trash bin (which is
+// reserved for the report / bundle delete affordances elsewhere
+// in the chrome — the sidebar's "Delete current" report button
+// and the bundles row's "Delete", both inlined separately to
+// avoid a cross-file icon dependency).
+const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H4v10h5"/><path d="M7 8h7M11 5l3 3-3 3"/></svg>`
 function workspaceItemTemplate(w, reportCount) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
@@ -199,7 +209,16 @@ function workspaceItemTemplate(w, reportCount) {
   // inside Lit's `_commitText`. The property binding keeps no
   // marker comments inside the span; the inline mutation becomes
   // a plain overwrite that the next render reapplies.
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
+  // Hover-revealed actions on the right side of the row:
+  // Export (download .gz bundle), then Leave (drop the workspace
+  // from THIS browser — entry, OPFS reports, persisted triage
+  // base — without touching the server's chain, so peers and
+  // your other devices keep their copy). The eventual server-
+  // side "delete the chain too" affordance lives elsewhere (TBD)
+  // — we don't park a placeholder trash icon here because that
+  // misreads as "Delete is the same action as Leave, just
+  // greyed out".
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
@@ -376,6 +395,55 @@ sidebar.addEventListener('click', async (e) => {
     if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to export workspace: ${err.message}`))
     return
   }
+  // Per-workspace Leave — open the confirmation dialog (which
+  // surfaces a detach-vs-delete choice when reports are
+  // attached, plus a triage keep-vs-wipe choice when orphans
+  // would result), then hand off to the leave pipeline. Listed
+  // before the workspace row handler so a click on the leave
+  // glyph doesn't double as "open the workspace" while the
+  // confirmation is open. `analyzeTriageImpact` is computed
+  // up front so the dialog can render the appropriate triage
+  // section synchronously on open (it parses every kept-side
+  // OPFS file on first hit, but short-circuits when no
+  // persisted triage exists or none lives on the workspace's
+  // reports).
+  const leaveEl = e.target.closest('[data-action="leave-workspace"]')
+  if (leaveEl) {
+    const wsEl = leaveEl.closest('[data-workspace-id]')
+    const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
+    if (!ws) return
+    const reports = Array.isArray(ws.reports) ? ws.reports : []
+    let triageImpact
+    try {
+      triageImpact = await analyzeTriageImpact(reports)
+    } catch (err) {
+      // Round-1 review #1: `analyzeTriageImpact` now propagates
+      // OPFS errors instead of silently treating every overlap
+      // as orphaned. Refuse to open the dialog rather than show
+      // a wrong "wipe N orphans" count — the user can retry
+      // once OPFS settles.
+      alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
+      return
+    }
+    const { confirmed, mode, triage } = await openLeaveWorkspaceDialog({
+      name: ws.name,
+      reportCount: reports.length,
+      triageImpact,
+    })
+    if (!confirmed) return
+    // Round-1 review #3: a sibling tab may have deleted the
+    // workspace while our dialog was open. The cached `ws`
+    // here is the snapshot we showed the user; re-resolve
+    // against the live blob and surface "already gone" rather
+    // than silently no-op'ing inside `leaveWorkspace`.
+    if (!listWorkspaces().some((w) => w.id === ws.id)) {
+      alert(`Workspace "${ws.name}" was removed elsewhere; nothing to leave.`)
+      return
+    }
+    try { await leaveWorkspace(ws.id, mode, { triage }) }
+    catch (err) { alert(`Failed to leave workspace: ${err.message}`) }
+    return
+  }
   // Workspace row — clicking the name button (or anywhere on the
   // workspace row that isn't an action button) loads every report
   // in the workspace as a merged view. The dblclick handler
@@ -405,7 +473,39 @@ sidebar.addEventListener('click', async (e) => {
     return
   }
   if (e.target.closest('#delete-current')) {
-    deleteCurrent()
+    // No active file → nothing to delete; the button is also
+    // disabled at render time, but the closest() match could
+    // still fire on a synthesized event.
+    if (!state.currentFile) return
+    const name = state.currentFile
+    // Precompute triage impact for THIS report so the dialog's
+    // triage section renders synchronously on open. We open the
+    // dialog unconditionally — even with no triage attached —
+    // so destructive action always goes through an explicit
+    // Cancel/Delete prompt.
+    let triageImpact
+    try {
+      triageImpact = await analyzeTriageImpact([name])
+    } catch (err) {
+      // Round-1 review #1: a transient OPFS error must not
+      // silently mis-classify orphans — refuse to open the
+      // dialog and let the user retry.
+      alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
+      return
+    }
+    const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact })
+    if (!confirmed) return
+    // Round-1 review #3: the active file may have changed under
+    // us (cross-tab switch / sibling-tab delete) while the
+    // dialog was open. Bail rather than deleting whatever's
+    // current now — the user confirmed deletion of the file
+    // shown in the dialog, not whatever just slid into place.
+    if (state.currentFile !== name) {
+      alert(`Active report changed during confirmation; aborting delete of "${name}".`)
+      return
+    }
+    try { await deleteCurrent({ triage }) }
+    catch (err) { alert(`Failed to delete report: ${err.message}`) }
     return
   }
   if (e.target.closest('#sync-status')) {
