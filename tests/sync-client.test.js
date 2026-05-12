@@ -3457,6 +3457,41 @@ describe('triage-sync client', () => {
     triageSync.closeSession(wsId)
     await deleteWorkspace(wsId)
   })
+
+  it('setServerUrl prunes persisted sessions whose serverUrl no longer matches', async () => {
+    // Revision IDs are per-server, so a persisted entry under a
+    // different `serverUrl` is already inert at restore time
+    // (loadPersistedSession rejects on URL mismatch). This pin
+    // covers the cleanup half: setServerUrl drops those entries
+    // from localStorage so legacy bytes (e.g. pre-`/api/sync` path)
+    // don't accumulate forever.
+    triageSync.closeSession()
+    const wsLive = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const wsStale = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsLive, name: wsLive, privateKey: randomBase64(), reports: [] })
+    await upsertWorkspace({ id: wsStale, name: wsStale, privateKey: randomBase64(), reports: [] })
+    localStorage.setItem('deepview.sync.sessions', JSON.stringify({
+      version: 1,
+      sessions: {
+        [wsLive]: { serverUrl, baseRevision: 'a'.repeat(43), savesSinceKeyframe: 0, baseState: {} },
+        [wsStale]: { serverUrl: 'ws://stale.example/api/sync', baseRevision: 'b'.repeat(43), savesSinceKeyframe: 0, baseState: {} },
+      },
+    }))
+    // Force a URL transition so setServerUrl doesn't early-return
+    // on the same-URL no-op (suite ordering may have left it at
+    // `serverUrl` already).
+    triageSync.setServerUrl('')
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(() => {
+      const blob = JSON.parse(localStorage.getItem('deepview.sync.sessions') ?? '{}')
+      return blob.sessions?.[wsStale] === undefined
+    }, 'stale-URL entry pruned')
+    const blob = JSON.parse(localStorage.getItem('deepview.sync.sessions'))
+    assert.notEqual(blob.sessions[wsLive], undefined, 'matching-URL entry survives')
+    assert.equal(blob.sessions[wsStale], undefined, 'stale-URL entry pruned')
+    await deleteWorkspace(wsLive)
+    await deleteWorkspace(wsStale)
+  })
 })
 
 // ─────────── second-client helper: push a chain via raw WS ───────────

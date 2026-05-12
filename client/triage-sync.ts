@@ -970,18 +970,34 @@ function persistSession(target: Session): void {
   }).catch((err) => { console.warn('Triage sync: persistSession lock failed:', err) })
 }
 
-// One-shot prune at module load — drop persisted entries for
-// workspaces that no longer exist (deleted but their session state
-// stayed). Cheap; runs once per page load. Same fire-and-forget
-// rejection guard as `persistSession`.
-function prunePersistedSessions(): void {
+// Drop persisted entries that can no longer be applied. Two
+// classes:
+//   1. Workspace was deleted while we were away. (Live deletions go
+//      through the `onWorkspaceDeleted` listener; this handles the
+//      offline-tab case.)
+//   2. The entry's `serverUrl` doesn't match the relay we're about
+//      to use. Revision IDs are per-server, so `loadPersistedSession`
+//      already refuses to apply such an entry (returns null on
+//      `entry.serverUrl !== currentServerUrl`) — pruning here just
+//      stops the dead bytes from sitting in localStorage forever.
+//      Older builds with a different WS path (e.g. pre-`/api/sync`)
+//      are the typical source.
+//
+// Pass `currentUrl=null` (default) to skip the URL check — module
+// load runs before the sidebar primes the URL, so a null check
+// there would nuke every entry. `setServerUrl` re-runs this with
+// the new URL once it's known.
+function prunePersistedSessions(currentUrl: string | null = null): void {
   mutateAllSessions((all) => {
     const ids = Object.keys(all)
     if (ids.length === 0) return false
     const live = new Set(listWorkspaces().map((w) => w.id))
     let changed = false
     for (const id of ids) {
-      if (!live.has(id)) {
+      const entry = all[id]
+      const stale = !live.has(id)
+        || (currentUrl != null && entry?.serverUrl !== currentUrl)
+      if (stale) {
         delete all[id]
         changed = true
       }
@@ -2087,6 +2103,12 @@ export const triageSync = {
     // `pendingSave` / `subscribed`.
     if (next === serverUrl) return
     serverUrl = next
+    // Drop persisted entries whose `serverUrl` doesn't match the
+    // new relay — they could never be applied (loadPersistedSession
+    // rejects on URL mismatch) and otherwise sit in localStorage
+    // indefinitely. Empty `next` (sync turning off) skips the prune
+    // so a user toggling sync back on doesn't lose their bases.
+    if (next) prunePersistedSessions(next)
     closeSocket()
     // Server changed — revision IDs are per-server, so every
     // active session's tracking is stale. Reset each one; if
