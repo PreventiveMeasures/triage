@@ -10,6 +10,7 @@ import { ensureCounts, getCount } from '../../client/counts.js'
 import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } from '../../client/workspaces.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
+import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.ts'
 import { ensureBundleFindingsIndexed, getPackagesIndex, getRepositoriesIndex } from '../../client/bundle-finding-index.js'
@@ -356,8 +357,8 @@ sidebar.addEventListener('click', async (e) => {
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
-    const name = window.prompt('Workspace name')
-    if (name && name.trim()) {
+    const name = await openNewWorkspaceDialog()
+    if (name) {
       await createWorkspace(name)
       renderSidebar()
     }
@@ -487,6 +488,16 @@ function renderSyncStatus(status) {
   const btn = document.getElementById('sync-status')
   if (!btn) return
   const visible = syncButtonVisible()
+  // Auto-prime the default sync URL the first time a workspace
+  // has reports — workspaces opt the user into sync (unattached
+  // reports stay local-only), so the offline → online flip
+  // shouldn't require a separate sidebar click. Skipped when the
+  // user has explicitly turned sync off via the status button
+  // (`isEnabled()` reads the persisted toggle, default true) or
+  // when a custom URL is already configured via the console API.
+  if (visible && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
+    triageSync.setServerUrl(DEFAULT_SYNC_URL)
+  }
   // Visibility doubles as an active gate: when the button can't
   // be seen, the sync layer should be paused (no socket, no
   // reconnect attempts) so a configured-but-unreachable session

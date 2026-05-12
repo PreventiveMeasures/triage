@@ -943,3 +943,63 @@
     &.danger:hover { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
   }
 }
+
+/* `<new-workspace-dialog>` — name editor for the sidebar's
+   workspace "+" button. Same frame look as comment/fix-link
+   dialogs, plus an E2EE-sync note under the input so the user
+   understands what's being opted into. */
+.new-workspace-dialog {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 480px; width: min(94vw, 480px);
+  margin-inline: auto;
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+
+  & .nwd-head h3 {
+    margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
+  }
+  & .nwd-input {
+    display: block; width: 100%; box-sizing: border-box;
+    padding: .5rem .65rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg, var(--surface));
+    color: var(--text);
+    font: inherit; font-size: .88rem;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .18);
+    }
+    &::placeholder { color: var(--muted); }
+  }
+  & .nwd-note {
+    margin: .55rem 0 0;
+    color: var(--muted); font-size: .74rem; line-height: 1.45;
+  }
+
+  & .nwd-actions {
+    display: flex; align-items: center; gap: .4rem;
+    margin-top: .8rem;
+    padding-top: .7rem;
+    border-top: 1px solid var(--border);
+  }
+  & .nwd-spacer { flex: 1; }
+  & .nwd-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: 5px;
+    padding: .35rem .9rem; cursor: pointer;
+    font: inherit; font-size: .8rem;
+
+    &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    &.primary {
+      background: var(--accent); color: var(--surface); border-color: var(--accent);
+
+      &:hover:not(:disabled) { filter: brightness(1.08); }
+    }
+    &:disabled { opacity: .5; cursor: not-allowed; }
+  }
+}
