@@ -57,9 +57,19 @@
 // server. We store and forward them; we never inspect.
 //
 // Subscriber tracking: `subscribers: Map<workspaceTag, Set<socket>>`.
-// A socket joins the set when it sends any signed message for the
-// tag (save or subscribe). It leaves on disconnect. Broadcasts go
-// to every subscriber for the workspaceTag except the originator.
+// A socket joins the set ONLY via an explicit, signature-verified
+// `workspace-subscribe` (sole call site of `subscribe()` is in
+// `handleSubscribe`, gated by the per-connection challenge nonce
+// bound into the signature and a post-await `readyState` check).
+// It leaves on disconnect. Broadcasts go to every subscriber for
+// the workspaceTag except the originator.
+//
+// `workspace-save` deliberately does NOT auto-attach the sender,
+// even on a valid signature — see the audit note in `handleSave`
+// (round-9 H1): auto-subscribe-on-save let a passive observer
+// replay any captured save frame from any TCP connection to attach
+// as a silent mirror, since the duplicate-id path returns ack-only
+// and would not reject the attaching socket.
 
 import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
