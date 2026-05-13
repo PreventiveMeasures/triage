@@ -618,10 +618,17 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     } finally { await cleanup() }
   })
 
-  it('multi-process UNIQUE id violation on INSERT: caught, refetched → duplicate', async () => {
-    // Same race shape but the sibling slipped in a retransmit of
-    // OUR id. The refetch sees the id is already in the chain and
-    // returns `duplicate` — ack-only on the wire, no chain change.
+  it('multi-process UNIQUE id violation on INSERT: caught, refetched → inserted (row is in chain; broadcast)', async () => {
+    // The hard case: the row is in the chain after a unique-violation
+    // catch. We cannot distinguish "we successfully INSERTed and a
+    // retry layer wrapped the response as a unique-violation" from
+    // "a sibling process committed our id first". Either way the row
+    // IS in the chain. Returning `inserted` here (rather than the
+    // earlier `duplicate`) is the defensive choice — handleSave
+    // broadcasts to peers; clients dedup by content-addressed id, so
+    // an idempotent re-broadcast is harmless. Returning `duplicate`
+    // (the prior shape) would have silently dropped peers' broadcast
+    // when our INSERT was the one that landed.
     const { handle, cleanup } = freshDb()
     try {
       const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
@@ -634,7 +641,7 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
         throw new Error('UNIQUE constraint failed: workspace_revision.workspace_tag, workspace_revision.id')
       }
       const result = await commitRevision(handle, rev({ id: 'our-id' }))
-      assert.equal(result.kind, 'duplicate')
+      assert.equal(result.kind, 'inserted')
       const chain = await chainFrom(handle, 'tag-A', null)
       assert.deepEqual(chain.map((r) => r.id), ['our-id'])
     } finally { await cleanup() }

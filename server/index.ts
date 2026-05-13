@@ -78,12 +78,12 @@ import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
-import { type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
+import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
 import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
-import { openObjstore } from './objstore/store.ts'
+import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
@@ -160,12 +160,21 @@ Environment:
 // presence; absent → SQLite. The Neon files import
 // `@neondatabase/serverless` lazily inside their open functions, so
 // static imports here are safe even on a SQLite-only install where the
-// optional peer dep isn't present.
+// optional peer dep isn't present. Branch out explicitly (rather than
+// via a ternary) so the SQLite path keeps its `SqliteHandle` narrowing
+// — `sqliteHandle.db` is typed as a non-optional `DatabaseSync` and
+// `openObjstore` accepts it without a non-null assertion.
 const NEON_URL = env['DATABASE_URL'] ?? null
-const handle = NEON_URL ? await openNeonDb(NEON_URL) : openDb(DB_PATH)
-const objstoreHandle = NEON_URL
-  ? await openNeonObjstore(NEON_URL, OBJSTORE_DIR)
-  : openObjstore(handle.db!, OBJSTORE_DIR)
+let handle: Handle
+let objstoreHandle: ObjstoreHandle
+if (NEON_URL) {
+  handle = await openNeonDb(NEON_URL)
+  objstoreHandle = await openNeonObjstore(NEON_URL, OBJSTORE_DIR)
+} else {
+  const sqliteHandle = openDb(DB_PATH)
+  handle = sqliteHandle
+  objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR)
+}
 
 // Per-connection challenge nonce (round-9 H2). Issued in a
 // `challenge` frame the moment the socket opens; the client signs

@@ -121,6 +121,16 @@ export type Handle = {
   close: () => Promise<void>
 }
 
+// Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
+// to be set. `openDb` returns this so call sites that need direct
+// `DatabaseSync` access (e.g. `openObjstore(handle.db, …)` in
+// `server/index.ts`'s SQLite branch) can reach `handle.db` without
+// an optional-chain or non-null assertion. A Neon-backed Handle
+// (`openNeonDb`) keeps the wider `db?: DatabaseSync` shape; routing
+// a Neon Handle into a SQLite-coupled call site is a compile-time
+// error. Mirrors the same pattern in `server/objstore/store.ts`.
+export type SqliteHandle = Handle & { db: DatabaseSync }
+
 // Module-private per-handle write lock. `commitRevision` is the
 // sole caller; exposing it on the Handle would invite a future
 // caller to grab it for an unrelated operation and either over- or
@@ -136,7 +146,7 @@ export function _attachWriteLock(handle: Handle): void {
   writeLocks.set(handle, new KeyedAsyncLock<string>())
 }
 
-export function openDb(path: string): Handle {
+export function openDb(path: string): SqliteHandle {
   const db = new DatabaseSync(path)
   // Any throw between the DatabaseSync constructor and the return
   // would otherwise leak the underlying file / WAL / shm locks until
@@ -151,7 +161,7 @@ export function openDb(path: string): Handle {
   }
 }
 
-function openDbInner(db: DatabaseSync): Handle {
+function openDbInner(db: DatabaseSync): SqliteHandle {
   // WAL gives concurrent readers + faster writes and survives
   // crashes between commits without corrupting the file. Foreign
   // keys aren't strictly needed here (single-table schema) but
@@ -199,7 +209,7 @@ function openDbInner(db: DatabaseSync): Handle {
   if (!columns.some((c) => c.name === 'keyframe')) {
     db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
   }
-  const handle: Handle = {
+  const handle: SqliteHandle = {
     db,
     headFor: wrapGet<[string], { id: string }>(db.prepare(`
       SELECT id FROM workspace_revision
@@ -381,11 +391,26 @@ export function commitRevision(
       // failures rather than masking as a stale-base catch-up.
       if (!isUniqueViolation(err)) throw err
       // The PK / UNIQUE was the only thing standing between us and
-      // a chain fork. Refetch and route through the same outcomes
-      // the in-process lock would have produced: if our id is now
-      // in the chain (someone committed our retransmit), `duplicate`;
-      // otherwise head advanced past us, `stale-base`.
-      if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
+      // a chain fork. Refetch and route through one of two outcomes:
+      //
+      //   • The row IS in the chain — return `inserted`. We can't
+      //     distinguish "we successfully INSERTed but the driver's
+      //     retry layer wrapped the response as a unique-violation"
+      //     from "a sibling process committed our id first". In the
+      //     first case the row IS our save and peers MUST receive
+      //     the broadcast; in the second it's still safe to
+      //     broadcast because clients dedup by content-addressed
+      //     `id` (and the id collision implies the canonical bytes
+      //     are byte-identical, so a peer can't tell the difference
+      //     anyway). Treating recovery-exists as `inserted` is the
+      //     defensive choice — broadcast on possibly-ours rather
+      //     than silently drop the broadcast on definitely-ours.
+      //
+      //   • The row is NOT in the chain — head advanced past our
+      //     computed seq via a sibling commit with a different id.
+      //     `stale-base` so the caller renders a `workspace-state`
+      //     catch-up.
+      if (await handle.revisionExists.get(tag, id)) return { kind: 'inserted' }
       const newHeadRow = await handle.headFor.get(tag)
       return { kind: 'stale-base', head: newHeadRow?.id ?? null }
     }
