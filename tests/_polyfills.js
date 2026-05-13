@@ -17,6 +17,33 @@
 //     this only takes effect on the older Node versions the
 //     local test loop covers.
 
+// `--js-base-64` is set for the base64 methods (Uint8Array.fromBase64
+// / .toBase64) the client relies on, but on some Node 24.x hosts the
+// same flag turns on a buggy native `Uint8Array.prototype.toHex` that
+// emits 'O'..'V' for nibbles ≥ 8 instead of '8'..'9' / 'a'..'f'.
+// @noble/hashes routes ed25519 key derivation through that method, so
+// triage-sync derivation throws `Cannot convert 0x…O…V… to a BigInt`.
+// Overwrite (not delete) so the result is timing-independent —
+// @noble/hashes captures `hasHexBuiltin` at module load and the test
+// runner can land that capture before _polyfills.js runs; replacing
+// in place keeps `typeof === 'function'` but routes every call to a
+// correct JS implementation. Fixed and unflagged in Node 25, so the
+// probe is a no-op there.
+if (typeof Uint8Array.prototype.toHex === 'function'
+    && new Uint8Array(32).fill(255).toHex() !== 'ff'.repeat(32)) {
+  const hexes = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'))
+  // eslint-disable-next-line no-extend-native -- intentionally patching the broken native
+  Object.defineProperty(Uint8Array.prototype, 'toHex', {
+    configurable: true,
+    writable: true,
+    value: function toHex() {
+      let s = ''
+      for (let i = 0; i < this.length; i++) s += hexes[this[i]]
+      return s
+    },
+  })
+}
+
 function createLocalStorage() {
   const store = new Map()
   return {

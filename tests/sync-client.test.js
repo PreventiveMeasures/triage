@@ -25,21 +25,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-function createLocalStorage() {
-  const store = new Map()
-  return {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => { store.set(k, String(v)) },
-    removeItem: (k) => { store.delete(k) },
-    clear: () => { store.clear() },
-    get length() { return store.size },
-    key: (i) => Array.from(store.keys())[i] ?? null,
-  }
-}
-
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = createLocalStorage()
-}
+// MUST run before any client module loads — `_polyfills.js` shims
+// `localStorage` / `navigator.locks` and (critically) drops the
+// broken native `Uint8Array.prototype.toHex` that some Node 24.x
+// builds expose under `--js-base-64`, before @noble/hashes captures
+// `hasHexBuiltin` at first import.
+await import('./_polyfills.js')
 
 // ─────────── client modules ───────────
 
