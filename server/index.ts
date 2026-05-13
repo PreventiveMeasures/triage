@@ -79,10 +79,12 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
+import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
 import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
 import { openObjstore } from './objstore/store.ts'
+import { openNeonObjstore } from './objstore/store-neon.ts'
 import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
 // Wire-message envelope as it lands post-`JSON.parse`. Every field is
@@ -136,15 +138,34 @@ if (argv.includes('--help') || argv.includes('-h')) {
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
-  DB_PATH                    sqlite file (default server/data.db)
-  OBJSTORE_DIR               object store root (default: ./objstore next to DB_PATH)
+  DB_PATH                    sqlite file (default server/data.db);
+                             ignored when DATABASE_URL is set
+  DATABASE_URL               Neon Postgres connection string; if set,
+                             selects the Neon backend instead of
+                             SQLite. Requires the optional peer dep
+                             @neondatabase/serverless.
+  OBJSTORE_DIR               object store root (default: ./objstore
+                             next to DB_PATH; the default still uses
+                             DB_PATH's dirname even when DATABASE_URL
+                             selects the Neon backend — set
+                             OBJSTORE_DIR explicitly on Neon if you
+                             want it elsewhere)
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
   DEBUG=1                    log every message`)
   process.exit(0)
 }
 
-const handle = openDb(DB_PATH)
-const objstoreHandle = openObjstore(handle.db, OBJSTORE_DIR)
+// Backend selection. Both planes (workspace_revision + the v1.objstore
+// tables) flow through the same backend, picked by DATABASE_URL
+// presence; absent → SQLite. The Neon files import
+// `@neondatabase/serverless` lazily inside their open functions, so
+// static imports here are safe even on a SQLite-only install where the
+// optional peer dep isn't present.
+const NEON_URL = env['DATABASE_URL'] ?? null
+const handle = NEON_URL ? await openNeonDb(NEON_URL) : openDb(DB_PATH)
+const objstoreHandle = NEON_URL
+  ? await openNeonObjstore(NEON_URL, OBJSTORE_DIR)
+  : openObjstore(handle.db!, OBJSTORE_DIR)
 
 // Per-connection challenge nonce (round-9 H2). Issued in a
 // `challenge` frame the moment the socket opens; the client signs
@@ -638,7 +659,10 @@ httpServer.on('listening', () => {
   // `address()` is always a populated AddressInfo here.
   const addr = httpServer.address()
   const boundPort = typeof addr === 'object' && addr ? addr.port : PORT
-  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (db: ${DB_PATH}, objstore: ${OBJSTORE_DIR})`)
+  // Differentiate the storage banner by backend so the log line
+  // doesn't claim a misleading DB_PATH under Neon.
+  const dbBanner = NEON_URL ? 'db: neon-postgres' : `db: ${DB_PATH}`
+  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, objstore: ${OBJSTORE_DIR})`)
 })
 
 // Route bind / post-listen failures through `shutdown` so the
@@ -744,8 +768,13 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   // a separate broadcast path. `Promise.allSettled` so a single
   // handler rejection doesn't abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-  // objstoreHandle has no `close()` — the underlying connection is
-  // owned by `handle` below; closing it once does both planes.
+  // objstoreHandle has no `close()`:
+  //  - SQLite: it shares the workspace_revision handle's
+  //    `DatabaseSync`, which `handle.close()` below closes.
+  //  - Neon: there's no persistent connection at all — `neon()`
+  //    returns a stateless HTTP callable, and the SQLite-only
+  //    `DatabaseSync` is the only thing that ever needs explicit
+  //    shutdown. `handle.close()` below is itself a no-op on Neon.
   try { await handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
   // Read `pendingExitCode` (not the parameter) so a re-entrant
   // `shutdown(1)` that landed during the drain wins over the

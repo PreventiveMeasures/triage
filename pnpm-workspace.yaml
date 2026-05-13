@@ -8,3 +8,5 @@ ignoreWorkspaceRootCheck: true
 linkWorkspacePackages: true
 
 lockfileIncludeTarballUrl: true
+
+autoInstallPeers: false

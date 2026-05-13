@@ -100,8 +100,15 @@ export type CommitResult =
 // stored in a module-private WeakMap — only `commitRevision` here
 // touches it, so no caller can accidentally acquire a lock for the
 // wrong scope.
+//
+// `db` is the raw `DatabaseSync` and is SQLite-only. The Neon
+// backend (`./db-neon.ts`) constructs a Handle with `db` unset.
+// Callers that reach into `db` directly (e.g. `openObjstore`,
+// test-only fixture SQL) are SQLite-coupled by construction —
+// passing them a Neon-backed Handle is the operator's mistake to
+// catch at the `if (DATABASE_URL)` switch in `server/index.ts`.
 export type Handle = {
-  db: DatabaseSync
+  db?: DatabaseSync
   headFor: GetStmt<[string], { id: string }>
   headSeq: GetStmt<[string], { s: number | null }>
   seqOfId: GetStmt<[string, string], { seq: number }>
@@ -120,6 +127,14 @@ export type Handle = {
 // under-serialise the wrong critical section. WeakMap so a closed
 // handle's lock is GC'd alongside it without a manual delete.
 const writeLocks = new WeakMap<Handle, KeyedAsyncLock<string>>()
+
+// Internal helper used by alternative backends (currently just
+// `db-neon.ts`) to register their handle's lock without touching
+// the module-private `writeLocks` map directly. Underscore-prefix
+// signals "internal API, do not call from application code".
+export function _attachWriteLock(handle: Handle): void {
+  writeLocks.set(handle, new KeyedAsyncLock<string>())
+}
 
 export function openDb(path: string): Handle {
   const db = new DatabaseSync(path)
@@ -268,10 +283,49 @@ export async function revisionExists(handle: Handle, tag: string, id: string): P
   return Boolean(await handle.revisionExists.get(tag, id))
 }
 
+// Driver shapes for a primary-key or unique-index violation.
+// `commitRevision`'s INSERT can hit either constraint under a
+// multi-process race against the same database: the
+// `(workspace_tag, seq)` PK if a sibling process landed a row with
+// our computed seq, or the `(workspace_tag, id)` UNIQUE if a
+// sibling retransmit slipped in with the same id. Both are
+// recoverable.
+//
+// We accept several driver-error shapes so the recovery path
+// doesn't silently regress under a driver upgrade:
+//   • Postgres / Neon: SQLSTATE `23505` via `err.code`.
+//   • node:sqlite: `SQLITE_CONSTRAINT_UNIQUE` /
+//     `SQLITE_CONSTRAINT_PRIMARYKEY` via `err.code`.
+//   • SQLite fallback by message-shape: modern releases emit
+//     "UNIQUE constraint failed: …" for both UNIQUE-index and
+//     PRIMARY-KEY violations; older / certain paths instead emit
+//     "PRIMARY KEY must be unique". Match both so a future Node
+//     `node:sqlite` change can't silently turn a recoverable
+//     conflict into an unhandled rejection.
+function isUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const code = (err as { code?: string }).code
+  if (code === '23505') return true
+  if (code === 'SQLITE_CONSTRAINT_UNIQUE') return true
+  if (code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return true
+  if (err.message.includes('UNIQUE constraint failed')) return true
+  if (err.message.includes('PRIMARY KEY must be unique')) return true
+  // Postgres / Neon message-shape fallback. The Postgres phrasing
+  // is "duplicate key value violates unique constraint …" — caught
+  // by SQLSTATE `23505` above today, but the message-shape match
+  // is belt-and-suspenders against a future Neon driver release
+  // that omits or renames `err.code`. Without it a missing `code`
+  // would silently regress the recovery path to "rethrow as an
+  // operational error" and the originator would never see the
+  // `stale-base` / `duplicate` catch-up.
+  if (err.message.includes('duplicate key value violates unique constraint')) return true
+  return false
+}
+
 // Atomic commit of a single revision. Dup-id check, base-equality
 // check, MAX(seq) computation, and INSERT all run inside one
 // `writeLock.run(tag, …)` block — the previously sync-atomic span
-// in `handleSave`'s post-signature path. Without this:
+// in `handleSave`'s post-signature path. Without the lock:
 //
 //   • Concurrent saves with the same `base` and DIFFERENT id would
 //     both pass an out-of-lock base-match check, both insert, and
@@ -281,7 +335,23 @@ export async function revisionExists(handle: Handle, tag: string, id: string): P
 //     out-of-lock dup recheck, both reach INSERT, and the second
 //     would throw on UNIQUE — the originator never sees an ack.
 //
-// Both manifestations are closed here.
+// Within one process the lock closes both manifestations.
+//
+// ACROSS processes — supported on the Neon backend — the in-process
+// lock can't serialise; two Node processes connected to the same DB
+// can both pass all four pre-INSERT checks and both INSERT. The
+// `PRIMARY KEY (workspace_tag, seq)` and `UNIQUE (workspace_tag, id)`
+// constraints are the multi-process backstops: at least one loser's
+// INSERT raises a unique-violation. The `try` below catches it and
+// refetches `revisionExists` + `headFor` while still under our own
+// per-`workspace_tag` lock. The refetch reads from whatever is
+// committed in the DB at refetch time — possibly advanced past the
+// immediate winner by a third process — and that's intentional:
+// the recovery is read-after-write-failure with no isolation-level
+// assumption, and any committed head we see is a valid stale-base
+// target. Returns the standard `duplicate` / `stale-base` outcome;
+// the caller's WS handler renders these as ack-only /
+// `workspace-state` catch-up. No silent failure, no chain fork.
 export function commitRevision(
   handle: Handle,
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
@@ -302,7 +372,22 @@ export function commitRevision(
     if (!matches) return { kind: 'stale-base', head }
     const seqRow = await handle.headSeq.get(tag)
     const seq = (seqRow?.s ?? 0) + 1
-    await handle.insertRevision.run(tag, seq, id, baseNorm, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
-    return { kind: 'inserted' }
+    try {
+      await handle.insertRevision.run(tag, seq, id, baseNorm, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
+      return { kind: 'inserted' }
+    } catch (err) {
+      // Only convert unique-violations; rethrow other driver errors
+      // (network, connection-closed, …) so they surface as real
+      // failures rather than masking as a stale-base catch-up.
+      if (!isUniqueViolation(err)) throw err
+      // The PK / UNIQUE was the only thing standing between us and
+      // a chain fork. Refetch and route through the same outcomes
+      // the in-process lock would have produced: if our id is now
+      // in the chain (someone committed our retransmit), `duplicate`;
+      // otherwise head advanced past us, `stale-base`.
+      if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
+      const newHeadRow = await handle.headFor.get(tag)
+      return { kind: 'stale-base', head: newHeadRow?.id ?? null }
+    }
   })
 }

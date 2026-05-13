@@ -19,6 +19,58 @@ DB_PATH=./mydb.db pnpm server
 Defaults: `PORT=8765`, `HOST=127.0.0.1`, `DB_PATH=server/data.db`.
 The SQLite file is created on first run; nothing else is needed.
 
+### Storage backends
+
+Two interchangeable backends back the same wire protocol — pick one
+per deployment:
+
+- **SQLite (default).** Built into Node ≥ 24 via `node:sqlite` (the
+  whole project requires Node ≥ 24 — see below). No extra
+  dependency, single file at `DB_PATH`. Best for single-process
+  / single-machine deployments.
+- **Neon Postgres.** Set `DATABASE_URL` to a Neon connection string;
+  `DB_PATH` is ignored. Requires the optional peer dependency
+  `@neondatabase/serverless`:
+
+  ```
+  pnpm add @neondatabase/serverless
+  DATABASE_URL=postgres://user:pass@…neon.tech/db pnpm server
+  ```
+
+  Both planes (`workspace_revision` for triage-sync and the
+  `workspace_object` / `workspace_object_staging` tables for v1.objstore)
+  land in the same Neon database. The objstore's BYTES still live on
+  local disk under `OBJSTORE_DIR` — multi-MB blobs are not stored in
+  the database in either backend.
+
+The peer dep is marked `optional` in `package.json` and the
+`pnpm-workspace.yaml` sets `autoInstallPeers: false`, so a SQLite-only
+deployment doesn't install it.
+
+> ⚠️ **The v1.objstore byte plane is single-process today.**
+> `OBJSTORE_DIR` is local to one process — a `PUT` on replica A
+> + `GET` on replica B would 503, and the reaper on replica A
+> cannot see replica B's files. The DB layer itself is
+> multi-process safe (the per-`workspace_tag` write lock that
+> serialises `commitRevision` is in-process, but the DB schema's
+> `PRIMARY KEY (workspace_tag, seq)` is the multi-process backstop
+> — a sibling process losing the race gets a clean `stale-base`
+> outcome via the catch in `commitRevision`, not a silent
+> failure). Full multi-process / multi-replica support arrives
+> when a shared object-storage backend (S3 or similar) lands for
+> the byte plane.
+
+> 📡 **Neon backend latency.** Every `commitRevision` issues 3–5
+> HTTP round-trips to Neon (dup check, base check, MAX(seq),
+> INSERT, plus the recovery `revisionExists` + `headFor` on a
+> unique-violation). At Neon's typical 30–80 ms HTTP RTT that's
+> 100–400 ms per save vs sub-millisecond on SQLite — and saves on
+> the same `workspace_tag` serialise through the in-process write
+> lock, capping per-tag throughput. Acceptable for triage-edit
+> cadence; size for it if you expect bursty writes per workspace.
+> A future optimisation (CTE / single-round-trip insert) could
+> collapse the pre-INSERT reads.
+
 ## URL layout
 
 The relay shares one `http.Server` for everything under `/api/*`,

@@ -140,7 +140,11 @@ type DbRow = {
 // pulls the same lock instance from the same place — no separate
 // plumbing per call site.
 export type Handle = {
-  db: DatabaseSync
+  // SQLite-only: the underlying `DatabaseSync`. Unset on the Neon
+  // backend (see ./store-neon.ts). Test-only fixture SQL routes
+  // through `handle.db.prepare(...)` and is therefore SQLite-coupled
+  // by construction.
+  db?: DatabaseSync
   dir: string
   lock: KeyedAsyncLock<string>
   insertStaging: RunStmt<[string, string, string, number | null, number, number, string, string, string, number]>
@@ -164,6 +168,16 @@ export type Handle = {
   listLiveTags: AllStmt<[], { workspace_tag: string }>
   countLive: GetStmt<[string], { c: number }>
 }
+
+// Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
+// to be set. `openObjstore` returns this so call sites (production
+// shutdown plumbing in `server/index.ts` + the entire SQLite-only
+// test suite in `tests/server-objstore.test.js`) can reach
+// `handle.db.prepare(...)` without an optional-chain or non-null
+// assertion. A Neon-backed Handle (`openNeonObjstore`) keeps the
+// wider `db?: DatabaseSync` shape; routing a Neon Handle into a
+// SQLite-coupled call site is a type error at compile time.
+export type SqliteHandle = Handle & { db: DatabaseSync }
 
 // Per-workspace resource cap. Caps the live row count for a single
 // workspace_tag so a holder of the seed (until per-account GitHub-auth
@@ -229,7 +243,7 @@ function rowFromDb(r: DbRow): ObjectRow {
   }
 }
 
-export function openObjstore(db: DatabaseSync, dir: string): Handle {
+export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
   // Ensure the root storage directory exists. The server defaults
   // this to `dirname(DB_PATH)/objstore`; an operator-supplied path
   // with parents that don't exist also gets created here.

@@ -1,8 +1,9 @@
-// Wire-time wrapper around the v1.objstore module — opens the
-// storage handle, mints a per-process bearer-token secret, kicks
-// off the orphan reaper, and returns the WS handlers + REST deps
-// + a teardown callback the index.ts shutdown path calls before
-// closing the shared DB handle.
+// Wire-time wrapper around the v1.objstore module — takes a pre-
+// opened storage handle (SQLite or Neon, opened one level up
+// alongside the workspace_revision handle), mints a per-process
+// bearer-token secret, kicks off the orphan reaper, and returns
+// the WS handlers + REST deps + a teardown callback the index.ts
+// shutdown path calls before closing the shared DB handle.
 
 import type { WebSocket } from 'ws'
 import type { Handle } from './store.ts'

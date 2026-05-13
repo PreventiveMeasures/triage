@@ -591,6 +591,91 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     )
   })
 
+  it('multi-process PK violation on INSERT: caught, refetched → stale-base', async () => {
+    // Cross-process race: our in-process lock can't serialise
+    // against a sibling Node process attached to the same DB. The
+    // sibling lands a row at OUR computed seq; our INSERT throws a
+    // unique-violation. The catch in commitRevision refetches and
+    // returns the standard `stale-base` outcome so the originator
+    // gets a workspace-state catch-up instead of a silent failure.
+    const { handle, cleanup } = freshDb()
+    try {
+      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      let injected = false
+      handle.insertRevision.run = async (...args) => {
+        if (injected) return originalRun(...args)
+        injected = true
+        // Simulate a sibling row landing first — same seq, different
+        // id — then throw the PK violation our INSERT would hit.
+        await originalRun(args[0], args[1], 'sibling-id', null, 0, args[5], args[6], args[7], args[8])
+        throw new Error('UNIQUE constraint failed: workspace_revision.workspace_tag, workspace_revision.seq')
+      }
+      const result = await commitRevision(handle, rev({ id: 'our-id' }))
+      assert.equal(result.kind, 'stale-base')
+      assert.equal(result.head, 'sibling-id')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['sibling-id'], 'only the sibling row is in the chain')
+    } finally { await cleanup() }
+  })
+
+  it('multi-process UNIQUE id violation on INSERT: caught, refetched → duplicate', async () => {
+    // Same race shape but the sibling slipped in a retransmit of
+    // OUR id. The refetch sees the id is already in the chain and
+    // returns `duplicate` — ack-only on the wire, no chain change.
+    const { handle, cleanup } = freshDb()
+    try {
+      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      let injected = false
+      handle.insertRevision.run = async (...args) => {
+        if (injected) return originalRun(...args)
+        injected = true
+        const [tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt] = args
+        await originalRun(tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt)
+        throw new Error('UNIQUE constraint failed: workspace_revision.workspace_tag, workspace_revision.id')
+      }
+      const result = await commitRevision(handle, rev({ id: 'our-id' }))
+      assert.equal(result.kind, 'duplicate')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['our-id'])
+    } finally { await cleanup() }
+  })
+
+  it('Postgres unique-violation (SQLSTATE 23505) is recognised the same way', async () => {
+    // SQLite throws with a "UNIQUE constraint failed" message;
+    // Postgres / Neon throws a NeonDbError with `code: '23505'`.
+    // `isUniqueViolation` matches either shape — pin both paths.
+    const { handle, cleanup } = freshDb()
+    try {
+      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      let injected = false
+      handle.insertRevision.run = async (...args) => {
+        if (injected) return originalRun(...args)
+        injected = true
+        await originalRun(args[0], args[1], 'pg-sibling', null, 0, args[5], args[6], args[7], args[8])
+        const err = new Error('duplicate key value violates unique constraint "workspace_revision_pkey"')
+        err.code = '23505'
+        throw err
+      }
+      const result = await commitRevision(handle, rev({ id: 'our-id' }))
+      assert.equal(result.kind, 'stale-base')
+      assert.equal(result.head, 'pg-sibling')
+    } finally { await cleanup() }
+  })
+
+  it('non-unique driver errors are NOT caught — they rethrow as rejections', async () => {
+    // The catch is narrow: only unique-violations are converted to
+    // recovery outcomes. Network / connection / non-existent-column
+    // errors must surface as real failures so the operator sees them.
+    const { handle, cleanup } = freshDb()
+    try {
+      handle.insertRevision.run = () => Promise.reject(new Error('connection refused'))
+      await assert.rejects(
+        () => commitRevision(handle, rev({ id: 'x' })),
+        /connection refused/u,
+      )
+    } finally { await cleanup() }
+  })
+
   it('chainFrom is safe to call alongside concurrent commits — no torn reads, no inserts seen mid-write', async () => {
     // chainFrom does NOT acquire the writeLock (reads do not need
     // serialisation against writes). It may return a snapshot from
