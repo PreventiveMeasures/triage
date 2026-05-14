@@ -13,22 +13,31 @@
 //   body })`. GET via the same shape. The WS handler issues the
 //   bearer token + URL; this module performs the HTTP round-trip.
 //
-// The bytes you pass to `put()` are OPAQUE to the server. Callers
-// are responsible for application-level encryption (ChaCha20-Poly1305
-// with a workspace-derived key, same as triage-sync). This module's
-// job is integrity + transport, NOT confidentiality:
-//   - `contentHash = SHA-256(bytes)` is computed here and bound
-//     into the Ed25519 signature, so a peer fetching bytes that
-//     don't match the signed hash has proof of tampering.
-//   - The Ed25519 signature is over the (signed) `contentHash`,
-//     length, prevVersion, etc. — every server-side state mutation
-//     is gated on the seed-holder's consent.
+// Confidentiality: the bytes the server sees are **always**
+// ciphertext — the session encrypts (fileName, content) with
+// ChaCha20-Poly1305 (key derived from the workspace privateKey via
+// HKDF; see `objstore-content-crypto.ts`) before each PUT, and
+// decrypts on each FETCH. The wire `resourceTag` is HMAC-SHA-256
+// (tagKey, fileName) — deterministic + privacy-preserving, so two
+// peers naming the same fileName under the same workspace agree on
+// the tag without coordination, but the relay can't reverse the
+// HMAC. Public API (`put` / `fetch` / `delete`) takes plaintext
+// fileNames; the wire `resourceTag` + ciphertext stay internal.
+// Integrity stays orthogonal:
+//   - `contentHash = SHA-256(ciphertext)` is computed here and
+//     bound into the Ed25519 signature on PUT-BEGIN, so a peer
+//     fetching bytes that don't match the signed hash has proof of
+//     tampering.
+//   - The AEAD also binds (workspaceTag, resourceTag) into AAD, so
+//     a relay shuffling blobs between resources or workspaces
+//     makes the decrypt fail at the AEAD-tag step BEFORE the
+//     fileName is exposed.
 //
 // Concurrency: the caller MUST NOT issue two ops for the same
-// resourceTag concurrently. Responses are correlated by message
-// `type` + `resourceTag` (or `type` only for `list`); a second
-// concurrent op for the same key would race the matcher. Ops on
-// DIFFERENT resourceTags are safe to interleave.
+// `fileName` concurrently (responses are correlated by `type` +
+// `resourceTag`; the deterministic tag derivation means two ops
+// for the same name produce the same tag and the matcher would
+// race). Ops on DIFFERENT fileNames are safe to interleave.
 
 import {
   type ObjstoreDeleteFields,
@@ -39,10 +48,20 @@ import {
   signObjstoreList,
   signObjstorePut,
 } from './objstore-crypto.ts'
+import {
+  type ObjstoreKeys,
+  computeResourceTag,
+  decryptObjstorePayload,
+  encryptObjstorePayload,
+} from './objstore-content-crypto.ts'
 
-// Server-emitted wire row shape. Returned by `list`, embedded in
-// `fetch`-token replies, and broadcast on `objstore-put`.
-export type ObjectMeta = {
+export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
+
+// Server-emitted wire row shape. Returned by `_rawList`, embedded
+// in `_rawFetch`-token replies, and broadcast on `objstore-put`.
+// Internal — the public API surfaces `Listing` (just `{ version,
+// contentLength }` per fileName) and decrypted `FetchResult`.
+type ObjectMeta = {
   resourceTag: string
   version: number
   contentHash: string
@@ -50,17 +69,36 @@ export type ObjectMeta = {
   signature: string
 }
 
+// Public listing — server-emitted metadata for one resource. The
+// `resourceTag` is the wire HMAC (opaque to anyone without the
+// tagKey); the `version` lets callers thread optimistic-concurrency
+// preconditions through `put` / `delete`. `contentLength` is the
+// CIPHERTEXT length (12-byte nonce + N-byte plaintext + 16-byte
+// AEAD tag), NOT the plaintext content length — callers who care
+// about plaintext size must `fetchByTag` and inspect the returned
+// `content`.
+export type Listing = {
+  resourceTag: string
+  version: number
+  contentLength: number
+}
+
 export type PutResult =
-  | { ok: true; meta: { version: number; contentHash: string; contentLength: number } }
-  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: true; meta: { version: number; contentLength: number } }
+  | { ok: false; reason: 'conflict'; currentVersion: number | null }
   | { ok: false; reason: 'workspace-full' }
 
 export type DeleteResult =
   | { ok: true; deletedVersion: number }
-  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: false; reason: 'conflict'; currentVersion: number | null }
   | { ok: false; reason: 'not-found' }
 
-export type FetchResult = { bytes: Uint8Array; meta: ObjectMeta }
+// `fetch(fileName)` returns plaintext content + version. `fileName`
+// is omitted from the result because the caller already knows it
+// (they passed it in). `fetchByTag` reverses the AAD-bound name and
+// returns both fields.
+export type FetchResult = { content: Uint8Array; version: number }
+export type FetchByTagResult = { fileName: string; content: Uint8Array; version: number }
 
 export type ObjstoreSessionDeps = {
   // WebSocket URL — `ws://host:port/api/sync` (the same URL the
@@ -70,23 +108,50 @@ export type ObjstoreSessionDeps = {
   // HTTP origin for REST data-plane PUT / GET — `http://host:port`
   // (no path). The token + relative urlPath come from the WS reply.
   httpOrigin: string
-  // The workspaceTag (base64url Ed25519 public key) the relay
-  // identifies this session against.
-  workspaceTag: string
-  // The Ed25519 private key for signing wire frames. Sign-only
-  // CryptoKey — the relay never sees the key itself, only sigs.
-  privateKey: CryptoKey
+  // Workspace identity + keys. `workspaceTag` is the base64url
+  // Ed25519 public key (also stored on `keys`); `keys.signingKey`
+  // signs wire frames, `keys.contentKey` / `keys.tagKey` drive the
+  // content-layer AEAD + HMAC. See `deriveObjstoreKeys` for the
+  // single-entrypoint derivation from a workspace's 32-byte secret.
+  keys: ObjstoreKeys
   // Optional: override the default 10s request timeout (per WS op).
   // REST PUT/GET timeouts use the platform's `fetch` default.
   requestTimeoutMs?: number
 }
 
 export type ObjstoreSession = {
-  put(opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<PutResult>
-  fetch(resourceTag: string): Promise<FetchResult | null>
-  delete(resourceTag: string, prevVersion: number | null): Promise<DeleteResult>
-  list(): Promise<ObjectMeta[]>
-  onPut(handler: (meta: ObjectMeta) => void): () => void
+  // PUT a plaintext (fileName, content) pair. Internally derives
+  // the wire tag, encrypts the payload, and routes the put-begin +
+  // REST PUT round-trip. `prevVersion` is the optimistic-concurrency
+  // precondition: `null` for first upload, the version returned by
+  // the previous `put` / `list` / `fetch` for an in-place overwrite.
+  put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult>
+  // FETCH by plaintext fileName. Derives the tag, fetches the wire
+  // ciphertext, verifies the AAD-bound (workspaceTag, tag) match and
+  // the fileName inside the AEAD blob equals the requested one
+  // (defense against a relay swapping resources). Returns null on
+  // not-found.
+  fetch(fileName: string): Promise<FetchResult | null>
+  // FETCH by opaque resourceTag — for the case the caller listed
+  // the workspace and got a tag they haven't seen before (peer
+  // uploaded under a fileName the local user doesn't know yet).
+  // Returns the fileName from the decrypted blob, or null on
+  // not-found.
+  fetchByTag(resourceTag: string): Promise<FetchByTagResult | null>
+  // DELETE by plaintext fileName. `prevVersion` carries the same
+  // optimistic-concurrency precondition as `put`.
+  delete(fileName: string, prevVersion: number | null): Promise<DeleteResult>
+  // LIST every resource the relay holds for this workspace. The
+  // `resourceTag` field is opaque (HMAC); callers who need a list
+  // of plaintext fileNames must `fetchByTag` on each tag to
+  // surface the inner names.
+  list(): Promise<Listing[]>
+  // Broadcast subscriptions — `onPut` fires when ANY peer (or this
+  // session) commits a new version under the workspace. `onDeleted`
+  // mirrors. Both deliver the wire `resourceTag` (opaque), since
+  // the relay doesn't decrypt — callers who need fileNames must
+  // `fetchByTag` to surface the inner names.
+  onPut(handler: (event: { resourceTag: string; version: number; contentLength: number }) => void): () => void
   onDeleted(handler: (event: { resourceTag: string; version: number }) => void): () => void
   close(): void
 }
@@ -122,6 +187,15 @@ async function signSubscribe(privateKey: CryptoKey, workspaceTag: string, connec
 
 export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<ObjstoreSession> {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
+  const workspaceTag = deps.keys.workspaceTag
+  const signingKey = deps.keys.signingKey
+  // Take a private copy of the raw keys so `close()` can wipe its
+  // own slot without affecting caller-owned state. Callers commonly
+  // reuse the same `ObjstoreKeys` across reconnect cycles (test
+  // expects this; presence-layer ditto), so mutating the caller's
+  // arrays in place would silently break the second session.
+  const contentKey = new Uint8Array(deps.keys.contentKey)
+  const tagKey = new Uint8Array(deps.keys.tagKey)
   const ws = new WebSocket(deps.serverUrl)
   // Queue + waiters pattern (same as the spawned-relay tests' helper
   // — see tests/sync-server-objstore.test.js). Listener attached at
@@ -129,8 +203,23 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
   // concurrently with `'open'` doesn't get dropped.
   const queue: WireMessage[] = []
   const waiters: Array<{ predicate: (m: WireMessage) => boolean; resolve: (m: WireMessage) => void; reject: (err: Error) => void }> = []
-  const putHandlers = new Set<(meta: ObjectMeta) => void>()
+  const putHandlers = new Set<(event: { resourceTag: string; version: number; contentLength: number }) => void>()
   const deletedHandlers = new Set<(event: { resourceTag: string; version: number }) => void>()
+  // Per-tag monotonic version watermark. The Ed25519 signature on a
+  // stored object binds (`prevVersion`, `contentHash`, …) into the
+  // PUT — so a fetched object's signature is still valid for ANY
+  // historical version a relay decides to serve. A relay that
+  // serves a stale-but-correctly-signed version on FETCH would slip
+  // past every other check (AEAD decrypts, contentHash matches the
+  // ciphertext, AAD binds (workspace, tag)). Track the highest
+  // version we've seen on this session — across put / fetch /
+  // fetchByTag / broadcasts — and refuse any fetch that comes back
+  // strictly lower. Audit round-1 M3.
+  const seenVersions = new Map<string, number>()
+  function noteVersion(tag: string, version: number): void {
+    const prev = seenVersions.get(tag) ?? 0
+    if (version > prev) seenVersions.set(tag, version)
+  }
 
   ws.addEventListener('message', (event) => {
     let msg: WireMessage
@@ -140,12 +229,33 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // request-correlation queue. A subscriber that registered AFTER
     // a broadcast arrived missed it (no replay); register before
     // calling the op that would trigger it on a peer.
-    if (msg.type === 'objstore-put' && isObjectMeta(msg)) {
-      for (const h of putHandlers) { try { h(toObjectMeta(msg)) } catch {} }
+    //
+    // Every broadcast is gated on `msg.workspaceTag === workspaceTag`
+    // even though the socket is workspace-scoped: defense in depth
+    // against a relay routing bug (or hostile relay) that fanned a
+    // foreign workspace's broadcast onto this socket — without the
+    // guard `onPut` / `onDeleted` callbacks would fire with another
+    // workspace's data, polluting caller state.
+    if (msg.type === 'objstore-put' && msg.workspaceTag === workspaceTag && isObjectMeta(msg)) {
+      const meta = toObjectMeta(msg)
+      // Advance the per-tag rollback watermark on every broadcast we
+      // believe. A relay that promises v5 in a broadcast then serves
+      // v3 on a follow-up FETCH will hit `assertFreshOrLater`.
+      noteVersion(meta.resourceTag, meta.version)
+      const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
+      for (const h of putHandlers) { try { h(putEvent) } catch {} }
       return
     }
-    if (msg.type === 'objstore-deleted' && typeof msg.resourceTag === 'string' && typeof msg['version'] === 'number') {
-      const ev = { resourceTag: msg.resourceTag, version: msg['version'] }
+    if (msg.type === 'objstore-deleted' && msg.workspaceTag === workspaceTag && typeof msg.resourceTag === 'string' && typeof msg['version'] === 'number') {
+      const tag = msg.resourceTag
+      const version = msg['version']
+      // A delete broadcast destroys the row server-side: the next
+      // legitimate PUT lands as v1 again. Drop the watermark so the
+      // recreate's v1 isn't mistaken for a rollback. Same rationale
+      // as the `deleteByName` path below — the rollback gate only
+      // applies *within* a single incarnation of a resource.
+      seenVersions.delete(tag)
+      const ev = { resourceTag: tag, version }
       for (const h of deletedHandlers) { try { h(ev) } catch {} }
       return
     }
@@ -247,9 +357,9 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // `workspace-subscribed` AND a `workspace-state` chain; we await
     // the former, and the message listener above drops the latter
     // as a known triage-sync type so it doesn't sit in the queue.
-    const subscribeSig = await signSubscribe(deps.privateKey, deps.workspaceTag, connectionNonce)
-    send({ type: 'workspace-subscribe', workspaceTag: deps.workspaceTag, from: null, signature: subscribeSig })
-    await recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === deps.workspaceTag)
+    const subscribeSig = await signSubscribe(signingKey, workspaceTag, connectionNonce)
+    send({ type: 'workspace-subscribe', workspaceTag, from: null, signature: subscribeSig })
+    await recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === workspaceTag)
   } catch (err) {
     // Close the WS so we don't leak the connection. Each `recv()`
     // call manages its own timeout + waiter cleanup, so by the time
@@ -260,16 +370,18 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     throw err
   }
 
-  async function put(opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+  // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
+  // `put` (public) is the encrypting wrapper.
+  async function _rawPut(opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<RawPutResult> {
     const contentHash = await computeContentHash(opts.bytes)
     const fields: ObjstorePutBeginFields = {
-      workspaceTag: deps.workspaceTag,
+      workspaceTag,
       resourceTag: opts.resourceTag,
       prevVersion: opts.prevVersion,
       expectedLength: opts.bytes.byteLength,
       contentHash,
     }
-    const signature = await signObjstorePut(deps.privateKey, fields, connectionNonce)
+    const signature = await signObjstorePut(signingKey, fields, connectionNonce)
     send({ type: 'objstore-put-begin', ...fields, signature })
     // Match `workspaceTag` on the reply too — every server reply frame
     // carries it (server/objstore/handlers.ts). The socket is already
@@ -277,15 +389,13 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // routing bug that delivered a different workspace's reply
     // would otherwise correlate on `type` + `resourceTag` alone.
     const reply = await recv((m) =>
-      m.workspaceTag === deps.workspaceTag && m.resourceTag === opts.resourceTag && (
+      m.workspaceTag === workspaceTag && m.resourceTag === opts.resourceTag && (
         m.type === 'objstore-put-token' ||
         m.type === 'objstore-put-error' ||
         m.type === 'objstore-conflict'
       ),
     )
     if (reply.type === 'objstore-put-error') {
-      // `workspace-full` is the only documented reason today, but
-      // forward the literal so a future reason surfaces unchanged.
       if (reply['reason'] === 'workspace-full') return { ok: false, reason: 'workspace-full' }
       throw new Error(`objstore: put-error reason='${String(reply['reason'])}'`)
     }
@@ -309,27 +419,9 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
         'authorization': `Bearer ${reply['token']}`,
         'content-type': 'application/octet-stream',
       },
-      // `fetch`'s `BodyInit` requires `Uint8Array<ArrayBuffer>` (not
-      // the broader `ArrayBufferLike` that a plain `Uint8Array`
-      // parameter has). Node's `Buffer` / `crypto.getRandomValues`
-      // always produce regular ArrayBuffer at runtime so the cast
-      // is safe. Same narrowing as `crypto.subtle.digest`.
       body: opts.bytes as Uint8Array<ArrayBuffer>,
     })
     if (!res.ok) {
-      // Documented REST PUT error paths that map to typed results
-      // (vs throws). See `server/README.md`'s error-handling matrix:
-      // - 409 `conflict` — race-loss at the per-resource commit lock.
-      //   Two peers both passed the WS put-begin (their staging rows
-      //   landed concurrently), then the first to acquire the commit
-      //   lock won; the second's `commitPut` sees a non-matching
-      //   live version and returns conflict. The REST 409 body
-      //   doesn't carry the current row (the commit lock isn't a
-      //   subscribe path), so `current` is null — caller can
-      //   `fetch()` to materialise the winner if it cares.
-      // - 410 `gone` — the staging row was reaped between
-      //   put-token-issue and REST commit. Surfaces as a conflict
-      //   from the caller's perspective; same null-current handling.
       if (res.status === 409 || res.status === 410) return { ok: false, reason: 'conflict', current: null }
       // Other 4xx/5xx are protocol violations or server-side faults
       // the caller can't usefully discriminate. Throw with the wire
@@ -362,11 +454,13 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     return { ok: true, meta }
   }
 
-  async function fetchOne(resourceTag: string): Promise<FetchResult | null> {
-    const signature = await signObjstoreFetch(deps.privateKey, deps.workspaceTag, resourceTag, connectionNonce)
-    send({ type: 'objstore-fetch', workspaceTag: deps.workspaceTag, resourceTag, signature })
+  // Wire-level FETCH — returns raw ciphertext + meta. `fetch` /
+  // `fetchByTag` (public) wrap this with decryption.
+  async function _rawFetch(resourceTag: string): Promise<{ bytes: Uint8Array; meta: ObjectMeta } | null> {
+    const signature = await signObjstoreFetch(signingKey, workspaceTag, resourceTag, connectionNonce)
+    send({ type: 'objstore-fetch', workspaceTag, resourceTag, signature })
     const reply = await recv((m) =>
-      m.workspaceTag === deps.workspaceTag && m.resourceTag === resourceTag && (
+      m.workspaceTag === workspaceTag && m.resourceTag === resourceTag && (
         m.type === 'objstore-fetch-token' ||
         m.type === 'objstore-fetch-not-found'
       ),
@@ -411,12 +505,14 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     return { bytes, meta }
   }
 
-  async function deleteOne(resourceTag: string, prevVersion: number | null): Promise<DeleteResult> {
-    const fields: ObjstoreDeleteFields = { workspaceTag: deps.workspaceTag, resourceTag, prevVersion }
-    const signature = await signObjstoreDelete(deps.privateKey, fields, connectionNonce)
+  // Wire-level DELETE. `delete` (public) is the encrypting wrapper —
+  // it derives the tag from the plaintext fileName and calls here.
+  async function _rawDelete(resourceTag: string, prevVersion: number | null): Promise<RawDeleteResult> {
+    const fields: ObjstoreDeleteFields = { workspaceTag, resourceTag, prevVersion }
+    const signature = await signObjstoreDelete(signingKey, fields, connectionNonce)
     send({ type: 'objstore-delete', ...fields, signature })
     const reply = await recv((m) =>
-      m.workspaceTag === deps.workspaceTag && m.resourceTag === resourceTag && (
+      m.workspaceTag === workspaceTag && m.resourceTag === resourceTag && (
         m.type === 'objstore-deleted-ack' ||
         m.type === 'objstore-delete-error' ||
         m.type === 'objstore-conflict'
@@ -430,15 +526,17 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
       const current = isObjectMeta(reply['current'] as WireMessage | undefined) ? toObjectMeta(reply['current'] as WireMessage) : null
       return { ok: false, reason: 'conflict', current }
     }
-    // objstore-delete-error
     if (reply['reason'] === 'not-found') return { ok: false, reason: 'not-found' }
     throw new Error(`objstore: delete-error reason='${String(reply['reason'])}'`)
   }
 
-  async function list(): Promise<ObjectMeta[]> {
-    const signature = await signObjstoreList(deps.privateKey, deps.workspaceTag, connectionNonce)
-    send({ type: 'objstore-list', workspaceTag: deps.workspaceTag, signature })
-    const reply = await recv((m) => m.type === 'objstore-list-result' && m.workspaceTag === deps.workspaceTag)
+  // Wire-level LIST. Returns raw ObjectMeta (with opaque resourceTag
+  // HMACs). `list` (public) downgrades to the small Listing shape
+  // — server-side metadata that doesn't include any plaintext.
+  async function _rawList(): Promise<ObjectMeta[]> {
+    const signature = await signObjstoreList(signingKey, workspaceTag, connectionNonce)
+    send({ type: 'objstore-list', workspaceTag, signature })
+    const reply = await recv((m) => m.type === 'objstore-list-result' && m.workspaceTag === workspaceTag)
     // Match fetch's strictness: any malformed wire shape is a protocol
     // violation, not a "missing data" signal. The server emits `[]`
     // explicitly for the empty case, and well-formed entries for
@@ -457,16 +555,151 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     return out
   }
 
+  // Reject a fetched object whose version is strictly lower than
+  // the highest we've already seen for this tag. The Ed25519 PUT
+  // signature is valid for ANY historical version, so without this
+  // watermark a relay could serve a stale-but-signed copy on FETCH
+  // and the AEAD / contentHash chain would all check out. Note
+  // we accept equal versions (an idempotent re-fetch of the same
+  // row); the monotonic gate fires strictly below the watermark.
+  function assertFreshOrLater(tag: string, version: number): void {
+    const last = seenVersions.get(tag) ?? 0
+    if (version < last) {
+      throw new Error(`objstore: version-rollback rejected — fetched v${version} for a tag we've already seen at v${last}`)
+    }
+  }
+
+  async function put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+    const resourceTag = await computeResourceTag(tagKey, opts.fileName)
+    const ciphertext = encryptObjstorePayload(contentKey, opts.fileName, opts.content, workspaceTag, resourceTag)
+    const raw = await _rawPut({ resourceTag, bytes: ciphertext, prevVersion: opts.prevVersion })
+    if (raw.ok) {
+      // `prevVersion: null` is the server's "must not exist"
+      // precondition — its success means the row was created
+      // fresh, possibly atop a deleted prior incarnation we
+      // never saw the broadcast for. Re-seed the watermark from
+      // this incarnation's v1 (server returns it in `meta.version`).
+      if (opts.prevVersion == null) seenVersions.delete(resourceTag)
+      noteVersion(resourceTag, raw.meta.version)
+      return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
+    }
+    if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
+    // A conflict envelope's `current.version` is the server's view
+    // of the live row; note it too so a subsequent fetch can't be
+    // rolled back below it.
+    if (raw.current) noteVersion(resourceTag, raw.current.version)
+    return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+  }
+
+  async function fetch(fileName: string): Promise<FetchResult | null> {
+    const resourceTag = await computeResourceTag(tagKey, fileName)
+    const raw = await _rawFetch(resourceTag)
+    if (!raw) return null
+    assertFreshOrLater(resourceTag, raw.meta.version)
+    const { fileName: decoded, content } = decryptObjstorePayload(contentKey, raw.bytes, workspaceTag, resourceTag)
+    // AAD already pins (workspaceTag, resourceTag); the encoded
+    // fileName inside the plaintext is the third leg of the bind.
+    // A relay that somehow served a successfully-decrypting blob
+    // whose plaintext encoded a different fileName would surface
+    // here. (Unreachable under standard threat model — the AAD
+    // mismatch raises first — but cheap defense in depth.)
+    if (decoded !== fileName) {
+      throw new Error(`objstore: fileName-binding mismatch — requested '${fileName}', payload encoded '${decoded}'`)
+    }
+    noteVersion(resourceTag, raw.meta.version)
+    return { content, version: raw.meta.version }
+  }
+
+  async function fetchByTag(resourceTag: string): Promise<FetchByTagResult | null> {
+    const raw = await _rawFetch(resourceTag)
+    if (!raw) return null
+    assertFreshOrLater(resourceTag, raw.meta.version)
+    const { fileName, content } = decryptObjstorePayload(contentKey, raw.bytes, workspaceTag, resourceTag)
+    // Re-derive the tag from the decrypted fileName and assert it
+    // matches the tag we asked for. AAD already pins the (workspace,
+    // tag) tuple at the AEAD layer — but a malicious workspace
+    // participant (anyone with the tagKey) could PUT an encrypted
+    // blob encoding `fileName=X` at the tag for `fileName=Y`, then
+    // a peer's `fetchByTag(tagY)` would surface `X` as the
+    // filename even though `fetch(X)` wouldn't find it (the
+    // round-trip is broken). Refuse the non-round-trippable result
+    // here so callers can rely on `fetchByTag(t).fileName` being a
+    // name they can fetch back. Audit round-1 M2.
+    const expected = await computeResourceTag(tagKey, fileName)
+    if (expected !== resourceTag) {
+      throw new Error('objstore: fetchByTag — decrypted fileName does not derive back to the requested resourceTag (relay or workspace member produced a non-round-trippable tag-name pair)')
+    }
+    noteVersion(resourceTag, raw.meta.version)
+    return { fileName, content, version: raw.meta.version }
+  }
+
+  async function deleteByName(fileName: string, prevVersion: number | null): Promise<DeleteResult> {
+    const resourceTag = await computeResourceTag(tagKey, fileName)
+    const raw = await _rawDelete(resourceTag, prevVersion)
+    if (raw.ok) {
+      // Delete drops the server-side row; the next PUT under this
+      // tag starts a new incarnation at v1. Drop the watermark so
+      // the recreate's v1 isn't mistaken for a rollback — the
+      // rollback gate applies *within* a single incarnation only.
+      // (A stale v2 the relay tries to serve *after* the delete
+      // is still rejected by the AAD-bound contentHash chain at
+      // fetch time; we just lose the version-monotonic check
+      // across the delete boundary, which can't be enforced
+      // without a tombstone the schema explicitly omits.)
+      seenVersions.delete(resourceTag)
+      return raw
+    }
+    if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
+    if (raw.current) noteVersion(resourceTag, raw.current.version)
+    return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+  }
+
+  async function list(): Promise<Listing[]> {
+    const entries = await _rawList()
+    // List advances the watermark for each tag so a follow-up fetch
+    // can't roll back below the version the relay just acknowledged.
+    for (const m of entries) noteVersion(m.resourceTag, m.version)
+    return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, contentLength: m.contentLength }))
+  }
+
   return {
     put,
-    fetch: fetchOne,
-    delete: deleteOne,
+    fetch,
+    fetchByTag,
+    delete: deleteByName,
     list,
     onPut(handler) { putHandlers.add(handler); return () => { putHandlers.delete(handler) } },
     onDeleted(handler) { deletedHandlers.add(handler); return () => { deletedHandlers.delete(handler) } },
-    close() { try { ws.close() } catch {} },
+    close() {
+      try { ws.close() } catch {}
+      // Defense-in-depth: drop the raw key wrappers we hold so a
+      // heap snapshot taken after close() doesn't include the
+      // workspace's content + tag key material. JS doesn't expose
+      // a deterministic erase primitive (the GC may have already
+      // moved the bytes), but the explicit fill(0) drops the
+      // wrappers themselves. Mirrors sync-crypto.ts's seed wipe.
+      try { contentKey.fill(0) } catch {}
+      try { tagKey.fill(0) } catch {}
+    },
   }
 }
+
+// Internal wire-level result shapes returned by `_rawPut` /
+// `_rawDelete`. Kept separate from the public `PutResult` /
+// `DeleteResult` so the public types can carry just
+// `currentVersion` (a number from the conflict envelope) rather
+// than the full server-meta blob — the conflict envelope's
+// resourceTag is the OPAQUE wire tag, which the caller can't
+// meaningfully consume without the tagKey.
+type RawPutResult =
+  | { ok: true; meta: { version: number; contentHash: string; contentLength: number } }
+  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: false; reason: 'workspace-full' }
+
+type RawDeleteResult =
+  | { ok: true; deletedVersion: number }
+  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: false; reason: 'not-found' }
 
 // Wire-shape guard. The objstore broadcast / list / fetch-token
 // frames all carry the same metadata shape; this validates the
