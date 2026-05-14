@@ -191,10 +191,12 @@ report.addEventListener('click', (e) => {
     if (state.bundleDetails?.integrity === integrity) {
       // Already parsed — just paint the new tab choice.
       render()
+      renderSidebar()
       return
     }
     state.bundleDetails = null
     render()
+    renderSidebar()
     openBundle(integrity)
     return
   }
@@ -240,6 +242,10 @@ report.addEventListener('click', (e) => {
     state.bundleCodeSearchQuery = ''
     state.bundleCodeSearchMode = 'files'
     render()
+    // Drop the sidebar's per-row highlight now that no bundle is
+    // selected — otherwise the deselected row would still read as
+    // "current" until the next sidebar re-render.
+    renderSidebar()
     return
   }
   // Packages list — row select. Mirrors the bundles select pattern;
@@ -596,6 +602,9 @@ report.addEventListener('click', (e) => {
     // first.
     state.shownTriage = null
     render()
+    // Re-render the sidebar too so the bundles section's per-row
+    // `.current` highlight follows the main-pane selection.
+    renderSidebar()
     // Async open pipeline (read bytes, parse, set bundleDetails,
     // kick file hashes, kick the cross-report findings indexer)
     // lives in view/bundle-load.js — shared with the Code →

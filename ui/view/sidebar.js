@@ -17,6 +17,8 @@ import { analyzeTriageImpact } from '../../client/triage-gc.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.ts'
 import { ensureBundleFindingsIndexed, getPackagesIndex, getRepositoriesIndex } from '../../client/bundle-finding-index.js'
+import { openBundle } from './bundle-load.js'
+import { graph2 } from './graph2/state.js'
 
 // Distinct package count across every report the OPFS finding
 // index has scanned (NOT just state.reports — Packages aggregates
@@ -177,6 +179,32 @@ function bundlesHeaderTemplate(count) {
   </li>`
 }
 
+// Generic bundle glyph — a 3D box / package outline. Stroke-based
+// (uses currentColor) rather than the `.file-icon.brand-*` filled
+// stickers that mark report buckets, so bundles read as a distinct
+// kind of artifact in the same column. Sized to match the other
+// 14px row icons; picks up `--muted` / `--text` through the shared
+// `.file-icon` rule in sidebar.css.
+const BUNDLE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 2 5v6l6 3 6-3V5L8 2Z"/><path d="M2 5l6 3 6-3"/><path d="M8 8v6"/></svg>`
+
+// Single bundle row under the Bundles header — rendered only while
+// the bundles view is active (state.currentView === 'bundles'), so
+// the section reads as "expanded" the same way Reports always does
+// and auto-collapses back to a one-line header on any other view.
+// `.current` lights up when this bundle is the open selection in the
+// main pane (selectedBundle matches its integrity). The integrity is
+// SRI-shaped (sha512-…) and too long to fit; the title surfaces it
+// for hover disambiguation when two bundles share a basename.
+function bundleItemTemplate(bundle) {
+  const { integrity, name } = bundle
+  const isCurrent = state.selectedBundle === integrity && state.currentView === 'bundles'
+  const cls = `file-item indented bundle-item${isCurrent ? ' current' : ''}`
+  return html`<li
+    class=${cls}
+    data-bundle-integrity=${integrity}
+  ><button type="button" class="file-name" title=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+}
+
 const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>`
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
@@ -299,8 +327,15 @@ export async function renderSidebar() {
   // count 0) so the unassign affordance stays reachable.
   const anyWorkspaceHasReports = workspaces.some((w) => w.reports.some((r) => nameSet.has(r)))
 
+  // Bundles section expands inline when the bundles view is the
+  // current view (either the list or any individual bundle); on
+  // every other view the header collapses back to a single strip.
+  // Mirrors the Reports section's "always expanded" shape while the
+  // user is reading bundles, without permanently growing the sidebar.
+  const bundlesExpanded = state.currentView === 'bundles' && bundleNames.length > 0
   litRender(html`
     ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
+    ${bundlesExpanded ? repeat(bundleNames, (b) => b.integrity, (b) => bundleItemTemplate(b)) : null}
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
@@ -359,6 +394,32 @@ sidebar.addEventListener('click', async (e) => {
     // its `.current` highlight (and any previously-highlighted
     // file/workspace row drops back to the muted state).
     renderSidebar()
+    return
+  }
+  // Per-bundle row in the expanded Bundles section — selects that
+  // bundle and switches to the bundles view. Mirrors the
+  // data-select-bundle handler in events.js (per-row setup must
+  // clear the prior load's parsed details, search box, and detail-
+  // tab choice so the new bundle starts on the Packages tab); the
+  // sidebar listener runs the same path so the row is interchangeable
+  // with the main-pane list row.
+  const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
+  if (bundleEl) {
+    const integrity = bundleEl.dataset.bundleIntegrity
+    if (state.selectedBundle === integrity && state.currentView === 'bundles') return
+    state.currentView = 'bundles'
+    state.selectedBundle = integrity
+    state.bundleDetails = null
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchQuery = ''
+    state.bundleCodeSearchMode = 'files'
+    state.bundleDetailsTab = 'packages'
+    graph2.showAll = true
+    state.shownTriage = null
+    render()
+    renderSidebar()
+    openBundle(integrity)
     return
   }
   if (e.target.closest('[data-action="show-packages"]')) {
