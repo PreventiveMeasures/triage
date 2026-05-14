@@ -1,4 +1,4 @@
-import { store } from '../rray-modules/frontend/state-management.mjs'
+import { store } from '@rray/frontend/state-management'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
@@ -103,7 +103,7 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
 // Centralised mutable view state. Every module that reads or writes
 // shared state imports this object and accesses fields directly —
 // `state.reports`, `state.currentView = 'files'`, etc. Wrapped in
-// `store()` (see rray-modules/frontend/state-management.mjs) so
+// `store()` (see @rray/frontend/state-management) so
 // reads done from inside a `StateElement.render()` are tracked and
 // the element re-renders automatically when those properties (or
 // keys inside the Maps / Sets) mutate.

@@ -28,7 +28,7 @@
 // out composed:true and reach events.js's `pathClosest`-based
 // delegate without intervention from this component.
 import { html, unsafeCSS } from 'lit'
-import { StateElement } from '../../rray-modules/frontend/state-element.mjs'
+import { StateElement } from '@rray/frontend/state-element'
 import { tableRowClasses, tableRowGid, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
 
