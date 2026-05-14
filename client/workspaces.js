@@ -1,8 +1,9 @@
 // Workspaces — named scopes a user creates from the sidebar. Each
-// workspace gets a uuid (`crypto.randomUUID`) and a freshly generated
-// 32-byte private key on creation. Persisted as a versioned JSON
-// object under `deepview.workspaces` in localStorage; the private
-// key rides along base64-encoded so the JSON stays a string.
+// workspace gets a UUID-shaped id (derived from the privateKey via
+// `deriveWorkspaceIdFromPrivateKey`) and a freshly generated 32-byte
+// private key on creation. Persisted as a versioned JSON object
+// under `deepview.workspaces` in localStorage; the private key
+// rides along base64-encoded so the JSON stays a string.
 //
 // Persisted shape (round-10 — pre-v1 freeze):
 //   { version: 1, workspaces: [...] }
@@ -16,6 +17,28 @@
 // few hundred bytes each), so localStorage is the right tier — same
 // pattern as triage / view-mode state. OPFS is reserved for the
 // per-report blobs.
+import { deriveWorkspaceIdFromPrivateKey } from './workspace-id.js'
+import {
+  fireReportMembershipChanged,
+  fireWorkspaceCreated,
+  fireWorkspaceDeleted,
+  fireWorkspacePrivateKeyChanged,
+  onReportMembershipChanged,
+  onWorkspaceCreated,
+  onWorkspaceDeleted,
+  onWorkspacePrivateKeyChanged,
+} from './workspace-listeners.js'
+
+// Re-export the `on*` registration helpers so existing call sites
+// (tests, triage-sync, etc.) can keep importing from this module.
+// The pub/sub plumbing itself lives in `workspace-listeners.js`.
+export {
+  onReportMembershipChanged,
+  onWorkspaceCreated,
+  onWorkspaceDeleted,
+  onWorkspacePrivateKeyChanged,
+}
+
 const STORAGE_KEY = 'deepview.workspaces'
 const WORKSPACES_VERSION = 1
 
@@ -162,7 +185,15 @@ const MAX_WORKSPACE_NAME_LEN = 200
 // layers and cross-tab logs. Strip control chars (incl. NUL) and
 // cap length. Returns the cleaned string or null when nothing
 // usable remains.
-function sanitizeWorkspaceName(raw) {
+//
+// Exported so the share-link unlock dialog can perform its live name-
+// collision check against the SAME normalised form that the persisted
+// blob uses. Comparing raw `.trim()` values would let a control-char
+// variant (e.g. `Foo`) typed by the recipient slip past the
+// dialog's check and persist as the same displayed `Foo` next to an
+// existing entry — two workspaces sharing a display name on the same
+// device. Audit follow-up (round-2 share-link review).
+export function sanitizeWorkspaceName(raw) {
   const trimmed = (raw ?? '').trim()
   if (!trimmed) return null
   // eslint-disable-next-line no-control-regex
@@ -175,16 +206,32 @@ export async function createWorkspace(name) {
   if (!cleaned) return null
   const keyBytes = new Uint8Array(32)
   crypto.getRandomValues(keyBytes)
+  const privateKey = keyBytes.toBase64()
   const workspace = {
-    id: crypto.randomUUID(),
+    // id is derived from the key (not random) so a future share
+    // link doesn't have to carry the id on the wire — receiver
+    // re-derives the same value from the same privateKey. See
+    // `deriveWorkspaceIdFromPrivateKey` above.
+    id: await deriveWorkspaceIdFromPrivateKey(privateKey),
     name: cleaned,
-    privateKey: keyBytes.toBase64(),
+    privateKey,
     reports: [],
     createdAt: Date.now(),
   }
-  await mutateWorkspaces((list) => {
+  // Defensive id-collision check INSIDE the same lock as the
+  // write. Two random 32-byte keys colliding under SHA-256-
+  // truncated-to-128-bits is astronomically improbable, but if
+  // `attachSharedWorkspace` already planted the same id (the user
+  // replayed their own earlier share link), pushing would land a
+  // duplicate-id row that `upsertWorkspace` would later clobber.
+  // Returning `false` from the mutator short-circuits the write;
+  // the public caller surfaces "nothing happened" as `null`.
+  const result = await mutateWorkspaces((list) => {
+    if (list.some((w) => w.id === workspace.id)) return false
     list.push(workspace)
+    return workspace
   })
+  if (!result) return null
   // Mark the new workspace as observed so the next propagate
   // handler doesn't fire createListener for it. createWorkspace
   // is a local-only affordance whose UI caller manages the new
@@ -198,65 +245,6 @@ export async function createWorkspace(name) {
   return workspace
 }
 
-// Listeners notified after a new workspace is added via
-// `upsertWorkspace` (first-insert) or via cross-tab propagation.
-// Symmetric with `onWorkspaceDeleted`; nothing in triage-sync
-// auto-subscribes to fresh workspaces today, but registries that
-// repaint UI affordances or seed per-workspace caches can hook
-// here without polling.
-const createListeners = new Set()
-
-export function onWorkspaceCreated(cb) {
-  createListeners.add(cb)
-  return () => createListeners.delete(cb)
-}
-
-// Listeners notified after a workspace is removed via
-// `deleteWorkspace`. The triage-sync layer subscribes here so its
-// in-memory + persisted session for the deleted workspace tears
-// down immediately, instead of waiting for the next page-load
-// prune (`prunePersistedSessions`). Listener errors are swallowed
-// so one bad subscriber can't strand the rest.
-const deleteListeners = new Set()
-
-export function onWorkspaceDeleted(cb) {
-  deleteListeners.add(cb)
-  return () => deleteListeners.delete(cb)
-}
-
-// Listeners notified after a workspace's `privateKey` changes (via
-// `upsertWorkspace`, e.g. import of a re-keyed bundle, or a future
-// "rotate workspace key" affordance). The triage-sync layer
-// subscribes so the in-flight session — whose cached
-// `signingKey` / `workspaceTag` were derived from the OLD key —
-// tears down and re-opens with fresh keys; otherwise saves keep
-// going to the old chain under a now-orphan workspaceTag and
-// silently drift away from the new identity. Listener errors are
-// swallowed so one bad subscriber can't strand the rest.
-const privateKeyChangeListeners = new Set()
-
-export function onWorkspacePrivateKeyChanged(cb) {
-  privateKeyChangeListeners.add(cb)
-  return () => privateKeyChangeListeners.delete(cb)
-}
-
-// Listeners notified after a workspace's `reports` membership
-// changes (via `setReportWorkspace`). Fired with each affected
-// workspace id (an attach + detach pair fires for both old and
-// new owners). The triage-sync layer subscribes so it can refresh
-// `session.ids` AND hydrate state.* from baseState for ids that
-// just entered scope — without that hydration, the next save's
-// `effectiveLocalState` would emit deletes for ids whose triage
-// was carried in baseState but never echoed into state.* (because
-// the previous applyToReactiveState was scoped to the OLD
-// session.ids). See the H1 audit finding.
-const reportMembershipListeners = new Set()
-
-export function onReportMembershipChanged(cb) {
-  reportMembershipListeners.add(cb)
-  return () => reportMembershipListeners.delete(cb)
-}
-
 export async function deleteWorkspace(id) {
   const removed = await mutateWorkspaces((list) => {
     const idx = list.findIndex((w) => w.id === id)
@@ -265,9 +253,7 @@ export async function deleteWorkspace(id) {
     return true
   })
   if (!removed) return
-  for (const cb of deleteListeners) {
-    try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
-  }
+  fireWorkspaceDeleted(id)
   markObservedDeleted(id)
 }
 
@@ -345,23 +331,76 @@ export async function upsertWorkspace(workspace) {
   // change never reaches local listeners. Audit round-13 W-6.
   const observed = lastSeen.find((w) => w.id === next.id) ?? null
   if (observed == null) {
-    for (const cb of createListeners) {
-      try { cb(next.id) } catch (err) { console.warn('workspace create listener failed:', err) }
-    }
+    fireWorkspaceCreated(next.id)
   } else {
-    if (observed.privateKey !== next.privateKey) {
-      for (const cb of privateKeyChangeListeners) {
-        try { cb(next.id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
-      }
-    }
+    if (observed.privateKey !== next.privateKey) fireWorkspacePrivateKeyChanged(next.id)
     if (!reportsSetEqual(observed.reports ?? [], next.reports)) {
-      for (const cb of reportMembershipListeners) {
-        try { cb(next.id) } catch (err) { console.warn('workspace membership listener failed:', err) }
-      }
+      fireReportMembershipChanged(next.id)
     }
   }
   markObservedFor(next)
   return next
+}
+
+// Attach a workspace received via a share link. Runs the id +
+// (sanitised) name uniqueness check AND the insert in the same
+// Web Lock acquisition that owns the read, so a sibling-tab
+// `createWorkspace` racing the check can't slip past with the
+// same name or the same id between the gate and the write.
+// Resolves to one of:
+//   { status: 'attached',         workspace }
+//   { status: 'already-attached', workspace }  // same id present
+//   { status: 'name-collision',   existing  }  // different id, same name
+//
+// `name` is sanitised the same way `createWorkspace` /
+// `upsertWorkspace` do; an empty result rejects via 'name-collision'
+// with `existing: null` so the caller can surface a single error
+// path. Audit follow-up (round-2 share-link review): the previous
+// design did its collision read in view.js BEFORE upserting, so a
+// concurrent same-name create from a sibling tab landed a twin
+// row that the dialog never warned about.
+export async function attachSharedWorkspace({ id, name, privateKey, createdAt }) {
+  let outcome = null
+  await mutateWorkspaces((list) => {
+    const sanitisedName = sanitizeWorkspaceName(name)
+    if (!sanitisedName) {
+      outcome = { status: 'name-collision', existing: null }
+      return false
+    }
+    const existingById = list.find((w) => w.id === id) ?? null
+    if (existingById) {
+      outcome = { status: 'already-attached', workspace: existingById }
+      return false
+    }
+    const existingByName = list.find(
+      (w) => sanitizeWorkspaceName(w.name) === sanitisedName,
+    ) ?? null
+    if (existingByName) {
+      outcome = { status: 'name-collision', existing: existingByName }
+      return false
+    }
+    const workspace = {
+      id,
+      name: sanitisedName,
+      privateKey,
+      reports: [],
+      createdAt: createdAt ?? Date.now(),
+    }
+    list.push(workspace)
+    outcome = { status: 'attached', workspace }
+    return undefined
+  })
+  if (outcome?.status === 'attached') {
+    // First-insert: fire create listeners the same way
+    // `upsertWorkspace` does on its first-insert branch — the
+    // sync layer subscribes to `onWorkspaceCreated` to bring up a
+    // session for the new workspace. Then mark it observed so the
+    // propagate handler doesn't re-fire on the storage event our
+    // own write triggered.
+    fireWorkspaceCreated(outcome.workspace.id)
+    markObservedFor(outcome.workspace)
+  }
+  return outcome
 }
 
 function reportsSetEqual(a, b) {
@@ -440,9 +479,7 @@ export async function setReportWorkspace(filename, workspaceId) {
     return { affected: aff, snapshot: snap }
   })
   for (const id of affected) {
-    for (const cb of reportMembershipListeners) {
-      try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
-    }
+    fireReportMembershipChanged(id)
     // Mark only the `reports` field of this workspace as observed
     // so the propagate handler doesn't re-fire the membership
     // listener for the local change. `markObservedFor` (full
@@ -491,33 +528,21 @@ export function propagateWorkspaceChangesFromStorage() {
   // Deletions
   for (const id of prevById.keys()) {
     if (nextById.has(id)) continue
-    for (const cb of deleteListeners) {
-      try { cb(id) } catch (err) { console.warn('workspace delete listener failed:', err) }
-    }
+    fireWorkspaceDeleted(id)
   }
   for (const [id, w] of nextById) {
     const p = prevById.get(id)
     if (!p) {
       // Sibling-tab create — symmetric with the delete branch above.
       // Audit M3 round-3.
-      for (const cb of createListeners) {
-        try { cb(id) } catch (err) { console.warn('workspace create listener failed:', err) }
-      }
+      fireWorkspaceCreated(id)
       continue
     }
-    if (p.privateKey !== w.privateKey) {
-      for (const cb of privateKeyChangeListeners) {
-        try { cb(id) } catch (err) { console.warn('workspace privateKey listener failed:', err) }
-      }
-    }
+    if (p.privateKey !== w.privateKey) fireWorkspacePrivateKeyChanged(id)
     // Set-equal compare on `reports` — reordering doesn't change
     // session.ids so it shouldn't fire spurious membership listeners.
     // Audit M2 round-3.
-    if (!reportsSetEqual(p.reports, w.reports)) {
-      for (const cb of reportMembershipListeners) {
-        try { cb(id) } catch (err) { console.warn('workspace membership listener failed:', err) }
-      }
-    }
+    if (!reportsSetEqual(p.reports, w.reports)) fireReportMembershipChanged(id)
   }
   // Update lastSeen AFTER firing listeners so a re-entrant handler
   // call (storage event during a listener's work) doesn't see a

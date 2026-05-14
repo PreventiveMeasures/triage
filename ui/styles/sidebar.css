@@ -201,6 +201,7 @@
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .file-item.workspace-item .workspace-count { align-self: center; }
 
+.workspace-share,
 .workspace-export,
 .workspace-leave {
   flex-shrink: 0;
@@ -223,8 +224,10 @@
   color: var(--critical, #f87171);
   border-color: var(--critical, #f87171);
 }
+.file-item.workspace-item:hover .workspace-share,
 .file-item.workspace-item:hover .workspace-export,
 .file-item.workspace-item:hover .workspace-leave,
+.file-item.workspace-item:focus-within .workspace-share,
 .file-item.workspace-item:focus-within .workspace-export,
 .file-item.workspace-item:focus-within .workspace-leave { opacity: 1; }
 
@@ -1033,9 +1036,52 @@ dialog {
     &.primary {
       background: var(--accent); color: var(--surface); border-color: var(--accent);
 
-      &:hover:not(:disabled) { filter: brightness(1.08); }
+      /* Re-state `color` so the more-specific (0,3,1) ambient hover
+         rule above doesn't repaint the label in the same accent
+         hue as the background — that's the blue-on-blue regression
+         the Generate / Unlock / Attach / Create buttons exhibited
+         before this rule. brightness(1.08) still gives the hover
+         its visual feedback against the solid accent fill. */
+      &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
     }
     &:disabled { opacity: .5; cursor: not-allowed; }
+  }
+}
+
+/* `<workspace-share-link-dialog>` + `<workspace-unlock-link-dialog>`
+   — sender and receiver halves of the per-workspace "Share by link"
+   affordance. Both reuse the `.new-workspace-dialog` chrome (via the
+   dual class) and add a few extras: `.wsl-field` wraps each labeled
+   row, `.wsl-link` is the read-only textarea for the generated URL,
+   `.wsl-error` paints validation / failure copy in the critical hue. */
+.workspace-share-dialog,
+.workspace-unlock-dialog {
+  max-width: 520px; width: min(94vw, 520px);
+
+  & .wsl-field {
+    display: block; margin-top: .6rem;
+    color: var(--text); font-size: .78rem;
+
+    & > span {
+      display: block; margin-bottom: .25rem;
+      color: var(--muted); font-size: .72rem;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+  }
+  & .wsl-link {
+    display: block; width: 100%; box-sizing: border-box;
+    padding: .5rem .65rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg, var(--surface));
+    color: var(--text);
+    font: inherit; font-size: .78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+    word-break: break-all;
+  }
+  & .wsl-error {
+    margin: .55rem 0 0;
+    color: var(--critical, #f87171); font-size: .74rem; line-height: 1.4;
   }
 }
 

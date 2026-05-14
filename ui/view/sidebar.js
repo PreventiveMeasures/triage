@@ -12,6 +12,7 @@ import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './leave-workspace-dialog.js'
+import { openWorkspaceShareLinkDialog } from './workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './delete-report-dialog.js'
 import { analyzeTriageImpact } from '../../client/triage-gc.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -217,6 +218,11 @@ const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="1
 // and the bundles row's "Delete", both inlined separately to
 // avoid a cross-file icon dependency).
 const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H4v10h5"/><path d="M7 8h7M11 5l3 3-3 3"/></svg>`
+// Chain-link glyph for the "Share by link" affordance — two
+// interlocking link-loops, distinct from the download tray icon
+// (export) and the door-arrow (leave). Sized to match the other
+// hover-revealed action buttons in the workspace row.
+const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
 function workspaceItemTemplate(w, reportCount) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
@@ -244,7 +250,7 @@ function workspaceItemTemplate(w, reportCount) {
   // — we don't park a placeholder trash icon here because that
   // misreads as "Delete is the same action as Leave, just
   // greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
@@ -442,6 +448,25 @@ sidebar.addEventListener('click', async (e) => {
     }
     return
   }
+  // Per-workspace share-by-link — open the share dialog with the
+  // workspace's current name as the prompt default + its 32-byte
+  // private key as the to-encrypt secret. Listed before the export /
+  // workspace / file row handlers because the share button lives
+  // inside the workspace li and we don't want a stray click to fall
+  // through to the workspace switcher.
+  const shareEl = e.target.closest('[data-action="share-workspace"]')
+  if (shareEl) {
+    const wsEl = shareEl.closest('[data-workspace-id]')
+    const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
+    if (ws) {
+      // The dialog handles its own internal errors inline (the
+      // `_error` state slot); the returned promise always
+      // resolves to `undefined` when the user closes the dialog
+      // — no `.catch` needed here.
+      openWorkspaceShareLinkDialog({ id: ws.id, name: ws.name, privateKeyBase64: ws.privateKey })
+    }
+    return
+  }
   // Per-workspace export — find the enclosing workspace li, look the
   // workspace up, hand it to exportWorkspace. Listed before the
   // workspace / file row handlers below because the export button
@@ -608,14 +633,16 @@ if (searchInput) {
 // above). Subscribes once at module load so the indicator follows
 // every reconnect / setServerUrl change without polling.
 //
-// Visibility is gated on (a) at least one workspace having a
-// non-empty `reports` array — sync is a workspace concept, no
-// point in showing it before any workspace actually carries
-// content — AND (b) a usable server URL existing, either because
-// the user previously configured one or because the page's origin
-// has a sensible default (see `DEFAULT_SYNC_URL` above for the
-// resolution rules). When either condition fails the button is
-// hidden so it doesn't read as a broken affordance.
+// Visibility is gated on (a) at least one workspace existing
+// — sync is a workspace concept, but it should be reachable for
+// an empty workspace too (e.g. one freshly attached via a share
+// link, before any reports are dropped in) so the user can see
+// incoming triage from peers as it arrives — AND (b) a usable
+// server URL existing, either because the user previously
+// configured one or because the page's origin has a sensible
+// default (see `DEFAULT_SYNC_URL` above for the resolution
+// rules). When either condition fails the button is hidden so
+// it doesn't read as a broken affordance.
 const SYNC_LABELS = {
   off: 'Sync off',
   online: 'Online',
@@ -640,20 +667,25 @@ const SYNC_TITLES = {
 function syncButtonVisible() {
   const usableUrl = triageSync.getServerUrl() || DEFAULT_SYNC_URL
   if (!usableUrl) return false
-  return listWorkspaces().some((w) => w.reports.length > 0)
+  // Any workspace, with or without attached reports. The previous
+  // gate required reports.length > 0 — which hid the button on a
+  // freshly-attached share-link workspace and prevented the user
+  // from seeing the sender's triage land before they'd added
+  // their own reports.
+  return listWorkspaces().length > 0
 }
 
 function renderSyncStatus(status) {
   const btn = document.getElementById('sync-status')
   if (!btn) return
   const visible = syncButtonVisible()
-  // Auto-prime the default sync URL the first time a workspace
-  // has reports — workspaces opt the user into sync (unattached
-  // reports stay local-only), so the offline → online flip
-  // shouldn't require a separate sidebar click. Skipped when the
-  // user has explicitly turned sync off via the status button
-  // (`isEnabled()` reads the persisted toggle, default true) or
-  // when a custom URL is already configured via the console API.
+  // Auto-prime the default sync URL the first time any workspace
+  // exists — workspaces opt the user into sync (unattached reports
+  // stay local-only), so the offline → online flip shouldn't
+  // require a separate sidebar click. Skipped when the user has
+  // explicitly turned sync off via the status button (`isEnabled()`
+  // reads the persisted toggle, default true) or when a custom URL
+  // is already configured via the console API.
   if (visible && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
     triageSync.setServerUrl(DEFAULT_SYNC_URL)
   }
