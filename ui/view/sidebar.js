@@ -36,24 +36,22 @@ function countLoadedRepositories() {
 
 // Default sync endpoint used when the user toggles the sidebar
 // status button on. Resolved per-origin:
-//   - `127.0.0.1` → the dev server on :8765, at the relay's
-//     canonical `/api/sync` upgrade path.
-//   - any other origin not ending in `.github.io` →
-//     `${origin}/api/sync` on the matching ws/wss scheme, so a
-//     self-hosted deploy can terminate sync at the same host
-//     serving the UI. The `/api/` prefix matches the relay's
-//     reserved backend namespace — a fronting nginx routes
-//     `/api/*` → relay, `/*` → the static UI bundle, no
-//     upgrade-header gymnastics.
 //   - `.github.io` (and the `typeof location` guard for SSR-style
 //     loads) stays empty — GitHub Pages can't host a WebSocket
 //     endpoint, so the button would only ever read as broken.
+//   - anything else → `${origin}/api/sync` on the matching ws/wss
+//     scheme. The `/api/` prefix matches the relay's reserved
+//     backend namespace — a fronting nginx (prod) or `build.js`'s
+//     dev proxy (local) routes `/api/*` → relay, `/*` → the static
+//     UI bundle, no upgrade-header gymnastics. Localhost gets the
+//     same shape as a self-hosted deploy: the dev proxy on :8000
+//     forwards `/api/sync` to `server/index.ts` on :8765, so
+//     `ws://127.0.0.1:8000/api/sync` Just Works.
 // A user who wants to override either default can still call
 // `DeepView.triageSync.setServerUrl('wss://…')` from the console;
 // the empty default just means there's no toggle-on target.
 const DEFAULT_SYNC_URL = (() => {
   if (typeof location === 'undefined') return ''
-  if (location.hostname === '127.0.0.1') return 'ws://127.0.0.1:8765/api/sync'
   if (location.hostname.endsWith('.github.io')) return ''
   const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${wsScheme}//${location.host}/api/sync`

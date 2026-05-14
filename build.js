@@ -9,6 +9,8 @@
 import * as esbuild from 'esbuild'
 import { readFile } from 'node:fs/promises'
 import { resolve as resolvePath, dirname } from 'node:path'
+import { createServer, request as httpRequest } from 'node:http'
+import { connect as netConnect } from 'node:net'
 import { minifyHTMLLiterals } from 'minify-html-literals'
 
 // `minify` is set in prod builds. esbuild's top-level `minify` flag
@@ -112,7 +114,83 @@ if (mode === 'build') {
     allowOverwrite: true,
     format: 'esm',
   })
-  await ctx.serve({ host: '127.0.0.1', port: 8000, servedir: 'ui' })
+  // Bind esbuild on an ephemeral port — the proxy below is the visible
+  // dev origin on PROXY_PORT (default 8000), esbuild lives behind it.
+  // Single-origin dev means the UI's WebSocket / objstore fetches can
+  // use plain relative URLs and skip CORS, matching the production
+  // topology where a fronting nginx routes `/api/*` to server/ and
+  // `/*` to the static bundle.
+  const esb = await ctx.serve({ host: '127.0.0.1', port: 0, servedir: 'ui' })
+
+  // Backend target = server/index.ts. Default to its env-var defaults
+  // (HOST=127.0.0.1, PORT=8765) so a plain `node server/index.ts` on
+  // the side Just Works; override with BACKEND_HOST / BACKEND_PORT
+  // when the operator picked custom values for the server process.
+  const backendHost = process.env['BACKEND_HOST'] ?? '127.0.0.1'
+  const backendPort = Number(process.env['BACKEND_PORT'] ?? 8765)
+  const proxyHost = process.env['PROXY_HOST'] ?? '127.0.0.1'
+  const proxyPort = Number(process.env['PROXY_PORT'] ?? 8000)
+
+  // Same `/api/*` prefix convention `server/index.ts` enforces for the
+  // WS upgrade path + REST routes. Keep this in sync with the server's
+  // `WS_UPGRADE_PATH` and `matchRoute` if either ever moves off `/api`.
+  const isApi = (url) => typeof url === 'string' && url.startsWith('/api/')
+
+  const proxy = createServer((req, res) => {
+    const target = isApi(req.url) ? { host: backendHost, port: backendPort, label: 'backend' } : { host: esb.host, port: esb.port, label: 'esbuild' }
+    const upstream = httpRequest({
+      host: target.host,
+      port: target.port,
+      method: req.method,
+      path: req.url,
+      headers: req.headers,
+    }, (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
+      upstreamRes.pipe(res)
+    })
+    upstream.on('error', (err) => {
+      // Backend down is the common case during dev (operator hasn't
+      // started `node server/index.ts` yet); emit a readable 502 so
+      // the browser console shows the cause instead of a generic
+      // connection reset.
+      const body = `Dev proxy: ${target.label} (${target.host}:${target.port}) unreachable — ${err.message}\n`
+      if (res.headersSent) { res.destroy(); return }
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(body)
+    })
+    req.on('error', () => { upstream.destroy() })
+    req.pipe(upstream)
+  })
+
+  // WS upgrade proxy: replay the request line + raw headers onto a raw
+  // TCP socket to the backend, then bidirectionally pipe. `http.request`
+  // does have an `upgrade` event, but its handling of the 101 response
+  // is more brittle (header casing, trailing data) than a straight
+  // socket forward — and the backend already speaks HTTP/1.1 upgrades
+  // natively via `ws`. esbuild's serve doesn't use WS for live-reload
+  // (it uses SSE on `/esbuild` when enabled), so any non-/api/ upgrade
+  // is unexpected and we drop it.
+  proxy.on('upgrade', (req, clientSocket, head) => {
+    if (!isApi(req.url)) { clientSocket.destroy(); return }
+    const upstream = netConnect(backendPort, backendHost, () => {
+      let headers = ''
+      // `rawHeaders` preserves casing and duplicate headers, both of
+      // which can matter to the WS handshake (Sec-WebSocket-Key etc.).
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        headers += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`
+      }
+      upstream.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n${headers}\r\n`)
+      if (head.length) upstream.write(head)
+      upstream.pipe(clientSocket)
+      clientSocket.pipe(upstream)
+    })
+    upstream.on('error', () => clientSocket.destroy())
+    clientSocket.on('error', () => upstream.destroy())
+  })
+
+  proxy.listen(proxyPort, proxyHost, () => {
+    console.log(`dev proxy: http://${proxyHost}:${proxyPort} → esbuild :${esb.port}, /api/* → ${backendHost}:${backendPort}`)
+  })
 } else {
   console.error(`unknown mode: ${mode}`)
   process.exit(1)
