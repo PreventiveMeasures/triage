@@ -120,7 +120,7 @@ if (!Number.isSafeInteger(PORT) || PORT < 0 || PORT > 65535) {
 // `fileURLToPath` decodes percent-escapes and handles non-ASCII path
 // segments correctly (the older `new URL(...).pathname` form left
 // `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
-const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data.db', import.meta.url))
+const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data/data.db', import.meta.url))
 // `path.join` so a Windows DB_PATH (`C:\srv\foo\data.db` → dirname
 // returns backslash-separated) doesn't get a mixed-separator child
 // (`C:\srv\foo/objstore`). Cosmetic on POSIX, real bug on win32.
@@ -138,7 +138,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
-  DB_PATH                    sqlite file (default server/data.db);
+  DB_PATH                    sqlite file (default: server/data/data.db);
                              ignored when DATABASE_URL is set
   DATABASE_URL               Neon Postgres connection string; if set,
                              selects the Neon backend instead of
@@ -148,8 +148,8 @@ Environment:
                              next to DB_PATH; the default still uses
                              DB_PATH's dirname even when DATABASE_URL
                              selects the Neon backend — set
-                             OBJSTORE_DIR explicitly on Neon if you
-                             want it elsewhere)
+                             OBJSTORE_DIR explicitly if you want it
+                             elsewhere)
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
   DEBUG=1                    log every message`)
   process.exit(0)

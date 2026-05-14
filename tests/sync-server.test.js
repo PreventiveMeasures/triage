@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -1047,6 +1047,19 @@ describe('triage-sync server', () => {
     assert.match(text, /\r\nContent-Type: application\/json\r\n/u)
     assert.match(text, /\r\nConnection: close\r\n/u)
     assert.match(text, /\r\n\r\n\{"error":"not-found"\}$/u)
+  })
+})
+
+describe('triage-sync server CLI', () => {
+  it('reports the default storage paths under server/data in --help', () => {
+    const proc = spawnSync(process.execPath, ['server/index.ts', '--help'], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      encoding: 'utf8',
+    })
+    assert.equal(proc.status, 0)
+    assert.match(proc.stdout, /DB_PATH\s+sqlite file \(default:\s+server\/data\/data\.db\)/u)
+    assert.match(proc.stdout, /OBJSTORE_DIR\s+object store root \(default:\s+\.\/objstore/u)
+    assert.match(proc.stdout, /next to DB_PATH/u)
   })
 })
 

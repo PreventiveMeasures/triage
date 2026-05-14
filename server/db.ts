@@ -35,6 +35,8 @@
 // accidentally over- or under-serialise the wrong region.
 
 import { DatabaseSync } from 'node:sqlite'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { KeyedAsyncLock } from './objstore/lock.ts'
 import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from './db-stmt.ts'
 
@@ -147,6 +149,7 @@ export function _attachWriteLock(handle: Handle): void {
 }
 
 export function openDb(path: string): SqliteHandle {
+  mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
   // Any throw between the DatabaseSync constructor and the return
   // would otherwise leak the underlying file / WAL / shm locks until

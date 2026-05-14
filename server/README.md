@@ -16,7 +16,9 @@ DEBUG=1 pnpm server        # log every message
 DB_PATH=./mydb.db pnpm server
 ```
 
-Defaults: `PORT=8765`, `HOST=127.0.0.1`, `DB_PATH=server/data.db`.
+Defaults: `PORT=8765`, `HOST=127.0.0.1`, `DB_PATH=server/data/data.db`.
+By default, `OBJSTORE_DIR` stays next to `DB_PATH` (so
+`server/data/objstore` with the default DB path).
 The SQLite file is created on first run; nothing else is needed.
 
 ### Storage backends

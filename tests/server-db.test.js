@@ -50,6 +50,19 @@ describe('openDb — schema + migration', () => {
     } finally { await cleanup() }
   })
 
+  it('creates missing parent directories for the SQLite file', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-nested-db-${++tmpCounter}-`))
+    const file = path.join(dir, 'nested', 'data.db')
+    const handle = openDb(file)
+    try {
+      await commitRevision(handle, rev({ id: 'nested-r1' }))
+      assert.equal(await revisionExists(handle, 'tag-A', 'nested-r1'), true)
+    } finally {
+      await handle.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('migrates a legacy DB created before the keyframe column existed', async () => {
     // Build a pre-migration schema by hand: same columns minus
     // `keyframe`. openDb's idempotent ALTER TABLE adds the column.
