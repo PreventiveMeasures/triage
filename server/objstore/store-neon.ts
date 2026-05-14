@@ -36,8 +36,6 @@ const SCHEMA_PG = [
      version        BIGINT  NOT NULL,
      content_hash   TEXT    NOT NULL,
      content_length BIGINT  NOT NULL,
-     chunk_count    BIGINT  NOT NULL,
-     nonce_prefix   TEXT    NOT NULL,
      signature      TEXT    NOT NULL,
      put_at         BIGINT  NOT NULL,
      PRIMARY KEY (workspace_tag, resource_tag)
@@ -47,10 +45,8 @@ const SCHEMA_PG = [
      resource_tag    TEXT    NOT NULL,
      staging_id      TEXT    NOT NULL,
      prev_version    BIGINT,
-     expected_chunks BIGINT  NOT NULL,
      expected_length BIGINT  NOT NULL,
      content_hash    TEXT    NOT NULL,
-     nonce_prefix    TEXT    NOT NULL,
      signature       TEXT    NOT NULL,
      begun_at        BIGINT  NOT NULL,
      PRIMARY KEY (workspace_tag, resource_tag, staging_id)
@@ -86,7 +82,7 @@ function numOrNull(v: unknown): number | null {
 
 type LiveDbRow = {
   resource_tag: string; version: number; content_hash: string; content_length: number
-  chunk_count: number; nonce_prefix: string; signature: string; put_at: number
+  signature: string; put_at: number
 }
 
 function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
@@ -95,8 +91,6 @@ function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
     version: num(r['version']),
     content_hash: String(r['content_hash']),
     content_length: num(r['content_length']),
-    chunk_count: num(r['chunk_count']),
-    nonce_prefix: String(r['nonce_prefix']),
     signature: String(r['signature']),
     put_at: num(r['put_at']),
   }
@@ -106,25 +100,22 @@ function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
 // within the max-lines-per-function budget. Each closes over the
 // Neon `sql` callable.
 
-function buildInsertStaging(sql: NeonSql): RunStmt<[string, string, string, number | null, number, number, string, string, string, number]> {
-  return { run: async (tag, resourceTag, stagingId, prevVersion, expectedChunks, expectedLength, contentHash, noncePrefix, signature, begunAt) => {
+function buildInsertStaging(sql: NeonSql): RunStmt<[string, string, string, number | null, number, string, string, number]> {
+  return { run: async (tag, resourceTag, stagingId, prevVersion, expectedLength, contentHash, signature, begunAt) => {
     await sql(
       `INSERT INTO workspace_object_staging
          (workspace_tag, resource_tag, staging_id, prev_version,
-          expected_chunks, expected_length, content_hash, nonce_prefix,
-          signature, begun_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [tag, resourceTag, stagingId, prevVersion, expectedChunks, expectedLength, contentHash, noncePrefix, signature, begunAt],
+          expected_length, content_hash, signature, begun_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [tag, resourceTag, stagingId, prevVersion, expectedLength, contentHash, signature, begunAt],
     )
   } }
 }
 
 type StagingRow = {
   prev_version: number | null
-  expected_chunks: number
   expected_length: number
   content_hash: string
-  nonce_prefix: string
   signature: string
   begun_at: number
 }
@@ -132,8 +123,7 @@ type StagingRow = {
 function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], StagingRow> {
   return { get: async (tag, resourceTag, stagingId) => {
     const rows = await sql(
-      `SELECT prev_version, expected_chunks, expected_length, content_hash,
-              nonce_prefix, signature, begun_at
+      `SELECT prev_version, expected_length, content_hash, signature, begun_at
        FROM workspace_object_staging
        WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`,
       [tag, resourceTag, stagingId],
@@ -142,10 +132,8 @@ function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], Sta
     if (!r) return undefined
     return {
       prev_version: numOrNull(r['prev_version']),
-      expected_chunks: num(r['expected_chunks']),
       expected_length: num(r['expected_length']),
       content_hash: String(r['content_hash']),
-      nonce_prefix: String(r['nonce_prefix']),
       signature: String(r['signature']),
       begun_at: num(r['begun_at']),
     }
@@ -185,8 +173,8 @@ function buildDeleteStaging(sql: NeonSql): RunStmt<[string, string, string]> {
 function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
   return { all: async (tag) => {
     const rows = await sql(
-      `SELECT resource_tag, version, content_hash, content_length, chunk_count,
-              nonce_prefix, signature, put_at
+      `SELECT resource_tag, version, content_hash, content_length,
+              signature, put_at
        FROM workspace_object
        WHERE workspace_tag = $1
        ORDER BY resource_tag ASC`,
@@ -199,8 +187,8 @@ function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
 function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> {
   return { get: async (tag, resourceTag) => {
     const rows = await sql(
-      `SELECT resource_tag, version, content_hash, content_length, chunk_count,
-              nonce_prefix, signature, put_at
+      `SELECT resource_tag, version, content_hash, content_length,
+              signature, put_at
        FROM workspace_object
        WHERE workspace_tag = $1 AND resource_tag = $2`,
       [tag, resourceTag],
@@ -210,22 +198,20 @@ function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> 
   } }
 }
 
-function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string, number, number, string, string, number]> {
-  return { run: async (tag, resourceTag, version, contentHash, contentLength, chunkCount, noncePrefix, signature, putAt) => {
+function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string, number, string, number]> {
+  return { run: async (tag, resourceTag, version, contentHash, contentLength, signature, putAt) => {
     await sql(
       `INSERT INTO workspace_object
          (workspace_tag, resource_tag, version, content_hash, content_length,
-          chunk_count, nonce_prefix, signature, put_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          signature, put_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
          version        = EXCLUDED.version,
          content_hash   = EXCLUDED.content_hash,
          content_length = EXCLUDED.content_length,
-         chunk_count    = EXCLUDED.chunk_count,
-         nonce_prefix   = EXCLUDED.nonce_prefix,
          signature      = EXCLUDED.signature,
          put_at         = EXCLUDED.put_at`,
-      [tag, resourceTag, version, contentHash, contentLength, chunkCount, noncePrefix, signature, putAt],
+      [tag, resourceTag, version, contentHash, contentLength, signature, putAt],
     )
   } }
 }

@@ -86,7 +86,6 @@ function signPut(sk, fields, connectionNonce) {
     fields.workspaceTag, fields.resourceTag,
     fields.prevVersion == null ? '' : String(fields.prevVersion),
     fields.contentHash, String(fields.expectedLength),
-    String(fields.expectedChunks), fields.noncePrefix,
     connectionNonce,
   ].join('\n')))
 }
@@ -108,7 +107,6 @@ function signFetch(sk, tag, resourceTag, connectionNonce) {
 }
 
 function syntheticHash() { return b64url(crypto.getRandomValues(new Uint8Array(32))) }
-function syntheticNoncePrefix() { return b64url(crypto.getRandomValues(new Uint8Array(8))) }
 
 function connect(url) {
   return new Promise((resolve, reject) => {
@@ -174,8 +172,8 @@ async function subscribeWS(c, sk, tag) {
 async function putBlob(c, sk, tag, resourceTag, payloadBytes, prevVersion = null, httpOrigin) {
   const fields = {
     workspaceTag: tag, resourceTag, prevVersion,
-    expectedChunks: 1, expectedLength: payloadBytes.byteLength,
-    contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+    expectedLength: payloadBytes.byteLength,
+    contentHash: syntheticHash(),
   }
   const signature = await signPut(sk, fields, c.connectionNonce)
   c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -332,8 +330,8 @@ describe('v1.objstore server (REST-primary)', () => {
     // Second put-begin with prevVersion=null → conflict.
     const fields = {
       workspaceTag: tag, resourceTag: 'r-conflict', prevVersion: null,
-      expectedChunks: 1, expectedLength: 6,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 6,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -350,8 +348,8 @@ describe('v1.objstore server (REST-primary)', () => {
     await c.expectSilent(50)
     const fields = {
       workspaceTag: tag, resourceTag: 'r-forge', prevVersion: null,
-      expectedChunks: 1, expectedLength: 4,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 4,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(otherSk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -405,8 +403,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const c2 = await connect(serverUrl)
     const fields = {
       workspaceTag: tag, resourceTag: 'r-put-replay', prevVersion: null,
-      expectedChunks: 1, expectedLength: 8,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 8,
+      contentHash: syntheticHash(),
     }
     // Sign against c1's nonce.
     const c1Sig = await signPut(sk, fields, c1.connectionNonce)
@@ -450,8 +448,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const c = await connect(serverUrl)
     const fields = {
       workspaceTag: tag, resourceTag: 'r-bad-len', prevVersion: null,
-      expectedChunks: 1, expectedLength: 100,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 100,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -476,8 +474,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const payload = Buffer.from('once', 'utf8')
     const fields = {
       workspaceTag: tag, resourceTag: 'r-once', prevVersion: null,
-      expectedChunks: 1, expectedLength: payload.byteLength,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: payload.byteLength,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -548,7 +546,7 @@ describe('v1.objstore server (REST-primary)', () => {
     c.ws.close()
   })
 
-  it('put-begin with NaN / non-safe-int expectedLength / expectedChunks → silent drop (no token issued)', async () => {
+  it('put-begin with NaN / non-safe-int expectedLength → silent drop (no token issued)', async () => {
     // Audit round-12: pre-sig gate switched from `typeof === number`
     // + range check to `Number.isSafeInteger`. Previously NaN slipped
     // past the typeof gate (since `NaN < 0` and `NaN > MAX` are both
@@ -559,8 +557,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const c = await connect(serverUrl)
     const baseFields = {
       workspaceTag: tag, resourceTag: 'r-nan', prevVersion: null,
-      expectedChunks: 1, expectedLength: 8,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 8,
+      contentHash: syntheticHash(),
     }
     // We can't sign over NaN canonical bytes (the canonical builder
     // would fail / produce garbage), but the wire-gate at the
@@ -569,13 +567,10 @@ describe('v1.objstore server (REST-primary)', () => {
     // Case 1: NaN expectedLength.
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, expectedLength: Number.NaN, signature: sig }))
     await c.expectSilent(150)
-    // Case 2: NaN expectedChunks.
-    c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, expectedChunks: Number.NaN, signature: sig }))
-    await c.expectSilent(150)
-    // Case 3: negative expectedLength.
+    // Case 2: negative expectedLength.
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, expectedLength: -1, signature: sig }))
     await c.expectSilent(150)
-    // Case 4: Number.MAX_SAFE_INTEGER + 1 (unsafe int).
+    // Case 3: Number.MAX_SAFE_INTEGER + 1 (unsafe int).
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, expectedLength: Number.MAX_SAFE_INTEGER + 1, signature: sig }))
     await c.expectSilent(150)
     // Sanity: a well-formed put-begin on the same socket still works.
@@ -744,8 +739,8 @@ describe('v1.objstore server (REST-primary)', () => {
     function mkFields() {
       return {
         workspaceTag: tag, resourceTag: 'r-race', prevVersion: null,
-        expectedChunks: 1, expectedLength: payload.byteLength,
-        contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+        expectedLength: payload.byteLength,
+        contentHash: syntheticHash(),
       }
     }
     const f1 = mkFields(); const f2 = mkFields()
@@ -786,8 +781,8 @@ describe('v1.objstore server (REST-primary)', () => {
     // resource was version 1; prevVersion=1 for the next bump).
     const putFields = {
       workspaceTag: tag, resourceTag: 'r-op-mix', prevVersion: 1,
-      expectedChunks: 1, expectedLength: 1,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 1,
+      contentHash: syntheticHash(),
     }
     const putSig = await signPut(sk, putFields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...putFields, signature: putSig }))
@@ -811,8 +806,8 @@ describe('v1.objstore server (REST-primary)', () => {
     await subscribeWS(c, sk, tag)
     const fields = {
       workspaceTag: tag, resourceTag: 'r-no-len', prevVersion: null,
-      expectedChunks: 1, expectedLength: 4,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 4,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -855,8 +850,8 @@ describe('v1.objstore server (REST-primary)', () => {
     await subscribeWS(c, sk, tag)
     const fields = {
       workspaceTag: tag, resourceTag: 'r-oversize', prevVersion: null,
-      expectedChunks: 1, expectedLength: 1,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 1,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -941,8 +936,8 @@ describe('v1.objstore server (REST-primary)', () => {
     // Mint a put-token for r-a.
     const fields = {
       workspaceTag: tag, resourceTag: 'r-a', prevVersion: null,
-      expectedChunks: 1, expectedLength: 4,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: 4,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -982,8 +977,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const payload = Buffer.from('replay-bytes', 'utf8')
     const fields = {
       workspaceTag: tag, resourceTag: 'r-concurrent-replay', prevVersion: null,
-      expectedChunks: 1, expectedLength: payload.byteLength,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: payload.byteLength,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
@@ -1016,8 +1011,8 @@ describe('v1.objstore server (REST-primary)', () => {
     const payload = Buffer.from('would-have-been-written', 'utf8')
     const fields = {
       workspaceTag: tag, resourceTag: 'r-enoent', prevVersion: null,
-      expectedChunks: 1, expectedLength: payload.byteLength,
-      contentHash: syntheticHash(), noncePrefix: syntheticNoncePrefix(),
+      expectedLength: payload.byteLength,
+      contentHash: syntheticHash(),
     }
     const signature = await signPut(sk, fields, c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))

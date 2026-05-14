@@ -15,17 +15,14 @@
 //
 // The bytes you pass to `put()` are OPAQUE to the server. Callers
 // are responsible for application-level encryption (ChaCha20-Poly1305
-// with a workspace-derived key, same as triage-sync) and for
-// computing a `noncePrefix` that uniquely names the encryption
-// nonce-base. This module's job is integrity + transport, NOT
-// confidentiality:
+// with a workspace-derived key, same as triage-sync). This module's
+// job is integrity + transport, NOT confidentiality:
 //   - `contentHash = SHA-256(bytes)` is computed here and bound
 //     into the Ed25519 signature, so a peer fetching bytes that
 //     don't match the signed hash has proof of tampering.
 //   - The Ed25519 signature is over the (signed) `contentHash`,
-//     length, chunks, noncePrefix, prevVersion, etc. — every
-//     server-side state mutation is gated on the seed-holder's
-//     consent.
+//     length, prevVersion, etc. — every server-side state mutation
+//     is gated on the seed-holder's consent.
 //
 // Concurrency: the caller MUST NOT issue two ops for the same
 // resourceTag concurrently. Responses are correlated by message
@@ -50,8 +47,6 @@ export type ObjectMeta = {
   version: number
   contentHash: string
   contentLength: number
-  chunkCount: number
-  noncePrefix: string
   signature: string
 }
 
@@ -87,7 +82,7 @@ export type ObjstoreSessionDeps = {
 }
 
 export type ObjstoreSession = {
-  put(opts: { resourceTag: string; bytes: Uint8Array; noncePrefix: string; prevVersion: number | null }): Promise<PutResult>
+  put(opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<PutResult>
   fetch(resourceTag: string): Promise<FetchResult | null>
   delete(resourceTag: string, prevVersion: number | null): Promise<DeleteResult>
   list(): Promise<ObjectMeta[]>
@@ -265,16 +260,14 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     throw err
   }
 
-  async function put(opts: { resourceTag: string; bytes: Uint8Array; noncePrefix: string; prevVersion: number | null }): Promise<PutResult> {
+  async function put(opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
     const contentHash = await computeContentHash(opts.bytes)
     const fields: ObjstorePutBeginFields = {
       workspaceTag: deps.workspaceTag,
       resourceTag: opts.resourceTag,
       prevVersion: opts.prevVersion,
-      expectedChunks: 1,
       expectedLength: opts.bytes.byteLength,
       contentHash,
-      noncePrefix: opts.noncePrefix,
     }
     const signature = await signObjstorePut(deps.privateKey, fields, connectionNonce)
     send({ type: 'objstore-put-begin', ...fields, signature })
@@ -486,8 +479,6 @@ function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
     && typeof m['version'] === 'number'
     && typeof m['contentHash'] === 'string'
     && typeof m['contentLength'] === 'number'
-    && typeof m['chunkCount'] === 'number'
-    && typeof m['noncePrefix'] === 'string'
     && typeof m['signature'] === 'string'
 }
 
@@ -500,8 +491,6 @@ function toObjectMeta(m: WireMessage): ObjectMeta {
     version: m['version'] as number,
     contentHash: m['contentHash'] as string,
     contentLength: m['contentLength'] as number,
-    chunkCount: m['chunkCount'] as number,
-    noncePrefix: m['noncePrefix'] as string,
     signature: m['signature'] as string,
   }
 }

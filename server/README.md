@@ -240,12 +240,10 @@ Client → server:
 ```
 objstore-put-begin {
   workspaceTag,         // base64url Ed25519 public key
-  resourceTag,          // base64url, HKDF-derived per (seed, name)
+  resourceTag,          // base64url, HMAC-derived per (tagKey, fileName)
   prevVersion,          // integer or null — server's expected current version
-  expectedChunks,       // AEAD chunk count
-  expectedLength,       // total ciphertext bytes (incl. nonces + tags)
-  contentHash,          // base64url SHA-256 of the plaintext (compressed) bytes
-  noncePrefix,          // base64url 8 bytes; per-resource AEAD nonce prefix
+  expectedLength,       // total ciphertext bytes (incl. AEAD nonce + tag)
+  contentHash,          // base64url SHA-256 of the ciphertext bytes
   signature             // Ed25519 over the canonical PUT payload
 }
 
@@ -271,7 +269,7 @@ objstore-put-token    { workspaceTag, resourceTag, stagingId, urlPath,
                         token, expiresAt }
                         // present the token at PUT urlPath to upload bytes
 objstore-fetch-token  { workspaceTag, resourceTag, version, contentHash,
-                        contentLength, chunkCount, noncePrefix, signature,
+                        contentLength, signature,
                         urlPath, token, expiresAt }
                         // metadata + GET capability
 objstore-fetch-not-found { workspaceTag, resourceTag }
@@ -302,7 +300,7 @@ objstore-list-result  { workspaceTag, resources: [...] }
 // broadcasts to subscribed peers (PUT broadcast on REST commit;
 //                                 DELETE broadcast on WS handler):
 objstore-put          { workspaceTag, resourceTag, version, contentHash,
-                        contentLength, chunkCount, noncePrefix, signature }
+                        contentLength, signature }
 objstore-deleted      { workspaceTag, resourceTag, version }
 ```
 
@@ -441,8 +439,6 @@ workspace_object (
   version        INTEGER NOT NULL,    -- monotonic per (tag, resource)
   content_hash   TEXT NOT NULL,
   content_length INTEGER NOT NULL,
-  chunk_count    INTEGER NOT NULL,
-  nonce_prefix   TEXT NOT NULL,
   signature      TEXT NOT NULL,
   put_at         INTEGER NOT NULL,
   PRIMARY KEY (workspace_tag, resource_tag)
@@ -450,8 +446,8 @@ workspace_object (
 
 workspace_object_staging (
   workspace_tag, resource_tag, staging_id,
-  prev_version, expected_chunks, expected_length,
-  content_hash, nonce_prefix, signature, begun_at,
+  prev_version, expected_length,
+  content_hash, signature, begun_at,
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
 ) STRICT
 

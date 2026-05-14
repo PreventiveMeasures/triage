@@ -27,8 +27,6 @@ function freshHandle() {
   }
 }
 
-// 8-byte b64url, 11 chars no padding (NONCE_PREFIX_RE)
-function b64u8() { return 'aaaaaaaaaaa' }
 // 32-byte b64url, 43 chars no padding (CONTENT_HASH_RE)
 function b64u32() { return 'a'.repeat(43) }
 // 64-byte b64url, 86 chars no padding (SIG_RE)
@@ -39,10 +37,8 @@ function fakeBegin(over = {}) {
     workspaceTag: 'workspace-tag-1',
     resourceTag: 'resource-tag-1',
     prevVersion: null,
-    expectedChunks: 1,
     expectedLength: 16,
     contentHash: b64u32(),
-    noncePrefix: b64u8(),
     signature: b64u64(),
     ...over,
   }
@@ -539,9 +535,9 @@ describe('reapOrphans', () => {
       handle.db.prepare(`
         INSERT INTO workspace_object
           (workspace_tag, resource_tag, version, content_hash, content_length,
-           chunk_count, nonce_prefix, signature, put_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, 1, b64u8(), b64u64(), Date.now())
+           signature, put_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, b64u64(), Date.now())
       release()
       await acquired
       await sweep
@@ -589,10 +585,9 @@ describe('reapOrphans', () => {
       handle.db.prepare(`
         INSERT INTO workspace_object_staging
           (workspace_tag, resource_tag, staging_id, prev_version,
-           expected_chunks, expected_length, content_hash,
-           nonce_prefix, signature, begun_at)
-        VALUES (?, ?, ?, NULL, 1, 1, ?, ?, ?, ?)
-      `).run('workspace-tag-1', 'bad/resource', sid, b64u32(), b64u8(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
+           expected_length, content_hash, signature, begun_at)
+        VALUES (?, ?, ?, NULL, 1, ?, ?, ?)
+      `).run('workspace-tag-1', 'bad/resource', sid, b64u32(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
       // Drop a staging file that the row points at.
       const stagingFile = stagingFilePath(objDir, 'workspace-tag-1', sid)
       mkdirSync(path.dirname(stagingFile), { recursive: true })
@@ -619,11 +614,10 @@ describe('reapOrphans', () => {
       handle.db.prepare(`
         INSERT INTO workspace_object_staging
           (workspace_tag, resource_tag, staging_id, prev_version,
-           expected_chunks, expected_length, content_hash,
-           nonce_prefix, signature, begun_at)
-        VALUES (?, ?, ?, NULL, 1, 1, ?, ?, ?, ?)
+           expected_length, content_hash, signature, begun_at)
+        VALUES (?, ?, ?, NULL, 1, ?, ?, ?)
       `).run('workspace-tag-1', 'resource-tag-1', '../../etc/passwd',
-        b64u32(), b64u8(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
+        b64u32(), b64u64(), Date.now() - 2 * 60 * 60 * 1000)
       // Drop a canary file outside objDir to prove we wouldn't
       // touch it even if the path resolved through `..`.
       const canary = path.join(objDir, '..', 'reaper-canary')
@@ -656,15 +650,13 @@ describe('readFileSync end-to-end', () => {
 describe('input validation', () => {
   it('rejects non-base64url tag shapes at the wire boundary', async () => {
     // Spot-check the validator regexes by importing them.
-    const { isValidTag, isValidContentHash, isValidNoncePrefix, isValidSignature, isValidStagingId } = await import('../server/objstore/store.ts')
+    const { isValidTag, isValidContentHash, isValidSignature, isValidStagingId } = await import('../server/objstore/store.ts')
     assert.equal(isValidTag(''), false)
     assert.equal(isValidTag('a'.repeat(257)), false, 'caps at 256 chars')
     assert.equal(isValidTag('a/b'), false, 'no `/` in base64url')
     assert.equal(isValidTag('valid_tag-1'), true)
     assert.equal(isValidContentHash('a'.repeat(43)), true)
     assert.equal(isValidContentHash('a'.repeat(42)), false)
-    assert.equal(isValidNoncePrefix('a'.repeat(11)), true)
-    assert.equal(isValidNoncePrefix('a'.repeat(10)), false)
     assert.equal(isValidSignature('a'.repeat(86)), true)
     assert.equal(isValidSignature('a'.repeat(85)), false)
     assert.equal(isValidStagingId('a'.repeat(22)), true)

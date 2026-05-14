@@ -44,8 +44,6 @@ const SCHEMA = `
     version        INTEGER NOT NULL,
     content_hash   TEXT    NOT NULL,
     content_length INTEGER NOT NULL,
-    chunk_count    INTEGER NOT NULL,
-    nonce_prefix   TEXT    NOT NULL,
     signature      TEXT    NOT NULL,
     put_at         INTEGER NOT NULL,
     PRIMARY KEY (workspace_tag, resource_tag)
@@ -56,10 +54,8 @@ const SCHEMA = `
     resource_tag    TEXT    NOT NULL,
     staging_id      TEXT    NOT NULL,
     prev_version    INTEGER,
-    expected_chunks INTEGER NOT NULL,
     expected_length INTEGER NOT NULL,
     content_hash    TEXT    NOT NULL,
-    nonce_prefix    TEXT    NOT NULL,
     signature       TEXT    NOT NULL,
     begun_at        INTEGER NOT NULL,
     PRIMARY KEY (workspace_tag, resource_tag, staging_id)
@@ -78,8 +74,6 @@ export type ObjectRow = {
   version: number
   contentHash: string
   contentLength: number
-  chunkCount: number
-  noncePrefix: string
   signature: string
   putAt: number
 }
@@ -91,17 +85,15 @@ export type BeginPutInput = {
   workspaceTag: string
   resourceTag: string
   prevVersion: number | null
-  expectedChunks: number
   expectedLength: number
   contentHash: string
-  noncePrefix: string
   signature: string
 }
 
 // `conflict` echoes the live row so the wire layer can include it in
 // `objstore-conflict`; `accepted` hands back the staging id + the
-// absolute path the chunk-append path will write to. `workspace-full`
-// is the per-workspace resource-count cap rejection — see
+// absolute path the REST PUT will write to. `workspace-full` is the
+// per-workspace resource-count cap rejection — see
 // `MAX_RESOURCES_PER_WORKSPACE`.
 export type BeginPutResult =
   | { ok: true; stagingId: string; filePath: string }
@@ -130,7 +122,7 @@ export type DeleteResult =
 // public `ObjectRow` is camelCased by `rowFromDb` at the call site.
 type DbRow = {
   resource_tag: string; version: number; content_hash: string; content_length: number
-  chunk_count: number; nonce_prefix: string; signature: string; put_at: number
+  signature: string; put_at: number
 }
 
 // Pre-prepared statements + the underlying connection + the
@@ -147,13 +139,11 @@ export type Handle = {
   db?: DatabaseSync
   dir: string
   lock: KeyedAsyncLock<string>
-  insertStaging: RunStmt<[string, string, string, number | null, number, number, string, string, string, number]>
+  insertStaging: RunStmt<[string, string, string, number | null, number, string, string, number]>
   selectStaging: GetStmt<[string, string, string], {
     prev_version: number | null
-    expected_chunks: number
     expected_length: number
     content_hash: string
-    nonce_prefix: string
     signature: string
     begun_at: number
   }>
@@ -162,7 +152,7 @@ export type Handle = {
   deleteStaging: RunStmt<[string, string, string]>
   selectLive: AllStmt<[string], DbRow>
   selectLiveOne: GetStmt<[string, string], DbRow>
-  upsertLive: RunStmt<[string, string, number, string, number, number, string, string, number]>
+  upsertLive: RunStmt<[string, string, number, string, number, string, number]>
   deleteLive: RunStmt<[string, string]>
   listAllStaging: AllStmt<[], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
   listLiveTags: AllStmt<[], { workspace_tag: string }>
@@ -204,7 +194,6 @@ export function lockKey(tag: string, resourceTag: string): string {
 }
 
 const TAG_RE = /^[\w-]+$/u
-const NONCE_PREFIX_RE = /^[\w-]{11}$/u   // 8 raw bytes → 11 b64url chars (no padding)
 const CONTENT_HASH_RE = /^[\w-]{43}$/u   // 32 raw bytes → 43 b64url chars (no padding)
 const SIG_RE = /^[\w-]{86}$/u            // 64 raw bytes → 86 b64url chars (no padding)
 const STAGING_ID_RE = /^[\w-]{22}$/u     // 16 raw bytes → 22 b64url chars (no padding)
@@ -218,9 +207,6 @@ export function isValidTag(s: unknown): s is string {
 }
 export function isValidContentHash(s: unknown): s is string {
   return typeof s === 'string' && CONTENT_HASH_RE.test(s)
-}
-export function isValidNoncePrefix(s: unknown): s is string {
-  return typeof s === 'string' && NONCE_PREFIX_RE.test(s)
 }
 export function isValidSignature(s: unknown): s is string {
   return typeof s === 'string' && SIG_RE.test(s)
@@ -238,8 +224,7 @@ export function isValidStagingId(s: unknown): s is string {
 function rowFromDb(r: DbRow): ObjectRow {
   return {
     resourceTag: r.resource_tag, version: r.version, contentHash: r.content_hash,
-    contentLength: r.content_length, chunkCount: r.chunk_count, noncePrefix: r.nonce_prefix,
-    signature: r.signature, putAt: r.put_at,
+    contentLength: r.content_length, signature: r.signature, putAt: r.put_at,
   }
 }
 
@@ -272,13 +257,11 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     insertStaging: wrapRun(db.prepare(`
       INSERT INTO workspace_object_staging
         (workspace_tag, resource_tag, staging_id, prev_version,
-         expected_chunks, expected_length, content_hash, nonce_prefix,
-         signature, begun_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         expected_length, content_hash, signature, begun_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)),
     selectStaging: wrapGet(db.prepare(`
-      SELECT prev_version, expected_chunks, expected_length, content_hash,
-             nonce_prefix, signature, begun_at
+      SELECT prev_version, expected_length, content_hash, signature, begun_at
       FROM workspace_object_staging
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
     `)),
@@ -297,29 +280,27 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
     `)),
     selectLive: wrapAll(db.prepare(`
-      SELECT resource_tag, version, content_hash, content_length, chunk_count,
-             nonce_prefix, signature, put_at
+      SELECT resource_tag, version, content_hash, content_length,
+             signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ?
       ORDER BY resource_tag ASC
     `)),
     selectLiveOne: wrapGet(db.prepare(`
-      SELECT resource_tag, version, content_hash, content_length, chunk_count,
-             nonce_prefix, signature, put_at
+      SELECT resource_tag, version, content_hash, content_length,
+             signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
     `)),
     upsertLive: wrapRun(db.prepare(`
       INSERT INTO workspace_object
         (workspace_tag, resource_tag, version, content_hash, content_length,
-         chunk_count, nonce_prefix, signature, put_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         signature, put_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
         version        = excluded.version,
         content_hash   = excluded.content_hash,
         content_length = excluded.content_length,
-        chunk_count    = excluded.chunk_count,
-        nonce_prefix   = excluded.nonce_prefix,
         signature      = excluded.signature,
         put_at         = excluded.put_at
     `)),
@@ -379,10 +360,8 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
     input.resourceTag,
     stagingId,
     input.prevVersion,
-    input.expectedChunks,
     input.expectedLength,
     input.contentHash,
-    input.noncePrefix,
     input.signature,
     Date.now(),
   )
@@ -446,8 +425,6 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     nextVersion,
     staging.content_hash,
     staging.expected_length,
-    staging.expected_chunks,
-    staging.nonce_prefix,
     staging.signature,
     putAt,
   )
@@ -459,8 +436,6 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
       version: nextVersion,
       contentHash: staging.content_hash,
       contentLength: staging.expected_length,
-      chunkCount: staging.expected_chunks,
-      noncePrefix: staging.nonce_prefix,
       signature: staging.signature,
       putAt,
     },

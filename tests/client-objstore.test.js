@@ -62,12 +62,6 @@ async function makeKp() {
   return { privateKey: kp.privateKey, workspaceTag: b64url(Buffer.from(jwk.x, 'base64url')) }
 }
 
-// Random 8-byte base64url nonce prefix — matches NONCE_PREFIX_RE on
-// the server (11 chars, base64url no padding).
-function freshNoncePrefix() {
-  return b64url(crypto.getRandomValues(new Uint8Array(8)))
-}
-
 // Subscribe to a broadcast event with a timeout. Any test that
 // awaits a broadcast without this wrapper will hang indefinitely
 // if the expected frame never arrives — turning a real bug into
@@ -121,7 +115,6 @@ describe('client/objstore session', () => {
       const put = await session.put({
         resourceTag: 'r-greeting',
         bytes,
-        noncePrefix: freshNoncePrefix(),
         prevVersion: null,
       })
       assert.equal(put.ok, true)
@@ -156,13 +149,13 @@ describe('client/objstore session', () => {
       // v1 lands fresh.
       const v1 = await session.put({
         resourceTag: 'r-stale', bytes: Buffer.from('v1'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(v1.ok, true)
       // Second PUT also claims prevVersion=null → conflict.
       const conflict = await session.put({
         resourceTag: 'r-stale', bytes: Buffer.from('also-v1?'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(conflict.ok, false)
       assert.equal(conflict.reason, 'conflict')
@@ -172,7 +165,7 @@ describe('client/objstore session', () => {
       // Update with the right prevVersion → v2.
       const v2 = await session.put({
         resourceTag: 'r-stale', bytes: Buffer.from('v2-bytes'),
-        noncePrefix: freshNoncePrefix(), prevVersion: 1,
+        prevVersion: 1,
       })
       assert.equal(v2.ok, true)
       assert.equal(v2.meta.version, 2)
@@ -212,7 +205,7 @@ describe('client/objstore session', () => {
       const deletedSeen = awaitEvent("B's onDeleted r-broadcast", (resolve) => b.onDeleted((event) => { if (event.resourceTag === 'r-broadcast') resolve(event) }))
       const put = await a.put({
         resourceTag: 'r-broadcast', bytes: Buffer.from('hello-peer'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       // B sees the broadcast.
@@ -239,7 +232,6 @@ describe('client/objstore session', () => {
         const res = await session.put({
           resourceTag: `r-fill-${i.toString().padStart(4, '0')}`,
           bytes: Buffer.alloc(4),
-          noncePrefix: freshNoncePrefix(),
           prevVersion: null,
         })
         assert.equal(res.ok, true, `fill row #${i}`)
@@ -247,14 +239,14 @@ describe('client/objstore session', () => {
       // 101st NEW resource is rejected at put-begin.
       const over = await session.put({
         resourceTag: 'r-one-too-many', bytes: Buffer.alloc(4),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(over.ok, false)
       assert.equal(over.reason, 'workspace-full')
       // Update path is still allowed at the cap.
       const reup = await session.put({
         resourceTag: 'r-fill-0000', bytes: Buffer.from('y'.repeat(8)),
-        noncePrefix: freshNoncePrefix(), prevVersion: 1,
+        prevVersion: 1,
       })
       assert.equal(reup.ok, true)
       assert.equal(reup.meta.version, 2)
@@ -271,17 +263,17 @@ describe('client/objstore session', () => {
     try {
       const v1 = await session.put({
         resourceTag: 'r-versions', bytes: Buffer.from('one'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(v1.ok, true); assert.equal(v1.meta.version, 1)
       const v2 = await session.put({
         resourceTag: 'r-versions', bytes: Buffer.from('two-bytes'),
-        noncePrefix: freshNoncePrefix(), prevVersion: 1,
+        prevVersion: 1,
       })
       assert.equal(v2.ok, true); assert.equal(v2.meta.version, 2)
       const v3 = await session.put({
         resourceTag: 'r-versions', bytes: Buffer.from('three-bytes-now'),
-        noncePrefix: freshNoncePrefix(), prevVersion: 2,
+        prevVersion: 2,
       })
       assert.equal(v3.ok, true); assert.equal(v3.meta.version, 3)
       // fetch returns latest
@@ -292,7 +284,7 @@ describe('client/objstore session', () => {
       // Replaying an old prevVersion fails with conflict echoing v3.
       const stale = await session.put({
         resourceTag: 'r-versions', bytes: Buffer.from('forgotten'),
-        noncePrefix: freshNoncePrefix(), prevVersion: 1,
+        prevVersion: 1,
       })
       assert.equal(stale.ok, false); assert.equal(stale.reason, 'conflict')
       assert.equal(stale.current?.version, 3)
@@ -312,7 +304,6 @@ describe('client/objstore session', () => {
         Array.from({ length: N }, (_, i) => session.put({
           resourceTag: `r-parallel-${i}`,
           bytes: Buffer.from(`payload-${i}`),
-          noncePrefix: freshNoncePrefix(),
           prevVersion: null,
         })),
       )
@@ -339,13 +330,13 @@ describe('client/objstore session', () => {
     try {
       const v1 = await session.put({
         resourceTag: 'r-recycle', bytes: Buffer.from('first-incarnation'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(v1.meta.version, 1)
       // Update to v2 then delete it.
       const v2 = await session.put({
         resourceTag: 'r-recycle', bytes: Buffer.from('second-incarnation'),
-        noncePrefix: freshNoncePrefix(), prevVersion: 1,
+        prevVersion: 1,
       })
       assert.equal(v2.meta.version, 2)
       const del = await session.delete('r-recycle', 2)
@@ -353,7 +344,7 @@ describe('client/objstore session', () => {
       // Re-put: version restarts at 1.
       const reborn = await session.put({
         resourceTag: 'r-recycle', bytes: Buffer.from('third-but-v1-again'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(reborn.ok, true)
       assert.equal(reborn.meta.version, 1, 'version starts back at 1 after delete')
@@ -375,7 +366,7 @@ describe('client/objstore session', () => {
         crypto.getRandomValues(bytes.subarray(off, Math.min(off + 65_536, bytes.byteLength)))
       }
       const put = await session.put({
-        resourceTag: 'r-big', bytes, noncePrefix: freshNoncePrefix(), prevVersion: null,
+        resourceTag: 'r-big', bytes, prevVersion: null,
       })
       assert.equal(put.ok, true)
       assert.equal(put.meta.contentLength, 256 * 1024)
@@ -400,7 +391,7 @@ describe('client/objstore session', () => {
       const cSeen = awaitEvent("C's onPut r-fanout", (resolve) => c.onPut((meta) => { if (meta.resourceTag === 'r-fanout') resolve(meta) }))
       const put = await a.put({
         resourceTag: 'r-fanout', bytes: Buffer.from('fanout'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       const [bMeta, cMeta] = await Promise.all([bSeen, cSeen])
@@ -426,7 +417,7 @@ describe('client/objstore session', () => {
       const sentinel1 = awaitEvent("B's onPut sentinel r-unsub", (resolve) => b.onPut((meta) => { if (meta.resourceTag === 'r-unsub') resolve() }))
       await a.put({
         resourceTag: 'r-unsub', bytes: Buffer.from('one'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       await sentinel1
       const afterFirst = firedCount
@@ -439,7 +430,7 @@ describe('client/objstore session', () => {
       const sentinel2 = awaitEvent("B's onPut sentinel r-unsub-2", (resolve) => b.onPut((meta) => { if (meta.resourceTag === 'r-unsub-2') resolve() }))
       await a.put({
         resourceTag: 'r-unsub-2', bytes: Buffer.from('two'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       await sentinel2
       // The unsubscribed handler must NOT have fired again.
@@ -453,7 +444,7 @@ describe('client/objstore session', () => {
     try {
       await session.put({
         resourceTag: 'r-stale-del', bytes: Buffer.from('v1'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       // prevVersion=2 against a live row at version=1 → conflict.
       const del = await session.delete('r-stale-del', 2)
@@ -502,7 +493,7 @@ describe('client/objstore session', () => {
     try {
       const put = await sa.put({
         resourceTag: 'r-iso', bytes: Buffer.from('only-in-a'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       // tagA sees it; tagB doesn't.
@@ -513,7 +504,7 @@ describe('client/objstore session', () => {
       // without affecting tagA.
       const bp = await sb.put({
         resourceTag: 'r-iso', bytes: Buffer.from('only-in-b'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(bp.ok, true)
       assert.equal(bp.meta.version, 1)
@@ -536,7 +527,7 @@ describe('client/objstore session', () => {
     try {
       const r = await first.put({
         resourceTag: 'r-persist', bytes: Buffer.from('survives-reconnect'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(r.ok, true)
       putMeta = r.meta
@@ -570,11 +561,11 @@ describe('client/objstore session', () => {
     try {
       const aPut = a.put({
         resourceTag: 'r-race', bytes: Buffer.from('from-a'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       const bPut = b.put({
         resourceTag: 'r-race', bytes: Buffer.from('from-b'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       const [aRes, bRes] = await Promise.all([aPut, bPut])
       // Exactly one wins: their (ok: true) ↔ (ok: false, conflict).
@@ -616,7 +607,7 @@ describe('client/objstore session', () => {
       const original = Buffer.from('original-bytes-for-the-race')
       const put = await session.put({
         resourceTag: 'r-fetch-delete-race', bytes: original,
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       // Fire fetch and delete concurrently. Either order is valid;
@@ -645,7 +636,7 @@ describe('client/objstore session', () => {
     try {
       const put = await session.put({
         resourceTag: 'r-must-not-exist', bytes: Buffer.from('mine'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       // Now delete with prevVersion=null on an existing row.
@@ -672,10 +663,10 @@ describe('client/objstore session', () => {
     try {
       const bytes = Buffer.from('identical-payload-bytes')
       const aRes = await session.put({
-        resourceTag: 'r-shared-a', bytes, noncePrefix: freshNoncePrefix(), prevVersion: null,
+        resourceTag: 'r-shared-a', bytes, prevVersion: null,
       })
       const bRes = await session.put({
-        resourceTag: 'r-shared-b', bytes, noncePrefix: freshNoncePrefix(), prevVersion: null,
+        resourceTag: 'r-shared-b', bytes, prevVersion: null,
       })
       assert.equal(aRes.ok, true); assert.equal(bRes.ok, true)
       assert.equal(aRes.meta.contentHash, bRes.meta.contentHash,
@@ -685,12 +676,10 @@ describe('client/objstore session', () => {
       const live = await session.list()
       assert.equal(live.length, 2)
       // Both rows share contentHash + contentLength but have
-      // distinct resourceTags + (because the client generates a
-      // fresh noncePrefix each call) different noncePrefixes.
+      // distinct resourceTags.
       const tags = live.map((r) => r.resourceTag).sort()
       assert.deepEqual(tags, ['r-shared-a', 'r-shared-b'])
       assert.equal(live[0].contentHash, live[1].contentHash)
-      assert.notEqual(live[0].noncePrefix, live[1].noncePrefix)
     } finally { session.close() }
   })
 
@@ -709,7 +698,7 @@ describe('client/objstore session', () => {
       const selfSeen = awaitEvent("self onPut r-self-put", (resolve) => session.onPut((meta) => { if (meta.resourceTag === 'r-self-put') resolve(meta) }))
       const put = await session.put({
         resourceTag: 'r-self-put', bytes: Buffer.from('echoed-to-me'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       const echo = await selfSeen
@@ -729,7 +718,7 @@ describe('client/objstore session', () => {
     try {
       await sender.put({
         resourceTag: 'r-asym-del', bytes: Buffer.from('temporary'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       // Drain the put-broadcast from BOTH sessions before testing
       // the delete-broadcast asymmetry. Use a tiny timeout so we
@@ -770,8 +759,8 @@ describe('client/objstore session', () => {
       // the negative assertion.
       const aSawA = awaitEvent("sa onPut r-a-only", (resolve) => sa.onPut((meta) => { if (meta.resourceTag === 'r-a-only') resolve(meta) }))
       const bSawB = awaitEvent("sb onPut r-b-only", (resolve) => sb.onPut((meta) => { if (meta.resourceTag === 'r-b-only') resolve(meta) }))
-      await sa.put({ resourceTag: 'r-a-only', bytes: Buffer.from('a'), noncePrefix: freshNoncePrefix(), prevVersion: null })
-      await sb.put({ resourceTag: 'r-b-only', bytes: Buffer.from('b'), noncePrefix: freshNoncePrefix(), prevVersion: null })
+      await sa.put({ resourceTag: 'r-a-only', bytes: Buffer.from('a'), prevVersion: null })
+      await sb.put({ resourceTag: 'r-b-only', bytes: Buffer.from('b'), prevVersion: null })
       await aSawA; await bSawB
       // Cross-tag must NOT have crossed.
       assert.equal(saSawBPut, false, 'tagA session must NOT receive tagB broadcasts')
@@ -795,7 +784,7 @@ describe('client/objstore session', () => {
       const sentinelSeen = awaitEvent("B's sentinel onPut r-handler-throw", (resolve) => b.onPut((meta) => { if (meta.resourceTag === 'r-handler-throw') resolve(meta) }))
       await a.put({
         resourceTag: 'r-handler-throw', bytes: Buffer.from('payload'),
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       const meta = await sentinelSeen
       assert.equal(meta.resourceTag, 'r-handler-throw')
@@ -814,7 +803,7 @@ describe('client/objstore session', () => {
       const empty = new Uint8Array(0)
       const put = await session.put({
         resourceTag: 'r-empty', bytes: empty,
-        noncePrefix: freshNoncePrefix(), prevVersion: null,
+        prevVersion: null,
       })
       assert.equal(put.ok, true)
       assert.equal(put.meta.contentLength, 0)
@@ -850,7 +839,7 @@ describe('client/objstore session', () => {
     const session = await createObjstoreSession({ serverUrl, httpOrigin, workspaceTag, privateKey })
     const inflight = session.put({
       resourceTag: 'bad/tag', bytes: Buffer.from('payload'),
-      noncePrefix: freshNoncePrefix(), prevVersion: null,
+      prevVersion: null,
     })
     // 100ms is enough for the put's sign + send to complete and the
     // recv waiter to land in the queue, with margin to spare.
@@ -881,7 +870,6 @@ describe('client/objstore session', () => {
           // `/` is outside `[\w-]+` — server drops at the wire-gate.
           resourceTag: 'bad/tag',
           bytes: Buffer.from('payload'),
-          noncePrefix: freshNoncePrefix(),
           prevVersion: null,
         }),
         /timeout/iu,
@@ -907,7 +895,7 @@ describe('client/objstore session', () => {
     // assert rejection (no message match).
     await assert.rejects(session.put({
       resourceTag: 'r-after-close', bytes: Buffer.from('post'),
-      noncePrefix: freshNoncePrefix(), prevVersion: null,
+      prevVersion: null,
     }))
     await assert.rejects(session.fetch('r-after-close'))
     await assert.rejects(session.delete('r-after-close', null))
@@ -935,7 +923,7 @@ describe('client/objstore session', () => {
     try {
       const bytes = crypto.getRandomValues(new Uint8Array(1024))
       const put = await session.put({
-        resourceTag: 'r-integrity', bytes, noncePrefix: freshNoncePrefix(), prevVersion: null,
+        resourceTag: 'r-integrity', bytes, prevVersion: null,
       })
       assert.equal(put.ok, true)
       // contentHash was computed client-side; verify it matches what

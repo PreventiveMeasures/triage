@@ -18,10 +18,8 @@ export type ObjstorePutBeginMsg = {
   workspaceTag?: unknown
   resourceTag?: unknown
   prevVersion?: unknown
-  expectedChunks?: unknown
   expectedLength?: unknown
   contentHash?: unknown
-  noncePrefix?: unknown
   signature?: unknown
 }
 
@@ -67,8 +65,6 @@ function canonicalObjstorePut(msg: ObjstorePutBeginMsg, connectionNonce: string)
     intOrEmpty(msg.prevVersion),
     msg.contentHash as string,
     String(msg.expectedLength),
-    String(msg.expectedChunks),
-    msg.noncePrefix as string,
     connectionNonce,
   ].join('\n'))
 }
@@ -118,11 +114,9 @@ export async function verifyObjstorePutSig(msg: ObjstorePutBeginMsg, connectionN
   if (typeof msg.workspaceTag !== 'string') return false
   if (typeof msg.resourceTag !== 'string') return false
   if (typeof msg.contentHash !== 'string') return false
-  if (typeof msg.noncePrefix !== 'string') return false
   if (typeof msg.signature !== 'string') return false
   if (typeof connectionNonce !== 'string') return false
   if (!isSafeIntOrNull(msg.prevVersion)) return false
-  if (!isSafeNonNegativeInt(msg.expectedChunks)) return false
   if (!isSafeNonNegativeInt(msg.expectedLength)) return false
   let payload: Uint8Array<ArrayBuffer>
   try { payload = canonicalObjstorePut(msg, connectionNonce) } catch { return false }

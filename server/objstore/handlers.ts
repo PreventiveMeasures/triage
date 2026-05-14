@@ -23,7 +23,6 @@ import {
   deleteObject,
   getLive,
   isValidContentHash,
-  isValidNoncePrefix,
   isValidSignature,
   isValidTag,
   listLive,
@@ -57,7 +56,7 @@ function urlPathFor(tag: string, resourceTag: string): string {
 
 async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstorePutBeginMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidTag(msg.resourceTag)) return
-  if (!isValidContentHash(msg.contentHash) || !isValidNoncePrefix(msg.noncePrefix)) return
+  if (!isValidContentHash(msg.contentHash)) return
   if (!isValidSignature(msg.signature)) return
   // `Number.isSafeInteger` rather than `typeof === 'number'`: a NaN
   // or non-finite value would pass typeof + comparisons (NaN <
@@ -65,7 +64,6 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // signature to fail. Cheaper to reject up-front, and consistent
   // with `verifyObjstorePutSig`'s `isSafeNonNegativeInt` gate.
   if (!Number.isSafeInteger(msg.expectedLength) || (msg.expectedLength as number) < 0 || (msg.expectedLength as number) > MAX_CONTENT_LENGTH) return
-  if (!Number.isSafeInteger(msg.expectedChunks) || (msg.expectedChunks as number) < 0) return
   const nonce = deps.getNonce(socket)
   if (typeof nonce !== 'string') return
   if (!await verifyObjstorePutSig(msg, nonce)) {
@@ -81,8 +79,8 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // stale when the staging row lands.
   const result = await deps.handle.lock.run(lockKey(tag, resourceTag), () => beginPut(deps.handle, {
     workspaceTag: tag, resourceTag, prevVersion,
-    expectedChunks: msg.expectedChunks as number, expectedLength: msg.expectedLength as number,
-    contentHash: msg.contentHash as string, noncePrefix: msg.noncePrefix as string,
+    expectedLength: msg.expectedLength as number,
+    contentHash: msg.contentHash as string,
     signature: msg.signature as string,
   }))
   if (!result.ok) {
@@ -157,7 +155,7 @@ async function handleList(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreLi
     workspaceTag: msg.workspaceTag,
     resources: rows.map((r) => ({
       resourceTag: r.resourceTag, version: r.version, contentHash: r.contentHash,
-      contentLength: r.contentLength, chunkCount: r.chunkCount, noncePrefix: r.noncePrefix, signature: r.signature,
+      contentLength: r.contentLength, signature: r.signature,
     })),
   })
 }
@@ -188,8 +186,6 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
     version: row.version,
     contentHash: row.contentHash,
     contentLength: row.contentLength,
-    chunkCount: row.chunkCount,
-    noncePrefix: row.noncePrefix,
     signature: row.signature,
     urlPath: urlPathFor(tag, resourceTag),
     token, expiresAt: exp,

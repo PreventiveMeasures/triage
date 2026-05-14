@@ -23,10 +23,8 @@ export type ObjstorePutBeginFields = {
   workspaceTag: string
   resourceTag: string
   prevVersion: number | null
-  expectedChunks: number
   expectedLength: number
   contentHash: string
-  noncePrefix: string
 }
 
 export type ObjstoreDeleteFields = {
@@ -60,8 +58,6 @@ export function canonicalObjstorePut(fields: ObjstorePutBeginFields, connectionN
     intOrEmpty(fields.prevVersion),
     fields.contentHash,
     String(fields.expectedLength),
-    String(fields.expectedChunks),
-    fields.noncePrefix,
     connectionNonce,
   ].join('\n'))
 }

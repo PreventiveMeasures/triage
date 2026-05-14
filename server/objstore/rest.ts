@@ -301,8 +301,6 @@ async function handleRestPutLocked(
     version: result.row.version,
     contentHash: result.row.contentHash,
     contentLength: result.row.contentLength,
-    chunkCount: result.row.chunkCount,
-    noncePrefix: result.row.noncePrefix,
     signature: result.row.signature,
   }, null)
   if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${result.row.version}`)
