@@ -1,15 +1,15 @@
 // Bundle-source terminal UI — separate esbuild entry point so the
-// virtual-shell runtime (`terminal/` at the repo root) and the lit
+// virtual-shell runtime (`@preventive/terminal`) and the lit
 // component don't land in the main view.js bundle. `ui/view/
 // terminal-attach.js` `await import('./terminal.js')`s this module
 // lazily the first time the Terminal tab opens.
 //
 // The component is mostly scaffolding (scrollable output, an input
 // row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
-// command behavior lives in `terminal/` — see ../terminal/index.js.
+// command behavior lives in `@preventive/terminal`.
 
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
-import { createTerminal } from '../terminal/index.js'
+import { createTerminal } from '@preventive/terminal'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
 // text loader). unsafeCSS wraps the literal in a CSSResult; the

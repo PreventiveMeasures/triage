@@ -1,6 +1,6 @@
 // Lazy loader for the bundle terminal UI. Mirrors the prism /
 // brotli pattern: a runtime-string dynamic import keeps the lit
-// component AND the `terminal/` API module out of the main view.js
+// component AND the `@preventive/terminal` API module out of the main view.js
 // bundle. First call kicks the fetch; subsequent calls share the
 // same promise so terminal.js is downloaded + parsed once per
 // session.
