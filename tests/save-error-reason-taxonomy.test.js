@@ -59,7 +59,18 @@ describe('workspace-save-error.reason taxonomy', () => {
     // Match `sendSaveError(..., 'reason')` calls — the typed wrapper
     // narrows at call time, but scraping the literals here keeps a
     // PR that bypasses the wrapper from sneaking past.
-    const matches = [...src.matchAll(/sendSaveError\([^)]+,\s*'([\w-]+)'\)/gu)]
+    // Non-greedy `[\s\S]+?` tolerates multi-line / multi-arg formatting
+    // (Prettier-style line wraps + trailing commas + inner `(...)` in
+    // earlier args); the `,?\s*\)` end accepts an optional trailing
+    // comma after the reason literal.
+    // The `(?<!function\s)` lookbehind skips the FUNCTION DEFINITION
+    // (`function sendSaveError(socket: WebSocket, ...)`) so the
+    // non-greedy span can't accidentally swallow the L519 emit site
+    // into the def's `(...)` and silently miss it. Confirmed: without
+    // the lookbehind the first match spans ~9 K chars from the def
+    // through the L519 call's `'too-large')`, so L519 is NEVER
+    // captured and the test passes only by happenstance.
+    const matches = [...src.matchAll(/(?<!function\s)sendSaveError\(\s*[\s\S]+?,\s*'([\w-]+)'\s*,?\s*\)/gu)]
     assert.ok(matches.length >= 3, `expected at least 3 sendSaveError call sites, got ${matches.length}`)
     const emittedReasons = new Set(matches.map((m) => m[1]))
     for (const r of emittedReasons) {

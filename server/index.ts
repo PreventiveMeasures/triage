@@ -78,7 +78,7 @@ import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
-import type { SaveErrorReason } from '../common/save-error-reason.ts'
+import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -208,7 +208,24 @@ const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 // firing valid frames can grow this set without bound, growing the
 // SIGTERM drain time. Drop frames once the cap is hit. Transport
 // audit `server/index.ts:590`.
-const MAX_INFLIGHT_PER_SOCKET = 64
+//
+// Env-configurable via `MAX_INFLIGHT_PER_SOCKET` for tests that
+// want to deterministically exercise the cap (`busy` NACK
+// regression) without needing 65 signed sends. Default 64.
+const MAX_INFLIGHT_PER_SOCKET = (() => {
+  const raw = env['MAX_INFLIGHT_PER_SOCKET']
+  if (raw == null) return 64
+  const n = Number(raw)
+  // Upper bound = 65_536. The cap's point is to bound memory under
+  // hostile load; a deployer passing `MAX_SAFE_INTEGER` would silently
+  // defeat the purpose. 65_536 is way above any realistic legitimate
+  // value (default is 64) but cheap to enforce. Adversarial-audit
+  // foot-gun guard.
+  if (!Number.isSafeInteger(n) || n < 1 || n > 65_536) {
+    console.error(`Invalid MAX_INFLIGHT_PER_SOCKET: ${raw} (must be integer 1..65536)`); process.exit(1)
+  }
+  return n
+})()
 const socketInflight = new WeakMap<WebSocket, number>()
 
 // REST PUT idle-body timeout. A slow-loris client trickling bytes
@@ -246,6 +263,12 @@ Environment:
                              where a bare X-Forwarded-* would
                              otherwise let an attacker page bypass
                              the gate.
+  MAX_INFLIGHT_PER_SOCKET    per-socket in-flight async-handler
+                             cap; saves dropped past this fire a
+                             typed 'busy' workspace-save-error
+                             NACK. Default 64. Lower for tests
+                             that need to deterministically
+                             exercise the cap.
   DEBUG=1                    log every message`)
   process.exit(0)
 }
@@ -335,6 +358,17 @@ function sendSaveError(
   base: string | null,
   reason: SaveErrorReason,
 ): void {
+  // Runtime guard alongside the compile-time `SaveErrorReason`
+  // union — covers the case where the `reason` argument is a
+  // variable (not a string literal) and TypeScript's narrowing
+  // can't enforce taxonomy membership at the call site. Throws
+  // because a server emitting a typo'd reason would be a wire-
+  // protocol break the client can't recover from; better to fail
+  // fast in the test suite than to silently land bytes the
+  // client coerces to `'rejected'`.
+  if (!SAVE_ERROR_REASONS.has(reason)) {
+    throw new Error(`sendSaveError: reason '${reason}' is not in SAVE_ERROR_REASONS — update common/save-error-reason.ts`)
+  }
   send(socket, { type: 'workspace-save-error', workspaceTag, base, reason })
 }
 
@@ -822,12 +856,35 @@ wss.on('connection', (socket: WebSocket, req) => {
       // hanging until the next heartbeat (~15–30s). Reason `busy`
       // is server-side overload; safe to retry. Same wire envelope
       // as the existing `too-large` save-error path.
+      //
+      // Wire-order interaction with `'stale-base'`: the cap-path
+      // send is SYNCHRONOUS in this message callback and lands on
+      // the wire BEFORE any handler IIFE's `await`-completed reply.
+      // If an earlier in-flight `workspace-save` (frame F1) ends up
+      // emitting a catch-up `workspace-state` + `'stale-base'` while
+      // a later frame F2 hits the cap, the order is `'busy'`(F2) →
+      // `workspace-state`(F1) → `'stale-base'`(F1). The client's
+      // `handleSaveError` correlates on `base`, and the wire-order
+      // trick documented in `common/save-error-reason.ts` (catch-up
+      // clears `pending` before the stale-base frame's
+      // `handleSaveError` runs) still holds.
       const rawBase = (parsed as SaveMsg).base
       const baseField: string | null = typeof rawBase === 'string' ? rawBase : null
       const rawTag = (parsed as SaveMsg).workspaceTag
       const tagField = typeof rawTag === 'string' ? rawTag : null
       if (parsed.type === 'workspace-save' && tagField != null) {
-        sendSaveError(socket, tagField, baseField, 'busy')
+        // `sendSaveError` runs its taxonomy-guard before the wire
+        // send and throws on an unknown reason. Every OTHER emit
+        // site lives inside the `handler` IIFE's try/catch — this
+        // cap path is the only one outside it. Mirror the same
+        // forensic envelope so a future bad reason here surfaces
+        // as `Handler error (type=workspace-save): …` rather than
+        // escaping to ws's emitter as an uncaught.
+        try {
+          sendSaveError(socket, tagField, baseField, 'busy')
+        } catch (err) {
+          console.warn('Handler error (type=workspace-save):', (err as Error)?.stack ?? err)
+        }
       }
       return
     }

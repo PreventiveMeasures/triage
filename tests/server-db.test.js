@@ -392,6 +392,40 @@ describe('commitRevision', () => {
     } finally { await cleanup() }
   })
 
+  it('keyframe column uses strict === true (truthy-non-true values store as 0)', async () => {
+    // PR #56 hardened the storage coercion from `keyframe ? 1 : 0`
+    // to `keyframe === true ? 1 : 0`. The canonical signed bytes
+    // use `keyframe === true ? '1' : ''` — if the storage path
+    // accepted a truthy-non-true value (`1`, `"true"`, `{}`) as
+    // `1`, the stored row would say keyframe-yes while the signed
+    // canonical said keyframe-no, breaking chain-replay verifies
+    // for peers who recompute. TypeScript narrows `keyframe:
+    // boolean` at compile time; this test pins the runtime
+    // behavior against a JS caller (test fixture, dynamic import)
+    // that smuggles a non-strict value past the type system.
+    const { handle, cleanup } = freshDb()
+    try {
+      // Cast to suppress the TS check the production code relies on;
+      // tests run as .js so the cast is purely for documentation.
+      await commitRevision(handle, rev({ id: 'k-num',  keyframe: /** @type {any} */ (1) }))
+      await commitRevision(handle, rev({ id: 'k-str',  base: 'k-num', keyframe: /** @type {any} */ ('true') }))
+      await commitRevision(handle, rev({ id: 'k-obj',  base: 'k-str', keyframe: /** @type {any} */ ({}) }))
+      await commitRevision(handle, rev({ id: 'k-real', base: 'k-obj', keyframe: true }))
+      const rows = await chainFrom(handle, 'tag-A', null)
+      // chainFrom(null) skips to the latest keyframe — only the
+      // genuine `keyframe: true` row should make the cut.
+      assert.equal(rows.length, 1, 'only the real keyframe cuts the chain')
+      assert.equal(rows[0].id, 'k-real')
+      assert.equal(rows[0].keyframe, 1)
+      // Walk the prior rows explicitly and assert they ALL stored 0.
+      const fromHead = await chainFrom(handle, 'tag-A', 'k-num')
+      const byId = Object.fromEntries(fromHead.map((r) => [r.id, r]))
+      assert.equal(byId['k-str']?.keyframe, 0, 'string "true" → 0')
+      assert.equal(byId['k-obj']?.keyframe, 0, 'object → 0')
+      assert.equal(byId['k-real']?.keyframe, 1, 'genuine true → 1')
+    } finally { await cleanup() }
+  })
+
   it('null base is preserved (first revision in a chain)', async () => {
     const { handle, cleanup } = freshDb()
     try {

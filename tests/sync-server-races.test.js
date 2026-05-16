@@ -1275,3 +1275,80 @@ describe('triage-sync server races', () => {
     } finally { c.ws.close() }
   })
 })
+
+// Pins the per-socket in-flight cap's `'busy'` NACK end-to-end. The
+// default cap (64) is impractical to exercise deterministically — would
+// need 65 valid signed frames in one tick — so the server exposes
+// `MAX_INFLIGHT_PER_SOCKET` as env-tunable for this test. With cap=1,
+// the second `workspace-save` arrives while the first's handler IIFE
+// is still suspended on `await handleSave`, hits the cap synchronously,
+// and gets a typed `'busy'` NACK. The first save still lands and acks.
+//
+// Closes the dead-config gap flagged in the audit: the env var existed
+// for this test, but no test exercised it. Without this, a refactor
+// that broke the env-config path would only surface in production.
+describe('triage-sync server: busy NACK at MAX_INFLIGHT_PER_SOCKET cap', () => {
+  let serverDir, serverProc, serverUrl
+
+  before(async () => {
+    serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-busy-nack-'))
+    serverProc = spawn(process.execPath, ['server/index.ts'], {
+      env: {
+        ...process.env,
+        PORT: '0',
+        HOST: '127.0.0.1',
+        DB_PATH: path.join(serverDir, 'data.db'),
+        MAX_INFLIGHT_PER_SOCKET: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const port = await awaitListeningPort(serverProc)
+    serverUrl = `ws://127.0.0.1:${port}/api/sync`
+  })
+
+  after(async () => {
+    if (!serverProc) return
+    serverProc.kill('SIGTERM')
+    await new Promise((resolve) => { serverProc.once('exit', resolve) })
+    rmSync(serverDir, { recursive: true, force: true })
+  })
+
+  it('cap=1: two workspace-save frames in one tick → first acks, second gets workspace-save-error reason=busy with echoed tag+base', async () => {
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    try {
+      await subscribe(c, sk, tag)
+      // Two saves with the same base=null. The server processes the
+      // first synchronously up through `socketInflight = 1` and spawns
+      // its handler IIFE which `await`s. The second message's
+      // `socket.on('message')` body runs in the SAME microtask cycle
+      // (both ws-level events emit back-to-back before any IIFE
+      // resumes) — sees inflight=1, cap=1, fails the gate, and
+      // synchronously emits `'busy'`.
+      const save1 = await buildSave(sk, tag, null, 'first')
+      const save2 = await buildSave(sk, tag, null, 'second')
+      c.ws.send(JSON.stringify(save1.msg))
+      c.ws.send(JSON.stringify(save2.msg))
+      // Wait for both responses; predicate matches either type so
+      // order-insensitivity is preserved (busy SHOULD land first per
+      // the wire-order analysis, but the assertion doesn't depend on
+      // that — only on receiving one of each).
+      const got = []
+      while (got.length < 2) {
+        const r = await c.recv((m) =>
+          m.type === 'workspace-save-ack' ||
+          m.type === 'workspace-save-error', 3_000,
+        )
+        got.push(r)
+      }
+      const busy = got.find((m) => m.type === 'workspace-save-error')
+      const ack = got.find((m) => m.type === 'workspace-save-ack')
+      assert.ok(busy, 'cap=1 must NACK the second save with workspace-save-error')
+      assert.equal(busy.reason, 'busy', `expected reason='busy', got '${busy.reason}'`)
+      assert.equal(busy.workspaceTag, tag, 'busy NACK echoes the workspaceTag from the dropped frame')
+      assert.equal(busy.base, null, 'busy NACK echoes base=null from the dropped frame')
+      assert.ok(ack, 'first save still gets an ack (cap is per-CONCURRENT, not per-total)')
+      assert.equal(ack.workspaceTag, tag)
+    } finally { c.ws.close() }
+  })
+})

@@ -149,8 +149,17 @@ workspace-save-error { workspaceTag, base, reason }
                        // chose not to commit. Sent AFTER sig verify, so
                        // only a legit seed-holder receives it (shape /
                        // sig attacks still drop silently). Current
-                       // reasons: `too-large` (ciphertext > 2 MiB). The
-                       // `base` field echoes the save's base so the
+                       // reasons (see `common/save-error-reason.ts`):
+                       //   - `too-large` (ciphertext > 2 MiB) — hard
+                       //     error; retry won't help.
+                       //   - `busy` — per-socket inflight cap dropped
+                       //     the save; recoverable, client re-arms
+                       //     `pendingSave` for the next trigger.
+                       //   - `stale-base` — concurrent commit advanced
+                       //     the head; emitted AFTER the catch-up
+                       //     `workspace-state` so the client clears
+                       //     `pending` first via handleChain.
+                       // The `base` field echoes the save's base so the
                        // client can attribute the error to the correct
                        // pending save (mismatches are dropped).
 
@@ -484,7 +493,38 @@ a slow line).
   different TCP connection — both sigs bind the per-socket
   `connectionNonce`.
 
+## Transport backpressure
 
+Per-socket caps that protect the relay from a slow / blackholed /
+abusive peer; these are cross-protocol (triage-sync WS, objstore
+WS, and the objstore REST PUT). None of these is a security
+primitive (the per-message signature gate is); they bound resource
+use under hostile load.
+
+- **`MAX_BUFFERED_BYTES = 16 MiB`** per socket. Outbound bytes that
+  the `ws` library hasn't drained to the kernel yet accumulate in
+  `socket.bufferedAmount` — a slow peer on a high-volume workspace
+  can hold many MB of fan-out broadcasts in this buffer with no
+  backpressure on the broadcast loop. Sends past the cap
+  `socket.terminate()` the connection; the client reconnects and
+  catches up via the chain. Worst-case cluster memory:
+  `16 MiB × concurrent_sockets` (no per-process socket cap today;
+  relies on OS file-descriptor limits + the reverse proxy's
+  connection cap).
+- **`MAX_INFLIGHT_PER_SOCKET = 64`** per socket — async handlers
+  in flight. Each inbound frame spawns a tracked IIFE; an
+  authorised peer firing valid frames could otherwise grow the set
+  unbounded (slow SIGTERM drain, memory growth). Saves dropped at
+  the cap surface to the client as `workspace-save-error
+  { reason: 'busy' }` so the client's `pending` slot clears
+  immediately rather than waiting for the heartbeat. Configurable
+  via the `MAX_INFLIGHT_PER_SOCKET` env var (for tests that need
+  to exercise the cap deterministically; production deployments
+  rarely need to change it).
+- **REST PUT idle-body timeout = 30 s** — a slow-loris client
+  trickling bytes within `Content-Length` aborts after 30 s of
+  inactivity rather than holding the staging fd + `inFlightSids`
+  slot until the global staging TTL reaps it.
 
 ## Error handling
 
@@ -497,8 +537,9 @@ WS. Only transport-level failures trigger reconnects. Summary:
 | Bad signature on `workspace-save` / `workspace-subscribe` | Silent drop | Stays open | Legit signer retries; persistent bad-sig surfaces client-side as `'encrypt/sign failed: …'` after the IIFE's `maxConsecutiveFailures` (5). |
 | `workspace-save` with shape-invalid field (newline, non-base64 alphabet) | Silent drop | Stays open | Same as bad sig — silent (legit clients never produce these). |
 | `workspace-save` ciphertext &gt; 2 MiB (`MAX_CIPHERTEXT_LEN`) | Emits `workspace-save-error { reason: 'too-large' }` AFTER sig verify | Stays open | Client clears `pending`, sets `session.error`. Recovery via `dismissError(wsId)` or any of the lifecycle handlers (`setServerUrl`, `setEnabled(true)`, `setForcedOff(false)`) — those clear the error AND re-kick key derivation if the session never had usable keys. |
+| `workspace-save` dropped by per-socket inflight cap (see "Transport backpressure") | Emits `workspace-save-error { reason: 'busy' }` BEFORE the handler IIFE runs | Stays open | Client clears `pending` and re-arms `pendingSave` so the next natural trigger retries. Does NOT set `session.error` — recoverable. `'busy'` is in `RECOVERABLE_SAVE_ERROR_REASONS` (see `common/save-error-reason.ts`). |
 | `objstore-put-begin` exceeds the per-workspace `MAX_RESOURCES_PER_WORKSPACE` (100) cap for a NEW resource | Emits `objstore-put-error { reason: 'workspace-full' }` AFTER sig verify | Stays open | Re-uploads of existing resourceTags (new versions) still succeed; the cap is on the live row count only. |
-| `workspace-save` `base` doesn't match server head | Server sends a `workspace-state` catch-up chain | Stays open | Client rebases against the chain and retries. |
+| `workspace-save` `base` doesn't match server head | Server sends `workspace-state` (catch-up chain) followed by `workspace-save-error { reason: 'stale-base' }` | Stays open | Client's `handleChain` clears `pending` first; the subsequent error frame's `handleSaveError` early-returns on missing pending. Recoverable (catch-up rebases the client). |
 | Total WS frame &gt; 4 MiB (`maxPayload`) | `ws` library closes with code 1009 | **Closed** | Client reconnects; on reconnect the same oversize state will retry, so this should not happen in practice — the 2 MiB ciphertext cap keeps frames well under 4 MiB. |
 | Heartbeat: client `ping` → no `pong` within timeout | n/a | **Closed by client** | Client reconnects (exponential backoff from 1 s). Per-session `pending`/`pendingSave`/`encrypting`/subscribed flags reset; `session.error` is preserved across reconnect. |
 | Graceful server shutdown (SIGTERM) | Sends close code 1001 "going away" to every client | **Closed by server** | Client reconnects per its backoff. |
