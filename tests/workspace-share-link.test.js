@@ -124,16 +124,66 @@ describe('workspace share-link', () => {
         privateKeyBase64: randomPrivateKeyBase64(),
         password: 'pw',
       }),
-      /share: id required/u,
+      /encodeShareLink: id required/u,
     )
   })
 
-  it('does not surface an oracle distinguishing wrong-version from wrong-password', async () => {
-    // Build a payload whose version byte is anything other than 1.
-    // The wire shape is still valid; only the leading byte differs.
-    // The error must collapse to the same generic message so an
-    // attacker can't distinguish version tampering from password
-    // failure by error text.
+  it('rejects an encode call missing the name field', async () => {
+    await assert.rejects(
+      () => encodeShareLink({
+        id: fakeUuid(),
+        privateKeyBase64: randomPrivateKeyBase64(),
+        password: 'pw',
+      }),
+      /encodeShareLink: name required/u,
+    )
+  })
+
+  it('rejects an encode call missing the privateKey field', async () => {
+    await assert.rejects(
+      () => encodeShareLink({
+        id: fakeUuid(),
+        name: 'X',
+        password: 'pw',
+      }),
+      /encodeShareLink: privateKey required/u,
+    )
+  })
+
+  it('rejects an encode call missing the password field', async () => {
+    await assert.rejects(
+      () => encodeShareLink({
+        id: fakeUuid(),
+        name: 'X',
+        privateKeyBase64: randomPrivateKeyBase64(),
+      }),
+      /encodeShareLink: password required/u,
+    )
+  })
+
+  it('rejects a decode call missing the password field (programmer error)', async () => {
+    const encoded = await encodeShareLink({
+      id: fakeUuid(),
+      name: 'X',
+      privateKeyBase64: randomPrivateKeyBase64(),
+      password: 'pw',
+    })
+    await assert.rejects(
+      () => decodeShareLink({ encoded }),
+      /decodeShareLink: password required/u,
+    )
+  })
+
+  it('maps a tampered version byte to the generic malformed-share-link error', async () => {
+    // A flipped version byte is a pre-decrypt shape failure: the
+    // explicit `wire[0] !== WIRE_VERSION` check in `password-crypto.js`
+    // fires before PBKDF2 runs. Pre-decrypt failures (bad base64,
+    // wrong version, truncated wire) surface as 'malformed share link';
+    // post-decrypt failures collapse into 'wrong password or corrupt
+    // link' so the password-correct path can't be distinguished from
+    // post-decrypt shape failures (which IS the oracle defense).
+    // Pre-decrypt distinction is intentional and harmless since the
+    // structural bytes are attacker-known anyway.
     const password = 'pw'
     const encoded = await encodeShareLink({
       id: fakeUuid(),
@@ -152,8 +202,10 @@ describe('workspace share-link', () => {
 
   it('rejects a payload whose decoded privateKey is not 32 bytes', async () => {
     // 16-byte key — base64-encodes to a valid string, fully wrong
-    // length for the sync-crypto pipeline. The decoder should refuse
-    // before the boot pipeline pulls the value into `Uint8Array.fromBase64`.
+    // length for the sync-crypto pipeline. The decoder must refuse
+    // before the boot pipeline pulls the value into use. Post-
+    // decrypt shape failures surface as the wrong-password error so
+    // they can't be told apart from a genuine auth failure.
     const shortKey = new Uint8Array(16)
     crypto.getRandomValues(shortKey)
     const password = 'pw'
@@ -165,7 +217,7 @@ describe('workspace share-link', () => {
     })
     await assert.rejects(
       () => decodeShareLink({ encoded, password }),
-      /malformed share link/u,
+      /wrong password or corrupt link/u,
     )
   })
 
@@ -173,7 +225,8 @@ describe('workspace share-link', () => {
     // A crafted payload could otherwise plant a multi-MB id in
     // localStorage. Bound the id length to a generous 256 chars
     // (UUIDs are 36) so a hostile sender can't bloat the workspaces
-    // blob.
+    // blob. Post-decrypt failures collapse into the wrong-password
+    // error so the cap check isn't an oracle.
     const password = 'pw'
     const longId = 'a'.repeat(257)
     const encoded = await encodeShareLink({
@@ -184,8 +237,81 @@ describe('workspace share-link', () => {
     })
     await assert.rejects(
       () => decodeShareLink({ encoded, password }),
-      /malformed share link/u,
+      /wrong password or corrupt link/u,
     )
+  })
+
+  // The post-decrypt oracle: a ciphertext that decrypts cleanly under
+  // the correct password but whose plaintext doesn't have the share-
+  // link shape must surface the same error as a genuine auth failure.
+  // Otherwise an attacker probing crafted ciphertexts can use the
+  // distinct error to confirm "the password decrypted my payload" vs
+  // "the password is wrong" without knowing the password.
+  it('collapses post-decrypt failures into the wrong-password error', async () => {
+    // Build a wire that decrypts to something which isn't valid JSON,
+    // by encrypting via the password-crypto primitive directly (skips
+    // the share-link JSON envelope).
+    const { encryptWithPassword } = await import('../client/password-crypto.js')
+    const password = 'pw'
+    const wire = await encryptWithPassword(new Uint8Array(64).fill(0xff), password)
+    const encoded = wire.toBase64({ alphabet: 'base64url', omitPadding: true })
+    await assert.rejects(
+      () => decodeShareLink({ encoded, password }),
+      /wrong password or corrupt link/u,
+    )
+  })
+
+  // The oracle defense depends on the auth-failure path and the
+  // post-decrypt-failure path returning the SAME error message text.
+  // A future refactor that diverges the two strings silently re-opens
+  // the oracle without breaking the regex-only assertions elsewhere.
+  // Pin byte-for-byte equality.
+  it('auth-failure and post-decrypt-failure produce byte-identical share-link error messages', async () => {
+    const { encryptWithPassword } = await import('../client/password-crypto.js')
+    const goodEncoded = await encodeShareLink({
+      id: fakeUuid(),
+      name: 'Workspace',
+      privateKeyBase64: randomPrivateKeyBase64(),
+      password: 'right',
+    })
+    let authErr
+    try {
+      await decodeShareLink({ encoded: goodEncoded, password: 'wrong' })
+    } catch (err) {
+      authErr = err
+    }
+    // Build a different wire that decrypts cleanly under its password
+    // but isn't a share-link payload (post-decrypt collapse).
+    const wire = await encryptWithPassword(new Uint8Array(64).fill(0xff), 'pw2')
+    const postDecryptEncoded = wire.toBase64({ alphabet: 'base64url', omitPadding: true })
+    let postDecryptErr
+    try {
+      await decodeShareLink({ encoded: postDecryptEncoded, password: 'pw2' })
+    } catch (err) {
+      postDecryptErr = err
+    }
+    assert.equal(authErr.message, postDecryptErr.message, 'oracle defense requires byte-identical messages')
+  })
+
+  // The oracle-collapse path preserves the underlying error as `cause`
+  // so DevTools / console diagnosis sees the gunzip / JSON parse error.
+  // The user-facing message stays generic; only the cause chain carries
+  // diagnostics. A refactor that dropped `{ cause }` would regress
+  // debug ergonomics without changing the user-facing oracle defense.
+  it('preserves `cause` on the post-decrypt oracle-collapse path', async () => {
+    const { encryptWithPassword } = await import('../client/password-crypto.js')
+    const password = 'pw'
+    const wire = await encryptWithPassword(new Uint8Array(64).fill(0xff), password)
+    const encoded = wire.toBase64({ alphabet: 'base64url', omitPadding: true })
+    let caught
+    try {
+      await decodeShareLink({ encoded, password })
+    } catch (err) {
+      caught = err
+    }
+    assert.ok(caught, 'expected the decode to throw')
+    assert.match(caught.message, /wrong password or corrupt link/u)
+    assert.ok(caught.cause, 'expected the rethrown error to carry `cause`')
   })
 
   it('produces a different ciphertext on each encode (random salt + nonce)', async () => {

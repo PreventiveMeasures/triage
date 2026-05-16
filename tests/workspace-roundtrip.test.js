@@ -35,10 +35,17 @@ const { state } = await import('../client/state.ts')
 const {
   parseWorkspaceJson,
   applyWorkspaceImport,
+  parseWorkspaceBundleBytes,
   readImportedTriageBucket,
   isWorkspaceExport,
 } = await import('../client/workspace-import.js')
-const { buildWorkspaceExportPayload } = await import('../client/workspace-export.js')
+const {
+  buildWorkspaceExportPayload,
+  buildWorkspaceExportGzip,
+  buildWorkspaceExportEncrypted,
+  buildWorkspaceExportBundle,
+} = await import('../client/workspace-export.js')
+const { isEncryptedBundle } = await import('../client/workspace-bundle-crypto.js')
 const { listWorkspaces } = await import('../client/workspaces.js')
 
 function clearState() {
@@ -247,6 +254,33 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported decision should win')
   })
 
+  // Per-property positive coverage: a refactor that broke
+  // `applyConflictDecisions` for color/comment/fix while leaving
+  // triage intact would pass the existing "imported wins" test
+  // (which only exercises triage). Pin each branch.
+  it('applyConflictDecisions writes color/comment/fix when the user picks "imported"', async () => {
+    state.markers.set(FINDING_A, 'green')
+    state.comments.set(FINDING_A, 'local note')
+    state.fixes.set(FINDING_A, 'local fix')
+    const conflictResolver = (conflicts) => {
+      const decisions = {}
+      for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
+      return decisions
+    }
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-per-prop', name: 'P', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: {
+        [FINDING_A]: { color: 'red', comment: 'imported note', fix: 'imported fix' },
+      },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver })
+    assert.equal(state.markers.get(FINDING_A), 'red', 'imported color should win')
+    assert.equal(state.comments.get(FINDING_A), 'imported note', 'imported comment should win')
+    assert.equal(state.fixes.get(FINDING_A), 'imported fix', 'imported fix should win')
+  })
+
   it('imported decision skipped when state.* changed during the dialog (M-2 stale guard)', async () => {
     // Audit H1 round-5: workspace-import's applyConflictDecisions
     // used to overwrite state.* unconditionally on an 'imported'
@@ -389,6 +423,154 @@ describe('export → import round-trip', () => {
     // id merges instead of duplicating).
     const wsList = listWorkspaces()
     assert.equal(wsList.filter((w) => w.id === ws.id).length, 1)
+  })
+})
+
+describe('encrypted bundle export → import round-trip', () => {
+  beforeEach(() => clearState())
+
+  it('round-trips a password-encrypted bundle end-to-end', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    state.markers.set(FINDING_A, 'red')
+    state.triageState.set(FINDING_A, 'fixed')
+    state.comments.set(FINDING_A, 'looks good')
+
+    const ws = makeWorkspace({ reports: ['r.json'] })
+    const password = 'correct horse battery staple'
+    const { blob, filename } = await buildWorkspaceExportEncrypted(ws, password)
+    assert.ok(filename.endsWith('.deepview-workspace.enc'))
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    assert.equal(isEncryptedBundle(bytes), true)
+
+    state.markers.clear()
+    state.triageState.clear()
+    state.comments.clear()
+
+    const data = await parseWorkspaceBundleBytes(bytes, password)
+    await applyWorkspaceImport(data)
+
+    assert.equal(state.markers.get(FINDING_A), 'red')
+    assert.equal(state.triageState.get(FINDING_A), 'fixed')
+    assert.equal(state.comments.get(FINDING_A), 'looks good')
+  })
+
+  it('parseWorkspaceBundleBytes rejects encrypted bundles when the password is wrong', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const { blob } = await buildWorkspaceExportEncrypted(ws, 'right')
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    await assert.rejects(
+      () => parseWorkspaceBundleBytes(bytes, 'wrong'),
+      /wrong password or corrupt bundle/u,
+    )
+  })
+
+  // The post-decrypt error oracle: a ciphertext that decrypts
+  // successfully under the correct password but whose plaintext isn't
+  // a valid gzipped JSON workspace must NOT surface a distinct
+  // 'gzip decompression failed' / 'not a deepview workspace export'
+  // — otherwise an attacker probing crafted ciphertexts can use the
+  // distinct error to confirm "the password decrypted my crafted
+  // payload" vs "the password is wrong".
+  it('parseWorkspaceBundleBytes collapses post-decrypt failures into the wrong-password error', async () => {
+    const { encryptBundle } = await import('../client/workspace-bundle-crypto.js')
+    // Encrypt non-gzip random bytes with a known password. The
+    // wire decrypts cleanly, but gunzip will fail.
+    const password = 'pw'
+    const wire = await encryptBundle(new Uint8Array(64).fill(0x42), password)
+    await assert.rejects(
+      () => parseWorkspaceBundleBytes(wire, password),
+      /wrong password or corrupt bundle/u,
+    )
+  })
+
+  // The oracle defense depends on the auth-failure path and the
+  // post-decrypt-failure path returning the SAME error message text.
+  // A future refactor that diverges the two strings (even subtly —
+  // different wording, missing period, etc.) silently re-opens the
+  // oracle without breaking the regex-only assertions elsewhere. Pin
+  // the exact byte-for-byte equality here.
+  it('auth-failure and post-decrypt-failure produce byte-identical bundle error messages', async () => {
+    const { encryptBundle } = await import('../client/workspace-bundle-crypto.js')
+    const wireGood = await encryptBundle(new Uint8Array(64).fill(0x42), 'right')
+    let authErr
+    try {
+      await parseWorkspaceBundleBytes(wireGood, 'wrong')
+    } catch (err) {
+      authErr = err
+    }
+    let postDecryptErr
+    try {
+      // Non-gzip plaintext but correct password — collapses post-decrypt.
+      await parseWorkspaceBundleBytes(wireGood, 'right')
+    } catch (err) {
+      postDecryptErr = err
+    }
+    assert.equal(authErr.message, postDecryptErr.message, 'oracle defense requires byte-identical messages')
+  })
+
+  it('parseWorkspaceBundleBytes preserves `cause` on the oracle-collapse path', async () => {
+    const { encryptBundle } = await import('../client/workspace-bundle-crypto.js')
+    const password = 'pw'
+    const wire = await encryptBundle(new Uint8Array(64).fill(0x42), password)
+    let caught
+    try {
+      await parseWorkspaceBundleBytes(wire, password)
+    } catch (err) {
+      caught = err
+    }
+    assert.ok(caught, 'expected the parse to throw')
+    assert.match(caught.message, /wrong password or corrupt bundle/u)
+    assert.ok(caught.cause, 'expected the rethrown error to carry `cause`')
+  })
+
+  it('parseWorkspaceBundleBytes throws on a missing password for an encrypted bundle', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const { blob } = await buildWorkspaceExportEncrypted(ws, 'pw')
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    await assert.rejects(
+      () => parseWorkspaceBundleBytes(bytes),
+      /password required/u,
+    )
+  })
+
+  it('parseWorkspaceBundleBytes routes plaintext gzip bundles through the existing pipeline', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const { blob, filename } = await buildWorkspaceExportGzip(ws)
+    assert.ok(filename.endsWith('.deepview-workspace.json.gz'))
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    assert.equal(isEncryptedBundle(bytes), false)
+    const data = await parseWorkspaceBundleBytes(bytes)
+    assert.equal(data.workspace.id, ws.id)
+  })
+
+  it('buildWorkspaceExportBundle dispatches by password presence', async () => {
+    const { saveFile } = await import('../client/storage.js')
+    await saveFile('r.json', reportContent([FINDING_A]))
+    const ws = makeWorkspace({ reports: ['r.json'] })
+
+    const plain = await buildWorkspaceExportBundle(ws)
+    assert.ok(plain.filename.endsWith('.deepview-workspace.json.gz'))
+    const plainBytes = new Uint8Array(await plain.blob.arrayBuffer())
+    assert.equal(isEncryptedBundle(plainBytes), false)
+
+    // Empty password matches the dialog's opt-out wiring.
+    const empty = await buildWorkspaceExportBundle(ws, { password: '' })
+    assert.ok(empty.filename.endsWith('.deepview-workspace.json.gz'))
+
+    const enc = await buildWorkspaceExportBundle(ws, { password: 'pw' })
+    assert.ok(enc.filename.endsWith('.deepview-workspace.enc'))
+    const encBytes = new Uint8Array(await enc.blob.arrayBuffer())
+    assert.equal(isEncryptedBundle(encBytes), true)
   })
 })
 

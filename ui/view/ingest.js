@@ -84,12 +84,12 @@ export async function addFiles(files) {
   const newBundleIntegrities = new Set()
   for (const file of files) {
     try {
-      // .gz drops are routed to the workspace-import pipeline. Reading
-      // the file as text first would mangle gzip bytes through
-      // UTF-8 decoding, so this branch comes BEFORE the file.text()
-      // read. importWorkspaceFromGzip throws if the payload doesn't
-      // look like our export shape — surface that to the user.
-      if (file.name.toLowerCase().endsWith('.gz')) {
+      // Route plaintext gzip and encrypted bundles to workspace import
+      // BEFORE the file.text() read — UTF-8 decoding would mangle the
+      // binary bytes. importWorkspaceFromGzip throws if the payload
+      // doesn't match our export shape.
+      const lower = file.name.toLowerCase()
+      if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
         await importWorkspaceFromGzip(file)
         continue
       }

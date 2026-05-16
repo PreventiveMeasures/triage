@@ -17,6 +17,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { decodeShareLink } from '../../client/workspace-share-link.js'
 import { listWorkspaces, sanitizeWorkspaceName } from '../../client/workspaces.js'
+import { makeStackedModalError } from './dom.js'
 
 class WorkspaceUnlockLinkDialog extends LitElement {
   static properties = {
@@ -28,6 +29,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     _existingById: { state: true },
     _busy: { state: true },
     _error: { state: true },
+    _settled: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -42,12 +44,32 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     this._existingById = null
     this._busy = false
     this._error = ''
+    this._settled = false
   }
 
   firstUpdated() {
     const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
+    if (!dialog) return
+    try {
+      dialog.showModal()
+    } catch (err) {
+      // Another modal is already open. Let the wrapper reject so the
+      // boot handler can surface a contextual error.
+      this._signalModalConflict(err)
+      return
+    }
     this._focusActiveInput()
+  }
+
+  _signalModalConflict(err) {
+    if (this._settled) return
+    this._settled = true
+    // `_finish` wipes `_decoded` / `_password` too, but at modal-conflict
+    // time the user hasn't unlocked yet — only the wrapper-set `encoded`
+    // AES-GCM ciphertext is populated and needs wiping so it doesn't
+    // sit on the element until GC.
+    this.encoded = ''
+    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
   }
 
   updated(changed) {
@@ -71,16 +93,16 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     if (this._settled) return
     this._settled = true
     // Drop the decrypted privateKey from the LitElement instance
-    // before the resolve hop. The element is detached + GC-eligible
-    // after `el.remove()` in the public entry point, but clearing
-    // explicitly shrinks the window where a heap-snapshot dump or
-    // a stray reference holder could observe the secret.
+    // before the resolve hop. Lit's reactive setter briefly retains
+    // the old value in its change-tracker until the next microtask,
+    // so the wipe doesn't fully erase the value until `el.remove()`
+    // detaches the host — but the property slot itself is empty.
     this._decoded = null
     this._password = ''
     // Drop the encrypted blob too — `encoded` came in via property
     // assignment from the public entry point and would otherwise
     // outlive the resolve hop on the still-mounted element until
-    // `el.remove()` runs. Cheap defense in depth.
+    // `el.remove()` runs.
     this.encoded = ''
     const dialog = this.querySelector('dialog')
     if (dialog) dialog.close()
@@ -102,6 +124,11 @@ class WorkspaceUnlockLinkDialog extends LitElement {
         encoded: this.encoded,
         password: this._password,
       })
+      // PBKDF2 takes hundreds of ms; user may have cancelled in the
+      // meantime. Skip the writes so `_finish`'s heap-snapshot wipe
+      // of `_decoded` / `_password` isn't undone by an in-flight
+      // resolution landing after cancel.
+      if (this._settled) return
       const existing = listWorkspaces().find((w) => w.id === decoded.id) ?? null
       this._decoded = decoded
       this._existingById = existing
@@ -109,6 +136,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
       this._password = ''
       this._stage = 'name'
     } catch (err) {
+      if (this._settled) return
       this._error = err?.message ?? String(err)
     } finally {
       this._busy = false
@@ -191,7 +219,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
           @keydown=${this._onKeydown}
         >
       </label>
-      ${this._error ? html`<p class="wsl-error">${this._error}</p>` : nothing}
+      ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" @click=${this._onCancel}>Cancel</button>
@@ -244,7 +272,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
         >
       </label>
       ${collision
-        ? html`<p class="wsl-error">A workspace named "${sanitised}" already exists on this device. Pick a different name.</p>`
+        ? html`<p class="wsl-error" role="alert">A workspace named "${sanitised}" already exists on this device. Pick a different name.</p>`
         : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
@@ -281,12 +309,16 @@ customElements.define('workspace-unlock-link-dialog', WorkspaceUnlockLinkDialog)
 // the sender's), or null when the user cancels, closes, or hits
 // the "already attached" branch.
 export function openWorkspaceUnlockLinkDialog({ encoded } = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const el = document.createElement('workspace-unlock-link-dialog')
     el.encoded = encoded ?? ''
     el.addEventListener('resolve', (e) => {
       el.remove()
       resolve(e.detail)
+    })
+    el.addEventListener('modal-conflict', (e) => {
+      el.remove()
+      reject(makeStackedModalError(e.detail?.cause))
     })
     document.body.append(el)
   })

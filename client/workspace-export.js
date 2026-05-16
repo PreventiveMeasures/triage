@@ -5,12 +5,14 @@ import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
 import { encodeUtf8 } from '../common/utf8.js'
+import { encryptBundle } from './workspace-bundle-crypto.js'
 
 // Pure-logic side of workspace export. The DOM-touching layer
-// (anchor-click download trigger) lives in
-// `ui/view/workspace-export.js` and calls into `buildWorkspaceGzip`.
-// Split this way so the payload-building logic can be exercised
-// from `tests/workspace-roundtrip.test.js` directly.
+// (export dialog + anchor-click download trigger) lives in
+// `ui/view/workspace-export.js` and calls into the public dispatcher
+// `buildWorkspaceExportBundle(workspace, { password })`. Split this
+// way so the payload-building logic can be exercised from
+// `tests/workspace-roundtrip.test.js` directly.
 //
 // Triage filtering is by report-membership: only entries whose id
 // appears in one of the workspace's reports ride along, so a
@@ -48,7 +50,7 @@ async function reportFindingIds(content) {
 
 // Filename-safe workspace name for the download. Falls back to
 // `workspace` when the name reduces to nothing after sanitization.
-export function safeFilename(name) {
+function safeFilename(name) {
   const cleaned = (name ?? '').replaceAll(/[^a-zA-Z0-9._-]+/gu, '_').replaceAll(/^_+|_+$/gu, '')
   return cleaned || 'workspace'
 }
@@ -172,4 +174,26 @@ export async function buildWorkspaceExportGzip(workspace) {
   const payload = await buildWorkspaceExportPayload(workspace)
   const blob = await gzip(JSON.stringify(payload))
   return { blob, filename: `${safeFilename(workspace.name)}.deepview-workspace.json.gz` }
+}
+
+// AES-GCM-wrapped variant of the gzipped bundle. The `.enc` suffix
+// pairs with the import path's filename + magic-byte routing.
+export async function buildWorkspaceExportEncrypted(workspace, password) {
+  if (typeof password !== 'string' || !password) {
+    throw new TypeError('buildWorkspaceExportEncrypted: password required')
+  }
+  const { blob: gzipBlob } = await buildWorkspaceExportGzip(workspace)
+  const plaintext = new Uint8Array(await gzipBlob.arrayBuffer())
+  const encrypted = await encryptBundle(plaintext, password)
+  const blob = new Blob([encrypted], { type: 'application/octet-stream' })
+  return { blob, filename: `${safeFilename(workspace.name)}.deepview-workspace.enc` }
+}
+
+// Dispatches on `password`: empty → plaintext gzip, set → encrypted.
+// Caller owns the explicit opt-out UX when calling without one.
+export async function buildWorkspaceExportBundle(workspace, { password } = {}) {
+  if (typeof password === 'string' && password) {
+    return await buildWorkspaceExportEncrypted(workspace, password)
+  }
+  return await buildWorkspaceExportGzip(workspace)
 }

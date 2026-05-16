@@ -7,11 +7,12 @@ import { firstDescriptionLine } from './finding-lookup.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 
-// Pure-logic side of workspace import. The DOM-touching layer
-// (gunzip read, conflict-resolution dialog, post-import re-render)
-// lives in `ui/view/workspace-import.js` and calls into here. Split
-// this way so the merge / migration logic can be exercised from
+// Pure-logic side of workspace import. The DOM-touching layer (unlock
+// dialog, conflict-resolution dialog, post-import re-render) lives in
+// `ui/view/workspace-import.js` and calls into here. Split this way so
+// the parse / merge / migration logic can be exercised from
 // `tests/workspace-roundtrip.test.js` without pulling in lit / DOM.
 //
 // `parseWorkspaceJson` validates the export shape (version 1) and
@@ -56,20 +57,43 @@ export function isWorkspaceExport(data) {
   )
 }
 
-async function gunzipText(file) {
-  const buf = await file.arrayBuffer()
-  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))
+async function gunzipBytesToText(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
   return await new Response(stream).text()
 }
 
-// Parse a workspace `.gz` (or any `Blob`/`File` with a `.arrayBuffer()`):
-// gunzip → JSON.parse → shape-validate. Throws with a descriptive
-// message at the first failing step so the caller can surface it to
-// the user verbatim.
-export async function parseWorkspaceGzip(file) {
+// UI import reads once up front so the magic-byte sniff and the
+// eventual parse share one buffer (re-reading would re-stream the
+// disk on every unlock-dialog retry).
+export async function readBundleBytes(file) {
+  return new Uint8Array(await file.arrayBuffer())
+}
+
+// Dispatches encrypted vs plaintext-gzip by magic byte. For encrypted
+// bundles a non-empty `password` must be supplied; the unlock dialog
+// owns the wrong-password retry loop. Post-decrypt failures (gunzip,
+// JSON shape) collapse into the same `wrong password or corrupt bundle`
+// error as a genuine auth failure — otherwise the distinct error texts
+// would form an oracle confirming "password decrypted successfully" to
+// an attacker probing crafted ciphertexts.
+export async function parseWorkspaceBundleBytes(bytes, password) {
+  if (isEncryptedBundle(bytes)) {
+    if (typeof password !== 'string' || !password) {
+      throw new TypeError('parseWorkspaceBundleBytes: password required for encrypted bundle')
+    }
+    const plaintext = await decryptBundle(bytes, password)
+    try {
+      return parseWorkspaceJson(await gunzipBytesToText(plaintext))
+    } catch (err) {
+      // Keep `cause` for debugging (DevTools / console) while the
+      // surfaced message stays generic — the oracle defense is at
+      // the message layer, not the cause chain.
+      throw new Error('wrong password or corrupt bundle', { cause: err })
+    }
+  }
   let text
   try {
-    text = await gunzipText(file)
+    text = await gunzipBytesToText(bytes)
   } catch (err) {
     throw new Error(`gzip decompression failed: ${err.message}`, { cause: err })
   }

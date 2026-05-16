@@ -461,10 +461,10 @@ sidebar.addEventListener('click', async (e) => {
     const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
     if (ws) {
       // The dialog handles its own internal errors inline (the
-      // `_error` state slot); the returned promise always
-      // resolves to `undefined` when the user closes the dialog
-      // — no `.catch` needed here.
+      // `_error` state slot); the returned promise rejects only on
+      // stacked-modal failure, which `.catch` surfaces.
       openWorkspaceShareLinkDialog({ id: ws.id, name: ws.name, privateKeyBase64: ws.privateKey })
+        .catch((err) => alert(`Failed to open share dialog: ${err.message}`))
     }
     return
   }
@@ -477,7 +477,7 @@ sidebar.addEventListener('click', async (e) => {
   if (exportEl) {
     const wsEl = exportEl.closest('[data-workspace-id]')
     const ws = wsEl ? listWorkspaces().find((w) => w.id === wsEl.dataset.workspaceId) : null
-    if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to export workspace: ${err.message}`))
+    if (ws) exportWorkspace(ws).catch((err) => alert(`Failed to open export dialog: ${err.message}`))
     return
   }
   // Per-workspace Leave — open the confirmation dialog (which

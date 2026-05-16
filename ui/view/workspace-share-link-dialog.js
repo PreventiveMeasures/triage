@@ -10,6 +10,7 @@
 // so global stylesheet rules in sidebar.css apply.
 import { LitElement, html, nothing } from 'lit'
 import { buildShareUrl, encodeShareLink } from '../../client/workspace-share-link.js'
+import { makeStackedModalError } from './dom.js'
 
 class WorkspaceShareLinkDialog extends LitElement {
   static properties = {
@@ -23,6 +24,7 @@ class WorkspaceShareLinkDialog extends LitElement {
     _busy: { state: true },
     _error: { state: true },
     _copied: { state: true },
+    _settled: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -39,14 +41,34 @@ class WorkspaceShareLinkDialog extends LitElement {
     this._busy = false
     this._error = ''
     this._copied = false
+    this._settled = false
   }
 
   firstUpdated() {
     const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
+    if (!dialog) return
+    try {
+      dialog.showModal()
+    } catch (err) {
+      // Another modal is already open. Let the wrapper reject so the
+      // caller can surface a contextual error.
+      this._signalModalConflict(err)
+      return
+    }
     this._name = this.initialName
     const input = this.querySelector('input[data-role="name"]')
     if (input) input.focus()
+  }
+
+  _signalModalConflict(err) {
+    if (this._settled) return
+    this._settled = true
+    // `_finish` wipes user-typed fields too, but at modal-conflict time
+    // those are still empty — the dialog never opened. Only the
+    // wrapper-set raw `privateKeyBase64` (32-byte secret) needs wiping
+    // so it doesn't sit on the element until GC.
+    this.privateKeyBase64 = ''
+    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
   }
 
   _finish() {
@@ -56,14 +78,20 @@ class WorkspaceShareLinkDialog extends LitElement {
       clearTimeout(this._copiedTimer)
       this._copiedTimer = null
     }
-    // Drop any plaintext password state on every exit path, not
-    // just after a successful generate. A user who typed a password
-    // then hit Esc / Cancel / closed the dialog otherwise leaves
-    // `_password` / `_confirm` live on the LitElement instance
-    // until GC reaps it. `_url` is also cleared for symmetry.
+    // Drop sensitive state on every exit path, not just after a
+    // successful generate. `_password` / `_confirm` carry the typed
+    // secret; `_url` embeds the workspace private key (base64url +
+    // AES-GCM ciphertext that the password unlocks); `privateKeyBase64`
+    // is the raw 32-byte key passed in via property assignment from
+    // the public entry point. Lit's reactive setter retains the old
+    // value in its change-tracker until the next microtask, so the
+    // wipe doesn't fully erase the value until `el.remove()` (which
+    // runs sync in the wrapper's resolve listener) detaches the host.
+    // The property slots themselves are empty immediately.
     this._password = ''
     this._confirm = ''
     this._url = ''
+    this.privateKeyBase64 = ''
     const dialog = this.querySelector('dialog')
     if (dialog) dialog.close()
     this.dispatchEvent(new CustomEvent('resolve', { detail: null }))
@@ -94,6 +122,12 @@ class WorkspaceShareLinkDialog extends LitElement {
         privateKeyBase64: this.privateKeyBase64,
         password: this._password,
       })
+      // PBKDF2 takes hundreds of ms; user may have cancelled in the
+      // meantime. Skip the URL write so the freshly-derived encoded
+      // value (which embeds the workspace private key) doesn't outlive
+      // the cancelled dialog. `_finish` already cleared `_password`
+      // and `_url` on its way out.
+      if (this._settled) return
       this._url = buildShareUrl(encoded)
       // Drop the plaintext password as soon as it's no longer needed
       // — the encoded URL is the only thing the user copies, and a
@@ -102,6 +136,7 @@ class WorkspaceShareLinkDialog extends LitElement {
       this._password = ''
       this._confirm = ''
     } catch (err) {
+      if (this._settled) return
       this._error = err?.message ?? String(err)
     } finally {
       this._busy = false
@@ -117,6 +152,12 @@ class WorkspaceShareLinkDialog extends LitElement {
     this._error = ''
     try {
       await navigator.clipboard.writeText(this._url)
+      // User may have hit Close while the clipboard write was
+      // pending. Skip the timer setup so a `setTimeout` doesn't
+      // land on a settled / detached element (Lit no-ops the
+      // property write, but the 1500ms closure pins `this` against
+      // GC for the duration).
+      if (this._settled) return
       this._copied = true
       // Stash the timer id so `_finish` can cancel it — without
       // that, a Close within 1500ms of Copy would leave the
@@ -131,6 +172,7 @@ class WorkspaceShareLinkDialog extends LitElement {
     } catch {
       // Clipboard API blocked (insecure context, denied permission) —
       // surface a hint so the user knows to select + copy manually.
+      if (this._settled) return
       this._error = 'Copy failed — select the link and copy it manually.'
     }
   }
@@ -158,7 +200,7 @@ class WorkspaceShareLinkDialog extends LitElement {
             @focus=${(e) => e.target.select()}
           >${this._url}</textarea>
         </label>
-        ${this._error ? html`<p class="wsl-error">${this._error}</p>` : nothing}
+        ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
         <footer class="nwd-actions">
           <span class="nwd-spacer"></span>
           <button type="button" @click=${this._onCancel}>Close</button>
@@ -225,9 +267,9 @@ class WorkspaceShareLinkDialog extends LitElement {
         decrypts with the password above; without it the link is
         useless.
       </p>
-      ${this._error ? html`<p class="wsl-error">${this._error}</p>` : nothing}
+      ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
       ${this._password && this._confirm && this._password !== this._confirm
-        ? html`<p class="wsl-error">Passwords don't match.</p>`
+        ? html`<p class="wsl-error" role="alert">Passwords don't match.</p>`
         : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
@@ -255,7 +297,7 @@ class WorkspaceShareLinkDialog extends LitElement {
 customElements.define('workspace-share-link-dialog', WorkspaceShareLinkDialog)
 
 export function openWorkspaceShareLinkDialog({ id, name, privateKeyBase64 } = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const el = document.createElement('workspace-share-link-dialog')
     el.workspaceId = id ?? ''
     el.initialName = name ?? ''
@@ -263,6 +305,10 @@ export function openWorkspaceShareLinkDialog({ id, name, privateKeyBase64 } = {}
     el.addEventListener('resolve', () => {
       el.remove()
       resolve()
+    })
+    el.addEventListener('modal-conflict', (e) => {
+      el.remove()
+      reject(makeStackedModalError(e.detail?.cause))
     })
     document.body.append(el)
   })

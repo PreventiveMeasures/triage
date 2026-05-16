@@ -27,47 +27,15 @@
 // channel; the full-bundle export/import path is still the way to
 // transfer those.
 //
-// Wire format (binary, then base64url):
-//   1 byte    version (= 0x01)
-//   16 bytes  PBKDF2 salt
-//   12 bytes  AES-GCM nonce
-//   N bytes   AES-GCM ciphertext + 16-byte auth tag
-//
-// PBKDF2-SHA-256 with 3M iterations derives a 256-bit AES-GCM
-// key. AES-GCM is picked over ChaCha20-Poly1305 (which the rest
-// of the codebase uses for triage-sync) purely because WebCrypto
-// covers AES-GCM unconditionally — no `detectWebCryptoChaCha` /
-// `@noble/ciphers` fallback to plumb through this path.
+// The password-encryption layer lives in `password-crypto.js`;
+// this module only deals with the JSON payload + base64url envelope.
 
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import {
+  decryptWithPasswordOrThrow,
+  encryptWithPassword,
+} from './password-crypto.js'
 import { deriveWorkspaceIdFromPrivateKey } from './workspace-id.js'
-
-const VERSION = 1
-const SALT_LEN = 16
-const NONCE_LEN = 12
-const PBKDF2_ITERATIONS = 3000000
-
-async function deriveAesKey(password, salt) {
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    encodeUtf8(password),
-    'PBKDF2',
-    false,
-    ['deriveKey'],
-  )
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      hash: 'SHA-256',
-      salt,
-      iterations: PBKDF2_ITERATIONS,
-    },
-    baseKey,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  )
-}
 
 // Build the encrypted hash payload. `id` is the workspace's
 // UUID-shaped identifier — for workspaces created via
@@ -80,19 +48,14 @@ async function deriveAesKey(password, salt) {
 // is the 32-byte secret encoded with the default alphabet
 // (matching `workspace.privateKey`'s on-disk shape).
 export async function encodeShareLink({ id, name, privateKeyBase64, password }) {
-  if (typeof id !== 'string' || !id) throw new Error('share: id required')
-  if (typeof name !== 'string' || !name) throw new Error('share: name required')
+  if (typeof id !== 'string' || !id) throw new TypeError('encodeShareLink: id required')
+  if (typeof name !== 'string' || !name) throw new TypeError('encodeShareLink: name required')
   if (typeof privateKeyBase64 !== 'string' || !privateKeyBase64) {
-    throw new Error('share: privateKey required')
+    throw new TypeError('encodeShareLink: privateKey required')
   }
   if (typeof password !== 'string' || !password) {
-    throw new Error('share: password required')
+    throw new TypeError('encodeShareLink: password required')
   }
-  const salt = new Uint8Array(SALT_LEN)
-  const nonce = new Uint8Array(NONCE_LEN)
-  crypto.getRandomValues(salt)
-  crypto.getRandomValues(nonce)
-  const aesKey = await deriveAesKey(password, salt)
   // Omit the id from the wire when it matches what the recipient
   // would compute via `deriveWorkspaceIdFromPrivateKey`. New
   // workspaces (created via createWorkspace after the derivation
@@ -102,18 +65,8 @@ export async function encodeShareLink({ id, name, privateKeyBase64, password }) 
   const payload = derivedId === id
     ? { v: 1, n: name, k: privateKeyBase64 }
     : { v: 1, i: id, n: name, k: privateKeyBase64 }
-  const plaintext = encodeUtf8(JSON.stringify(payload))
-  const ct = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce },
-    aesKey,
-    plaintext,
-  ))
-  const out = new Uint8Array(1 + SALT_LEN + NONCE_LEN + ct.length)
-  out[0] = VERSION
-  out.set(salt, 1)
-  out.set(nonce, 1 + SALT_LEN)
-  out.set(ct, 1 + SALT_LEN + NONCE_LEN)
-  return out.toBase64({ alphabet: 'base64url', omitPadding: true })
+  const wire = await encryptWithPassword(encodeUtf8(JSON.stringify(payload)), password)
+  return wire.toBase64({ alphabet: 'base64url', omitPadding: true })
 }
 
 // Reverse of `encodeShareLink`. Throws with a stable message on a
@@ -125,7 +78,9 @@ export async function decodeShareLink({ encoded, password }) {
     throw new Error('malformed share link')
   }
   if (typeof password !== 'string' || !password) {
-    throw new Error('share: password required')
+    // Programmer error — the dialog gates the unlock button on a
+    // non-empty password, so this is unreachable from the UI.
+    throw new TypeError('decodeShareLink: password required')
   }
   let bytes
   try {
@@ -133,39 +88,25 @@ export async function decodeShareLink({ encoded, password }) {
   } catch {
     throw new Error('malformed share link')
   }
-  if (bytes.length < 1 + SALT_LEN + NONCE_LEN + 16) {
-    throw new Error('malformed share link')
-  }
-  // Collapse the version mismatch into the same generic message as
-  // every other shape failure so an attacker probing a victim with
-  // tampered payloads can't distinguish "version byte flipped" from
-  // "wrong password" by error text. Future versions will need a
-  // dispatch step BEFORE the password is consumed; for v1, the
-  // single supported version makes the check effectively a sanity
-  // gate on the leading byte.
-  if (bytes[0] !== VERSION) {
-    throw new Error('malformed share link')
-  }
-  const salt = bytes.subarray(1, 1 + SALT_LEN)
-  const nonce = bytes.subarray(1 + SALT_LEN, 1 + SALT_LEN + NONCE_LEN)
-  const ct = bytes.subarray(1 + SALT_LEN + NONCE_LEN)
-  const aesKey = await deriveAesKey(password, salt)
-  let plaintext
+  const plaintext = await decryptWithPasswordOrThrow(bytes, password, {
+    malformedMsg: 'malformed share link',
+    wrongPasswordMsg: 'wrong password or corrupt link',
+  })
+  // Every post-decrypt failure (bad JSON, missing fields, oversized
+  // id, non-32-byte key) collapses into the same `'wrong password or
+  // corrupt link'` error as a genuine auth failure. Otherwise an
+  // attacker who can probe error messages can tell "decryption
+  // succeeded but plaintext is malformed" from "decryption failed",
+  // confirming the password is correct against a crafted ciphertext.
   try {
-    plaintext = new Uint8Array(await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonce },
-      aesKey,
-      ct,
-    ))
-  } catch {
-    throw new Error('wrong password or corrupt link')
+    return await parsePlaintextPayload(plaintext)
+  } catch (err) {
+    throw new Error('wrong password or corrupt link', { cause: err })
   }
-  let parsed
-  try {
-    parsed = JSON.parse(decodeUtf8(plaintext))
-  } catch {
-    throw new Error('malformed share link')
-  }
+}
+
+async function parsePlaintextPayload(plaintext) {
+  const parsed = JSON.parse(decodeUtf8(plaintext))
   if (
     !parsed
     || typeof parsed !== 'object'
@@ -174,7 +115,7 @@ export async function decodeShareLink({ encoded, password }) {
     || !parsed.n
     || !parsed.k
   ) {
-    throw new Error('malformed share link')
+    throw new Error('shape')
   }
   // `i` (id) is optional on the wire. When present it overrides
   // derivation — used by senders whose stored id doesn't match
@@ -183,29 +124,23 @@ export async function decodeShareLink({ encoded, password }) {
   // key. Either way the caller gets a single `{ id, name, k }`
   // triple. A present-but-wrong-shape `i` is still a rejection.
   if (parsed.i !== undefined && (typeof parsed.i !== 'string' || !parsed.i)) {
-    throw new Error('malformed share link')
+    throw new Error('shape')
   }
   // Cap the explicit id's length so a crafted payload can't plant
   // a multi-MB string in localStorage. `crypto.randomUUID()` output
   // is 36 chars; a generous 256-char cap covers any conceivable
   // future id format without bloating the workspaces blob.
   if (typeof parsed.i === 'string' && parsed.i.length > 256) {
-    throw new Error('malformed share link')
+    throw new Error('shape')
   }
   // The privateKey rides through to `sync-crypto`'s 32-byte
   // assertion. Reject up front so a crafted payload (wrong length,
-  // non-base64) surfaces as a clean "malformed share link" instead
-  // of an unhandled rejection later, and so a sender substituting
-  // a non-32-byte key can't silently break triage-sync on the
-  // recipient.
-  let keyBytes
-  try {
-    keyBytes = Uint8Array.fromBase64(parsed.k)
-  } catch {
-    throw new Error('malformed share link')
-  }
+  // non-base64) surfaces as a clean error instead of an unhandled
+  // rejection later, and so a sender substituting a non-32-byte key
+  // can't silently break triage-sync on the recipient.
+  const keyBytes = Uint8Array.fromBase64(parsed.k)
   if (keyBytes.length !== 32) {
-    throw new Error('malformed share link')
+    throw new Error('shape')
   }
   const id = typeof parsed.i === 'string'
     ? parsed.i

@@ -24,3 +24,10 @@ export function downloadBlob(blob, filename) {
   host.remove()
   URL.revokeObjectURL(url)
 }
+
+// `<dialog>.showModal()` throws `InvalidStateError` when another modal is
+// already open. Every dialog wrapper that turns that throw into a promise
+// rejection uses this so the user-facing copy stays consistent.
+export function makeStackedModalError(cause) {
+  return new Error('Another dialog is already open. Close it and try again.', { cause })
+}

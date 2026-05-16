@@ -101,7 +101,18 @@ async function handleShareHashIfPresent() {
   try {
     history.replaceState(null, '', location.pathname)
   } catch {}
-  const payload = await openWorkspaceUnlockLinkDialog({ encoded })
+  let payload
+  try {
+    payload = await openWorkspaceUnlockLinkDialog({ encoded })
+  } catch (err) {
+    // Stacked-modal failure (or any other dialog open failure) —
+    // surface and bail so the caller doesn't proceed with an empty
+    // payload. Call out that this is the receiver-side unlock prompt
+    // (not the sender-side share dialog) so a user pasting a share
+    // link doesn't read the alert as "the link is corrupt".
+    alert(`Couldn't open the share-link unlock prompt: ${err.message}`)
+    return false
+  }
   if (!payload) return false
   // `attachSharedWorkspace` performs the id + (sanitised-)name
   // collision check AND the write inside one Web Lock acquisition,

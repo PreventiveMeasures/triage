@@ -39,8 +39,25 @@ const DIALOG_STRINGS = {
 }
 
 export function installHydrationConflictResolver() {
-  setHydrationConflictResolver((conflicts, _baseState, context) => {
+  setHydrationConflictResolver(async (conflicts, _baseState, context) => {
     const lookup = buildFindingLookupForLoadedReports(conflicts)
-    return resolveTriageConflicts(conflicts, lookup, DIALOG_STRINGS[context] ?? DIALOG_STRINGS.attach)
+    try {
+      return await resolveTriageConflicts(conflicts, lookup, DIALOG_STRINGS[context] ?? DIALOG_STRINGS.attach)
+    } catch {
+      // Stacked-modal failure — the user can't pick. Surface that we
+      // kept local for the disagreements so a chain catch-up doesn't
+      // silently override their view, then fall through to the
+      // null-returns-keep-local path in triage-sync. The "try again"
+      // suffix from `makeStackedModalError` doesn't apply — chain
+      // catch-up is passive and the local-wins default already
+      // propagates back to the chain on next save.
+      const n = conflicts.length
+      const what = context === 'attach' ? 'A report attach' : 'A workspace sync'
+      const recovery = context === 'attach'
+        ? 'Detach and re-attach the report to pick again.'
+        : 'Your local values will re-publish to the chain on the next change.'
+      alert(`${what} had ${n} triage disagreement${n === 1 ? '' : 's'} with your local view. Kept your local values because another dialog is open. ${recovery}`)
+      return null
+    }
   })
 }

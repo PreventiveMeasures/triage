@@ -17,6 +17,7 @@
 // in the global stylesheet apply directly.
 import { LitElement, html, nothing } from 'lit'
 import { isHttpUrl } from './format.js'
+import { makeStackedModalError } from './dom.js'
 
 // Swatch reads its hue from the global `--marker-*` custom
 // properties (see theme.css); the matching `.conflict-color-dot`
@@ -102,6 +103,7 @@ class TriageConflictDialog extends LitElement {
     conflicts: { attribute: false },
     findingLookup: { attribute: false },
     labels: { attribute: false },
+    _settled: { state: true },
   }
 
   // Light DOM — `.workspace-conflict-dialog` rules live in the
@@ -115,15 +117,32 @@ class TriageConflictDialog extends LitElement {
     this.conflicts = []
     this.findingLookup = new Map()
     this.labels = { ...DEFAULT_LABELS }
+    this._settled = false
   }
 
   // Show the modal once the <dialog> lands in the document. Uses
   // updateComplete-via-firstUpdated so the underlying element
   // exists before showModal() is called. Esc / backdrop / the
-  // explicit Cancel button all converge on `_finish(null)`.
+  // explicit Cancel button all converge on `_finish(null)`. A
+  // stacked-modal failure (another dialog is already open) dispatches
+  // 'modal-conflict' so the wrapper rejects — caller wraps that with
+  // an alert so the user knows their imported peer's triage decisions
+  // were skipped (otherwise the silent-keep-local fallback would
+  // discard the disagreements without any feedback).
   firstUpdated() {
     const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
+    if (!dialog) return
+    try {
+      dialog.showModal()
+    } catch (err) {
+      this._signalModalConflict(err)
+    }
+  }
+
+  _signalModalConflict(err) {
+    if (this._settled) return
+    this._settled = true
+    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
   }
 
   _finish(decisions) {
@@ -238,7 +257,10 @@ customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
 // Public API — same signature the imperative version exposed:
 // caller awaits the Promise; resolves with a `${id}:${property}`
-// → 'local' / 'imported' map, or null on cancel.
+// → 'local' / 'imported' map, or null on cancel. Rejects when
+// another modal is already open so the caller can surface that the
+// conflict resolution was skipped (the merge layer otherwise
+// silently keeps local for all disagreements).
 //
 // `findingLookup` is `Map<id, { severity, file, line, description }>`.
 // `labels` overrides the default copy: { title, intro, trailingNote,
@@ -246,7 +268,7 @@ customElements.define('triage-conflict-dialog', TriageConflictDialog)
 // generic "triage conflicts" wording; pass labels to specialise for
 // "import bundle" vs "report attach".
 export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const el = document.createElement('triage-conflict-dialog')
     el.conflicts = conflicts
     el.findingLookup = findingLookup
@@ -254,6 +276,10 @@ export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
     el.addEventListener('resolve', (e) => {
       el.remove()
       resolve(e.detail)
+    })
+    el.addEventListener('modal-conflict', (e) => {
+      el.remove()
+      reject(makeStackedModalError(e.detail?.cause))
     })
     document.body.append(el)
   })

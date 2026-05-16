@@ -1048,14 +1048,12 @@ dialog {
   }
 }
 
-/* `<workspace-share-link-dialog>` + `<workspace-unlock-link-dialog>`
-   — sender and receiver halves of the per-workspace "Share by link"
-   affordance. Both reuse the `.new-workspace-dialog` chrome (via the
-   dual class) and add a few extras: `.wsl-field` wraps each labeled
-   row, `.wsl-link` is the read-only textarea for the generated URL,
-   `.wsl-error` paints validation / failure copy in the critical hue. */
+/* Share-link sender + receiver dialogs and the encrypted-bundle export
+   dialog share the `.new-workspace-dialog` chrome plus a few extras:
+   `.wsl-field`, `.wsl-link`, `.wsl-error`, `.wsl-optout`, `.wsl-warning`. */
 .workspace-share-dialog,
-.workspace-unlock-dialog {
+.workspace-unlock-dialog,
+.workspace-export-dialog {
   max-width: 520px; width: min(94vw, 520px);
 
   & .wsl-field {
@@ -1082,6 +1080,23 @@ dialog {
   & .wsl-error {
     margin: .55rem 0 0;
     color: var(--critical, #f87171); font-size: .74rem; line-height: 1.4;
+  }
+  & .wsl-warning {
+    padding: .55rem .65rem;
+    border: 1px solid var(--critical, #f87171); border-radius: 6px;
+    background: rgb(from var(--critical, #f87171) r g b / .08);
+  }
+  & .wsl-optout {
+    display: flex; align-items: center; gap: .5rem;
+    margin-top: .7rem;
+    color: var(--text); font-size: .78rem;
+    cursor: pointer;
+
+    & input[type='checkbox'] { cursor: pointer; }
+  }
+  & .nwd-input:disabled {
+    opacity: .5;
+    cursor: not-allowed;
   }
 }
 
