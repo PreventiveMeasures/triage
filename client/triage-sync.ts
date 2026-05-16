@@ -881,24 +881,59 @@ const SESSION_STATE_LOCK = SESSION_STATE_KEY
 const SESSIONS_VERSION = 1
 
 // Latch — flipped true when `mutateAllSessions` finds an
-// `unknown-version` blob on disk and skips its write. Stays sticky
-// for the rest of the page-load so UI consumers can show a
-// degraded-persistence hint (the user's in-memory state isn't
-// being written through). Reset on next page-load. Audit follow-up
-// to round-15.
+// `unknown-version` blob on disk and skips its write. Tracks the
+// CURRENT state of persistence (was the last load result an
+// unknown-version blob?), not just a one-way sticky flag, so a user
+// who clears `localStorage[deepview.sync.sessions]` via DevTools
+// can recover within the same page-load without a reload. Both
+// flips (off→on AND on→off) fire registered listeners. Audit
+// follow-up to round-15 / PR #61 latch-lifecycle review.
 let persistenceDegradedLatch = false
-const persistenceDegradedListeners = new Set<() => void>()
-function markPersistenceDegraded(): void {
-  if (persistenceDegradedLatch) return
-  persistenceDegradedLatch = true
-  console.warn(
-    'triage-sync: persisted-sessions blob has an unrecognised version; skipping writes to avoid clobbering a future build\'s data. ' +
-    'Your in-memory triage state still works this session but will not persist across reload. ' +
-    'Clear localStorage[deepview.sync.sessions] to recover.',
-  )
-  for (const cb of persistenceDegradedListeners) {
-    try { cb() } catch (err) { console.warn('persistenceDegraded listener:', err) }
+const persistenceDegradedListeners = new Set<(degraded: boolean) => void>()
+function setPersistenceDegraded(next: boolean): void {
+  if (persistenceDegradedLatch === next) return
+  persistenceDegradedLatch = next
+  if (next) {
+    console.warn(
+      'triage-sync: persisted-sessions blob has an unrecognised version; skipping writes to avoid clobbering a future build\'s data. ' +
+      'Your in-memory triage state still works this session but will not persist across reload. ' +
+      'Clear localStorage[deepview.sync.sessions] to recover (note: same-tab DevTools removeItem doesn\'t fire the cross-tab `storage` event, so the badge clears on the NEXT successful save).',
+    )
+  } else {
+    // `warn` rather than `info` so operators correlating support
+    // tickets via screenshares / DevTools paste don't miss the
+    // recovery transition — Chrome/Firefox hide `info`-level logs
+    // by default in the standard filter set.
+    console.warn('triage-sync: persistence recovered; persisted-sessions blob is now writable.')
   }
+  for (const cb of persistenceDegradedListeners) {
+    try { cb(next) } catch (err) { console.warn('persistenceDegraded listener:', err) }
+  }
+}
+
+// Cross-tab persistence recovery. The `storage` event fires on
+// every OTHER tab when localStorage mutates. Tab-A clearing the
+// sessions blob from DevTools / the unlock-link flow / a user
+// "log out everywhere" affordance: tab-B's latch (if currently
+// degraded) needs to flip back so its UI hint disappears. Probe
+// `loadAllSessionsResult` on the storage event for the
+// SESSION_STATE_KEY; ignore other keys so we don't spin on
+// unrelated localStorage activity. Audit follow-up to PR #61
+// latch-lifecycle review.
+if (typeof globalThis.addEventListener === 'function') {
+  globalThis.addEventListener('storage', (e) => {
+    // Duck-type the `key` field rather than `instanceof StorageEvent`
+    // so the handler also works under Node test fixtures that
+    // synthesise a plain Event with the storage shape. In real
+    // browsers `addEventListener('storage', ...)` only receives
+    // StorageEvents, so the `as unknown as StorageEvent` narrowing
+    // would be redundant. Defense-in-depth: ignore events whose
+    // `key` isn't our sessions blob to avoid spinning on unrelated
+    // localStorage activity.
+    if (!('key' in e) || (e as StorageEvent).key !== SESSION_STATE_KEY) return
+    const r = loadAllSessionsResult()
+    setPersistenceDegraded(r.kind === 'unknown-version')
+  })
 }
 
 // Discriminated load result so `mutateAllSessions` can distinguish
@@ -950,16 +985,24 @@ function loadAllSessions(): PersistedSessionsMap {
   return (r.kind === 'v1' || r.kind === 'legacy') ? r.map : {}
 }
 
-function writeAllSessionsRaw(map: PersistedSessionsMap): void {
+// Returns true on a successful write, false on a swallowed
+// localStorage error (typically QuotaExceededError). Callers gate
+// `persistenceDegraded` clear-on-success on this — a quota-exceeded
+// write that the user can't see ("disk full" with no surfaced
+// error) is itself a form of degraded persistence and the UI
+// hint should stay on.
+function writeAllSessionsRaw(map: PersistedSessionsMap): boolean {
   try {
     localStorage.setItem(SESSION_STATE_KEY, JSON.stringify({
       version: SESSIONS_VERSION,
       sessions: map,
     }))
+    return true
   } catch (err) {
     // Likely QuotaExceededError — sync just falls back to the
     // "always start from null base" path on next reload.
     console.warn('Triage sync: could not persist session state:', err)
+    return false
   }
 }
 
@@ -1013,13 +1056,21 @@ export async function mutateAllSessions(mutator: SessionsMutator): Promise<void>
       // keyframe from server). Flip `persistenceDegraded` so the UI
       // can surface a hint to the user; `triageSync.persistenceDegraded`
       // exposes it. Audit follow-up to round-15.
-      markPersistenceDegraded()
+      setPersistenceDegraded(true)
       return
     }
     const all = (r.kind === 'v1' || r.kind === 'legacy') ? r.map : {}
     const result = await mutator(all)
     if (result === false) return
-    writeAllSessionsRaw(all)
+    const wroteSuccessfully = writeAllSessionsRaw(all)
+    // Clear the degraded latch ONLY on a confirmed successful
+    // write. A quota-exceeded write would silently fail (the
+    // catch in writeAllSessionsRaw logs but returns false) — if
+    // we cleared the latch unconditionally, the UI hint would
+    // disappear while persistence is still broken. The latch
+    // staying ON keeps the user informed that their state isn't
+    // being persisted. Audit follow-up to PR #80 cross-tab review.
+    if (wroteSuccessfully) setPersistenceDegraded(false)
   })
 }
 
@@ -2578,33 +2629,45 @@ export const triageSync = {
     if (changed) emitStatusIfChanged()
   },
 
-  // Becomes `true` (sticky for the page-load) when the persisted-
-  // sessions blob is from a future build we don't recognise and
-  // `mutateAllSessions` is therefore skipping its write. UI consumers
-  // (sync-status badge) read this to surface a "persistence
-  // degraded" hint — the in-memory state is fine for this session
-  // but won't survive a reload.
-  get persistenceDegraded(): boolean { return persistenceDegradedLatch },
-  // Subscribe to the degraded→clean→degraded transitions. Sticky:
-  // the latch is one-way per page-load (only ever flips off→on),
-  // so each subscriber receives AT MOST one callback over the
-  // session.
+  // Reflects whether the persisted-sessions blob is currently in
+  // an unknown-version state that `mutateAllSessions` is refusing
+  // to overwrite. UI consumers (sync-status badge) read this to
+  // surface a "persistence degraded" hint — the in-memory state
+  // works for this session but won't survive a reload until the
+  // blob is cleared.
   //
-  // Late subscribers — registered AFTER the latch has already
-  // flipped — are fired SYNCHRONOUSLY-on-microtask on subscribe so
-  // a lazily-mounted UI component (badge, toast) doesn't have to
-  // separately poll `persistenceDegraded` to discover the existing
-  // state. The unsubscribe function is still returned and works
-  // identically; calling it before the queued microtask runs is
-  // safe — the listener is removed before the dispatch and skipped.
-  onPersistenceDegraded(cb: () => void): () => void {
+  // Two-way: the latch flips OFF when a subsequent
+  // `mutateAllSessions` writes a recognized v1 shape (the user
+  // cleared the unknown-version blob via DevTools or another tab
+  // did so), and the cross-tab `storage` listener re-probes and
+  // aligns the latch when another tab mutates the sessions blob.
+  get persistenceDegraded(): boolean { return persistenceDegradedLatch },
+  // Subscribe to ALL degraded-state transitions (off↔on, both
+  // directions). The listener receives the new `degraded` value
+  // on every transition AND once on subscribe with the current
+  // state — so a lazily-mounted UI component (badge, toast)
+  // doesn't have to separately poll `persistenceDegraded` to
+  // discover the existing state. The on-subscribe fire is queued
+  // on a microtask so the subscribe call itself returns
+  // synchronously; the unsubscribe function is still returned and
+  // works identically — calling it before the queued microtask
+  // runs is safe (the listener is removed before the dispatch
+  // and skipped). Callback signature is `(degraded: boolean) =>
+  // void` so consumers can render the transition direction
+  // without re-reading `triageSync.persistenceDegraded`.
+  onPersistenceDegraded(cb: (degraded: boolean) => void): () => void {
     persistenceDegradedListeners.add(cb)
-    if (persistenceDegradedLatch) {
-      queueMicrotask(() => {
-        if (!persistenceDegradedListeners.has(cb)) return
-        try { cb() } catch (err) { console.warn('persistenceDegraded listener:', err) }
-      })
-    }
+    // Always fire on subscribe (regardless of current state) so
+    // consumers get a single signal to render the current value.
+    // Without this, a consumer subscribing while the latch is
+    // false would only see transitions GOING FORWARD and would
+    // miss the "I'm currently healthy" signal — forcing every
+    // consumer to also synchronously read `persistenceDegraded`
+    // at mount-time. Audit follow-up to PR #80 review.
+    queueMicrotask(() => {
+      if (!persistenceDegradedListeners.has(cb)) return
+      try { cb(persistenceDegradedLatch) } catch (err) { console.warn('persistenceDegraded listener:', err) }
+    })
     return () => persistenceDegradedListeners.delete(cb)
   },
 }

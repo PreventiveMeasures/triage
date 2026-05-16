@@ -3502,20 +3502,27 @@ describe('triage-sync client', () => {
     // write entirely so the future shape survives. Triggers the
     // `persistenceDegraded` latch so UI can surface a hint.
     triageSync.closeSession()
+    // Reset latch from any prior test by clearing the blob and
+    // driving mutateAllSessions through a successful write.
+    localStorage.removeItem('deepview.sync.sessions')
+    await mutateAllSessions((all) => { all['_reset'] = { serverUrl: 'wss://reset', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, false, 'pre-condition: latch clean')
     const futurePayload = JSON.stringify({ version: 99, sessions: { 'ws-future': { serverUrl: 'wss://later.example', baseRevision: 'rev-from-v99' } }, futureField: { whatever: 1 } })
     localStorage.setItem('deepview.sync.sessions', futurePayload)
-    let degradedFired = 0
-    const unsub = triageSync.onPersistenceDegraded(() => { degradedFired++ })
-    // Drive `mutateAllSessions` directly. The mutator would normally
-    // add or update a workspace entry; here it's a no-op that just
-    // exercises the skip-write path.
+    const transitions = []
+    const unsub = triageSync.onPersistenceDegraded((degraded) => { transitions.push(degraded) })
+    // queueMicrotask runs before this await resolves — initial fire
+    // captures the current (still-false) state.
+    await Promise.resolve()
+    assert.deepEqual(transitions, [false], 'subscribe fires once with current state (false)')
+    // Drive `mutateAllSessions` directly to hit the skip-write path.
     await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     unsub()
     // The future blob is still on disk byte-identical.
     assert.equal(localStorage.getItem('deepview.sync.sessions'), futurePayload, 'unrecognized future blob preserved')
-    // Latch flipped + listener fired exactly once (sticky).
+    // Latch flipped + listener received the off→on transition.
     assert.equal(triageSync.persistenceDegraded, true, 'persistenceDegraded latch on')
-    assert.equal(degradedFired, 1, 'onPersistenceDegraded listener fired once')
+    assert.deepEqual(transitions, [false, true], 'listener received initial state + transition')
   })
 
   it('mutateAllSessions recovers from a matching-version blob with corrupt sessions field', async () => {
@@ -3539,12 +3546,11 @@ describe('triage-sync client', () => {
     assert.ok(rewritten.sessions.probe, 'mutator entry persisted post-recovery')
   })
 
-  it('onPersistenceDegraded late subscribers fire once on subscribe when latch is already flipped', async () => {
-    // Audit follow-up: a lazily-mounted UI component (badge/toast)
-    // that subscribes AFTER the unknown-version skip-write fired
-    // should still see the degraded state without separately
-    // polling the getter. The late callback is queued on a
-    // microtask so the subscribe-and-immediately-unsubscribe path
+  it('onPersistenceDegraded late subscribers fire once with current state (both directions)', async () => {
+    // A lazily-mounted UI component (badge/toast) that subscribes
+    // AFTER the unknown-version skip-write fired should see the
+    // current state on the first callback. The late callback is
+    // queued on a microtask so subscribe-and-immediately-unsubscribe
     // is safe.
     triageSync.closeSession()
     const futurePayload = JSON.stringify({ version: 99, sessions: {} })
@@ -3553,20 +3559,18 @@ describe('triage-sync client', () => {
     // subscribing.
     await mutateAllSessions((all) => { all['probe-late'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, true, 'latch flipped pre-subscribe')
-    // Subscribe AFTER the flip. The callback should fire on the
-    // next microtask.
-    let lateFired = 0
-    const unsubLate = triageSync.onPersistenceDegraded(() => { lateFired++ })
-    // queueMicrotask resolves before this `await` returns.
+    // Subscribe AFTER the flip. The callback fires with the
+    // current `degraded === true` state.
+    const lateValues = []
+    const unsubLate = triageSync.onPersistenceDegraded((degraded) => { lateValues.push(degraded) })
     await Promise.resolve()
-    assert.equal(lateFired, 1, 'late subscriber received the missed event')
-    unsubLate()
-    // Unsubscribing before the next mutator hit means no extra
-    // calls — already-degraded latch is sticky so no further
-    // notifications regardless.
+    assert.deepEqual(lateValues, [true], 'late subscriber received initial state = true')
+    // Latch already-true → setPersistenceDegraded(true) is a no-op,
+    // no transition fires the listener.
     await mutateAllSessions((all) => { all['probe-late-2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     await Promise.resolve()
-    assert.equal(lateFired, 1, 'no spurious follow-up call after unsubscribe')
+    assert.deepEqual(lateValues, [true], 'no-op transition does not fire the listener')
+    unsubLate()
     // Unsubscribing IMMEDIATELY after subscribe (before the queued
     // microtask runs) suppresses the late dispatch — defends against
     // a component that mounts + unmounts in the same tick.
@@ -3575,6 +3579,99 @@ describe('triage-sync client', () => {
     unsubBounced()
     await Promise.resolve()
     assert.equal(bouncedFired, 0, 'subscribe+unsubscribe in same tick suppresses dispatch')
+  })
+
+  it('persistenceDegraded latch clears on a subsequent successful mutateAllSessions', async () => {
+    // Audit follow-up: the latch was previously sticky-per-page-load,
+    // so a user clearing the future-version blob via DevTools couldn't
+    // recover without a reload. Now: a successful write of a
+    // recognized v1 shape flips the latch off and fires listeners
+    // on the off transition.
+    triageSync.closeSession()
+    const futurePayload = JSON.stringify({ version: 99, sessions: {} })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    // Skip write → latch on.
+    await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, true, 'latch on after skipped write')
+    const transitions = []
+    const unsub = triageSync.onPersistenceDegraded((degraded) => { transitions.push(degraded) })
+    // Late-subscriber microtask fires once with the current state.
+    await Promise.resolve()
+    assert.deepEqual(transitions, [true], 'late subscriber sees current degraded state')
+    // Simulate the user clearing the future-version blob (DevTools
+    // / sibling tab).
+    localStorage.removeItem('deepview.sync.sessions')
+    // Next mutateAllSessions writes a recognized v1 shape → latch clears.
+    await mutateAllSessions((all) => { all['probe2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, false, 'latch cleared after successful write')
+    assert.deepEqual(transitions, [true, false], 'listener fired on the off transition')
+    unsub()
+  })
+
+  it('latch stays ON when writeAllSessionsRaw fails (quota path) — clear is gated on successful write', async () => {
+    // Audit follow-up to PR #80 review: a degraded user whose disk
+    // is full would see the UI hint disappear (clearing the latch)
+    // even though localStorage.setItem actually threw inside
+    // writeAllSessionsRaw and the warn was the only signal. Fixed
+    // by gating setPersistenceDegraded(false) on the write returning
+    // true. Simulate a quota throw via a patched setItem.
+    triageSync.closeSession()
+    // Pre-condition: latch on after a skip-write.
+    const futurePayload = JSON.stringify({ version: 99, sessions: {} })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await mutateAllSessions((all) => { all['probe-q'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, true, 'pre-condition: latch on')
+    // Clear the future blob and patch setItem to throw on the
+    // sessions key (simulating quota exceeded).
+    localStorage.removeItem('deepview.sync.sessions')
+    const origSetItem = localStorage.setItem
+    localStorage.setItem = function (k, v) {
+      if (k === 'deepview.sync.sessions') {
+        const err = new Error('quota exceeded (simulated)')
+        err.name = 'QuotaExceededError'
+        throw err
+      }
+      return origSetItem.call(this, k, v)
+    }
+    try {
+      await mutateAllSessions((all) => { all['probe-q2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+      // The write threw inside writeAllSessionsRaw (swallowed +
+      // warned). Latch must NOT clear — the user's state isn't
+      // persisted; the UI hint should stay on.
+      assert.equal(triageSync.persistenceDegraded, true, 'latch stays on when write fails')
+    } finally {
+      localStorage.setItem = origSetItem
+    }
+    // Recovery: a subsequent successful write clears the latch.
+    await mutateAllSessions((all) => { all['probe-q3'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, false, 'latch clears on subsequent successful write')
+  })
+
+  it('persistenceDegraded latch syncs across tabs via the `storage` event', async () => {
+    // Audit follow-up: with no cross-tab listener, tab-A's latch
+    // wouldn't reflect tab-B clearing the blob. Now the global
+    // `storage` event handler re-probes the load result and aligns.
+    triageSync.closeSession()
+    const futurePayload = JSON.stringify({ version: 99, sessions: {} })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await mutateAllSessions((all) => { all['probe-xtab'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, true)
+    // Simulate another tab clearing the blob via DevTools. The
+    // setItem from this same window does NOT fire the `storage`
+    // event in browsers (only OTHER windows see it), but in the
+    // Node test environment we dispatch the event manually to
+    // exercise the handler.
+    const recovered = JSON.stringify({ version: 1, sessions: {} })
+    localStorage.setItem('deepview.sync.sessions', recovered)
+    // Node doesn't expose `StorageEvent` globally; dispatch a plain
+    // Event with the storage shape — the handler duck-types on `key`.
+    const ev = new Event('storage')
+    Object.defineProperty(ev, 'key', { value: 'deepview.sync.sessions' })
+    Object.defineProperty(ev, 'newValue', { value: recovered })
+    Object.defineProperty(ev, 'oldValue', { value: futurePayload })
+    globalThis.dispatchEvent(ev)
+    // The handler re-probes synchronously.
+    assert.equal(triageSync.persistenceDegraded, false, 'cross-tab clear realigns the latch')
   })
 })
 

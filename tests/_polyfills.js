@@ -60,6 +60,21 @@ if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 
+// EventTarget on globalThis: in browsers `globalThis === window` is
+// already an EventTarget (`window.addEventListener('storage', ...)`
+// is the cross-tab notification path). Node's globalThis is a plain
+// object — no addEventListener / dispatchEvent — so client modules
+// that register a `'storage'` listener at module-load time would
+// silently skip registration in tests. Mount a minimal EventTarget
+// proxy so the listener attaches and the test can dispatch a
+// synthesised storage event. Idempotent guard for repeat imports.
+if (typeof globalThis.addEventListener !== 'function') {
+  const target = new EventTarget()
+  globalThis.addEventListener = target.addEventListener.bind(target)
+  globalThis.removeEventListener = target.removeEventListener.bind(target)
+  globalThis.dispatchEvent = target.dispatchEvent.bind(target)
+}
+
 // `navigator` exists on Node 22+ but with a tiny surface — no
 // `locks`. Native `navigator.locks` lands in Node 24. The
 // production code (`saveTriage`, `mutateAllSessions`,
