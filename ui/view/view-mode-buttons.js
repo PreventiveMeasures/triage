@@ -23,22 +23,30 @@ import { LitElement, html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 
 const VIEW_ICONS = {
-  // table   — four dense rows, like a spreadsheet
-  table: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
-    <rect x="2" y="3" width="12" height="1.6"/><rect x="2" y="6" width="12" height="1.6"/>
-    <rect x="2" y="9" width="12" height="1.6"/><rect x="2" y="12" width="12" height="1.6"/>
+  // table   — gridded cell layout
+  table: html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <line x1="3" x2="21" y1="9" y2="9"/>
+    <line x1="3" x2="21" y1="15" y2="15"/>
+    <line x1="9" x2="9" y1="3" y2="21"/>
   </svg>`,
-  // list    — three taller items with a row-bullet on the left
-  list: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
-    <rect x="2" y="3" width="2" height="2.2" rx=".4"/><rect x="6" y="3" width="9" height="2.2" rx=".4"/>
-    <rect x="2" y="7" width="2" height="2.2" rx=".4"/><rect x="6" y="7" width="9" height="2.2" rx=".4"/>
-    <rect x="2" y="11" width="2" height="2.2" rx=".4"/><rect x="6" y="11" width="9" height="2.2" rx=".4"/>
+  // list    — three full-width horizontal lines (no bullet dots).
+  // `stroke-linecap="round"` softens the line ends.
+  list: html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <line x1="3" x2="21" y1="6" y2="6"/>
+    <line x1="3" x2="21" y1="12" y2="12"/>
+    <line x1="3" x2="21" y1="18" y2="18"/>
   </svg>`,
-  // grouped — items under a section header band on top
+  // grouped — two header bands, each with two indented items below.
+  // Showing two distinct groups (vs one header + rows) is what
+  // visually communicates "grouping" instead of just "list w/ title".
   grouped: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
-    <rect x="2" y="2" width="12" height="2.4" rx=".5"/>
-    <rect x="3" y="6" width="11" height="1.6"/><rect x="3" y="8.5" width="11" height="1.6"/>
-    <rect x="3" y="11" width="11" height="1.6"/><rect x="3" y="13.5" width="11" height="1.6"/>
+    <rect x="2" y="1.5" width="12" height="2" rx=".4"/>
+    <rect x="5" y="4.4" width="9" height="1.3"/>
+    <rect x="5" y="6.2" width="9" height="1.3"/>
+    <rect x="2" y="8.5" width="12" height="2" rx=".4"/>
+    <rect x="5" y="11.4" width="9" height="1.3"/>
+    <rect x="5" y="13.2" width="9" height="1.3"/>
   </svg>`,
   // graph   — three nodes connected by edges
   graph: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">

@@ -722,37 +722,43 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            The selected option's text already advertises what it sorts
            by, plus a ↓ / ↑ arrow showing direction. Class
            sort-select lets toolbar.css give the button a touch more
-           padding than the generic toolbar select. -->
-      <select id="sort-select" class="sort-select" aria-label="Sort findings">
-        ${sortOpt('severity', 'Severity ↓')}
-        ${sortOpt('file', 'File ↑')}
-        ${showConfidence ? html`${sortOpt('confidence-desc', 'Confidence ↓')}${sortOpt('confidence-asc', 'Confidence ↑')}` : nothing}
-        ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
-      </select>
+           padding than the generic toolbar select. The .sort-wrapper
+           around it carries the custom chevron via ::after (pseudo-
+           elements don't render on bare <select> in any browser). -->
+      <span class="sort-wrapper">
+        <select id="sort-select" class="sort-select" aria-label="Sort findings">
+          ${sortOpt('severity', 'Severity ↓')}
+          ${sortOpt('file', 'File ↑')}
+          ${showConfidence ? html`${sortOpt('confidence-desc', 'Confidence ↓')}${sortOpt('confidence-asc', 'Confidence ↑')}` : nothing}
+          ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
+        </select>
+      </span>
       ${showSource ? html`<div class="sep"></div>
         <div class="source-toggle" role="group" aria-label="Source filter">
           ${srcChip('own', 'Sources')}
           ${srcChip('modules', 'Dependencies')}
         </div>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
-        <span class="conf-range-label">Confidence</span>
-        <!-- Dual-thumb slider replaces the prior min / max select
-             pair. Lower bound at 0 means "include findings without a
-             confidence rating"; upper bound at 10 means "no upper cap
-             (allow >10 outliers)" — both edges are how the user opts
-             out of that half of the filter (see filters.js /
-             matchesFilters). The conf-range-mirror element listens
-             for range-input events from the slider and patches its
-             own text during drag, so the toolbar doesn't re-render
-             every tick. On release a range-change event triggers a
-             full re-render and the property bindings here re-seed
-             the mirror in sync. -->
-        <range-slider
-          id="conf-range" min="0" max="10" step="1"
-          low=${state.filterConfMin}
-          high=${state.filterConfMax}
-          aria-label="Confidence range"></range-slider>
-        <conf-range-mirror id="conf-range-vals" class="conf-vals" for="conf-range" .low=${state.filterConfMin} .high=${state.filterConfMax}></conf-range-mirror>` : nothing}
+        <div class="conf-filter">
+          <span class="conf-range-label">Confidence</span>
+          <!-- Dual-thumb slider replaces the prior min / max select
+               pair. Lower bound at 0 means "include findings without a
+               confidence rating"; upper bound at 10 means "no upper cap
+               (allow >10 outliers)" — both edges are how the user opts
+               out of that half of the filter (see filters.js /
+               matchesFilters). The conf-range-mirror element listens
+               for range-input events from the slider and patches its
+               own text during drag, so the toolbar doesn't re-render
+               every tick. On release a range-change event triggers a
+               full re-render and the property bindings here re-seed
+               the mirror in sync. -->
+          <range-slider
+            id="conf-range" min="0" max="10" step="1"
+            low=${state.filterConfMin}
+            high=${state.filterConfMax}
+            aria-label="Confidence range"></range-slider>
+          <conf-range-mirror id="conf-range-vals" class="conf-vals" for="conf-range" .low=${state.filterConfMin} .high=${state.filterConfMax}></conf-range-mirror>
+        </div>` : nothing}
       ${triageSelectorTemplate(triageCounts)}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search

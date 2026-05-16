@@ -264,6 +264,30 @@ function tabTemplate(f, isActive) {
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}</span></button>`
 }
 
+// Confidence display for the finding-left badge column. Table mode
+// (where the card is shown as the side-details panel of a selected
+// row) renders a conic-gradient ring colored by severity, matching
+// the design prototype. List / grouped modes keep the plain
+// "<n>/10" stack so the cards stay compact.
+function confTemplate(f) {
+  if (state.viewMode === 'table') {
+    // Arc length in viewBox units. The circle's radius is 15.9155
+    // (circumference ≈ 100), so stroke-dasharray = "<conf*10> 100"
+    // draws an N% arc with the remainder invisible (no track ring).
+    const arc = f.confidence * 10
+    return html`<div class=${`conf-ring ${f.severity}`}>
+      <svg viewBox="0 0 36 36" aria-hidden="true">
+        <circle class="conf-ring-track" cx="18" cy="18" r="15.9155"/>
+        <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style=${`stroke-dasharray: ${arc} 100`}/>
+      </svg>
+      <span>${f.confidence}<small>/10</small></span>
+    </div>
+    <div class="value-label">Confidence</div>`
+  }
+  return html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div>
+    <div class="value-label">Confidence</div>`
+}
+
 // One tab body — finding-left (badge column) + the right-side stack
 // (line row, description, recommendation, conf reason). Only the
 // active body is `display: grid` on screen; print mode shows them
@@ -319,7 +343,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
     <div class="finding-left">
       <span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span>
       <div class="value-label">Severity</div>
-      ${f.confidence === undefined ? nothing : html`<div class="conf-score"><strong>${f.confidence}</strong>/10</div><div class="value-label">Confidence</div>`}
+      ${f.confidence === undefined ? nothing : confTemplate(f)}
       ${codeButton}
     </div>
     <div>

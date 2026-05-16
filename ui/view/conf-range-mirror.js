@@ -97,7 +97,7 @@ class ConfRangeMirror extends LitElement {
   }
 
   render() {
-    return html`${this.low}–${this.high}`
+    return html`<span>${this.low}</span><span class="dash">–</span><span>${this.high}</span>`
   }
 }
 

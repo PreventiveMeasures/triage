@@ -20,11 +20,48 @@
      pair, so the selected option carries the role label and
      deserves the visual weight a button would get. Slightly wider
      padding + a `min-width` so changing direction (`Severity ↓` →
-     `Confidence ↑`) doesn't shift its neighbour. */
+     `Confidence ↑`) doesn't shift its neighbour.
+
+     Native browser select arrow varies wildly across UAs (Chrome
+     puts a small triangle; Safari uses a chunky inset chevron) and
+     none of them sit nicely against the toolbar's chrome. Strip
+     the native chrome and draw our own chevron via a background
+     SVG, right-aligned with breathing room — same shape and tone
+     as the design prototype's `.field.select::after` (muted
+     45deg-rotated borders) but baked into the select so we don't
+     need a wrapper. */
   & select.sort-select {
-    padding: .3rem .55rem;
+    padding: .3rem 1.7rem .3rem .55rem;
     min-width: 8.5rem;
     font-weight: 500;
+    appearance: none; -webkit-appearance: none;
+    /* Transparent so the glass-shell toolbar shows through — matches
+       the sibling `.conf-filter` / `.source-toggle` / `.sev-chip`
+       treatment in the same row. Chevron is drawn by `.sort-wrapper
+       ::after` below since pseudo-elements don't apply to <select>. */
+    background: transparent;
+  }
+
+  /* Custom chevron — two muted borders rotated 45deg form a down-
+     chevron, same approach the design prototype uses for
+     `.field.select::after`. Sits inside the select's right padding
+     (1.7rem total → chevron at .55rem from the right with the
+     glyph itself ~.4rem wide). `pointer-events: none` so a click on
+     the chevron still falls through to the select. */
+  & .sort-wrapper {
+    position: relative;
+    display: inline-block;
+
+    &::after {
+      content: '';
+      position: absolute;
+      right: .7rem; top: 50%;
+      width: .35rem; height: .35rem;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: translateY(-70%) rotate(45deg);
+      pointer-events: none;
+    }
   }
 
   /* Confidence slider track tint + thumb fill flow off the toolbar's
@@ -37,9 +74,39 @@
   & .conf-vals {
     color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: .75rem;
+    font-size: .72rem;
     font-variant-numeric: tabular-nums;
-    min-width: 2.75rem;
+
+    /* Separator dash sits between the two value spans in a dimmer
+       tone with breathing room either side — matches the design
+       prototype's `.vals .sep` (faint color, 2px each side).
+       Class is `dash` (not `sep`) so the toolbar's group-separator
+       rule above doesn't apply its vertical border to this span. */
+    & .dash { color: var(--muted); margin: 0 .15rem; }
+  }
+
+  /* Confidence filter — bordered shell wrapping the label, the
+     dual-thumb slider, and the live `low – high` mirror. Matches
+     the design prototype's `.conf-slider`: subtle inset background,
+     soft border, label in the muted toolbar tone with slight
+     letter-spacing. The slider's own `0 .25rem` margin (above) is
+     reset here so the shell's flex `gap` controls spacing. */
+  & .conf-filter {
+    display: inline-flex; align-items: center;
+    height: 30px; box-sizing: border-box;
+    padding: 0 .55rem;
+    gap: .5rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+
+    & .conf-range-label {
+      color: var(--muted);
+      font-size: .7rem;
+      font-weight: 500;
+      letter-spacing: .04em;
+    }
+    & range-slider { margin: 0; }
   }
 
   & input[type='text'] {
@@ -88,27 +155,38 @@
 }
 .toolbar .trash-btn { margin-left: auto; }
 
-/* Triage state selector — Fixed / Invalid / Deleted segmented
+/* Triage state selector — Fixed / Invalid / Deleted / Ignored
    buttons that replace the prior single Trash button. Visible
    buttons follow the bucket counts; the active one (matching
-   state.shownTriage) takes the same accent color the trash-btn
-   used. Lives at the right of the toolbar row by default. */
+   state.shownTriage) takes the bucket's accent color. Lives at the
+   right of the toolbar row by default.
+
+   Shell mirrors `.source-toggle` above: a single bordered, rounded
+   container with flush chips inside divided by `border-right` on
+   every chip except the last. Per-bucket colors land on the active
+   chip's text only — the shared shell stays neutral. */
 .triage-selector {
   display: inline-flex;
-  gap: .25rem;
+  height: 30px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
 }
 .toolbar .triage-selector { margin-left: auto; }
 .triage-state-btn {
-  height: 30px; box-sizing: border-box;
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
-  font-family: inherit;
+  background: transparent; border: none; color: var(--muted);
+  padding: 0 .55rem; cursor: pointer;
+  display: inline-flex; align-items: center;
+  transition: background .12s, color .12s;
+  font-family: inherit; font-size: .8rem;
+
+  &:not(:last-child) { border-right: 1px solid var(--border); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  &.active { background: var(--surface-active); }
 }
-.triage-state-btn:hover { border-color: var(--accent); }
-.triage-state-btn.active.triage-state-deleted { border-color: var(--critical); color: var(--critical); }
-.triage-state-btn.active.triage-state-fixed   { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-.triage-state-btn.active.triage-state-invalid { border-color: var(--muted); color: var(--muted); }
-.triage-state-btn.active.triage-state-ignored { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+.triage-state-btn.active.triage-state-deleted { color: var(--critical); }
+.triage-state-btn.active.triage-state-fixed   { color: var(--green, #4ade80); }
+.triage-state-btn.active.triage-state-invalid { color: var(--muted); }
+.triage-state-btn.active.triage-state-ignored { color: var(--accent, #2563eb); }
 
 /* `<view-mode-buttons>` styles live outside `.toolbar` so the same
    chrome lands wherever the component is mounted — the findings
@@ -273,7 +351,7 @@ view-mode-buttons { display: contents; }
      mismatch as a visible step. */
   height: 30px; box-sizing: border-box;
   padding: 0 8px 0 7px;
-  background: var(--bg);
+  background: transparent;
   border: 1px solid var(--border); border-radius: 4px;
   color: var(--muted);
   font-size: .7rem; font-weight: 600;

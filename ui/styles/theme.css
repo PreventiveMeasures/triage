@@ -181,22 +181,13 @@ a { color: var(--accent); text-decoration: none; }
    built-ins are always defined — so this is safe to apply globally. */
 :not(:defined) { display: none; }
 
-/* Print button — fixed-position chrome control in the top-right
-   corner. Same glass shell as the toolbar / sidebar so it reads as
-   part of the matte-glass UI, not a floating widget. The sibling
-   `<theme-toggle>` Lit component carries an equivalent rule in its
-   shadow DOM (see view/theme.js). */
-#print-btn {
+/* Print + download buttons — fixed-position chrome controls in the
+   top-right corner. Same glass shell as the toolbar / sidebar so they
+   read as part of the matte-glass UI, not floating widgets. The
+   sibling `<theme-toggle>` Lit component carries an equivalent rule in
+   its shadow DOM (see view/theme.js). */
+#print-btn, #download-btn {
   position: fixed; right: .5rem;
-  /* Sits directly under the theme toggle — its top stacks below
-     the toggle's bottom (.5rem from the viewport top + 30px
-     toggle height + .35rem gap). Hidden by default; render() in
-     view/render.js toggles `body.show-print-btn` based on
-     (state.reports.length > 0 && state.currentView === 'findings')
-     so the button only appears where window.print() makes sense
-     (graph / files tabs strip the canvas / cards in print
-     anyway). */
-  top: calc(.5rem + 30px + .35rem);
   display: none;
   z-index: 1000;
   width: 30px; height: 30px;
@@ -213,6 +204,21 @@ a { color: var(--accent); text-decoration: none; }
   & svg { display: block; }
 }
 
-body.show-print-btn #print-btn { display: flex; }
+/* Print sits directly under the theme toggle — its top stacks below
+   the toggle's bottom (.5rem from the viewport top + 30px toggle
+   height + .35rem gap). Hidden by default; render() in view/render.js
+   toggles `body.show-print-btn` based on
+   (state.reports.length > 0 && state.currentView === 'findings')
+   so the button only appears where window.print() makes sense
+   (graph / files tabs strip the canvas / cards in print anyway). */
+#print-btn { top: calc(.5rem + 30px + .35rem); }
 
-@media print { #print-btn { display: none !important; } }
+/* Download sits directly under the print button, same .35rem gap. */
+#download-btn { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
+
+body.show-print-btn #print-btn,
+body.show-print-btn #download-btn { display: flex; }
+
+@media print {
+  #print-btn, #download-btn { display: none !important; }
+}
