@@ -351,13 +351,29 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     const existing = await listFiles()
     if (entry.disposed || !entry.remoteTags.has(tag)) return
     if (existing.includes(fileName)) return
-  } catch { return }
+  } catch (err) {
+    // OPFS listFiles failure (rare — usually a permission / quota
+    // issue). Log so the operator sees WHY the download didn't
+    // appear; without this every subsequent ensureRemoteNames pass
+    // retries silently. API ergonomics audit
+    // `ui/view/objstore-presence.js:343`.
+    console.warn(`auto-download: listFiles failed before saving "${fileName}":`, err)
+    return
+  }
   // Validate the decompressed text against `analyzeContent`. A
   // peer with the workspace key could PUT arbitrary bytes; refuse
   // anything that isn't a recognized report shape.
   let text
   try { text = decodeUtf8(await gunzipBytes(bytes)) }
-  catch { return }
+  catch (err) {
+    // Gunzip / utf8 decode failure usually means the peer-supplied
+    // bytes were corrupt or didn't go through saveFile/saveFileBytes
+    // — a forged blob from a buggy / malicious peer. Log under
+    // warn so it's visible without spamming for legitimate
+    // mis-matches.
+    console.warn(`auto-download: gunzip/decode of "${fileName}" failed (likely forged peer payload):`, err)
+    return
+  }
   if (entry.disposed || !entry.remoteTags.has(tag)) return
   const result = analyzeContent(text)
   if (!result.recognized) return
@@ -366,7 +382,16 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     if (entry.disposed || !entry.remoteTags.has(tag)) return
     setCount(fileName, result.count, result.source)
     await setReportWorkspace(fileName, entry.workspaceId)
-  } catch { return }
+  } catch (err) {
+    // OPFS quota-exceeded or workspace-blob lock failure. The user
+    // sees nothing — bytes were decrypted and validated but never
+    // persisted, and the next ensureRemoteNames pass repeats the
+    // whole gunzip + validate cycle. Log so quota / persistence
+    // failures surface in devtools. API ergonomics audit
+    // `ui/view/objstore-presence.js:358`.
+    console.warn(`auto-download: persisting "${fileName}" to workspace "${entry.workspaceId}" failed:`, err)
+    return
+  }
   if (entry.disposed) return
   for (const cb of autoDownloadListeners) {
     try { cb(entry.workspaceId, fileName) } catch {}

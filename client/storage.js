@@ -245,7 +245,15 @@ export async function readFile(name) {
       // result is already decided, and a write failure is harmless
       // (next read will retry the migration). Skipping the await
       // also keeps the read path fast on the migration pass.
-      saveFile(name, text).catch(() => {})
+      //
+      // Surface the failure via `console.warn` rather than silent
+      // swallow — a persistent QuotaExceeded here means EVERY read
+      // re-tries the migration forever; an operator inspecting
+      // OPFS / quota mysteries needs the breadcrumb. API ergonomics
+      // audit `client/storage.js:248`.
+      saveFile(name, text).catch((err) => {
+        console.warn(`storage: legacy-uncompressed migration of "${name}" failed:`, err)
+      })
       return text
     }
     const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
@@ -336,7 +344,21 @@ export async function deleteFile(name) {
   inFlight.delete(name)
   const dir = await getOpfsDir()
   if (dir) {
-    try { await dir.removeEntry(name) } catch {}
+    // Only swallow the "already gone" case (NotFoundError). Other
+    // failures — EACCES via NoModificationAllowedError, OPFS
+    // truncate failures wrapped as InvalidModificationError — must
+    // propagate; without this gate, `writeGen` is still bumped and
+    // `'delete'` listeners fire AS IF the removeEntry succeeded,
+    // so subscribers (bundle-finding-index, presence module) think
+    // the file is gone while OPFS still holds it. API ergonomics
+    // audit `client/storage.js:339`.
+    try { await dir.removeEntry(name) }
+    catch (err) {
+      if (!(err instanceof DOMException) || err.name !== 'NotFoundError') {
+        bumpWriteGen(name)
+        throw err
+      }
+    }
     // Post-commit bump — a readFile that started AFTER our pre-bump
     // but captured the File snapshot before `removeEntry` resolved
     // would otherwise observe a matching gen and re-cache the
