@@ -39,6 +39,46 @@ function firstLine(text) {
   return ''
 }
 
+// Split a description into title + body for the card view's typographic
+// layout. The first line acts as the title (bold heading) and the rest
+// is the body. We only treat the first line as a title when there's
+// actually a non-empty body after it — a single-line description stays
+// rendered as a plain `.desc` so JSON findings with one-paragraph
+// summaries don't get jarringly bolded.
+function splitDescription(text) {
+  if (!text) return { title: '', body: '' }
+  const nl = text.indexOf('\n')
+  if (nl < 0) return { title: '', body: text }
+  const body = text.slice(nl + 1).replace(/^\s+/u, '')
+  if (!body) return { title: '', body: text }
+  return { title: text.slice(0, nl).trim(), body }
+}
+
+// Render prose with inline highlights for `"quoted"` strings and
+// `` `code` `` spans — matches the prototype's `.summary q` /
+// `.title em` styling (`design/prototypes/DeepView.0.html`). The
+// surrounding delimiters are kept inside the highlighted region so a
+// reader still sees the original quote / backtick characters. Returns
+// the raw string when nothing matches so we don't churn out single-
+// child arrays for the common case of plain text.
+const INLINE_HL_RE = /"[^"\n]+"|`[^`\n]+`/gu
+function renderHighlighted(text) {
+  if (!text) return text
+  INLINE_HL_RE.lastIndex = 0
+  const parts = []
+  let lastIdx = 0
+  let m
+  while ((m = INLINE_HL_RE.exec(text)) !== null) {
+    if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
+    const cls = m[0].charCodeAt(0) === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
+    parts.push(html`<span class=${cls}>${m[0]}</span>`)
+    lastIdx = m.index + m[0].length
+  }
+  if (lastIdx === 0) return text
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx))
+  return parts
+}
+
 // Combined `file:line` link for the table-view row's location cell —
 // the row has no file header above it (unlike the list / grouped
 // views) so file + line live together in one slot. Returns a
@@ -338,6 +378,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
       >Code</button>`
     }
   }
+  const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f.exportName))
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -352,9 +393,10 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
         ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
-      <div class="desc">${stripExportMarker(f.description, f.exportName)}</div>
-      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${stripExportMarker(f.recommendation, f.exportName)}</div>` : nothing}
-      ${f.confidenceReason ? html`<div class="conf-reason">${stripExportMarker(f.confidenceReason, f.exportName)}</div>` : nothing}
+      ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
+      ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
+      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f.exportName))}</div>` : nothing}
+      ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f.exportName))}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)

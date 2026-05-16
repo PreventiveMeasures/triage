@@ -80,9 +80,58 @@
   &.active { display: grid; }
 }
 
-.desc { grid-column: 2; white-space: pre-line; }
-.recommendation { color: var(--green); margin-top: .25rem; font-size: .825rem; grid-column: 2; white-space: pre-line; }
-.conf-reason { color: var(--muted); font-size: .8rem; margin-top: .2rem; grid-column: 2; white-space: pre-line; }
+/* Typography matches the prototype's `.summary` block
+   (design/prototypes/DeepView.0.html). The description's first line
+   becomes a bold title; the rest renders as a slightly muted body
+   block. Inline `"quoted"` / `` `code` `` segments get tag-style
+   highlights via render-finding.js's renderHighlighted(). The
+   rationale (`.conf-reason`) sits below a dashed divider in italic
+   muted type so it reads as an explanatory note, not body prose.
+   Single-line descriptions still render as plain `.desc` so JSON
+   findings with one-paragraph summaries don't get jarringly bolded. */
+.desc-title {
+  grid-column: 2;
+  font-size: 1.08em; font-weight: 600;
+  letter-spacing: -.005em; line-height: 1.35;
+  color: var(--text);
+}
+.desc {
+  grid-column: 2; white-space: pre-line;
+  font-size: .96em; line-height: 1.6;
+  color: rgb(from var(--text) r g b / .82);
+  margin-top: .4rem;
+}
+.recommendation {
+  grid-column: 2; white-space: pre-line;
+  font-size: .92em; line-height: 1.55;
+  color: var(--green); margin-top: .4rem;
+}
+.conf-reason {
+  grid-column: 2; white-space: pre-line;
+  font-size: .92em; font-style: italic;
+  color: var(--muted);
+  margin-top: .6rem; padding-top: .55rem;
+  border-top: 1px dashed var(--border);
+}
+
+/* Inline highlights — `"quoted"` regions get a soft accent-tinted
+   chip; `` `code` `` spans get a monospace chip with the same
+   chrome. Both keep the original delimiters inside the chip so the
+   reader still sees them. Mirrors the prototype's `.summary q` and
+   `.title em` rules with our theme tokens. */
+.inline-quote {
+  background: rgb(from var(--accent) r g b / .1);
+  padding: .05em .35em; border-radius: 3px;
+  color: var(--text);
+}
+.inline-code {
+  background: var(--surface-active);
+  padding: .05em .35em; border-radius: 3px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  color: var(--text);
+}
 
 .line-row {
   display: flex; justify-content: space-between;
