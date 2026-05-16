@@ -64,6 +64,13 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // signature to fail. Cheaper to reject up-front, and consistent
   // with `verifyObjstorePutSig`'s `isSafeNonNegativeInt` gate.
   if (!Number.isSafeInteger(msg.expectedLength) || (msg.expectedLength as number) < 0 || (msg.expectedLength as number) > MAX_CONTENT_LENGTH) return
+  // Symmetric with `handleDelete`'s prevVersion gate (line 116) and
+  // `verifyObjstorePutSig`'s `isSafeIntOrNull` (sign.ts:119). Without
+  // this, a non-safe-integer `prevVersion` (NaN, 2^53+1, ...) would
+  // pass the typeof check below and reach sig verify, burning a
+  // hash + Ed25519 round-trip on a guaranteed-fail input. Input-
+  // validation audit `server/objstore/handlers.ts:76`.
+  if (msg.prevVersion != null && (typeof msg.prevVersion !== 'number' || !Number.isSafeInteger(msg.prevVersion))) return
   const nonce = deps.getNonce(socket)
   if (typeof nonce !== 'string') return
   if (!await verifyObjstorePutSig(msg, nonce)) {

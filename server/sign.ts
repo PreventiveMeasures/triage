@@ -82,13 +82,28 @@ function fromB64Url(str: string): Uint8Array<ArrayBuffer> {
 export function canonicalSave(
   { workspaceTag, base, keyframe, nonce, ciphertext }: SaveMsg,
 ): Uint8Array<ArrayBuffer> {
+  // Strict input gates — defense-in-depth against a future caller
+  // that invokes canonicalSave without going through handleSave's
+  // upstream `validTagSigBase` / `validNonce` / `validCiphertextShape`
+  // gates. `base` is `string | null` (previous revision's id); any
+  // non-string non-null value (object, array, number, ...) would
+  // otherwise coerce via `String(...)` to canonical bytes the client
+  // could never reproduce, producing a verify failure with a
+  // confusing diff in the canonical bytes rather than a clean drop.
+  // Mirrors the `isSafeNonNegativeInt` rigor that the objstore
+  // canonical builders apply. Input-validation audit
+  // `server/sign.ts:88`.
+  if (typeof workspaceTag !== 'string') throw new TypeError('canonicalSave: workspaceTag must be string')
+  if (typeof nonce !== 'string') throw new TypeError('canonicalSave: nonce must be string')
+  if (typeof ciphertext !== 'string') throw new TypeError('canonicalSave: ciphertext must be string')
+  if (base != null && typeof base !== 'string') throw new TypeError('canonicalSave: base must be string or null')
   return encodeUtf8([
     SAVE_DOMAIN,
-    workspaceTag as string,
-    base == null ? '' : String(base),
+    workspaceTag,
+    base ?? '',
     keyframe === true ? '1' : '',
-    nonce as string,
-    ciphertext as string,
+    nonce,
+    ciphertext,
   ].join('\n'))
 }
 

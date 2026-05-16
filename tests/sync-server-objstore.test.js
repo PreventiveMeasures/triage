@@ -581,6 +581,39 @@ describe('v1.objstore server (REST-primary)', () => {
     c.ws.close()
   })
 
+  it('put-begin with non-safe-int prevVersion → silent drop (handler gate matches sig-verifier)', async () => {
+    // `handlePutBegin`'s prevVersion gate was previously `typeof
+    // === 'number'` — asymmetric with `verifyObjstorePutSig`'s
+    // stricter `isSafeIntOrNull` (sign.ts:119). An unsafe-int
+    // prevVersion (2^53, 1.5, ...) would pass the wire gate, reach
+    // sig verify, fail there. Now rejected up-front for parity with
+    // `handleDelete:116`. Input-validation audit
+    // `server/objstore/handlers.ts:76`. (NaN / Infinity aren't
+    // testable over JSON — they serialise to `null` — but the same
+    // gate covers them deterministically since `Number.isSafeInteger`
+    // is false for both.)
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    const baseFields = {
+      workspaceTag: tag, resourceTag: 'r-prev-unsafe', prevVersion: null,
+      expectedLength: 8,
+      contentHash: syntheticHash(),
+    }
+    const sig = await signPut(sk, baseFields, c.connectionNonce)
+    // Unsafe-int prevVersion (2^53; safe-integer range is [-(2^53-1), 2^53-1]).
+    c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, prevVersion: Number.MAX_SAFE_INTEGER + 1, signature: sig }))
+    await c.expectSilent(150)
+    // Non-integer number.
+    c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, prevVersion: 1.5, signature: sig }))
+    await c.expectSilent(150)
+    // Sanity: prevVersion: null still issues a token.
+    const okSig = await signPut(sk, baseFields, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...baseFields, signature: okSig }))
+    const tok = await c.recv((m) => m.type === 'objstore-put-token' && m.resourceTag === 'r-prev-unsafe')
+    assert.equal(tok.workspaceTag, tag)
+    c.ws.close()
+  })
+
   it('WS upgrade outside /api/sync is rejected; HTTP outside /api/* is 404', async () => {
     // Bad WS path — connect should fail.
     const wsUrl = serverUrl.replace('/api/sync', '/wrong-path')
