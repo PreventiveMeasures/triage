@@ -1,12 +1,16 @@
-// `server/sign.ts` direct unit tests. The end-to-end paths through
-// `verifySaveSigAndCanonical` / `verifySubscribeSig` /
-// `computeRevisionIdFromCanonical` are exercised via
-// `tests/sync-server.test.js` (full WS round-trips) and the wire-
-// format goldens in `tests/sync-crypto-v1.test.js`. This file
-// targets the module's negative paths (bad shape / wrong key /
-// length-precheck) and the content-addressed-id contract so a
-// regression in any one branch surfaces here, without standing up
-// the WS server.
+// `server/sign.ts` direct unit tests. Uses the test-friendly
+// composition wrapper `verifySaveSigAndCanonical` for the save-path
+// negatives — production `handleSave` (server/index.ts) does NOT
+// call that wrapper; it composes `canonicalSave` +
+// `computeRevisionIdFromCanonical` + `verifyEd25519` separately so
+// the dup-precheck (`revisionExists`) can interleave between
+// canonical-derive and Ed25519-verify (round-9 H1 CPU-DoS defense).
+// The production WS round-trips are covered in
+// `tests/sync-server.test.js`; the wire-format goldens in
+// `tests/sync-crypto-v1.test.js`. This file targets the module's
+// negative paths (bad shape / wrong key / length-precheck) and the
+// content-addressed-id contract so a regression in any one branch
+// surfaces here, without standing up the WS server.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'

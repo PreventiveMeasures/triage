@@ -534,10 +534,17 @@ promise (a power loss between ack and the next WAL checkpoint
 under NORMAL would lose the row even though peers heard "this
 revision committed"). Round-9 M1.
 
-Single-process write semantics are sufficient because the JS event
-loop serialises handlers; for a multi-process deployment add
-`BEGIN IMMEDIATE` / `COMMIT` around `head + insert` or move
-id-assignment behind the UNIQUE-index retry loop.
+Multi-process deployments (Neon backend) are supported via the
+UNIQUE-violation recovery branch in `commitRevision` (see the
+`catch` block in `server/db.ts`): when two processes' INSERTs race
+on the same `(workspace_tag, seq)` or `(workspace_tag, id)`, the
+loser's unique-violation is caught and re-routed through a
+`revisionExists` + `headFor` refetch — emerging as either
+`inserted` (if the id IS the row we computed) or `stale-base` (if
+a sibling process landed a different id at our seq). Single-
+process SQLite serialises `commitRevision` per-workspace via the
+in-process `KeyedAsyncLock` so the multi-process path is only
+exercised on Neon.
 
 ## What the server CAN'T do
 

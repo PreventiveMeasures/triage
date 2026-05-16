@@ -55,6 +55,15 @@ export type SubscribeMsg = {
 // `Uint8Array<ArrayBuffer>` (not `<ArrayBufferLike>`) so the bytes
 // thread directly into `crypto.subtle.digest` — `BufferSource`
 // rejects SharedArrayBuffer-backed views.
+//
+// NOTE: `verifySaveSigAndCanonical` is a test-friendly composition
+// helper. Production `handleSave` in `server/index.ts` does NOT
+// call it — it composes `canonicalSave` +
+// `computeRevisionIdFromCanonical` + `verifyEd25519` separately so
+// the dup-precheck (`revisionExists`) can fire BEFORE the Ed25519
+// verify, closing the round-9 H1 CPU-DoS vector where a passive
+// observer floods captured saves. The wrapper exists for unit
+// tests that don't need the precheck ordering.
 export type VerifyResult =
   | { ok: true; canonical: Uint8Array<ArrayBuffer> }
   | { ok: false; canonical: null }
@@ -143,17 +152,22 @@ export async function verifyEd25519(
   }
 }
 
-// Verify the save signature AND return the canonical bytes the
-// signature was checked against, so a follow-up step (computing the
-// content-addressed revision id) hashes the EXACT bytes the
-// signature covered. The previous shape — separate `verifySaveSig`
-// + `computeRevisionId`, each calling `canonicalSave` independently
-// — was correct today but brittle: a future divergence in either
-// helper would let the stored id drift from the signed bytes,
-// breaking the protocol's content-addressed-id contract for
-// peers who recompute. Returns `{ ok: false, canonical: null }`
-// on bad shape / bad sig; `{ ok: true, canonical: <bytes> }` on
-// success.
+// Test-friendly composition: verify the save signature AND return
+// the canonical bytes the signature was checked against, so a
+// follow-up step (computing the content-addressed revision id)
+// hashes the EXACT bytes the signature covered. Returns
+// `{ ok: false, canonical: null }` on bad shape / bad sig;
+// `{ ok: true, canonical: <bytes> }` on success.
+//
+// NOT used by `server/index.ts handleSave`. Production composes
+// the smaller helpers (`canonicalSave`, `computeRevisionIdFromCanonical`,
+// `verifyEd25519`) separately so the dup-precheck via
+// `revisionExists` can fire BEFORE Ed25519-verify and skip the
+// expensive crypto work on a replayed save (round-9 H1 CPU-DoS
+// defense). The helper survives because unit tests in
+// `tests/server-sign.test.js` benefit from a clean single-call
+// surface; the round-9 H1 ordering is exercised end-to-end in
+// `tests/sync-server.test.js`.
 //
 // `encodeUtf8` throws on non-string or lone-surrogate input (any of
 // which on the wire is already a hostile / malformed message), so
@@ -182,8 +196,9 @@ export async function verifySaveSigAndCanonical(msg: SaveMsg): Promise<VerifyRes
 // Server doesn't get to assign ids: it derives the id from received
 // content and stores under that. Mirrors the client's
 // `computeRevisionId` so two ends always land on the same string.
-// Takes the canonical bytes returned by `verifySaveSigAndCanonical`
-// so the hash is over EXACTLY the bytes the signature covered.
+// Takes the canonical bytes produced by `canonicalSave` (or, in
+// tests, returned by `verifySaveSigAndCanonical`) so the hash is
+// over EXACTLY the bytes the signature covered.
 export async function computeRevisionIdFromCanonical(canonical: Uint8Array<ArrayBuffer>): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', canonical)
   return Buffer.from(new Uint8Array(digest)).toString('base64url')

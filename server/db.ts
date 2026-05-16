@@ -13,10 +13,14 @@
 // `keyframe` is `1` for a revision the client emits with the full
 // state baked in (rather than just a delta). The wire-level flag
 // is also covered by the signature, so the column value MUST match
-// what the signed canonical bytes claim — `verifySaveSigAndCanonical`
-// in server/sign.ts enforces this. Client-driven: the server only
-// stores what the client sent and treats keyframes as catch-up
-// roots when a from=null subscriber arrives.
+// what the signed canonical bytes claim — `canonicalSave` in
+// `server/sign.ts` (called from `handleSave` in `server/index.ts`)
+// encodes `keyframe ? '1' : ''` into the bytes that `verifyEd25519`
+// then checks against the wire-supplied signature, so a wire flag
+// that doesn't match what the signer hashed fails verify and never
+// reaches this column. Client-driven: the server only stores what
+// the client sent and treats keyframes as catch-up roots when a
+// from=null subscriber arrives.
 //
 // `node:sqlite` is the built-in driver (Node ≥ 22 experimental,
 // stable in 24+). The driver is synchronous under the hood; the

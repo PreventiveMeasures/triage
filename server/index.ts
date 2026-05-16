@@ -990,13 +990,17 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   }
   await new Promise<void>((resolve) => { wss.close(() => resolve()) })
   clearTimeout(terminateTimer)
-  // Drain in-flight handlers so a save that's mid-`await
-  // verifySaveSigAndCanonical` finishes its insertRevision before
-  // the DB closes. Without this, SIGINT during a save throws into
-  // the connection-level catch (silent log) and the row is lost
-  // even though the client may already have observed an ack from
-  // a separate broadcast path. `Promise.allSettled` so a single
-  // handler rejection doesn't abort the drain.
+  // Drain in-flight handlers so a save that's mid-pipeline finishes
+  // its insertRevision before the DB closes. `handleSave` splits
+  // canonicalSave + computeRevisionIdFromCanonical + revisionExists
+  // + verifyEd25519 + commitRevision across awaits (dup-precheck
+  // interleaved between id-derive and verify), so the in-flight
+  // window spans several yield points. Without this drain, SIGINT
+  // during a save throws into the connection-level catch (silent
+  // log) and the row is lost even though the client may already
+  // have observed an ack from a separate broadcast path.
+  // `Promise.allSettled` so a single handler rejection doesn't
+  // abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
   // objstoreHandle has no `close()`:
   //  - SQLite: it shares the workspace_revision handle's
