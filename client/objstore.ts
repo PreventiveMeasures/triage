@@ -284,8 +284,16 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // a misbehaving relay (or new protocol message we haven't taught
     // the client about) doesn't grow it without limit. FIFO eviction
     // — the oldest unmatched message is the least likely to be
-    // wanted by the next predicate.
-    if (queue.length > MAX_QUEUE_SIZE) queue.splice(0, queue.length - MAX_QUEUE_SIZE)
+    // wanted by the next predicate. The queue is documented to never
+    // grow in well-behaved code, so an eviction is a real signal:
+    // surface it via `console.warn` so a future debug session can
+    // see WHICH frame type accumulated. Transport audit follow-up
+    // `client/objstore.ts:288`.
+    if (queue.length > MAX_QUEUE_SIZE) {
+      const dropped = queue.splice(0, queue.length - MAX_QUEUE_SIZE)
+      const types = [...new Set(dropped.map((m) => (m as { type?: unknown }).type ?? '<no-type>'))].slice(0, 4)
+      console.warn(`objstore: dropping ${dropped.length} unmatched frame(s) over MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE} (types: ${types.join(', ')})`)
+    }
   })
 
   function recv(predicate: (m: WireMessage) => boolean): Promise<WireMessage> {

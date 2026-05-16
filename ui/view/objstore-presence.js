@@ -54,6 +54,24 @@ function notify() {
 // scheme + drop pathname. Returns null when sync isn't configured —
 // in that case we keep an empty entry around so isInRemote can still
 // answer false synchronously.
+// Stringify `entry.err` for inclusion in user-facing Error messages.
+// `entry.err` is typically an `Error` (e.g. `new Error('connect
+// failed')`) so `.message` is the readable form. But the boot path
+// captures rejection from `createObjstoreSession`, which can also
+// reject with a non-Error value (Web Locks API throws plain
+// `{ name, message }` DOMExceptions; `crypto.subtle.*` failures
+// surface as DOMException too). Falling back to `String(err)`
+// instead of bare `err` avoids producing `[object Object]` in the
+// thrown message. Memory-lifecycle audit follow-up
+// `ui/view/objstore-presence.js:374`.
+function formatEntryErr(err) {
+  if (err == null) return ''
+  if (err instanceof Error && err.message) return `: ${err.message}`
+  if (typeof err === 'string' && err) return `: ${err}`
+  if (typeof err === 'object' && typeof err.message === 'string' && err.message) return `: ${err.message}`
+  try { return `: ${String(err)}` } catch { return '' }
+}
+
 function httpOriginFromWsUrl(wsUrl) {
   try {
     const u = new URL(wsUrl)
@@ -407,7 +425,7 @@ export async function fetchFile(workspaceId, fileName) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
   if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${entry.err ? `: ${entry.err.message ?? entry.err}` : ''}`)
+  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
   return entry.session.fetch(fileName)
 }
 
@@ -427,7 +445,7 @@ export async function putFile(workspaceId, fileName, content) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
   if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${entry.err ? `: ${entry.err.message ?? entry.err}` : ''}`)
+  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
   // Optimistic first-upload precondition. The objstore session
   // tracks version monotonically internally (`seenVersions` —
   // populated by every put/fetch/list/broadcast), so on a
@@ -483,7 +501,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
     const entry = sessions.get(workspaceId)
     if (!entry) throw new Error(`Workspace ${workspaceId} could not be opened — not in listWorkspaces()?`)
     if (entry.ready && !entry.session) await entry.ready
-    if (!entry.session) throw new Error(`Objstore session is not connected${entry.err ? `: ${entry.err.message ?? entry.err}` : ''}`)
+    if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
     if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
     // Pre-compute the tag so we can drop it from the local cache
     // post-delete even if `fileTags` doesn't have an entry yet (a

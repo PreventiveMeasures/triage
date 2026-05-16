@@ -239,11 +239,16 @@ function buildDeleteLive(sql: NeonSql): RunStmt<[string, string]> {
   } }
 }
 
-function buildListAllStaging(sql: NeonSql): AllStmt<[], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }> {
-  return { all: async () => {
+function buildListAllStaging(sql: NeonSql): AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }> {
+  return { all: async (staleBefore) => {
+    // `WHERE begun_at < $1` uses workspace_object_staging_begun_at_idx
+    // so the reaper sweep is O(stale-rows) cluster-wide. DB-layout
+    // audit follow-up.
     const rows = await sql(
-      `SELECT workspace_tag, resource_tag, staging_id, begun_at FROM workspace_object_staging`,
-      [],
+      `SELECT workspace_tag, resource_tag, staging_id, begun_at
+       FROM workspace_object_staging
+       WHERE begun_at < $1`,
+      [staleBefore],
     ) as Array<Record<string, unknown>>
     return rows.map((r) => ({
       workspace_tag: String(r['workspace_tag']),

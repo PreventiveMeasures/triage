@@ -67,7 +67,15 @@ async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
 // column shouldn't be able to trick the reaper into unlinking
 // outside `handle.dir`. PR #4 review.
 async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: number): Promise<void> {
-  const staging = await handle.listAllStaging.all() as StagingRow[]
+  // Push the staleness filter into SQL so the
+  // `workspace_object_staging_begun_at_idx` index handles the scan.
+  // The pre-lock-snapshot is now O(stale-rows) cluster-wide; the
+  // per-lock fresh-read inside the loop still re-validates with the
+  // current begun_at to catch a refresh that landed between
+  // snapshot-time and lock-acquire-time. DB-layout audit
+  // `server/objstore/store.ts:312`.
+  const staleBefore = now - stagingTtlMs
+  const staging = await handle.listAllStaging.all(staleBefore) as StagingRow[]
   for (const s of staging) {
     if (!isValidTag(s.workspace_tag) || !isValidTag(s.resource_tag) || !isValidStagingId(s.staging_id)) {
       // Truncate fields — the full workspace_tag is an Ed25519 public
@@ -76,7 +84,6 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
       console.warn(`reaper: skipping malformed staging row tag=${String(s.workspace_tag).slice(0, 12)}… res=${String(s.resource_tag).slice(0, 8)}… sid=${String(s.staging_id).slice(0, 8)}…`)
       continue
     }
-    if (now - s.begun_at < stagingTtlMs) continue
     // Re-check freshness INSIDE the lock against the row's current
     // begun_at, not the pre-lock snapshot. A concurrent REST PUT
     // calls `refreshStagingBegunAt` right after the body finishes
@@ -91,8 +98,15 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
       const fresh = await handle.selectStaging.get(s.workspace_tag, s.resource_tag, s.staging_id)
       if (!fresh) return
       if (Date.now() - fresh.begun_at < stagingTtlMs) return
-      await unlinkIfExists(stagingFilePath(handle.dir, s.workspace_tag, s.staging_id))
+      // DB row first, then unlink — symmetric with deleteObject in
+      // store.ts. Inverting from the previous unlink-first order
+      // closes a narrow crash window where the file is gone but the
+      // row points at a missing path; the next reaper sweep's
+      // `unlinkIfExists` of an absent file is a no-op, so the
+      // inverted ordering self-heals via the reaper's idempotent
+      // re-sweep. Concurrency audit `server/objstore/reaper.ts:94`.
       await handle.deleteStaging.run(s.workspace_tag, s.resource_tag, s.staging_id)
+      await unlinkIfExists(stagingFilePath(handle.dir, s.workspace_tag, s.staging_id))
     })
   }
 }

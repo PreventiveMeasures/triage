@@ -1879,7 +1879,17 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
 
 async function handleMessage(data: unknown): Promise<void> {
   let msg: unknown
-  try { msg = JSON.parse(data as string) } catch { return }
+  try { msg = JSON.parse(data as string) }
+  catch (err) {
+    // A persistent malformed-message storm (server bug, MITM, proxy
+    // injecting HTML for an error page) is otherwise invisible to
+    // operators since the previous catch was empty. Single console
+    // line per malformed frame is acceptable; if it ever floods, a
+    // future debounced surface can replace this. API-ergonomics
+    // audit follow-up `client/triage-sync.ts:1805`.
+    console.warn('Triage sync: dropping malformed wire frame:', err)
+    return
+  }
   if (!msg || typeof msg !== 'object') return
   const wire = msg as WireMessage
   // Heartbeat — stateless, no per-session match needed. Cancel the

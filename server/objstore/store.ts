@@ -154,7 +154,12 @@ export type Handle = {
   selectLiveOne: GetStmt<[string, string], DbRow>
   upsertLive: RunStmt<[string, string, number, string, number, string, number]>
   deleteLive: RunStmt<[string, string]>
-  listAllStaging: AllStmt<[], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
+  // `[staleBefore]` — only rows whose `begun_at < staleBefore` are
+  // returned. The reaper passes `Date.now() - stagingTtlMs` so the
+  // index `workspace_object_staging_begun_at_idx` is used and the
+  // sweep is O(stale-rows) instead of O(in-flight-uploads-cluster-
+  // wide). DB-layout audit `server/objstore/store.ts:312`.
+  listAllStaging: AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
   listLiveTags: AllStmt<[], { workspace_tag: string }>
   countLive: GetStmt<[string], { c: number }>
 }
@@ -311,6 +316,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     listAllStaging: wrapAll(db.prepare(`
       SELECT workspace_tag, resource_tag, staging_id, begun_at
       FROM workspace_object_staging
+      WHERE begun_at < ?
     `)),
     listLiveTags: wrapAll(db.prepare(`
       SELECT DISTINCT workspace_tag FROM workspace_object
