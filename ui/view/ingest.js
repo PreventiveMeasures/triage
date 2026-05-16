@@ -18,6 +18,7 @@ import { deriveFindingId } from '../../common/finding-id.js'
 import { analyzeContent, removeCount, setCount } from '../../client/counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { deleteWorkspace, listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
+import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, openWorkspaceIds as presenceOpenWorkspaceIds } from './objstore-presence.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -193,6 +194,7 @@ export async function switchToFile(name, content) {
   for (const info of triageSync.openSessions) {
     if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
       triageSync.closeSession(info.workspaceId)
+      closePresence(info.workspaceId)
     }
   }
   state.reports = []
@@ -247,7 +249,10 @@ export async function switchToFile(name, content) {
   // is idempotent on already-open ids; same-workspace file switches
   // re-use the existing session — its `ids` self-refreshes via
   // `refreshSessionIds` on the next notify / chain.
-  for (const id of desiredWorkspaceIds) triageSync.openSession(id)
+  for (const id of desiredWorkspaceIds) {
+    triageSync.openSession(id)
+    openPresence(id)
+  }
   await renderSidebar()
 }
 
@@ -268,7 +273,15 @@ export async function switchToWorkspace(workspaceId) {
   const gen = ++loadGen
   // Tear the previous session down before we touch state.reports —
   // its workspace-id set is keyed off the old set of loaded reports
-  // and would mis-attribute edits otherwise.
+  // and would mis-attribute edits otherwise. Iterate the PRESENCE
+  // map (not `triageSync.openSessions`) so a presence entry opened
+  // by some other code path still gets closed here. The triage-
+  // sync sessions are torn down by `triageSync.closeSession()`
+  // below, which closes everything — symmetric with the presence
+  // sweep. Review r3242461702.
+  for (const id of presenceOpenWorkspaceIds()) {
+    if (id !== workspaceId) closePresence(id)
+  }
   triageSync.closeSession()
   // Same drop-out as switchToFile — opening a workspace lands in
   // findings, not the bundles / packages list.
@@ -311,6 +324,7 @@ export async function switchToWorkspace(workspaceId) {
   // build its workspace-id set. No-op when sync is disabled (no
   // server URL).
   triageSync.openSession(workspaceId)
+  openPresence(workspaceId)
   await renderSidebar()
 }
 
@@ -335,7 +349,7 @@ export async function switchToWorkspace(workspaceId) {
 // reachable from a kept report, keep-vs-wipe radio when orphans
 // exist). The default 'keep' is the no-op path and is what the
 // dialog resolves with when there are no orphans to ask about.
-export async function deleteCurrent({ triage = 'keep' } = {}) {
+export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null } = {}) {
   if (!state.currentFile) return
   // Bump the load generation so any switchTo* / ingestReport
   // already in flight bails before pushing into the cleared
@@ -343,6 +357,22 @@ export async function deleteCurrent({ triage = 'keep' } = {}) {
   // otherwise resurrect findings into the about-to-be-empty view.
   ++loadGen
   const name = state.currentFile
+  // Delete the remote copy FIRST. Doing the remote delete after
+  // the local one would leave a window where the next `openWorkspace`
+  // auto-download could re-pull the report (the remote tag is still
+  // there); ordering remote-first closes that window.
+  //
+  // Throw on `conflict` — the row is still in remote and a peer
+  // would otherwise auto-download it back the moment we proceed
+  // with the local delete (matching the "next openWorkspace would
+  // resurrect" guard this code is here to provide). `not-found`
+  // is fine (nothing to remove). Review r3242639305.
+  if (deleteFromRemote) {
+    const remoteResult = await deletePresence(deleteFromRemote, name)
+    if (remoteResult && remoteResult.ok === false && remoteResult.reason !== 'not-found') {
+      throw new Error(`Failed to delete '${name}' from remote: ${remoteResult.reason}`)
+    }
+  }
   await deleteFile(name)
   await setReportWorkspace(name, null)
   removeCount(name)
@@ -421,6 +451,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
   // mid-deletion view of state.reports and emitting a doomed
   // save against a chain whose identity is about to vanish.
   triageSync.closeSession(workspaceId)
+  closePresence(workspaceId)
   if (mode === 'delete') {
     // Drop each report's OPFS bytes and its localStorage sidekicks
     // (counts, repo URL). The reports array on a workspace owns the

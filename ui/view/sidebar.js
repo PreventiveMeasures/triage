@@ -8,6 +8,7 @@ import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
 import { ensureCounts, getCount } from '../../client/counts.js'
 import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } from '../../client/workspaces.js'
+import { deleteFromRemote as deleteRemote, isInRemote } from './objstore-presence.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
@@ -577,7 +578,14 @@ sidebar.addEventListener('click', async (e) => {
       alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
       return
     }
-    const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact })
+    // Workspace + remote presence for the deletion dialog: if
+    // the report is in this workspace's remote objstore inventory
+    // we surface a notice + auto-elect to delete it there too,
+    // because a local-only delete would race the next workspace
+    // open's auto-download and resurrect the file.
+    const owningWorkspace = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(name))
+    const inRemote = owningWorkspace ? isInRemote(owningWorkspace.id, name) : false
+    const { confirmed, triage, deleteFromRemote } = await openDeleteReportDialog({ name, triageImpact, inRemote })
     if (!confirmed) return
     // Round-1 review #3: the active file may have changed under
     // us (cross-tab switch / sibling-tab delete) while the
@@ -588,7 +596,7 @@ sidebar.addEventListener('click', async (e) => {
       alert(`Active report changed during confirmation; aborting delete of "${name}".`)
       return
     }
-    try { await deleteCurrent({ triage }) }
+    try { await deleteCurrent({ triage, deleteFromRemote: deleteFromRemote ? owningWorkspace?.id : null }) }
     catch (err) { alert(`Failed to delete report: ${err.message}`) }
     return
   }
@@ -836,6 +844,29 @@ sidebar.addEventListener('drop', async (e) => {
   clearDragOver()
   const wsTarget = e.target.closest('[data-workspace-id]')
   const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
+  // Drag-out of a workspace mirrors the delete dialog's "everywhere"
+  // path: if the source workspace held a remote copy, drop it from
+  // remote BEFORE the membership mutation lands locally. Without
+  // that, the next openWorkspace's auto-download would pull the
+  // file back into the source workspace and the drag-out would
+  // appear to undo itself. A drop INTO another workspace is a
+  // move (also clears the source's remote); the destination
+  // doesn't auto-upload — the user has to do that explicitly
+  // through the badge.
+  //
+  // `deleteRemote` opens the source workspace's presence session
+  // on demand if it isn't already active (review r3251765881) —
+  // a synchronous `isInRemote` pre-check would silently no-op
+  // when dragging from a non-active workspace. The remote
+  // delete is idempotent on missing rows, so issuing it for a
+  // file that wasn't in remote is a free no-op.
+  const sourceWorkspace = listWorkspaces().find(
+    (w) => Array.isArray(w.reports) && w.reports.includes(filename),
+  )
+  if (sourceWorkspace && sourceWorkspace.id !== targetId) {
+    try { await deleteRemote(sourceWorkspace.id, filename) }
+    catch (err) { console.warn(`Failed to remove '${filename}' from ${sourceWorkspace.name} remote:`, err) }
+  }
   await setReportWorkspace(filename, targetId)
   renderSidebar()
 })

@@ -52,7 +52,7 @@ async function gzipBytes(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
-async function gunzipBytes(bytes) {
+export async function gunzipBytes(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
@@ -259,6 +259,71 @@ export async function readFile(name) {
     return content
   } finally {
     inFlight.delete(name)
+  }
+}
+
+// Read the on-disk bytes for a report, unchanged. Where OPFS holds
+// the report it returns the gzipped bytes (the same shape
+// `saveFile` writes); on localStorage fallback it returns the
+// gzipped bytes too (after base64-decoding the LS string). Caller
+// is responsible for gunzipping if it wants the plaintext.
+//
+// Used by the objstore upload path so we can ship the existing
+// on-disk gzipped representation through the wire encryption layer
+// — no need to decompress and re-compress.
+export async function readFileBytes(name) {
+  const dir = await getOpfsDir()
+  if (dir) {
+    const fh = await dir.getFileHandle(name)
+    const file = await fh.getFile()
+    return new Uint8Array(await file.arrayBuffer())
+  }
+  const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
+  if (compressed === null) throw new Error(`File not found: ${name}`)
+  // Legacy localStorage path stored compressed strings (see
+  // `gzipString` / `gunzipString` below); decode the base64 wrapper
+  // back to bytes so this returns the on-disk gzip stream.
+  return Uint8Array.fromBase64(compressed)
+}
+
+// Write raw bytes to OPFS under `name` without re-compressing — the
+// inverse of `readFileBytes`. Bypasses the in-memory text cache
+// since the caller hands us bytes, not the parsed content. The
+// next `readFile(name)` will hit OPFS, decompress, and populate
+// the cache (matches the legacy-uncompressed migration path).
+//
+// Used by the objstore download path so a peer-uploaded gzipped
+// blob lands on disk byte-identical, preserving any non-UTF-8
+// safe content without going through a TextDecoder round-trip
+// that could corrupt it.
+export async function saveFileBytes(name, bytes) {
+  if (typeof name !== 'string' || name.includes('\0')) {
+    throw new Error(`Invalid report name: contains NUL byte or is not a string`)
+  }
+  bumpWriteGen(name)
+  cache.delete(name)
+  const dir = await getOpfsDir()
+  if (dir) {
+    const fh = await dir.getFileHandle(name, { create: true })
+    const writable = await fh.createWritable()
+    try {
+      await writable.write(bytes)
+      await writable.close()
+    } catch (err) {
+      bumpWriteGen(name)
+      throw err
+    }
+    bumpWriteGen(name)
+    notifyFileMutated(name, 'save')
+    return
+  }
+  try {
+    localStorage.setItem(LS_REPORT_PREFIX + name, bytes.toBase64())
+    bumpWriteGen(name)
+    notifyFileMutated(name, 'save')
+  } catch (err) {
+    bumpWriteGen(name)
+    throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
   }
 }
 

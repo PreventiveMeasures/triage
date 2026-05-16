@@ -28,7 +28,23 @@
   & header.page-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 1rem;
+    /* Cap matching the toolbar (.findings-content / its
+       .with-details `.toolbar` override below both pin the toolbar
+       at 1200px — see `toolbar.css`). The header rides the same
+       cap so its right edge sits above the toolbar's right edge,
+       not far out at the viewport edge where the sync-status badge
+       would otherwise collide with the fixed `<theme-toggle>` /
+       `#print-btn` stack pinned to viewport top-right. */
+    max-width: 1200px;
+    width: 100%;
     margin-bottom: 1.125rem;
+
+    /* Page-title fills the header so the sync-status badge nested
+       inside its `h1` (via Lit's `${reportSyncBadgeTemplate()}` in
+       the template) can right-align via `margin-left: auto`.
+       `min-width: 0` keeps long titles from blowing out the flex
+       container. */
+    & .page-title { flex: 1; min-width: 0; }
 
     & .page-title h1 {
       margin: 0 0 .25rem;
@@ -144,7 +160,76 @@
         background: var(--surface-active);
       }
     }
+
+    /* Per-report sync-status badge — rendered inside the title `h1`
+       (a flex row alongside file-chip / repo-chip / files-toggle-btn)
+       so it sits on the same baseline as those, not visually a half-
+       row above. `margin-left: auto` consumes the remaining space
+       inside the h1, pushing the badge to the header's right edge
+       (which is itself capped at max-width: 1200px above, so the
+       badge naturally aligns above the right end of the toolbar
+       below). Two states driven by `data-status`:
+         local — hard-drive icon, neutral chrome (report not in
+                 remote inventory yet); clickable to open the
+                 upload-confirmation dialog
+         cloud — cloud icon, accent border + accent text (every
+                 loaded report's tag is present in objstore.list())
+       Pill chrome mirrors the sibling .files-toggle-btn / .file-chip
+       so all chips in the title row share one height + corner
+       shape. */
+    & .report-sync-badge {
+      display: inline-flex; align-items: center; gap: .375rem;
+      min-height: 24px; box-sizing: border-box;
+      margin-left: auto;
+      padding: .125rem .5rem .125rem .4rem;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-family: inherit;
+      font-size: .72rem;
+      font-weight: 500;
+      cursor: default;
+      flex-shrink: 0;
+
+      & .sync-badge-icon { flex-shrink: 0; }
+      &[data-status='cloud'] {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      /* Workspace-aggregate variant: two side-by-side chips
+         ("N cloud / M local") with a divider between. Either chip
+         can be clickable (local opens multi-upload). */
+      & .sync-badge-chunk {
+        display: inline-flex; align-items: center; gap: .25rem;
+        background: transparent; border: 0; padding: 0; margin: 0;
+        font: inherit; color: inherit; cursor: inherit;
+      }
+      & .sync-badge-chunk.cloud { color: var(--accent); }
+      & .sync-badge-chunk.local { color: var(--muted); }
+      & .sync-badge-divider {
+        width: 1px; height: 14px; margin: 0 .125rem;
+        background: var(--border);
+      }
+      &.report-sync-badge-clickable { cursor: pointer; }
+      &.report-sync-badge-clickable .sync-badge-chunk.local { cursor: pointer; }
+      &.report-sync-badge-clickable:hover[data-status='local'] {
+        border-color: var(--accent);
+        color: var(--text);
+      }
+    }
   }
+}
+
+/* Narrow-viewport guard — below ~1530px the page-head's right edge
+   (after the 1200px cap above) gets close enough to the fixed
+   `<theme-toggle>` / `#print-btn` stack (right: .5rem of viewport,
+   30px wide) that they overlap. Reserve a 56px gutter on the right
+   so the badge inside the h1 always has clear space for the
+   toggle. The header itself shrinks; the title content reflows
+   inside `.page-title` via `flex-wrap`. */
+@media (width <= 1530px) {
+  #report header.page-head { padding-right: 56px; box-sizing: border-box; }
 }
 
 /* Findings list (cards / table / grouped rows) — max-width

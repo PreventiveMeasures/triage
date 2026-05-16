@@ -9,8 +9,10 @@ import { listFiles } from '../client/storage.js'
 import { renderSidebar } from './view/sidebar.js'
 import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { attachSharedWorkspace, listWorkspaces } from '../client/workspaces.js'
-import { setRedraw } from '../client/triage-sync.ts'
+import { setRedraw, triageSync } from '../client/triage-sync.ts'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
+import { onAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
+import { state } from '../client/state.ts'
 import { runLegacyOriginCheck } from './view/origin-check.js'
 import { render } from './view/render.js'
 import { extractShareEncoded } from '../client/workspace-share-link.js'
@@ -42,6 +44,32 @@ import './view/brotli-decompress.js'
 // repaints the view. The client/ layer doesn't import from ui/, so
 // this hook bridges the two.
 setRedraw(render)
+// objstore-presence's cache changes (initial list() snapshot, plus
+// live objstore-put / objstore-deleted broadcasts) repaint the
+// header sync-status badge. Re-uses the full render() rather than a
+// targeted DOM patch — Lit's `litRender(headerTpl, headerSlot)`
+// inside render() reconciles efficiently, and the no-active-report
+// early return short-circuits before any work happens.
+onPresenceChange(render)
+// triage-sync status transitions (off → connecting → online →
+// offline) gate the badge: it only renders while sync is `online`
+// (any other state means `isInRemote` can't give a trustworthy
+// answer, so showing "local" would be misleading).
+triageSync.onStatusChange(render)
+// Auto-download bridge — the presence module silently fetches +
+// saves peer-uploaded reports it discovers. If the workspace that
+// gained the new report is the active view, re-run
+// `switchToWorkspace` so the report lands in state.reports +
+// renders into the merged findings list. (renderSidebar already
+// picks up the new attachment via the membership listener; the
+// extra hop here is only for the merged-view refresh.)
+onAutoDownloaded(async (workspaceId) => {
+  if (state.currentWorkspace === workspaceId) {
+    await switchToWorkspace(workspaceId)
+  } else {
+    await renderSidebar()
+  }
+})
 // Same bridge for the report-attach conflict dialog: triage-sync
 // surfaces conflicts via a callback the UI installs here.
 installHydrationConflictResolver()

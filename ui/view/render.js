@@ -16,6 +16,8 @@ import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
 import { listWorkspaces } from '../../client/workspaces.js'
+import { triageSync } from '../../client/triage-sync.ts'
+import { isInRemote, remoteCount } from './objstore-presence.js'
 import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -399,7 +401,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
 
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}</h1>
+      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}${reportSyncBadgeTemplate()}</h1>
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
@@ -407,6 +409,215 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
       </div>
     </div>
   </header>`
+}
+
+// Sync-status badge — renders into the title h1 alongside the
+// file-chip / repo-chip so it sits on the same baseline. Two
+// shapes:
+//
+//   - Single-file view (state.currentFile in a workspace): one
+//     chip with `local` / `cloud` status. The whole element is a
+//     <button>; clicking `local` opens the upload-confirmation
+//     dialog. (`cloud` chip is non-interactive in v1.)
+//
+//   - Workspace view: two side-by-side chunks "N cloud / M local"
+//     inside an outer <div>. `N` is the workspace's full remote
+//     inventory size (synced + remote-only); `M` is the
+//     locally-loaded report count (synced + local-only).
+//     - Click "cloud" → download dialog scoped to remote-only
+//       reports (non-interactive if every remote file is local).
+//     - Click "local" → upload dialog scoped to local-only
+//       reports (non-interactive if every local file is uploaded).
+//
+// Gated on `triageSync.status === 'online'` — that's the
+// "connection up" signal. The empty-workspace case is intentionally
+// supported (mode === 'workspace', state.reports = []) so a user
+// who just created a workspace and joined a peer's chain still
+// sees the badge and can click "N cloud" to pull the peer's
+// reports down. (`reportSyncBadgeTemplate` only hides when BOTH
+// local and remote counts are zero.)
+function reportSyncBadgeTemplate() {
+  if (triageSync.status !== 'online') return nothing
+  if (state.currentView !== 'findings' && state.currentView !== 'files') return nothing
+  const wsContext = resolveWorkspaceContext()
+  if (!wsContext) return nothing
+  const { workspaceId, fileNames, mode } = wsContext
+  if (mode === 'single') {
+    const name = fileNames[0]
+    const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
+    return badgeChipButton({
+      status,
+      label: status,
+      title: status === 'cloud'
+        ? 'Synced to remote'
+        : 'Local only — click to upload',
+      onClick: status === 'local'
+        ? () => openUploadFromBadge({ workspaceId, fileNames: [name] })
+        : null,
+    })
+  }
+  // Workspace view — two chunks, "N cloud" and "M local", with
+  // each chunk suppressed when its count is zero. Counts:
+  //
+  //   N (cloud) — full remote inventory size (`remoteCount`), so
+  //               the badge surfaces the cloud-side total even
+  //               while background `fetchByTag` discovery is
+  //               still resolving names. A locally-loaded file
+  //               that is ALSO in remote contributes to N, not M
+  //               — "cloud" absorbs "synced" because the bytes are
+  //               already replicated.
+  //   M (local-only) — files in state.reports whose HMAC tag is
+  //                    NOT in the remote set. Partitioned via the
+  //                    synchronous `isInRemote` so a peer-just-
+  //                    uploaded file (whose name hasn't been
+  //                    decoded yet) doesn't briefly flicker into
+  //                    M and offer a redundant upload (review
+  //                    r3242197745).
+  //
+  // Clickability:
+  //   cloud chunk — clickable iff cloudCount > intersection, i.e.
+  //                 there's at least one remote-only entry to
+  //                 download. We compute intersection as
+  //                 (localCount − localOnly.length) which only
+  //                 needs the sync `isInRemote` map.
+  //   local chunk — clickable iff M > 0 (there's something to
+  //                 upload).
+  //
+  // Hides entirely when both chunks would render empty (e.g. a
+  // freshly-created workspace with no peers and no local
+  // reports). Empty-workspace bug fix #4.
+  const cloudCount = remoteCount(workspaceId)
+  const localOnly = fileNames.filter((n) => !isInRemote(workspaceId, n))
+  const intersection = fileNames.length - localOnly.length
+  const remoteOnlyCount = Math.max(0, cloudCount - intersection)
+  // `remoteOnlyCount` is the authoritative count (derived from the
+  // full HMAC-tag inventory). The click handler awaits
+  // `discoverRemoteFileNames` to materialize the actual file
+  // names before opening the download dialog — so we can drive
+  // the badge straight off the HMAC count without waiting for
+  // background `fetchByTag` discovery.
+  if (cloudCount === 0 && localOnly.length === 0) return nothing
+  const cloudClickable = remoteOnlyCount > 0
+  const localClickable = localOnly.length > 0
+  const wrapperTitle = [
+    cloudCount > 0 ? `${cloudCount} in cloud` : null,
+    localOnly.length > 0 ? `${localOnly.length} local-only` : null,
+    remoteOnlyCount > 0 ? `click "cloud" to download ${remoteOnlyCount}` : null,
+    localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
+  ].filter(Boolean).join(' — ')
+  const cloudChunk = cloudCount === 0 ? nothing
+    : cloudClickable
+      ? html`<button
+          type="button"
+          class="sync-badge-chunk cloud"
+          aria-label=${`${remoteOnlyCount} remote reports not yet downloaded — open download dialog`}
+          @click=${(e) => { e.stopPropagation(); openDownloadFromBadge({ workspaceId, localFileNames: fileNames }) }}
+        >${cloudIconTpl()}<span>${cloudCount} cloud</span></button>`
+      : html`<span class="sync-badge-chunk cloud" aria-label=${`${cloudCount} reports in remote`}>
+          ${cloudIconTpl()}<span>${cloudCount} cloud</span>
+        </span>`
+  const localChunk = localOnly.length === 0 ? nothing
+    : html`<button
+        type="button"
+        class="sync-badge-chunk local"
+        aria-label=${`${localOnly.length} reports not yet uploaded — open upload dialog`}
+        @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, fileNames: localOnly }) }}
+      >${localIconTpl()}<span>${localOnly.length} local</span></button>`
+  // The divider only shows when BOTH chunks are present.
+  const divider = (cloudCount > 0 && localOnly.length > 0)
+    ? html`<span class="sync-badge-divider" aria-hidden="true"></span>`
+    : nothing
+  return html`<div
+    class=${`report-sync-badge${cloudClickable || localClickable ? ' report-sync-badge-clickable' : ''}`}
+    data-status="mixed"
+    title=${wrapperTitle}
+  >${cloudChunk}${divider}${localChunk}</div>`
+}
+
+function badgeChipButton({ status, label, title, onClick }) {
+  const icon = status === 'cloud' ? cloudIconTpl() : localIconTpl()
+  const labelTpl = html`<span class="sync-badge-label">${label}</span>`
+  if (typeof onClick !== 'function') {
+    // Informational chip — render as a `<span>` so it doesn't pick
+    // up the disabled-button focus / tab semantics or land in the
+    // tab order with a no-op activation. Mirrors the workspace-
+    // aggregate non-clickable chunk (review r3242461680).
+    return html`<span
+      class="report-sync-badge"
+      data-status=${status}
+      title=${title}
+      aria-label=${`report sync status: ${label}`}
+    >${icon}${labelTpl}</span>`
+  }
+  return html`<button
+    type="button"
+    class="report-sync-badge report-sync-badge-clickable"
+    data-status=${status}
+    title=${title}
+    aria-label=${`report sync status: ${label}`}
+    @click=${onClick}
+  >${icon}${labelTpl}</button>`
+}
+
+function localIconTpl() {
+  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+    <line x1="6" y1="18" x2="6.01" y2="18"/>
+    <line x1="10" y1="18" x2="10.01" y2="18"/>
+    <path d="M6 14V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10"/>
+  </svg>`
+}
+
+function cloudIconTpl() {
+  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
+  </svg>`
+}
+
+async function openUploadFromBadge({ workspaceId, fileNames }) {
+  const { openUploadDialog } = await import('./upload-dialog.js')
+  await openUploadDialog({ workspaceId, fileNames })
+}
+
+async function openDownloadFromBadge({ workspaceId, localFileNames }) {
+  // Await the full background-discovery pass before opening the
+  // dialog. The badge's clickable cloud-chunk count (`cloudCount -
+  // intersection`) reflects the full HMAC-tag inventory, while
+  // `remoteFileNames` is sync and only returns names whose
+  // `fetchByTag` has already resolved. If we passed the sync
+  // list to the dialog, a partially-decoded inventory would open
+  // with fewer entries than the badge advertised — sometimes
+  // zero (review r3252019240). `discoverRemoteFileNames` awaits
+  // every in-flight + queues any not-yet-started discovery,
+  // returning the complete decoded set.
+  const { discoverRemoteFileNames } = await import('./objstore-presence.js')
+  const { openDownloadDialog } = await import('./download-dialog.js')
+  const allRemote = await discoverRemoteFileNames(workspaceId)
+  const localSet = new Set(localFileNames)
+  const fileNames = allRemote.filter((n) => !localSet.has(n))
+  await openDownloadDialog({ workspaceId, fileNames })
+}
+
+// Resolve which workspace + which loaded report file-names the
+// sync-status badge applies to. `mode` differentiates a single-file
+// view (one report from a workspace) from a workspace-merged view
+// (every loaded report) so the badge template can pick between the
+// `local` / `cloud` shape and the "N cloud / M local" aggregate.
+// Returns `null` if the active view isn't a report-in-workspace.
+function resolveWorkspaceContext() {
+  if (state.currentWorkspace) {
+    return {
+      mode: 'workspace',
+      workspaceId: state.currentWorkspace,
+      fileNames: state.reports.map((r) => r.fileName).filter((n) => typeof n === 'string'),
+    }
+  }
+  if (state.currentFile) {
+    const ws = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(state.currentFile))
+    if (!ws) return null
+    return { mode: 'single', workspaceId: ws.id, fileNames: [state.currentFile] }
+  }
+  return null
 }
 
 // Stats — clickable filter chips. Severity chips on the left, mark-color

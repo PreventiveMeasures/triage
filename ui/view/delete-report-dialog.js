@@ -1,29 +1,35 @@
 // `<delete-report-dialog>` — confirmation prompt that fronts the
 // sidebar's "Delete current" button. Always shown, even when no
 // persisted triage is attached, so the destructive action goes
-// through an explicit Cancel/Delete prompt. Three shapes based on
-// the precomputed triage impact:
-//   - no triage attached → terse note
-//   - all attached triage is also reachable from a kept report →
-//     reassuring note that nothing will be orphaned
-//   - some attached triage would be orphaned → radio (keep vs.
-//     wipe)
+// through an explicit Cancel/Delete prompt. Three concerns
+// composed into the same dialog:
+//   - triage impact (none / shared / orphan-radio)
+//   - whether the report is also stored in the workspace's remote
+//     objstore inventory — if so, the user picks "delete from this
+//     device only" vs "delete everywhere" (default everywhere, so
+//     the destructive choice doesn't slip past while reading)
+//   - the final destructive confirm
 //
 // Sibling of `<leave-workspace-dialog>`: native <dialog> for
 // focus-trap + Esc-to-cancel, light-DOM render so global
 // stylesheet rules in sidebar.css apply. Public
-// `openDeleteReportDialog({ name, triageImpact })` returns a
-// Promise that resolves to `{ confirmed, triage }` — `triage` is
-// 'keep' | 'wipe' (defaults to 'keep' / falls back when the radio
-// isn't shown).
-import { LitElement, html } from 'lit'
+// `openDeleteReportDialog({ name, triageImpact, inRemote })`
+// returns a Promise that resolves to `{ confirmed, triage,
+// deleteFromRemote }`.
+import { LitElement, html, nothing } from 'lit'
 
 class DeleteReportDialog extends LitElement {
   static properties = {
     reportName: { type: String },
     orphanedTriage: { type: Number },
     sharedTriage: { type: Number },
+    // `true` when the report exists in the workspace's remote
+    // objstore inventory. Drives the remote-side radio block + the
+    // body copy. The resolve-detail's `deleteFromRemote` flag rides
+    // the user's pick.
+    inRemote: { type: Boolean },
     _triage: { state: true },
+    _scope: { state: true },
   }
 
   // Light DOM — `.delete-report-dialog` rules live in sidebar.css.
@@ -34,11 +40,19 @@ class DeleteReportDialog extends LitElement {
     this.reportName = ''
     this.orphanedTriage = 0
     this.sharedTriage = 0
+    this.inRemote = false
     // Default to the non-destructive option: keep the orphaned
     // triage in localStorage so a re-import of the same report
     // resurfaces it automatically. The user has to actively pick
     // wipe to evict.
     this._triage = 'keep'
+    // Default to the FULL teardown when the report is in remote:
+    // the dialog's primary verb is "delete", and "this device
+    // only" leaves a confusing trail (auto-download will resurface
+    // the report on the next workspace open, since the bytes are
+    // still in the cloud). Users who want the local-only behavior
+    // pick it explicitly.
+    this._scope = 'everywhere'
   }
 
   firstUpdated() {
@@ -53,11 +67,16 @@ class DeleteReportDialog extends LitElement {
     this._settled = true
     const dialog = this.querySelector('dialog')
     if (dialog) dialog.close()
-    // Triage only matters when orphans exist; otherwise collapse
-    // to 'keep' (the no-op path).
     const triage = this.orphanedTriage > 0 ? this._triage : 'keep'
+    // `deleteFromRemote` only ever flips on when (1) the dialog
+    // was confirmed (Cancel/Esc → false), (2) the report is
+    // actually in remote, and (3) the user picked the
+    // "everywhere" scope. Pre-fix this was implicit (always-on
+    // when inRemote); the explicit radio + this final gate match
+    // what the user clicked.
+    const deleteFromRemote = Boolean(confirmed) && this.inRemote && this._scope === 'everywhere'
     this.dispatchEvent(new CustomEvent('resolve', {
-      detail: { confirmed: Boolean(confirmed), triage },
+      detail: { confirmed: Boolean(confirmed), triage, deleteFromRemote },
     }))
   }
 
@@ -65,6 +84,45 @@ class DeleteReportDialog extends LitElement {
   _onCancel = () => this._finish(false)
   _onConfirm = () => this._finish(true)
   _onTriageChange = (e) => { this._triage = e.target.value }
+  _onScopeChange = (e) => { this._scope = e.target.value }
+
+  _scopeSection() {
+    if (!this.inRemote) return nothing
+    // Two-radio choice. The descriptive hint under each option
+    // spells out the consequence so the user understands what
+    // "this device only" actually does (the workspace's remote
+    // copy survives, peers keep the report, AND auto-download
+    // will re-attach the file on the next workspace open).
+    return html`<fieldset class="lwd-choice">
+      <legend>This report is also stored in the workspace's <strong>remote</strong> inventory. What should happen there?</legend>
+      <label class="lwd-option">
+        <input
+          type="radio"
+          name="drd-scope"
+          value="everywhere"
+          ?checked=${this._scope === 'everywhere'}
+          @change=${this._onScopeChange}
+        >
+        <span class="lwd-option-text">
+          <span class="lwd-option-title">Delete everywhere</span>
+          <span class="lwd-option-hint">Remove from this device AND from the workspace's remote inventory. Other workspace members lose the report.</span>
+        </span>
+      </label>
+      <label class="lwd-option">
+        <input
+          type="radio"
+          name="drd-scope"
+          value="local"
+          ?checked=${this._scope === 'local'}
+          @change=${this._onScopeChange}
+        >
+        <span class="lwd-option-text">
+          <span class="lwd-option-title">Delete from this device only</span>
+          <span class="lwd-option-hint">Keep the report on remote — other members keep their copy, and this device will auto-download it again the next time you open the workspace.</span>
+        </span>
+      </label>
+    </fieldset>`
+  }
 
   _triageSection() {
     const orphan = this.orphanedTriage
@@ -114,8 +172,9 @@ class DeleteReportDialog extends LitElement {
         <h3>Delete report</h3>
       </header>
       <p class="lwd-body">
-        Delete <strong>"${this.reportName}"</strong> from this device?
+        Delete <strong>"${this.reportName}"</strong>?
       </p>
+      ${this._scopeSection()}
       ${this._triageSection()}
       <footer class="lwd-actions">
         <span class="lwd-spacer"></span>
@@ -128,15 +187,20 @@ class DeleteReportDialog extends LitElement {
 
 customElements.define('delete-report-dialog', DeleteReportDialog)
 
-// Public entry point. Resolves with `{ confirmed, triage }`.
-// Cancel / Esc / native close all resolve to `{ confirmed: false,
-// triage: 'keep' }`.
-export function openDeleteReportDialog({ name, triageImpact } = {}) {
+// Public entry point. Resolves with `{ confirmed, triage,
+// deleteFromRemote }`. Cancel / Esc / native close all resolve to
+// `{ confirmed: false, triage: 'keep', deleteFromRemote: false }`.
+// Pass `inRemote: true` when the workspace's objstore session
+// holds a copy of the report — the dialog will surface the
+// remote-scope radio and the resolved `deleteFromRemote` flips on
+// for the user's pick.
+export function openDeleteReportDialog({ name, triageImpact, inRemote } = {}) {
   return new Promise((resolve) => {
     const el = document.createElement('delete-report-dialog')
     el.reportName = name ?? ''
     el.orphanedTriage = triageImpact?.orphanedCount ?? 0
     el.sharedTriage = triageImpact?.sharedCount ?? 0
+    el.inRemote = Boolean(inRemote)
     el.addEventListener('resolve', (e) => {
       el.remove()
       resolve(e.detail)
