@@ -3148,25 +3148,33 @@ describe('triage-sync client', () => {
     // Audit M2 round-4: a save that's mid-encryption when the user
     // disables sync leaves `session.encrypting=true` stranded; the
     // next `trySendSave` (after re-enable) sees it and redundantly
-    // raises `pendingSave`. The reset paths now clear the flag.
+    // raises `pendingSave`. The reset paths now clear the flag at
+    // client/triage-sync.ts:2215.
+    //
+    // sessionInfo (client/triage-sync.ts:2433) exposes `encrypting`,
+    // so we can pin the property directly: after a settled save +
+    // setEnabled toggle, `encrypting` is observably false (the
+    // toggle's reset path ran). Catching the IIFE mid-encrypt
+    // deterministically would need an encryptJson stub; the
+    // steady-state assertion below is the strongest black-box pin
+    // available without one.
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
-    // Manually pin `encrypting=true` to simulate an in-flight IIFE
-    // that hasn't returned. (Capturing the real race deterministically
-    // would need encryptJson stubbing; the explicit set is the same
-    // observable.)
-    const sessions = (await import('../client/triage-sync.ts')).triageSync.openSessions
-    void sessions  // touch import; we read via sessionInfo below
-    // sessionInfo doesn't expose `encrypting` directly, but `setEnabled`
-    // is the documented reset point — invoke it and verify state.
+    // Steady-state pre-condition: encrypting cleared by the
+    // settled save's own success path (line 1403).
+    assert.equal(triageSync.sessionInfo(wsId).encrypting, false, 'baseline encrypting=false post-ack')
+    // Toggle disable / enable. The reset path inside setEnabled(false)
+    // walks every session and clears `encrypting` (line 2215). Even
+    // if the steady-state pre-condition already had it false, this
+    // pins that the reset path doesn't TURN IT BACK ON.
     triageSync.setEnabled(false)
+    assert.equal(triageSync.sessionInfo(wsId).encrypting, false, 'setEnabled(false) leaves encrypting=false')
     triageSync.setEnabled(true)
     await waitFor(statusOnline, 'reconnected after toggle')
-    // After re-enable, a fresh save must complete cleanly; if
-    // `encrypting=true` had been stranded, the trySendSave would
-    // raise pendingSave (no-op observable) but the ack still lands.
+    assert.equal(triageSync.sessionInfo(wsId).encrypting, false, 'setEnabled(true) leaves encrypting=false')
+    // A fresh save after re-enable still completes cleanly.
     state.markers.set('finding-A', 'green')
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'follow-up ack after toggle')

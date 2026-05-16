@@ -298,12 +298,19 @@ describe('triage-sync client races', () => {
   // ──────────────────────────────────────────────────────────────
 
   it('closeSession during an in-flight save: persisted state stays consistent (no half-save)', async () => {
-    // The session can be closed while a save is mid-flight (REST
-    // ack hasn't returned). The close handler clears `pending` /
-    // `pendingSave`; the in-flight encryption's eventual send
-    // hits a closed socket and is silently dropped. We pin that
-    // the localStorage-persisted base after close matches the
-    // last acked save (not the in-flight one).
+    // The session can be closed while a save is mid-encryption.
+    // `closeSession` (client/triage-sync.ts:2407-2417) only removes
+    // the entry from the `sessions` map — the underlying WS socket
+    // stays open and is shared across sessions. The drop mechanism
+    // for an in-flight save IIFE is the `sessions.get(workspaceId)
+    // !== session` re-check at line 1358-1359, run AFTER the
+    // encrypt-await: the captured session reference no longer
+    // matches the map entry, so the IIFE bails before `send()`.
+    //
+    // We pin the externally-observable invariant: the localStorage-
+    // persisted base after close matches the last fully-acked save
+    // (the post-close save's encrypt result is dropped by the
+    // identity recheck, never reaches persist).
     const wsId = await startSession(['finding-close'])
     try {
       state.markers.set('finding-close', 'red')

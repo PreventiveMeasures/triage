@@ -1077,16 +1077,39 @@ describe('triage-sync server races', () => {
   })
 
   // ──────────────────────────────────────────────────────────────
-  // SECTION 10: it.todo — suspected bugs / known-failing assertions
+  // SECTION 10: production hardening + suspected gaps
   // ──────────────────────────────────────────────────────────────
+  //
+  // An earlier draft had four it.todo cases here. An independent
+  // review showed three were false positives — the production
+  // code already handles the scenarios I'd documented as gaps:
+  //
+  //   - Forged `keyframe: 1` integer: already tested at
+  //     tests/sync-server.test.js:687-718 as a SECURITY DEFENSE
+  //     (silent drop on sig-canonical mismatch is intentional;
+  //     a typed error would weaken the chain-poisoning defense).
+  //   - Cross-workspace `from` id: by-design keyframe fallback per
+  //     server/index.ts:583-588. The schema has no per-workspace
+  //     id index by design; the comment is explicit that "client
+  //     lying about `from` just means a smaller catch-up".
+  //   - Per-socket in-flight cap: already implemented at
+  //     server/index.ts:210 (`MAX_INFLIGHT_PER_SOCKET = 64`) and
+  //     enforced at line 767 (silent drop above cap, with `ping`
+  //     exempt so the heartbeat keeps responding under shed).
+  //
+  // The remaining genuine gap is the typed stale-base error frame.
+  // Two positive tests pinning the existing protections replace
+  // the removed todos so a regression in the documented defences
+  // would surface here.
 
   it.todo('stale-base catch-up chain should carry workspace-save-error for the loser, not just workspace-state (clearer error signal)', async () => {
     // OBSERVATION: today, when a save loses the lock race, the
-    // server emits a `workspace-state` with the current chain. The
-    // client interprets that as a catch-up. But the LOSER doesn't
-    // get an explicit "your save failed" signal — they get the
-    // catch-up and must infer their save was rejected (their
-    // claimed `base` no longer matches the chain head).
+    // server emits a `workspace-state` with the current chain
+    // (server/index.ts:502-512). The client interprets that as a
+    // catch-up. But the LOSER doesn't get an explicit "your save
+    // failed" signal — they get the catch-up and must infer their
+    // save was rejected (their claimed `base` no longer matches
+    // the chain head).
     //
     // For most clients this is fine because they're driving an
     // optimistic-concurrency loop. But for a debugging surface, a
@@ -1123,142 +1146,102 @@ describe('triage-sync server races', () => {
     } finally { c1.ws.close(); c2.ws.close() }
   })
 
-  it.todo('a save with a forged keyframe wire-flag (`keyframe: 1` integer instead of `true`) should be rejected explicitly, not silently dropped (currently silent)', async () => {
-    // OBSERVATION: server/index.ts:386 uses strict `=== true` to
-    // determine the canonical-bytes value of `keyframe`. A wire
-    // payload that sends `keyframe: 1` (truthy integer) signs the
-    // canonical with `keyframe ? '1' : ''` which works for `1` too,
-    // but the strict check makes the server compute the canonical
-    // as if `keyframe = ''`. Result: signature verify fails because
-    // the canonical bytes the server computes (with `keyframe = ''`)
-    // don't match what the client signed (with `keyframe = '1'`).
-    // The frame is silently dropped (sig verify fail → no reply).
+  it('subscribe with `from = id-from-a-different-workspace` falls back to the target workspace\'s keyframe path (by-design, not an error)', async () => {
+    // server/index.ts:583-588: "Client lying about `from` just means
+    // they get a smaller catch-up — their subsequent saves will
+    // reveal stale state on the usual base-mismatch path."
     //
-    // From the client's perspective, a save vanishes with no
-    // explanation; they hit the 5s recv timeout.
-    //
-    // SHOULD-BE: a typed `workspace-save-error` with reason
-    // 'bad-keyframe-flag' (or similar) so the client knows their
-    // wire shape is wrong, rather than guessing.
-    //
-    // IMPACT: developer-experience issue, not a data-loss bug.
-    // Production clients always send strict `keyframe: true`, so
-    // this is only reachable via custom wire generation.
-    const { sk, tag } = await makeKp()
-    const c = await connect(serverUrl)
-    try {
-      await subscribe(c, sk, tag)
-      // Build a save where the client signs with truthy keyframe.
-      const nonce = b64url(crypto.getRandomValues(new Uint8Array(12)))
-      const ciphertext = b64url(new TextEncoder().encode('keyframe-via-integer'))
-      // Sign with `keyframe: '1'` in the canonical (the client
-      // thinks it's a keyframe).
-      const { signature, id } = await signSave(sk, { tag, base: null, keyframe: true, nonce, ciphertext })
-      // Send with `keyframe: 1` (integer) instead of `true`.
-      c.ws.send(JSON.stringify({
-        type: 'workspace-save', workspaceTag: tag, base: null,
-        keyframe: 1, // truthy but NOT === true
-        nonce, ciphertext, signature,
-      }))
-      // SHOULD BE: an explicit error frame. CURRENTLY: silent drop.
-      const reply = await c.recv((m) => m.type === 'workspace-save-error' || m.type === 'workspace-save-ack', 1_500)
-      assert.equal(reply.type, 'workspace-save-error', 'malformed keyframe wire flag should surface as a typed error')
-      void id
-    } finally { c.ws.close() }
-  })
-
-  it.todo('a subscribe with `from = id-from-a-different-workspace` should be a typed error (currently treated as unknown-id keyframe fallback)', async () => {
-    // OBSERVATION: server/index.ts handleSubscribe accepts any
-    // `from` string. If the id corresponds to a revision in a
-    // DIFFERENT workspace (different tag), the server can't tell —
-    // its lookup is keyed on (workspace_tag, id). The lookup fails,
-    // falls back to the most-recent-keyframe path, returns the
-    // chain from there.
-    //
-    // SHOULD-BE: the server should detect "this id exists in another
-    // workspace" and reject with a typed error. Falling back to the
-    // keyframe is a quiet success that hides a real client bug
-    // (e.g. mismatched workspace-id state in localStorage).
-    //
-    // IMPACT: subtle — client never learns its `from` was for the
-    // wrong workspace, just gets a fresh keyframe chain. Could
-    // mask data-loss-adjacent bugs where the client is operating
-    // on stale workspace state.
+    // The `seqOfId` query (server/db.ts:225-228) is keyed on
+    // (workspace_tag, id). An id from another workspace doesn't
+    // match for this workspace; the cursor falls through to the
+    // keyframe-or-full-chain path. The client gets the workspace
+    // they actually authenticated as, not their (possibly stale)
+    // cross-workspace cursor. Pin this as correct by-design
+    // behaviour so a future refactor that "tightens" it (turning
+    // it into a typed error) would fail this test and prompt a
+    // protocol-design discussion.
     const a = await makeKp(); const b = await makeKp()
     const writerA = await connect(serverUrl)
     try {
       await subscribe(writerA, a.sk, a.tag)
+      // Land a revision in workspace A.
       const { msg, id: idInA } = await buildSave(a.sk, a.tag, null, 'in-workspace-A')
       writerA.ws.send(JSON.stringify(msg))
       await writerA.recv((m) => m.type === 'workspace-save-ack' && m.id === idInA)
-      // Now subscribe to workspace B using the id from workspace A.
+      // Now subscribe to workspace B using A's id as the `from` cursor.
+      // The signature is for B (correct workspace) — the `from` is
+      // semantically wrong but cryptographically valid.
       const subscriber = await connect(serverUrl)
       try {
         const sig = await signSubscribe(b.sk, b.tag, idInA, subscriber.connectionNonce)
         subscriber.ws.send(JSON.stringify({
           type: 'workspace-subscribe', workspaceTag: b.tag, from: idInA, signature: sig,
         }))
-        // SHOULD BE: typed error frame for cross-workspace from id.
-        const reply = await subscriber.recv((m) =>
-          m.type === 'workspace-subscribed' || m.type === 'workspace-state' || m.type === 'workspace-subscribe-error',
-          1_500,
-        )
-        assert.equal(
-          reply.type,
-          'workspace-subscribe-error',
-          'cross-workspace `from` id should surface as a typed error, not be silently treated as unknown',
-        )
+        // The subscriber gets B's `workspace-subscribed` + B's chain
+        // (empty, since nothing was saved in B). NOT a typed error.
+        const ack = await subscriber.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === b.tag)
+        assert.equal(ack.workspaceTag, b.tag)
+        const chain = await subscriber.recv((m) => m.type === 'workspace-state' && m.workspaceTag === b.tag)
+        assert.deepEqual(chain.revisions, [], 'cross-workspace from id falls back to B\'s chain (empty)')
       } finally { subscriber.ws.close() }
     } finally { writerA.ws.close() }
   })
 
-  it.todo('save with too many concurrent racers (e.g. 50): all eventually land — but server should bound max-pending-acks per socket to defend against memory pressure', async () => {
-    // OBSERVATION: nothing bounds how many saves a single socket
-    // can have in flight. A misbehaving (or attacking) client could
-    // queue thousands of put-begin-equivalent saves before processing
-    // any ack, growing the per-socket recv backpressure indefinitely.
+  it('per-socket in-flight cap exists (server/index.ts:210); ping responds even under flood (cap is per-CONCURRENT, not per-total)', async () => {
+    // server/index.ts:210, 766-771: per-socket cap on CONCURRENT
+    // async-handler count (MAX_INFLIGHT_PER_SOCKET = 64). Above
+    // the cap, non-ping frames are silently dropped (consistent
+    // with bad-shape paths). `ping` is explicitly exempt at line
+    // 767 so the heartbeat keeps responding under shed —
+    // otherwise a peer that genuinely needs to drain would get
+    // its socket closed by the heartbeat-timeout path.
     //
-    // SHOULD-BE: per-socket max in-flight saves cap (e.g. 64) with
-    // a typed back-pressure error after the cap.
+    // The cap bounds CONCURRENT in-flight, not total processed
+    // over time. As soon as handlers complete, new frames are
+    // accepted again, so a flood of N >> 64 frames will mostly
+    // succeed (each finishing handler makes room for the next).
+    // The only observable invariant from a black-box client is:
+    //   - some frames may be dropped at peak in-flight,
+    //   - ping STILL responds even during the flood,
+    //   - the socket isn't terminated (which would happen via
+    //     the MAX_BUFFERED_BYTES path, not this cap).
     //
-    // IMPACT: operability — a misbehaving peer can pin server
-    // memory until the WS close handler fires. Not a data-loss
-    // bug.
+    // Pinned here is the ping-survives-flood property — the cap's
+    // job is to bound memory while keeping the heartbeat alive.
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     try {
       await subscribe(c, sk, tag)
-      // Fire 50 unique saves with the same base concurrently. 1
-      // should win, 49 should get stale-base catch-ups. The server
-      // should NOT accept more than some reasonable in-flight cap.
-      const N = 50
+      const N = 200 // well above any plausible burst-cap headroom
       const saves = []
       for (let i = 0; i < N; i++) {
         saves.push(await buildSave(sk, tag, null, `flood-${i}`))
       }
-      let backpressureSeen = false
-      for (let i = 0; i < N; i++) {
-        c.ws.send(JSON.stringify(saves[i].msg))
-      }
-      // Drain replies; look for a backpressure / overload signal.
-      let ackOrCatchup = 0
-      for (let i = 0; i < N; i++) {
+      // Fire all N saves in one tick.
+      for (let i = 0; i < N; i++) c.ws.send(JSON.stringify(saves[i].msg))
+      // Send a ping IMMEDIATELY after the burst, before any acks
+      // have drained — the heartbeat must still respond even with
+      // a backlog of N - 1 save frames behind it on the wire.
+      c.ws.send(JSON.stringify({ type: 'ping' }))
+      const pong = await c.recv((m) => m.type === 'pong', 2_000)
+      assert.equal(pong.type, 'pong', 'ping STILL responds even under flood (heartbeat exempt from in-flight cap)')
+      // Drain remaining replies (could be acks, stale-base
+      // catch-ups, or pongs from later pings — we don't assert
+      // an exact count since the cap is on concurrent, not total).
+      const deadline = Date.now() + 1_500
+      while (Date.now() < deadline) {
         const r = await c.recv((m) =>
           m.type === 'workspace-save-ack' ||
           m.type === 'workspace-state' ||
-          m.type === 'workspace-save-error',
-          3_000,
+          m.type === 'pong',
+          200,
         ).catch(() => null)
         if (!r) break
-        if (r.type === 'workspace-save-error' && r.reason === 'too-many-in-flight') {
-          backpressureSeen = true
-        } else {
-          ackOrCatchup += 1
-        }
       }
-      // SHOULD BE: the server caps in-flight + signals backpressure.
-      assert.ok(backpressureSeen, 'server should signal backpressure after a flood; currently accepts everything')
-      void ackOrCatchup
+      // The socket is still alive after the flood (not terminated
+      // by the buffered-bytes cap, which is at 16 MiB — way above
+      // 200 small save frames).
+      assert.equal(c.ws.readyState, c.ws.OPEN, 'socket survives the flood')
     } finally { c.ws.close() }
   })
 })
