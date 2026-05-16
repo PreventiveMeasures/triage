@@ -78,6 +78,7 @@ import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
+import type { SaveErrorReason } from '../common/save-error-reason.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -320,6 +321,23 @@ function send(socket: WebSocket, msg: object): void {
   sendRaw(socket, JSON.stringify(msg))
 }
 
+// Typed wrapper for the three `workspace-save-error` emit sites
+// (too-large at handleSave, stale-base after the catch-up, busy
+// at the inflight-cap drop). Forces the `reason` argument to be a
+// member of `SaveErrorReason` so a typo or a server-side addition
+// that didn't update `common/save-error-reason.ts` fails at
+// compile time rather than turning into a wire-level surprise.
+// The shared taxonomy is pinned by
+// `tests/save-error-reason-taxonomy.test.js`.
+function sendSaveError(
+  socket: WebSocket,
+  workspaceTag: string,
+  base: string | null,
+  reason: SaveErrorReason,
+): void {
+  send(socket, { type: 'workspace-save-error', workspaceTag, base, reason })
+}
+
 // Lower-level send for when the JSON payload is already serialised
 // (e.g. broadcast fan-out — stringify once, send N times).
 function sendRaw(socket: WebSocket, payload: string): void {
@@ -469,7 +487,7 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // forever in the client's `pending` slot (no ack, no rebase).
   if (msg.ciphertext.length > MAX_CIPHERTEXT_LEN) {
     if (DEBUG) console.warn(`reject save: ciphertext too large (${msg.ciphertext.length} > ${MAX_CIPHERTEXT_LEN})`)
-    send(socket, { type: 'workspace-save-error', workspaceTag: tag, base: msg.base ?? null, reason: 'too-large' })
+    sendSaveError(socket, tag, msg.base == null || typeof msg.base !== 'string' ? null : msg.base, 'too-large')
     return
   }
   // NOTE: Earlier revisions auto-subscribed the sending socket here.
@@ -519,7 +537,7 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
     const revisions = chainForWire(await chainFrom(handle, tag, baseNorm))
     if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${commit.head}) → chain ${revisions.length}`)
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
-    send(socket, { type: 'workspace-save-error', workspaceTag: tag, base: baseNorm, reason: 'stale-base' })
+    sendSaveError(socket, tag, baseNorm, 'stale-base')
     return
   }
   if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${debugTag(tag)}`)
@@ -790,14 +808,12 @@ wss.on('connection', (socket: WebSocket, req) => {
       // hanging until the next heartbeat (~15–30s). Reason `busy`
       // is server-side overload; safe to retry. Same wire envelope
       // as the existing `too-large` save-error path.
-      const baseField = typeof (parsed as SaveMsg).base === 'string' || (parsed as SaveMsg).base === null
-        ? ((parsed as SaveMsg).base ?? null)
-        : null
-      const tagField = typeof (parsed as SaveMsg).workspaceTag === 'string'
-        ? (parsed as SaveMsg).workspaceTag as string
-        : null
+      const rawBase = (parsed as SaveMsg).base
+      const baseField: string | null = typeof rawBase === 'string' ? rawBase : null
+      const rawTag = (parsed as SaveMsg).workspaceTag
+      const tagField = typeof rawTag === 'string' ? rawTag : null
       if (parsed.type === 'workspace-save' && tagField != null) {
-        send(socket, { type: 'workspace-save-error', workspaceTag: tagField, base: baseField, reason: 'busy' })
+        sendSaveError(socket, tagField, baseField, 'busy')
       }
       return
     }

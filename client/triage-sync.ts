@@ -1,6 +1,7 @@
 import { type TriageBucket, state } from './state.ts'
 import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
+import { RECOVERABLE_SAVE_ERROR_REASONS } from '../common/save-error-reason.ts'
 import {
   type SavePayload,
   buildAad,
@@ -1775,6 +1776,25 @@ async function handleAck(session: Session, msg: WireMessage): Promise<void> {
 }
 
 async function handleChain(session: Session, revisions: unknown): Promise<void> {
+  // INVARIANT (load-bearing for the stale-base typed-error path):
+  // empty `revisions` early-returns here WITHOUT clearing
+  // `session.pending`. The stale-base server branch in
+  // `server/index.ts handleSave` emits `workspace-state` (this
+  // handler) THEN `workspace-save-error{stale-base}`, relying on
+  // this handler to clear `session.pending` BEFORE the subsequent
+  // save-error reaches `handleSaveError`. That works today because
+  // `chainFrom` on a head-mismatched base ALWAYS returns ≥1 row —
+  // a base mismatch by definition means at least one revision the
+  // client hasn't seen. So `revisions.length === 0` is unreachable
+  // on the stale-base path under the current protocol.
+  //
+  // If a future server change ever emits an empty `workspace-state`
+  // ahead of a stale-base error frame, this early-return would let
+  // `pending` survive, `handleSaveError` would find it set, take
+  // the non-recoverable branch, and mark `session.error` on a
+  // benign race. Either move `session.pending = null` above this
+  // guard, or reaffirm the non-empty-chain server invariant.
+  // Audit follow-up to PR #79 correctness review.
   if (!Array.isArray(revisions) || revisions.length === 0) return
   // Key not derived yet — bail; a future open will retry once
   // deriveSessionKey lands and trySendSave re-runs.
@@ -1945,22 +1965,6 @@ async function handleMessage(data: unknown): Promise<void> {
 // token — a compromised relay can't pump arbitrary bytes into
 // `session.error`.
 const SAVE_ERROR_REASON_RE = /^[\w-]+$/u
-// Server-side reasons that are recoverable backpressure / race
-// signals rather than hard rejections. The client clears `pending`
-// (the in-flight save lost) and re-arms `pendingSave` so the next
-// natural trySendSave retries the current state, but does NOT
-// transition the session into `error` (which would gate every
-// future save behind `dismissError`).
-//   `busy` — server's per-socket inflight cap dropped the save
-//            (transport audit follow-up; server emits this when
-//            shedding load).
-//   `stale-base` — concurrent commit advanced the head past the
-//            client's claimed base; the server also sent a
-//            `workspace-state` catch-up just before this frame so
-//            in practice the catch-up handler will have cleared
-//            `pending` first and this branch is hit only as a
-//            belt-and-braces fallback.
-const RECOVERABLE_SAVE_ERROR_REASONS = new Set(['busy', 'stale-base'])
 function handleSaveError(session: Session, wire: WireMessage): void {
   if (!session.pending) return
   if (typeof wire.base !== 'string' && wire.base !== null) return
@@ -1970,11 +1974,15 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     ? rawReason
     : 'rejected'
   session.pending = null
-  if (RECOVERABLE_SAVE_ERROR_REASONS.has(reason)) {
+  if ((RECOVERABLE_SAVE_ERROR_REASONS as ReadonlySet<string>).has(reason)) {
     // Recoverable — re-arm the save for the next natural trigger.
     // Don't bump consecutiveFailures or set error: that would push
     // the session into the explicit error state, and the user
     // would need to dismissError() to get saves flowing again.
+    // The recoverable set is defined in `common/save-error-reason.ts`
+    // and pinned by `tests/save-error-reason-taxonomy.test.js`;
+    // note that `'stale-base'` is deliberately NOT recoverable —
+    // see that module's docstring for why.
     session.pendingSave = true
     return
   }
