@@ -130,31 +130,20 @@ describe('objstore client/server races', () => {
   // SECTION 1: Concurrent ops on the same fileName, multiple sessions
   // ─────────────────────────────────────────────────────────────
 
-  it.todo('5 sessions race on the same fileName: every conflict should carry currentVersion=1 (currently null for REST-409 path)', async () => {
-    // OBSERVATION: conflicts can arrive via two paths today:
-    //   - WS `objstore-conflict` (beginPut saw the live row) →
-    //     `currentVersion = 1` reaches the client.
-    //   - REST `409 conflict` (both racers passed beginPut, the
+  it('5 sessions race on the same fileName: every conflict carries currentVersion=1 (both WS-conflict and REST-409 paths)', async () => {
+    // Conflicts can arrive via two server-side paths:
+    //   - WS `objstore-conflict` (beginPut already saw the live row)
+    //     → the WS reply has always carried `current.version`.
+    //   - REST `409 conflict` (both racers passed beginPut; the
     //     second's commit-recheck inside the lock found the row) →
-    //     the server emits a JSON body `{"error":"conflict"}` with
-    //     NO current-version field → client surfaces
-    //     `currentVersion = null`.
+    //     PR #56 made the REST 409 body carry `{ error: 'conflict',
+    //     currentVersion: <N> }`. Before #56 the REST path emitted
+    //     `currentVersion: null` and the test pinned the gap as
+    //     `it.todo`.
     //
-    // SHOULD-BE: every conflict carries the live version so the
-    // client doesn't have to do a separate `list()` to discover
-    // what to retry against. The REST commit-recheck has the live
-    // row in scope (`commitPut` returns a `conflict: ObjectRow`
-    // for that exact reason); it just doesn't pass it through
-    // server/objstore/rest.ts's 409 path.
-    //
-    // FIX HINT: in rest.ts handleRestPutLocked, when `result.reason
-    // === 'conflict'`, include `result.conflict?.version` in the
-    // 409 JSON body; have `_rawPut` in client/objstore.ts parse the
-    // body and surface it as `currentVersion`.
-    //
-    // IMPACT: clients receiving conflict can't avoid an extra round-
-    // trip to discover the version they're racing against. Not a
-    // data-loss bug, but a usability gap that this test pins.
+    // Now-correct contract: regardless of which server path produced
+    // the conflict, the client's `PutResult.currentVersion` is the
+    // live row's version. Pins the wire shape on both planes.
     const { keys } = await makeKeys()
     const sessions = await Promise.all(Array.from({ length: 5 }, () => createObjstoreSession({ serverUrl, httpOrigin, keys })))
     try {
@@ -168,10 +157,8 @@ describe('objstore client/server races', () => {
       const conflicts = results.filter((r) => !r.ok && r.reason === 'conflict')
       assert.equal(oks.length, 1, 'exactly one PUT wins')
       assert.equal(conflicts.length, 4, '4 PUTs see conflict')
-      // SHOULD-BE: every conflict carries the live version.
-      // Currently some have currentVersion=null (REST 409 path).
       for (const c of conflicts) {
-        assert.equal(c.currentVersion, 1, 'every conflict signal should carry currentVersion=1')
+        assert.equal(c.currentVersion, 1, 'every conflict signal carries currentVersion=1')
       }
       const winner = sessions[results.findIndex((r) => r.ok)]
       const got = await winner.fetch('crowded.json')
