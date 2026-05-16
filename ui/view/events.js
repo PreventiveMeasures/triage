@@ -9,6 +9,7 @@ import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-b
 import { getPackagesIndex, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 import { openCommentDialog } from './comment-dialog.js'
 import { openFixLinkDialog } from './fix-link-dialog.js'
+import { downloadReportsAsMarkdown } from './markdown-export.js'
 
 // Subscribe once to the bundle-finding index. Any time another
 // OPFS report finishes parsing, re-render IF the user is currently
@@ -1181,6 +1182,15 @@ document.getElementById('print-btn').addEventListener('click', async () => {
     }
     printing = false
   }
+})
+
+// Markdown download — pairs with the print button (same top-right
+// stack). Pure data export: no view-mode swap needed since we
+// serialize state.reports + per-finding triage / marker / comment
+// state directly, without going through the DOM.
+document.getElementById('download-btn').addEventListener('click', () => {
+  if (state.reports.length === 0) return
+  downloadReportsAsMarkdown(state.reports)
 })
 
 report.addEventListener('change', (e) => {
