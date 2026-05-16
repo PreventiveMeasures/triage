@@ -8,7 +8,7 @@ import { sidebar } from './view/dom.js'
 import { listFiles } from '../client/storage.js'
 import { renderSidebar } from './view/sidebar.js'
 import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
-import { attachSharedWorkspace, listWorkspaces } from '../client/workspaces.js'
+import { attachSharedWorkspace, listWorkspaces, syncObservedAfterHydrate } from '../client/workspaces.js'
 import { setRedraw, triageSync } from '../client/triage-sync.ts'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { onAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
@@ -17,6 +17,10 @@ import { runLegacyOriginCheck } from './view/origin-check.js'
 import { render } from './view/render.js'
 import { extractShareEncoded } from '../client/workspace-share-link.js'
 import { openWorkspaceUnlockLinkDialog } from './view/workspace-unlock-link-dialog.js'
+import { isDisablingInThisTab, isEncryptionEnabled, isUnlocked, onVaultStateChange } from '../client/passkey-vault.js'
+import { getItem as getSecureItem, hydrate as hydrateSecureStorage } from '../client/secure-storage.js'
+import './view/encryption-toggle.js'
+import './view/lock-overlay.js'
 import './view/events.js'
 import './view/theme.js'
 import './view/finding-table.js'
@@ -63,6 +67,12 @@ triageSync.onStatusChange(render)
 // renders into the merged findings list. (renderSidebar already
 // picks up the new attachment via the membership listener; the
 // extra hop here is only for the merged-view refresh.)
+//
+// Note: this listener only fires when triage-sync has an open WS
+// session, which can only happen post-unlock (workspaces are read
+// from secure-storage which is empty until hydrate runs in
+// continueBoot). So an auto-download can never land while the
+// vault is enabled-but-locked.
 onAutoDownloaded(async (workspaceId) => {
   if (state.currentWorkspace === workspaceId) {
     await switchToWorkspace(workspaceId)
@@ -149,6 +159,123 @@ async function handleShareHashIfPresent() {
   return true
 }
 
+// Boot continuation — everything that touches encrypted data,
+// triage-sync sessions, OPFS reads, or the UI's restored state.
+// Gated behind `bootContinuationRan` so it only ever runs once
+// per page load, whether via the boot IIFE (vault disabled, or
+// unlocked at boot) or via the vault-state-change listener
+// (unlock dismissed at boot, user later unlocks via the overlay).
+//
+// While `bootContinuationRan === false` and the vault is locked,
+// NOTHING operational runs in this tab:
+//   - secure-storage cache is empty → workspaces appears empty,
+//     sync sessions appear empty, no last-file pointer, etc.
+//   - The sidebar isn't rendered, so OPFS is never scanned.
+//   - triage-sync never opens a WS connection (sessions only open
+//     when a workspace's `openSession` is called, which happens
+//     via switchToWorkspace, which is part of this continuation).
+//   - objstore-presence never sees a session opened, so no
+//     auto-download can fire — the locked-vault saveFileBytes
+//     rejection path is defensive-only.
+//   - The lock overlay is the only interactive surface; the rest
+//     of the app is effectively suspended.
+let bootContinuationRan = false
+
+async function continueBoot() {
+  if (bootContinuationRan) return
+  bootContinuationRan = true
+  // Hydrate the encrypted-localStorage cache (workspaces, sync
+  // sessions, repoUrls, fileCounts, lastFile). MUST run BEFORE
+  // renderSidebar / restore-last-file because those code paths
+  // read from the cache synchronously via getItem(). No-op fast
+  // path when the vault is disabled (everything was plaintext on
+  // disk and gets cached verbatim).
+  await hydrateSecureStorage()
+  // Now that secure-storage has the decrypted workspaces in cache,
+  // snapshot them as "already observed" so the first sibling-tab
+  // storage event doesn't fire phantom workspace-created listeners
+  // for entries that were already in storage at boot.
+  syncObservedAfterHydrate()
+  await renderSidebar()
+  // Share-link hash takes precedence over the last-file restore so
+  // the user lands on the freshly-attached workspace, not whatever
+  // they were looking at last time.
+  const attached = await handleShareHashIfPresent()
+  if (attached) return
+  const last = getSecureItem(LAST_FILE_KEY)
+  if (last) {
+    if (last.startsWith('ws:')) {
+      const id = last.slice(3)
+      if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
+    } else {
+      const names = await listFiles()
+      if (names.includes(last)) await switchToFile(last)
+    }
+  }
+}
+
+// Vault state transitions:
+//   1. First unlock after a locked-boot → run the deferred
+//      continueBoot.
+//   2. Mid-session sibling-tab enable / re-key (we were running
+//      with no encryption, or under a different credential, and
+//      now the vault is enabled-but-not-yet-unlocked-here) →
+//      force reload. Our in-memory state is stale relative to
+//      the just-flipped storage shape (open WS sessions,
+//      decrypted `state.*` maps, secure-storage cache) — none of
+//      it is safe to keep operating against. The reload restarts
+//      this tab in the locked-boot state where the overlay covers
+//      everything until unlock.
+//   3. Mid-session sibling-tab DISABLE (we were operational under
+//      an enabled vault, sibling just decrypted-and-cleared
+//      metadata) → force reload. Without this, our hydrate runs
+//      against sibling's mid-migration disk and `propagate*`
+//      listeners fire spurious deletes for every workspace as the
+//      cache transiently empties (envelope keys un-decryptable
+//      after sibling's `clearMetadata` storage event drops our
+//      sessionKey). `isDisablingInThisTab()` distinguishes this
+//      from our OWN `disableEncryption` call — that user clicked
+//      Disable here and expects to continue in this tab.
+//   4. Any other transition (intra-tab disable, intra-tab unlock
+//      that didn't go through the boot-deferred path) just
+//      re-renders.
+//
+// `alert()` (single-button "OK") rather than `confirm()` for the
+// reload prompts: decline path is a footgun — the lock overlay
+// covers everything with an opaque backdrop, so the user can't
+// usefully "stash unsaved work" after declining. Making it
+// acknowledgement-only avoids that trap while still giving notice.
+let lastSeenEnabled = isEncryptionEnabled()
+let reloadPending = false
+function scheduleReload(reason) {
+  if (reloadPending) return
+  reloadPending = true
+  // Defer to a microtask so the synchronous `render()` above
+  // paints the new vault state BEFORE the alert grabs the event
+  // loop — the user sees context for the reload.
+  queueMicrotask(() => {
+    alert(reason + ' This tab will reload to refresh its state. Any unsaved edits in this tab will be lost.')
+    location.reload()
+  })
+}
+onVaultStateChange(() => {
+  const wasEnabled = lastSeenEnabled
+  const isEnabled = isEncryptionEnabled()
+  lastSeenEnabled = isEnabled
+  render()
+  if (!bootContinuationRan && isUnlocked()) {
+    continueBoot().catch((err) => console.warn('continueBoot:', err))
+    return
+  }
+  if (bootContinuationRan && isEnabled && !isUnlocked()) {
+    scheduleReload('Encryption was just enabled in another tab.')
+    return
+  }
+  if (bootContinuationRan && wasEnabled && !isEnabled && !isDisablingInThisTab()) {
+    scheduleReload('Encryption was disabled in another tab.')
+  }
+})
+
 ;(async () => {
   // Legacy-origin redirect: deepaudit.dev users with no local data
   // bounce silently to triage.space; users with data get a confirm
@@ -160,21 +287,18 @@ async function handleShareHashIfPresent() {
   try {
     if (localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
   } catch {}
-  await renderSidebar()
-  // Share-link hash takes precedence over the last-file restore so
-  // the user lands on the freshly-attached workspace, not whatever
-  // they were looking at last time.
-  const attached = await handleShareHashIfPresent()
-  if (attached) return
-  let last = null
-  try { last = localStorage.getItem(LAST_FILE_KEY) } catch {}
-  if (last) {
-    if (last.startsWith('ws:')) {
-      const id = last.slice(3)
-      if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
-    } else {
-      const names = await listFiles()
-      if (names.includes(last)) await switchToFile(last)
-    }
-  }
+  // Vault enabled-but-locked at boot: skip continueBoot and let
+  // the lock overlay (`view/lock-overlay.js`) be the sole unlock
+  // affordance. Clicking the overlay button opens the unlock
+  // dialog; on successful unlock the vault-state-change listener
+  // above kicks continueBoot. While the user remains locked, no
+  // operational work happens in this tab — no WS connection, no
+  // sidebar render, no auto-download.
+  //
+  // The boot flow used to auto-open the unlock dialog here, which
+  // resulted in TWO unlock surfaces visible simultaneously (the
+  // modal dialog AND the overlay behind it). Now the overlay is
+  // the only surface, and the dialog appears only on user intent.
+  if (isEncryptionEnabled() && !isUnlocked()) return
+  await continueBoot()
 })()

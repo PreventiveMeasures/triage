@@ -155,8 +155,13 @@ describe('counts cache (setCount / getCount / removeCount / getKind)', () => {
     // counts.js memoizes its in-process cache, so we need a fresh
     // module instance to exercise the lazy load() path against a
     // pre-existing legacy blob. Cache-bust the import URL to get one.
+    // The counts cache reads through secure-storage, so we also need
+    // to re-hydrate that layer's cache from the just-written LS
+    // value before the fresh import does its first load().
     globalThis.localStorage.clear()
     globalThis.localStorage.setItem(COUNTS_KEY, JSON.stringify({ 'legacy.json': 42 }))
+    const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
+    await hydrateSecureStorage()
     const fresh = await import(`../client/counts.js?legacy=${Date.now()}`)
     assert.equal(fresh.getCount('legacy.json'), 42, 'count read from bare-number entry')
     assert.equal(fresh.getKind('legacy.json'), undefined, 'source absent on legacy entry')

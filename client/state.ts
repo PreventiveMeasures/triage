@@ -1,4 +1,5 @@
 import { store } from '@rray/frontend/state-management'
+import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
@@ -82,23 +83,31 @@ function readSavedViewMode(): ViewMode | null {
 // to empty string. Exported so `switchToFile` can populate
 // `state.repoUrl` on every file switch and the events.js input
 // handler can write back without re-deriving the key.
-function readRepoUrlMap(): Record<string, string> {
+// Reads go through secure-storage's in-memory cache (sync). Writes
+// go through `mutateSecureItem` which acquires a per-key Web Lock
+// and re-hydrates inside the lock before the updater runs — without
+// this, a sibling tab's `saveRepoUrlFor` racing ours would have its
+// write clobbered: our cache is blind to the sibling's write
+// (pendingValues protection on our in-flight setItem masks the
+// storage event), and our subsequent merge writes back the
+// sibling-less map. The lock + in-lock-hydrate gives cross-tab
+// last-writer-wins SEMANTICS at the entry level (both URLs survive)
+// instead of at the whole-map level (one URL lost).
+function parseRepoUrlMap(raw: string | null): Record<string, string> {
   // JSON.parse can return any value — `null`, an array, a primitive
-  // — depending on the localStorage contents. Without the
-  // typeof+object gate, a corrupted value like the literal string
-  // `"null"` makes downstream `readRepoUrlMap()[name]` throw
-  // TypeError on property access. Open-ended audit
-  // `client/state.ts:86`.
+  // — depending on the source contents. Without the typeof+object
+  // gate, a corrupted value like the literal string `"null"` makes
+  // downstream `parsed[name]` throw TypeError on property access.
   try {
-    const parsed = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}')
+    const parsed = JSON.parse(raw || '{}')
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, string>
     }
     return {}
   } catch { return {} }
 }
-function writeRepoUrlMap(map: Record<string, string>): void {
-  try { localStorage.setItem(REPO_URLS_KEY, JSON.stringify(map)) } catch {}
+function readRepoUrlMap(): Record<string, string> {
+  return parseRepoUrlMap(getSecureItem(REPO_URLS_KEY))
 }
 export function loadRepoUrlFor(name: string | null | undefined): string {
   if (!name) return ''
@@ -106,10 +115,36 @@ export function loadRepoUrlFor(name: string | null | undefined): string {
 }
 export function saveRepoUrlFor(name: string | null | undefined, url: string): void {
   if (!name) return
+  // Two-step write:
+  //
+  // 1. Synchronous in-tab cache update via `setSecureItem`. Preserves
+  //    the long-standing contract that `saveRepoUrlFor()` followed
+  //    immediately by `loadRepoUrlFor()` returns the new value
+  //    without an `await`. Many call sites (header chip, table
+  //    cell renderer) rely on this.
+  //
+  // 2. Async cross-tab reconciliation via `mutateSecureItem` under
+  //    a per-key Web Lock. After our sync setItem persists, the
+  //    mutate's in-lock hydrate pulls in any sibling writes we
+  //    overwrote — its updater applies our modification ON TOP of
+  //    the freshest disk view, merging entries from both tabs.
+  //    Eventually consistent: both tabs converge to the merged map
+  //    after one mutate round-trip.
+  //
+  // Without (2), two tabs editing different entries clobber each
+  // other (each writes its whole-map view, last writer wins). Audit
+  // round-N P0.
   const map = readRepoUrlMap()
   if (url) map[name] = url
   else delete map[name]
-  writeRepoUrlMap(map)
+  void setSecureItem(REPO_URLS_KEY, JSON.stringify(map))
+    .catch((err: unknown) => console.warn('saveRepoUrlFor:', err))
+  void mutateSecureItem(REPO_URLS_KEY, (currentFromDisk) => {
+    const diskMap = parseRepoUrlMap(currentFromDisk)
+    if (url) diskMap[name] = url
+    else delete diskMap[name]
+    return JSON.stringify(diskMap)
+  }).catch((err: unknown) => console.warn('saveRepoUrlFor cross-tab merge:', err))
 }
 
 // Centralised mutable view state. Every module that reads or writes
@@ -333,11 +368,15 @@ export const state: State = store<State>({
   filesSelectedFile: null,
 })
 
-// Cross-tab propagation: a sibling tab's `saveRepoUrlFor` fires a
-// `storage` event in this tab. When the active file's URL changed
-// upstream, sync `state.repoUrl` so the header chip refreshes
-// immediately rather than showing stale text until the next
-// switchToFile / reload. Audit round-8 H3.
+// Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes
+// through secure-storage, which fires an after-hydrate listener once
+// the encrypted-cache refresh completes. Subscribing to that hook
+// (instead of the raw `storage` event) ensures `loadRepoUrlFor` sees
+// the post-decrypt cache, not the pre-hydrate stale one. The raw
+// `storage` event would fire synchronously on the just-written
+// envelope base64, and our sync `getSecureItem` would read the
+// not-yet-rehydrated cache — silently reverting the chip to the
+// stale URL. Audit round-8 H3 + round-N concurrency.
 //
 // Bail when `state.repoEditing` is set — the user has the header
 // chip expanded into its `<input>` and overwriting `state.repoUrl`
@@ -345,17 +384,10 @@ export const state: State = store<State>({
 // The blur / Save handlers in events.js read the user's input and
 // call `saveRepoUrlFor` on commit; if they prefer the sibling's
 // value they can re-enter and re-edit. Audit round-9 M2.
-//
-// Exported so node:test environments can invoke the handler
-// directly — `window` doesn't exist in tests and the storage
-// event never fires there.
 export function propagateRepoUrlChangesFromStorage(): void {
   if (state.repoEditing) return
   if (state.currentFile) state.repoUrl = loadRepoUrlFor(state.currentFile)
 }
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e: StorageEvent) => {
-    if (e.key !== REPO_URLS_KEY) return
-    propagateRepoUrlChangesFromStorage()
-  })
-}
+onAfterHydrate(() => {
+  propagateRepoUrlChangesFromStorage()
+})

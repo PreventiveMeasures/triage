@@ -18,6 +18,7 @@
 // pattern as triage / view-mode state. OPFS is reserved for the
 // per-report blobs.
 import { deriveWorkspaceIdFromPrivateKey } from './workspace-id.js'
+import * as secureStorage from './secure-storage.js'
 import {
   fireBundleMembershipChanged,
   fireReportMembershipChanged,
@@ -47,7 +48,11 @@ const WORKSPACES_VERSION = 1
 
 function readRaw() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    // Read from the secure-storage cache (hydrated at boot via
+    // `view.js`). The cache string is the JSON payload — same shape
+    // as what `localStorage.getItem(STORAGE_KEY)` used to return,
+    // but now decrypted from an envelope when the vault is unlocked.
+    const raw = secureStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     // Versioned shape: { version, workspaces }. Read forward-compat:
@@ -67,21 +72,13 @@ function readRaw() {
   }
 }
 
-function writeRaw(list) {
-  // Don't swallow quota / storage errors. Pre-fix, a failed
-  // setItem (QuotaExceeded, security policy) was caught and only
-  // logged — `mutateWorkspaces` then continued, the caller called
-  // `markObservedFor` on the would-have-persisted entry, and
-  // `lastSeen` recorded a workspace that doesn't exist in storage.
-  // The next sibling-tab `storage` event would diff lastSeen
-  // (has the entry) against readRaw (doesn't have it) and fire a
-  // phantom `deleteListener`; a page reload would silently lose
-  // the workspace with no error surfaced to the user. Propagating
-  // the throw lets `mutateWorkspaces` skip the post-write
-  // `markObservedFor` and surfaces the failure to the public
-  // mutation function's caller (createWorkspace, etc.) so a UI
-  // layer can warn the user. Audit round-13 W-7.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+async function writeRaw(list) {
+  // Don't swallow quota / storage errors — see audit round-13 W-7.
+  // Now goes through secure-storage so the persisted value is
+  // envelope-encrypted when the vault is unlocked. The setItem
+  // there is async (seal is async), so this function is async too;
+  // `mutateWorkspaces` awaits it inside the lock body.
+  await secureStorage.setItem(STORAGE_KEY, JSON.stringify({
     version: WORKSPACES_VERSION,
     workspaces: list,
   }))
@@ -105,7 +102,7 @@ function mutateWorkspaces(mutator) {
     const list = readRaw()
     const result = await mutator(list)
     if (result === false) return undefined
-    writeRaw(list)
+    await writeRaw(list)
     return result
   })
 }
@@ -138,7 +135,18 @@ function snapshotForCache(w) {
 // or `markObservedDeleted(id)` for the ids IT touched. A sibling-
 // only change that came in via readRaw stays unmarked, so the
 // handler still fires for it on the next run.
+// At module init the secure-storage cache is empty (hydration runs
+// later, in the boot flow). So lastSeen starts empty; the boot flow
+// calls `syncObservedAfterHydrate()` once the secure-storage cache
+// is populated, snapshotting the just-hydrated state so the FIRST
+// sibling-tab `storage` event doesn't fire phantom create listeners
+// for workspaces that were already in storage at boot.
 let lastSeen = readRaw().map(snapshotForCache)
+
+export function syncObservedAfterHydrate() {
+  lastSeen = readRaw().map(snapshotForCache)
+}
+
 function markObservedFor(workspace) {
   lastSeen = lastSeen.filter((w) => w.id !== workspace.id)
   lastSeen.push(snapshotForCache(workspace))
@@ -596,9 +604,14 @@ export function propagateWorkspaceChangesFromStorage() {
   lastSeen = next
 }
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key !== STORAGE_KEY) return
-    propagateWorkspaceChangesFromStorage()
-  })
-}
+// Subscribe to secure-storage's after-hydrate listener instead of
+// the raw `storage` event. The raw event fires synchronously in
+// sibling tabs, but secure-storage's hydrate (which decrypts the
+// just-written envelope) is async — so a sync `storage` handler
+// here would read the PRE-hydrate cache and silently fail to
+// detect any sibling-tab create/delete/rekey. The after-hydrate
+// hook fires post-decrypt, so `propagateWorkspaceChangesFromStorage`
+// sees the fresh cache. Audit round-5 concurrency #2.
+secureStorage.onAfterHydrate(() => {
+  propagateWorkspaceChangesFromStorage()
+})

@@ -38,6 +38,7 @@ const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval 
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
+const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 
 // ─────────── helpers ───────────
 
@@ -898,6 +899,7 @@ describe('triage-sync client', () => {
     const all = wrapper.sessions ?? wrapper
     delete all[wsId]
     localStorage.setItem('deepview.sync.sessions', JSON.stringify({ version: 1, sessions: all }))
+    await hydrateSecureStorage()
     triageSync.openSession(wsId)
     await waitFor(statusOnline, 'reader online')
     // Server returns the chain starting at the keyframe; client
@@ -1622,6 +1624,7 @@ describe('triage-sync client', () => {
         },
       },
     }))
+    await hydrateSecureStorage()
 
     triageSync.openSession(wsId)
     triageSync.setServerUrl(serverUrl)
@@ -2397,6 +2400,8 @@ describe('triage-sync client', () => {
     const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const remaining = persisted.filter((w) => w.id !== wsId)
     localStorage.setItem('deepview.workspaces', JSON.stringify(remaining))
+
+    await hydrateSecureStorage()
     propagateWorkspaceChangesFromStorage()
 
     // Triage-sync's onWorkspaceDeleted listener tears down the session.
@@ -2426,6 +2431,8 @@ describe('triage-sync client', () => {
     const idx = persisted.findIndex((w) => w.id === wsId)
     persisted[idx] = { ...persisted[idx], privateKey: randomBase64() }
     localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+
+    await hydrateSecureStorage()
     propagateWorkspaceChangesFromStorage()
 
     await waitFor(
@@ -2469,6 +2476,8 @@ describe('triage-sync client', () => {
     const idx = persisted.findIndex((w) => w.id === wsId)
     persisted[idx] = { ...persisted[idx], reports: ['A.md', 'B.md'] }
     localStorage.setItem('deepview.workspaces', JSON.stringify(persisted))
+
+    await hydrateSecureStorage()
     propagateWorkspaceChangesFromStorage()
 
     // Membership listener refreshes session.ids — `tracked` now
@@ -2706,6 +2715,8 @@ describe('triage-sync client', () => {
         createdAt: Date.now(),
       })
       localStorage.setItem('deepview.workspaces', JSON.stringify({ version: 1, workspaces: persisted }))
+
+      await hydrateSecureStorage()
       propagateWorkspaceChangesFromStorage()
 
       assert.equal(firedFor, wsId, 'create listener fired with new workspace id')
@@ -3476,6 +3487,7 @@ describe('triage-sync client', () => {
         [wsStale]: { serverUrl: 'ws://stale.example/api/sync', baseRevision: 'b'.repeat(43), savesSinceKeyframe: 0, baseState: {} },
       },
     }))
+    await hydrateSecureStorage()
     // Force a URL transition so setServerUrl doesn't early-return
     // on the same-URL no-op (suite ordering may have left it at
     // `serverUrl` already).
@@ -3507,15 +3519,24 @@ describe('triage-sync client', () => {
     localStorage.removeItem('deepview.sync.sessions')
     await mutateAllSessions((all) => { all['_reset'] = { serverUrl: 'wss://reset', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, false, 'pre-condition: latch clean')
-    const futurePayload = JSON.stringify({ version: 99, sessions: { 'ws-future': { serverUrl: 'wss://later.example', baseRevision: 'rev-from-v99' } }, futureField: { whatever: 1 } })
-    localStorage.setItem('deepview.sync.sessions', futurePayload)
     const transitions = []
     const unsub = triageSync.onPersistenceDegraded((degraded) => { transitions.push(degraded) })
-    // queueMicrotask runs before this await resolves — initial fire
-    // captures the current (still-false) state.
+    // Late-subscriber microtask fires once with current state (false).
     await Promise.resolve()
     assert.deepEqual(transitions, [false], 'subscribe fires once with current state (false)')
-    // Drive `mutateAllSessions` directly to hit the skip-write path.
+    const futurePayload = JSON.stringify({ version: 99, sessions: { 'ws-future': { serverUrl: 'wss://later.example', baseRevision: 'rev-from-v99' } }, futureField: { whatever: 1 } })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    // sync sessions now read through the secure-storage cache; the
+    // direct LS write needs an explicit hydrate. The hydrate fires
+    // triage-sync's onAfterHydrate hook which re-probes the load
+    // result and flips the latch ON when it observes the
+    // unknown-version blob. (Pre-secure-storage, the latch only
+    // flipped during the first mutateAllSessions skip-write; now
+    // boot-time detection catches it earlier.)
+    await hydrateSecureStorage()
+    // Drive `mutateAllSessions` directly to confirm the skip-write
+    // path still no-ops on disk (the latch is already on, so this
+    // doesn't fire another transition).
     await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     unsub()
     // The future blob is still on disk byte-identical.
@@ -3535,6 +3556,9 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     const corruptPayload = JSON.stringify({ version: 1, sessions: [] })
     localStorage.setItem('deepview.sync.sessions', corruptPayload)
+    // sync sessions read through the secure-storage cache; the
+    // direct LS write needs an explicit hydrate.
+    await hydrateSecureStorage()
     // Drive mutateAllSessions directly with a mutator that adds an
     // entry — exercises the recovery write.
     await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
@@ -3555,6 +3579,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     const futurePayload = JSON.stringify({ version: 99, sessions: {} })
     localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await hydrateSecureStorage()
     // Flip the latch by driving mutateAllSessions BEFORE
     // subscribing.
     await mutateAllSessions((all) => { all['probe-late'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
@@ -3590,6 +3615,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     const futurePayload = JSON.stringify({ version: 99, sessions: {} })
     localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await hydrateSecureStorage()
     // Skip write → latch on.
     await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, true, 'latch on after skipped write')
@@ -3601,6 +3627,7 @@ describe('triage-sync client', () => {
     // Simulate the user clearing the future-version blob (DevTools
     // / sibling tab).
     localStorage.removeItem('deepview.sync.sessions')
+    await hydrateSecureStorage()
     // Next mutateAllSessions writes a recognized v1 shape → latch clears.
     await mutateAllSessions((all) => { all['probe2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, false, 'latch cleared after successful write')
@@ -3619,11 +3646,13 @@ describe('triage-sync client', () => {
     // Pre-condition: latch on after a skip-write.
     const futurePayload = JSON.stringify({ version: 99, sessions: {} })
     localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await hydrateSecureStorage()
     await mutateAllSessions((all) => { all['probe-q'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, true, 'pre-condition: latch on')
     // Clear the future blob and patch setItem to throw on the
     // sessions key (simulating quota exceeded).
     localStorage.removeItem('deepview.sync.sessions')
+    await hydrateSecureStorage()
     const origSetItem = localStorage.setItem
     localStorage.setItem = function (k, v) {
       if (k === 'deepview.sync.sessions') {
@@ -3654,23 +3683,20 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     const futurePayload = JSON.stringify({ version: 99, sessions: {} })
     localStorage.setItem('deepview.sync.sessions', futurePayload)
+    await hydrateSecureStorage()
     await mutateAllSessions((all) => { all['probe-xtab'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
     assert.equal(triageSync.persistenceDegraded, true)
-    // Simulate another tab clearing the blob via DevTools. The
-    // setItem from this same window does NOT fire the `storage`
-    // event in browsers (only OTHER windows see it), but in the
-    // Node test environment we dispatch the event manually to
-    // exercise the handler.
+    // Simulate another tab clearing the blob via DevTools. In real
+    // browsers the sibling tab's setItem fires a `storage` event in
+    // our tab, which secure-storage's listener turns into a
+    // hydrate; the after-hydrate hook then re-probes the
+    // load-result. node:test has no cross-tab storage plumbing, so
+    // we drive `hydrateSecureStorage()` directly — same effect
+    // as the real-browser flow once secure-storage's hydrate
+    // resolves.
     const recovered = JSON.stringify({ version: 1, sessions: {} })
     localStorage.setItem('deepview.sync.sessions', recovered)
-    // Node doesn't expose `StorageEvent` globally; dispatch a plain
-    // Event with the storage shape — the handler duck-types on `key`.
-    const ev = new Event('storage')
-    Object.defineProperty(ev, 'key', { value: 'deepview.sync.sessions' })
-    Object.defineProperty(ev, 'newValue', { value: recovered })
-    Object.defineProperty(ev, 'oldValue', { value: futurePayload })
-    globalThis.dispatchEvent(ev)
-    // The handler re-probes synchronously.
+    await hydrateSecureStorage()
     assert.equal(triageSync.persistenceDegraded, false, 'cross-tab clear realigns the latch')
   })
 })

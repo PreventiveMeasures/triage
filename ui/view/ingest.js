@@ -19,6 +19,8 @@ import { analyzeContent, removeCount, setCount } from '../../client/counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { deleteWorkspace, listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
 import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, openWorkspaceIds as presenceOpenWorkspaceIds } from './objstore-presence.js'
+import { maybePromptFirstImport } from './first-import-prompt.js'
+import { removeItem as removeSecureItem, setItem as setSecureItem } from '../../client/secure-storage.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -73,6 +75,13 @@ function bundleKind(name) {
 }
 
 export async function addFiles(files) {
+  // First-import nudge: ask once whether to enable passkey
+  // encryption before this drop's files hit disk, so that an
+  // accepted enable seals the very first write rather than landing
+  // it as plaintext and then immediately re-writing the migration.
+  // Skipped silently when the vault is already enabled, the
+  // browser doesn't support WebAuthn, or the user already chose.
+  await maybePromptFirstImport()
   let last = null
   let lastBundleIntegrity = null
   // Track every newly-saved bundle integrity in this drop so we
@@ -223,7 +232,7 @@ export async function switchToFile(name, content) {
   graph2.hidden.clear()
   graph2.pathFilter = ''
   cleanupGraph2()
-  try { localStorage.setItem(LAST_FILE_KEY, name) } catch {}
+  setSecureItem(LAST_FILE_KEY, name).catch(() => {})
   if (content === undefined) {
     try {
       content = await readFile(name)
@@ -233,6 +242,27 @@ export async function switchToFile(name, content) {
       // would have cleared, and surfacing an error from the dead
       // load would just confuse the user.
       if (isStaleLoad(gen)) return
+      // A "vault locked" failure is actionable: prompt the user to
+      // unlock and retry on success. Mirrors the boot-time prompt
+      // for users who dismissed it earlier in the session. Imported
+      // lazily so the storage module's import tree doesn't pull in
+      // a Lit-using dialog at boot time.
+      if (err && err.message?.includes('vault locked')) {
+        const { openPasskeyUnlockDialog } = await import('./passkey-unlock-dialog.js')
+        const ok = await openPasskeyUnlockDialog()
+        if (ok && !isStaleLoad(gen)) {
+          await switchToFile(name)
+          return
+        }
+        // User dismissed the unlock dialog (or a newer switch took
+        // over). Clear the about-to-be-current file so the sidebar
+        // doesn't leave the row highlighted with no content loaded.
+        if (!isStaleLoad(gen)) {
+          state.currentFile = null
+          await renderSidebar()
+        }
+        return
+      }
       alert(`Failed to read ${name}: ${err.message}`)
       state.currentFile = null
       await renderSidebar()
@@ -300,7 +330,7 @@ export async function switchToWorkspace(workspaceId) {
   graph2.hidden.clear()
   graph2.pathFilter = ''
   cleanupGraph2()
-  try { localStorage.setItem(LAST_FILE_KEY, `ws:${workspaceId}`) } catch {}
+  setSecureItem(LAST_FILE_KEY, `ws:${workspaceId}`).catch(() => {})
   // Empty workspace — no reports to ingest, so the readFile loop below
   // is a no-op. Without explicitly clearing the report pane here, the
   // user sees whatever was last rendered (a stale finding, a bundle,
@@ -443,7 +473,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   graph2.hidden.clear()
   graph2.pathFilter = ''
   cleanupGraph2()
-  try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
+  removeSecureItem(LAST_FILE_KEY)
   report.classList.remove('active')
   // Drop the rendered findings via Lit so any cached parts on
   // #report (slot-reuse holds them across renders) get cleaned up
@@ -554,7 +584,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
     graph2.hidden.clear()
     graph2.pathFilter = ''
     cleanupGraph2()
-    try { localStorage.removeItem(LAST_FILE_KEY) } catch {}
+    removeSecureItem(LAST_FILE_KEY)
     report.classList.remove('active')
     litRender(nothing, report)
     dropZone.classList.remove('hidden')

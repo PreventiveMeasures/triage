@@ -33,6 +33,7 @@
 
   &.collapsed .brand,
   &.collapsed .sidebar-search,
+  &.collapsed #encryption-toggle,
   &.collapsed #file-list { display: none; }
   &.collapsed .sidebar-header { padding: .5rem 0; justify-content: center; }
   /* Collapsed: keep the actions row visible but hide the
@@ -74,6 +75,35 @@
   cursor: pointer; padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+}
+
+/* Encryption toggle — small lock icon sitting to the LEFT of the
+   hamburger. Three visual states:
+     - default          : open lock, muted (encryption off)
+     - `.encrypted`     : closed lock, accent (on + unlocked)
+     - `.locked-pending`: closed lock, warning tint (on + this tab
+                          hasn't unlocked — data is currently
+                          inaccessible). The dashed outline + warning
+                          hue separate this state from the working
+                          one so a user who dismissed the boot dialog
+                          notices their reports aren't merely absent.
+   Hidden via the inline `hidden` attribute when WebAuthn isn't
+   available in the browser. */
+#encryption-toggle {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 4px;
+  cursor: pointer; padding: 0;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+  &.encrypted { color: var(--accent); }
+  &.locked-pending {
+    color: light-dark(#b25b00, #f0a060);
+    outline: 1px dashed currentcolor;
+    outline-offset: -2px;
+  }
 }
 
 .sidebar-search {
@@ -1228,5 +1258,85 @@ dialog {
       &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
     }
     &:disabled { opacity: .5; cursor: not-allowed; }
+  }
+}
+
+/* Full-page lock overlay — shown by `ui/view/lock-overlay.js` when
+   the passkey vault is enabled but this tab hasnt unlocked yet.
+   Sits above EVERYTHING (the report pane, the sidebar, even dialogs)
+   so the user cant accidentally interact with stale or empty
+   widgets while encrypted state is unreadable. */
+#lock-overlay {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  display: grid; place-items: center;
+  background: rgb(from var(--bg) r g b / .85);
+  backdrop-filter: blur(10px);
+
+  &[hidden] { display: none; }
+
+  & .lock-overlay-card {
+    max-width: 28rem;
+    padding: 2rem 2.5rem;
+    text-align: center;
+    background: var(--surface, #1a1a1a);
+    border: 1px solid var(--border, #333);
+    border-radius: 12px;
+    box-shadow: 0 12px 48px rgb(0 0 0 / .4);
+  }
+
+  & .lock-overlay-icon {
+    color: var(--accent, #58a6ff);
+    margin-bottom: 1rem;
+    display: flex; justify-content: center;
+  }
+
+  & .lock-overlay-title {
+    font-size: 1.25rem; font-weight: 600;
+    margin-bottom: .5rem;
+    color: var(--text);
+  }
+
+  & .lock-overlay-body {
+    font-size: .9rem;
+    color: var(--muted, #999);
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+  }
+
+  & .lock-overlay-button {
+    padding: .6rem 1.25rem;
+    font-size: .95rem;
+    font-weight: 500;
+    background: var(--accent, #58a6ff);
+    color: var(--bg, #121212);
+    border: 0; border-radius: 6px;
+    cursor: pointer;
+
+    &:hover { filter: brightness(1.1); }
+    &:focus-visible { outline: 2px solid currentcolor; outline-offset: 3px; }
+    &:disabled { opacity: .6; cursor: wait; }
+  }
+
+  & .lock-overlay-error {
+    color: light-dark(#c33, #f87171);
+    font-size: .85rem;
+    margin-bottom: 1rem;
+    line-height: 1.4;
+
+    &[hidden] { display: none; }
+  }
+
+  & .lock-overlay-footer {
+    margin-top: 1.5rem;
+    font-size: .8rem;
+    color: var(--muted, #999);
+
+    & a {
+      color: light-dark(#888, #aaa);
+      text-decoration: underline;
+      cursor: pointer;
+      &:hover { color: var(--text); }
+    }
   }
 }

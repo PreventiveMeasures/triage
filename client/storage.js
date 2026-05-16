@@ -1,4 +1,14 @@
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import {
+  VAULT_LOCK,
+  getEnvelopeAadForOpfs,
+  getSessionKey,
+  hasEnvelopeMagic,
+  isEncryptionEnabled,
+  onVaultStateChange,
+  openForOpfs,
+  sealForOpfs,
+} from './passkey-vault.js'
 
 // Persistent file storage backs the sidebar. OPFS — Origin Private
 // File System — is the preferred layer (real files, larger quota); on
@@ -25,23 +35,6 @@ async function getOpfsDir() {
     }
     return null
   }
-}
-
-// Compress / decompress JSON text via gzip + base64 for the localStorage
-// fallback. CompressionStream / DecompressionStream are well supported
-// (same primitive used by loadTriage / saveTriage). Base64 is the
-// transport because localStorage values are strings.
-async function gzipString(text) {
-  const bytes = encodeUtf8(text)
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
-  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
-  return arr.toBase64()
-}
-async function gunzipString(b64) {
-  const bytes = Uint8Array.fromBase64(b64)
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-  const arr = new Uint8Array(await new Response(stream).arrayBuffer())
-  return decodeUtf8(arr)
 }
 
 // Binary gzip — bytes in, bytes out. Used by the bundles layer so
@@ -157,6 +150,10 @@ export async function listFiles() {
   return names.toSorted()
 }
 
+// preserves async signature so a sync-throwing NUL-name validation
+// surfaces as a rejected promise via `assert.rejects` test
+// expectations.
+// eslint-disable-next-line require-await
 export async function saveFile(name, content) {
   // Reject names containing NUL. `\0` is the separator inside
   // `state.ignoredIds` keys (`${reportName}\0${id}`) and inside
@@ -174,8 +171,16 @@ export async function saveFile(name, content) {
   // that already started can detect that its result is stale and
   // skip overwriting the cache. Audit round-9 H1.
   bumpWriteGen(name)
-  const dir = await getOpfsDir()
-  if (dir) {
+  // Hold a SHARED VAULT_LOCK so vault enable/disable (which acquires
+  // it exclusively) waits for our in-flight write to land. Without
+  // this, a vault transition that snapshots `listFiles` between this
+  // saveFile's gzip + seal and its OPFS commit can miss the new
+  // file, leaving a stale-state envelope (or plaintext) at rest
+  // that won't match the post-transition vault. Shared mode allows
+  // concurrent saves to proceed in parallel.
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+    const dir = await getOpfsDir()
+    if (dir) {
     // OPFS reports are gzipped at rest — JSON dumps compress well
     // and OPFS quota is shared with bundles + workspaces. readFile
     // sniffs the gzip magic on read so legacy uncompressed entries
@@ -189,7 +194,53 @@ export async function saveFile(name, content) {
     // click) could land in the window where the entry was gone,
     // which made the just-clicked file vanish from the sidebar
     // until reload.
-    const bytes = await gzipBytes(encodeUtf8(content))
+    let bytes = await gzipBytes(encodeUtf8(content))
+    // Envelope when the passkey vault is unlocked. AAD binds the
+    // ciphertext to the filename so a report swap on disk fails
+    // AEAD verification on the next read. Storage at rest layout:
+    //   [4-byte DVE1 magic][12-byte nonce][AES-GCM ciphertext+tag]
+    // …of the GZIPPED report bytes — readFile peels the envelope
+    // FIRST, then falls into the existing gzip magic-sniff to
+    // decompress.
+    //
+    // Vault-state consistency: capture the session key BEFORE the
+    // async seal, then double-check it didn't flip during the seal.
+    // A sibling-tab disable that fires during seal would otherwise
+    // produce envelope bytes on disk under a key the next page load
+    // doesn't have. Mirrors the same check in saveTriage. On
+    // mismatch, abort cleanly — the saveFile caller already saw a
+    // resolved promise from the bump, and the next save will land
+    // under the new state.
+    //
+    // LOAD-BEARING under shared VAULT_LOCK: the shared lock serialises
+    // this saveFile against enable/disable, BUT the storage-event
+    // handler in passkey-vault.js synchronously nulls `sessionKey`
+    // on a sibling-tab disable WITHOUT acquiring VAULT_LOCK (storage
+    // events fire on the task queue, not through the lock
+    // scheduler). The check catches exactly that path.
+    //
+    // Refuse writes when the vault is enabled-but-locked. A user
+    // who dismissed the boot unlock dialog still ends up here on
+    // drag-drop / paste; without this guard, the file lands as
+    // plaintext on disk under an enabled vault — breaking the
+    // "everything written while encryption is on is encrypted"
+    // invariant. Caller surfaces via the same "vault locked"
+    // path that switchToFile already handles (unlock + retry).
+    if (isEncryptionEnabled() && !getSessionKey()) {
+      bumpWriteGen(name)
+      throw new Error(`storage: vault locked, cannot save "${name}"`)
+    }
+    const sealedWithKey = getSessionKey()
+    if (sealedWithKey) bytes = await sealForOpfs(bytes, name)
+    if (getSessionKey() !== sealedWithKey) {
+      // Vault flipped between key capture and seal completion.
+      // Don't write — the bytes are inconsistent with the current
+      // vault state. Caller should re-issue a save; the bumpWriteGen
+      // we already did invalidates any in-flight readFile's cached
+      // result. Surface as a rejection so the caller can retry.
+      bumpWriteGen(name)
+      throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
+    }
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
     try {
@@ -227,9 +278,24 @@ export async function saveFile(name, content) {
     notifyFileMutated(name, 'save')
     return
   }
-  const compressed = await gzipString(content)
+  // LS-fallback path mirrors the OPFS branch's envelope step + the
+  // same vault-state consistency check.
+  let lsBytes = encodeUtf8(content)
+  lsBytes = await gzipBytes(lsBytes)
+  // Same locked-vault rejection as the OPFS branch above.
+  if (isEncryptionEnabled() && !getSessionKey()) {
+    bumpWriteGen(name)
+    throw new Error(`storage: vault locked, cannot save "${name}"`)
+  }
+  const lsSealedWithKey = getSessionKey()
+  if (lsSealedWithKey) lsBytes = await sealForOpfs(lsBytes, name)
+  if (getSessionKey() !== lsSealedWithKey) {
+    bumpWriteGen(name)
+    throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
+  }
+  const stored = lsBytes.toBase64()
   try {
-    localStorage.setItem(LS_REPORT_PREFIX + name, compressed)
+    localStorage.setItem(LS_REPORT_PREFIX + name, stored)
     cache.set(name, content)
     bumpWriteGen(name)
     notifyFileMutated(name, 'save')
@@ -239,6 +305,7 @@ export async function saveFile(name, content) {
     bumpWriteGen(name)
     throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
   }
+  })
 }
 
 export async function readFile(name) {
@@ -255,7 +322,19 @@ export async function readFile(name) {
     if (dir) {
       const fh = await dir.getFileHandle(name)
       const file = await fh.getFile()
-      const bytes = new Uint8Array(await file.arrayBuffer())
+      let bytes = new Uint8Array(await file.arrayBuffer())
+      // Envelope-aware: a passkey-encrypted file starts with the
+      // 4-byte magic "DVE1". Peel the envelope FIRST (yields the
+      // gzipped bytes), then fall through to the existing gzip
+      // magic check. A locked-but-enveloped file surfaces a clean
+      // error here rather than a confusing "gunzip failed" or
+      // garbled JSON later.
+      if (hasEnvelopeMagic(bytes)) {
+        if (!getSessionKey()) {
+          throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
+        }
+        bytes = await openForOpfs(bytes, name)
+      }
       // Gzipped payload (saveFile compresses since v…) — decompress
       // and return the JSON text. Stale uncompressed entries from
       // before the on-disk-gzip flip fall through to the legacy
@@ -282,9 +361,17 @@ export async function readFile(name) {
       })
       return text
     }
-    const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
-    if (compressed === null) throw new Error(`File not found: ${name}`)
-    return await gunzipString(compressed)
+    const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
+    if (stored === null) throw new Error(`File not found: ${name}`)
+    let lsBytes = Uint8Array.fromBase64(stored)
+    if (hasEnvelopeMagic(lsBytes)) {
+      if (!getSessionKey()) {
+        throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
+      }
+      lsBytes = await openForOpfs(lsBytes, name)
+    }
+    const plain = await gunzipBytes(lsBytes)
+    return decodeUtf8(plain)
   })()
   inFlight.set(name, promise)
   try {
@@ -296,28 +383,35 @@ export async function readFile(name) {
   }
 }
 
-// Read the on-disk bytes for a report, unchanged. Where OPFS holds
-// the report it returns the gzipped bytes (the same shape
-// `saveFile` writes); on localStorage fallback it returns the
-// gzipped bytes too (after base64-decoding the LS string). Caller
-// is responsible for gunzipping if it wants the plaintext.
-//
-// Used by the objstore upload path so we can ship the existing
-// on-disk gzipped representation through the wire encryption layer
-// — no need to decompress and re-compress.
+// Read the on-disk bytes for a report, unchanged at the LOGICAL
+// layer — the passkey envelope (when present) is peeled here so
+// callers always see the same gzipped representation regardless of
+// whether the on-disk file was wrapped or not. The objstore upload
+// path consumes the gzipped representation directly: shipping
+// encrypted-at-rest bytes through the workspace's wire-encryption
+// layer would just double-wrap, and a peer who downloaded the
+// resulting blob wouldn't have this device's passkey to peel the
+// inner envelope. So peel here, encrypt over the wire there, and
+// `saveFileBytes` re-wraps with this device's passkey on disk.
 export async function readFileBytes(name) {
   const dir = await getOpfsDir()
+  let bytes
   if (dir) {
     const fh = await dir.getFileHandle(name)
     const file = await fh.getFile()
-    return new Uint8Array(await file.arrayBuffer())
+    bytes = new Uint8Array(await file.arrayBuffer())
+  } else {
+    const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
+    if (stored === null) throw new Error(`File not found: ${name}`)
+    bytes = Uint8Array.fromBase64(stored)
   }
-  const compressed = localStorage.getItem(LS_REPORT_PREFIX + name)
-  if (compressed === null) throw new Error(`File not found: ${name}`)
-  // Legacy localStorage path stored compressed strings (see
-  // `gzipString` / `gunzipString` below); decode the base64 wrapper
-  // back to bytes so this returns the on-disk gzip stream.
-  return Uint8Array.fromBase64(compressed)
+  if (hasEnvelopeMagic(bytes)) {
+    if (!getSessionKey()) {
+      throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
+    }
+    bytes = await openForOpfs(bytes, name)
+  }
+  return bytes
 }
 
 // Write raw bytes to OPFS under `name` without re-compressing — the
@@ -330,39 +424,63 @@ export async function readFileBytes(name) {
 // blob lands on disk byte-identical, preserving any non-UTF-8
 // safe content without going through a TextDecoder round-trip
 // that could corrupt it.
+// see saveFile note above.
+// eslint-disable-next-line require-await
 export async function saveFileBytes(name, bytes) {
   if (typeof name !== 'string' || name.includes('\0')) {
     throw new Error(`Invalid report name: contains NUL byte or is not a string`)
   }
   bumpWriteGen(name)
   cache.delete(name)
-  const dir = await getOpfsDir()
-  if (dir) {
-    const fh = await dir.getFileHandle(name, { create: true })
-    const writable = await fh.createWritable()
+  // Shared VAULT_LOCK so concurrent vault transitions wait — same
+  // rationale as saveFile.
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+    // Wrap with the passkey envelope when the vault is unlocked — same
+    // policy as `saveFile`. Bytes received here are the LOGICAL
+    // on-disk form (gzipped report); the envelope sits on top so the
+    // file on disk is the AEAD ciphertext. AAD = filename, so a
+    // file-rename swap fails AEAD verification on the next read.
+    // Refuse the write when the vault is enabled-but-locked (same
+    // invariant as saveFile — no plaintext bytes land while
+    // encryption is supposed to be on).
+    if (isEncryptionEnabled() && !getSessionKey()) {
+      bumpWriteGen(name)
+      throw new Error(`storage: vault locked, cannot save "${name}"`)
+    }
+    const sealedWithKey = getSessionKey()
+    const onDisk = sealedWithKey ? await sealForOpfs(bytes, name) : bytes
+    if (getSessionKey() !== sealedWithKey) {
+      bumpWriteGen(name)
+      throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
+    }
+    const dir = await getOpfsDir()
+    if (dir) {
+      const fh = await dir.getFileHandle(name, { create: true })
+      const writable = await fh.createWritable()
+      try {
+        await writable.write(onDisk)
+        await writable.close()
+      } catch (err) {
+        bumpWriteGen(name)
+        // Eager-release the writable rather than wait for GC. Symmetric
+        // with `saveFile` above; memory-lifecycle audit
+        // `client/storage.js:175`.
+        try { await writable.abort(err) } catch {}
+        throw err
+      }
+      bumpWriteGen(name)
+      notifyFileMutated(name, 'save')
+      return
+    }
     try {
-      await writable.write(bytes)
-      await writable.close()
+      localStorage.setItem(LS_REPORT_PREFIX + name, onDisk.toBase64())
+      bumpWriteGen(name)
+      notifyFileMutated(name, 'save')
     } catch (err) {
       bumpWriteGen(name)
-      // Eager-release the writable rather than wait for GC. Symmetric
-      // with `saveFile` above; memory-lifecycle audit
-      // `client/storage.js:175`.
-      try { await writable.abort(err) } catch {}
-      throw err
+      throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
     }
-    bumpWriteGen(name)
-    notifyFileMutated(name, 'save')
-    return
-  }
-  try {
-    localStorage.setItem(LS_REPORT_PREFIX + name, bytes.toBase64())
-    bumpWriteGen(name)
-    notifyFileMutated(name, 'save')
-  } catch (err) {
-    bumpWriteGen(name)
-    throw new Error(`localStorage write failed for ${name}: ${err.message}`, { cause: err })
-  }
+  })
 }
 
 export async function deleteFile(name) {
@@ -542,3 +660,119 @@ export async function readBundle(integrity) {
   }
   return bytes
 }
+
+// Migration helpers — driven by passkey-vault.js's enable/disable
+// flow. Iterate every report in the active backend (OPFS or LS
+// fallback), read the on-disk bytes WITHOUT routing through the
+// envelope-aware reader (which would either over- or under-process
+// the file), seal/open through the caller-supplied helper, write
+// the result back. Caches are cleared at the start so any concurrent
+// reader picks up the new shape on its next attempt.
+//
+// Failure mode: a single file's seal/open failure aborts the run.
+// The vault keeps the partially-migrated state — some files
+// enveloped, others not — which is fine: the envelope-aware reader
+// sniffs each file independently. The vault's enable/disable
+// transition rolls back its metadata on a thrown migration so the
+// user can retry without ending up in a "encryption enabled but
+// half the data isn't encrypted" lockout.
+async function rawReadAndWrite(name, transform) {
+  const dir = await getOpfsDir()
+  if (dir) {
+    const fh = await dir.getFileHandle(name)
+    const file = await fh.getFile()
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const next = await transform(bytes)
+    if (next === null) return
+    cache.delete(name)
+    inFlight.delete(name)
+    bumpWriteGen(name)
+    const writeFh = await dir.getFileHandle(name, { create: true })
+    const writable = await writeFh.createWritable()
+    // Mirror saveFile / saveFileBytes — abort the writable on any
+    // failure so a half-flushed migration write doesn't leak a file
+    // handle (impl-defined; some browsers leave partial bytes
+    // visible to the next read until GC).
+    try {
+      await writable.write(next)
+      await writable.close()
+    } catch (err) {
+      try { await writable.abort(err) } catch {}
+      throw err
+    }
+    bumpWriteGen(name)
+    return
+  }
+  const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
+  if (stored === null) return
+  const bytes = Uint8Array.fromBase64(stored)
+  const next = await transform(bytes)
+  if (next === null) return
+  cache.delete(name)
+  inFlight.delete(name)
+  bumpWriteGen(name)
+  localStorage.setItem(LS_REPORT_PREFIX + name, next.toBase64())
+  bumpWriteGen(name)
+}
+
+// CONTRACT: must be called from inside an EXCLUSIVE VAULT_LOCK
+// acquisition (i.e. from the migration callback passed to
+// `enableEncryption` / `disableEncryption`). The helper itself
+// doesn't acquire the lock — it relies on the caller's exclusive
+// hold to block concurrent `saveFile` / `saveFileBytes` (which
+// acquire VAULT_LOCK in shared mode) from interleaving writes into
+// files the migration's `listFiles` snapshot has already taken.
+// Calling this outside that lock leaves a TOCTOU window where a
+// concurrent save can land bytes that the migration misses.
+//
+// AAD comes from the vault's `getEnvelopeAadForOpfs` so a future
+// rename of the AAD format doesn't drift between save / migrate.
+// Per-file: a `getFileHandle` NotFoundError (the file vanished
+// between `listFiles` and the read) is swallowed so a concurrent
+// delete doesn't abort the whole sweep; every other error
+// propagates and aborts.
+export async function migrateOpfsFilesEncrypt({ seal }) {
+  const names = await listFiles()
+  for (const name of names) {
+    try {
+      await rawReadAndWrite(name, (bytes) => {
+        if (hasEnvelopeMagic(bytes)) return null  // already enveloped
+        return seal(bytes, getEnvelopeAadForOpfs(name))
+      })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotFoundError') continue
+      throw err
+    }
+  }
+}
+
+// Same VAULT_LOCK exclusive-hold precondition as
+// `migrateOpfsFilesEncrypt`.
+export async function migrateOpfsFilesDecrypt({ open }) {
+  const names = await listFiles()
+  for (const name of names) {
+    try {
+      await rawReadAndWrite(name, (bytes) => {
+        if (hasEnvelopeMagic(bytes)) return open(bytes, getEnvelopeAadForOpfs(name))
+        return null  // already plaintext
+      })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotFoundError') continue
+      throw err
+    }
+  }
+}
+
+// Vault state change handler — wipe the per-name read cache so the
+// next read of an encrypted file goes back to OPFS / LS and the
+// just-set (or just-cleared) session key is used to peel the
+// envelope. Without this, a cached plaintext read from BEFORE the
+// vault state changed would keep serving stale data.
+onVaultStateChange(() => {
+  cache.clear()
+  inFlight.clear()
+})
+
+// Surface isEncryptionEnabled for the UI without forcing every
+// caller to import the vault module separately.
+export { isEncryptionEnabled }

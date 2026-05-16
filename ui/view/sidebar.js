@@ -15,6 +15,7 @@ import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './leave-workspace-dialog.js'
 import { openWorkspaceShareLinkDialog } from './workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './delete-report-dialog.js'
+import { onVaultStateChange } from '../../client/passkey-vault.js'
 import { analyzeTriageImpact } from '../../client/triage-gc.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { triageSync } from '../../client/triage-sync.ts'
@@ -498,6 +499,14 @@ export async function renderSidebar() {
   ensureCounts(names, () => { renderSidebar() })
 }
 
+// Re-render the sidebar whenever the passkey vault state flips so
+// the encryption row reflects the live state (enable → unlock → lock
+// transitions) without waiting for an unrelated event to trigger a
+// render. Wired here rather than in view.js because view.js already
+// invokes the main `render()` on vault changes — this hook covers
+// the sidebar's own template too.
+onVaultStateChange(() => { renderSidebar() })
+
 // Sidebar event delegation: file-list click switches; Delete removes
 // the current file; toggle collapses / expands; search filters on
 // input. The workspace "+" button intercepts BEFORE the file-row
@@ -568,6 +577,13 @@ sidebar.addEventListener('click', async (e) => {
   if (e.target.closest('[data-action="new-workspace"]')) {
     const name = await openNewWorkspaceDialog()
     if (name) {
+      // First-use prompt fires here too (not just on file drop) so
+      // a user who starts by setting up a workspace gets the same
+      // encryption opt-in before the workspace's private key lands
+      // on disk. Same idempotent flag as the drop path; the prompt
+      // only fires once.
+      const { maybePromptFirstUse } = await import('./first-import-prompt.js')
+      await maybePromptFirstUse()
       await createWorkspace(name)
       renderSidebar()
     }

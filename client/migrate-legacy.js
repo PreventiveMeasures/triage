@@ -18,6 +18,7 @@ import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
 import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
+import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -127,12 +128,11 @@ async function run() {
     if (renamedKeys.length > 0) await saveTriage()
 
     // Last-viewed-file pointer — update so the next reload restores
-    // the renamed entry rather than failing to find it.
-    try {
-      if (localStorage.getItem(LAST_FILE_KEY) === name) {
-        localStorage.setItem(LAST_FILE_KEY, target)
-      }
-    } catch {}
+    // the renamed entry rather than failing to find it. Goes through
+    // secure-storage so the encrypted form is preserved.
+    if (getSecureItem(LAST_FILE_KEY) === name) {
+      try { await setSecureItem(LAST_FILE_KEY, target) } catch {}
+    }
   }
 
   // Workspace memberships keyed by filename. Three cases for a

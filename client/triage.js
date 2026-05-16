@@ -1,6 +1,16 @@
 import { state } from './state.ts'
 import { triageSync } from './triage-sync.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import {
+  VAULT_LOCK,
+  getEnvelopeAadForTriage,
+  getSessionKey,
+  hasEnvelopeMagic,
+  isEncryptionEnabled,
+  onVaultStateChange,
+  openForTriage,
+  sealForTriage,
+} from './passkey-vault.js'
 
 // Markers + deletions + comments + fix-links survive page reload
 // via `localStorage['deepview.triage']`. Payload shape:
@@ -116,16 +126,48 @@ export function saveTriage() {
   // compressed key still stale). readTriageBlob prefers pending
   // on next load. Wrapped in its own try so a localStorage quota
   // failure doesn't abort the compress + main write below.
+  //
+  // The pending key is intentionally NOT encrypted — it's a crash-
+  // recovery snapshot that the same tab needs to be able to read
+  // even before the user has unlocked the vault on a subsequent
+  // page load. Trading off encryption-at-rest of the pending
+  // window for the recovery guarantee: a crash-recovery read of an
+  // encrypted pending key would itself need the session key, and
+  // a locked vault would mean the pending edit is lost. The blob
+  // is short-lived (cleared at the tail of saveTriage) and lives
+  // only on the user's device.
   if (json != null) {
     try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
   }
-  return (async () => {
+  // Hold a SHARED VAULT_LOCK for the duration of the compress + seal
+  // + commit so a vault enable/disable (which acquires the lock
+  // exclusively) waits for us to finish. Without this, an enable
+  // that ran its `listFiles` snapshot BEFORE saveTriage's write
+  // could miss the just-written-enveloped blob; a disable that
+  // ran AFTER saveTriage's seal-with-key-K could leave the envelope
+  // unrecoverable. Shared mode lets concurrent saves run in
+  // parallel; only the (rare) transition pauses them.
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
     let b64 = null
+    let sealedWithKey = null
     if (json != null) {
       try {
         const bytes = encodeUtf8(json)
         const compressed = await compressBrotli(bytes)
-        b64 = compressed.toBase64()
+        // Envelope when the vault is unlocked. A vault that's
+        // enabled but locked (no session key) skips the seal step,
+        // saving as plaintext — the next saveTriage post-unlock
+        // re-writes enveloped, and the on-disk blob is overwritten
+        // before any read could surface stale plaintext.
+        //
+        // `sealedWithKey` is captured here so the lock-protected
+        // commit below can detect a same-tab user-driven flip during
+        // compress (the sibling-tab race is already covered by the
+        // shared VAULT_LOCK; this guards the in-tab edge where a
+        // listener fires during the await window).
+        sealedWithKey = getSessionKey()
+        const finalBytes = sealedWithKey ? await sealForTriage(compressed) : compressed
+        b64 = finalBytes.toBase64()
       } catch (err) {
         console.warn('Failed to save triage:', err)
         triageSync.notify()
@@ -138,9 +180,37 @@ export function saveTriage() {
     // both the TRIAGE_KEY write AND the pending-key clear (the
     // newer call's pending is already in localStorage and
     // mustn't be clobbered by our older commit).
+    //
+    // Vault-state consistency: if the session key has changed
+    // (sibling tab disabled / enabled / re-keyed mid-compress), the
+    // bytes we just sealed (or didn't seal) are inconsistent with
+    // the current vault state. Skip the write and queue a fresh
+    // saveTriage so the next snapshot lands under the correct
+    // state. Without this, a "compress completes after sibling
+    // disabled the vault" race would persist an envelope into a
+    // disabled vault, bricking the data.
+    //
+    // LOAD-BEARING under shared VAULT_LOCK: the shared lock serialises
+    // saveTriage vs enable/disable in this tab and across tabs, BUT
+    // the storage-event handler in passkey-vault.js synchronously
+    // nulls `sessionKey` on a sibling-tab disable WITHOUT acquiring
+    // VAULT_LOCK — storage events fire on the JS task queue, not
+    // through the lock scheduler. This check catches that path.
     await navigator.locks.request(TRIAGE_LOCK, () => {
       try {
         if (gen !== saveGen) return
+        // Vault-state consistency check ONLY applies to the seal
+        // path (json != null). The empty-entries branch removes
+        // TRIAGE_KEY entirely — there's no enveloped vs plaintext
+        // ambiguity to reconcile, and `sealedWithKey` was never
+        // captured for the empty path. Without this gate, an
+        // unlocked-vault empty save would loop: sealedWithKey
+        // stayed null, getSessionKey() returns the non-null key,
+        // mismatch → microtask retry → identical state → repeat.
+        if (json != null && getSessionKey() !== sealedWithKey) {
+          queueMicrotask(() => { saveTriage() })
+          return
+        }
         if (isEmpty) {
           localStorage.removeItem(TRIAGE_KEY)
           localStorage.removeItem(TRIAGE_PENDING_KEY)
@@ -161,13 +231,21 @@ export function saveTriage() {
     // empty-entries branch (audit round-12 H10a) skipped this and
     // stranded the chain on stale state.
     triageSync.notify()
-  })()
+  })
 }
 
 // Decode the persisted blob into `{ id: entry }` form. Returns
 // null when nothing's stored; throws errors are swallowed at the
 // caller so a corrupt blob doesn't take down ingestReport / the
 // cross-tab listener.
+//
+// Envelope-aware: when the decoded base64 starts with the passkey
+// envelope magic (`DVE1`), peel the envelope before decompressing.
+// A locked vault throws here (encryption is enabled but no session
+// key available) — the caller (loadTriage / reloadTriageFromStorage)
+// swallows it via the same `console.warn` path that handles every
+// other read failure, and the UI surfaces the unlock prompt via the
+// vault-state-change listener registered at boot.
 async function readTriageBlob() {
   // Prefer the synchronous "ahead-of-compress" snapshot when
   // present — it's strictly newer than the compressed key (a
@@ -179,8 +257,18 @@ async function readTriageBlob() {
   }
   const raw = localStorage.getItem(TRIAGE_KEY)
   if (!raw) return null
-  const compressed = Uint8Array.fromBase64(raw)
-  const decompressed = await decompressBrotli(compressed)
+  let bytes = Uint8Array.fromBase64(raw)
+  if (hasEnvelopeMagic(bytes)) {
+    // Envelope present — must have a session key to unwrap. A
+    // missing session key (vault locked / disabled while envelopes
+    // are at rest) surfaces as a clear error rather than a
+    // misleading "decompression failed" or "JSON parse" downstream.
+    if (!getSessionKey()) {
+      throw new Error('triage: vault locked, cannot decrypt envelope')
+    }
+    bytes = await openForTriage(bytes)
+  }
+  const decompressed = await decompressBrotli(bytes)
   return JSON.parse(decodeUtf8(decompressed))
 }
 
@@ -345,4 +433,90 @@ if (typeof window !== 'undefined') {
 // this before rendering so the first drop already shows stored marks
 // and deletions for matching findings.
 export const loadPromise = loadTriage()
+
+// Re-trigger a load whenever the vault state changes (unlock, lock,
+// remote enable). On unlock the freshly-derived session key lets us
+// finally peel an envelope that was previously unreadable; on lock
+// we drop in-memory state that came from an envelope (the user
+// asked to seal it away). The reload is fire-and-forget — failures
+// surface through readTriageBlob's caller.
+onVaultStateChange(() => { reloadTriageFromStorage() })
+
+// Pending-key plaintext cleanup. `TRIAGE_PENDING_KEY` is the
+// synchronous "ahead-of-compress" snapshot saveTriage writes
+// before the async compress await (M3 round-5). It's plaintext
+// because crash-recovery needs to be readable without the session
+// key. Once a `saveTriage` commit lands successfully, the pending
+// key is cleared at line 213. But if a saveTriage fails AFTER
+// writing pending but BEFORE the commit (compress throw, browser
+// kill), the plaintext can sit on disk indefinitely until the
+// next successful save. The audit-flagged concrete failure: a
+// user enables encryption, makes one edit, crashes, never edits
+// again — TRIAGE_PENDING_KEY stays plaintext alongside the
+// sealed TRIAGE_KEY, defeating encryption-at-rest for the most
+// recent edit.
+//
+// Fix: trigger a fresh saveTriage whenever:
+//   - the vault transitions to unlocked, AND
+//   - a plaintext pending blob exists.
+// The fresh save reads the just-loaded in-memory state (which
+// was populated from pending on boot), compresses, seals, and
+// clears the pending key — closing the window.
+onVaultStateChange(() => {
+  if (getSessionKey() && localStorage.getItem(TRIAGE_PENDING_KEY)) {
+    saveTriage()
+  }
+})
+
+// Migration helpers — used by passkey-vault.js's
+// enable/disableEncryption flow. CONTRACT: must be called from
+// inside an EXCLUSIVE VAULT_LOCK acquisition. The shared-mode
+// VAULT_LOCK that saveTriage acquires waits for the migration to
+// release the exclusive hold; calling these helpers outside that
+// hold creates a TOCTOU window where a concurrent saveTriage can
+// land bytes inconsistent with the just-flipped vault state.
+//
+// Encrypt: read the current plaintext blob, seal under the
+// just-derived session key, write the envelope back. Then drop
+// any stale `TRIAGE_PENDING_KEY` plaintext — the main key is now
+// the authoritative sealed copy; pending was either already
+// merged into it (next saveTriage cycle) or is older crash-
+// recovery bytes that we don't want sitting around plaintext
+// under an enabled vault. If no triage data is stored, this is a
+// no-op (but the pending clear still fires defensively).
+//
+// Decrypt: read the current envelope, unwrap, write the plaintext
+// back. Tolerant of a blob that's already plaintext (legacy /
+// half-migrated) — leaves it alone. Pending is ALSO cleared here:
+// it's stale relative to the just-decrypted main key, and on a
+// next-load it would be `readTriageBlob`-preferred (overriding
+// the freshly-decrypted entries the user just chose to expose).
+//
+// AAD comes from the vault's `getEnvelopeAadForTriage` so a future
+// rename of the AAD format doesn't drift between save / migrate.
+export async function migrateTriageToEncrypted({ seal }) {
+  try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+  const raw = localStorage.getItem(TRIAGE_KEY)
+  if (!raw) return
+  const bytes = Uint8Array.fromBase64(raw)
+  if (hasEnvelopeMagic(bytes)) return  // already enveloped
+  const sealed = await seal(bytes, getEnvelopeAadForTriage())
+  localStorage.setItem(TRIAGE_KEY, sealed.toBase64())
+}
+
+export async function migrateTriageToPlaintext({ open }) {
+  try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+  const raw = localStorage.getItem(TRIAGE_KEY)
+  if (!raw) return
+  const bytes = Uint8Array.fromBase64(raw)
+  if (!hasEnvelopeMagic(bytes)) return  // already plaintext
+  const plain = await open(bytes, getEnvelopeAadForTriage())
+  localStorage.setItem(TRIAGE_KEY, plain.toBase64())
+}
+
+// Surface the vault state to the boot-time UI without exposing the
+// passkey-vault import path to every caller (events.js / sidebar
+// already import from triage.js for other reasons; this saves them
+// a second import).
+export { isEncryptionEnabled }
 

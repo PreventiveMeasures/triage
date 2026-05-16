@@ -142,6 +142,11 @@ describe('migrateLegacyFilenames', () => {
     const target = legacy.replace(/\.deepseek$/u, '.md')
     await saveFile(legacy, '# X\n\n## HIGH (1)\n\n### F\n')
     globalThis.localStorage.setItem(LAST_FILE_KEY, legacy)
+    // migrate-legacy.js now reads/writes LAST_FILE_KEY through the
+    // secure-storage cache; hydrate it so the just-written LS value
+    // is visible.
+    const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
+    await hydrateSecureStorage()
 
     await freshMigrate()
 

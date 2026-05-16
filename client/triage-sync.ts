@@ -2,6 +2,7 @@ import { type TriageBucket, state } from './state.ts'
 import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../common/save-error-reason.ts'
+import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, setItem as setSecureItem } from './secure-storage.js'
 import {
   type SavePayload,
   buildAad,
@@ -930,21 +931,31 @@ function setPersistenceDegraded(next: boolean): void {
 // SESSION_STATE_KEY; ignore other keys so we don't spin on
 // unrelated localStorage activity. Audit follow-up to PR #61
 // latch-lifecycle review.
-if (typeof globalThis.addEventListener === 'function') {
-  globalThis.addEventListener('storage', (e) => {
-    // Duck-type the `key` field rather than `instanceof StorageEvent`
-    // so the handler also works under Node test fixtures that
-    // synthesise a plain Event with the storage shape. In real
-    // browsers `addEventListener('storage', ...)` only receives
-    // StorageEvents, so the `as unknown as StorageEvent` narrowing
-    // would be redundant. Defense-in-depth: ignore events whose
-    // `key` isn't our sessions blob to avoid spinning on unrelated
-    // localStorage activity.
-    if (!('key' in e) || (e as StorageEvent).key !== SESSION_STATE_KEY) return
-    const r = loadAllSessionsResult()
-    setPersistenceDegraded(r.kind === 'unknown-version')
-  })
-}
+//
+// Subscribes to secure-storage's `onAfterHydrate` instead of the
+// raw `storage` event. The sessions blob is read through the
+// secure-storage cache (encrypted at rest under the passkey vault);
+// the raw `storage` handler would fire synchronously on the
+// sibling's just-written enveloped base64, but secure-storage's
+// hydrate is async — so a sync read here would see the stale
+// pre-hydrate cache and silently miss the cross-tab clear. The
+// after-hydrate hook fires post-decrypt, so `loadAllSessionsResult`
+// sees the fresh cache. Same pattern `workspaces.js` /
+// `state.ts` adopted for their secure-storage keys.
+//
+// Asymmetric transitions: we only flip the latch in the two
+// directions that have unambiguous semantics — unknown-version
+// turns it ON, recognised-version turns it OFF. The 'empty' case
+// (someone removed the blob entirely, e.g. a DevTools delete or a
+// fresh-vault wipe) does NOT touch the latch: a pre-existing ON
+// state from a failed write should persist across the empty
+// transition until a SUCCESSFUL save proves the underlying issue
+// (quota, vault-locked) is resolved.
+onSecureStorageHydrated(() => {
+  const r = loadAllSessionsResult()
+  if (r.kind === 'unknown-version') setPersistenceDegraded(true)
+  else if (r.kind === 'v1' || r.kind === 'legacy') setPersistenceDegraded(false)
+})
 
 // Discriminated load result so `mutateAllSessions` can distinguish
 // "blob doesn't exist / is unparseable / is legacy / is current"
@@ -959,7 +970,11 @@ type LoadAllSessionsResult =
 
 function loadAllSessionsResult(): LoadAllSessionsResult {
   try {
-    const raw = localStorage.getItem(SESSION_STATE_KEY)
+    // Read through the secure-storage cache so encrypted-at-rest
+    // session state surfaces decrypted post-unlock. Cache is
+    // hydrated by view.js's boot flow before any session-touching
+    // code runs.
+    const raw = getSecureItem(SESSION_STATE_KEY)
     if (!raw) return { kind: 'empty' }
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return { kind: 'empty' }
@@ -996,21 +1011,22 @@ function loadAllSessions(): PersistedSessionsMap {
 }
 
 // Returns true on a successful write, false on a swallowed
-// localStorage error (typically QuotaExceededError). Callers gate
-// `persistenceDegraded` clear-on-success on this — a quota-exceeded
-// write that the user can't see ("disk full" with no surfaced
-// error) is itself a form of degraded persistence and the UI
-// hint should stay on.
-function writeAllSessionsRaw(map: PersistedSessionsMap): boolean {
+// persist error (QuotaExceededError, vault-locked-cannot-save).
+// Callers gate `persistenceDegraded` clear-on-success on this — a
+// quota-exceeded write that the user can't see ("disk full" with
+// no surfaced error) is itself a form of degraded persistence and
+// the UI hint should stay on.
+async function writeAllSessionsRaw(map: PersistedSessionsMap): Promise<boolean> {
   try {
-    localStorage.setItem(SESSION_STATE_KEY, JSON.stringify({
+    await setSecureItem(SESSION_STATE_KEY, JSON.stringify({
       version: SESSIONS_VERSION,
       sessions: map,
     }))
     return true
   } catch (err) {
-    // Likely QuotaExceededError — sync just falls back to the
-    // "always start from null base" path on next reload.
+    // Likely QuotaExceededError or vault-locked-cannot-save — sync
+    // just falls back to the "always start from null base" path on
+    // next reload.
     console.warn('Triage sync: could not persist session state:', err)
     return false
   }
@@ -1072,14 +1088,15 @@ export async function mutateAllSessions(mutator: SessionsMutator): Promise<void>
     const all = (r.kind === 'v1' || r.kind === 'legacy') ? r.map : {}
     const result = await mutator(all)
     if (result === false) return
-    const wroteSuccessfully = writeAllSessionsRaw(all)
+    const wroteSuccessfully = await writeAllSessionsRaw(all)
     // Clear the degraded latch ONLY on a confirmed successful
-    // write. A quota-exceeded write would silently fail (the
-    // catch in writeAllSessionsRaw logs but returns false) — if
-    // we cleared the latch unconditionally, the UI hint would
-    // disappear while persistence is still broken. The latch
-    // staying ON keeps the user informed that their state isn't
-    // being persisted. Audit follow-up to PR #80 cross-tab review.
+    // write. A quota-exceeded / vault-locked write would silently
+    // fail (the catch in writeAllSessionsRaw logs but returns
+    // false) — if we cleared the latch unconditionally, the UI
+    // hint would disappear while persistence is still broken. The
+    // latch staying ON keeps the user informed that their state
+    // isn't being persisted. Audit follow-up to PR #80 cross-tab
+    // review.
     if (wroteSuccessfully) setPersistenceDegraded(false)
   })
 }
@@ -2363,9 +2380,12 @@ export const triageSync = {
     const next = Boolean(value)
     if (next === userEnabled) return
     userEnabled = next
-    try {
-      localStorage.setItem(USER_ENABLED_KEY, next ? '1' : '0')
-    } catch {}
+    // Best-effort persist via secure-storage so an enabled-vault
+    // user's sync toggle is encrypted at rest. Failure logged but
+    // not surfaced — userEnabled stays in-memory either way.
+    setSecureItem(USER_ENABLED_KEY, next ? '1' : '0').catch((err: unknown) => {
+      console.warn('Triage sync: could not persist user-enabled:', err)
+    })
     if (isActive()) {
       // Re-enabling sync is equivalent to a user-initiated retry —
       // clear any sticky `error` from a previous server reject so
@@ -2704,7 +2724,7 @@ export const triageSync = {
 // to avoid resurrecting stale endpoints from older builds.
 try {
   localStorage.removeItem(LEGACY_URL_KEY)
-  const savedEnabled = localStorage.getItem(USER_ENABLED_KEY)
+  const savedEnabled = getSecureItem(USER_ENABLED_KEY)
   if (savedEnabled === '0') userEnabled = false
   if (isActive()) openSocket()
 } catch {}

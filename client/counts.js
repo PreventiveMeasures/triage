@@ -16,17 +16,22 @@
 import { readFile } from './storage.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
 
+// File-counts blob contains filenames, which we treat as sensitive
+// metadata (project names, sample identifiers). Reads go through
+// the secure-storage cache (hydrated at boot); writes async-persist.
 let cache = null
 function load() {
   if (cache) return cache
-  try { cache = JSON.parse(localStorage.getItem(COUNTS_KEY) || '{}') } catch { cache = {} }
+  try { cache = JSON.parse(getSecureItem(COUNTS_KEY) || '{}') } catch { cache = {} }
   return cache
 }
 function persist() {
-  try { localStorage.setItem(COUNTS_KEY, JSON.stringify(cache)) } catch {}
+  setSecureItem(COUNTS_KEY, JSON.stringify(cache))
+    .catch((err) => console.warn('counts persist:', err))
 }
 
 // Normalize a cache entry to the `{ count, source }` shape. Legacy
