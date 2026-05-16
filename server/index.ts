@@ -133,6 +133,90 @@ if (!Number.isSafeInteger(OBJSTORE_REAP_INTERVAL_MS) || OBJSTORE_REAP_INTERVAL_M
 }
 const DEBUG = env['DEBUG'] === '1'
 
+// Same-origin gate for the WS upgrade and REST data plane. We don't
+// support cross-origin browser clients, so any Origin header
+// present on an incoming request MUST match the server's own host
+// (derived from `req.headers.host` directly, or from `X-Forwarded-
+// Host` / `X-Forwarded-Proto` when a reverse proxy is in front and
+// we're configured to trust it).
+//
+// Why "present-must-match" rather than "always required":
+// - WebSocket handshakes from browsers always carry an Origin header
+//   (per RFC 6455), so a foreign-page session attempt always
+//   surfaces here.
+// - Browser same-origin XHR/fetch may OMIT the Origin header
+//   entirely; requiring it would break legitimate same-origin REST
+//   calls.
+// - Non-browser clients (the test suite's `ws`, an admin CLI, …)
+//   may also omit Origin. Same-origin in that context just means
+//   "trusted operator process" and the network is the trust
+//   boundary.
+//
+// Reverse-proxy support is OPT-IN via TRUST_PROXY. When off, we
+// ignore `X-Forwarded-Host` / `X-Forwarded-Proto` entirely and
+// derive the expected origin from `req.headers.host` + `http://`.
+// When on, the proxy headers take precedence. This guards a public-
+// bind deployment (`HOST=0.0.0.0` directly on a port, no proxy)
+// from a trivial bypass: an attacker page would otherwise send its
+// own `X-Forwarded-Host` + matching `Origin` and walk through the
+// gate. Default: ON for loopback binds (typical: relay behind nginx
+// on the same host), OFF for everything else (operator must
+// explicitly opt-in when fronting a public bind with a proxy).
+// Transport audit `server/index.ts:530` + `server/objstore/rest.ts:103`.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
+const TRUST_PROXY_ENV = env['TRUST_PROXY']
+const TRUST_PROXY = TRUST_PROXY_ENV == null
+  ? LOOPBACK_HOSTS.has(HOST)
+  : TRUST_PROXY_ENV === '1' || TRUST_PROXY_ENV.toLowerCase() === 'true'
+
+function firstHeaderValue(v: string | string[] | undefined): string | null {
+  if (typeof v === 'string') return v.split(',')[0]!.trim() || null
+  if (Array.isArray(v) && v.length > 0) return String(v[0]).trim() || null
+  return null
+}
+function expectedOrigin(req: { headers: HttpRequest['headers'] }): string | null {
+  const xfHost = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-host']) : null
+  const xfProto = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-proto']) : null
+  const host = xfHost ?? firstHeaderValue(req.headers['host'])
+  if (!host) return null
+  const proto = xfProto ?? 'http'
+  return `${proto}://${host}`
+}
+function isOriginAllowed(req: { headers: HttpRequest['headers'] }): boolean {
+  const origin = firstHeaderValue(req.headers['origin'])
+  // Missing Origin → same-origin browser fetch OR non-browser
+  // client. Both are allowed; non-browser callers' trust boundary
+  // is the network / token, not Origin.
+  if (origin == null) return true
+  const expected = expectedOrigin(req)
+  if (expected == null) return false // Origin present but no Host to compare → deny
+  return origin === expected
+}
+
+// Per-socket buffered-bytes cap. `socket.send` returns synchronously
+// even when the kernel/ws library can't drain to the wire fast
+// enough; the unsent payload accumulates in `bufferedAmount`. A
+// slow / blackholed peer on a high-volume workspace can hold many
+// MB of fan-out broadcasts in this buffer with no backpressure on
+// the broadcast loop. Drop the message when the buffer crosses the
+// cap; the heartbeat will eventually close a peer that never
+// drains. Transport audit `server/index.ts:225`.
+const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+// Per-socket in-flight async-handler cap. Each inbound text frame
+// spawns a `track(handler)` IIFE; an authorised peer who keeps
+// firing valid frames can grow this set without bound, growing the
+// SIGTERM drain time. Drop frames once the cap is hit. Transport
+// audit `server/index.ts:590`.
+const MAX_INFLIGHT_PER_SOCKET = 64
+const socketInflight = new WeakMap<WebSocket, number>()
+
+// REST PUT idle-body timeout. A slow-loris client trickling bytes
+// within the declared Content-Length holds the staging fd and an
+// inFlightSids slot until the global staging TTL reaps it. Aborting
+// the per-chunk-idle period closes that window. Transport audit
+// `server/objstore/rest.ts:218`.
+const REST_PUT_IDLE_TIMEOUT_MS = 30_000
+
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: node server/index.ts
 Environment:
@@ -151,6 +235,16 @@ Environment:
                              OBJSTORE_DIR explicitly if you want it
                              elsewhere)
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
+  TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
+                             Host / X-Forwarded-Proto when computing
+                             the same-origin gate's expected origin.
+                             Default: ON when HOST is a loopback
+                             (127.0.0.1, ::1, localhost) — the typical
+                             "behind nginx on same host" deployment.
+                             OFF for public binds (HOST=0.0.0.0 etc.)
+                             where a bare X-Forwarded-* would
+                             otherwise let an attacker page bypass
+                             the gate.
   DEBUG=1                    log every message`)
   process.exit(0)
 }
@@ -230,6 +324,18 @@ function send(socket: WebSocket, msg: object): void {
 // (e.g. broadcast fan-out — stringify once, send N times).
 function sendRaw(socket: WebSocket, payload: string): void {
   if (socket.readyState !== socket.OPEN) return
+  // Backpressure cap. `socket.bufferedAmount` is the count of bytes
+  // queued in the `ws` send pipeline that haven't drained to the
+  // kernel yet — a slow / blackholed peer accumulates them
+  // unboundedly during fan-out broadcasts. Drop above the cap and
+  // terminate the socket so the heartbeat doesn't keep it alive on
+  // ping/pong while every broadcast piles up. Transport audit
+  // `server/index.ts:225`.
+  if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+    if (DEBUG) console.warn(`drop broadcast: socket buffered ${socket.bufferedAmount}B > cap`)
+    try { socket.terminate() } catch {}
+    return
+  }
   // Wrap send() in try/catch — readyState can transition from OPEN
   // to CLOSING between the check above and the send() call (TOCTOU
   // window in `ws`'s event loop). Without this, a socket dying
@@ -501,6 +607,29 @@ const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
 
 const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
   if (matchRoute(req.url) != null) {
+    // Same-origin gate. Token IS the auth on REST, but a hostile
+    // origin that holds a valid token (e.g. via XSS that read a
+    // freshly-minted one) would PUT with its own Origin header — we
+    // catch that here. Same-origin XHR/fetch may omit Origin; that
+    // path is allowed (see `isOriginAllowed`). Transport audit
+    // `server/objstore/rest.ts:103`.
+    if (!isOriginAllowed(req)) {
+      res.writeHead(403, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: 'origin-denied' }))
+      return
+    }
+    // PUT idle-body timeout — a slow-loris client trickling bytes
+    // within the declared Content-Length holds the staging fd + an
+    // inFlightSids slot indefinitely. `req.setTimeout` fires on
+    // inactivity (no bytes received within the window) and emits
+    // `'timeout'`; we destroy the request, which aborts the body
+    // pipeline. Transport audit `server/objstore/rest.ts:218`.
+    if (req.method === 'PUT') {
+      req.setTimeout(REST_PUT_IDLE_TIMEOUT_MS, () => {
+        if (DEBUG) console.warn(`REST PUT idle ${REST_PUT_IDLE_TIMEOUT_MS}ms → abort`)
+        try { req.destroy(new Error('idle-timeout')) } catch {}
+      })
+    }
     // Track so SIGTERM mid-upload/download awaits handleRest before
     // handle.close(). `httpServer.close()` waits for active requests
     // too, but the WS plane's track() pattern is the canonical drain.
@@ -548,6 +677,23 @@ httpServer.on('upgrade', (req, socket, head) => {
       `Content-Length: ${Buffer.byteLength(NOT_FOUND_BODY)}\r\n` +
       'Connection: close\r\n\r\n' +
       NOT_FOUND_BODY,
+    )
+    return
+  }
+  // Same-origin gate. The WS upgrade IS a cross-origin-reachable
+  // surface in the browser; without this any page in any tab can
+  // open a session to a 127.0.0.1 relay and probe handler shape /
+  // burn signature-verify CPU. Browser WS handshakes always carry
+  // Origin (RFC 6455), so a foreign tab is caught here; non-
+  // browser clients (test suite, admin CLI) omit Origin and are
+  // allowed (network is their trust boundary).
+  if (!isOriginAllowed(req)) {
+    socket.end(
+      'HTTP/1.1 403 Forbidden\r\n' +
+      'Content-Type: application/json\r\n' +
+      'Content-Length: 26\r\n' +
+      'Connection: close\r\n\r\n' +
+      '{"error":"origin-denied"}\n',
     )
     return
   }
@@ -610,6 +756,19 @@ wss.on('connection', (socket: WebSocket, req) => {
     } catch { return }
     if (!msg || typeof msg !== 'object') return
     const parsed: IncomingMessage = msg
+    // Per-socket inflight cap. Each tracked handler keeps the socket
+    // alive in `inFlight`, and a peer who keeps firing valid frames
+    // can spawn unbounded handlers — growing SIGTERM drain time and
+    // memory. Drop new work above the cap. Heartbeat ping is the
+    // exception: it's stateless, cheap, and we want to KEEP
+    // responding so the peer doesn't drop the socket while we're
+    // shedding load. Transport audit `server/index.ts:590`.
+    const inflightForSocket = socketInflight.get(socket) ?? 0
+    if (parsed.type !== 'ping' && inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
+      if (DEBUG) console.warn(`drop message: socket inflight ${inflightForSocket} >= ${MAX_INFLIGHT_PER_SOCKET}`)
+      return
+    }
+    socketInflight.set(socket, inflightForSocket + 1)
     const handler = (async () => {
       try {
         if (parsed.type === 'workspace-save') await handleSave(socket, parsed as SaveMsg)
@@ -636,6 +795,10 @@ wss.on('connection', (socket: WebSocket, req) => {
         // mortem has the throw site.
         const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
         console.warn(`Handler error (type=${typeStr}):`, (err as Error)?.stack ?? err)
+      } finally {
+        const n = (socketInflight.get(socket) ?? 1) - 1
+        if (n <= 0) socketInflight.delete(socket)
+        else socketInflight.set(socket, n)
       }
     })()
     track(handler)

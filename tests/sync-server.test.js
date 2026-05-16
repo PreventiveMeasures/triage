@@ -1210,3 +1210,128 @@ describe('triage-sync server: graceful shutdown', () => {
     }
   })
 })
+
+// Same-origin gate on WS upgrade + REST plane (transport audit
+// `server/index.ts:530` + `server/objstore/rest.ts:103`). The
+// expected origin is derived from `req.headers.host` directly, or
+// from `X-Forwarded-Host` / `X-Forwarded-Proto` when TRUST_PROXY is
+// on. TRUST_PROXY defaults to ON for loopback binds (the typical
+// "behind nginx on same host" deployment) and OFF for public binds
+// (HOST=0.0.0.0 etc., where unconditional X-Forwarded-* trust would
+// let an attacker page set its own forwarded headers + matching
+// Origin to bypass the gate). Browser WS handshakes always send
+// Origin (RFC 6455); non-browser clients omit it and are allowed.
+describe('triage-sync server: same-origin gate', () => {
+  async function withSpawnedServer(env, body) {
+    const { default: net } = await import('node:net')
+    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-origin-'))
+    const proc = spawn(process.execPath, ['server/index.ts'], {
+      env: { ...process.env, PORT: '0', DB_PATH: path.join(dir, 'data.db'), ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    // Raw-TCP upgrade so we can set Origin / X-Forwarded-* freely
+    // (undici's `fetch` refuses `Upgrade: websocket`; the `ws`
+    // client only sets Origin from the constructor in some Node
+    // versions).
+    function rawUpgrade(port, originValue, hostHeader, xfHost, xfProto) {
+      return new Promise((resolve, reject) => {
+        const sock = net.connect({ host: '127.0.0.1', port })
+        let buf = ''
+        sock.on('data', (d) => {
+          buf += String(d)
+          const m = /^HTTP\/1\.1 (\d+)/u.exec(buf)
+          if (m) { try { sock.destroy() } catch {} ; resolve(Number(m[1])) }
+        })
+        sock.on('error', reject)
+        sock.on('connect', () => {
+          const key = Buffer.from('0123456789abcdef').toString('base64')
+          const headers = [
+            `GET /api/sync HTTP/1.1`,
+            `Host: ${hostHeader ?? `127.0.0.1:${port}`}`,
+            `Upgrade: websocket`,
+            `Connection: Upgrade`,
+            `Sec-WebSocket-Version: 13`,
+            `Sec-WebSocket-Key: ${key}`,
+          ]
+          if (originValue != null) headers.push(`Origin: ${originValue}`)
+          if (xfHost != null) headers.push(`X-Forwarded-Host: ${xfHost}`)
+          if (xfProto != null) headers.push(`X-Forwarded-Proto: ${xfProto}`)
+          sock.write(headers.join('\r\n') + '\r\n\r\n')
+        })
+      })
+    }
+    try {
+      const port = await awaitListeningPort(proc)
+      await body(port, rawUpgrade)
+    } finally {
+      proc.kill('SIGTERM')
+      await new Promise((resolve) => { proc.once('exit', resolve) })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('HOST=127.0.0.1 (loopback): trusts X-Forwarded-* by default, gate accepts proxy-forwarded match', async () => {
+    await withSpawnedServer({ HOST: '127.0.0.1' }, async (port, rawUpgrade) => {
+      // Foreign Origin against direct Host → denied.
+      assert.equal(await rawUpgrade(port, 'https://evil.example'), 403, 'foreign Origin denied')
+      // Matching Origin (scheme + host) against direct Host → upgraded.
+      assert.equal(await rawUpgrade(port, `http://127.0.0.1:${port}`), 101, 'matching Origin upgraded')
+      // Missing Origin (non-browser client / same-origin fetch) → upgraded.
+      assert.equal(await rawUpgrade(port, null), 101, 'missing Origin upgraded (non-browser)')
+      // TRUST_PROXY=on (loopback default): X-Forwarded-Host takes
+      // precedence; Origin matching the forwarded host → upgraded.
+      assert.equal(
+        await rawUpgrade(port, 'https://triage.space', `127.0.0.1:${port}`, 'triage.space', 'https'),
+        101,
+        'X-Forwarded-Host honoured (loopback default) + Origin match → upgraded',
+      )
+      // Same proxy setup but Origin says a different host → denied.
+      assert.equal(
+        await rawUpgrade(port, 'https://evil.example', `127.0.0.1:${port}`, 'triage.space', 'https'),
+        403,
+        'X-Forwarded-Host honoured + foreign Origin → denied',
+      )
+    })
+  })
+
+  it('HOST=0.0.0.0 (public): ignores X-Forwarded-* by default, closes the attacker-forged-forwarded-host bypass', async () => {
+    await withSpawnedServer({ HOST: '0.0.0.0' }, async (port, rawUpgrade) => {
+      // Without TRUST_PROXY (default off for public binds): an
+      // attacker page that sets matching X-Forwarded-Host + Origin
+      // CANNOT bypass the gate. Expected origin falls back to
+      // req.headers.host, so Origin must match the literal Host
+      // header. Audit `server/index.ts:171` regression.
+      assert.equal(
+        await rawUpgrade(port, 'https://triage.space', `127.0.0.1:${port}`, 'triage.space', 'https'),
+        403,
+        'attacker-forged X-Forwarded-* ignored; gate denies foreign Origin',
+      )
+      // Matching the actual Host still upgrades.
+      assert.equal(
+        await rawUpgrade(port, `http://127.0.0.1:${port}`),
+        101,
+        'Origin matching real Host upgrades on public bind',
+      )
+    })
+  })
+
+  it('TRUST_PROXY=1 explicit override: honours X-Forwarded-* even on public bind', async () => {
+    await withSpawnedServer({ HOST: '0.0.0.0', TRUST_PROXY: '1' }, async (port, rawUpgrade) => {
+      assert.equal(
+        await rawUpgrade(port, 'https://triage.space', `127.0.0.1:${port}`, 'triage.space', 'https'),
+        101,
+        'TRUST_PROXY=1 opt-in honours X-Forwarded-*',
+      )
+    })
+  })
+
+  it('TRUST_PROXY=0 explicit override: ignores X-Forwarded-* even on loopback bind', async () => {
+    await withSpawnedServer({ HOST: '127.0.0.1', TRUST_PROXY: '0' }, async (port, rawUpgrade) => {
+      assert.equal(
+        await rawUpgrade(port, 'https://triage.space', `127.0.0.1:${port}`, 'triage.space', 'https'),
+        403,
+        'TRUST_PROXY=0 opt-out ignores X-Forwarded-* even on loopback',
+      )
+    })
+  })
+})
