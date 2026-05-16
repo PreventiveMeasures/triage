@@ -148,6 +148,18 @@ export async function buildWorkspaceExportPayload(workspace) {
     if (url) repoUrls[r.name] = url
   }
 
+  // Bundle membership rides as a top-level list of sha512 integrities
+  // — symmetric with `reports`, but bytes-free: bundle blobs can be
+  // tens of MB, content-addressed by SHA-512, so shipping the bytes
+  // alongside reports would balloon the export for little benefit. A
+  // receiver that already has the matching bundle in their OPFS will
+  // auto-claim it into the workspace on import (same address = same
+  // bytes); a receiver who doesn't gets a pointer that the sidebar
+  // skips at render time. Filter to string values just in case the
+  // in-memory workspace blob got a junk entry from elsewhere — the
+  // import side does the same defensive check.
+  const bundles = (workspace.bundles ?? []).filter((b) => typeof b === 'string' && b.length > 0)
+
   return {
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
@@ -158,6 +170,7 @@ export async function buildWorkspaceExportPayload(workspace) {
       createdAt: workspace.createdAt,
     },
     reports,
+    bundles,
     repoUrls,
     triage,
   }

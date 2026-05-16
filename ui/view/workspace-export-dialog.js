@@ -134,10 +134,12 @@ class WorkspaceExportDialog extends LitElement {
     const passwordsMatch = !this._password || !this._confirm || this._password === this._confirm
     return html`
       <p class="nwd-note">
-        The bundle carries this workspace's reports, triage state,
-        comments, fixes, and its private key. Encrypting it with a
-        password ensures only those with the password can attach
-        the workspace after download.
+        The export file carries this workspace's reports, triage state,
+        comments, fixes, references to attached bundles (the integrities
+        only — the bundle bytes are not included in this file), and
+        its private key. Encrypting the file with a password ensures
+        only those with the password can attach the workspace after
+        download.
       </p>
       <label class="wsl-field">
         <span>Password</span>

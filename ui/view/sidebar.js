@@ -7,7 +7,7 @@ import { listBundles, listFiles } from '../../client/storage.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
 import { ensureCounts, getCount } from '../../client/counts.js'
-import { createWorkspace, listWorkspaces, renameWorkspace, setReportWorkspace } from '../../client/workspaces.js'
+import { createWorkspace, listWorkspaces, renameWorkspace, setBundleWorkspace, setReportWorkspace } from '../../client/workspaces.js'
 import { deleteFromRemote as deleteRemote, isInRemote } from './objstore-presence.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
@@ -68,6 +68,12 @@ const DEFAULT_SYNC_URL = (() => {
 // uses the private mime so OS file drags (which only carry Files)
 // don't accidentally match.
 const REPORT_DT = 'application/x-deepview-report'
+// Companion mime for bundles. Value is the bundle's sha512 integrity
+// string (same key the bundle metadata + setBundleWorkspace use).
+// Separate from REPORT_DT so the drag handlers can tell the two apart
+// without re-resolving the payload — bundles and reports have
+// disjoint identifier spaces (filename vs `sha512-…`).
+const BUNDLE_DT = 'application/x-deepview-bundle'
 
 // Section header label per group. The default JSON bucket renders
 // under "Reports" — broad enough to fit any analyzer-native dump
@@ -175,9 +181,18 @@ function bundlesHeaderTemplate(count) {
   // Mark the row "current" while the bundles view is up so the
   // sidebar reads as "you're here" — mirrors how a file row picks
   // up the .current class while its file is loaded.
+  // `data-default-bundles` flags the header as the unfiled-bundle
+  // drop target — same role `data-default-reports` plays for the
+  // Reports header. The dragover handler lights it up when a bundle
+  // is dragged outside any workspace block; the drop handler then
+  // routes to setBundleWorkspace(integrity, null).
+  // Suppress the count chip when `count === 0` (all bundles claimed
+  // by workspaces) — the header stays as the navigation + detach drop
+  // target, but a "(0)" badge alongside a header that navigates to a
+  // list of every bundle reads as inconsistent.
   const cls = `file-group-header bundles-header${state.currentView === 'bundles' ? ' current' : ''}`
-  return html`<li class=${cls} data-action="show-bundles" role="button" tabindex="0" title="Show bundles">
-    <span class="group-label">Bundles</span><span class="group-count">${count}</span>
+  return html`<li class=${cls} data-action="show-bundles" data-default-bundles="true" role="button" tabindex="0" title="Show bundles">
+    <span class="group-label">Bundles</span>${count > 0 ? html`<span class="group-count">${count}</span>` : nothing}
   </li>`
 }
 
@@ -197,14 +212,43 @@ const BUNDLE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" h
 // main pane (selectedBundle matches its integrity). The integrity is
 // SRI-shaped (sha512-…) and too long to fit; the title surfaces it
 // for hover disambiguation when two bundles share a basename.
-function bundleItemTemplate(bundle) {
+function bundleItemTemplate(bundle, opts = {}) {
   const { integrity, name } = bundle
   const isCurrent = state.selectedBundle === integrity && state.currentView === 'bundles'
   const cls = `file-item indented bundle-item${isCurrent ? ' current' : ''}`
+  // `data-workspace-id` mirrors `fileItemTemplate` — when the row sits
+  // INSIDE a workspace, a drop onto it resolves to "this workspace"
+  // (so dragging a sibling bundle into the same workspace is a no-op
+  // rather than a phantom detach + re-attach). Top-level bundle rows
+  // in the Bundles section have no workspace attribute, so a drop on
+  // them counts as "outside" and falls through to the detach path.
   return html`<li
     class=${cls}
     data-bundle-integrity=${integrity}
+    data-workspace-id=${opts.workspaceId ?? nothing}
+    draggable="true"
   ><button type="button" class="file-name" title=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+}
+
+// Row for a workspace-claimed bundle whose bytes aren't on this device
+// (typically an imported workspace referencing a bundle the recipient
+// hasn't dropped yet). Renders muted + non-draggable so the user can
+// see WHICH bundles are missing without being misled into thinking
+// they can interact with them. The integrity prefix is short enough
+// to be human-eyeable for cross-device matching; full integrity is in
+// the title for copy-paste. Detach via the Bundles header still works
+// (sets `data-workspace-id` so the drop handler finds the owner — but
+// `draggable=false` here means the user has to detach from the OTHER
+// device first, which is the right UX: this device can't authoritatively
+// say what should happen to a bundle it doesn't have.
+function missingBundleItemTemplate(integrity, workspaceId) {
+  const shortPrefix = integrity.slice(0, 'sha512-'.length + 8)
+  return html`<li
+    class="file-item indented bundle-item bundle-missing"
+    data-bundle-integrity=${integrity}
+    data-workspace-id=${workspaceId}
+    title=${`Bundle bytes not on this device — drop the matching bundle to attach.\n${integrity}`}
+  ><span class="file-name"><span class="file-icon" aria-hidden="true">?</span><span class="file-label"><em>missing · ${shortPrefix}…</em></span></span></li>`
 }
 
 const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>`
@@ -224,10 +268,16 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
-function workspaceItemTemplate(w, reportCount) {
+function workspaceItemTemplate(w, presentCount, missingCount = 0) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
+  // Count chip shows the count of locally-resolvable items
+  // (reports-on-disk + bundles-on-disk). Missing bundles are surfaced
+  // as a parenthetical "+N" suffix when present, so the badge reads
+  // "5 +2" — five items the user can act on, two pointers to bundles
+  // they don't have. Without the split, a 1-present / 4-missing
+  // workspace would advertise "5" while only 1 row is interactive.
   // Clicking the workspace's main button loads every report in the
   // workspace into a single merged view (handled by the `.file-item`
   // click delegate against the dataset.workspaceId). The
@@ -242,16 +292,26 @@ function workspaceItemTemplate(w, reportCount) {
   // inside Lit's `_commitText`. The property binding keeps no
   // marker comments inside the span; the inline mutation becomes
   // a plain overwrite that the next render reapplies.
-  // Hover-revealed actions on the right side of the row:
-  // Export (download .gz bundle), then Leave (drop the workspace
-  // from THIS browser — entry, OPFS reports, persisted triage
-  // base — without touching the server's chain, so peers and
-  // your other devices keep their copy). The eventual server-
-  // side "delete the chain too" affordance lives elsewhere (TBD)
-  // — we don't park a placeholder trash icon here because that
-  // misreads as "Delete is the same action as Leave, just
+  // Hover-revealed actions on the right side of the row (in row
+  // order): Share by link, Export (download .gz bundle), then Leave
+  // (drop the workspace from THIS browser — entry, OPFS reports,
+  // persisted triage base — without touching the server's chain,
+  // so peers and your other devices keep their copy). The eventual
+  // server-side "delete the chain too" affordance lives elsewhere
+  // (TBD) — we don't park a placeholder trash icon here because
+  // that misreads as "Delete is the same action as Leave, just
   // greyed out".
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${reportCount > 0 ? html`<span class="file-count workspace-count">${reportCount}</span>` : nothing}</li>`
+  // When `presentCount === 0 && missingCount > 0`, show just "+N"
+  // instead of "0 +N" — the leading zero reads as "0 items, plus 2"
+  // which is mildly confusing when the workspace has no interactive
+  // rows at all. The hover title still carries the precise count.
+  const missingTitle = `${missingCount} bundle pointer${missingCount === 1 ? '' : 's'} not present on this device`
+  const countLabel = missingCount > 0
+    ? (presentCount > 0
+      ? html`${presentCount}<span class="workspace-count-missing" title=${missingTitle}> +${missingCount}</span>`
+      : html`<span class="workspace-count-missing" title=${missingTitle}>+${missingCount}</span>`)
+    : html`${presentCount}`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${presentCount > 0 || missingCount > 0 ? html`<span class="file-count workspace-count">${countLabel}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
@@ -304,6 +364,21 @@ export async function renderSidebar() {
   for (const w of workspaces) {
     for (const r of w.reports) if (nameSet.has(r)) claimed.add(r)
   }
+  // Same treatment for bundles — workspace-claimed integrities render
+  // inside the workspace and drop out of the top-level Bundles list.
+  // The bundle metadata `_meta.json` is the source of truth for which
+  // integrities exist on disk; references to bundles that were deleted
+  // out from under the workspace stay in the JSON until the next
+  // setBundleWorkspace call prunes them, but never render here.
+  // `listWorkspaces()` backfills `bundles` to [] for any legacy entry,
+  // so the loop below can iterate without a defensive `?? []` guard.
+  const bundleByIntegrity = new Map(bundleNames.map((b) => [b.integrity, b]))
+  const claimedBundles = new Set()
+  for (const w of workspaces) {
+    for (const integ of w.bundles) {
+      if (bundleByIntegrity.has(integ)) claimedBundles.add(integ)
+    }
+  }
 
   // Bucket by group, applying the search filter as we go so empty
   // post-filter groups skip their header entirely.
@@ -318,12 +393,20 @@ export async function renderSidebar() {
   }
 
   // Workspaces above Reports. The header itself is filtered by name;
-  // each workspace's own reports are filtered too so a name search
-  // surfaces matches inside workspaces without the parent disappearing.
+  // each workspace's own reports + bundles are filtered too so a name
+  // search surfaces matches inside workspaces without the parent
+  // disappearing. Missing-bundle pointers have no name to match against,
+  // so they don't satisfy a search query — a workspace with only
+  // missing bundles disappears under search (recoverable by clearing
+  // the query).
   const visibleWorkspaces = workspaces.filter((w) => {
     if (!searchQuery) return true
     if (w.name.toLowerCase().includes(searchQuery)) return true
-    return w.reports.some((r) => nameSet.has(r) && matchesSearch(r))
+    if (w.reports.some((r) => nameSet.has(r) && matchesSearch(r))) return true
+    return w.bundles.some((integ) => {
+      const b = bundleByIntegrity.get(integ)
+      return b && matchesSearch(b.name)
+    })
   })
 
   // Default buckets — render unfiled reports under their format header.
@@ -339,18 +422,51 @@ export async function renderSidebar() {
   // every other view the header collapses back to a single strip.
   // Mirrors the Reports section's "always expanded" shape while the
   // user is reading bundles, without permanently growing the sidebar.
-  const bundlesExpanded = state.currentView === 'bundles' && bundleNames.length > 0
+  // The top-level Bundles list only carries UNFILED bundles — those
+  // claimed by a workspace render under the workspace, matching how
+  // reports work. Filter by search query so a name search narrows the
+  // visible list (same treatment unfiled reports get at the GROUP_ORDER
+  // loop below). The header count reflects the post-filter subset; the
+  // header itself stays visible whenever ANY bundles exist (even all-
+  // claimed) so it remains reachable as a navigation entry AND as the
+  // detach drop target for dragging a bundle out of a workspace.
+  const unfiledBundles = bundleNames.filter(
+    (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
+  )
+  const bundlesExpanded = state.currentView === 'bundles' && unfiledBundles.length > 0
   litRender(html`
-    ${bundleNames.length > 0 ? bundlesHeaderTemplate(bundleNames.length) : null}
-    ${bundlesExpanded ? repeat(bundleNames, (b) => b.integrity, (b) => bundleItemTemplate(b)) : null}
+    ${bundleNames.length > 0 ? bundlesHeaderTemplate(unfiledBundles.length) : null}
+    ${bundlesExpanded ? repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b)) : null}
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
+      // Resolve bundle integrities to their metadata + filter by search.
+      // Bundles split into two render paths:
+      //   - present:  the integrity matches an OPFS bundle → normal row
+      //   - missing:  the integrity is referenced but no bytes locally
+      //               (typically an imported workspace from another
+      //               device) → muted row so the user sees what's
+      //               unresolved instead of silently dropping it.
+      // Both bypass the search filter unless a query is active — a
+      // search query hides missing rows (no name to match against).
+      const presentBundles = []
+      const missingBundles = []
+      for (const integ of w.bundles) {
+        const b = bundleByIntegrity.get(integ)
+        if (b) {
+          if (!searchQuery || matchesSearch(b.name)) presentBundles.push(b)
+        } else if (!searchQuery) {
+          missingBundles.push(integ)
+        }
+      }
+      const presentCount = visibleReports.length + presentBundles.length
       return html`
-        ${workspaceItemTemplate(w, visibleReports.length)}
+        ${workspaceItemTemplate(w, presentCount, missingBundles.length)}
         ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
+        ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
+        ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
       `
     })}
     ${GROUP_ORDER.map((g) => {
@@ -412,6 +528,14 @@ sidebar.addEventListener('click', async (e) => {
   // with the main-pane list row.
   const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
   if (bundleEl) {
+    // Missing-bundle rows (imported workspace claims an integrity the
+    // recipient doesn't have locally) are advertised as non-interactive
+    // via muted italic styling + `cursor: help`. Without this gate,
+    // clicking flipped the view to bundles and set `state.selectedBundle`
+    // to the missing integrity — `openBundle` then silently returned
+    // (no matching entry in state.bundles), leaving the user on the
+    // bundles list with a phantom selection and no panel content.
+    if (bundleEl.classList.contains('bundle-missing')) return
     const integrity = bundleEl.dataset.bundleIntegrity
     if (state.selectedBundle === integrity && state.currentView === 'bundles') return
     state.currentView = 'bundles'
@@ -513,6 +637,7 @@ sidebar.addEventListener('click', async (e) => {
     const { confirmed, mode, triage } = await openLeaveWorkspaceDialog({
       name: ws.name,
       reportCount: reports.length,
+      bundleCount: ws.bundles.length,
       triageImpact,
     })
     if (!confirmed) return
@@ -770,26 +895,65 @@ sidebar.addEventListener('dblclick', (e) => {
   input.addEventListener('dblclick', (ev) => ev.stopPropagation())
 })
 
-// Intra-sidebar drag-and-drop — move reports between workspaces and
-// the unfiled list. The whole sidebar is a drop zone:
+// Intra-sidebar drag-and-drop — move reports AND bundles between
+// workspaces and the unfiled list. The whole sidebar is a drop zone:
 //   - drop on any element with `[data-workspace-id]` (workspace row
 //     OR one of its indented children) → assign to that workspace
 //   - drop anywhere else in the sidebar → detach (back to the unfiled
-//     list, where the report's filename extension routes it to the
-//     correct format bucket)
-// The Reports header lights up as the visual affordance for the
-// detach drop (when it's rendered), but the drop works regardless of
-// what the cursor is over so "drag back" is forgiving.
+//     list, where reports route by extension and bundles return to
+//     the top-level Bundles section)
+// The Reports header lights up as the visual affordance for a report
+// detach; the Bundles header plays the same role for a bundle
+// detach. The drop works regardless of what the cursor is over so
+// "drag back" is forgiving in either case.
 //
-// OS file drops are NOT mistaken for this: the type check below looks
-// for our private mime, which only the dragstart below sets. The
+// OS file drops are NOT mistaken for either: the type check below
+// looks for our private mimes, only set by the dragstart handler. The
 // document-level drop handler in ingest.js still handles OS files
 // (its `e.dataTransfer.files` check no-ops on internal drags).
 function clearDragOver() {
   for (const el of sidebar.querySelectorAll('.drag-over')) el.classList.remove('drag-over')
 }
 
+// Did this drag carry one of OUR mime types? Used by every drag
+// handler to filter out OS file drags and unrelated browser drags
+// (text selections, links) so the document-level ingest handler still
+// handles them.
+function dragHasOurPayload(e) {
+  return e.dataTransfer.types.includes(REPORT_DT)
+    || e.dataTransfer.types.includes(BUNDLE_DT)
+}
+
 sidebar.addEventListener('dragstart', (e) => {
+  // Bundle rows match BOTH `.file-item[data-file]` (no — they don't
+  // carry data-file) and `.file-item[data-bundle-integrity]`, so the
+  // bundle branch goes first. Reports carry data-file; bundles carry
+  // data-bundle-integrity; an element never carries both.
+  const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
+  if (bundleEl) {
+    // Missing-bundle rows must not initiate a drag. The `<li>` carries
+    // no `draggable` attribute (defaulting to false in most browsers),
+    // but a user-initiated drag of selected text / icon glyph can still
+    // fire dragstart in some Chromium variants. Without this guard the
+    // handler would write the missing integrity into dataTransfer; a
+    // subsequent drop on another workspace would attach a bundle
+    // nobody has locally, contradicting the row's "non-interactive"
+    // affordance (cursor:help, italic muted styling, click gated).
+    if (bundleEl.classList.contains('bundle-missing')) {
+      e.preventDefault()
+      return
+    }
+    const integrity = bundleEl.dataset.bundleIntegrity
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData(BUNDLE_DT, integrity)
+    // text/plain fallback — paste-into-an-unrelated-textarea is
+    // pointless for an integrity hash but consistent with how the
+    // report drag works; some browsers also use it as the "ghost
+    // image" caption.
+    e.dataTransfer.setData('text/plain', integrity)
+    bundleEl.classList.add('dragging')
+    return
+  }
   const fileEl = e.target.closest('.file-item[data-file]')
   if (!fileEl) return
   e.dataTransfer.effectAllowed = 'move'
@@ -804,23 +968,42 @@ sidebar.addEventListener('dragend', () => {
 })
 
 sidebar.addEventListener('dragover', (e) => {
-  if (!e.dataTransfer.types.includes(REPORT_DT)) return
+  if (!dragHasOurPayload(e)) return
   e.preventDefault()
-  e.dataTransfer.dropEffect = 'move'
-  clearDragOver()
+  // If the cursor is over a workspace that already owns the dragged
+  // identifier (or outside any workspace while the source is already
+  // unfiled), this drop will be a W-4 no-op. Surface as `dropEffect:
+  // 'none'` so the cursor reads correctly, and skip the highlight loop
+  // so neither the source row (same-workspace) nor the detach indicator
+  // (already-unfiled → header) lights up against an operation that
+  // won't move anything.
   const wsTarget = e.target.closest('[data-workspace-id]')
+  const sourceWsId = sidebar.querySelector('.dragging')?.closest('[data-workspace-id]')?.dataset.workspaceId ?? null
+  const sameWorkspaceDrop = wsTarget && sourceWsId && wsTarget.dataset.workspaceId === sourceWsId
+  const alreadyUnfiledDrop = !wsTarget && !sourceWsId
+  const isSelfDrop = sameWorkspaceDrop || alreadyUnfiledDrop
+  e.dataTransfer.dropEffect = isSelfDrop ? 'none' : 'move'
+  clearDragOver()
+  if (isSelfDrop) return
   if (wsTarget) {
     // Highlight at the workspace level so dropping on either the
     // workspace row or any of its indented children reads as the
-    // same target.
+    // same target. Skip the dragged source row itself — without the
+    // skip a same-workspace drop visually conflates source and
+    // target during the drag.
     const wsId = wsTarget.dataset.workspaceId
     for (const el of sidebar.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]`)) {
+      if (el.classList.contains('dragging')) continue
       el.classList.add('drag-over')
     }
   } else {
-    // Anywhere outside a workspace block detaches; mark the Reports
-    // header as the visible affordance when it's rendered.
-    const indicator = sidebar.querySelector('[data-default-reports]')
+    // Anywhere outside a workspace block detaches; light up the
+    // header matching the drag's payload — Bundles for bundle drags,
+    // Reports for report drags. Falls through silently when that
+    // header isn't rendered (no unfiled bucket exists).
+    const isBundle = e.dataTransfer.types.includes(BUNDLE_DT)
+    const selector = isBundle ? '[data-default-bundles]' : '[data-default-reports]'
+    const indicator = sidebar.querySelector(selector)
     if (indicator) indicator.classList.add('drag-over')
   }
 })
@@ -833,17 +1016,28 @@ sidebar.addEventListener('dragleave', (e) => {
 })
 
 sidebar.addEventListener('drop', async (e) => {
-  if (!e.dataTransfer.types.includes(REPORT_DT)) return
-  const filename = e.dataTransfer.getData(REPORT_DT)
-  if (!filename) {
-    clearDragOver()
-    return
-  }
+  if (!dragHasOurPayload(e)) return
   e.preventDefault()
   e.stopPropagation()
   clearDragOver()
   const wsTarget = e.target.closest('[data-workspace-id]')
   const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
+  if (e.dataTransfer.types.includes(BUNDLE_DT)) {
+    const integrity = e.dataTransfer.getData(BUNDLE_DT)
+    if (!integrity) return
+    // Bundles have no objstore-presence counterpart yet — bytes live
+    // in OPFS only, never uploaded by the workspace sync layer. So
+    // the report-side `deleteRemote(source, filename)` dance has no
+    // bundle analogue here; the membership mutation alone is the
+    // whole operation. (If bundles ever start participating in the
+    // objstore protocol, mirror the deleteRemote step from the
+    // report branch below.)
+    await setBundleWorkspace(integrity, targetId)
+    renderSidebar()
+    return
+  }
+  const filename = e.dataTransfer.getData(REPORT_DT)
+  if (!filename) return
   // Drag-out of a workspace mirrors the delete dialog's "everywhere"
   // path: if the source workspace held a remote copy, drop it from
   // remote BEFORE the membership mutation lands locally. Without

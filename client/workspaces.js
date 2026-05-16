@@ -19,10 +19,12 @@
 // per-report blobs.
 import { deriveWorkspaceIdFromPrivateKey } from './workspace-id.js'
 import {
+  fireBundleMembershipChanged,
   fireReportMembershipChanged,
   fireWorkspaceCreated,
   fireWorkspaceDeleted,
   fireWorkspacePrivateKeyChanged,
+  onBundleMembershipChanged,
   onReportMembershipChanged,
   onWorkspaceCreated,
   onWorkspaceDeleted,
@@ -33,6 +35,7 @@ import {
 // (tests, triage-sync, etc.) can keep importing from this module.
 // The pub/sub plumbing itself lives in `workspace-listeners.js`.
 export {
+  onBundleMembershipChanged,
   onReportMembershipChanged,
   onWorkspaceCreated,
   onWorkspaceDeleted,
@@ -108,12 +111,14 @@ function mutateWorkspaces(mutator) {
 }
 
 // Defensive shallow clone of the fields we diff on. Keeps the
-// cache stable even if a caller hands us mutable `reports` arrays.
+// cache stable even if a caller hands us mutable `reports` /
+// `bundles` arrays.
 function snapshotForCache(w) {
   return {
     id: w.id,
     privateKey: w.privateKey,
     reports: Array.isArray(w.reports) ? [...w.reports] : [],
+    bundles: Array.isArray(w.bundles) ? [...w.bundles] : [],
   }
 }
 
@@ -138,24 +143,25 @@ function markObservedFor(workspace) {
   lastSeen = lastSeen.filter((w) => w.id !== workspace.id)
   lastSeen.push(snapshotForCache(workspace))
 }
-// Pin only the `reports` field of an existing observed snapshot,
-// leaving `privateKey` at its previously-observed value. Used by
-// `setReportWorkspace`, which only mutates `reports` — without the
-// field-scoped variant, a sibling tab's concurrent privateKey
-// rotation would be absorbed into lastSeen by the full-snapshot
-// `markObservedFor` and its listener fire silently dropped on the
-// next storage-event handler run (`prev == next` for privateKey).
-// Audit round-12 H5.
-function markObservedReportsFor(workspace) {
-  const reports = Array.isArray(workspace.reports) ? [...workspace.reports] : []
+// Pin only the named field (`reports` or `bundles`) of an existing
+// observed snapshot, leaving every other diffed field at its
+// previously-observed value. Used by `setReportWorkspace` /
+// `setBundleWorkspace`, each of which only mutates ONE list — without
+// the field-scoped variant, a sibling tab's concurrent privateKey
+// rotation (or the other list's mutation) would be absorbed into
+// lastSeen by the full-snapshot `markObservedFor` and the matching
+// listener fire silently dropped on the next storage-event handler
+// run (`prev == next` for that field). Audit round-12 H5.
+function markObservedFieldFor(workspace, field) {
+  const value = Array.isArray(workspace[field]) ? [...workspace[field]] : []
   const existing = lastSeen.find((w) => w.id === workspace.id)
   if (existing) {
-    existing.reports = reports
+    existing[field] = value
     return
   }
-  // No prior snapshot — push a fresh one. setReportWorkspace operates
-  // on workspaces already in the blob (so lastSeen has them via
-  // createWorkspace / upsertWorkspace / propagate), but cover the
+  // No prior snapshot — push a fresh one. setReport/BundleWorkspace
+  // operate on workspaces already in the blob (so lastSeen has them
+  // via createWorkspace / upsertWorkspace / propagate), but cover the
   // no-existing case for defense in depth.
   lastSeen.push(snapshotForCache(workspace))
 }
@@ -165,10 +171,14 @@ function markObservedDeleted(id) {
 
 export function listWorkspaces() {
   const list = readRaw()
-  // Backfill `reports` for entries persisted before report-membership
-  // existed — keeps the rest of the renderer free of `?? []` checks.
+  // Backfill `reports` / `bundles` for entries persisted before each
+  // field existed — keeps the rest of the renderer free of `?? []`
+  // checks. `bundles` was added after `reports` so older blobs (and
+  // newly-imported share-link / export bundles produced by older
+  // builds) need the same defensive default.
   for (const w of list) {
     if (!Array.isArray(w.reports)) w.reports = []
+    if (!Array.isArray(w.bundles)) w.bundles = []
   }
   return list
 }
@@ -216,6 +226,7 @@ export async function createWorkspace(name) {
     name: cleaned,
     privateKey,
     reports: [],
+    bundles: [],
     createdAt: Date.now(),
   }
   // Defensive id-collision check INSIDE the same lock as the
@@ -294,6 +305,18 @@ export async function renameWorkspace(id, name) {
 //     audit H1: a re-import that adds reports via upsertWorkspace
 //     used to skip the eager hydration / conflict-dialog path the
 //     rest of the membership listeners drive.
+//   - `onBundleMembershipChanged` when an existing id's `bundles`
+//     list changes (same set-equal compare).
+//
+// Special option `preserveBundles: true` (only used by the import path
+// today) says: ignore `workspace.bundles` and reuse the previously-
+// persisted `bundles` array for this id. The read happens INSIDE the
+// mutateWorkspaces lock so a sibling tab can't race a detach between
+// the caller's listWorkspaces() snapshot and our write — without the
+// in-lock read, the import would resurrect a bundle the sibling
+// intentionally detached, or smuggle the integrity into multi-owner
+// state via the bundles-omitted branch (which skips the detach pass).
+// On first-insert with `preserveBundles: true`, falls back to [].
 export async function upsertWorkspace(workspace) {
   const result = await mutateWorkspaces((list) => {
     const idx = list.findIndex((w) => w.id === workspace.id)
@@ -306,11 +329,18 @@ export async function upsertWorkspace(workspace) {
     const cleanedName = sanitizeWorkspaceName(workspace.name)
       ?? previous?.name
       ?? 'Workspace'
+    // Resolve the bundles list against the preserve flag, then dedupe
+    // — `[...new Set(...)]` is order-preserving so a caller's intended
+    // ordering (e.g. workspace export's report sequence) survives.
+    const resolvedBundles = workspace.preserveBundles
+      ? (Array.isArray(previous?.bundles) ? previous.bundles : [])
+      : (Array.isArray(workspace.bundles) ? workspace.bundles : [])
     const next = {
       id: workspace.id,
       name: cleanedName,
       privateKey: workspace.privateKey,
-      reports: Array.isArray(workspace.reports) ? workspace.reports : [],
+      reports: Array.isArray(workspace.reports) ? [...new Set(workspace.reports)] : [],
+      bundles: [...new Set(resolvedBundles)],
       createdAt: workspace.createdAt ?? Date.now(),
     }
     if (idx >= 0) list[idx] = next
@@ -334,9 +364,8 @@ export async function upsertWorkspace(workspace) {
     fireWorkspaceCreated(next.id)
   } else {
     if (observed.privateKey !== next.privateKey) fireWorkspacePrivateKeyChanged(next.id)
-    if (!reportsSetEqual(observed.reports ?? [], next.reports)) {
-      fireReportMembershipChanged(next.id)
-    }
+    if (!filesSetEqual(observed.reports, next.reports)) fireReportMembershipChanged(next.id)
+    if (!filesSetEqual(observed.bundles, next.bundles)) fireBundleMembershipChanged(next.id)
   }
   markObservedFor(next)
   return next
@@ -384,6 +413,7 @@ export async function attachSharedWorkspace({ id, name, privateKey, createdAt })
       name: sanitisedName,
       privateKey,
       reports: [],
+      bundles: [],
       createdAt: createdAt ?? Date.now(),
     }
     list.push(workspace)
@@ -403,21 +433,81 @@ export async function attachSharedWorkspace({ id, name, privateKey, createdAt })
   return outcome
 }
 
-function reportsSetEqual(a, b) {
-  // Use Set sizes (deduped) AND set-membership. Pre-fix the
-  // length-then-one-direction-membership compare was a false-
-  // positive on duplicates: ['F','G'] vs ['F','F'] passed as
-  // equal (same length, all of b's items in a's set) even
-  // though the deduped sets differ. `reports` is supposed to be
-  // unique-by-filename, but `upsertWorkspace` trusts caller-
-  // supplied imports — a malformed bundle can plant duplicates
-  // that bypass the propagate handler's membership-change
-  // detection. Audit round-13 W-8.
+// Generic set-equal compare used for both `reports` (filename strings)
+// and `bundles` (sha512-integrity strings). Use Set sizes (deduped)
+// AND set-membership. Pre-fix the length-then-one-direction-membership
+// compare was a false-positive on duplicates: ['F','G'] vs ['F','F']
+// passed as equal (same length, all of b's items in a's set) even
+// though the deduped sets differ. `reports` / `bundles` are supposed
+// to be unique-by-key, but `upsertWorkspace` trusts caller-supplied
+// imports — a malformed bundle can plant duplicates that bypass the
+// propagate handler's membership-change detection. Audit round-13 W-8.
+function filesSetEqual(a, b) {
   const setA = new Set(a)
   const setB = new Set(b)
   if (setA.size !== setB.size) return false
   for (const x of setA) if (!setB.has(x)) return false
   return true
+}
+
+// Generic membership-mutation core shared by setReportWorkspace and
+// setBundleWorkspace. Each entry point passes the field name it owns
+// (`reports` or `bundles`) and the matching listener-fire helper;
+// the rest of the lifecycle is identical. Audit lineage lives inline:
+//   W-4 — short-circuit when target already owns identifier, else a
+//         remove-then-push fires the listener for a no-op call.
+//   W-5 — validate target BEFORE detaching source; an unknown
+//         workspaceId must not orphan the identifier.
+//   H5  — advance lastSeen for the touched field only; pinning the
+//         full snapshot would mask a sibling tab's concurrent
+//         privateKey rotation or other-list mutation.
+//   M4  — advance lastSeen only for workspaces THIS call modified.
+async function setWorkspaceMembership({ identifier, workspaceId, field, fire }) {
+  const result = await mutateWorkspaces((list) => {
+    const currentOwnerId = list.find(
+      (w) => Array.isArray(w[field]) && w[field].includes(identifier),
+    )?.id ?? null
+    // No-op short-circuits — return `false` so mutateWorkspaces skips
+    // the writeRaw entirely. Pre-fix returned a truthy
+    // `{ affected: new Set(), snapshot: new Map() }`, which still
+    // landed a no-op writeRaw — firing a `storage` event in every
+    // sibling tab that then re-parsed the blob and ran the propagate
+    // diff for nothing. Common case (W-4): user drags a row back onto
+    // its current workspace.
+    if (currentOwnerId === (workspaceId ?? null)) return false
+    if (workspaceId != null) {
+      const target = list.find((w) => w.id === workspaceId)
+      if (!target) return false
+    }
+    const aff = new Set()
+    for (const w of list) {
+      if (!Array.isArray(w[field])) w[field] = []
+      if (w[field].includes(identifier)) {
+        w[field] = w[field].filter((x) => x !== identifier)
+        aff.add(w.id)
+      }
+    }
+    if (workspaceId) {
+      const target = list.find((w) => w.id === workspaceId)
+      if (target && !target[field].includes(identifier)) {
+        target[field].push(identifier)
+        aff.add(target.id)
+      }
+    }
+    const snap = new Map()
+    for (const id of aff) {
+      const ws = list.find((w) => w.id === id)
+      if (ws) snap.set(id, ws)
+    }
+    return { affected: aff, snapshot: snap }
+  })
+  if (!result) return
+  const { affected, snapshot } = result
+  for (const id of affected) {
+    fire(id)
+    const ws = snapshot.get(id)
+    if (ws) markObservedFieldFor(ws, field)
+  }
 }
 
 // Move a report to `workspaceId` (or detach it back to the unfiled
@@ -426,78 +516,30 @@ function reportsSetEqual(a, b) {
 // No-ops cleanly when the target workspace doesn't exist. Fires
 // `onReportMembershipChanged` for every workspace whose `reports`
 // list actually changed (so an attach + detach pair notifies both
-// the old owner and the new one); a no-op call (filename is already
-// where it should be) fires nothing.
-export async function setReportWorkspace(filename, workspaceId) {
-  const { affected, snapshot } = await mutateWorkspaces((list) => {
-    // Find the current owner (if any) and short-circuit when the
-    // target matches. Pre-fix, `setReportWorkspace(F, currentOwner)`
-    // (filename already at target) executed remove-then-push and
-    // fired the membership listener for an effective no-op,
-    // contradicting the doc-block "a no-op call (filename is
-    // already where it should be) fires nothing." Audit round-13 W-4.
-    const currentOwnerId = list.find(
-      (w) => Array.isArray(w.reports) && w.reports.includes(filename),
-    )?.id ?? null
-    if (currentOwnerId === (workspaceId ?? null)) {
-      return { affected: new Set(), snapshot: new Map() }
-    }
-    // Validate target before detaching the source. Pre-fix, the
-    // source-loop unconditionally detached, then the target lookup
-    // failed silently when `workspaceId` was unknown — leaving the
-    // report orphaned (detached without re-attachment). Doc says
-    // "No-ops cleanly when the target workspace doesn't exist" —
-    // make it true. Audit round-13 W-5.
-    if (workspaceId != null) {
-      const target = list.find((w) => w.id === workspaceId)
-      if (!target) return { affected: new Set(), snapshot: new Map() }
-    }
-    const aff = new Set()
-    for (const w of list) {
-      if (!Array.isArray(w.reports)) w.reports = []
-      if (w.reports.includes(filename)) {
-        w.reports = w.reports.filter((r) => r !== filename)
-        aff.add(w.id)
-      }
-    }
-    if (workspaceId) {
-      const target = list.find((w) => w.id === workspaceId)
-      if (target && !target.reports.includes(filename)) {
-        target.reports.push(filename)
-        aff.add(target.id)
-      }
-    }
-    // Snapshot the affected workspaces' post-mutation state so the
-    // post-lock listener-fire path can call markObservedFor against
-    // the canonical state — without holding the lock for the
-    // listener fires.
-    const snap = new Map()
-    for (const id of aff) {
-      const ws = list.find((w) => w.id === id)
-      if (ws) snap.set(id, ws)
-    }
-    return { affected: aff, snapshot: snap }
+// the old owner and the new one); a no-op call (filename already at
+// its destination) fires nothing.
+export function setReportWorkspace(filename, workspaceId) {
+  return setWorkspaceMembership({
+    identifier: filename,
+    workspaceId,
+    field: 'reports',
+    fire: fireReportMembershipChanged,
   })
-  for (const id of affected) {
-    fireReportMembershipChanged(id)
-    // Mark only the `reports` field of this workspace as observed
-    // so the propagate handler doesn't re-fire the membership
-    // listener for the local change. `markObservedFor` (full
-    // snapshot) would also pin the post-mutation `privateKey`,
-    // absorbing a concurrent sibling privateKey rotation that
-    // arrived via readRaw inside the lock — the queued storage
-    // event would then compute prev == next on privateKey and
-    // silently drop its listener fire. Audit round-12 H5.
-    //
-    // M4 round-8 still applies: only mark workspaces THIS call
-    // modified — sibling changes to OTHER workspaces in the same
-    // blob stay unmarked and still get a listener fire on the next
-    // handler run.
-    const ws = snapshot.get(id)
-    if (ws) markObservedReportsFor(ws)
-  }
 }
 
+// `bundles` twin of setReportWorkspace — same contract, scoped to
+// the workspace's `bundles` list (sha512-integrity strings). Bundle
+// bytes live in OPFS and aren't transmitted by the workspace sync
+// protocol; this just moves the membership pointer (which IS synced
+// cross-tab via the storage-event propagation, same as reports).
+export function setBundleWorkspace(integrity, workspaceId) {
+  return setWorkspaceMembership({
+    identifier: integrity,
+    workspaceId,
+    field: 'bundles',
+    fire: fireBundleMembershipChanged,
+  })
+}
 
 // Cross-tab propagation: a sibling tab's `deleteWorkspace` /
 // `upsertWorkspace` (key rotation, re-import) / `setReportWorkspace`
@@ -541,8 +583,11 @@ export function propagateWorkspaceChangesFromStorage() {
     if (p.privateKey !== w.privateKey) fireWorkspacePrivateKeyChanged(id)
     // Set-equal compare on `reports` — reordering doesn't change
     // session.ids so it shouldn't fire spurious membership listeners.
-    // Audit M2 round-3.
-    if (!reportsSetEqual(p.reports, w.reports)) fireReportMembershipChanged(id)
+    // Audit M2 round-3. Same logic mirrors to `bundles`: the field
+    // exists alongside `reports` per workspace, propagated cross-tab
+    // by the same storage-event diff.
+    if (!filesSetEqual(p.reports, w.reports)) fireReportMembershipChanged(id)
+    if (!filesSetEqual(p.bundles, w.bundles)) fireBundleMembershipChanged(id)
   }
   // Update lastSeen AFTER firing listeners so a re-entrant handler
   // call (storage event during a listener's work) doesn't see a

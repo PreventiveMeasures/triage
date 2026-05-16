@@ -86,6 +86,7 @@ import { dropBundleFromHashIndex } from '../../client/bundle-hash-index.js'
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { switchToFile } from './ingest.js'
+import { setBundleWorkspace } from '../../client/workspaces.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -217,6 +218,15 @@ report.addEventListener('click', (e) => {
     if (!confirm(`Delete bundle "${friendly}"?`)) return
     ;(async () => {
       await deleteBundle(integrity)
+      // Detach from any owning workspace's `bundles` list — mirrors
+      // the `setReportWorkspace(name, null)` call in `deleteCurrent`.
+      // Without this, the integrity stays in the workspace JSON until
+      // a later setBundleWorkspace call rewrites the list. The sidebar
+      // renders defensively against missing entries (as a muted
+      // "missing bundle" row), but leaving a dangling pointer would
+      // surface that row for a bundle the user explicitly deleted —
+      // surprising and useless. The detach call cleans the JSON.
+      await setBundleWorkspace(integrity, null)
       // Drop the open panel if it was pointing at the deleted row.
       if (state.selectedBundle === integrity) {
         state.selectedBundle = null

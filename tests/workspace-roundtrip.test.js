@@ -83,12 +83,13 @@ function reportContent(ids) {
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
 
-function makeWorkspace({ id = 'ws-1', name = 'WS', reports = [] } = {}) {
+function makeWorkspace({ id = 'ws-1', name = 'WS', reports = [], bundles = [] } = {}) {
   return {
     id,
     name,
     privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
     reports,
+    bundles,
     createdAt: 1,
   }
 }
@@ -129,6 +130,162 @@ describe('isWorkspaceExport', () => {
     assert.equal(isWorkspaceExport({ version: 2, workspace: { id: 'a', name: 'b', privateKey: 'c' }, reports: [] }), false)
     assert.equal(isWorkspaceExport({ version: 1, reports: [] }), false)
     assert.equal(isWorkspaceExport({ version: 1, workspace: { id: 'a', name: 'b', privateKey: 'c' }, reports: 'x' }), false)
+  })
+
+  it('accepts an explicit `bundles: undefined` (back-compat with pre-bundles exports)', () => {
+    // Distinct from "accepts a well-formed payload" above: that test
+    // OMITS the field; this one sets it explicitly to undefined. Both
+    // must pass through the validator since `data.bundles === undefined`
+    // is the back-compat sentinel that triggers preserve-existing on
+    // the import side.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: undefined,
+    }), true)
+  })
+
+  it('accepts a well-formed `bundles` array', () => {
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ['sha512-AAAA', 'sha512-BBBB'],
+    }), true)
+  })
+
+  it('rejects a non-array `bundles` field', () => {
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: 'sha512-X',
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: { 0: 'sha512-X' },
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: null,
+    }), false)
+  })
+
+  it('rejects non-finite `createdAt` values (NaN, Infinity, null)', () => {
+    // `typeof NaN === 'number'` and `typeof Infinity === 'number'` —
+    // the prior shape check let them through, then JSON.stringify
+    // serialized them as `null` on the persisted blob. Tightened to
+    // Number.isFinite, which also rejects `null` (Number.isFinite(null)
+    // === false) — pin that too so a future loosening can't accept it.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: NaN },
+      reports: [],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: Infinity },
+      reports: [],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: -Infinity },
+      reports: [],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c', createdAt: null },
+      reports: [],
+    }), false)
+  })
+
+  it('rejects a `bundles` array exceeding the length cap (audit S-Import-1 DoS guard)', () => {
+    // Cap is 1024. A crafted export with K=50000 entries would otherwise
+    // run K serial detach calls (each a Web Lock RMW) and could land
+    // partial state if the final upsert quotas out. Rejecting at the
+    // validator stops the import before any side effects.
+    const huge = Array.from({ length: 1025 }, () => 'sha512-X')
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: huge,
+    }), false)
+    // 1024 is accepted (boundary).
+    const ok = Array.from({ length: 1024 }, () => 'sha512-X')
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ok,
+    }), true)
+  })
+
+  it('rejects an integrity string longer than the per-entry cap', () => {
+    // Per-entry length cap is 200 chars — wider than the legit sha512
+    // SRI shape ("sha512-" + base64(64 bytes) = ~95 chars) and narrow
+    // enough that a single 100MB integrity can't smuggle in.
+    const tooLong = 'sha512-' + 'A'.repeat(200)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ['sha512-OK', tooLong],
+    }), false)
+  })
+
+  it('accepts an integrity string at the per-entry boundary (exactly 200 chars)', () => {
+    // Positive boundary — pins the off-by-one. A 200-char string must
+    // pass; 201 must fail (covered by the rejection test above).
+    const atBoundary = 'A'.repeat(200)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: [atBoundary],
+    }), true)
+  })
+
+  it('rejects a non-string bundles entry at validation (no longer permissive)', () => {
+    // Tightened S-Import-3: prior to the fix, non-string entries
+    // passed the validator and were silently filtered downstream.
+    // The validator is now the line of defense.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ['sha512-OK', 123],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ['sha512-OK', null],
+    }), false)
+  })
+
+  it('rejects a `reports` array exceeding the length cap (parallel DoS guard)', () => {
+    // Symmetric to bundles — without a cap, 50k empty `{findings:[]}`
+    // reports gzip small but still pile up K serial detach calls
+    // against the Web Lock. Reports content is gzipped on the wire so
+    // the cap doubles as belt-and-suspenders alongside transport limits.
+    const huge = Array.from({ length: 1025 }, (_, i) => ({ name: `r${i}.json`, content: '{}' }))
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: huge,
+    }), false)
+    const ok = Array.from({ length: 1024 }, (_, i) => ({ name: `r${i}.json`, content: '{}' }))
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: ok,
+    }), true)
   })
 
   it('rejects a non-numeric `createdAt` (audit round-14 WI-2)', () => {
@@ -424,6 +581,318 @@ describe('export → import round-trip', () => {
     const wsList = listWorkspaces()
     assert.equal(wsList.filter((w) => w.id === ws.id).length, 1)
   })
+
+  it('round-trips bundle membership as pointers (no bytes shipped)', async () => {
+    const integA = 'sha512-AAAA'
+    const integB = 'sha512-BBBB'
+    const ws = makeWorkspace({ bundles: [integA, integB] })
+    const payload = await buildWorkspaceExportPayload(ws)
+
+    // Top-level `bundles` carries integrities, NOT bytes — the export
+    // pipeline doesn't touch OPFS for bundle content. Tighter than the
+    // earlier assertion: confirm `payload.reports` is EMPTY (no bundle
+    // bytes piggybacking onto the reports payload) and that no other
+    // top-level field acquired the bundle bytes.
+    assert.deepEqual(payload.bundles, [integA, integB])
+    assert.deepEqual(payload.reports, [], 'bundle bytes do NOT ride the reports payload')
+    // Sanity: serialized payload size is small (bytes-free). Pin a
+    // generous upper bound so a future regression that accidentally
+    // packed bundle bytes alongside trips this test.
+    const size = JSON.stringify(payload).length
+    assert.ok(size < 2000, `bytes-free payload should be small; got ${size} chars`)
+
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+
+    const restored = listWorkspaces().find((w) => w.id === ws.id)
+    assert.deepEqual(restored.bundles, [integA, integB],
+      'imported workspace re-acquired its bundle pointers')
+  })
+
+  it('importing references to bundles not present locally does not crash', async () => {
+    // Receiver has no matching bundles in OPFS — the import should
+    // still land the workspace with its `bundles` list intact. The
+    // sidebar render (a separate concern, tested elsewhere) filters
+    // missing integrities at paint time; this test just verifies the
+    // import path itself doesn't throw when the references won't
+    // resolve.
+    const orphan = 'sha512-DOES-NOT-EXIST'
+    const ws = makeWorkspace({ bundles: [orphan] })
+    const payload = await buildWorkspaceExportPayload(ws)
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const restored = listWorkspaces().find((w) => w.id === ws.id)
+    assert.deepEqual(restored.bundles, [orphan],
+      'reference preserved so a later drop of the matching bytes auto-claims')
+  })
+
+  it('older exports without a `bundles` field import cleanly (back-compat)', async () => {
+    // Simulate a pre-bundles export by hand-rolling the payload
+    // shape — the field is omitted entirely, not set to `[]` or
+    // `null`.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-legacy',
+        name: 'Legacy',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      repoUrls: {},
+      triage: {},
+    }
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const restored = listWorkspaces().find((w) => w.id === 'ws-legacy')
+    assert.deepEqual(restored.bundles, [],
+      'missing `bundles` field defaults to [] without crashing')
+  })
+
+  it('re-importing a pre-bundles export does NOT wipe locally-attached bundles', async () => {
+    // The data-loss regression flagged by audit-lineage review. Pre-fix
+    // `applyWorkspaceImport` always sent `bundles: importedBundles` to
+    // `upsertWorkspace`, which replaced the field wholesale — so an
+    // older export (no `bundles` key) caused `[]` to overwrite local
+    // membership. Fix: preserve existing when the field is absent.
+    const { upsertWorkspace } = await import('../client/workspaces.js')
+    const id = 'ws-preserve'
+    // Local state: user dragged bundles onto WS after exporting it.
+    await upsertWorkspace({
+      id,
+      name: 'Preserve',
+      privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+      reports: [],
+      bundles: ['sha512-LOCAL-1', 'sha512-LOCAL-2'],
+      createdAt: 1,
+    })
+    // Friend's pre-bundles export — `bundles` field absent.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id,
+        name: 'Preserve',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      repoUrls: {},
+      triage: {},
+    }
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const restored = listWorkspaces().find((w) => w.id === id)
+    assert.deepEqual(restored.bundles, ['sha512-LOCAL-1', 'sha512-LOCAL-2'],
+      'locally-attached bundles survive a pre-bundles re-import')
+  })
+
+  it('import enforces single-owner for REPORTS: claimed names detach from any OTHER workspace', async () => {
+    // Parallel to the bundle test below. The detach pass in
+    // applyWorkspaceImport runs unconditionally for reports (savedNames
+    // always non-null), so a regression special-casing the bundles
+    // branch only would silently break report single-owner.
+    const { saveFile } = await import('../client/storage.js')
+    const { upsertWorkspace } = await import('../client/workspaces.js')
+    const wsA = 'ws-A-r-owner'
+    const wsB = 'ws-B-r-imported'
+    const reportName = `shared-${Date.now()}.json`
+    // Save the report and attach it to WS_A.
+    await saveFile(reportName, reportContent([FINDING_A]))
+    await upsertWorkspace({
+      id: wsA,
+      name: 'A',
+      privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+      reports: [reportName],
+      bundles: [],
+      createdAt: 1,
+    })
+    // Import WS_B claiming the same report.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: wsB,
+        name: 'B',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [{ name: reportName, content: reportContent([FINDING_A]) }],
+      bundles: [],
+      repoUrls: {},
+      triage: {},
+    }
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const list = listWorkspaces()
+    const a = list.find((w) => w.id === wsA)
+    const b = list.find((w) => w.id === wsB)
+    assert.deepEqual(a.reports, [], 'WS_A no longer owns the shared report')
+    assert.deepEqual(b.reports, [reportName], 'WS_B took ownership on import')
+  })
+
+  it('import enforces single-owner: claimed integrities detach from any OTHER workspace', async () => {
+    // Without the detach pass, `upsertWorkspace` (which replaces the
+    // target workspace's `bundles` wholesale but doesn't touch others)
+    // leaves an imported integrity claimed by BOTH the import target
+    // AND any prior owner — violating the at-most-one-workspace
+    // invariant that drag-drop enforces.
+    const { upsertWorkspace } = await import('../client/workspaces.js')
+    const wsA = 'ws-A-owner'
+    const wsB = 'ws-B-imported'
+    // WS_A locally has bundle X.
+    await upsertWorkspace({
+      id: wsA,
+      name: 'A',
+      privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+      reports: [],
+      bundles: ['sha512-SHARED'],
+      createdAt: 1,
+    })
+    // Import WS_B which also claims X.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: wsB,
+        name: 'B',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: ['sha512-SHARED'],
+      repoUrls: {},
+      triage: {},
+    }
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const list = listWorkspaces()
+    const a = list.find((w) => w.id === wsA)
+    const b = list.find((w) => w.id === wsB)
+    assert.deepEqual(a.bundles, [], 'WS_A no longer owns the shared integrity')
+    assert.deepEqual(b.bundles, ['sha512-SHARED'], 'WS_B took ownership on import')
+  })
+
+  it('rejects a `bundles` payload containing non-string entries at parse time', () => {
+    // The validator now requires every entry to be a string (S-Import-3):
+    // a non-string entry under the count cap would otherwise pass shape
+    // validation and be silently filtered out by applyWorkspaceImport
+    // later, leaving the validator more permissive than its contract
+    // implies. parseWorkspaceJson throws upfront — no side effects.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-malformed',
+        name: 'Malformed',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: ['sha512-REAL', '', 123, null, { x: 1 }],
+      repoUrls: {},
+      triage: {},
+    }
+    assert.throws(
+      () => parseWorkspaceJson(JSON.stringify(payload)),
+      /bundles entries must be strings/u,
+    )
+    // No workspace landed.
+    assert.equal(listWorkspaces().find((w) => w.id === 'ws-malformed'), undefined)
+  })
+
+  it('parseWorkspaceJson surfaces a specific cap-violation message', () => {
+    // Validator gates the import at the parse step. The user shouldn't
+    // see "not a deepview workspace export" for a file that IS a valid
+    // export, just over the size cap — they should see the specific
+    // reason.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-oversize',
+        name: 'Oversize',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: Array.from({ length: 1025 }, () => 'sha512-X'),
+      repoUrls: {},
+      triage: {},
+    }
+    assert.throws(
+      () => parseWorkspaceJson(JSON.stringify(payload)),
+      /bundles count \(1025\) exceeds cap \(1024\)/u,
+    )
+  })
+
+  it('oversize import does not partially detach victim workspaces', async () => {
+    // parseWorkspaceJson rejects BEFORE applyWorkspaceImport runs, so
+    // victim workspaces' memberships are untouched. Pin the contract:
+    // even if a future regression splits the cap check into
+    // applyWorkspaceImport (post-saveFile / post-detach), this test
+    // would catch the partial-state leak.
+    const { upsertWorkspace } = await import('../client/workspaces.js')
+    const victimId = 'ws-victim'
+    await upsertWorkspace({
+      id: victimId,
+      name: 'Victim',
+      privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+      reports: [],
+      bundles: ['sha512-VICTIM-1', 'sha512-VICTIM-2'],
+      createdAt: 1,
+    })
+    // Crafted import that, if it ran the detach pass, would strip
+    // VICTIM-1 from the victim workspace.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-oversize-importer',
+        name: 'Oversize',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      // 1024 junk + 'sha512-VICTIM-1' = 1025 → over cap.
+      bundles: [...Array.from({ length: 1024 }, (_, i) => `sha512-CRAFT-${i}`), 'sha512-VICTIM-1'],
+      repoUrls: {},
+      triage: {},
+    }
+    assert.throws(() => parseWorkspaceJson(JSON.stringify(payload)))
+    // Victim's memberships intact.
+    const victim = listWorkspaces().find((w) => w.id === victimId)
+    assert.deepEqual(victim.bundles, ['sha512-VICTIM-1', 'sha512-VICTIM-2'],
+      'victim bundles untouched by rejected import')
+    // No new workspace was created.
+    assert.equal(listWorkspaces().find((w) => w.id === 'ws-oversize-importer'), undefined)
+  })
+
+  it('upsertWorkspace dedupes duplicate-bearing imported bundles', async () => {
+    // Distinct from the validator gate above — a payload with all-string
+    // duplicates passes parseWorkspaceJson; the dedupe inside
+    // upsertWorkspace then collapses to a single entry.
+    const integ = 'sha512-DUP'
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-dedup',
+        name: 'Dedup',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: [integ, integ, integ],
+      repoUrls: {},
+      triage: {},
+    }
+    const reparsed = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(reparsed)
+    const restored = listWorkspaces().find((w) => w.id === 'ws-dedup')
+    assert.deepEqual(restored.bundles, [integ], 'duplicates collapsed by upsertWorkspace')
+  })
 })
 
 describe('encrypted bundle export → import round-trip', () => {
@@ -576,6 +1045,23 @@ describe('encrypted bundle export → import round-trip', () => {
 
 describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', () => {
   beforeEach(clearState)
+
+  it('bundles array is filtered to non-empty strings on export (defense in depth)', async () => {
+    // Symmetric to the import-side filter test. The export path
+    // expects `workspace.bundles` to already be string[] (upsertWorkspace
+    // dedupes + the in-memory shape is enforced by listWorkspaces
+    // backfill), but the filter is defense in depth — a future API
+    // change shouldn't silently leak garbage into someone's export.
+    const ws = makeWorkspace({
+      bundles: ['sha512-A', '', 'sha512-B', 0, null, undefined, 'sha512-C'],
+    })
+    const payload = await buildWorkspaceExportPayload(ws)
+    assert.deepEqual(
+      payload.bundles,
+      ['sha512-A', 'sha512-B', 'sha512-C'],
+      'empty strings and non-strings dropped',
+    )
+  })
 
   it('ignoredReports is filtered against this workspace\'s reports (audit round-13 W-Export-1)', async () => {
     // Pre-fix the loop only checked `claimedIds.has(id)` and

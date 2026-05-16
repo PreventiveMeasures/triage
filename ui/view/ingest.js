@@ -301,6 +301,22 @@ export async function switchToWorkspace(workspaceId) {
   graph2.pathFilter = ''
   cleanupGraph2()
   try { localStorage.setItem(LAST_FILE_KEY, `ws:${workspaceId}`) } catch {}
+  // Empty workspace — no reports to ingest, so the readFile loop below
+  // is a no-op. Without explicitly clearing the report pane here, the
+  // user sees whatever was last rendered (a stale finding, a bundle,
+  // etc.) while the sidebar marks this workspace as current — a "dead
+  // click" UX. Mirror leaveWorkspace's empty-state teardown so the
+  // drop zone re-appears and the user knows the workspace exists but
+  // has nothing to show yet. Bundle-only workspaces (no reports, some
+  // bundles) get the same treatment — the bundles render in the
+  // sidebar; clicking the workspace row itself is a no-op for the main
+  // pane until reports land.
+  if (ws.reports.length === 0) {
+    report.classList.remove('active')
+    litRender(nothing, report)
+    dropZone.classList.remove('hidden')
+    document.body.classList.remove('show-print-btn')
+  }
   // Kick off every readFile concurrently up front, then ingest the
   // results in workspace order. The await inside the loop only blocks
   // until each report's bytes land — slower reads carry on in the

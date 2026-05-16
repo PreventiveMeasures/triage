@@ -25,10 +25,12 @@ class LeaveWorkspaceDialog extends LitElement {
   static properties = {
     workspaceName: { type: String },
     reportCount: { type: Number },
+    bundleCount: { type: Number },
     orphanedTriage: { type: Number },
     sharedTriage: { type: Number },
     _mode: { state: true },
     _triage: { state: true },
+    _settled: { state: true },
   }
 
   // Light DOM — `.leave-workspace-dialog` rules live in sidebar.css.
@@ -38,6 +40,7 @@ class LeaveWorkspaceDialog extends LitElement {
     super()
     this.workspaceName = ''
     this.reportCount = 0
+    this.bundleCount = 0
     this.orphanedTriage = 0
     this.sharedTriage = 0
     // Default to the non-destructive option — detaching keeps the
@@ -48,6 +51,11 @@ class LeaveWorkspaceDialog extends LitElement {
     // non-destructive default; the user has to actively pick
     // wipe to evict the persisted entries.
     this._triage = 'keep'
+    // Guards against double-resolve when both `close` and a button
+    // click fire (e.g. Cancel → dialog.close() → _onClose). Declared
+    // in `static properties` for consistency with WorkspaceExportDialog
+    // and so Lit's reactive system sees it.
+    this._settled = false
   }
 
   // Show the modal once the <dialog> lands in the document, then
@@ -135,6 +143,7 @@ class LeaveWorkspaceDialog extends LitElement {
 
   render() {
     const n = this.reportCount
+    const b = this.bundleCount
     const hasReports = n > 0
     const reportNoun = n === 1 ? 'report' : 'reports'
     // Pluralization for the radio labels + hints. `n === 1`
@@ -144,6 +153,15 @@ class LeaveWorkspaceDialog extends LitElement {
     const them = n === 1 ? 'it' : 'them'
     const stay = n === 1 ? 'stays' : 'stay'
     const areRemoved = n === 1 ? 'is removed' : 'are removed'
+    // Bundles attached to the workspace are detached on leave regardless
+    // of mode — their OPFS bytes are content-addressed and may be
+    // shared across workspaces, so 'delete mode' doesn't sweep them up
+    // with the reports. The dialog surfaces the count + behaviour so
+    // the user isn't surprised when the workspace disappears but the
+    // bundles resurface in the unfiled Bundles section.
+    const bundleNote = b > 0
+      ? html`<p class="lwd-note">${b === 1 ? 'One bundle is' : `${b} bundles are`} also attached. ${b === 1 ? 'It' : 'They'} will become unfiled — the bundle bytes stay on this device either way (delete bundles manually from the Bundles list if you want them gone).</p>`
+      : ''
     const choice = hasReports
       ? html`<fieldset class="lwd-choice">
           <legend>
@@ -176,7 +194,9 @@ class LeaveWorkspaceDialog extends LitElement {
             </span>
           </label>
         </fieldset>`
-      : html`<p class="lwd-empty">No reports are attached to this workspace.</p>`
+      : (b > 0
+        ? html`<p class="lwd-empty">No reports are attached to this workspace (only bundles, see below).</p>`
+        : html`<p class="lwd-empty">No reports are attached to this workspace.</p>`)
     return html`<dialog class="leave-workspace-dialog" @close=${this._onClose}>
       <header class="lwd-head">
         <h3>Leave workspace</h3>
@@ -185,6 +205,7 @@ class LeaveWorkspaceDialog extends LitElement {
         Leave workspace <strong>"${this.workspaceName}"</strong> on this device?
       </p>
       ${choice}
+      ${bundleNote}
       ${this._triageSection()}
       <ul class="lwd-list">
         <li>Workspace synchronization data stays on the sync server — peers (and your other devices) keep their copy.</li>
@@ -204,11 +225,12 @@ customElements.define('leave-workspace-dialog', LeaveWorkspaceDialog)
 // Cancel / Esc / native close all resolve to `{ confirmed: false,
 // mode: 'detach', triage: 'keep' }`. Callers should branch on
 // `confirmed` first.
-export function openLeaveWorkspaceDialog({ name, reportCount, triageImpact } = {}) {
+export function openLeaveWorkspaceDialog({ name, reportCount, bundleCount, triageImpact } = {}) {
   return new Promise((resolve) => {
     const el = document.createElement('leave-workspace-dialog')
     el.workspaceName = name ?? ''
     el.reportCount = reportCount ?? 0
+    el.bundleCount = bundleCount ?? 0
     el.orphanedTriage = triageImpact?.orphanedCount ?? 0
     el.sharedTriage = triageImpact?.sharedCount ?? 0
     el.addEventListener('resolve', (e) => {

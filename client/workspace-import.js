@@ -1,6 +1,6 @@
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveFile } from './storage.js'
-import { upsertWorkspace } from './workspaces.js'
+import { listWorkspaces, setBundleWorkspace, setReportWorkspace, upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
@@ -35,26 +35,74 @@ import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 
 const EXPORT_VERSION = 1
 
+// Caps on the membership arrays. The import path runs a serial detach
+// pass per identifier (each takes the Web Lock + a writeRaw) — without
+// a cap, a crafted export with a 50k-entry `bundles` (or 50k empty
+// `reports`) would freeze the tab and strip legitimate memberships
+// from victim workspaces BEFORE the final upsert hits QuotaExceededError
+// (audit S-Import-1). 1024 is comfortably above any plausible legit
+// workspace (the user would have to drag 1024 items in by hand) and
+// small enough that the K × lock-RMW import pass stays interactive.
+// Reports DO carry content (gzipped), but a payload of K empty
+// `{findings:[]}` objects gzips small while still triggering K detach
+// calls — so the cap applies symmetrically to both fields.
+// Per-entry length on bundles is gated separately so a single 100MB
+// integrity string can't smuggle in under the count cap.
+const MAX_BUNDLES_PER_EXPORT = 1024
+const MAX_REPORTS_PER_EXPORT = 1024
+const MAX_BUNDLE_INTEGRITY_LEN = 200
+
 function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
+// Single source of truth for export-shape validation. Returns `null`
+// when the payload is acceptable, or a specific error string when it
+// isn't. `isWorkspaceExport` wraps this for a boolean contract;
+// `parseWorkspaceJson` surfaces the specific reason so cap violations
+// don't look like a generic "not a deepview workspace export" — that
+// reads as a format error on a file that IS valid, just oversized.
+function validateExportShape(data) {
+  if (!data || typeof data !== 'object') return 'payload is not an object'
+  if (data.version !== EXPORT_VERSION) return `unsupported export version: ${data.version}`
+  if (!data.workspace || typeof data.workspace !== 'object') return 'workspace metadata missing'
+  if (typeof data.workspace.id !== 'string') return 'workspace.id must be a string'
+  if (typeof data.workspace.name !== 'string') return 'workspace.name must be a string'
+  if (typeof data.workspace.privateKey !== 'string') return 'workspace.privateKey must be a string'
+  // `createdAt` rides through `applyWorkspaceImport` straight to
+  // `upsertWorkspace`, then into the persisted workspaces blob. A
+  // crafted bundle could otherwise embed any value (function-shape
+  // string, nested object, NaN, Infinity, null). `Number.isFinite`
+  // rejects all of those (and accepts only finite numbers); `undefined`
+  // stays accepted because `upsertWorkspace` falls back to `Date.now()`
+  // for missing fields. Audit round-14 WI-2.
+  if (data.workspace.createdAt !== undefined && !Number.isFinite(data.workspace.createdAt)) {
+    return 'workspace.createdAt must be a finite number or omitted'
+  }
+  if (!Array.isArray(data.reports)) return 'reports field must be an array'
+  if (data.reports.length > MAX_REPORTS_PER_EXPORT) {
+    return `reports count (${data.reports.length}) exceeds cap (${MAX_REPORTS_PER_EXPORT})`
+  }
+  if (data.bundles !== undefined) {
+    if (!Array.isArray(data.bundles)) return 'bundles field must be an array when present'
+    if (data.bundles.length > MAX_BUNDLES_PER_EXPORT) {
+      return `bundles count (${data.bundles.length}) exceeds cap (${MAX_BUNDLES_PER_EXPORT})`
+    }
+    // Per-entry check requires `typeof === 'string'` AND length cap —
+    // a non-string entry under the count cap would otherwise pass
+    // validation here and be silently filtered out by
+    // applyWorkspaceImport later, leaving the validator more
+    // permissive than its contract implies (audit S-Import-3).
+    for (const b of data.bundles) {
+      if (typeof b !== 'string') return 'bundles entries must be strings'
+      if (b.length > MAX_BUNDLE_INTEGRITY_LEN) {
+        return `bundle integrity exceeds per-entry length cap (${MAX_BUNDLE_INTEGRITY_LEN})`
+      }
+    }
+  }
+  return null
+}
+
 export function isWorkspaceExport(data) {
-  return Boolean(
-    data
-    && typeof data === 'object'
-    && data.version === EXPORT_VERSION
-    && data.workspace
-    && typeof data.workspace.id === 'string'
-    && typeof data.workspace.name === 'string'
-    && typeof data.workspace.privateKey === 'string'
-    // `createdAt` rides through `applyWorkspaceImport` straight to
-    // `upsertWorkspace`, then into the persisted workspaces blob. A
-    // crafted bundle could otherwise embed any value (function-shape
-    // string, nested object, NaN). `undefined` stays accepted because
-    // `upsertWorkspace` falls back to `Date.now()` for missing fields.
-    // Audit round-14 WI-2.
-    && (data.workspace.createdAt === undefined || typeof data.workspace.createdAt === 'number')
-    && Array.isArray(data.reports),
-  )
+  return validateExportShape(data) === null
 }
 
 async function gunzipBytesToText(bytes) {
@@ -107,10 +155,15 @@ export function parseWorkspaceJson(text) {
   } catch (err) {
     throw new Error(`payload is not JSON: ${err.message}`, { cause: err })
   }
-  if (!isWorkspaceExport(data)) {
-    throw new Error('not a deepview workspace export')
-  }
-  return data
+  const reason = validateExportShape(data)
+  if (reason === null) return data
+  // A cap-violation reason ("bundles count exceeds cap (1025)") is more
+  // useful to the user than a generic "not a deepview workspace export"
+  // — the file IS a valid export, just over the size limit. Wrap with
+  // the legacy prefix only for structural failures so existing callers'
+  // error-message expectations keep working for the shape-error case.
+  const isCapFailure = reason.includes('exceeds cap')
+  throw new Error(isCapFailure ? reason : `not a deepview workspace export: ${reason}`)
 }
 
 // Read an imported triage entry's bucket. Preferred form is the
@@ -341,11 +394,72 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     : new Map()
   await mergeTriage(data.triage, conflictResolver, lookup)
 
+  // Bundle membership rides through as pointers (sha512 integrities);
+  // the bundle bytes themselves are NOT in the export. Filter to
+  // non-empty strings so a malformed payload can't seed the workspace
+  // blob with garbage. Integrities that don't resolve to a locally-
+  // stored bundle stay in the workspace's `bundles` list — the sidebar
+  // render skips them defensively, and a future drop of the matching
+  // bytes auto-claims via setBundleWorkspace (content-addressed, same
+  // hash = same bundle).
+  //
+  // `data.bundles` is OPTIONAL — older exports predate the field. When
+  // it's omitted, we tell upsertWorkspace to PRESERVE the target's
+  // existing bundles via `preserveBundles: true` — that flag reads the
+  // existing list INSIDE upsertWorkspace's lock, so a sibling tab can't
+  // race a detach between our read and our write. (Reading outside the
+  // lock would let a sibling-tab `setBundleWorkspace(X, null)` get
+  // resurrected by our deferred upsert — audit C-Import-1.) Unlike
+  // reports, no bundle bytes ride the export, so treating "absent" as
+  // "empty" would silently detach every locally-attached bundle.
+  const targetId = data.workspace.id
+  const bundlesProvided = Array.isArray(data.bundles)
+  const importedBundles = bundlesProvided
+    ? data.bundles.filter((b) => typeof b === 'string' && b.length > 0)
+    : []
+
+  // Single-owner enforcement. `upsertWorkspace` replaces the target
+  // workspace's `reports` / `bundles` lists wholesale but doesn't reach
+  // into OTHER workspaces. Without this pre-pass, an import claiming
+  // an identifier already attached to a different workspace would leave
+  // it claimed by both, violating the at-most-one-workspace invariant
+  // that drag-drop (`setReportWorkspace` / `setBundleWorkspace`)
+  // enforces. Items already in the target are not touched.
+  //
+  // Hoisting: a SINGLE `listWorkspaces()` snapshot drives the owner
+  // lookup for every identifier — vs. one parse per loop iteration in
+  // the prior implementation, which made a 1024-element bundles array
+  // pay K full JSON.parse passes of the workspaces blob. Each detach
+  // call still acquires the Web Lock individually, so a sibling tab's
+  // concurrent mutation between iterations remains visible (the
+  // setReportWorkspace / setBundleWorkspace implementations re-check
+  // ownership under their own lock — the snapshot here is just a
+  // fast-path filter to avoid no-op detach calls).
+  const currentList = listWorkspaces()
+  const reportOwners = new Map()
+  const bundleOwners = new Map()
+  for (const w of currentList) {
+    for (const r of w.reports) if (!reportOwners.has(r)) reportOwners.set(r, w.id)
+    for (const b of w.bundles) if (!bundleOwners.has(b)) bundleOwners.set(b, w.id)
+  }
+  for (const name of savedNames) {
+    const owner = reportOwners.get(name)
+    if (owner !== undefined && owner !== targetId) await setReportWorkspace(name, null)
+  }
+  if (bundlesProvided) {
+    for (const integ of importedBundles) {
+      const owner = bundleOwners.get(integ)
+      if (owner !== undefined && owner !== targetId) await setBundleWorkspace(integ, null)
+    }
+  }
+
   const ws = await upsertWorkspace({
     id: data.workspace.id,
     name: data.workspace.name,
     privateKey: data.workspace.privateKey,
     reports: savedNames,
+    bundles: bundlesProvided ? importedBundles : undefined,
+    preserveBundles: !bundlesProvided,
     createdAt: data.workspace.createdAt,
   })
 
