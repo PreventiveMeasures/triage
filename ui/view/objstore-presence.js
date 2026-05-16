@@ -155,6 +155,17 @@ export function closeWorkspace(workspaceId) {
   if (!entry) return
   entry.disposed = true
   try { entry.session?.close() } catch {}
+  // Zero the workspace's content + tag key material we hold. The
+  // session's `close()` zeroes its OWN copy (`new Uint8Array(...)`
+  // wrappers in `createObjstoreSession`), but the original
+  // `entry.keys` Uint8Arrays we passed in stay live until the entry
+  // is GC'd. Match the wipe contract documented at
+  // `client/objstore.ts:close()`.
+  if (entry.keys) {
+    try { entry.keys.contentKey.fill(0) } catch {}
+    try { entry.keys.tagKey.fill(0) } catch {}
+    entry.keys = null
+  }
   sessions.delete(workspaceId)
   notify()
 }

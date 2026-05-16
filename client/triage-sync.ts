@@ -415,6 +415,22 @@ function sessionIsLive(session: Session): boolean {
   return sessions.get(session.workspaceId) === session
 }
 
+// Drop session's content-encryption key material before releasing the
+// session. `session.key` is the raw 32-byte HKDF output from
+// `deriveSessionKey`; zeroing the buffer mirrors `objstore.ts`'s
+// explicit `contentKey.fill(0)` so the workspace's content key isn't
+// recoverable from a post-close heap snapshot. The CryptoKey at
+// `session.signingKey` is non-extractable — the runtime owns its
+// erasure when the reference drops, so dropping it is best-effort.
+function wipeSessionKey(session: Session): void {
+  if (session.key) {
+    try { session.key.fill(0) } catch {}
+    session.key = null
+  }
+  session.signingKey = null
+  session.verifyingKey = null
+}
+
 // ─────────── pure state / changeset helpers ───────────
 
 // Collect every per-report ignore key matching `id`, returned as
@@ -2382,10 +2398,19 @@ export const triageSync = {
   // session. The single-workspace UI's "switch workspace" path
   // calls `closeSession(oldId)` before `openSession(newId)`; the
   // page-unload / "log out of sync" paths call it with no arg.
+  //
+  // Zeros `session.key` (the raw 32-byte content-encryption key from
+  // `deriveSessionKey`) before dropping the session — mirrors the
+  // explicit `fill(0)` wipe in `client/objstore.ts`'s `session.close()`.
+  // `signingKey` is a non-extractable CryptoKey, so the runtime owns
+  // its erasure; dropping the reference is the best we can do.
   closeSession(workspaceId?: string | null): void {
     if (workspaceId == null) {
+      for (const s of sessions.values()) wipeSessionKey(s)
       sessions.clear()
     } else {
+      const s = sessions.get(workspaceId)
+      if (s) wipeSessionKey(s)
       sessions.delete(workspaceId)
     }
     emitStatusIfChanged()
