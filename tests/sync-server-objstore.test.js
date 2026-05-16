@@ -788,6 +788,14 @@ describe('v1.objstore server (REST-primary)', () => {
     ])
     const statuses = [r1.status, r2.status].sort()
     assert.deepEqual(statuses, [200, 409], 'exactly one commit wins, the other is 409 conflict')
+    // The 409 envelope carries `currentVersion` so a retry can
+    // precondition on the live row's version. Without this the
+    // caller would loop with `prevVersion: null` against a live
+    // slot. API-ergonomics audit `client/objstore.ts:425`.
+    const losing = r1.status === 409 ? r1 : r2
+    const body = await losing.json()
+    assert.equal(body.error, 'conflict')
+    assert.equal(body.currentVersion, 1, 'REST 409 conflict body carries currentVersion')
     c.ws.close()
   })
 

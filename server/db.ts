@@ -386,7 +386,18 @@ export function commitRevision(
     const seqRow = await handle.headSeq.get(tag)
     const seq = (seqRow?.s ?? 0) + 1
     try {
-      await handle.insertRevision.run(tag, seq, id, baseNorm, keyframe ? 1 : 0, nonce, ciphertext, signature, Date.now())
+      // Strict-boolean coercion via `=== true`. The canonical signed
+      // by the client uses `keyframe === true ? '1' : ''` — anything
+      // truthy-but-not-strictly-true (e.g. `1`, `"true"`, `{}`) would
+      // canonicalize to `''` (non-keyframe) on the verifier side but
+      // would round-trip to `1` here via the looser ternary, diverging
+      // signed bytes from stored bytes. TS narrows `keyframe` to
+      // `boolean` upstream; the strict comparison is defense-in-depth
+      // against a future caller that loosens the field type or a
+      // direct invocation from a non-typed context. Input-validation
+      // audit `server/db.ts:389`.
+      const keyframeCol = keyframe === true ? 1 : 0
+      await handle.insertRevision.run(tag, seq, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
       return { kind: 'inserted' }
     } catch (err) {
       // Only convert unique-violations; rethrow other driver errors

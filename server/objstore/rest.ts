@@ -100,6 +100,18 @@ function deny(res: ServerResponse, status: number, body: string): void {
   res.end(JSON.stringify({ error: body }))
 }
 
+// Variant of `deny` that augments the JSON envelope with the
+// live row's `currentVersion` so a REST PUT 409 lets the caller
+// retry with the right precondition. Without this the client only
+// learns the slot is occupied — not at what version — and retries
+// with `prevVersion: null` against a non-empty slot, looping
+// indefinitely against a live row. Symmetric with the WS plane's
+// `objstore-conflict` envelope.
+function denyConflict(res: ServerResponse, currentVersion: number | null): void {
+  res.writeHead(409, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ error: 'conflict', currentVersion }))
+}
+
 export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const route = matchRoute(req.url)
   if (!route) { deny(res, 404, 'not-found'); return }
@@ -267,7 +279,10 @@ async function handleRestPutLocked(
     return r
   })
   if (!result.ok) {
-    if (result.reason === 'conflict') { deny(res, 409, 'conflict'); return }
+    if (result.reason === 'conflict') {
+      denyConflict(res, result.conflict?.version ?? null)
+      return
+    }
     if (result.reason === 'no-staging') { deny(res, 410, 'gone'); return }
     // `io-error` = FS/disk fault (EACCES/ENOSPC/EIO/racing abort);
     // server-side, not client-fixable. `size-mismatch` is the

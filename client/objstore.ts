@@ -422,7 +422,18 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
       body: opts.bytes as Uint8Array<ArrayBuffer>,
     })
     if (!res.ok) {
-      if (res.status === 409 || res.status === 410) return { ok: false, reason: 'conflict', current: null }
+      if (res.status === 409 || res.status === 410) {
+        // Parse the server's `{ error, currentVersion }` envelope so a
+        // 409 carries the live row's version into the caller's retry
+        // loop — symmetric with the WS plane's `objstore-conflict`
+        // envelope. Without `currentVersion` a putFile retry against
+        // a live slot would re-send `prevVersion: null` and loop
+        // indefinitely against a non-empty row. 410 (`gone`, staging
+        // row reaped between begin and commit) doesn't have a live
+        // version to surface — fall through with `current: null`.
+        const current = res.status === 409 ? await parseRestConflictVersion(res) : null
+        return { ok: false, reason: 'conflict', current }
+      }
       // Other 4xx/5xx are protocol violations or server-side faults
       // the caller can't usefully discriminate. Throw with the wire
       // body so a post-mortem has the reason string.
@@ -691,14 +702,22 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
 // than the full server-meta blob — the conflict envelope's
 // resourceTag is the OPAQUE wire tag, which the caller can't
 // meaningfully consume without the tagKey.
+// `current` on a conflict carries the version only — that's what
+// the public `PutResult` / `DeleteResult` surface to callers as
+// `currentVersion`. The WS plane's `objstore-conflict` envelope
+// produces a full `ObjectMeta` (which structurally satisfies
+// `{ version: number }`); the REST plane's 409 body carries just
+// the version field. Narrowing the type to the only field actually
+// consumed lets the two planes share the union without forcing the
+// REST path to fabricate the rest of the ObjectMeta shape.
 type RawPutResult =
   | { ok: true; meta: { version: number; contentHash: string; contentLength: number } }
-  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: false; reason: 'conflict'; current: { version: number } | null }
   | { ok: false; reason: 'workspace-full' }
 
 type RawDeleteResult =
   | { ok: true; deletedVersion: number }
-  | { ok: false; reason: 'conflict'; current: ObjectMeta | null }
+  | { ok: false; reason: 'conflict'; current: { version: number } | null }
   | { ok: false; reason: 'not-found' }
 
 // Wire-shape guard. The objstore broadcast / list / fetch-token
@@ -706,6 +725,21 @@ type RawDeleteResult =
 // fields the caller cares about (the signature field is wire-only
 // — callers don't verify it client-side since the bytes themselves
 // are verified via `contentHash`).
+// Read the live row's version out of a REST PUT 409 `conflict` body.
+// Returns `null` for malformed bodies, missing fields, or non-safe
+// integer values. The caller treats `null` the same as "no version
+// surfaced" — the retry path won't loop against a live row, but the
+// caller can't precondition on a known version either.
+async function parseRestConflictVersion(res: Response): Promise<{ version: number } | null> {
+  try {
+    const body = (await res.json()) as { currentVersion?: unknown }
+    if (typeof body.currentVersion === 'number' && Number.isSafeInteger(body.currentVersion)) {
+      return { version: body.currentVersion }
+    }
+  } catch {}
+  return null
+}
+
 function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
   if (!m || typeof m !== 'object') return false
   return typeof m['resourceTag'] === 'string'
