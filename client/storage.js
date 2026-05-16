@@ -97,6 +97,25 @@ const inFlight = new Map()
 //      close) — captured the start-bumped gen, sees gen advanced
 //      again after writable.close + cache.set, skips cache.set.
 //      (Audit round-12 H8.)
+//
+// The Map grows monotonically with every distinct filename touched
+// over the page's lifetime; we deliberately do NOT prune entries
+// on `deleteFile` because the race-protection invariant — "if
+// writeGen advanced since you started reading, skip the cache
+// update" — would weaken under prune-then-reinsert. Concretely: an
+// in-flight `readFile` that captured `gen = 5` then saw the entry
+// pruned (gen would default to 0 on a re-`saveFile`) could resume
+// with the gen check `0 !== 5` → skip cache.set; safe. But a NEW
+// read post-prune captures `gen = 0`, sees the next saveFile bump
+// to `1`, and SKIPS POPULATING ITS OWN FRESH BYTES INTO THE CACHE
+// — the bytes are still returned to the caller (the gen-check
+// only gates `cache.set`, not `return content`), but the next
+// readFile pays the OPFS round-trip again. Net effect is a
+// redundant re-read, not a correctness break — but redundant
+// re-reads in a fast-path that's read on every render are easy
+// to leak ~8 bytes per ever-touched name to avoid. Audit-flagged
+// as "benign in practice"; documented here so the trade-off
+// isn't re-litigated.
 const writeGen = new Map()
 function bumpWriteGen(name) {
   writeGen.set(name, (writeGen.get(name) ?? 0) + 1)

@@ -64,6 +64,20 @@ function notify() {
 // instead of bare `err` avoids producing `[object Object]` in the
 // thrown message. Memory-lifecycle audit follow-up
 // `ui/view/objstore-presence.js:374`.
+//
+// Edge cases:
+//   - `new Error('')` (empty message) → Error branch skips empty
+//     message, falls through to `String(err)` → ': Error' (the
+//     prototype toString). Degraded but not misleading.
+//   - `{ name: 'X' }` (object, no .message) → falls to `String(err)`
+//     → ': [object Object]'. Same as the pre-fix shape — formally
+//     a defense-in-depth gap, but no real-world thrower in the
+//     codebase produces such shapes.
+//   - `Symbol(...)` → `String(err)` throws on most engines; the
+//     outer try/catch returns '' rather than propagating. Callers
+//     end up with a less-informative composite ("Objstore session
+//     is not connected" with no trailing reason) — acceptable for
+//     this rare pathological case.
 function formatEntryErr(err) {
   if (err == null) return ''
   if (err instanceof Error && err.message) return `: ${err.message}`

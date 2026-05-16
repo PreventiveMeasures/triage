@@ -763,6 +763,20 @@ wss.on('connection', (socket: WebSocket, req) => {
   const nonce = newChallenge()
   socketChallenge.set(socket, nonce)
   send(socket, { type: 'challenge', nonce })
+  // Per-socket handlers are DELIBERATELY NOT serialized (vs the
+  // client-side `queue = queue.then(...)` message-dispatch chain
+  // inside `triageSync.openSocket` in `client/triage-sync.ts`).
+  // Each inbound frame spawns its own tracked async IIFE; two
+  // frames from the same socket can interleave across `await`
+  // boundaries inside the handlers. Per-resource correctness is
+  // preserved by the `KeyedAsyncLock` (held by `commitRevision` /
+  // `commitPut` / `beginPut` / `deleteObject`) and by post-await
+  // `readyState === OPEN` rechecks in every objstore handler. The
+  // unbounded fan-out is capped by `MAX_INFLIGHT_PER_SOCKET` (see
+  // also the `'busy'` NACK at the cap below). Concurrent dispatch
+  // is intentional: it lets multi-workspace clients multiplex
+  // saves + subscribes over one socket without HOL blocking.
+  // Audit follow-up to round-15 concurrency review.
   socket.on('message', (data: Buffer, isBinary: boolean) => {
     // Drop new work once shutdown started — `wss.close()` stops new
     // CONNECTIONS but already-open sockets can still send messages.

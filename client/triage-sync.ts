@@ -285,6 +285,16 @@ let socket: WebSocket | null = null
 // frame arrives; `trySendSubscribe` bails when null and is re-kicked
 // from the `challenge` handler. Reset on every socket close /
 // teardown so a new connection picks up the new nonce.
+//
+// Module-global rather than per-socket WeakMap (asymmetric with the
+// server's `socketChallenge: WeakMap<WebSocket, string>` in
+// server/index.ts). Safe because the client only ever has ONE socket
+// open at a time — `openSocket` tears down the prior socket before
+// assigning the new one, and the stale-close guard (the `socket !==
+// ws` check inside the socket's `close` handler) prevents a stale
+// message from the OLD socket from racing the nonce wipe. A
+// WeakMap would be cleaner but is not load-bearing today; audit
+// follow-up flagged it as defense-in-depth.
 let connectionNonce: string | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectDelayMs = 1_000
@@ -1843,12 +1853,27 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   // ahead of a stale-base error frame, this early-return would let
   // `pending` survive, `handleSaveError` would find it set, take
   // the non-recoverable branch, and mark `session.error` on a
-  // benign race. Either move `session.pending = null` above this
-  // guard, or reaffirm the non-empty-chain server invariant.
-  // Audit follow-up to PR #79 correctness review.
+  // benign race. The preferred mitigation in that case is to
+  // reaffirm the non-empty-chain server invariant (it's an explicit
+  // protocol contract, not an accident). Moving `session.pending =
+  // null` above this guard is technically a wider fix but subtly
+  // changes behavior for genuinely-malformed empty `workspace-state`
+  // frames from a buggy / hostile server: today they're a no-op;
+  // hoisting the clear would re-arm pendingSave on every empty
+  // chain. Audit follow-up to PR #79 correctness review.
   if (!Array.isArray(revisions) || revisions.length === 0) return
   // Key not derived yet — bail; a future open will retry once
-  // deriveSessionKey lands and trySendSave re-runs.
+  // deriveSessionKey lands and trySendSave re-runs. This early-
+  // return ALSO bypasses the pending-clear, but it's safe: the
+  // guard is only reachable in the pre-key-derivation bootstrap
+  // window. `trySendSave` gates on `!session.key || !session.signingKey`
+  // before assigning `session.pending`, so `session.pending` is
+  // provably null at this point. Parallel invariant to the empty-
+  // revisions guard above — without an explicit assertion, a
+  // refactor that loosens the trySendSave gate won't break this
+  // function at runtime; it would silently land here with pending
+  // set and take the non-recoverable branch. Pinned by the
+  // sync-client tests covering pre-key handleChain paths.
   if (!session.key) return
   // Capture overlay BEFORE applyChainToBase mutates baseState.
   // Also stash the OLD baseState reference (applyChainToBase
