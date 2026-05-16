@@ -21,21 +21,35 @@ import { mkdirSync } from 'node:fs'
 import { KeyedAsyncLock } from './lock.ts'
 import type { AllStmt, GetStmt, RunStmt } from '../db-stmt.ts'
 import type { Handle } from './store.ts'
+import { type NeonSql, assertDurableSyncCommit } from '../db-neon.ts'
 
-type NeonSql = {
-  (queryText: string, params?: readonly unknown[]): Promise<unknown[]>
-}
+// Advisory-lock keys (two int32s for the two-arg form). Distinct
+// from the workspace_revision DDL keys in `db-neon.ts` so the two
+// bootstraps don't serialize against each other. See db-neon.ts for
+// the choice rationale.
+const DDL_LOCK_KEY_OBJSTORE = 0x6465_7670 // 'depv'
+const DDL_LOCK_KEY_OBJSTORE_SUB = 0x6f62_6a73 // 'objs'
 
 // Statement-per-array-element because Neon's HTTP transport runs
 // one statement per request — there's no multi-statement support
-// like SQLite's `db.exec`.
+// like SQLite's `db.exec`. The DDL bootstrap in `openNeonObjstore`
+// wraps the full array in a pipelined `sql.transaction` so the
+// whole schema either applies or rolls back, AND grabs a
+// transaction-scoped advisory lock so concurrent boots serialize.
+//
+// `CHECK (version >= 0)` / `CHECK (content_length >= 0)` defend the
+// commitPut conflict arithmetic — a manual `UPDATE workspace_object
+// SET version = -1` would otherwise round-trip through `num()`
+// (which only rejects non-safe-integers) and corrupt the version
+// monotonicity invariant. Same vector covered for SQLite by the
+// STRICT type affinity + boot-time `pragma_table_list` check.
 const SCHEMA_PG = [
   `CREATE TABLE IF NOT EXISTS workspace_object (
      workspace_tag  TEXT    NOT NULL,
      resource_tag   TEXT    NOT NULL,
-     version        BIGINT  NOT NULL,
+     version        BIGINT  NOT NULL CHECK (version >= 0),
      content_hash   TEXT    NOT NULL,
-     content_length BIGINT  NOT NULL,
+     content_length BIGINT  NOT NULL CHECK (content_length >= 0),
      signature      TEXT    NOT NULL,
      put_at         BIGINT  NOT NULL,
      PRIMARY KEY (workspace_tag, resource_tag)
@@ -44,8 +58,8 @@ const SCHEMA_PG = [
      workspace_tag   TEXT    NOT NULL,
      resource_tag    TEXT    NOT NULL,
      staging_id      TEXT    NOT NULL,
-     prev_version    BIGINT,
-     expected_length BIGINT  NOT NULL,
+     prev_version    BIGINT  CHECK (prev_version IS NULL OR prev_version >= 0),
+     expected_length BIGINT  NOT NULL CHECK (expected_length >= 0),
      content_hash    TEXT    NOT NULL,
      signature       TEXT    NOT NULL,
      begun_at        BIGINT  NOT NULL,
@@ -273,7 +287,20 @@ export async function openNeonObjstore(connectionString: string, dir: string): P
   // the SQLite path's `mkdirSync(dir, { recursive: true })` so
   // callers can rely on the dir being ready post-open.
   mkdirSync(dir, { recursive: true })
-  for (const stmt of SCHEMA_PG) await sql(stmt, [])
+  // Boot-time durability gate (see db-neon.ts) — `openNeonDb` runs
+  // the same assertion when it opens, but `openNeonObjstore` is
+  // independently invoked for the objstore plane and an operator
+  // who runs only this plane (future stand-alone deployment) must
+  // be gated too.
+  await assertDurableSyncCommit(sql)
+  // DDL bootstrap under one pipelined transaction so a transient
+  // network failure mid-batch rolls back, AND a transaction-scoped
+  // advisory lock so two replicas booting concurrently serialize
+  // their DDL (the advisory lock releases at COMMIT).
+  await sql.transaction([
+    sql(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_OBJSTORE, DDL_LOCK_KEY_OBJSTORE_SUB]),
+    ...SCHEMA_PG.map((stmt) => sql(stmt, [])),
+  ])
 
   return {
     // `db` intentionally unset — Neon has no `DatabaseSync`.

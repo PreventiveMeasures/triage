@@ -12,11 +12,15 @@
 //
 // API shape: `neon(connectionString)` returns a tagged-template +
 // callable function. We use the function-call form
-// `sql(text, params)`. Transactions are NOT used — Neon's HTTP
-// transport doesn't carry them across calls. The module-private
-// per-(workspace_tag) `writeLock` from `./db.ts` (registered via
-// `_attachWriteLock`) is what keeps `commitRevision`'s dup-check +
-// base-check + MAX(seq) + INSERT atomic against concurrent saves.
+// `sql(text, params)`. Per-statement transactions are not used by
+// `commitRevision` — Neon's HTTP transport doesn't carry session
+// state across calls, so the module-private per-(workspace_tag)
+// `writeLock` from `./db.ts` (registered via `_attachWriteLock`) is
+// what keeps `commitRevision`'s dup-check + base-check + MAX(seq) +
+// INSERT atomic against concurrent saves. DDL bootstrap (below)
+// DOES use the driver's `transaction([...])` pipelined-transaction
+// API so the schema creates either fully or not at all on a
+// transient network failure mid-DDL.
 //
 // Durability: the SQLite path sets `PRAGMA synchronous = FULL` so
 // `workspace-save-ack` is only emitted after the row is fsynced.
@@ -25,7 +29,11 @@
 // commits to durable WAL on the primary before returning. Neon
 // additionally replicates synchronously to multiple AZs, so the
 // "ack means durable" contract holds without explicit per-statement
-// configuration here.
+// configuration here. `openNeonDb` runs a boot-time `SHOW
+// synchronous_commit` and throws if the endpoint has been
+// configured `off` — the only level that skips the primary's WAL
+// fsync. `local` / `on` / `remote_*` all preserve the
+// ack-implies-durable contract that `workspace-save-ack` carries.
 
 import type { AllStmt, GetStmt, RunStmt } from './db-stmt.ts'
 import { type Handle, type RevisionRow, _attachWriteLock } from './db.ts'
@@ -35,8 +43,55 @@ import { type Handle, type RevisionRow, _attachWriteLock } from './db.ts'
 // the peer dep may be absent; the runtime `import()` lands the real
 // implementation. Anything we use here is at the wire level (SQL
 // string + positional params + returned rows array).
-type NeonSql = {
-  (queryText: string, params?: readonly unknown[]): Promise<unknown[]>
+//
+// `transaction` is the driver's pipelined-transaction primitive —
+// a single HTTP round-trip carries `BEGIN; <stmt>; …; COMMIT` so
+// the whole batch atomically applies or fully aborts on the server
+// side. Used by the DDL bootstrap below to prevent partial schema
+// creation on a transient mid-batch network failure.
+//
+// `transaction` is typed against the query promise the call form
+// returns (NOT plain `Promise<unknown>`) so a misuse like
+// `sql.transaction([Promise.resolve(123)])` fails at compile time
+// rather than failing opaquely inside the driver. The driver itself
+// inspects each promise's internal shape and rejects non-query
+// promises at runtime; the type narrows that to a static error.
+type NeonQueryPromise = ReturnType<NeonSqlCall>
+type NeonSqlCall = (queryText: string, params?: readonly unknown[]) => Promise<unknown[]>
+export type NeonSql = NeonSqlCall & {
+  transaction: (queries: NeonQueryPromise[]) => Promise<unknown[][]>
+}
+
+// Advisory-lock keys (signed-int64 split into two int32s for the
+// two-arg `pg_advisory_xact_lock` form). Distinct per-table so the
+// triage-revision + objstore DDL bootstraps don't serialize against
+// each other; same value across replicas so multiple boot-races
+// converge on a single DDL run. Chosen to be unlikely to collide
+// with operator-issued advisory locks.
+const DDL_LOCK_KEY_REVISION = 0x6465_7670 // 'depv'
+const DDL_LOCK_KEY_REVISION_SUB = 0x7273_6e72 // 'rsnr'
+
+// Durability levels that satisfy the ack-implies-durable contract.
+// `local` fsyncs the primary's WAL before returning — matches what
+// SQLite's `PRAGMA synchronous = FULL` enforces (single-node fsync)
+// and the contract that server acks imply durable commit. `on`
+// (the Postgres default) is `local` plus waiting for any sync
+// standbys. `remote_write` waits for sync replicas to receive WAL;
+// `remote_apply` for them to apply it. Only `off` is rejected — it
+// skips the WAL fsync entirely so a primary crash mid-ack loses
+// the committed row.
+const DURABLE_SYNC_COMMIT_LEVELS = new Set(['local', 'on', 'remote_write', 'remote_apply'])
+
+export async function assertDurableSyncCommit(sql: NeonSql): Promise<void> {
+  const rows = await sql(`SHOW synchronous_commit`, []) as Array<{ synchronous_commit?: unknown }>
+  const level = String(rows[0]?.synchronous_commit ?? '').trim().toLowerCase()
+  if (!DURABLE_SYNC_COMMIT_LEVELS.has(level)) {
+    throw new Error(
+      `Neon endpoint has synchronous_commit='${level}' — refuses to start because server acks ` +
+      `imply durable commit; configure the Postgres role / project to use 'local', 'on' (default), ` +
+      `'remote_write', or 'remote_apply'.`,
+    )
+  }
 }
 
 // Postgres DDL. Statement-per-array-element because Neon's HTTP
@@ -214,7 +269,22 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
   // @ts-ignore optional peer dep: '@neondatabase/serverless'
   const mod = (await import('@neondatabase/serverless')) as { neon: (url: string) => NeonSql }
   const sql: NeonSql = mod.neon(connectionString)
-  for (const stmt of SCHEMA_PG) await sql(stmt, [])
+  // Boot-time durability gate — refuses to open against an endpoint
+  // configured `synchronous_commit = off` (skips primary WAL fsync,
+  // breaking the ack-implies-durable contract). All other levels —
+  // `local`, `on`, `remote_write`, `remote_apply` — preserve parity
+  // with the SQLite path's `PRAGMA synchronous = FULL`. See
+  // DURABLE_SYNC_COMMIT_LEVELS.
+  await assertDurableSyncCommit(sql)
+  // DDL bootstrap under one pipelined transaction so a transient
+  // network failure mid-batch rolls back, AND a transaction-scoped
+  // advisory lock so two replicas booting concurrently serialize
+  // their DDL (the advisory lock releases at COMMIT; the
+  // `IF NOT EXISTS` clauses then make the second runner a no-op).
+  await sql.transaction([
+    sql(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_REVISION, DDL_LOCK_KEY_REVISION_SUB]),
+    ...SCHEMA_PG.map((stmt) => sql(stmt, [])),
+  ])
 
   const handle: Handle = {
     // `db` intentionally unset — Neon has no `DatabaseSync`. The
