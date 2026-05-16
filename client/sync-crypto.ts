@@ -105,6 +105,13 @@ export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8A
     {
       name: 'HKDF',
       hash: 'SHA-256',
+      // Empty salt is RFC 5869-acceptable here: IKM is 32 bytes
+      // from a CSPRNG (uniformly random), so HKDF-Extract is a
+      // no-op-with-relabeling and a salt would add no entropy.
+      // Domain separation lives in `info` — every HKDF call site
+      // in this codebase uses a distinct info string. Pinned by
+      // `tests/sync-crypto-info-uniqueness.test.js`. See
+      // https://soatok.blog/2021/11/17/understanding-hkdf/ §3.
       salt: new Uint8Array(),
       info: encodeUtf8(KEY_INFO),
     },
@@ -143,6 +150,14 @@ export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId
     {
       name: 'HKDF',
       hash: 'SHA-256',
+      // Empty salt rationale: see deriveSessionKey above. The info
+      // string carries the workspaceId suffix so two distinct
+      // workspaces sharing the same private key (impossible under
+      // CSPRNG generation, but defense-in-depth) would still derive
+      // different signing keys. The `|${workspaceId}` portion is
+      // load-bearing — dropping it would collide signing keys with
+      // any other workspace and is pinned by the info-uniqueness
+      // regression test.
       salt: new Uint8Array(),
       info: encodeUtf8(`${SIGN_INFO}|${workspaceId}`),
     },

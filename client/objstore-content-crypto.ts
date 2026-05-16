@@ -100,6 +100,16 @@ export async function deriveObjstoreKeys(privateKeyBase64: string, workspaceId: 
 
 // HKDF-Expand step — Node 24 supports HKDF natively via WebCrypto's
 // deriveBits, so we don't pull in @noble/hashes for this.
+//
+// Empty salt is RFC 5869-acceptable: the workspace privateKey IKM
+// is a 32-byte CSPRNG output (uniformly random), so HKDF-Extract is
+// a no-op-with-relabeling and a salt would add no entropy. Domain
+// separation across all HKDF derivations in this codebase
+// (`.content-key`, `.sign-key|<workspaceId>` in sync-crypto.ts;
+// `.objstore.v1.content`, `.objstore.v1.tag` here) lives entirely
+// in the info string. Pairwise-distinctness of info strings is
+// pinned by `tests/sync-crypto-info-uniqueness.test.js`. See
+// https://soatok.blog/2021/11/17/understanding-hkdf/ §3.
 async function hkdfExpand(secret: Uint8Array, info: string, lengthBytes: number): Promise<Uint8Array> {
   const baseKey = await crypto.subtle.importKey('raw', secret as Uint8Array<ArrayBuffer>, 'HKDF', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits(
