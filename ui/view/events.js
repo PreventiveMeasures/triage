@@ -703,7 +703,7 @@ report.addEventListener('click', (e) => {
     cleanupGraph2()
     render()
     requestAnimationFrame(() => {
-      const target = document.getElementById(treeAnchor(targetFile))
+      const target = document.querySelector(`#${treeAnchor(targetFile)}`)
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
     return
@@ -715,7 +715,7 @@ report.addEventListener('click', (e) => {
   // input value is cleared.
   if (e.target.closest('#g2-path-filter-clear')) {
     graph2.pathFilter = ''
-    const input = document.getElementById('g2-path-filter')
+    const input = document.querySelector('#g2-path-filter')
     if (input) input.value = ''
     graph2.graphState?.requestDraw?.()
     return
@@ -1026,7 +1026,7 @@ report.addEventListener('click', (e) => {
 // clicks don't reach the report listener above. The handlers
 // here cover the modal-specific interactions: close button,
 // backdrop click, side-panel close, and per-line gutter dots.
-const bundleSourceOverlaySlot = document.getElementById('bundle-source-overlay-slot')
+const bundleSourceOverlaySlot = document.querySelector('#bundle-source-overlay-slot')
 if (bundleSourceOverlaySlot) {
   bundleSourceOverlaySlot.addEventListener('click', (e) => {
     // Backdrop click (`.bundle-source-overlay` itself, not a
@@ -1133,7 +1133,7 @@ report.addEventListener('mark-color', (e) => {
 // `oldMode` from the already-swapped state — when both runs settle
 // they'd restore the wrong mode and strand the user in 'list'.
 let printing = false
-document.getElementById('print-btn').addEventListener('click', async () => {
+document.querySelector('#print-btn').addEventListener('click', async () => {
   if (state.reports.length === 0) return
   if (printing) return
   printing = true
@@ -1188,7 +1188,7 @@ document.getElementById('print-btn').addEventListener('click', async () => {
 // stack). Pure data export: no view-mode swap needed since we
 // serialize state.reports + per-finding triage / marker / comment
 // state directly, without going through the DOM.
-document.getElementById('download-btn').addEventListener('click', () => {
+document.querySelector('#download-btn').addEventListener('click', () => {
   if (state.reports.length === 0) return
   downloadReportsAsMarkdown(state.reports)
 })

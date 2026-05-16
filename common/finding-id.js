@@ -15,7 +15,7 @@ function toHex(bytes) {
 
 function toBase64(bytes) {
   let s = ''
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+  for (let i = 0; i < bytes.length; i++) s += String.fromCodePoint(bytes[i])
   return btoa(s)
 }
 

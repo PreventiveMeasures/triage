@@ -113,5 +113,5 @@ const SORTERS = {
 export function applySorting(groups) {
   const cmp = SORTERS[state.sortBy]
   if (!cmp) return [...groups]
-  return [...groups].sort((a, b) => cmp(primaryTab(a), primaryTab(b)))
+  return [...groups].toSorted((a, b) => cmp(primaryTab(a), primaryTab(b)))
 }

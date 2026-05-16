@@ -197,7 +197,7 @@ export function sanitizeWorkspaceName(raw) {
   const trimmed = (raw ?? '').trim()
   if (!trimmed) return null
   // eslint-disable-next-line no-control-regex
-  const cleaned = trimmed.replace(/[\u0000-\u001F\u007F]/gu, "").slice(0, MAX_WORKSPACE_NAME_LEN)
+  const cleaned = trimmed.replaceAll(/[\u0000-\u001F\u007F]/gu, "").slice(0, MAX_WORKSPACE_NAME_LEN)
   return cleaned || null
 }
 

@@ -37,7 +37,7 @@ describe('parseDeepsecFindings — format guard', () => {
   })
 
   it('normalizes \\r\\n line endings', () => {
-    const md = `${HEADER.replace(/\n/gu, '\r\n')}## HIGH (1)\r\n\r\n### A finding\r\n\r\n- **File:** \`src/x.js\`\r\n- **Lines:** 1\r\n`
+    const md = `${HEADER.replaceAll('\n', '\r\n')}## HIGH (1)\r\n\r\n### A finding\r\n\r\n- **File:** \`src/x.js\`\r\n- **Lines:** 1\r\n`
     const parsed = parseDeepsecFindings(md)
     assert.equal(parsed.findings.length, 1)
     assert.equal(parsed.findings[0].severity, 'high')

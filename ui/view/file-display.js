@@ -52,6 +52,6 @@ export function groupOf(name) {
 // `.md` extension and need no transform.
 export function displayName(name) {
   const lower = name.toLowerCase()
-  if (lower.endsWith('.codex')) return name.slice(0, -'.codex'.length).replace(/__/gu, '/')
+  if (lower.endsWith('.codex')) return name.slice(0, -'.codex'.length).replaceAll('__', '/')
   return name
 }

@@ -653,7 +653,7 @@ describe('v1.objstore server (REST-primary)', () => {
     c.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
     const list = await c.recv((m) => m.type === 'objstore-list-result')
     assert.equal(list.resources.length, 3)
-    const tags = list.resources.map((r) => r.resourceTag).sort()
+    const tags = list.resources.map((r) => r.resourceTag).toSorted()
     assert.deepEqual(tags, ['r-a', 'r-b', 'r-c'])
     // Per-resource fetch returns its own bytes, not a sibling's.
     const fetchedB = await fetchBlob(c, sk, tag, 'r-b', httpOrigin)
@@ -786,7 +786,7 @@ describe('v1.objstore server (REST-primary)', () => {
       fetch(httpOrigin + tok1.urlPath, { method: 'PUT', headers: { authorization: `Bearer ${tok1.token}`, 'content-type': 'application/octet-stream' }, body: payload }),
       fetch(httpOrigin + tok2.urlPath, { method: 'PUT', headers: { authorization: `Bearer ${tok2.token}`, 'content-type': 'application/octet-stream' }, body: payload }),
     ])
-    const statuses = [r1.status, r2.status].sort()
+    const statuses = [r1.status, r2.status].toSorted()
     assert.deepEqual(statuses, [200, 409], 'exactly one commit wins, the other is 409 conflict')
     // The 409 envelope carries `currentVersion` so a retry can
     // precondition on the live row's version. Without this the
@@ -1034,7 +1034,7 @@ describe('v1.objstore server (REST-primary)', () => {
       fetch(httpOrigin + tok.urlPath, opts),
       fetch(httpOrigin + tok.urlPath, opts),
     ])
-    const statuses = [r1.status, r2.status].sort()
+    const statuses = [r1.status, r2.status].toSorted()
     assert.deepEqual(statuses, [200, 410], 'one succeeds, the other gets 410 gone')
     c.ws.close()
   })

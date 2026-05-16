@@ -53,7 +53,7 @@ function parseCsvRows(text) {
   // Trailing field / row (no final newline).
   if (field !== '' || row.length > 0) { row.push(field); rows.push(row) }
   // Strip purely-empty trailing rows that come from a trailing newline.
-  while (rows.length > 0 && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop()
+  while (rows.length > 0 && rows.at(-1).length === 1 && rows.at(-1)[0] === '') rows.pop()
   return rows
 }
 

@@ -51,7 +51,7 @@ describe('buildTriageExportPayload', () => {
     state.ignoredIds.add(`r1.json\0${FINDING_A}`)
     state.ignoredIds.add(`r2.json\0${FINDING_A}`)
     const payload = buildTriageExportPayload()
-    assert.deepEqual(payload.triage[FINDING_A].ignoredReports.sort(), ['r1.json', 'r2.json'].sort())
+    assert.deepEqual(payload.triage[FINDING_A].ignoredReports.toSorted(), ['r1.json', 'r2.json'].toSorted())
   })
 
   it('reads repoUrls from localStorage', () => {

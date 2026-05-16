@@ -3655,7 +3655,7 @@ async function pushRemoteChange(url, workspaceTag, seedB64, changeset) {
   // Use the latest revision id as `base` so the save lands cleanly.
   const states = buffered.filter((m) => m.type === 'workspace-state')
   const lastChain = states.flatMap((s) => s.revisions)
-  const base = lastChain.length ? lastChain[lastChain.length - 1].id : null
+  const base = lastChain.length > 0 ? lastChain.at(-1).id : null
 
   const aad = cryptoMod.buildAad(workspaceTag, base)
   const { nonce, ciphertext } = await cryptoMod.encryptJson(key, changeset, aad)

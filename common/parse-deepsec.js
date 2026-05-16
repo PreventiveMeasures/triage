@@ -76,7 +76,7 @@ function stripBackticks(s) {
 }
 
 export function parseDeepsecFindings(content) {
-  const text = content.replace(/\r\n?/gu, '\n').trim()
+  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
   // Format guard — the distinctive shape is `## SEVERITY (n)`. Without
   // any of those, this isn't a DeepSec doc; bail out so the chain
   // moves on to parseMarkdownFindings.
@@ -143,7 +143,7 @@ function parseBlock(block, severity) {
     .split('\n')
     .filter((line) => !/^\s*- \*\*/u.test(line))
     .join('\n')
-    .replace(/\*\*/gu, '')
+    .replaceAll('**', '')
     .trim()
 
   // Title prefix matches the convention used by parse-md / parse-codex
@@ -158,7 +158,7 @@ function parseBlock(block, severity) {
   const line = (fields.lines || '').split(',').map((s) => s.trim()).find(Boolean) || '?'
 
   const finding = { file, line, severity, description: fullDescription }
-  if (recommendation) finding.recommendation = recommendation.replace(/\*\*/gu, '')
+  if (recommendation) finding.recommendation = recommendation.replaceAll('**', '')
   const confidence = mapConfidence(fields.confidence)
   if (confidence !== undefined) finding.confidence = confidence
   if (fields.slug) finding.slug = fields.slug

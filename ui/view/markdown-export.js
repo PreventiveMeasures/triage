@@ -111,7 +111,7 @@ function reportToMarkdown(report) {
     if (!buckets.has(sev)) buckets.set(sev, [])
     buckets.get(sev).push(f)
   }
-  const sortedSeverities = [...buckets.keys()].sort((a, b) => severityRank(a) - severityRank(b))
+  const sortedSeverities = [...buckets.keys()].toSorted((a, b) => severityRank(a) - severityRank(b))
 
   for (const sev of sortedSeverities) {
     const bucket = buckets.get(sev)

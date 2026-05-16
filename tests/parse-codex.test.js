@@ -226,7 +226,7 @@ describe('parseCodexCsvToScans — CSV reader edge cases', () => {
   })
 
   it('handles \\r\\n line endings', () => {
-    const text = csv(row()).replace(/\n/gu, '\r\n')
+    const text = csv(row()).replaceAll('\n', '\r\n')
     const scans = parseCodexCsvToScans(text)
     assert.equal(scans.length, 1)
     assert.equal(scans[0].data.findings.length, 1)

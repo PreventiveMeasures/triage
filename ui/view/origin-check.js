@@ -237,7 +237,7 @@ function openMigrationDialog(host) {
       el.remove()
       resolve(Boolean(e.detail))
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }
 

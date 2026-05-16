@@ -49,7 +49,7 @@ async function reportFindingIds(content) {
 // Filename-safe workspace name for the download. Falls back to
 // `workspace` when the name reduces to nothing after sanitization.
 export function safeFilename(name) {
-  const cleaned = (name ?? '').replace(/[^a-zA-Z0-9._-]+/gu, '_').replace(/^_+|_+$/gu, '')
+  const cleaned = (name ?? '').replaceAll(/[^a-zA-Z0-9._-]+/gu, '_').replaceAll(/^_+|_+$/gu, '')
   return cleaned || 'workspace'
 }
 

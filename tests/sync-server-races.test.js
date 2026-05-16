@@ -666,7 +666,7 @@ describe('triage-sync server races', () => {
         // form a continuous chain from null.
         assertContinuousChain(chain.revisions, null)
         const chainIds = chain.revisions.map((r) => r.id)
-        assert.deepEqual([...chainIds].sort(), [...acked].sort(), 'chain matches the acked set exactly — no fork, no orphans')
+        assert.deepEqual([...chainIds].toSorted(), [...acked].toSorted(), 'chain matches the acked set exactly — no fork, no orphans')
       } finally { observer.ws.close() }
     } finally { writer.ws.close() }
   })
@@ -798,7 +798,7 @@ describe('triage-sync server races', () => {
               break
             }
             // Stale-base catch-up: rebase against the chain's tail.
-            const last = reply.revisions[reply.revisions.length - 1]
+            const last = reply.revisions.at(-1)
             myHead = last.id
           }
         }
@@ -926,7 +926,7 @@ describe('triage-sync server races', () => {
       // Catch-up contains the seed revision somewhere.
       assert.ok(catchup.revisions.some((r) => r.id === seedId), 'catch-up includes the seed')
       // Racer rebases against the catch-up tail and retries.
-      const newHead = catchup.revisions[catchup.revisions.length - 1].id
+      const newHead = catchup.revisions.at(-1).id
       const { msg: retry, id: retryId } = await buildSave(sk, tag, newHead, 'retry-after-rebase')
       racer.ws.send(JSON.stringify(retry))
       const retryAck = await racer.recv((m) => m.type === 'workspace-save-ack' && m.id === retryId)

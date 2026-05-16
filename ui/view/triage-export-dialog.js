@@ -188,6 +188,6 @@ export function openTriageExportDialog() {
       el.remove()
       resolve()
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }

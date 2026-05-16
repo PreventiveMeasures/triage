@@ -83,7 +83,7 @@ async function gunzipBlob(blob) {
 // are illegal on Windows; replaced with hyphens. Seconds-precision
 // is enough — same-second exports are exceedingly rare.
 function timestampFilename() {
-  const dt = new Date().toISOString().replace(/[:.]/gu, '-').slice(0, 19)
+  const dt = new Date().toISOString().replaceAll(/[:.]/gu, '-').slice(0, 19)
   return `deepview-triage-${dt}.json.gz`
 }
 
@@ -180,8 +180,8 @@ export async function applyTriageImport(payload, mode) {
     if (SESSION_ID_RE.test(id)) continue
     if (!v || typeof v !== 'object') continue
 
-    if (typeof v.color === 'string' && v.color) {
-      if (!keepCurrent || !state.markers.has(id)) state.markers.set(id, v.color)
+    if (typeof v.color === 'string' && v.color && (!keepCurrent || !state.markers.has(id))) {
+      state.markers.set(id, v.color)
     }
     // Triage state — preferred form is `triage:`; legacy `deleted: true`
     // entries map to 'deleted', matching the load path in triage.js.
@@ -191,11 +191,11 @@ export async function applyTriageImport(payload, mode) {
     if (triageVal && (!keepCurrent || !state.triageState.has(id))) {
       state.triageState.set(id, triageVal)
     }
-    if (typeof v.comment === 'string' && v.comment) {
-      if (!keepCurrent || !state.comments.has(id)) state.comments.set(id, v.comment)
+    if (typeof v.comment === 'string' && v.comment && (!keepCurrent || !state.comments.has(id))) {
+      state.comments.set(id, v.comment)
     }
-    if (typeof v.fix === 'string' && v.fix) {
-      if (!keepCurrent || !state.fixes.has(id)) state.fixes.set(id, v.fix)
+    if (typeof v.fix === 'string' && v.fix && (!keepCurrent || !state.fixes.has(id))) {
+      state.fixes.set(id, v.fix)
     }
     // Per-report ignore: mutex with triage state. Skip the
     // ignoredReports merge when this id ended up with a triage

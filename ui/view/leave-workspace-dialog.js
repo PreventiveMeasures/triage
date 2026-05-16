@@ -215,6 +215,6 @@ export function openLeaveWorkspaceDialog({ name, reportCount, triageImpact } = {
       el.remove()
       resolve(e.detail)
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }

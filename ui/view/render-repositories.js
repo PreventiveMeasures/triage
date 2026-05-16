@@ -262,7 +262,7 @@ function renderRepositoryRow(repo, bucket, isSel) {
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">
-      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replace(/_/gu, ' ')}>${sevCounts[s]}</span>`)}
+      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
     <button
       type="button"
@@ -317,11 +317,11 @@ function renderRepositoryOverview(repo, bucket) {
     if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
   }
   const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
-  const sortedFiles = [...bucket.files.entries()].sort(([fa, a], [fb, b]) => {
+  const sortedFiles = [...bucket.files.entries()].toSorted(([fa, a], [fb, b]) => {
     if (b.length !== a.length) return b.length - a.length
     return fa.localeCompare(fb)
   })
-  const sortedReports = [...bucket.reports].sort((a, b) => a.localeCompare(b))
+  const sortedReports = [...bucket.reports].toSorted((a, b) => a.localeCompare(b))
   const repoUrl = /^https?:/iu.test(repo) ? repo : `https://github.com/${repo}`
   return html`<dl class="packages-detail-meta">
     <dt>Repository</dt><dd class="mono"><a href=${repoUrl} target="_blank" rel="noopener">${prettyRepoLabel(repo)}</a></dd>
@@ -330,7 +330,7 @@ function renderRepositoryOverview(repo, bucket) {
     <dt>Reports</dt><dd>${bucket.reports.size}</dd>
   </dl>
   ${chips.length > 0 ? html`<div class="packages-detail-chips">
-    ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+    ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`}>${sevCounts[s]} ${s.replaceAll('_', ' ')}</span>`)}
   </div>` : nothing}
   <h3 class="packages-detail-section">Reports</h3>
   <ul class="packages-detail-reports">

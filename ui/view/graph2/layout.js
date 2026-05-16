@@ -297,7 +297,7 @@ export function layoutSpiral(graph, w, h) {
   const others = (entryPkg
     ? graph.packages.filter((p) => p !== entryPkg)
     : [...graph.packages])
-    .sort((a, b) => {
+    .toSorted((a, b) => {
       const cd = (crossDeg.get(b) ?? 0) - (crossDeg.get(a) ?? 0)
       if (cd !== 0) return cd
       return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
@@ -536,7 +536,7 @@ export function layoutFilesVogel(graph, w, h) {
   const unitToPx = Math.min(w, h) / 2
   const N = graph.nodes.length
   if (N === 0) return
-  const sorted = [...graph.nodes].sort((a, b) => b.deg - a.deg)
+  const sorted = [...graph.nodes].toSorted((a, b) => b.deg - a.deg)
   for (let i = 0; i < N; i++) {
     const n = sorted[i]
     const angle = ((i * 137.508) % 360) * Math.PI / 180

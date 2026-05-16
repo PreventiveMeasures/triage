@@ -31,7 +31,7 @@ export function isIgnored(f) {
 // as the default active tab AND as the representative for group-level
 // sorting (file/severity/confidence dropdowns).
 export function sortTabs(group) {
-  return [...group].sort((a, b) => {
+  return [...group].toSorted((a, b) => {
     const aColored = state.markers.has(tabKey(a)) ? 1 : 0
     const bColored = state.markers.has(tabKey(b)) ? 1 : 0
     if (aColored !== bColored) return bColored - aColored

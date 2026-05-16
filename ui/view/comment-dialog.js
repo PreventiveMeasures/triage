@@ -14,7 +14,7 @@ import { LitElement, html, nothing } from 'lit'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing
-  const label = sev.replace(/_/gu, ' ')
+  const label = sev.replaceAll('_', ' ')
   return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
 }
 
@@ -145,6 +145,6 @@ export function openCommentDialog({ initial = '', finding = null } = {}) {
       el.remove()
       resolve(e.detail)
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }

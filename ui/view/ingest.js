@@ -110,7 +110,7 @@ export async function addFiles(files) {
       if (file.name.toLowerCase().endsWith('.csv')) {
         const scans = parseCodexCsvToScans(content)
         for (const { displayName, data } of scans) {
-          const codexName = displayName.replace(/\//gu, '__') + '.codex'
+          const codexName = displayName.replaceAll('/', '__') + '.codex'
           const json = JSON.stringify(data)
           await saveFile(codexName, json)
           const { count, source } = analyzeContent(json)
@@ -805,7 +805,7 @@ function openFilePicker() {
       if (files && files.length > 0) addFiles(files)
       filePickerInput.value = ''
     })
-    document.body.appendChild(filePickerInput)
+    document.body.append(filePickerInput)
   }
   filePickerInput.click()
 }

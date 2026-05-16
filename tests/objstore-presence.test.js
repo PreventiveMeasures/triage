@@ -220,7 +220,7 @@ describe('ui/view/objstore-presence', () => {
         // Decoded names land asynchronously via the background
         // fetchByTag worker.
         await awaitPresence(() => remoteFileNames(ws.id).length === 2, 'two names decoded')
-        const names = remoteFileNames(ws.id).sort()
+        const names = remoteFileNames(ws.id).toSorted()
         assert.deepEqual(names, ['alpha.json', 'beta.json'])
       } finally { peer.close() }
     } finally {
@@ -239,7 +239,7 @@ describe('ui/view/objstore-presence', () => {
         await peer.put({ fileName: 'discover-me.json', content: Buffer.from('payload'), prevVersion: null })
         openWorkspace(ws.id)
         const names = await discoverRemoteFileNames(ws.id)
-        assert.deepEqual(names.sort(), ['discover-me.json'])
+        assert.deepEqual(names.toSorted(), ['discover-me.json'])
       } finally { peer.close() }
     } finally {
       closeWorkspace(ws.id)

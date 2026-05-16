@@ -504,7 +504,7 @@ describe('client/objstore session', () => {
     }
     const objstoreDir = path.join(serverDir, 'objstore')
     const files = walk(objstoreDir)
-    assert.ok(files.length >= 1, 'objstore committed at least one file')
+    assert.ok(files.length > 0, 'objstore committed at least one file')
     const seenFileName = new TextEncoder().encode(MAGIC_FILE)
     const seenContent = new TextEncoder().encode(MAGIC_CONTENT)
     for (const f of files) {

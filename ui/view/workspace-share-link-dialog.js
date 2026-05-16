@@ -264,6 +264,6 @@ export function openWorkspaceShareLinkDialog({ id, name, privateKeyBase64 } = {}
       el.remove()
       resolve()
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }

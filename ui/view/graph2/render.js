@@ -271,7 +271,7 @@ export function renderSevChips(counts) {
   const present = tiers.filter((s) => (counts[s] ?? 0) > 0)
   if (present.length === 0) return html`<div class="g2-sel-section-empty">none</div>`
   return html`<div class="tree-count-chips">
-    ${present.map((s) => html`<span class=${`tree-count-chip ${s}`}>${counts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+    ${present.map((s) => html`<span class=${`tree-count-chip ${s}`}>${counts[s]} ${s.replaceAll('_', ' ')}</span>`)}
   </div>`
 }
 
@@ -622,7 +622,7 @@ function renderDistribution(graph, activeTab) {
   if (tab === 'issues') {
     sorted = graph.packages
       .filter((p) => (issueByPkg.get(p) ?? 0) > 0)
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const ia = issueByPkg.get(a) ?? 0, ib = issueByPkg.get(b) ?? 0
         if (ib !== ia) return ib - ia
         return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
@@ -630,13 +630,13 @@ function renderDistribution(graph, activeTab) {
   } else if (tab === 'size') {
     sorted = graph.packages
       .filter((p) => (sizeByPkg.get(p) ?? 0) > 0)
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const sa = sizeByPkg.get(a) ?? 0, sb = sizeByPkg.get(b) ?? 0
         if (sb !== sa) return sb - sa
         return (graph.pkgCount.get(b) ?? 0) - (graph.pkgCount.get(a) ?? 0)
       })
   } else {
-    sorted = [...graph.packages].sort((a, b) => {
+    sorted = [...graph.packages].toSorted((a, b) => {
       const fa = graph.pkgCount.get(a) ?? 0, fb = graph.pkgCount.get(b) ?? 0
       if (fb !== fa) return fb - fa
       return (issueByPkg.get(b) ?? 0) - (issueByPkg.get(a) ?? 0)

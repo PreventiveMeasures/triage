@@ -364,7 +364,7 @@ export async function renderSidebar() {
     })}
   `, fileList)
 
-  const deleteBtn = document.getElementById('delete-current')
+  const deleteBtn = document.querySelector('#delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
 
   // Sync button visibility tracks workspace state (non-empty
@@ -627,7 +627,7 @@ sidebar.addEventListener('click', async (e) => {
   }
 })
 
-const searchInput = document.getElementById('sidebar-search-input')
+const searchInput = document.querySelector('#sidebar-search-input')
 if (searchInput) {
   searchInput.addEventListener('input', (e) => {
     searchQuery = e.target.value.trim().toLowerCase()
@@ -684,7 +684,7 @@ function syncButtonVisible() {
 }
 
 function renderSyncStatus(status) {
-  const btn = document.getElementById('sync-status')
+  const btn = document.querySelector('#sync-status')
   if (!btn) return
   const visible = syncButtonVisible()
   // Auto-prime the default sync URL the first time any workspace
@@ -748,7 +748,7 @@ sidebar.addEventListener('dblclick', (e) => {
   input.value = ws.name
   input.className = 'workspace-rename-input'
   labelSpan.textContent = ''
-  labelSpan.appendChild(input)
+  labelSpan.append(input)
   input.focus()
   input.select()
   let done = false

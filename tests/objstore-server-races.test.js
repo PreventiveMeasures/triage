@@ -1001,7 +1001,7 @@ describe('listLive consistency under concurrent writes', () => {
       // Final list (after all commits drained) has the full set.
       const final = await listLive(handle, 'ws-1')
       assert.equal(final.length, N)
-      assert.deepEqual(final.map((r) => r.resourceTag).sort(), [...expectedTags].sort())
+      assert.deepEqual(final.map((r) => r.resourceTag).toSorted(), [...expectedTags].toSorted())
     } finally { cleanup() }
   })
 })

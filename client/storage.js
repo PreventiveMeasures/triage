@@ -128,14 +128,14 @@ export async function listFiles() {
   if (dir) {
     const names = []
     for await (const [name] of dir.entries()) names.push(name)
-    return names.sort()
+    return names.toSorted()
   }
   const names = []
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
     if (key && key.startsWith(LS_REPORT_PREFIX)) names.push(key.slice(LS_REPORT_PREFIX.length))
   }
-  return names.sort()
+  return names.toSorted()
 }
 
 export async function saveFile(name, content) {
@@ -447,7 +447,7 @@ export async function listBundles() {
   const dir = await getOpfsBundlesDir()
   if (!dir) return []
   const meta = await readBundleMeta(dir)
-  return [...meta].sort((a, b) => a.name.localeCompare(b.name))
+  return [...meta].toSorted((a, b) => a.name.localeCompare(b.name))
 }
 
 // Persists a dropped bundle. Computes SHA-512 of the ORIGINAL

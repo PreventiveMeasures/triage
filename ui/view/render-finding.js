@@ -24,7 +24,7 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 //                   under the shared text-transform: uppercase)
 function badgeLabel(severity) {
   if (severity === 'informational') return 'info'
-  return severity.replace(/_/gu, ' ')
+  return severity.replaceAll('_', ' ')
 }
 
 // First non-empty line of a description, for the table-view title.
@@ -70,7 +70,7 @@ function renderHighlighted(text) {
   let m
   while ((m = INLINE_HL_RE.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
-    const cls = m[0].charCodeAt(0) === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
+    const cls = m[0].codePointAt(0) === 0x60 /* ` */ ? 'inline-code' : 'inline-quote'
     parts.push(html`<span class=${cls}>${m[0]}</span>`)
     lastIdx = m.index + m[0].length
   }
@@ -265,7 +265,7 @@ function triageMenuTemplate(group, title) {
   // Stable popover id derived from gid — escape so
   // `f.id`/`String(f._id)` shapes that include `.` / `:` produce a
   // valid CSS-selectable id.
-  const popId = `triage-menu-${gid.replace(/[^A-Za-z0-9_-]/gu, '_')}`
+  const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
     <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" title=${title} aria-label=${title}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}

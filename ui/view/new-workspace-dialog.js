@@ -117,6 +117,6 @@ export function openNewWorkspaceDialog() {
       el.remove()
       resolve(e.detail)
     })
-    document.body.appendChild(el)
+    document.body.append(el)
   })
 }

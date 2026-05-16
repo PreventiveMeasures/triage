@@ -129,7 +129,7 @@ export function buildGraph2Data() {
 // would orphan the cache and the next render would try to
 // `insertBefore` on a null parent (TypeError on the next click).
 export function refreshGraph2Sidebar() {
-  const area = document.getElementById('g2-selection-area')
+  const area = document.querySelector('#g2-selection-area')
   if (!area) return
   const data = buildGraph2Data()
   if (!data) return
@@ -139,7 +139,7 @@ export function refreshGraph2Sidebar() {
   // card does, so refresh both from the same trigger. Slot
   // element is rendered unconditionally by renderStage; we just
   // swap its content via the same lit-managed update.
-  const focusSlot = document.getElementById('g2-focus-overlay-slot')
+  const focusSlot = document.querySelector('#g2-focus-overlay-slot')
   if (focusSlot) litRender(renderFocusOverlay(data.graph), focusSlot)
 }
 
@@ -149,7 +149,7 @@ export function refreshGraph2Sidebar() {
 // its cached PartInfo on the container; manually clearing
 // `innerHTML` would break the cache.
 export function refreshGraph2TopPkgs() {
-  const block = document.getElementById('g2-top-pkgs-block')
+  const block = document.querySelector('#g2-top-pkgs-block')
   if (!block) return
   const data = buildGraph2Data()
   if (!data) return
@@ -373,7 +373,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
     const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
     if (presentSevs.length > 0) {
       statusBarTpl = html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) => {
-        const tip = `${sevCounts[s]} ${s.replace(/_/gu, ' ')}`
+        const tip = `${sevCounts[s]} ${s.replaceAll('_', ' ')}`
         return html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} title=${tip}></span>`
       })}</span>`
     }
@@ -839,7 +839,7 @@ function findingsBodyTemplate(filtered) {
     // stash the sorted list in pendingTableItems so render() can
     // assign it as a property after innerHTML lands.
     const items = state.sortBy === 'file'
-      ? [...filtered].sort((a, b) => {
+      ? [...filtered].toSorted((a, b) => {
         const pa = primaryTab(a), pb = primaryTab(b)
         return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
       })
@@ -885,10 +885,10 @@ function findingsBodyTemplate(filtered) {
     }
     // For file sort, sort files alphabetically; otherwise preserve
     // first-appearance order.
-    const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].sort() : [...byFile.keys()]
+    const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].toSorted() : [...byFile.keys()]
     return html`${repeat(fileKeys, (file) => file, (file) => {
       const items = state.sortBy === 'file'
-        ? byFile.get(file).sort((a, b) => parseInt(primaryTab(a).line, 10) - parseInt(primaryTab(b).line, 10))
+        ? byFile.get(file).toSorted((a, b) => parseInt(primaryTab(a).line, 10) - parseInt(primaryTab(b).line, 10))
         : byFile.get(file)
       // All findings under one file share the same `repo.github` (it's
       // a property of the source file's package), so probe the first
@@ -912,7 +912,7 @@ function findingsBodyTemplate(filtered) {
   // ordering with line-within-file, which the file-grouped path
   // achieves by sorting per-file.
   const items = state.sortBy === 'file'
-    ? [...filtered].sort((a, b) => {
+    ? [...filtered].toSorted((a, b) => {
       const pa = primaryTab(a), pb = primaryTab(b)
       return pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
     })
@@ -972,7 +972,7 @@ function findingsBodyTemplate(filtered) {
 // `#report` means the modal survives the report's `innerHTML`
 // rebuilds the dispatch branches do.
 function mountBundleSourceOverlay() {
-  const slot = document.getElementById('bundle-source-overlay-slot')
+  const slot = document.querySelector('#bundle-source-overlay-slot')
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
 
@@ -1016,10 +1016,10 @@ export function render() {
       // path doesn't touch #bundles-slot, so a stale slot only
       // appears when we just arrived from another view; we replace
       // #report's content only in that case.
-      let slot = document.getElementById('bundles-slot')
+      let slot = document.querySelector('#bundles-slot')
       if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
         report.innerHTML = '<div id="bundles-slot"></div>'
-        slot = document.getElementById('bundles-slot')
+        slot = document.querySelector('#bundles-slot')
       }
       if (slot) litRender(renderBundlesList(state.bundles), slot)
       // Bundle graph tab — populate the slot left by
@@ -1034,7 +1034,7 @@ export function render() {
         state.bundleDetails &&
         state.bundleDetails.json
       ) {
-        const graphSlot = document.getElementById('bundle-graph-slot')
+        const graphSlot = document.querySelector('#bundle-graph-slot')
         if (graphSlot) {
           const graph = buildBundleGraphData(state.bundleDetails)
           if (graph) {
@@ -1061,7 +1061,7 @@ export function render() {
         state.bundleDetails &&
         state.bundleDetails.json
       ) {
-        const terminalSlot = document.getElementById('bundle-terminal-slot')
+        const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
       report.classList.add('active')
@@ -1075,10 +1075,10 @@ export function render() {
   // depend on state.reports — works the moment any report has
   // landed in OPFS, even if it isn't the currently-loaded one.
   if (state.currentView === 'packages') {
-    let slot = document.getElementById('packages-slot')
+    let slot = document.querySelector('#packages-slot')
     if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
       report.innerHTML = '<div id="packages-slot"></div>'
-      slot = document.getElementById('packages-slot')
+      slot = document.querySelector('#packages-slot')
     }
     if (slot) litRender(renderPackagesView(), slot)
     report.classList.add('active')
@@ -1092,10 +1092,10 @@ export function render() {
   // shared `.packages-view` chrome the render-repositories.js
   // module emits.
   if (state.currentView === 'repositories') {
-    let slot = document.getElementById('repositories-slot')
+    let slot = document.querySelector('#repositories-slot')
     if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
       report.innerHTML = '<div id="repositories-slot"></div>'
-      slot = document.getElementById('repositories-slot')
+      slot = document.querySelector('#repositories-slot')
     }
     if (slot) litRender(renderRepositoriesView(), slot)
     report.classList.add('active')
@@ -1231,12 +1231,12 @@ export function render() {
     // and the file tree got fully rebuilt instead of diffed (lost
     // scroll, lost expand state). Recreate only on cross-view
     // entry, detected by the slots' presence as #report children.
-    let fHeader = document.getElementById('header-slot')
-    let treeSlot = document.getElementById('tree-view-slot')
+    let fHeader = document.querySelector('#header-slot')
+    let treeSlot = document.querySelector('#tree-view-slot')
     if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
       report.innerHTML = '<div id="header-slot"></div><div id="tree-view-slot"></div>'
-      fHeader = document.getElementById('header-slot')
-      treeSlot = document.getElementById('tree-view-slot')
+      fHeader = document.querySelector('#header-slot')
+      treeSlot = document.querySelector('#tree-view-slot')
     }
     if (fHeader) litRender(headerTpl, fHeader)
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
@@ -1347,7 +1347,7 @@ export function render() {
   // a stable shape, every render() is just litRender into existing
   // slots → Lit diffs in place, scroll / focus / persistent
   // <finding-table> all survive without manual capture-restore.
-  let headerSlot = document.getElementById('header-slot')
+  let headerSlot = document.querySelector('#header-slot')
   let wrapper = report.querySelector(':scope > .findings-content')
   const hadGraphSlot = wrapper && wrapper.querySelector(':scope > #findings-graph-slot')
   const hadBodySlot = wrapper && wrapper.querySelector(':scope > #findings-body-slot')
@@ -1359,7 +1359,7 @@ export function render() {
       ? '<div id="findings-graph-slot"></div>'
       : '<div id="toolbar-slot"></div><div id="empty-state-slot"></div><div id="findings-body-slot"></div>'
     report.innerHTML = `<div id="header-slot"></div><div class="${wrapperClass}">${inner}</div>`
-    headerSlot = document.getElementById('header-slot')
+    headerSlot = document.querySelector('#header-slot')
     wrapper = report.querySelector(':scope > .findings-content')
   } else if (wrapper.className !== wrapperClass) {
     wrapper.className = wrapperClass
@@ -1371,9 +1371,9 @@ export function render() {
   // was populated last render would keep stale content when the
   // current render's template resolves to `nothing` (e.g. the
   // empty-state line disappearing once findings appear).
-  const toolbarSlot = document.getElementById('toolbar-slot')
+  const toolbarSlot = document.querySelector('#toolbar-slot')
   if (toolbarSlot) litRender(toolbarTpl, toolbarSlot)
-  const emptyStateSlot = document.getElementById('empty-state-slot')
+  const emptyStateSlot = document.querySelector('#empty-state-slot')
   if (emptyStateSlot) litRender(emptyStateTpl, emptyStateSlot)
 
   // Now that the slots are in the DOM, litRender the Lit-templated
@@ -1394,7 +1394,7 @@ export function render() {
   // (pendingTableItems truthy) AND whenever we just detached a
   // previously-mounted persistent table (cache is poisoned even if
   // this render is going to nothing / list / grouped).
-  let bodySlot = document.getElementById('findings-body-slot')
+  let bodySlot = document.querySelector('#findings-body-slot')
   if (bodySlot && (pendingTableItems || detachedPersistentTable)) {
     const fresh = document.createElement('div')
     fresh.id = 'findings-body-slot'
@@ -1409,7 +1409,7 @@ export function render() {
   // own topbar so this view doesn't need a separate toolbar above
   // the canvas.
   if (g2DataForBody) {
-    const graphSlot = document.getElementById('findings-graph-slot')
+    const graphSlot = document.querySelector('#findings-graph-slot')
     if (graphSlot) {
       const viewModeRow = html`<view-mode-buttons
         mode=${state.viewMode}
@@ -1467,9 +1467,9 @@ export function render() {
 // keystroke triggers a render. Without this, focus would jump out of
 // the box mid-typing because the input element gets recreated.
 export function renderKeepFocus(inputId) {
-  const prev = document.getElementById(inputId)
+  const prev = document.querySelector(`#${inputId}`)
   const pos = prev ? prev.selectionStart : 0
   render()
-  const el = document.getElementById(inputId)
+  const el = document.querySelector(`#${inputId}`)
   if (el) { el.focus(); el.setSelectionRange(pos, pos) }
 }

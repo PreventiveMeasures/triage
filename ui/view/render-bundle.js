@@ -303,15 +303,15 @@ export function buildBundleGraphData(details) {
 
 export function refreshBundleGraphSidebar() {
   if (!_currentBundleGraph) return
-  const area = document.getElementById('g2-selection-area')
+  const area = document.querySelector('#g2-selection-area')
   if (area) litRender(renderSelectionCard(_currentBundleGraph), area)
-  const focusSlot = document.getElementById('g2-focus-overlay-slot')
+  const focusSlot = document.querySelector('#g2-focus-overlay-slot')
   if (focusSlot) litRender(renderFocusOverlay(_currentBundleGraph), focusSlot)
 }
 
 export function refreshBundleGraphTopPkgs() {
   if (!_currentBundleGraph) return
-  const block = document.getElementById('g2-top-pkgs-block')
+  const block = document.querySelector('#g2-top-pkgs-block')
   if (block) litRender(renderTopPkgsBlock(_currentBundleGraph), block)
 }
 
@@ -357,7 +357,7 @@ function renderBundleSizeDistribution(items) {
     total += size
   }
   if (total === 0) return nothing
-  const sorted = [...totalByPkg.entries()].sort((a, b) => b[1] - a[1])
+  const sorted = [...totalByPkg.entries()].toSorted((a, b) => b[1] - a[1])
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
@@ -407,7 +407,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   // Stable alphabetical order — size signal is in the dist viz.
   const order = stripped
     .map((_, i) => i)
-    .sort((a, b) => stripped[a].localeCompare(stripped[b]))
+    .toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
 
   const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i] }))
   const distTpl = renderBundleSizeDistribution(distItems)
@@ -443,7 +443,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       }
     }
   }
-  const reports = [...reportCounts.keys()].sort()
+  const reports = [...reportCounts.keys()].toSorted()
 
   // The Graph and Issues tabs open a full-width slide (see
   // renderBundleSlide below) — they don't live in the details
@@ -459,7 +459,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   else if (state.bundleDetailsTab === 'reports' && reports.length > 0) activeTab = 'reports'
   const issueChips = SEVERITIES
     .filter((s) => issueSummary[s] > 0)
-    .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replace(/_/gu, ' ')}</span>`)
+    .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replaceAll('_', ' ')}</span>`)
   // Each row is a button so the whole strip is a click target +
   // keyboard-focusable; data-bundle-view-source carries the full
   // (un-stripped) path for the source viewer modal. Rows render
@@ -680,7 +680,7 @@ function renderBundleSourceFindingPanel(findings) {
   const lineLabel = formatFindingLine(f.line)
   return html`<aside class="bundle-source-panel">
     <header class="bundle-source-panel-bar">
-      <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replace(/_/gu, ' ')}</span>
+      <span class=${`bundle-source-panel-sev sev-${f.severity}`}>${f.severity.replaceAll('_', ' ')}</span>
       ${triageLabel ? html`<span class=${`bundle-source-panel-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
       <button
         type="button"
@@ -791,7 +791,7 @@ function buildBundleSourceTree(paths) {
       }
       node = child
     }
-    node.files.set(parts[parts.length - 1], p)
+    node.files.set(parts.at(-1), p)
   }
   return root
 }
@@ -821,8 +821,8 @@ let _bundleTreeMapBundle = null
 // for the highlight strip; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
 function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
-  const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))
-  const files = [...node.files.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
+  const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
   // the tree spotlights it on slide-open.
   const containsCurrent = (n) => {
@@ -1074,7 +1074,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
             title=${file}
           >
             <div class="bundle-code-search-issue-row">
-              <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+              <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
               <span class="bundle-code-search-issue-path mono">${bare}${finding.line ? `:${finding.line}` : ''}</span>
             </div>
             <div class="bundle-code-search-issue-desc">${finding.description ?? ''}</div>
@@ -1107,7 +1107,7 @@ function renderBundleCodeView(details) {
     _bundleTreeUserOpen.clear()
     _bundleTreeMapBundle = state.selectedBundle
   }
-  const allPaths = [...sources.keys()].sort()
+  const allPaths = [...sources.keys()].toSorted()
   const { prefix, stripped } = stripCommonPathPrefix(allPaths)
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
@@ -1398,7 +1398,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
   // Sort files by worst-severity descending, then by stripped name
   // — surfaces files with critical issues at the top, while
   // alphabetical tie-breaking keeps the list stable.
-  const fileEntries = [...findingsByFile.entries()].sort(([fa, ga], [fb, gb]) => {
+  const fileEntries = [...findingsByFile.entries()].toSorted(([fa, ga], [fb, gb]) => {
     const wa = SEVERITY_ORDER[_topSeverityOf(ga)] ?? 0
     const wb = SEVERITY_ORDER[_topSeverityOf(gb)] ?? 0
     if (wb !== wa) return wb - wa
@@ -1417,7 +1417,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
         // Sort findings within a file by severity desc → line asc
         // so the most urgent surfaces first; line ordering helps
         // when the user scrolls down within the same file.
-        const sortedFindings = [...findings].sort((a, b) => {
+        const sortedFindings = [...findings].toSorted((a, b) => {
           const sa = SEVERITY_ORDER[a.severity] ?? 0
           const sb = SEVERITY_ORDER[b.severity] ?? 0
           if (sb !== sa) return sb - sa
@@ -1465,7 +1465,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                 ? triage.toUpperCase()
                 : null
               const inner = html`<div class="bundle-issues-finding-head">
-                <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replace(/_/gu, ' ')}</span>
+                <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
                 ${(() => { const lbl = formatFindingLine(finding.line); return lbl ? html`<span class="bundle-issues-finding-line">${lbl}</span>` : nothing })()}
                 ${triageLabel ? html`<span class=${`bundle-issues-finding-triage triage-${triage}`}>${triageLabel}</span>` : nothing}
                 <span class="bundle-issues-finding-spacer"></span>

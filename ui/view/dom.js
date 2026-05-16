@@ -3,10 +3,10 @@
 // querying — and keeps every consumer module's import list short.
 import { html, render as litRender } from 'lit'
 
-export const dropZone = document.getElementById('drop-zone')
-export const report = document.getElementById('report')
-export const sidebar = document.getElementById('sidebar')
-export const fileList = document.getElementById('file-list')
+export const dropZone = document.querySelector('#drop-zone')
+export const report = document.querySelector('#report')
+export const sidebar = document.querySelector('#sidebar')
+export const fileList = document.querySelector('#file-list')
 
 // Trigger a browser download for the given Blob via a transient
 // hidden anchor. Lit-rendered (rather than raw createElement) so
@@ -19,7 +19,7 @@ export function downloadBlob(blob, filename) {
   const host = document.createElement('span')
   host.style.display = 'none'
   litRender(html`<a href=${url} download=${filename}></a>`, host)
-  document.body.appendChild(host)
+  document.body.append(host)
   host.firstElementChild.click()
   host.remove()
   URL.revokeObjectURL(url)

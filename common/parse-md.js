@@ -40,7 +40,7 @@
 const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
 
 export function parseMarkdownFindings(content) {
-  const text = content.replace(/\r\n?/gu, '\n').trim()
+  const text = content.replaceAll(/\r\n?/gu, '\n').trim()
   // Cheap format guard: real markdown findings always start with an
   // h1. Anything else (random text, an empty file, a JSON-shaped blob
   // that failed to parse) returns null so the caller surfaces the
@@ -202,4 +202,4 @@ function buildDescription(title, sections) {
   return stripBold(bodyParts.join('\n\n'))
 }
 
-function stripBold(text) { return text.replace(/\*\*/gu, '') }
+function stripBold(text) { return text.replaceAll('**', '') }

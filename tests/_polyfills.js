@@ -77,7 +77,7 @@ if (typeof navigator !== 'undefined' && !navigator.locks) {
       // We ignore `options` (no `mode: 'shared'` / `signal` /
       // `ifAvailable` / `steal` support — the production code
       // never uses them).
-      const callback = rest[rest.length - 1]
+      const callback = rest.at(-1)
       const prev = chains.get(name) ?? Promise.resolve()
       // Swallow the previous chain's rejection on the wait edge
       // so one failed callback doesn't poison subsequent ones.

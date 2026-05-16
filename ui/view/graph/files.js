@@ -25,7 +25,7 @@ import { treeAnchor } from './utils.js'
 // placeholder into the report html string and `litRender`s the
 // template into it after `report.innerHTML = …` lands.
 export function renderTreeView(treeData, findingCounts) {
-  const allFiles = Object.keys(treeData).sort()
+  const allFiles = Object.keys(treeData).toSorted()
   // Inverse adjacency: file → list of files that import it.
   const importedBy = new Map()
   for (const f of allFiles) {
@@ -54,7 +54,7 @@ export function renderTreeView(treeData, findingCounts) {
     const present = SEVERITIES.filter((s) => (counts[s] ?? 0) > 0)
     if (present.length === 0) return null
     return html`<span class="tree-count-chips">
-      ${present.map((s) => html`<span class=${`tree-count-chip ${s}`}>${counts[s]} ${s.replace(/_/gu, ' ')}</span>`)}
+      ${present.map((s) => html`<span class=${`tree-count-chip ${s}`}>${counts[s]} ${s.replaceAll('_', ' ')}</span>`)}
     </span>`
   }
 

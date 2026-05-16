@@ -123,7 +123,7 @@ export function stripPackagePrefix(file) {
 // they're still useful context (e.g. "this export affects <other>").
 export function stripExportMarker(text, exportName) {
   if (!exportName || !text) return text
-  const escaped = exportName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const escaped = exportName.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
   return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
 }
 

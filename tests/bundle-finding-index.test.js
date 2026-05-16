@@ -79,7 +79,7 @@ describe('bundle-finding-index — hash-keyed lookup', () => {
     await ensureBundleFindingsIndexed()
     const list = findingsForFileHash(hash)
     assert.equal(list.length, 2)
-    const ids = list.map((f) => f.id).sort()
+    const ids = list.map((f) => f.id).toSorted()
     assert.deepEqual(ids, ['f1', 'f2'])
   })
 
@@ -140,7 +140,7 @@ describe('bundle-finding-index — reportsForFinding (cross-report attribution)'
     await ensureBundleFindingsIndexed()
     const finding = findingsForFileHash(hash).find((f) => f.id === 'multi')
     const reports = reportsForFinding(hash, finding)
-    assert.deepEqual(reports.sort(), [r1, r2].sort())
+    assert.deepEqual(reports.toSorted(), [r1, r2].toSorted())
   })
 
   it('returns an empty array for an unknown hash', () => {
@@ -174,7 +174,7 @@ describe('bundle-finding-index — reportsForFindingByPackage', () => {
     await ensureBundleFindingsIndexed()
     const finding = getPackagesIndex().get(tag).findings.find((f) => f.id === `${tag}-f1`)
     const reports = reportsForFindingByPackage(tag, finding)
-    assert.deepEqual(reports.sort(), [r1, r2].sort())
+    assert.deepEqual(reports.toSorted(), [r1, r2].toSorted())
   })
 
   it('returns an empty array for an unknown package', () => {
@@ -213,7 +213,7 @@ describe('bundle-finding-index — reportsForFindingByRepo', () => {
     await ensureBundleFindingsIndexed()
     const finding = getRepositoriesIndex().get(repo).findings.find((f) => f.id === `${tag}-f1`)
     const reports = reportsForFindingByRepo(repo, finding)
-    assert.deepEqual(reports.sort(), [r1, r2].sort())
+    assert.deepEqual(reports.toSorted(), [r1, r2].toSorted())
   })
 
   it('returns an empty array for an unknown repo', () => {
@@ -239,7 +239,7 @@ describe('bundle-finding-index — package-keyed view', () => {
     const bucket = idx.get(tag)
     assert.ok(bucket, `package "${tag}" indexed`)
     assert.equal(bucket.findings.length, 2, 'own source skipped')
-    const ids = bucket.findings.map((f) => f.id).sort()
+    const ids = bucket.findings.map((f) => f.id).toSorted()
     assert.deepEqual(ids, [`${tag}-f1`, `${tag}-f2`])
   })
 
@@ -292,7 +292,7 @@ describe('bundle-finding-index — package-keyed view', () => {
     assert.equal(bucket.files.size, 2, 'two distinct files in this package')
     assert.equal(bucket.files.get(`node_modules/${tag}/a.js`).length, 2)
     assert.equal(bucket.files.get(`node_modules/${tag}/b.js`).length, 1)
-    assert.deepEqual([...bucket.reports].sort(), [r1, r2].sort())
+    assert.deepEqual([...bucket.reports].toSorted(), [r1, r2].toSorted())
   })
 })
 
@@ -311,7 +311,7 @@ describe('bundle-finding-index — extract shape variants', () => {
       ],
     })
     await ensureBundleFindingsIndexed()
-    const ids = getPackagesIndex().get(tag).findings.map((f) => f.id).sort()
+    const ids = getPackagesIndex().get(tag).findings.map((f) => f.id).toSorted()
     assert.deepEqual(ids, [`${tag}-1`, `${tag}-2`, `${tag}-3`])
   })
 

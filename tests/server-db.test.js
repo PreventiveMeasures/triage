@@ -423,7 +423,7 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
         commitRevision(handle, input),
         commitRevision(handle, { ...input }),
       ])
-      assert.deepEqual([ra.kind, rb.kind].sort(), ['duplicate', 'inserted'])
+      assert.deepEqual([ra.kind, rb.kind].toSorted(), ['duplicate', 'inserted'])
       const chain = await chainFrom(handle, 'tag-A', null)
       assert.equal(chain.length, 1, 'exactly one row landed')
     } finally { await cleanup() }
@@ -444,7 +444,7 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
         commitRevision(handle, a),
         commitRevision(handle, b),
       ])
-      assert.deepEqual([ra.kind, rb.kind].sort(), ['inserted', 'stale-base'])
+      assert.deepEqual([ra.kind, rb.kind].toSorted(), ['inserted', 'stale-base'])
       const chain = await chainFrom(handle, 'tag-A', null)
       // Critical invariant: ONE row, not two. Pin against a future
       // regression that scopes the lock too narrowly again.
@@ -529,7 +529,7 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
         commitRevision(handle, b),
         commitRevision(handle, c),
       ])
-      const kinds = results.map((r) => r.kind).sort()
+      const kinds = results.map((r) => r.kind).toSorted()
       assert.deepEqual(kinds, ['duplicate', 'inserted', 'stale-base'])
       const chain = await chainFrom(handle, 'tag-A', null)
       assert.equal(chain.length, 2)

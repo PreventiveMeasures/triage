@@ -150,7 +150,7 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
   // looks up by name so order there is irrelevant.
   const pkgCount = new Map()
   for (const n of nodes) pkgCount.set(n.pkg, (pkgCount.get(n.pkg) ?? 0) + 1)
-  const packages = [...pkgCount.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p)
+  const packages = [...pkgCount.entries()].toSorted((a, b) => b[1] - a[1]).map(([p]) => p)
 
   // Packages-by-name lookup for the hub pass below.
   const byPkg = new Map()

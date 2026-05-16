@@ -13,7 +13,7 @@ const emptyCounts = () => Object.fromEntries(SEVERITIES_ORDERED.map((s) => [s, 0
 // underscore so paths with `/` `.` `@` (node_modules / scoped packages)
 // produce valid id attributes.
 export function treeAnchor(file) {
-  return 'tree-' + file.replace(/[^\w-]+/gu, '_')
+  return 'tree-' + file.replaceAll(/[^\w-]+/gu, '_')
 }
 
 // file → { critical, high, medium, low } finding-count map. Used by
@@ -93,7 +93,7 @@ export function forceLayout(files, importsOf, layoutW, layoutH) {
   // k is the "ideal edge length" — larger canvas → more spread
   const k = Math.sqrt((width * height) / Math.max(N, 1)) * 1.1
 
-  const seed = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h }
+  const seed = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) | 0; return h }
 
   // Seed nodes on a grid + jitter rather than a circle — grid seeds
   // produce fewer initial edge crossings than a ring and converge faster.
@@ -276,7 +276,7 @@ export function pkgColor(pkg) {
   if (_pkgColorCache.has(cacheKey)) return _pkgColorCache.get(cacheKey)
   const key = pkg ?? '__own__'
   let h = 0
-  for (const c of key) h = (h * 37 + c.charCodeAt(0)) | 0
+  for (const c of key) h = (h * 37 + c.codePointAt(0)) | 0
   // Spread indices: interleave halves so sequential packages get distant hues
   const raw = ((h % palette.length) + palette.length) % palette.length
   const idx = (raw * 7 + 3) % palette.length
