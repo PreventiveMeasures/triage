@@ -760,12 +760,33 @@ wss.on('connection', (socket: WebSocket, req) => {
     // alive in `inFlight`, and a peer who keeps firing valid frames
     // can spawn unbounded handlers — growing SIGTERM drain time and
     // memory. Drop new work above the cap. Heartbeat ping is the
-    // exception: it's stateless, cheap, and we want to KEEP
+    // exception: it's stateless, synchronous, and we want to KEEP
     // responding so the peer doesn't drop the socket while we're
-    // shedding load. Transport audit `server/index.ts:590`.
+    // shedding load. Pings go through a fast inline `send(pong)`
+    // path BELOW that doesn't bump the per-socket inflight counter,
+    // so a ping-spam at the cap can't outrun the gate. Transport
+    // audit `server/index.ts:590` + post-#58 audit follow-up.
+    if (parsed.type === 'ping') {
+      send(socket, { type: 'pong' })
+      return
+    }
     const inflightForSocket = socketInflight.get(socket) ?? 0
-    if (parsed.type !== 'ping' && inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
+    if (inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
       if (DEBUG) console.warn(`drop message: socket inflight ${inflightForSocket} >= ${MAX_INFLIGHT_PER_SOCKET}`)
+      // For workspace-save specifically, send a typed NACK so the
+      // client's `pending` slot clears IMMEDIATELY instead of
+      // hanging until the next heartbeat (~15–30s). Reason `busy`
+      // is server-side overload; safe to retry. Same wire envelope
+      // as the existing `too-large` save-error path.
+      const baseField = typeof (parsed as SaveMsg).base === 'string' || (parsed as SaveMsg).base === null
+        ? ((parsed as SaveMsg).base ?? null)
+        : null
+      const tagField = typeof (parsed as SaveMsg).workspaceTag === 'string'
+        ? (parsed as SaveMsg).workspaceTag as string
+        : null
+      if (parsed.type === 'workspace-save' && tagField != null) {
+        send(socket, { type: 'workspace-save-error', workspaceTag: tagField, base: baseField, reason: 'busy' })
+      }
       return
     }
     socketInflight.set(socket, inflightForSocket + 1)
@@ -781,11 +802,6 @@ wss.on('connection', (socket: WebSocket, req) => {
         else if (parsed.type === 'objstore-delete') await objstore.handleDelete(socket, parsed as ObjstoreDeleteMsg)
         else if (parsed.type === 'objstore-list') await objstore.handleList(socket, parsed as ObjstoreListMsg)
         else if (parsed.type === 'objstore-fetch') await objstore.handleFetch(socket, parsed as ObjstoreFetchMsg)
-        // Heartbeat — application-level alive check the browser
-        // WebSocket API doesn't expose at protocol level. Stateless,
-        // unauthenticated; the security-critical paths (save /
-        // subscribe) still verify signatures.
-        else if (parsed.type === 'ping') send(socket, { type: 'pong' })
       } catch (err) {
         // Forensic logging for unexpected throws — the handlers all
         // have internal narrow catches (e.g. signature reject paths);

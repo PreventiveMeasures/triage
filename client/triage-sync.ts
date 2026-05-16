@@ -1945,6 +1945,22 @@ async function handleMessage(data: unknown): Promise<void> {
 // token — a compromised relay can't pump arbitrary bytes into
 // `session.error`.
 const SAVE_ERROR_REASON_RE = /^[\w-]+$/u
+// Server-side reasons that are recoverable backpressure / race
+// signals rather than hard rejections. The client clears `pending`
+// (the in-flight save lost) and re-arms `pendingSave` so the next
+// natural trySendSave retries the current state, but does NOT
+// transition the session into `error` (which would gate every
+// future save behind `dismissError`).
+//   `busy` — server's per-socket inflight cap dropped the save
+//            (transport audit follow-up; server emits this when
+//            shedding load).
+//   `stale-base` — concurrent commit advanced the head past the
+//            client's claimed base; the server also sent a
+//            `workspace-state` catch-up just before this frame so
+//            in practice the catch-up handler will have cleared
+//            `pending` first and this branch is hit only as a
+//            belt-and-braces fallback.
+const RECOVERABLE_SAVE_ERROR_REASONS = new Set(['busy', 'stale-base'])
 function handleSaveError(session: Session, wire: WireMessage): void {
   if (!session.pending) return
   if (typeof wire.base !== 'string' && wire.base !== null) return
@@ -1954,6 +1970,14 @@ function handleSaveError(session: Session, wire: WireMessage): void {
     ? rawReason
     : 'rejected'
   session.pending = null
+  if (RECOVERABLE_SAVE_ERROR_REASONS.has(reason)) {
+    // Recoverable — re-arm the save for the next natural trigger.
+    // Don't bump consecutiveFailures or set error: that would push
+    // the session into the explicit error state, and the user
+    // would need to dismissError() to get saves flowing again.
+    session.pendingSave = true
+    return
+  }
   session.consecutiveFailures = (session.consecutiveFailures ?? 0) + 1
   session.error = `server rejected save: ${reason}`
   emitStatusIfChanged()
