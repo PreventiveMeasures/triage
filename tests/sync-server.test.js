@@ -308,7 +308,7 @@ describe('triage-sync server', () => {
     c1.ws.close(); subs.forEach((w) => w.close())
   })
 
-  it('stale base triggers a catch-up chain instead of an ack', async () => {
+  it('stale base triggers a catch-up chain + typed save-error, not an ack', async () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribe(c, sk, tag)
@@ -321,6 +321,17 @@ describe('triage-sync server', () => {
     const catchup = await c.recv((m) => m.type === 'workspace-state')
     assert.equal(catchup.revisions.length, 1)
     assert.equal(catchup.revisions[0].id, first.id)
+    // The catch-up is followed by a typed `workspace-save-error
+    // { reason: 'stale-base' }` so a debug surface / explicit-
+    // rejection-aware client gets the signal. The client's
+    // handleChain clears `session.pending` BEFORE the error
+    // frame is processed, so handleSaveError early-returns and
+    // the session does NOT enter error state — the typed frame
+    // is purely protocol clarity. Sibling test in
+    // sync-server-races.test.js pins both frames + their order.
+    const err = await c.recv((m) => m.type === 'workspace-save-error' && m.reason === 'stale-base')
+    assert.equal(err.workspaceTag, tag)
+    assert.equal(err.base, null, 'echoes the stale base')
     // No ack should follow.
     await c.expectSilent(150)
     c.ws.close()

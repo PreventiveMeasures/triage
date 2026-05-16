@@ -505,9 +505,21 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
     // between lock-release and `chainFrom` only means the catch-up
     // is fresher than the recheck saw, which is benign (clients
     // tolerate extra revisions in the chain).
+    //
+    // Wire order: send `workspace-state` (catch-up) FIRST, then
+    // the typed `workspace-save-error { reason: 'stale-base' }`.
+    // The catch-up's handler clears `session.pending`; the
+    // subsequent error frame's `handleSaveError` then early-returns
+    // on the missing pending and does NOT mark the session errored
+    // — exactly what we want, since stale-base is a recoverable
+    // race (client rebases + re-saves). The typed frame is for
+    // protocol clarity (debug surfaces / explicit rejection signal),
+    // not for triggering an error transition.
+    // Audit follow-up to round-15 — `sync-server-races.test.js:1105`.
     const revisions = chainForWire(await chainFrom(handle, tag, baseNorm))
     if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${commit.head}) → chain ${revisions.length}`)
     send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
+    send(socket, { type: 'workspace-save-error', workspaceTag: tag, base: baseNorm, reason: 'stale-base' })
     return
   }
   if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${debugTag(tag)}`)

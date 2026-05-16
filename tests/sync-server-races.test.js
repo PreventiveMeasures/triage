@@ -1102,31 +1102,17 @@ describe('triage-sync server races', () => {
   // the removed todos so a regression in the documented defences
   // would surface here.
 
-  it.todo('stale-base catch-up chain should carry workspace-save-error for the loser, not just workspace-state (clearer error signal)', async () => {
-    // OBSERVATION: today, when a save loses the lock race, the
-    // server emits a `workspace-state` with the current chain
-    // (server/index.ts:502-512). The client interprets that as a
-    // catch-up. But the LOSER doesn't get an explicit "your save
-    // failed" signal — they get the catch-up and must infer their
-    // save was rejected (their claimed `base` no longer matches
-    // the chain head).
-    //
-    // For most clients this is fine because they're driving an
-    // optimistic-concurrency loop. But for a debugging surface, a
-    // typed error frame would be clearer. Specifically: when the
-    // server returns `kind: 'stale-base'` from `commitRevision`, the
-    // wire response is a `workspace-state` with the catch-up. There
-    // is no field that says "your save id X was rejected" — the
-    // client has to compute that from the absence of an `ack`.
-    //
-    // SHOULD-BE: a `workspace-save-error` frame with reason
-    // 'stale-base' AND the catch-up chain. Today only the catch-up
-    // is sent.
-    //
-    // IMPACT: medium — clients have to await both the ack AND any
-    // workspace-state and disambiguate. A typed error frame would
-    // make the protocol self-describing and reduce client-side
-    // bookkeeping. Not a data-loss bug; this is a usability-todo.
+  it('stale-base catch-up carries workspace-save-error after the workspace-state catch-up (typed signal)', async () => {
+    // Two racers send a save with `base = null` to the same
+    // workspace. One commits as the chain root; the other's commit
+    // sees `kind: 'stale-base'`. The loser receives BOTH a
+    // `workspace-state` (catch-up chain) AND a
+    // `workspace-save-error { reason: 'stale-base' }`, in that
+    // order. The catch-up clears `session.pending` on the client
+    // and the subsequent typed error frame early-returns in
+    // `handleSaveError` (no pending) — so the typed signal exists
+    // for debug / protocol clarity without pushing the client
+    // into error state. PR symmetric-with-rest-conflict-types.
     const { sk, tag } = await makeKp()
     const c1 = await connect(serverUrl)
     const c2 = await connect(serverUrl)
@@ -1136,12 +1122,56 @@ describe('triage-sync server races', () => {
       const { msg: m2, id: id2 } = await buildSave(sk, tag, null, 'B')
       c1.ws.send(JSON.stringify(m1))
       c2.ws.send(JSON.stringify(m2))
-      const r1 = await c1.recv((m) => m.type === 'workspace-save-ack' || m.type === 'workspace-state' || m.type === 'workspace-save-error')
-      const r2 = await c2.recv((m) => m.type === 'workspace-save-ack' || m.type === 'workspace-state' || m.type === 'workspace-save-error')
-      const errs = [r1, r2].filter((m) => m.type === 'workspace-save-error')
-      // SHOULD BE: one explicit save-error for the loser.
-      assert.equal(errs.length, 1, 'the loser should receive an explicit workspace-save-error frame')
-      assert.equal(errs[0].reason, 'stale-base')
+      // Each connection receives ONE of:
+      //   - workspace-save-ack (winner)
+      //   - 1+ workspace-state frames + workspace-save-error (loser)
+      //
+      // The loser receives TWO classes of `workspace-state` frames
+      // both arriving on the same socket: the BROADCAST of the
+      // winner's commit (fan-out to subscribers, see
+      // server/index.ts:539), and the LOSER'S OWN catch-up emitted
+      // from the stale-base branch. Their relative ordering depends
+      // on whether c1's commit fan-out fires before or after c2's
+      // stale-base handler runs — non-deterministic to the wire.
+      //
+      // The invariant the typed-error wire order DOES guarantee:
+      // the loser's typed `workspace-save-error` is emitted
+      // IMMEDIATELY AFTER the loser's catch-up `workspace-state`
+      // from inside the stale-base branch. Equivalently, the typed
+      // save-error must NOT be the first frame the loser sees — at
+      // least one workspace-state must precede it. Assert that.
+      const pullSaveOutcome = async (c) => {
+        const first = await c.recv((m) => (
+          m.type === 'workspace-save-ack' ||
+          m.type === 'workspace-state' ||
+          m.type === 'workspace-save-error'
+        ))
+        if (first.type === 'workspace-save-ack') return { kind: 'ack', ack: first }
+        if (first.type === 'workspace-save-error') {
+          throw new Error('stale-base wire-order regression: typed save-error arrived as the FIRST frame, before any workspace-state')
+        }
+        // first === workspace-state. Drain any additional state
+        // frames (the broadcast + the catch-up may both queue) and
+        // then assert the save-error follows.
+        let lastState = first
+        let err = null
+        for (let i = 0; i < 4; i++) {
+          const next = await c.recv((m) => m.type === 'workspace-state' || m.type === 'workspace-save-error')
+          if (next.type === 'workspace-save-error') { err = next; break }
+          lastState = next
+        }
+        if (!err) throw new Error('stale-base wire-order regression: no typed save-error followed the workspace-state frame(s)')
+        return { kind: 'loser', state: lastState, err }
+      }
+      const [o1, o2] = await Promise.all([pullSaveOutcome(c1), pullSaveOutcome(c2)])
+      const winners = [o1, o2].filter((o) => o.kind === 'ack')
+      const losers = [o1, o2].filter((o) => o.kind === 'loser')
+      assert.equal(winners.length, 1, 'exactly one commit wins')
+      assert.equal(losers.length, 1, 'exactly one commit loses')
+      assert.equal(losers[0].err.reason, 'stale-base', 'loser receives typed stale-base error')
+      assert.equal(losers[0].err.workspaceTag, tag, 'error names the workspace')
+      assert.equal(losers[0].err.base, null, 'error echoes the stale base')
+      assert.ok(Array.isArray(losers[0].state.revisions), 'catch-up state carries revisions array')
       void id1; void id2
     } finally { c1.ws.close(); c2.ws.close() }
   })

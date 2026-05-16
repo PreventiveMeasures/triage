@@ -143,7 +143,13 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   }
   deps.send(socket, { type: 'objstore-deleted-ack', workspaceTag: tag, resourceTag, deletedVersion: result.deletedVersion })
   if (result.deletedVersion === 0) return // sentinel: nothing to broadcast
-  deps.broadcast(tag, { type: 'objstore-deleted', workspaceTag: tag, resourceTag, version: result.deletedVersion }, socket)
+  // Broadcast to ALL subscribers (including the originator). The
+  // REST PUT path's `objstore-put` broadcast at rest.ts:308 already
+  // uses `except: null`, so a session that listens via `onPut`
+  // observes its own PUTs as echo events. The same symmetry on
+  // `onDeleted` lets `session.onDeleted` fire for the session's
+  // own deletes — pinned by `tests/objstore-client-races.test.js`.
+  deps.broadcast(tag, { type: 'objstore-deleted', workspaceTag: tag, resourceTag, version: result.deletedVersion }, null)
   if (deps.debug) console.log(`objstore delete → ${debugTag(tag)}/${resourceTag.slice(0, 8)}…`)
 }
 

@@ -471,13 +471,14 @@ export async function putFile(workspaceId, fileName, content) {
 //   `{ ok: false, reason }` — conflict re-fired, or server error
 //
 // On success the presence module ALSO drops the tag from its own
-// cache, because the server's `objstore-deleted` broadcast
-// excludes the originating socket (see
-// `server/objstore/handlers.ts`'s `handleDelete`). Without the
-// explicit drop here, isInRemote / remoteCount would lag the
-// server's view until something else (peer broadcast, re-list)
-// repaired it — and any in-flight `fetchByTag` would race-restore
-// the file via `maybeAutoDownload`.
+// cache synchronously. The server's `objstore-deleted` broadcast
+// now includes the originator (PR landing this comment) and the
+// session's `onDeleted` handler will do the same cleanup when it
+// arrives — but that's an async round-trip; the synchronous drop
+// here ensures `isInRemote` / `remoteCount` return false BEFORE
+// this function resolves. Without the synchronous drop, an
+// in-flight `fetchByTag` whose response races our delete could
+// race-restore the file via `maybeAutoDownload`.
 //
 // Opens a short-lived presence session for the workspace if one
 // isn't already cached — drag-out from a non-active workspace, or
@@ -518,13 +519,13 @@ export async function deleteFromRemote(workspaceId, fileName) {
       result = await entry.session.delete(fileName, result.currentVersion)
     }
     if (result.ok) {
-      // Drop the tag locally — the server confirmed the delete but
-      // its broadcast excludes the originator (this socket), so we
-      // won't see the `objstore-deleted` event for our own delete.
-      // Without this drop the auto-download race-guard in
-      // maybeAutoDownload would see the still-present tag, the
-      // local watermark would lag the server's view, and an
-      // in-flight fetchByTag could race-restore the file.
+      // Drop the tag locally — the server's `objstore-deleted`
+      // broadcast now includes the originator (PR symmetric-broadcast)
+      // and `onDeleted` will do this same cleanup when it arrives.
+      // The synchronous drop here ensures isInRemote / remoteCount
+      // return false IMMEDIATELY (before the broadcast round-trip)
+      // so an in-flight fetchByTag whose response is queued can't
+      // race-restore the file via maybeAutoDownload.
       entry.remoteTags.delete(tag)
       entry.remoteNameByTag.delete(tag)
       notify()

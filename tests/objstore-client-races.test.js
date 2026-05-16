@@ -474,30 +474,14 @@ describe('objstore client/server races', () => {
     } finally { a.close(); b.close() }
   })
 
-  it.todo('onDeleted fires for OWN deletes (currently only fires for peers — asymmetric with onPut which DOES fire for own puts)', async () => {
-    // OBSERVATION: PUT broadcasts in `rest.ts` are emitted with
-    // `except: null` (every subscriber sees them, INCLUDING the
-    // originator). DELETE broadcasts in
-    // `server/objstore/handlers.ts:139` are emitted with
-    // `except: socket` (originator EXCLUDED).
-    //
-    // The asymmetry surfaces in user-facing API:
-    //   - `session.onPut` fires on own puts (echo)
-    //   - `session.onDeleted` does NOT fire on own deletes
-    //
-    // SHOULD-BE: both event handlers fire consistently. The
-    // simplest fix is to align handleDelete with the REST PUT
-    // path: `deps.broadcast(tag, msg, null)` instead of `socket`.
-    // (Alternative: change PUT to also exclude originator. That
-    // would require REST to thread the originating WS socket
-    // through, which it doesn't carry today — more invasive.)
-    //
-    // IMPACT: any user code that listens via `onDeleted` to react
-    // to delete events ("close the open editor", "drop a cache
-    // entry", "log audit trail") silently misses their own
-    // deletes. The application-level workaround is to manually
-    // fire the handler from the `delete()` call site, but that
-    // duplicates logic and is easy to forget.
+  it('onDeleted fires for OWN deletes (broadcast symmetry with onPut)', async () => {
+    // PUT broadcasts in `server/objstore/rest.ts` are emitted with
+    // `except: null` (every subscriber including the originator
+    // sees them); DELETE broadcasts in `server/objstore/handlers.ts`
+    // used to be emitted with `except: socket` (originator excluded).
+    // PR fixing this aligned DELETE with the PUT semantics so
+    // `session.onDeleted` now fires on own deletes — same as
+    // `session.onPut` does on own puts.
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
@@ -505,16 +489,12 @@ describe('objstore client/server races', () => {
       let deletedFired = 0
       session.onPut(() => { putFired++ })
       session.onDeleted(() => { deletedFired++ })
-      // Self-put: onPut SHOULD fire (and currently does — REST
-      // path uses except=null).
       await session.put({ fileName: 'asym.json', content: Buffer.from('x'), prevVersion: null })
-      // Self-delete: onDeleted SHOULD fire (but currently DOES NOT
-      // — WS handleDelete uses except=originator-socket).
       await session.delete('asym.json', 1)
       // Give broadcasts a chance to round-trip.
       await new Promise((r) => { setTimeout(r, 200) })
-      assert.equal(putFired, 1, 'own put fired onPut (PUT broadcast doesn\'t exclude originator)')
-      assert.equal(deletedFired, 1, 'own delete should fire onDeleted (DELETE broadcast currently excludes originator)')
+      assert.equal(putFired, 1, 'own put fires onPut')
+      assert.equal(deletedFired, 1, 'own delete fires onDeleted (post broadcast-symmetry fix)')
     } finally { session.close() }
   })
 
