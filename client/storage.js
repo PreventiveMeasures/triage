@@ -189,6 +189,13 @@ export async function saveFile(name, content) {
       // Bump again so a concurrent in-flight readFile that observed
       // the pre-bump gen treats its result as stale. Audit round-12 H8.
       bumpWriteGen(name)
+      // Explicit abort so the underlying writable releases its file
+      // handle immediately rather than waiting for GC. OPFS spec
+      // auto-cleans on collection, but eager release closes the
+      // window where a concurrent createWritable for the same name
+      // could race the GC. Memory-lifecycle audit
+      // `client/storage.js:175`.
+      try { await writable.abort(err) } catch {}
       throw err
     }
     cache.set(name, content)
@@ -319,6 +326,10 @@ export async function saveFileBytes(name, bytes) {
       await writable.close()
     } catch (err) {
       bumpWriteGen(name)
+      // Eager-release the writable rather than wait for GC. Symmetric
+      // with `saveFile` above; memory-lifecycle audit
+      // `client/storage.js:175`.
+      try { await writable.abort(err) } catch {}
       throw err
     }
     bumpWriteGen(name)

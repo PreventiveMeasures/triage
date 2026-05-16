@@ -34,7 +34,7 @@ await import('./_polyfills.js')
 
 // ─────────── client modules ───────────
 
-const { triageSync, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.ts')
+const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
@@ -3490,6 +3490,91 @@ describe('triage-sync client', () => {
     assert.equal(blob.sessions[wsStale], undefined, 'stale-URL entry pruned')
     await deleteWorkspace(wsLive)
     await deleteWorkspace(wsStale)
+  })
+
+  it('mutateAllSessions skips writes when localStorage holds an unrecognized future version', async () => {
+    // Open-ended audit `client/triage-sync.ts:884`. Pre-fix:
+    // loadAllSessions returned `{}` for any `{ version: N }` with
+    // N !== SESSIONS_VERSION, so a subsequent mutateAllSessions
+    // call would WRITE a v1 blob over whatever the future build had
+    // persisted, silently destroying its entries. Post-fix:
+    // mutateAllSessions detects `unknown-version` and skips the
+    // write entirely so the future shape survives. Triggers the
+    // `persistenceDegraded` latch so UI can surface a hint.
+    triageSync.closeSession()
+    const futurePayload = JSON.stringify({ version: 99, sessions: { 'ws-future': { serverUrl: 'wss://later.example', baseRevision: 'rev-from-v99' } }, futureField: { whatever: 1 } })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    let degradedFired = 0
+    const unsub = triageSync.onPersistenceDegraded(() => { degradedFired++ })
+    // Drive `mutateAllSessions` directly. The mutator would normally
+    // add or update a workspace entry; here it's a no-op that just
+    // exercises the skip-write path.
+    await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    unsub()
+    // The future blob is still on disk byte-identical.
+    assert.equal(localStorage.getItem('deepview.sync.sessions'), futurePayload, 'unrecognized future blob preserved')
+    // Latch flipped + listener fired exactly once (sticky).
+    assert.equal(triageSync.persistenceDegraded, true, 'persistenceDegraded latch on')
+    assert.equal(degradedFired, 1, 'onPersistenceDegraded listener fired once')
+  })
+
+  it('mutateAllSessions recovers from a matching-version blob with corrupt sessions field', async () => {
+    // Audit follow-up to round-15. Pre-fix: `{ version: 1, sessions: <missing|array> }`
+    // (e.g. a v1 client that crashed mid-write, or hand-edited
+    // corruption) classified as `'unknown-version'` and the entry
+    // was permanently quarantined. Post-fix: matching version with
+    // a malformed sessions field reads as `'empty'` so the next
+    // save rewrites cleanly.
+    triageSync.closeSession()
+    const corruptPayload = JSON.stringify({ version: 1, sessions: [] })
+    localStorage.setItem('deepview.sync.sessions', corruptPayload)
+    // Drive mutateAllSessions directly with a mutator that adds an
+    // entry — exercises the recovery write.
+    await mutateAllSessions((all) => { all['probe'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    // The corrupt blob has been replaced by a fresh v1 wrapper
+    // containing the mutator's entry.
+    const rewritten = JSON.parse(localStorage.getItem('deepview.sync.sessions'))
+    assert.equal(rewritten.version, 1, 'corrupt blob rewritten with v1 wrapper')
+    assert.ok(rewritten.sessions && typeof rewritten.sessions === 'object' && !Array.isArray(rewritten.sessions), 'sessions field is a plain object')
+    assert.ok(rewritten.sessions.probe, 'mutator entry persisted post-recovery')
+  })
+
+  it('onPersistenceDegraded late subscribers fire once on subscribe when latch is already flipped', async () => {
+    // Audit follow-up: a lazily-mounted UI component (badge/toast)
+    // that subscribes AFTER the unknown-version skip-write fired
+    // should still see the degraded state without separately
+    // polling the getter. The late callback is queued on a
+    // microtask so the subscribe-and-immediately-unsubscribe path
+    // is safe.
+    triageSync.closeSession()
+    const futurePayload = JSON.stringify({ version: 99, sessions: {} })
+    localStorage.setItem('deepview.sync.sessions', futurePayload)
+    // Flip the latch by driving mutateAllSessions BEFORE
+    // subscribing.
+    await mutateAllSessions((all) => { all['probe-late'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, true, 'latch flipped pre-subscribe')
+    // Subscribe AFTER the flip. The callback should fire on the
+    // next microtask.
+    let lateFired = 0
+    const unsubLate = triageSync.onPersistenceDegraded(() => { lateFired++ })
+    // queueMicrotask resolves before this `await` returns.
+    await Promise.resolve()
+    assert.equal(lateFired, 1, 'late subscriber received the missed event')
+    unsubLate()
+    // Unsubscribing before the next mutator hit means no extra
+    // calls — already-degraded latch is sticky so no further
+    // notifications regardless.
+    await mutateAllSessions((all) => { all['probe-late-2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    await Promise.resolve()
+    assert.equal(lateFired, 1, 'no spurious follow-up call after unsubscribe')
+    // Unsubscribing IMMEDIATELY after subscribe (before the queued
+    // microtask runs) suppresses the late dispatch — defends against
+    // a component that mounts + unmounts in the same tick.
+    let bouncedFired = 0
+    const unsubBounced = triageSync.onPersistenceDegraded(() => { bouncedFired++ })
+    unsubBounced()
+    await Promise.resolve()
+    assert.equal(bouncedFired, 0, 'subscribe+unsubscribe in same tick suppresses dispatch')
   })
 })
 

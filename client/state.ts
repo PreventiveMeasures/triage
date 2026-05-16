@@ -83,7 +83,19 @@ function readSavedViewMode(): ViewMode | null {
 // `state.repoUrl` on every file switch and the events.js input
 // handler can write back without re-deriving the key.
 function readRepoUrlMap(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch { return {} }
+  // JSON.parse can return any value — `null`, an array, a primitive
+  // — depending on the localStorage contents. Without the
+  // typeof+object gate, a corrupted value like the literal string
+  // `"null"` makes downstream `readRepoUrlMap()[name]` throw
+  // TypeError on property access. Open-ended audit
+  // `client/state.ts:86`.
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+    return {}
+  } catch { return {} }
 }
 function writeRepoUrlMap(map: Record<string, string>): void {
   try { localStorage.setItem(REPO_URLS_KEY, JSON.stringify(map)) } catch {}

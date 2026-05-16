@@ -879,27 +879,74 @@ const SESSION_STATE_LOCK = SESSION_STATE_KEY
 // `writeAllSessionsRaw` rewrites in the versioned form.
 const SESSIONS_VERSION = 1
 
-function loadAllSessions(): PersistedSessionsMap {
+// Latch — flipped true when `mutateAllSessions` finds an
+// `unknown-version` blob on disk and skips its write. Stays sticky
+// for the rest of the page-load so UI consumers can show a
+// degraded-persistence hint (the user's in-memory state isn't
+// being written through). Reset on next page-load. Audit follow-up
+// to round-15.
+let persistenceDegradedLatch = false
+const persistenceDegradedListeners = new Set<() => void>()
+function markPersistenceDegraded(): void {
+  if (persistenceDegradedLatch) return
+  persistenceDegradedLatch = true
+  console.warn(
+    'triage-sync: persisted-sessions blob has an unrecognised version; skipping writes to avoid clobbering a future build\'s data. ' +
+    'Your in-memory triage state still works this session but will not persist across reload. ' +
+    'Clear localStorage[deepview.sync.sessions] to recover.',
+  )
+  for (const cb of persistenceDegradedListeners) {
+    try { cb() } catch (err) { console.warn('persistenceDegraded listener:', err) }
+  }
+}
+
+// Discriminated load result so `mutateAllSessions` can distinguish
+// "blob doesn't exist / is unparseable / is legacy / is current"
+// from "blob is a future version we don't understand". The latter
+// MUST skip the write — overwriting with a v1 shape would silently
+// destroy whatever a future build persisted under the same key.
+// Open-ended audit `client/triage-sync.ts:884`.
+type LoadAllSessionsResult =
+  | { kind: 'v1' | 'legacy'; map: PersistedSessionsMap }
+  | { kind: 'empty' }
+  | { kind: 'unknown-version' }
+
+function loadAllSessionsResult(): LoadAllSessionsResult {
   try {
     const raw = localStorage.getItem(SESSION_STATE_KEY)
-    if (!raw) return {}
+    if (!raw) return { kind: 'empty' }
     const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return {}
+    if (!parsed || typeof parsed !== 'object') return { kind: 'empty' }
     const obj = parsed as { version?: unknown, sessions?: unknown }
-    // Versioned shape: { version, sessions }. Forward-compat: a
-    // future version still gives us the inner map; the next write
-    // downgrades to v1 (acceptable for v1 freeze, revisit when v2
-    // exists).
-    if (obj.sessions && typeof obj.sessions === 'object' && !Array.isArray(obj.sessions)) {
-      return obj.sessions as PersistedSessionsMap
+    // Versioned shape we understand: { version === SESSIONS_VERSION,
+    // sessions: map }. The `version === SESSIONS_VERSION` check is
+    // the gate that distinguishes "current build" from "future
+    // version we don't know how to read" — the previous shape
+    // returned `{}` for any unrecognised `version`, which let
+    // `mutateAllSessions` overwrite a v2 blob with v1 entries.
+    if (obj.version === SESSIONS_VERSION
+      && obj.sessions && typeof obj.sessions === 'object' && !Array.isArray(obj.sessions)) {
+      return { kind: 'v1', map: obj.sessions as PersistedSessionsMap }
     }
+    // Matching version but malformed/missing `sessions` (e.g. crashed
+    // mid-write, hand-edited corruption). Don't quarantine the
+    // localStorage entry — the version says "this is for our build",
+    // so an empty start + clean rewrite on next save is the right
+    // recovery. `'unknown-version'` is reserved for blobs whose
+    // version we don't recognise (future build's data we mustn't
+    // overwrite). Audit follow-up to round-15.
+    if (obj.version === SESSIONS_VERSION) return { kind: 'empty' }
+    if ('version' in obj) return { kind: 'unknown-version' }
     // Pre-version legacy shape: bare object keyed by workspaceId.
     // The legacy entries had a `serverUrl` field on each value, so
-    // we can sanity-check the shape isn't accidentally the
-    // versioned wrapper missing its `sessions` key.
-    if (!('version' in obj)) return obj as PersistedSessionsMap
-    return {}
-  } catch { return {} }
+    // a flat object without a `version` key is the v0 shape.
+    return { kind: 'legacy', map: obj as PersistedSessionsMap }
+  } catch { return { kind: 'empty' } }
+}
+
+function loadAllSessions(): PersistedSessionsMap {
+  const r = loadAllSessionsResult()
+  return (r.kind === 'v1' || r.kind === 'legacy') ? r.map : {}
 }
 
 function writeAllSessionsRaw(map: PersistedSessionsMap): void {
@@ -954,7 +1001,21 @@ type SessionsMutator = (all: PersistedSessionsMap) => Promise<unknown> | unknown
 // didn't actually change anything).
 export async function mutateAllSessions(mutator: SessionsMutator): Promise<void> {
   await navigator.locks.request(SESSION_STATE_LOCK, async () => {
-    const all = loadAllSessions()
+    const r = loadAllSessionsResult()
+    if (r.kind === 'unknown-version') {
+      // The persisted blob is from a future build we don't recognize.
+      // Writing v1 over it would silently destroy the future shape;
+      // skip the mutation. In-memory session state still updates via
+      // the caller's other paths, but on next page-load it's lost
+      // (the future blob is read again, sees no entries for our
+      // workspaceId, returns null → fresh session, re-fetches
+      // keyframe from server). Flip `persistenceDegraded` so the UI
+      // can surface a hint to the user; `triageSync.persistenceDegraded`
+      // exposes it. Audit follow-up to round-15.
+      markPersistenceDegraded()
+      return
+    }
+    const all = (r.kind === 'v1' || r.kind === 'legacy') ? r.map : {}
     const result = await mutator(all)
     if (result === false) return
     writeAllSessionsRaw(all)
@@ -2473,6 +2534,36 @@ export const triageSync = {
       }
     }
     if (changed) emitStatusIfChanged()
+  },
+
+  // Becomes `true` (sticky for the page-load) when the persisted-
+  // sessions blob is from a future build we don't recognise and
+  // `mutateAllSessions` is therefore skipping its write. UI consumers
+  // (sync-status badge) read this to surface a "persistence
+  // degraded" hint — the in-memory state is fine for this session
+  // but won't survive a reload.
+  get persistenceDegraded(): boolean { return persistenceDegradedLatch },
+  // Subscribe to the degraded→clean→degraded transitions. Sticky:
+  // the latch is one-way per page-load (only ever flips off→on),
+  // so each subscriber receives AT MOST one callback over the
+  // session.
+  //
+  // Late subscribers — registered AFTER the latch has already
+  // flipped — are fired SYNCHRONOUSLY-on-microtask on subscribe so
+  // a lazily-mounted UI component (badge, toast) doesn't have to
+  // separately poll `persistenceDegraded` to discover the existing
+  // state. The unsubscribe function is still returned and works
+  // identically; calling it before the queued microtask runs is
+  // safe — the listener is removed before the dispatch and skipped.
+  onPersistenceDegraded(cb: () => void): () => void {
+    persistenceDegradedListeners.add(cb)
+    if (persistenceDegradedLatch) {
+      queueMicrotask(() => {
+        if (!persistenceDegradedListeners.has(cb)) return
+        try { cb() } catch (err) { console.warn('persistenceDegraded listener:', err) }
+      })
+    }
+    return () => persistenceDegradedListeners.delete(cb)
   },
 }
 
