@@ -351,12 +351,30 @@ export async function switchToWorkspace(workspaceId) {
 // dialog resolves with when there are no orphans to ask about.
 export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null } = {}) {
   if (!state.currentFile) return
-  // Bump the load generation so any switchTo* / ingestReport
-  // already in flight bails before pushing into the cleared
-  // state.reports — a delete that races with a load would
-  // otherwise resurrect findings into the about-to-be-empty view.
-  ++loadGen
+  // Bump the load generation AND capture it. The bump alone (pre-
+  // fix) gated other in-flight switchTo*/ingestReport calls from
+  // clobbering state.reports — but deleteCurrent's own tail
+  // (state.currentFile = null; state.reports = []; ...) ran
+  // unconditionally even if a NEW switchTo* / switchToWorkspace
+  // landed during one of the awaits below (deletePresence,
+  // deleteFile, setReportWorkspace, pruneOrphanTriage). That would
+  // clobber the freshly-built view. Mirror the switchToFile pattern:
+  // capture the captured gen, re-check `isStaleLoad(gen)` at every
+  // await checkpoint, and bail before the state mutations if a
+  // newer load has superseded us. Concurrency audit
+  // `ui/view/ingest.js:366`.
+  const gen = ++loadGen
   const name = state.currentFile
+  // Drop name-scoped cache + localStorage entries up-front, BEFORE
+  // any await. removeCount + saveRepoUrlFor are synchronous and
+  // scoped to the captured `name`, so they can't clobber the
+  // active file's state even if a switchTo* races in. If we deferred
+  // these until after the awaits, an early stale-bail would leave
+  // a stale repoUrl entry in localStorage that resurrects on a
+  // future same-name re-import. Audit follow-up: PR-73 cross-
+  // module review.
+  removeCount(name)
+  saveRepoUrlFor(name, '')
   // Delete the remote copy FIRST. Doing the remote delete after
   // the local one would leave a window where the next `openWorkspace`
   // auto-download could re-pull the report (the remote tag is still
@@ -369,14 +387,15 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   // is fine (nothing to remove). Review r3242639305.
   if (deleteFromRemote) {
     const remoteResult = await deletePresence(deleteFromRemote, name)
+    if (isStaleLoad(gen)) return
     if (remoteResult && remoteResult.ok === false && remoteResult.reason !== 'not-found') {
       throw new Error(`Failed to delete '${name}' from remote: ${remoteResult.reason}`)
     }
   }
   await deleteFile(name)
+  if (isStaleLoad(gen)) return
   await setReportWorkspace(name, null)
-  removeCount(name)
-  saveRepoUrlFor(name, '')
+  if (isStaleLoad(gen)) return
   // GC orphan triage entries only when the user picked "wipe"
   // in the dialog. Default ('keep') leaves them in localStorage
   // so a future re-import of the same report resurfaces the
@@ -387,7 +406,17 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   if (triage === 'wipe') {
     try { await pruneOrphanTriage() }
     catch (err) { console.warn('Skipped orphan-triage GC:', err) }
+    if (isStaleLoad(gen)) return
   }
+  // Final stale-check guarding the unguarded-tail mutation block.
+  // Pre-fix the block below (state.* + graph2.* + cleanupGraph2 +
+  // localStorage.removeItem + litRender) ran whenever the previous
+  // gate passed, even though no await separates them — but a
+  // switchTo*'s `++loadGen` is synchronous and can happen between
+  // any two JS statements. Re-check here so a brand-new view
+  // doesn't have its `state.reports` cleared / `graph2` torn down
+  // out from under it. Audit follow-up: PR-73 cross-module review.
+  if (isStaleLoad(gen)) return
   state.currentFile = null
   state.reports = []
   state.repoUrl = ''
