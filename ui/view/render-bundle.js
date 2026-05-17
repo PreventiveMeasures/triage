@@ -530,19 +530,16 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         type="button"
         class="bundles-tab bundles-tab-action"
         data-bundle-tab="graph"
-        title="Open the bundle's import graph"
       >Graph →</button>
       ${issueTotal > 0 ? html`<button
         type="button"
         class="bundles-tab bundles-tab-action"
         data-bundle-tab="issues"
-        title="Open the bundle's matched issues"
       >Issues →</button>` : nothing}
       <button
         type="button"
         class="bundles-tab bundles-tab-action"
         data-bundle-tab="code"
-        title="Browse bundle source"
       >Code →</button>
     </div>
     ${activeTab === 'files' ? filesTpl

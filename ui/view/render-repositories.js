@@ -258,7 +258,7 @@ function renderRepositoryRow(repo, bucket, isSel) {
   >
     <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
-      <span class="packages-name" title=${repo}>${label}</span>
+      <span class="packages-name">${label}</span>
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">

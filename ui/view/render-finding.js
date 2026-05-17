@@ -513,7 +513,7 @@ export function tableRowInnerTemplate(g) {
     </div>
     <div class="row-body">
       <div class="title-row">
-        <span class="title" title=${title}>${title}</span>
+        <span class="title">${title}</span>
         ${typeLabel ? html`<span class="row-type">${typeLabel}</span>` : nothing}
       </div>
       <div class="meta-row">
