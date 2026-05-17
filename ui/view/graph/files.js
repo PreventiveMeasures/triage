@@ -113,8 +113,8 @@ export function renderTreeView(treeData, findingCounts) {
               data-tree-select=${file}
             >
               <span class="tree-table-name">${file}</span>
-              ${sizeLabel ? html`<span class="tree-table-size">${sizeLabel}</span>` : nothing}
               ${sevChips(file) ?? html`<span class="tree-table-clean-marker">—</span>`}
+              ${sizeLabel ? html`<span class="tree-table-size">${sizeLabel}</span>` : nothing}
             </div>`
           })}
         </div>
@@ -143,8 +143,8 @@ export function renderTreeView(treeData, findingCounts) {
       return html`<section class="tree-file" id=${treeAnchor(file)}>
         <div class="tree-file-header">
           <span class="name">${file}</span>
-          ${sizeLabel ? html`<span class="tree-file-size">${sizeLabel}</span>` : nothing}
           ${sevChips(file)}
+          ${sizeLabel ? html`<span class="tree-file-size">${sizeLabel}</span>` : nothing}
         </div>
         ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">${[
           entry.fileHash ? `file: ${entry.fileHash}` : null,
