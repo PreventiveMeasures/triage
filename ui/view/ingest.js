@@ -18,7 +18,7 @@ import { deriveFindingId } from '../../common/finding-id.js'
 import { analyzeContent, removeCount, setCount } from '../../client/counts.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { deleteWorkspace, listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
-import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, openWorkspaceIds as presenceOpenWorkspaceIds } from './objstore-presence.js'
+import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence } from './objstore-presence.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 import { removeItem as removeSecureItem, setItem as setSecureItem } from '../../client/secure-storage.js'
 
@@ -203,7 +203,11 @@ export async function switchToFile(name, content) {
   for (const info of triageSync.openSessions) {
     if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
       triageSync.closeSession(info.workspaceId)
-      closePresence(info.workspaceId)
+      // Presence sessions stay alive across switches — keeping the
+      // remote-tag subscription open means a return-visit hits the
+      // warm cache instead of refetching every blob via
+      // `fetchByTag`. Workspace delete + privateKey rotation drive
+      // cleanup via listeners in `objstore-presence.js`.
     }
   }
   state.reports = []
@@ -301,17 +305,13 @@ export async function switchToWorkspace(workspaceId) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = ++loadGen
-  // Tear the previous session down before we touch state.reports —
-  // its workspace-id set is keyed off the old set of loaded reports
-  // and would mis-attribute edits otherwise. Iterate the PRESENCE
-  // map (not `triageSync.openSessions`) so a presence entry opened
-  // by some other code path still gets closed here. The triage-
-  // sync sessions are torn down by `triageSync.closeSession()`
-  // below, which closes everything — symmetric with the presence
-  // sweep. Review r3242461702.
-  for (const id of presenceOpenWorkspaceIds()) {
-    if (id !== workspaceId) closePresence(id)
-  }
+  // Tear the previous triage-sync sessions down before we touch
+  // state.reports — they're keyed off the old set of loaded reports
+  // and would mis-attribute edits otherwise. Presence sessions stay
+  // alive across switches (the warm cache is the whole point of the
+  // multiplex refactor — see `objstore-presence.js`'s lifecycle
+  // comment); workspace-delete + privateKey-rotation listeners
+  // there drive cleanup when it's actually needed.
   triageSync.closeSession()
   // Same drop-out as switchToFile — opening a workspace lands in
   // findings, not the bundles / packages list.

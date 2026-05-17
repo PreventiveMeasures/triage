@@ -5,14 +5,14 @@
 //
 // Lifecycle: openWorkspace(id) is called from `ingest.js` when a
 // workspace becomes the active scope (switchToFile / switchToWorkspace
-// hooks). The hook opens a per-workspace session over the shared
-// `objstoreClient` (one WebSocket multiplexes every open workspace
-// — single connection per client, N subscriptions for N workspaces),
-// snapshots `list()`, then subscribes to objstore-put / objstore-deleted
-// broadcasts so the cached set follows the live inventory without
-// polling. closeWorkspace(id) tears the session down when the user
-// moves to a different workspace (or to no workspace); the shared
-// socket stays up until the last session closes.
+// hooks). Sessions STAY OPEN across workspace switches — the shared
+// transport multiplexes all of them on one socket, and keeping the
+// per-workspace subscription alive lets a return-visit hit the
+// already-warm `remoteTags` cache instead of refetching every blob
+// via `fetchByTag`. Cleanup is event-driven, not switch-driven:
+// `onWorkspaceDeleted` tears the session down when the workspace
+// is actually gone; `onWorkspacePrivateKeyChanged` tears down and
+// re-opens so the stale keys don't outlive the rotation.
 //
 // Tag mapping: the objstore session encrypts (fileName, content)
 // internally and uses HMAC-SHA-256(tagKey, fileName) as the wire
@@ -33,7 +33,7 @@ import { createObjstoreClient, deriveObjstoreKeys } from '../../client/objstore.
 import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
 import { triageSync } from '../../client/triage-sync.ts'
 import { getSharedTransport } from '../../client/sync-transport.ts'
-import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged } from '../../client/workspaces.js'
+import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from '../../client/workspaces.js'
 import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../../client/storage.js'
 import { analyzeContent, setCount } from '../../client/counts.js'
 import { decodeUtf8 } from '../../common/utf8.js'
@@ -329,6 +329,29 @@ onBundleMembershipChanged((workspaceId) => {
   for (const integrity of ws.bundles ?? []) {
     if (!entry.bundleTags.has(integrity)) trackBundle(workspaceId, integrity).catch(() => {})
   }
+})
+
+// Workspace teardown — the per-switch caller (`ingest.js`) used to
+// invoke `closeWorkspace` directly on every workspace transition;
+// now sessions stay alive across switches and cleanup is event-
+// driven. Fire on the workspaces-store delete so any presence
+// session bound to a vanished id releases its transport acquire
+// and zeroes its key material.
+onWorkspaceDeleted((workspaceId) => {
+  closeWorkspace(workspaceId)
+})
+
+// Workspace privateKey rotation — the live session's
+// `keys.signingKey` / `keys.contentKey` / `keys.tagKey` are bound to
+// the OLD private key; subsequent objstore ops would sign with stale
+// material and decrypt remote blobs against the wrong contentKey.
+// Tear down and re-open so the next access derives fresh keys
+// against the new private key. Mirrors triage-sync's handler at
+// `client/triage-sync.ts:onWorkspacePrivateKeyChanged`.
+onWorkspacePrivateKeyChanged((workspaceId) => {
+  if (!sessions.has(workspaceId)) return
+  closeWorkspace(workspaceId)
+  openWorkspace(workspaceId)
 })
 
 // Enumerate workspaceIds with a live presence entry — used by
