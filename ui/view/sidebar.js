@@ -158,11 +158,6 @@ function workspaceHeaderTemplate(count) {
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button><span class="group-count">${count}</span></span></li>`
 }
 
-// Bundles section header — collapsed to a single "BUNDLES (N)"
-// strip; clicking it switches the main view to a list of every
-// bundle stored in OPFS. Hidden entirely when no bundles have been
-// dropped (the user otherwise has nothing to navigate to). The
-// `data-action="show-bundles"` is the click delegate's hook.
 // Packages section header — collapsed to a single "PACKAGES (N)"
 // strip, sitting under the bundles entry. Clicking it switches to
 // a cross-report view that aggregates findings by package
@@ -190,20 +185,15 @@ function repositoriesHeaderTemplate(count) {
 }
 
 function bundlesHeaderTemplate(count) {
-  // Mark the row "current" while the bundles view is up so the
-  // sidebar reads as "you're here" — mirrors how a file row picks
-  // up the .current class while its file is loaded.
+  // Plain label — not a navigation target. The section is an
+  // always-expanded category for bundles that don't belong to any
+  // workspace, so there's nothing for a click to switch to.
   // `data-default-bundles` flags the header as the unfiled-bundle
   // drop target — same role `data-default-reports` plays for the
   // Reports header. The dragover handler lights it up when a bundle
   // is dragged outside any workspace block; the drop handler then
   // routes to setBundleWorkspace(integrity, null).
-  // Suppress the count chip when `count === 0` (all bundles claimed
-  // by workspaces) — the header stays as the navigation + detach drop
-  // target, but a "(0)" badge alongside a header that navigates to a
-  // list of every bundle reads as inconsistent.
-  const cls = `file-group-header bundles-header${state.currentView === 'bundles' ? ' current' : ''}`
-  return html`<li class=${cls} data-action="show-bundles" data-default-bundles="true" role="button" tabindex="0" title="Show bundles">
+  return html`<li class="file-group-header bundles-header" data-default-bundles="true">
     <span class="group-label">Bundles</span>${count > 0 ? html`<span class="group-count">${count}</span>` : nothing}
   </li>`
 }
@@ -216,10 +206,7 @@ function bundlesHeaderTemplate(count) {
 // `.file-icon` rule in sidebar.css.
 const BUNDLE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 2 5v6l6 3 6-3V5L8 2Z"/><path d="M2 5l6 3 6-3"/><path d="M8 8v6"/></svg>`
 
-// Single bundle row under the Bundles header — rendered only while
-// the bundles view is active (state.currentView === 'bundles'), so
-// the section reads as "expanded" the same way Reports always does
-// and auto-collapses back to a one-line header on any other view.
+// Single bundle row under the always-expanded Bundles header.
 // `.current` lights up when this bundle is the open selection in the
 // main pane (selectedBundle matches its integrity). The integrity is
 // SRI-shaped (sha512-…) and too long to fit; the title surfaces it
@@ -227,7 +214,12 @@ const BUNDLE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" h
 function bundleItemTemplate(bundle, opts = {}) {
   const { integrity, name } = bundle
   const isCurrent = state.selectedBundle === integrity && state.currentView === 'bundles'
-  const cls = `file-item indented bundle-item${isCurrent ? ' current' : ''}`
+  // `indented` only when the row sits under a workspace — the tree-line
+  // decoration anchors it to its parent. Top-level rows under the
+  // Bundles category render flush with the other category rows
+  // (Reports, DeepSec, …).
+  const indented = opts.workspaceId != null
+  const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}`
   // `data-workspace-id` mirrors `fileItemTemplate` — when the row sits
   // INSIDE a workspace, a drop onto it resolves to "this workspace"
   // (so dragging a sibling bundle into the same workspace is a no-op
@@ -430,26 +422,19 @@ export async function renderSidebar() {
   // exactly when the user is mid-drag, and stays out of the way
   // otherwise.
 
-  // Bundles section expands inline when the bundles view is the
-  // current view (either the list or any individual bundle); on
-  // every other view the header collapses back to a single strip.
-  // Mirrors the Reports section's "always expanded" shape while the
-  // user is reading bundles, without permanently growing the sidebar.
-  // The top-level Bundles list only carries UNFILED bundles — those
-  // claimed by a workspace render under the workspace, matching how
-  // reports work. Filter by search query so a name search narrows the
-  // visible list (same treatment unfiled reports get at the GROUP_ORDER
-  // loop below). The header count reflects the post-filter subset; the
-  // header itself stays visible whenever ANY bundles exist (even all-
-  // claimed) so it remains reachable as a navigation entry AND as the
-  // detach drop target for dragging a bundle out of a workspace.
+  // The Bundles section is an always-expanded category that hosts
+  // every bundle not claimed by a workspace — workspace-claimed ones
+  // render under the workspace, matching how reports work. Filter by
+  // search query so a name search narrows the visible list (same
+  // treatment unfiled reports get at the GROUP_ORDER loop below). The
+  // header itself stays visible whenever ANY bundles exist (even
+  // all-claimed) so it remains the detach drop target for dragging a
+  // bundle out of a workspace; the section renders at the end of the
+  // sidebar, below the report groups.
   const unfiledBundles = bundleNames.filter(
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
-  const bundlesExpanded = state.currentView === 'bundles' && unfiledBundles.length > 0
   litRender(html`
-    ${bundleNames.length > 0 ? bundlesHeaderTemplate(unfiledBundles.length) : null}
-    ${bundlesExpanded ? repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b)) : null}
     ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
     ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
@@ -491,6 +476,8 @@ export async function renderSidebar() {
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}
+    ${bundleNames.length > 0 ? bundlesHeaderTemplate(unfiledBundles.length) : null}
+    ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
 
   const deleteBtn = document.querySelector('#delete-current')
@@ -526,20 +513,6 @@ onVaultStateChange(() => { renderSidebar() })
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 sidebar.addEventListener('click', async (e) => {
-  // BUNDLES header → switch the main view to the bundles list. Only
-  // fires when bundles exist (the header is suppressed otherwise).
-  // The bundles list lives off `state.bundles`, freshly populated by
-  // the renderSidebar pass above; render() reads from it so the
-  // main view paints synchronously.
-  if (e.target.closest('[data-action="show-bundles"]')) {
-    state.currentView = 'bundles'
-    render()
-    // Re-render the sidebar too so the BUNDLES header picks up
-    // its `.current` highlight (and any previously-highlighted
-    // file/workspace row drops back to the muted state).
-    renderSidebar()
-    return
-  }
   // Per-bundle row in the expanded Bundles section — selects that
   // bundle and switches to the bundles view. Mirrors the
   // data-select-bundle handler in events.js (per-row setup must

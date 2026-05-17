@@ -173,11 +173,9 @@
   }
 }
 
-/* Bundles header — clickable strip; opens the bundles list view in
-   the main pane. Hover affordance + accent recolor mirror the
-   sidebar's other clickable rows. Hidden entirely when no bundles
-   exist (controlled by sidebar.js, not CSS). */
-.file-group-header.bundles-header,
+/* Packages / Repositories headers — clickable strips that switch the
+   main pane to a cross-report aggregation view. Hover affordance +
+   accent recolor mirror the sidebar's other clickable rows. */
 .file-group-header.packages-header {
   border-radius: 4px;
   /* Equalize vertical padding on the clickable row-style
