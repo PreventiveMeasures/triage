@@ -5,11 +5,14 @@
 //
 // Lifecycle: openWorkspace(id) is called from `ingest.js` when a
 // workspace becomes the active scope (switchToFile / switchToWorkspace
-// hooks). The hook opens a single objstore WS session per workspace,
+// hooks). The hook opens a per-workspace session over the shared
+// `objstoreClient` (one WebSocket multiplexes every open workspace
+// — single connection per client, N subscriptions for N workspaces),
 // snapshots `list()`, then subscribes to objstore-put / objstore-deleted
 // broadcasts so the cached set follows the live inventory without
 // polling. closeWorkspace(id) tears the session down when the user
-// moves to a different workspace (or to no workspace).
+// moves to a different workspace (or to no workspace); the shared
+// socket stays up until the last session closes.
 //
 // Tag mapping: the objstore session encrypts (fileName, content)
 // internally and uses HMAC-SHA-256(tagKey, fileName) as the wire
@@ -26,7 +29,7 @@
 // blob, surfaces the encoded fileName, and verifies the
 // tag-to-name rebinding.
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../../client/objstore.ts'
+import { createObjstoreClient, deriveObjstoreKeys } from '../../client/objstore.ts'
 import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
 import { triageSync } from '../../client/triage-sync.ts'
 import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged } from '../../client/workspaces.js'
@@ -60,6 +63,35 @@ async function objstoreAuthResolver({ retry }) {
 
 const sessions = new Map()
 const listeners = new Set()
+
+// Shared multiplexed client — one WebSocket per `serverUrl`, with
+// every open workspace's session piggybacking on the same socket.
+// Lazily constructed on first openWorkspace; rebuilt if the server
+// URL changes between calls. Closed when the last session closes
+// (via the underlying client's auto-teardown on session.close()).
+let client = null
+let clientServerUrl = null
+let clientHttpOrigin = null
+function ensureClient(serverUrl, httpOrigin) {
+  if (client && (clientServerUrl !== serverUrl || clientHttpOrigin !== httpOrigin)) {
+    // Server URL changed (rare: user retypes the URL, or the
+    // browser-detected default flips). Tear down and rebuild — the
+    // old client's open sessions are gone with `closeWorkspace`
+    // calls from the URL-change-driven session resets in
+    // `switchToWorkspace` / `setServerUrl`.
+    try { client.close() } catch {}
+    client = null
+  }
+  if (!client) {
+    client = createObjstoreClient({
+      serverUrl, httpOrigin,
+      authResolver: objstoreAuthResolver,
+    })
+    clientServerUrl = serverUrl
+    clientHttpOrigin = httpOrigin
+  }
+  return client
+}
 // Fired after the auto-download worker saves a new report to OPFS
 // + attaches it to the workspace. The UI bridge re-runs
 // `switchToWorkspace` if the affected workspace is currently
@@ -87,7 +119,7 @@ function notify() {
 // Stringify `entry.err` for inclusion in user-facing Error messages.
 // `entry.err` is typically an `Error` (e.g. `new Error('connect
 // failed')`) so `.message` is the readable form. But the boot path
-// captures rejection from `createObjstoreSession`, which can also
+// captures rejection from `client.openWorkspace`, which can also
 // reject with a non-Error value (Web Locks API throws plain
 // `{ name, message }` DOMExceptions; `crypto.subtle.*` failures
 // surface as DOMException too). Falling back to `String(err)`
@@ -198,10 +230,8 @@ export function openWorkspace(workspaceId) {
     const httpOrigin = httpOriginFromWsUrl(serverUrl)
     if (!httpOrigin) return
     try {
-      const session = await createObjstoreSession({
-        serverUrl, httpOrigin, keys: entry.keys,
-        authResolver: objstoreAuthResolver,
-      })
+      const c = ensureClient(serverUrl, httpOrigin)
+      const session = await c.openWorkspace(entry.keys)
       if (entry.disposed) {
         try { session.close() } catch {}
         return
@@ -274,7 +304,7 @@ export function closeWorkspace(workspaceId) {
   try { entry.session?.close() } catch {}
   // Zero the workspace's content + tag key material we hold. The
   // session's `close()` zeroes its OWN copy (`new Uint8Array(...)`
-  // wrappers in `createObjstoreSession`), but the original
+  // wrappers inside `client.openWorkspace`), but the original
   // `entry.keys` Uint8Arrays we passed in stay live until the entry
   // is GC'd. Match the wipe contract documented at
   // `client/objstore.ts:close()`.
