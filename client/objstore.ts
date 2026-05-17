@@ -57,8 +57,18 @@ import {
   unwrapBundleContent,
   wrapBundleContent,
 } from './objstore-content-crypto.ts'
+import { getCachedSyncPassword, setCachedSyncPassword } from './sync-auth-cache.ts'
 
 export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
+
+// Resolver shape for the operator-side first-action gate. Matches
+// `AuthenticationResolver` in client/triage-sync.ts so the UI can
+// install the same dialog-driver in both places. `retry: true`
+// means the previous attempt on this socket failed the password
+// compare — UI surfaces "wrong password" rather than re-prompting
+// cold. Returning `null` / `undefined` cancels (the put returns
+// `{ ok: false, reason: 'unauthorized' }` as usual).
+export type ObjstoreAuthResolver = (context: { retry: boolean }) => Promise<string | null | undefined>
 
 // Server-emitted wire row shape. Returned by `_rawList`, embedded
 // in `_rawFetch`-token replies, and broadcast on `objstore-put`.
@@ -145,6 +155,19 @@ export type ObjstoreSessionDeps = {
   // Optional: override the default 10s request timeout (per WS op).
   // REST PUT/GET timeouts use the platform's `fetch` default.
   requestTimeoutMs?: number
+  // Optional: password prompt for the operator-side first-action
+  // gate. The objstore session authenticates independently from the
+  // triage-sync session (separate WebSocket, separate per-socket
+  // `socketAuthorized` flag on the server), so when an
+  // `objstore-put-begin` against a never-before-seen workspace tag
+  // returns `unauthorized { kind: 'gated' }` the session runs its
+  // own auth flow against ITS socket: try the shared cached password
+  // (silent) first, then fall back to this resolver. The cache is
+  // shared with triage-sync via ./sync-auth-cache.ts, so a password
+  // the user typed for one session is reused silently across the
+  // other. Omitted → no auth flow runs; put-begin returns
+  // `unauthorized` immediately and the caller surfaces a typed error.
+  authResolver?: ObjstoreAuthResolver
 }
 
 export type ObjstoreSession = {
@@ -258,6 +281,81 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     if (version > prev) seenVersions.set(tag, version)
   }
 
+  // Per-socket auth state for the operator-side first-action gate.
+  // Mirrors the same structure in client/triage-sync.ts but scoped
+  // per-session (each objstore session opens its own WebSocket, and
+  // the server's `socketAuthorized` flag is per-socket). The shared
+  // `sync-auth-cache.ts` keeps the cached password identical
+  // across both planes; only the per-socket replay-guard and the
+  // in-flight resolver live here.
+  let authFlowInFlight = false
+  let cachedPasswordTriedOnThisSocket = false
+  let authResponseResolver: ((ok: boolean) => void) | null = null
+  function attemptAuthenticate(password: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      authResponseResolver = resolve
+      try { send({ type: 'authenticate', password }) } catch (err) {
+        authResponseResolver = null
+        // The send-after-close case: WebSocket transitioned to
+        // CLOSING / CLOSED between the put-begin reply and our auth
+        // attempt. Bail false so the auth flow doesn't hang.
+        console.warn('objstore: authenticate send failed:', err)
+        resolve(false)
+      }
+    })
+  }
+  // Run the gated-put-begin auth flow against THIS session's socket.
+  // Returns `true` when the socket is now authenticated and the
+  // caller should retry the put-begin; `false` when the user
+  // cancelled / there's no resolver / the cached attempt failed
+  // and no resolver is wired. Serialised via `authFlowInFlight` so
+  // multiple concurrent `_rawPut` calls hitting the gate collapse
+  // into one outstanding `authenticate`.
+  async function runAuthFlow(): Promise<boolean> {
+    if (authFlowInFlight) return false
+    if (ws.readyState !== WebSocket.OPEN) return false
+    authFlowInFlight = true
+    try {
+      // Silent replay of the shared cached password, once per socket.
+      const cached = getCachedSyncPassword()
+      if (cached != null && !cachedPasswordTriedOnThisSocket) {
+        cachedPasswordTriedOnThisSocket = true
+        const ok = await attemptAuthenticate(cached)
+        if (ok) return true
+        // Cache was wrong — drop it so triage-sync doesn't re-replay
+        // the same broken value, then fall through to the resolver.
+        try { await setCachedSyncPassword(null) } catch (err) {
+          console.warn('objstore: failed to clear cached auth password:', err)
+        }
+      }
+      // Prompt loop. `retry=true` after the first attempt so the UI
+      // surfaces "wrong password" rather than re-prompting cold.
+      let firstAttempt = true
+      while (true) {
+        if (ws.readyState !== WebSocket.OPEN) return false
+        if (!deps.authResolver) return false
+        let password: string | null | undefined
+        try {
+          password = await deps.authResolver({ retry: !firstAttempt })
+        } catch (err) {
+          console.warn('objstore: authentication resolver threw:', err)
+          return false
+        }
+        firstAttempt = false
+        if (password == null || password === '') return false
+        const ok = await attemptAuthenticate(password)
+        if (ok) {
+          try { await setCachedSyncPassword(password) } catch (err) {
+            console.warn('objstore: failed to cache auth password:', err)
+          }
+          return true
+        }
+      }
+    } finally {
+      authFlowInFlight = false
+    }
+  }
+
   // Bounded retry for server-side `contended` (REST PUT 503 + body
   // `error: 'contended'`, or WS DELETE error reason 'contended').
   // The server already waited up to 2 s polling the commit-lock
@@ -317,6 +415,30 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
       for (const h of deletedHandlers) { try { h(ev) } catch {} }
       return
     }
+    // Operator-side auth handshake replies (server response to our
+    // `authenticate { password }`). Settled into `authResponseResolver`
+    // so `attemptAuthenticate` resolves with the outcome — `true` on
+    // `authenticated`, `false` on `unauthorized { kind: 'auth-failed' }`.
+    // Pin on the explicit `kind` discriminator so an `unauthorized`
+    // with `kind: 'gated'` (the put-begin gate signal) still falls
+    // through to the recv-predicate dispatch below, where the
+    // in-flight `_rawPut` matches it on resourceTag.
+    if (msg.type === 'authenticated') {
+      if (authResponseResolver) {
+        const r = authResponseResolver
+        authResponseResolver = null
+        r(true)
+      }
+      return
+    }
+    if (msg.type === 'unauthorized' && msg['kind'] === 'auth-failed') {
+      if (authResponseResolver) {
+        const r = authResponseResolver
+        authResponseResolver = null
+        r(false)
+      }
+      return
+    }
     // The session subscribes via the shared `workspace-subscribe`
     // path so objstore broadcasts land here. The relay's subscribe
     // contract also delivers triage-sync frames (`workspace-state`
@@ -325,7 +447,7 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // those frames match an objstore-side predicate; without an
     // explicit drop they'd pile up in `queue` forever on an active
     // workspace. Filter known triage-sync types up-front.
-    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'pong' || msg.type === 'authenticated') return
+    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'pong') return
     // Request-response correlation. First waiter whose predicate
     // matches gets the message; otherwise queue for a later `recv`.
     for (let i = 0; i < waiters.length; i++) {
@@ -448,31 +570,50 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
       contentHash,
     }
     const signature = await signObjstorePut(signingKey, fields, connectionNonce)
-    send({ type: 'objstore-put-begin', ...fields, signature })
-    // Match `workspaceTag` on the reply too — every server reply frame
-    // carries it (server/objstore/handlers.ts). The socket is already
-    // workspace-scoped, but this is defense-in-depth: a server
-    // routing bug that delivered a different workspace's reply
-    // would otherwise correlate on `type` + `resourceTag` alone.
-    //
-    // `unauthorized` with `kind: 'gated'` is the operator-side first-
-    // action gate firing (server/index.ts `requiresAuth` +
-    // `workspaceExists`); the reply carries `workspaceTag +
-    // resourceTag`, mirroring the shape the other branches match
-    // on. Pin on the explicit `kind` discriminator so a future
-    // server-side variant (e.g. a different `'auth-failed'` reply
-    // arriving on this socket) can't accidentally satisfy the
-    // predicate. Surfaced as a typed result so the caller can decide
-    // whether to retry (e.g. after the user authenticates via
-    // triage-sync's dialog).
-    const reply = await recv((m) =>
-      m.workspaceTag === workspaceTag && m.resourceTag === opts.resourceTag && (
-        m.type === 'objstore-put-token' ||
-        m.type === 'objstore-put-error' ||
-        m.type === 'objstore-conflict' ||
-        (m.type === 'unauthorized' && m['kind'] === 'gated')
-      ),
-    )
+    // Send + await, with at most ONE retry after a successful auth
+    // flow. The Ed25519 signature binds (tag, resourceTag, prevVersion,
+    // contentHash, expectedLength, connectionNonce) — none of which
+    // change between retries on the same socket — so the original
+    // signature is reusable verbatim. `attemptedAuth` guards against
+    // a runaway loop in the pathological case where auth succeeds but
+    // a second `unauthorized` still arrives.
+    let reply: WireMessage
+    let attemptedAuth = false
+    while (true) {
+      send({ type: 'objstore-put-begin', ...fields, signature })
+      // Match `workspaceTag` on the reply too — every server reply frame
+      // carries it (server/objstore/handlers.ts). The socket is already
+      // workspace-scoped, but this is defense-in-depth: a server
+      // routing bug that delivered a different workspace's reply
+      // would otherwise correlate on `type` + `resourceTag` alone.
+      //
+      // `unauthorized` with `kind: 'gated'` is the operator-side first-
+      // action gate firing (server/index.ts `requiresAuth` +
+      // `workspaceExists`); the reply carries `workspaceTag +
+      // resourceTag`, mirroring the shape the other branches match
+      // on. Pin on the explicit `kind` discriminator so the
+      // `kind: 'auth-failed'` reply from our own in-flight
+      // `authenticate` (handled by the dispatcher higher up) can't
+      // accidentally satisfy this predicate.
+      reply = await recv((m) =>
+        m.workspaceTag === workspaceTag && m.resourceTag === opts.resourceTag && (
+          m.type === 'objstore-put-token' ||
+          m.type === 'objstore-put-error' ||
+          m.type === 'objstore-conflict' ||
+          (m.type === 'unauthorized' && m['kind'] === 'gated')
+        ),
+      )
+      if (reply.type !== 'unauthorized') break
+      if (attemptedAuth) break
+      attemptedAuth = true
+      // Run the gated-put-begin auth flow against this session's
+      // socket. On success → loop back and re-send put-begin (now
+      // the server's `socketAuthorized` flag is on for us). On
+      // failure / cancel → fall through to the unauthorized return
+      // below.
+      const authed = await runAuthFlow()
+      if (!authed) break
+    }
     if (reply.type === 'unauthorized') return { ok: false, reason: 'unauthorized' }
     if (reply.type === 'objstore-put-error') {
       if (reply['reason'] === 'workspace-full') return { ok: false, reason: 'workspace-full' }

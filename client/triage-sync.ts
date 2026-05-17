@@ -2,7 +2,8 @@ import { type TriageBucket, state } from './state.ts'
 import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../common/save-error-reason.ts'
-import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
+import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, setItem as setSecureItem } from './secure-storage.js'
+import { getCachedSyncPassword, loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync-auth-cache.ts'
 import {
   type SavePayload,
   buildAad,
@@ -268,7 +269,10 @@ const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
 // at rest. Single string (one password per page session); on server
 // URL change the cache is dropped because per-server passwords are
 // independent. Hydrated alongside the other secure keys at boot.
-const AUTH_PASSWORD_KEY = 'deepview.sync.password'
+// Cached auth password lives in `./sync-auth-cache.ts` and is shared
+// with the objstore session (same secure-storage envelope, same
+// in-memory mirror — see that module for the rationale on the
+// no-per-server-scoping shape).
 // Per-workspace sync state — `{ [workspaceId]: { serverUrl,
 // baseRevision, baseState } }`. Scoped by `serverUrl` because
 // revision IDs are per-server: switching to a different relay
@@ -304,19 +308,18 @@ let hydrationConflictResolver: ConflictResolver | null = null
 // auth flow is a no-op: the pending save sits in `pendingSave` until
 // a future trigger.
 let authenticationResolver: AuthenticationResolver | null = null
-// In-memory cache of the last successfully-used password, plus the
-// secure-storage hydration of the same. On reconnect the wire
-// handler auto-replays the cached value on the FIRST `unauthorized`
-// of the new socket so the user sees the prompt at most once per
-// page load + per password change. Cleared when the server rejects
-// it (the cache is wrong; ask the user again).
-let cachedPassword: string | null = null
 // Per-socket guard so an in-flight `authenticate` doesn't pile up
 // extra concurrent auth flows when multiple sessions hit the gate
 // at once. Reset on socket close (the per-socket auth state has to
 // re-run on the new connection). Also tracks whether we've already
 // tried the cached password on this socket so we don't ping-pong
 // `unauthorized` ↔ `authenticate` if it's wrong.
+//
+// The cached password itself lives in `./sync-auth-cache.ts`
+// (in-memory + secure-storage mirror) and is shared with
+// `client/objstore.ts` so both planes see the same value — without
+// the shared cache, objstore would re-prompt for the same password
+// the triage-sync session just learned.
 let authFlowInFlight = false
 let cachedPasswordTriedOnThisSocket = false
 // Pending resolver for the in-flight `authenticate` round-trip.
@@ -1015,15 +1018,15 @@ onSecureStorageHydrated(() => {
   const r = loadAllSessionsResult()
   if (r.kind === 'unknown-version') setPersistenceDegraded(true)
   else if (r.kind === 'v1' || r.kind === 'legacy') setPersistenceDegraded(false)
-  // Hydrate the cached auth password alongside the sessions blob.
-  // A passkey-enabled vault keeps this encrypted at rest; the
-  // post-unlock cache surfaces the plaintext for the in-memory
-  // replay on the next `unauthorized`. Reset the per-socket replay
-  // guard so a freshly-hydrated cache gets one optimistic attempt
-  // on the live connection (covers the boot-after-unlock path:
-  // socket opens → server gates first save → we replay from cache).
-  const cachedRaw = getSecureItem(AUTH_PASSWORD_KEY)
-  cachedPassword = typeof cachedRaw === 'string' && cachedRaw.length > 0 ? cachedRaw : null
+  // Hydrate the shared auth-password cache (in ./sync-auth-cache.ts)
+  // alongside the sessions blob. A passkey-enabled vault keeps this
+  // encrypted at rest; the post-unlock cache surfaces the plaintext
+  // for the in-memory replay on the next `unauthorized`. Reset the
+  // per-socket replay guard so a freshly-hydrated cache gets one
+  // optimistic attempt on the live connection (covers the boot-
+  // after-unlock path: socket opens → server gates first save → we
+  // replay from cache).
+  loadCachedSyncPasswordFromStorage()
   cachedPasswordTriedOnThisSocket = false
 })
 
@@ -2201,15 +2204,15 @@ async function runAuthFlow(): Promise<void> {
     // hydrated from secure-storage) and haven't tried it on this
     // socket yet, send it silently. The user sees no prompt on the
     // happy reconnect path.
-    if (cachedPassword != null && !cachedPasswordTriedOnThisSocket) {
+    const cached = getCachedSyncPassword()
+    if (cached != null && !cachedPasswordTriedOnThisSocket) {
       cachedPasswordTriedOnThisSocket = true
-      const ok = await attemptAuthenticate(cachedPassword)
+      const ok = await attemptAuthenticate(cached)
       if (ok) return
       // Cached password is wrong — clear it both in memory and on
       // disk so a future session doesn't repeat the loop. The
       // resolver below will prompt the user for a fresh one.
-      cachedPassword = null
-      try { await persistCachedPassword(null) } catch (err) {
+      try { await setCachedSyncPassword(null) } catch (err) {
         console.warn('Triage sync: failed to clear cached auth password:', err)
       }
     }
@@ -2231,8 +2234,7 @@ async function runAuthFlow(): Promise<void> {
       if (password == null || password === '') return
       const ok = await attemptAuthenticate(password)
       if (ok) {
-        cachedPassword = password
-        try { await persistCachedPassword(password) } catch (err) {
+        try { await setCachedSyncPassword(password) } catch (err) {
           console.warn('Triage sync: failed to cache auth password:', err)
         }
         return
@@ -2252,19 +2254,6 @@ function attemptAuthenticate(password: string): Promise<boolean> {
     authResponseResolver = resolve
     send({ type: 'authenticate', password })
   })
-}
-
-// Persist the cached password (or wipe it). Secure-storage's
-// `setItem` doesn't accept null; route the wipe through the
-// matching removeItem so a clear is durable across reloads. Errors
-// bubble — the caller logs (caching is best-effort; a write failure
-// shouldn't abort the auth flow that already succeeded on the wire).
-async function persistCachedPassword(password: string | null): Promise<void> {
-  if (password == null) {
-    removeSecureItem(AUTH_PASSWORD_KEY)
-    return
-  }
-  await setSecureItem(AUTH_PASSWORD_KEY, password)
 }
 
 // Server rejected a signed save after sig verify (e.g. ciphertext
@@ -2564,6 +2553,7 @@ export const triageSync = {
     // pointlessly closeSocket + reset every session's `pending` /
     // `pendingSave` / `subscribed`.
     if (next === serverUrl) return
+    const prev = serverUrl
     serverUrl = next
     // Drop persisted entries whose `serverUrl` doesn't match the
     // new relay — they could never be applied (loadPersistedSession
@@ -2571,17 +2561,22 @@ export const triageSync = {
     // indefinitely. Empty `next` (sync turning off) skips the prune
     // so a user toggling sync back on doesn't lose their bases.
     if (next) prunePersistedSessions(next)
-    // Server change also invalidates the cached auth password —
-    // different relays may run different (or no) password gates.
-    // Best-effort wipe both in memory and on disk so a user
-    // switching to a new server doesn't have their old password
-    // silently replayed (which would just fail) and doesn't accumulate
-    // stale ciphertext at rest.
-    cachedPassword = null
-    cachedPasswordTriedOnThisSocket = false
-    persistCachedPassword(null).catch((err) => {
-      console.warn('Triage sync: failed to drop cached auth password on server change:', err)
-    })
+    // Server change invalidates the cached auth password only when
+    // we're actually SWITCHING between two different non-empty
+    // servers (different relays may run different password gates).
+    // The initial set (`prev === ''` → `next === '<resolved URL>'`)
+    // and the off-toggle (`next === ''`) MUST NOT wipe — that would
+    // nuke a freshly-hydrated cache on every page load (the boot
+    // path calls setServerUrl after hydrate to install the resolved
+    // default URL) and nuke the cache when the user momentarily
+    // toggles sync off-then-on without restarting the browser.
+    // Audit follow-up to the "Password asked each time" regression.
+    if (prev && next && prev !== next) {
+      cachedPasswordTriedOnThisSocket = false
+      setCachedSyncPassword(null).catch((err) => {
+        console.warn('Triage sync: failed to drop cached auth password on server change:', err)
+      })
+    }
     closeSocket()
     // Server changed — revision IDs are per-server, so every
     // active session's tracking is stale. Reset each one; if

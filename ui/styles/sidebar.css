@@ -1070,6 +1070,17 @@ dialog {
     margin: .55rem 0 0;
     color: var(--muted); font-size: .74rem; line-height: 1.45;
   }
+  /* `.nwd-intro` is the above-the-input sibling to `.nwd-note`:
+     body-text size for first-read legibility (the user is reading
+     it to know what to type), plus margin-bottom to break the
+     visual stickiness against the input. `.nwd-note` collapses
+     down to a footnote AFTER the input and uses its own .74rem
+     size — keep both classes so dialogs can pick the right shape
+     for their layout. */
+  & .nwd-intro {
+    margin: 0 0 .8rem;
+    color: var(--muted); font-size: .82rem; line-height: 1.5;
+  }
 
   & .nwd-actions {
     display: flex; align-items: center; gap: .4rem;

@@ -33,6 +33,30 @@ import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMem
 import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../../client/storage.js'
 import { analyzeContent, setCount } from '../../client/counts.js'
 import { decodeUtf8 } from '../../common/utf8.js'
+import { openSyncAuthDialog } from './sync-auth-dialog.js'
+
+// Shared resolver for the operator-side first-action gate. The
+// objstore session authenticates independently from triage-sync
+// (separate WebSocket → separate per-socket `socketAuthorized` flag
+// on the server), so when an `objstore-put-begin` against a never-
+// before-seen workspace tag hits the gate the session needs its
+// own resolver to prompt the user. Reuses the same `<sync-auth-
+// dialog>` triage-sync's resolver opens — the dialog UX is identical
+// regardless of which plane triggered it, and the shared
+// `sync-auth-cache` means a successful auth on one plane silently
+// unlocks the other.
+async function objstoreAuthResolver({ retry }) {
+  try {
+    return await openSyncAuthDialog({ retry })
+  } catch (err) {
+    // Stacked-modal failure (another modal is open). Bail null — the
+    // objstore session's `runAuthFlow` treats null as "user cancelled"
+    // and returns the `unauthorized` to the put caller; the user can
+    // re-trigger by uploading again once the blocking modal closes.
+    console.warn('objstore: sync auth dialog failed to open:', err)
+    return null
+  }
+}
 
 const sessions = new Map()
 const listeners = new Set()
@@ -174,7 +198,10 @@ export function openWorkspace(workspaceId) {
     const httpOrigin = httpOriginFromWsUrl(serverUrl)
     if (!httpOrigin) return
     try {
-      const session = await createObjstoreSession({ serverUrl, httpOrigin, keys: entry.keys })
+      const session = await createObjstoreSession({
+        serverUrl, httpOrigin, keys: entry.keys,
+        authResolver: objstoreAuthResolver,
+      })
       if (entry.disposed) {
         try { session.close() } catch {}
         return

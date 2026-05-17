@@ -75,12 +75,18 @@ class SyncAuthDialog extends LitElement {
       <header class="nwd-head">
         <h3>Sync server password</h3>
       </header>
-      <p class="nwd-note">${intro}</p>
+      <p class="nwd-intro">${intro}</p>
       <input
         type="password"
         class="nwd-input"
         placeholder="Password"
-        autocomplete="current-password"
+        autocomplete="off"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        name="dv-sync-auth"
+        maxlength="4096"
         .value=${this._value}
         @input=${this._onInput}
         @keydown=${this._onKeydown}
