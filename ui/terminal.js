@@ -16,7 +16,53 @@ import { createTerminal } from '@preventive/terminal'
 // bytes are static, never user input.
 import terminalCSS from './view/terminal.css'
 
-const BANNER = 'Virtual shell over the bundle source tree. Try `ls`, `find /`, `grep TODO src/...`, `cat src/foo.js | head -n 20`. ↑/↓ for history, Tab to complete.'
+// Banner suggestions. `ls` and `find /` are always present; the
+// grep example surfaces the first symbol from SEARCH_SYMBOLS that
+// actually appears in the bundle so the suggestion isn't a dead
+// `grep` for a marker no one used (falling back to the first
+// entry — `TODO` — when nothing matches or the bundle is empty).
+// The `cat ... | head -n 20` example uses the shortest path from
+// the bundle so it Just Works without the user having to invent a
+// real file name; skipped entirely when the bundle has no files.
+function bannerCommands(sources) {
+  const symbol = pickSearchSymbol(sources)
+  const cmds = ['ls', 'find /', `grep -r ${symbol} .`]
+  if (!sources || sources.size === 0) return cmds
+  let shortest = null
+  for (const key of sources.keys()) {
+    const p = stripLeading(key)
+    if (shortest === null || p.length < shortest.length) shortest = p
+  }
+  if (shortest) cmds.push(`cat ${shortest} | head -n 20`)
+  return cmds
+}
+
+// Priority list for the grep suggestion: code markers first
+// (TODO/FIXME/etc., where a hit means something interesting to
+// look at), then JS keywords (rougher "any code at all" probe),
+// then `//` as a near-universal JS fallback. The first entry that
+// matches any file content wins; `TODO` is the static default
+// when nothing does.
+const SEARCH_SYMBOLS = ['TODO', 'FIXME', 'XXX', 'HACK', 'NOTE', 'BUG', 'export', 'import', 'require', '//']
+
+function pickSearchSymbol(sources) {
+  if (!sources || sources.size === 0) return SEARCH_SYMBOLS[0]
+  for (const symbol of SEARCH_SYMBOLS) {
+    for (const content of sources.values()) {
+      if (content.includes(symbol)) return symbol
+    }
+  }
+  return SEARCH_SYMBOLS[0]
+}
+
+// The bundle map may key files with `./` or `/`-prefixed paths
+// depending on how the source tree was assembled. Drop a single
+// leading slash or `./` so the banner shows the clean form.
+function stripLeading(path) {
+  if (path.startsWith('./')) return path.slice(2)
+  if (path.startsWith('/')) return path.slice(1)
+  return path
+}
 
 class BundleTerminal extends LitElement {
   // Render-driving state stays as Lit reactive properties: Lit
@@ -80,7 +126,7 @@ class BundleTerminal extends LitElement {
     if (changed.has('sources') && this.sources !== this.#lastSources) {
       this.#term = this.sources ? createTerminal(this.sources) : null
       this._cwd = this.#term ? this.#term.cwd() : '/'
-      this._lines = [{ kind: 'banner', text: BANNER }]
+      this._lines = [{ kind: 'banner', commands: bannerCommands(this.sources) }]
       this.#history = []
       this.#histIdx = -1
       this.#draft = ''
@@ -286,6 +332,18 @@ class BundleTerminal extends LitElement {
 
   #onInput = (e) => { this._input = e.target.value }
 
+  // Banner-suggestion click: drop the example into the input and
+  // focus, so the user can edit before submitting (or just hit
+  // Enter). Reset history nav state — without that, the next
+  // ArrowDown after a click would walk back to a stale `#draft`
+  // captured before the click.
+  #runExample = (cmd) => {
+    this._input = cmd
+    this.#histIdx = -1
+    this.#draft = ''
+    this.#focusInput()
+  }
+
   // Click-anywhere-to-focus is convenient for "I want to type",
   // but unconditional refocus also fires at the end of a
   // drag-select — moving focus into the <input> collapses the
@@ -303,7 +361,7 @@ class BundleTerminal extends LitElement {
   render() {
     return html`
       <div class="output" @click=${this.#onClickOutput}>
-        ${this._lines.map((l) => renderLine(l))}
+        ${this._lines.map((l) => this.#renderLine(l))}
       </div>
       <form class="form" @submit=${this.#onSubmit}>
         <span class="cwd">${this._cwd}</span><span class="sigil">$</span>
@@ -325,16 +383,21 @@ class BundleTerminal extends LitElement {
       </form>
     `
   }
-}
 
-function renderLine(l) {
-  if (l.kind === 'banner') return html`<div class="banner">${l.text}</div>`
-  if (l.kind === 'prompt') {
-    return html`<div class="line"><span class="cwd">${l.cwd}</span><span class="sigil">$</span>${l.text}</div>`
+  // Instance method so the banner branch can close over `this`
+  // for the click handler. Prompts and stdout/stderr remain pure
+  // markup — they don't need the component context.
+  #renderLine(l) {
+    if (l.kind === 'banner') {
+      return html`<div class="banner">Virtual shell over the bundle source tree. Try ${l.commands.map((cmd, i) => html`${i > 0 ? ', ' : ''}\`<span class="cmd" @click=${() => this.#runExample(cmd)}>${cmd}</span>\``)}. ↑/↓ for history, Tab to complete.</div>`
+    }
+    if (l.kind === 'prompt') {
+      return html`<div class="line"><span class="cwd">${l.cwd}</span><span class="sigil">$</span>${l.text}</div>`
+    }
+    if (l.kind === 'stdout') return html`<pre class="stdout">${l.text}</pre>`
+    if (l.kind === 'stderr') return html`<pre class="stderr">${l.text}</pre>`
+    return nothing
   }
-  if (l.kind === 'stdout') return html`<pre class="stdout">${l.text}</pre>`
-  if (l.kind === 'stderr') return html`<pre class="stderr">${l.text}</pre>`
-  return nothing
 }
 
 customElements.define('bundle-terminal', BundleTerminal)

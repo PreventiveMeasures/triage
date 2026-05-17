@@ -29,6 +29,17 @@
   margin-bottom: 8px;
 }
 
+/* Clickable command suggestions inside the banner — plain text
+   in accent colour, no button chrome. Inherits monospace/size
+   from the host so the line reads as continuous prose. */
+.banner .cmd {
+  color: var(--accent, #58a6ff);
+  cursor: pointer;
+}
+.banner .cmd:hover {
+  text-decoration: underline;
+}
+
 .line {
   white-space: pre-wrap;
   overflow-wrap: break-word;
