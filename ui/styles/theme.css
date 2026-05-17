@@ -176,10 +176,14 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Native UI doesn't let you select chrome labels by dragging across
-   them. Light-DOM scope only — shadow-DOM components (terminal,
-   finding-row, finding-card, theme-toggle) set `user-select: none`
-   themselves where they need it. */
+/* Native UI shows the arrow cursor (not the I-beam) over chrome and
+   labels, and doesn't let you select them by dragging. Light-DOM
+   scope only — shadow-DOM components (terminal, finding-row,
+   finding-card, theme-toggle) set their own user-select where they
+   need it. The suffix wildcards catch the project's convention for
+   chrome class names (-title / -meta / -label / -header / -section)
+   so new chrome inherits the treatment without having to touch this
+   rule. */
 button,
 summary,
 select,
@@ -189,16 +193,42 @@ label,
 .tab,
 .tabs,
 .toolbar,
-.sidebar-header {
+.page-head,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+[class$='-title'],
+[class*='-title '],
+[class$='-meta'],
+[class*='-meta '],
+[class$='-label'],
+[class*='-label '],
+[class$='-header'],
+[class*='-header '],
+[class$='-section'],
+[class*='-section '] {
+  cursor: default;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* Reassert selectability on the actual text-entry elements — Chrome and
-   Safari's UA stylesheets do this for us, but the explicit rule
-   guarantees the inherited `none` from a wrapping `.toolbar` doesn't
-   reach the `<input>` inside it across UAs. */
-input, textarea, [contenteditable] {
+/* Reassert selectability + text cursor on the actual text-entry
+   elements and the content blocks users routinely copy (file paths
+   in `.mono`, pre/code snippets). UA stylesheets handle inputs in
+   Chrome/Safari, but the explicit rule guarantees the inherited
+   `none` from a wrapping `.toolbar` or `.packages-detail-meta`
+   doesn't reach the field across UAs — and re-enables text cursor
+   on the copyable blobs inside chrome-cursored containers. */
+input,
+textarea,
+[contenteditable],
+pre,
+code,
+.mono {
+  cursor: text;
   user-select: text;
   -webkit-user-select: text;
 }
