@@ -663,6 +663,104 @@ describe('client/objstore session', () => {
       assert.ok(Array.isArray(live), 'second session subscribes and lists after first.close()')
     } finally { second.close() }
   })
+
+  // ------------------------------------------------------------------
+  // Bundle-side put / fetch / delete + fetchByTag discrimination.
+  // ------------------------------------------------------------------
+
+  it('putBundle / fetchBundle round-trip: content-addressed bundle bytes + name', async () => {
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    try {
+      const integrity = 'sha512-AAAA-bundle-test'
+      const content = Buffer.from('bundle-bytes-content')
+      const put = await session.putBundle({ integrity, name: 'my-app.bundle.js', content, prevVersion: null })
+      assert.equal(put.ok, true)
+      const fetched = await session.fetchBundle(integrity)
+      assert.ok(fetched)
+      assert.equal(fetched.name, 'my-app.bundle.js', 'user-friendly name round-trips through the wire')
+      assert.equal(Buffer.from(fetched.content).toString('utf8'), 'bundle-bytes-content')
+    } finally { session.close() }
+  })
+
+  it('fetchByTag surfaces the bundle name alongside the integrity', async () => {
+    // The discriminated `fetchByTag` for a bundle tag returns both
+    // the integrity (for the round-trip verification) and the user-
+    // friendly name (so peer-uploaded bundles surface in the sidebar
+    // with their original label, not a `bundle-<integrity-prefix>`
+    // fallback).
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    try {
+      await session.putBundle({ integrity: 'sha512-AAAA-name-test', name: 'my-app.js', content: Buffer.from('B'), prevVersion: null })
+      const live = await session.list()
+      assert.equal(live.length, 1)
+      const decoded = await session.fetchByTag(live[0].resourceTag)
+      assert.ok(decoded && decoded.kind === 'bundle')
+      assert.equal(decoded.integrity, 'sha512-AAAA-name-test')
+      assert.equal(decoded.name, 'my-app.js')
+    } finally { session.close() }
+  })
+
+  it('fetchByTag discriminates between report and bundle tags', async () => {
+    // A peer holding only the workspace's tag list (no advance
+    // knowledge of which tags are reports vs. bundles) must be able
+    // to classify each tag by attempting both round-trips. Pin the
+    // discriminator: a report PUT returns kind='report', a bundle
+    // PUT returns kind='bundle', both with their respective
+    // identifier fields surfaced.
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    try {
+      await session.put({ fileName: 'r.json', content: Buffer.from('report-bytes'), prevVersion: null })
+      await session.putBundle({ integrity: 'sha512-AAAA-disc', name: 'disc.js', content: Buffer.from('bundle-bytes'), prevVersion: null })
+      const live = await session.list()
+      assert.equal(live.length, 2, 'one report tag + one bundle tag')
+      const decoded = await Promise.all(live.map((m) => session.fetchByTag(m.resourceTag)))
+      const reportEntry = decoded.find((d) => d.kind === 'report')
+      const bundleEntry = decoded.find((d) => d.kind === 'bundle')
+      assert.ok(reportEntry, 'one of the tags decodes as a report')
+      assert.ok(bundleEntry, 'one of the tags decodes as a bundle')
+      assert.equal(reportEntry.fileName, 'r.json')
+      assert.equal(bundleEntry.integrity, 'sha512-AAAA-disc')
+    } finally { session.close() }
+  })
+
+  it('deleteBundle removes the bundle from list()', async () => {
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    try {
+      const integrity = 'sha512-AAAA-deletetest'
+      const put = await session.putBundle({ integrity, name: 'b.js', content: Buffer.from('x'), prevVersion: null })
+      assert.equal(put.ok, true)
+      const beforeDel = await session.list()
+      assert.equal(beforeDel.length, 1)
+      // prevVersion=null on an existing row conflicts; same shape as
+      // session.delete for reports — pass the live version we just got.
+      const del = await session.deleteBundle(integrity, put.meta.version)
+      assert.equal(del.ok, true)
+      const afterDel = await session.list()
+      assert.equal(afterDel.length, 0)
+    } finally { session.close() }
+  })
+
+  it('report tag and bundle tag for the same string are independent rows', async () => {
+    // Domain-separation pin at the session level: putting a report
+    // named "foo" and a bundle with integrity "foo" produces two
+    // distinct rows on the relay (vs. one row with a collision).
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    try {
+      await session.put({ fileName: 'foo', content: Buffer.from('rep'), prevVersion: null })
+      await session.putBundle({ integrity: 'foo', name: 'bun.js', content: Buffer.from('bun'), prevVersion: null })
+      const live = await session.list()
+      assert.equal(live.length, 2, 'distinct tags despite same input string')
+      // Each tag round-trips to its kind.
+      const decoded = await Promise.all(live.map((m) => session.fetchByTag(m.resourceTag)))
+      const kinds = decoded.map((d) => d.kind).toSorted()
+      assert.deepEqual(kinds, ['bundle', 'report'])
+    } finally { session.close() }
+  })
 })
 
 // Substring search over Buffer/Uint8Array. Returns false if `needle`

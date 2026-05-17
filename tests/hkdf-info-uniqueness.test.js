@@ -74,6 +74,34 @@ describe('HKDF info-string uniqueness (RFC 5869 §3.1 — empty salt with unifor
     const allLiterals = [...fromSync, ...fromObj]
     const unique = new Set(allLiterals)
     assert.equal(unique.size, allLiterals.length, `HKDF info strings collide: ${JSON.stringify(allLiterals)}`)
+    // Same domain-separation contract applies to the HMAC prefixes
+    // that derive tag namespaces from the SHARED `tagKey` — the
+    // report tag (`objstore-tag\n`) and bundle tag (`objstore-
+    // bundle-tag\n`) prefixes are byte-strings concatenated with the
+    // identifier before HMAC-SHA-256. They MUST be pairwise distinct
+    // AND no prefix must be a prefix of another (otherwise an
+    // identifier crafted to align across prefixes could produce the
+    // same HMAC input — defeating the namespace split). The regex
+    // matches every `'objstore-…\n'` literal in the source (both
+    // const declarations and doc-comment quotes), so we dedupe
+    // before counting.
+    const objSrc = readFileSync(OBJSTORE_CRYPTO_PATH, 'utf8')
+    const hmacPrefixMatches = objSrc.matchAll(/'(objstore-[\w-]+\\n)'/gu)
+    const hmacPrefixes = [...new Set([...hmacPrefixMatches].map((m) => m[1]))]
+    assert.ok(hmacPrefixes.length >= 2, `expected at least two HMAC prefixes, found ${hmacPrefixes.length}`)
+    for (const a of hmacPrefixes) {
+      for (const b of hmacPrefixes) {
+        if (a === b) continue
+        assert.ok(!a.startsWith(b) && !b.startsWith(a),
+          `HMAC prefix is a prefix of another: ${JSON.stringify({ a, b })}`)
+      }
+    }
+    // Pin the expected canonical set so a future refactor that
+    // adds a third namespace prompts an explicit decision.
+    const expectedPrefixes = new Set(['objstore-tag\\n', 'objstore-bundle-tag\\n'])
+    for (const want of expectedPrefixes) {
+      assert.ok(hmacPrefixes.includes(want), `expected HMAC prefix '${want}' not found in source`)
+    }
     // The canonical four are what every protocol participant
     // expects. A drift in any of these is a wire-protocol v2.
     const expected = new Set([

@@ -17,7 +17,7 @@ import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
 import { listWorkspaces } from '../../client/workspaces.js'
 import { triageSync } from '../../client/triage-sync.ts'
-import { isInRemote, remoteCount } from './objstore-presence.js'
+import { isBundleInRemote, isInRemote, remoteCount } from './objstore-presence.js'
 import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -401,7 +401,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
 
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}${reportSyncBadgeTemplate()}</h1>
+      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}${syncBadgeTemplate()}</h1>
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
@@ -436,13 +436,17 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
 // sees the badge and can click "N cloud" to pull the peer's
 // reports down. (`reportSyncBadgeTemplate` only hides when BOTH
 // local and remote counts are zero.)
-function reportSyncBadgeTemplate() {
+function syncBadgeTemplate() {
   if (triageSync.status !== 'online') return nothing
   if (state.currentView !== 'findings' && state.currentView !== 'files') return nothing
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
   if (mode === 'single') {
+    // Single-file view: chip reflects just the active report's
+    // status. Bundles aren't represented here — they live in the
+    // workspace context, which the user can navigate to via the
+    // sidebar to see the combined badge.
     const name = fileNames[0]
     const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
     return badgeChipButton({
@@ -452,7 +456,7 @@ function reportSyncBadgeTemplate() {
         ? 'Synced to remote'
         : 'Local only — click to upload',
       onClick: status === 'local'
-        ? () => openUploadFromBadge({ workspaceId, fileNames: [name] })
+        ? () => openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: name }] })
         : null,
     })
   }
@@ -486,9 +490,32 @@ function reportSyncBadgeTemplate() {
   // Hides entirely when both chunks would render empty (e.g. a
   // freshly-created workspace with no peers and no local
   // reports). Empty-workspace bug fix #4.
+  //
+  // Aggregate reports + bundles into a single badge: the user sees
+  // one "N cloud / M local" pair in the header instead of two
+  // side-by-side badges. The click handlers fan out to a unified
+  // upload / download dialog that lists items of both kinds.
+  //
+  // `cloudCount` is just `remoteCount` (reports + bundles together
+  // — `remoteCount` is the cardinality of remoteTags, which now
+  // includes both kinds). The earlier split (`remoteCount -
+  // remoteBundleCount + remoteBundleCount`) algebraically collapsed
+  // to this; keeping the simpler form pins the relationship clearly.
+  // The actual report-vs-bundle dispatch happens in
+  // `openDownloadFromBadge`, which fans out both discovery passes
+  // and assembles the unified dialog item list.
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
   const cloudCount = remoteCount(workspaceId)
-  const localOnly = fileNames.filter((n) => !isInRemote(workspaceId, n))
-  const intersection = fileNames.length - localOnly.length
+  const localOnlyReports = fileNames.filter((n) => !isInRemote(workspaceId, n))
+  const localOnlyBundles = localBundles.filter((i) => !isBundleInRemote(workspaceId, i))
+  const localOnly = [
+    ...localOnlyReports.map((n) => ({ kind: 'report', identifier: n })),
+    ...localOnlyBundles.map((i) => ({ kind: 'bundle', identifier: i })),
+  ]
+  const reportIntersection = fileNames.length - localOnlyReports.length
+  const bundleIntersection = localBundles.length - localOnlyBundles.length
+  const intersection = reportIntersection + bundleIntersection
   const remoteOnlyCount = Math.max(0, cloudCount - intersection)
   // `remoteOnlyCount` is the authoritative count (derived from the
   // full HMAC-tag inventory). The click handler awaits
@@ -510,18 +537,18 @@ function reportSyncBadgeTemplate() {
       ? html`<button
           type="button"
           class="sync-badge-chunk cloud"
-          aria-label=${`${remoteOnlyCount} remote reports not yet downloaded — open download dialog`}
-          @click=${(e) => { e.stopPropagation(); openDownloadFromBadge({ workspaceId, localFileNames: fileNames }) }}
+          aria-label=${`${remoteOnlyCount} remote items not yet downloaded — open download dialog`}
+          @click=${(e) => { e.stopPropagation(); openDownloadFromBadge({ workspaceId, localFileNames: fileNames, localBundles }) }}
         >${cloudIconTpl()}<span>${cloudCount} cloud</span></button>`
-      : html`<span class="sync-badge-chunk cloud" aria-label=${`${cloudCount} reports in remote`}>
+      : html`<span class="sync-badge-chunk cloud" aria-label=${`${cloudCount} items in remote`}>
           ${cloudIconTpl()}<span>${cloudCount} cloud</span>
         </span>`
   const localChunk = localOnly.length === 0 ? nothing
     : html`<button
         type="button"
         class="sync-badge-chunk local"
-        aria-label=${`${localOnly.length} reports not yet uploaded — open upload dialog`}
-        @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, fileNames: localOnly }) }}
+        aria-label=${`${localOnly.length} items not yet uploaded — open upload dialog`}
+        @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, items: localOnly }) }}
       >${localIconTpl()}<span>${localOnly.length} local</span></button>`
   // The divider only shows when BOTH chunks are present.
   const divider = (cloudCount > 0 && localOnly.length > 0)
@@ -574,28 +601,63 @@ function cloudIconTpl() {
   </svg>`
 }
 
-async function openUploadFromBadge({ workspaceId, fileNames }) {
-  const { openUploadDialog } = await import('./upload-dialog.js')
-  await openUploadDialog({ workspaceId, fileNames })
+async function openUploadFromBadge({ workspaceId, items }) {
+  // Resolve user-friendly labels for the bundle items so the dialog
+  // shows the actual sidebar name (e.g. "my-app.js") instead of the
+  // sha512 prefix fallback. The bundle metadata `_meta.json` is the
+  // source of truth for the local label — pull it once and join.
+  const bundleItems = items.filter((i) => i.kind === 'bundle')
+  if (bundleItems.length > 0) {
+    const { listBundles } = await import('../../client/storage.js')
+    const meta = await listBundles()
+    const labelByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
+    for (const item of bundleItems) {
+      const name = labelByIntegrity.get(item.identifier)
+      if (name) item.label = name
+    }
+  }
+  const { openSyncUploadDialog } = await import('./sync-upload-dialog.js')
+  await openSyncUploadDialog({ workspaceId, items })
 }
 
-async function openDownloadFromBadge({ workspaceId, localFileNames }) {
+async function openDownloadFromBadge({ workspaceId, localFileNames, localBundles }) {
   // Await the full background-discovery pass before opening the
-  // dialog. The badge's clickable cloud-chunk count (`cloudCount -
-  // intersection`) reflects the full HMAC-tag inventory, while
-  // `remoteFileNames` is sync and only returns names whose
-  // `fetchByTag` has already resolved. If we passed the sync
-  // list to the dialog, a partially-decoded inventory would open
-  // with fewer entries than the badge advertised — sometimes
-  // zero (review r3252019240). `discoverRemoteFileNames` awaits
-  // every in-flight + queues any not-yet-started discovery,
-  // returning the complete decoded set.
-  const { discoverRemoteFileNames } = await import('./objstore-presence.js')
-  const { openDownloadDialog } = await import('./download-dialog.js')
-  const allRemote = await discoverRemoteFileNames(workspaceId)
-  const localSet = new Set(localFileNames)
-  const fileNames = allRemote.filter((n) => !localSet.has(n))
-  await openDownloadDialog({ workspaceId, fileNames })
+  // dialog. The badge's clickable cloud-chunk count reflects the
+  // full HMAC-tag inventory, while the synchronous remote-name /
+  // remote-integrity getters only return what `fetchByTag` has
+  // already resolved. If we passed the sync lists to the dialog, a
+  // partially-decoded inventory would open with fewer entries than
+  // the badge advertised — sometimes zero (review r3252019240).
+  // `discoverRemote*` awaits every in-flight + queues any not-yet-
+  // started discovery, returning the complete decoded set for each
+  // kind.
+  const {
+    discoverRemoteBundleIntegrities,
+    discoverRemoteFileNames,
+    remoteBundleName,
+  } = await import('./objstore-presence.js')
+  const [remoteReports, remoteBundles] = await Promise.all([
+    discoverRemoteFileNames(workspaceId),
+    discoverRemoteBundleIntegrities(workspaceId),
+  ])
+  const localReportsSet = new Set(localFileNames)
+  const localBundlesSet = new Set(localBundles)
+  const items = [
+    ...remoteReports
+      .filter((n) => !localReportsSet.has(n))
+      .map((n) => ({ kind: 'report', identifier: n })),
+    ...remoteBundles
+      .filter((i) => !localBundlesSet.has(i))
+      .map((i) => {
+        // The discovery worker stashed the user-friendly name when it
+        // classified this integrity; surface it as the dialog label
+        // so the user sees "my-app.js" instead of the sha512 prefix.
+        const label = remoteBundleName(workspaceId, i)
+        return label ? { kind: 'bundle', identifier: i, label } : { kind: 'bundle', identifier: i }
+      }),
+  ]
+  const { openSyncDownloadDialog } = await import('./sync-download-dialog.js')
+  await openSyncDownloadDialog({ workspaceId, items })
 }
 
 // Resolve which workspace + which loaded report file-names the

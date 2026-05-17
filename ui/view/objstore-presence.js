@@ -27,10 +27,10 @@
 // tag-to-name rebinding.
 
 import { createObjstoreSession, deriveObjstoreKeys } from '../../client/objstore.ts'
-import { computeResourceTag } from '../../client/objstore-content-crypto.ts'
+import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
 import { triageSync } from '../../client/triage-sync.ts'
-import { addReportToWorkspace, listWorkspaces } from '../../client/workspaces.js'
-import { gunzipBytes, listFiles, saveFileBytes } from '../../client/storage.js'
+import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged } from '../../client/workspaces.js'
+import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../../client/storage.js'
 import { analyzeContent, setCount } from '../../client/counts.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 
@@ -42,6 +42,12 @@ const listeners = new Set()
 // active so the new report joins state.reports without a manual
 // refresh.
 const autoDownloadListeners = new Set()
+// Same shape for bundles — fires after `maybeAutoDownloadBundle` (or
+// an explicit `fetchBundleFromRemote` followed by attach) lands a
+// new bundle's bytes in OPFS + claims it under a workspace. The UI
+// bridge re-renders the sidebar (so `state.bundles` picks up the
+// new entry) and the bundles main view if active.
+const bundleAutoDownloadListeners = new Set()
 
 function notify() {
   for (const cb of listeners) {
@@ -86,6 +92,23 @@ function formatEntryErr(err) {
   try { return `: ${String(err)}` } catch { return '' }
 }
 
+// Receiver-side defensive cap on the user-friendly bundle name.
+// The wire wrap allows up to 64 KiB (u16BE length prefix) — a
+// misbehaving workspace member could ship a huge name to bloat the
+// OPFS `_meta.json` blob and break the sidebar render. Clamp before
+// passing to `saveBundle`. 256 bytes is comfortably past any
+// reasonable filename. UTF-8 truncation at a non-codepoint boundary
+// would produce mojibake but never a JSON-stringify failure, so we
+// slice by JS string length (codepoints) rather than byte length
+// to keep the cap easy to reason about.
+const MAX_RECEIVED_BUNDLE_NAME_LEN = 256
+
+function clampBundleName(name) {
+  if (typeof name !== 'string') return ''
+  if (name.length <= MAX_RECEIVED_BUNDLE_NAME_LEN) return name
+  return name.slice(0, MAX_RECEIVED_BUNDLE_NAME_LEN)
+}
+
 function httpOriginFromWsUrl(wsUrl) {
   try {
     const u = new URL(wsUrl)
@@ -109,24 +132,40 @@ export function openWorkspace(workspaceId) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   // `fileTags` mirrors the objstore's HMAC tags for every fileName
-  // the workspace knows locally. `remoteTags` is the set of tags
-  // the relay says the workspace holds; we compare them by HMAC.
+  // the workspace knows locally; `bundleTags` does the same for the
+  // workspace's claimed bundle integrities. `remoteTags` is the
+  // server-side inventory; we compare each tag against both forward
+  // maps to classify (report vs. bundle). The reverse maps
+  // (`remoteNameByTag` / `remoteBundleByTag`) are populated by the
+  // background `fetchByTag` discovery worker AND by upload paths
+  // that already know the name. `remoteBundleNameByIntegrity` carries
+  // the user-friendly bundle name surfaced by `fetchByTag` so the
+  // download dialog can render a meaningful label pre-fetch.
   const entry = {
     workspaceId,
     session: null, keys: null,
-    remoteTags: new Set(), fileTags: new Map(),
-    remoteNameByTag: new Map(), inFlight: new Map(),
+    remoteTags: new Set(),
+    fileTags: new Map(),
+    bundleTags: new Map(),
+    remoteNameByTag: new Map(),
+    remoteBundleByTag: new Map(),
+    remoteBundleNameByIntegrity: new Map(),
+    inFlight: new Map(),
     err: null, disposed: false, ready: null,
   }
   sessions.set(workspaceId, entry)
   entry.ready = (async () => {
     entry.keys = await deriveObjstoreKeys(ws.privateKey, ws.id)
     if (entry.disposed) return
-    // Pre-compute fileTags BEFORE opening the WS session so a render
-    // racing the boot has its lookups resolve (to `false`) rather
-    // than miss-and-return-false-with-no-cache.
+    // Pre-compute fileTags + bundleTags BEFORE opening the WS session
+    // so a render racing the boot has its lookups resolve (to `false`)
+    // rather than miss-and-return-false-with-no-cache.
     for (const name of ws.reports ?? []) {
       entry.fileTags.set(name, await computeResourceTag(entry.keys.tagKey, name))
+    }
+    if (entry.disposed) return
+    for (const integrity of ws.bundles ?? []) {
+      entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
     }
     if (entry.disposed) return
     notify()
@@ -165,10 +204,29 @@ export function openWorkspace(workspaceId) {
         entry.remoteTags.delete(resourceTag)
         const name = entry.remoteNameByTag.get(resourceTag)
         entry.remoteNameByTag.delete(resourceTag)
+        // Re-resolve the workspace's live `reports` / `bundles` at
+        // each broadcast instead of reading the closure-captured `ws`.
+        // The boot-time snapshot would miss any identifier the user
+        // attached AFTER openWorkspace (via drag-drop, import, or
+        // auto-download from another peer), and an onDeleted for
+        // that fresh identifier would incorrectly drop its tag from
+        // the local fileTags / bundleTags cache. The cost is one
+        // localStorage parse per delete broadcast — rare enough to
+        // be neutral.
+        const live = listWorkspaces().find((w) => w.id === workspaceId)
+        const liveReports = live?.reports ?? []
+        const liveBundles = live?.bundles ?? []
         // Drop fileTags only for names we ONLY learned via remote
-        // discovery — if `ws.reports` contains the name, the local
+        // discovery — if the workspace claims the name, the local
         // owner is keeping the tag fresh.
-        if (name && !(ws.reports ?? []).includes(name)) entry.fileTags.delete(name)
+        if (name && !liveReports.includes(name)) entry.fileTags.delete(name)
+        // Mirror the cleanup for bundles.
+        const integrity = entry.remoteBundleByTag.get(resourceTag)
+        entry.remoteBundleByTag.delete(resourceTag)
+        if (integrity) {
+          entry.remoteBundleNameByIntegrity.delete(integrity)
+          if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
+        }
         notify()
       })
     } catch (err) {
@@ -201,6 +259,35 @@ export function closeWorkspace(workspaceId) {
   sessions.delete(workspaceId)
   notify()
 }
+
+// Pre-derive tags for newly-attached identifiers so the synchronous
+// `isInRemote` / `isBundleInRemote` predicates can answer correctly
+// immediately after a drag-drop / import without waiting for the
+// next sidebar render to call `trackFile` / `trackBundle`. Without
+// these subscriptions, `setReportWorkspace` / `setBundleWorkspace`
+// mutates the workspace blob but the presence module's `fileTags`
+// / `bundleTags` forward maps stay snapshotted at boot time — an
+// `onDeleted` broadcast race for a freshly-attached identifier
+// would then mis-classify whether the local owner is keeping the
+// tag fresh.
+onReportMembershipChanged((workspaceId) => {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  if (!ws) return
+  for (const name of ws.reports ?? []) {
+    if (!entry.fileTags.has(name)) trackFile(workspaceId, name).catch(() => {})
+  }
+})
+onBundleMembershipChanged((workspaceId) => {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return
+  const ws = listWorkspaces().find((w) => w.id === workspaceId)
+  if (!ws) return
+  for (const integrity of ws.bundles ?? []) {
+    if (!entry.bundleTags.has(integrity)) trackBundle(workspaceId, integrity).catch(() => {})
+  }
+})
 
 // Enumerate workspaceIds with a live presence entry — used by
 // `switchToWorkspace` to close out every prior session without
@@ -238,6 +325,30 @@ export async function trackFile(workspaceId, fileName) {
   if (!entry.disposed) notify()
 }
 
+// Bundle counterpart of `isInRemote` — synchronous predicate the
+// render path can use to flip a bundle row's `local` / `cloud` badge
+// without an await. Worst case: returns `false` while the session is
+// still booting, then notify() re-renders once the tag lands.
+export function isBundleInRemote(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return false
+  const tag = entry.bundleTags.get(integrity)
+  if (!tag) return false
+  return entry.remoteTags.has(tag)
+}
+
+// Pre-warm the bundle tag cache. Mirrors `trackFile` for bundles —
+// called when a bundle is freshly attached to a workspace, so a
+// follow-up `isBundleInRemote` check has the tag ready.
+export async function trackBundle(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry || entry.bundleTags.has(integrity)) return
+  if (entry.ready && !entry.keys) await entry.ready
+  if (!entry.keys) return
+  entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
+  if (!entry.disposed) notify()
+}
+
 export function onChange(cb) {
   listeners.add(cb)
   return () => listeners.delete(cb)
@@ -254,6 +365,18 @@ export function onChange(cb) {
 export function onAutoDownloaded(cb) {
   autoDownloadListeners.add(cb)
   return () => autoDownloadListeners.delete(cb)
+}
+
+// Bundle counterpart of `onAutoDownloaded`. Fires after a
+// peer-uploaded bundle lands locally — either via the background
+// `maybeAutoDownloadBundle` worker OR via an explicit user-driven
+// `fetchBundleFromRemote`. `cb(workspaceId, integrity, name)`. The
+// UI bridge re-renders the sidebar so `state.bundles` picks up the
+// new entry; if the bundles main view is active, the view re-renders
+// against the refreshed state.bundles too.
+export function onBundleAutoDownloaded(cb) {
+  bundleAutoDownloadListeners.add(cb)
+  return () => bundleAutoDownloadListeners.delete(cb)
 }
 
 // Enumerate the workspace's remote inventory by fileName. The wire
@@ -296,6 +419,50 @@ export async function discoverRemoteFileNames(workspaceId) {
   return Array.from(entry.remoteNameByTag.values())
 }
 
+// Enumerate peer-uploaded bundle integrities discovered via
+// `fetchByTag`. Like `remoteFileNames`, returns whatever the
+// background discovery worker has classified so far. The workspace
+// badge's "M cloud" bundle count uses this for the actionable
+// (downloadable) subset; the total remote count via `remoteCount`
+// covers ALL tags (reports + bundles + unclassified).
+export function remoteBundleIntegrities(workspaceId) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return []
+  return Array.from(entry.remoteBundleByTag.values())
+}
+
+// Total number of remote BUNDLES (classified subset of remoteTags).
+// `remoteCount` covers everything; this narrows to the bundle slice
+// for the workspace badge's bundles chunk.
+export function remoteBundleCount(workspaceId) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return 0
+  return entry.remoteBundleByTag.size
+}
+
+// Awaits discovery of every peer-uploaded bundle then returns the
+// resulting integrities. The download-bundles dialog calls this on
+// open so it doesn't race the background classification worker.
+export async function discoverRemoteBundleIntegrities(workspaceId) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return []
+  if (entry.ready && !entry.session) await entry.ready
+  if (!entry.session) return []
+  await ensureRemoteNames(entry)
+  return Array.from(entry.remoteBundleByTag.values())
+}
+
+// Synchronous lookup of the user-friendly name for a remote bundle
+// integrity, populated by the discovery worker from `fetchByTag`.
+// Returns undefined if the integrity hasn't been discovered yet (or
+// isn't in remote). Used by the download dialog to render a
+// meaningful label instead of the integrity-prefix fallback.
+export function remoteBundleName(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) return undefined
+  return entry.remoteBundleNameByIntegrity.get(integrity)
+}
+
 // Background discovery worker. For each remote tag we don't yet
 // have a name for, kick a `fetchByTag` and stash the decrypted
 // fileName + a fileTags entry. Multiple concurrent
@@ -308,6 +475,7 @@ async function ensureRemoteNames(entry) {
   const pending = []
   for (const tag of entry.remoteTags) {
     if (entry.remoteNameByTag.has(tag)) continue
+    if (entry.remoteBundleByTag.has(tag)) continue
     let p = entry.inFlight.get(tag)
     if (!p) {
       p = entry.session.fetchByTag(tag).then(
@@ -322,6 +490,24 @@ async function ensureRemoteNames(entry) {
           // handler; without this gate the auto-download below
           // would race-restore the file the user just deleted.
           if (!entry.remoteTags.has(tag)) return null
+          if (got.kind === 'bundle') {
+            // Peer-uploaded bundle. Stash the integrity for the
+            // workspace badge's "M cloud" count + reverse-lookup so
+            // a future `isBundleInRemote(integrity)` check can short-
+            // circuit. Then run the auto-download path: save the
+            // bytes to OPFS, attach to the workspace. Mirrors the
+            // report path below — same threat model (anyone with
+            // the workspace key can PUT; we re-hash on download to
+            // detect content forgery), same trust posture (a peer-
+            // initiated drop lands silently in the workspace just
+            // like triage changes do).
+            entry.remoteBundleByTag.set(tag, got.integrity)
+            entry.bundleTags.set(got.integrity, tag)
+            if (got.name) entry.remoteBundleNameByIntegrity.set(got.integrity, got.name)
+            await maybeAutoDownloadBundle(entry, tag, got.integrity, got.name, got.content)
+            return null
+          }
+          // Report path (existing behavior).
           entry.remoteNameByTag.set(tag, got.fileName)
           entry.fileTags.set(got.fileName, tag)
           // Auto-download: if a peer-uploaded report isn't on local
@@ -484,6 +670,92 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
   }
 }
 
+// Auto-download counterpart for bundles. Sibling of
+// `maybeAutoDownload` (reports), with three key differences:
+//   1. Bundles are content-addressed (sha512), so we re-hash the
+//      decrypted bytes and refuse on mismatch — the same forgery
+//      defense `fetchBundleFromRemote` uses for explicit downloads.
+//   2. No `analyzeContent`-style format gate (bundles can be any
+//      bytes; the sha512 match is the entire trust gate).
+//   3. The local OPFS key is the integrity, not the user-friendly
+//      name — `saveBundle` re-hashes and persists under the
+//      canonical key, deduping if the same bytes already exist.
+async function maybeAutoDownloadBundle(entry, tag, integrity, name, bytes) {
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  // Skip if we already have this integrity locally (we uploaded it
+  // ourselves and the broadcast is the echo, or a sibling tab
+  // already downloaded it).
+  let existing
+  try { existing = await listBundles() }
+  catch (err) {
+    console.warn(`auto-download: listBundles failed before saving bundle "${integrity}":`, err)
+    return
+  }
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  // Multi-workspace membership (mirrors the report-side maybeAutoDownload
+  // shape): `addBundleToWorkspace` ADDS to our workspace without
+  // detaching from any other workspace that already lists the
+  // integrity. A peer of workspace B uploading a bundle the user
+  // already had attached to workspace A no longer relocates the
+  // bundle from A to B — both workspaces converge to listing it.
+  if (existing.some((b) => b.integrity === integrity)) {
+    // Already local — additively attach to this workspace (no-op when
+    // already claimed here, thanks to the W-4 / aff-empty short-
+    // circuits in setWorkspaceMembership).
+    try { await addBundleToWorkspace(integrity, entry.workspaceId) }
+    catch (err) {
+      console.warn(`auto-download: attach pre-existing bundle failed:`, err)
+      return
+    }
+    if (entry.disposed) return
+    // Fire the auto-downloaded listeners so the UI bridge refreshes
+    // the sidebar — symmetric with the report-side
+    // `maybeAutoDownload` already-local branch. Without this, a
+    // peer's broadcast that hits this path attaches the bundle to
+    // the workspace but the sidebar stays stale until the next
+    // unrelated render. The name comes from the local OPFS metadata
+    // (the user's existing label) — for a peer-uploaded duplicate
+    // the user's local name wins, which matches the "local bytes
+    // win" trust posture on the report side.
+    const localName = existing.find((b) => b.integrity === integrity)?.name ?? ''
+    for (const cb of bundleAutoDownloadListeners) {
+      try { cb(entry.workspaceId, integrity, localName) } catch {}
+    }
+    return
+  }
+  // Re-hash check. AAD-bound name binding catches a tag-name swap;
+  // the re-hash is the SOLE defense against a workspace member
+  // PUTting bytes that don't actually hash to the claimed integrity.
+  const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
+  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  if (computed !== integrity) {
+    console.warn(`auto-download: bundle integrity mismatch (claimed ${integrity}, got ${computed}) — refusing to save`)
+    return
+  }
+  // Clamp the user-friendly name. The wire wrapper allows up to 64
+  // KiB but bundle names in the sidebar / OPFS metadata expect
+  // something filename-sized. A misbehaving workspace member could
+  // ship a 64 KiB name to bloat localStorage metadata and break the
+  // sidebar render — cap defensively at 256 bytes (filename-like).
+  const rawName = name && name.length > 0
+    ? name
+    : `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 8)}`
+  const fallbackName = clampBundleName(rawName)
+  try {
+    await saveBundle(fallbackName, bytes)
+    if (entry.disposed || !entry.remoteTags.has(tag)) return
+    await addBundleToWorkspace(integrity, entry.workspaceId)
+  } catch (err) {
+    console.warn(`auto-download: persisting bundle "${integrity}" to workspace "${entry.workspaceId}" failed:`, err)
+    return
+  }
+  if (entry.disposed) return
+  for (const cb of bundleAutoDownloadListeners) {
+    try { cb(entry.workspaceId, integrity, fallbackName) } catch {}
+  }
+}
+
 // Fetch the plaintext content for a single remote report. Reuses
 // the workspace's open objstore session so the call piggybacks on
 // the existing signed connection rather than minting a one-shot
@@ -603,3 +875,142 @@ export async function deleteFromRemote(workspaceId, fileName) {
     if (openedHere) closeWorkspace(workspaceId)
   }
 }
+
+// Upload the bundle bytes addressed by `integrity` to the workspace's
+// remote objstore. Reads from OPFS via `readBundle`, encrypts under
+// the workspace's contentKey, PUTs with optimistic-concurrency retry
+// on conflict. The objstore-put broadcast feeds back via our session's
+// subscription and flips `isBundleInRemote` for the integrity.
+//
+// Caller must have called openWorkspace() first; throws if the
+// session isn't ready (the upload dialog gates on
+// `triageSync.status === 'online'` + presence readiness before
+// offering the action).
+export async function putBundleToRemote(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
+  if (entry.ready && !entry.session) await entry.ready
+  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  const content = await readBundle(integrity)
+  // Pull the user-friendly name from the local bundle metadata so the
+  // peer downloading this bundle sees the original sidebar label
+  // (vs. a `bundle-<integrity-prefix>` fallback). The metadata is
+  // keyed by integrity; on a miss (race: bundle deleted between the
+  // user clicking Upload and this read) we fall back to a synthetic
+  // label rather than failing the upload entirely.
+  const meta = await listBundles()
+  const found = meta.find((b) => b.integrity === integrity)
+  const name = found?.name ?? `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 8)}`
+  let result = await entry.session.putBundle({ integrity, name, content, prevVersion: null })
+  if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
+    result = await entry.session.putBundle({ integrity, name, content, prevVersion: result.currentVersion })
+  }
+  return result
+}
+
+// Download a bundle from the workspace's remote objstore, save it to
+// OPFS, and attach it to the workspace. Mirrors the report
+// download flow (download-dialog.js → fetchFile → saveFileBytes →
+// setReportWorkspace) but content-addressed: after decrypt we
+// re-hash the bytes and verify the sha512 matches the requested
+// integrity. The re-hash is the SOLE defense against content
+// forgery — a workspace member (anyone with the contentKey + tagKey)
+// can PUT a blob whose embedded `name` slot says integrity-X while
+// the accompanying bytes hash to anything else, and AAD/AEAD/name-
+// binding all pass cleanly. See the inline comment at the re-hash
+// site for the full failure mode.
+//
+// Returns `{ ok: true, integrity }` on success or `{ ok: false,
+// reason }` on a download / validation failure.
+export async function fetchBundleFromRemote(workspaceId, integrity) {
+  const entry = sessions.get(workspaceId)
+  if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
+  if (entry.ready && !entry.session) await entry.ready
+  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  const result = await entry.session.fetchBundle(integrity)
+  if (!result) return { ok: false, reason: 'not-found' }
+  // Verify integrity hash on download. This is the ONLY defense
+  // against content forgery: the AAD-bound name check inside
+  // `fetchBundle` verifies the encrypted plaintext's `name` slot
+  // equals the requested integrity, but it does NOT verify that the
+  // accompanying content bytes actually hash to that integrity. A
+  // workspace member (anyone with the workspace's contentKey + tagKey)
+  // can PUT a blob whose name slot says "sha512-X" but whose content
+  // is arbitrary — AAD/AEAD/name-binding all pass. Without this
+  // re-hash, the user would receive whatever-bytes under a label
+  // that lies about their integrity, and `saveBundle` would store
+  // them under whatever they ACTUALLY hash to — leaving the
+  // workspace's `bundles` list pointing at a sha512 that never
+  // landed locally.
+  const hashBuf = await crypto.subtle.digest('SHA-512', result.content)
+  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  if (computed !== integrity) {
+    return { ok: false, reason: 'integrity-mismatch' }
+  }
+  // `saveBundle` takes (name, content) and computes its own integrity.
+  // The user-friendly bundle name now rides in the encrypted payload
+  // (carried by `fetchBundle` via the structured content wrap), so
+  // peers see the original sidebar label. Fall back to a synthetic
+  // label only if the peer somehow shipped an empty string (malformed
+  // payload from a buggy peer).
+  const rawName = result.name && result.name.length > 0
+    ? result.name
+    : `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 8)}`
+  const name = clampBundleName(rawName)
+  await saveBundle(name, result.content)
+  // Fire the auto-downloaded listeners so the UI bridge can
+  // refresh the sidebar + bundles view — explicit dialog-driven
+  // downloads need the same post-save UI refresh that
+  // `maybeAutoDownloadBundle` triggers for background discovery.
+  for (const cb of bundleAutoDownloadListeners) {
+    try { cb(workspaceId, integrity, name) } catch {}
+  }
+  return { ok: true, integrity, name }
+}
+
+// Delete a bundle's remote copy. Mirrors `deleteFromRemote` for
+// reports — idempotent on missing, drops the local cache entry
+// synchronously to prevent a race-restore from an in-flight
+// `fetchByTag` discovery.
+//
+// Used by the local Delete dialog (when the user explicitly deletes
+// a bundle from remote) — bundle membership detach during workspace
+// leave / drag-out does NOT touch remote (vs. reports, which DO drop
+// remote on drag-out); bundle bytes are content-addressed and may be
+// shared across workspaces, so dropping them from one workspace's
+// remote could orphan another workspace that hadn't yet downloaded.
+export async function deleteBundleFromRemote(workspaceId, integrity) {
+  let openedHere = false
+  if (!sessions.has(workspaceId)) {
+    openWorkspace(workspaceId)
+    openedHere = true
+  }
+  try {
+    const entry = sessions.get(workspaceId)
+    if (!entry) throw new Error(`Workspace ${workspaceId} could not be opened — not in listWorkspaces()?`)
+    if (entry.ready && !entry.session) await entry.ready
+    if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+    if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
+    if (!entry.bundleTags.has(integrity)) {
+      entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
+    }
+    const tag = entry.bundleTags.get(integrity)
+    let result = await entry.session.deleteBundle(integrity, null)
+    if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
+      result = await entry.session.deleteBundle(integrity, result.currentVersion)
+    }
+    if (result.ok) {
+      entry.remoteTags.delete(tag)
+      entry.remoteBundleByTag.delete(tag)
+      notify()
+    }
+    return result
+  } finally {
+    if (openedHere) closeWorkspace(workspaceId)
+  }
+}
+
+// `isInRemote` for bundles is exported above as `isBundleInRemote`.
+// The unfiled-bundle-bytes path (`putBundleToRemote` from the user
+// dragging a bundle into a workspace + then explicitly clicking
+// upload) also exists above.

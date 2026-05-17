@@ -11,7 +11,7 @@ import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js
 import { attachSharedWorkspace, listWorkspaces, syncObservedAfterHydrate } from '../client/workspaces.js'
 import { setRedraw, triageSync } from '../client/triage-sync.ts'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
-import { onAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
+import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
 import { state } from '../client/state.ts'
 import { runLegacyOriginCheck } from './view/origin-check.js'
 import { render } from './view/render.js'
@@ -79,6 +79,14 @@ onAutoDownloaded(async (workspaceId) => {
   } else {
     await renderSidebar()
   }
+})
+// Bundle auto-download bridge. Bundles aren't part of state.reports
+// so `switchToWorkspace` isn't needed — just refresh the sidebar
+// (which re-populates `state.bundles` via `listBundles()`) and the
+// main view if the user is currently looking at the bundles list.
+onBundleAutoDownloaded(async () => {
+  await renderSidebar()
+  if (state.currentView === 'bundles') render()
 })
 // Same bridge for the report-attach conflict dialog: triage-sync
 // surfaces conflicts via a callback the UI installs here.

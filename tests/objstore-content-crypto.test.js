@@ -9,10 +9,13 @@ import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
 import {
+  computeBundleResourceTag,
   computeResourceTag,
   decryptObjstorePayload,
   deriveObjstoreKeys,
   encryptObjstorePayload,
+  unwrapBundleContent,
+  wrapBundleContent,
 } from '../client/objstore-content-crypto.ts'
 import { deriveSigningKeypair } from '../client/sync-crypto.ts'
 
@@ -102,6 +105,95 @@ describe('client/objstore-content-crypto', () => {
       const tag = await computeResourceTag(tagKey, 'super-secret-filename.json')
       assert.ok(!tag.includes('secret'), 'tag must not embed the plaintext')
       assert.ok(!tag.includes('filename'), 'tag must not embed the plaintext')
+    })
+  })
+
+  describe('computeBundleResourceTag', () => {
+    it('is deterministic per (tagKey, integrity)', async () => {
+      const { tagKey } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws-1')
+      const a = await computeBundleResourceTag(tagKey, 'sha512-AAAA')
+      const b = await computeBundleResourceTag(tagKey, 'sha512-AAAA')
+      assert.equal(a, b)
+    })
+
+    it('produces a 43-char base64url string (HMAC-SHA-256 → no padding)', async () => {
+      const { tagKey } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws-1')
+      const tag = await computeBundleResourceTag(tagKey, 'sha512-AAAA')
+      assert.match(tag, /^[\w-]{43}$/u)
+    })
+
+    it('different integrities produce different tags', async () => {
+      const { tagKey } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws-1')
+      const a = await computeBundleResourceTag(tagKey, 'sha512-AAAA')
+      const b = await computeBundleResourceTag(tagKey, 'sha512-BBBB')
+      assert.notEqual(a, b)
+    })
+
+    it('bundle and report tags are disjoint for the same input string', async () => {
+      // Domain separation: a report named "foo" and a (hypothetical)
+      // bundle with integrity "foo" must produce different wire tags
+      // under the same tagKey. Without the distinct HMAC prefixes
+      // (`objstore-tag\n` vs. `objstore-bundle-tag\n`) the same
+      // string would HMAC to the same value and the report and
+      // bundle namespaces would collide on the relay's storage.
+      const { tagKey } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws-1')
+      const sameInput = 'sha512-COLLIDE'
+      const reportTag = await computeResourceTag(tagKey, sameInput)
+      const bundleTag = await computeBundleResourceTag(tagKey, sameInput)
+      assert.notEqual(reportTag, bundleTag,
+        'report and bundle tag derivations must be disjoint for the same input')
+    })
+
+    it('different tagKeys produce different bundle tags for the same integrity', async () => {
+      const x = await deriveObjstoreKeys(Buffer.alloc(32, 1).toString('base64'), 'ws')
+      const y = await deriveObjstoreKeys(Buffer.alloc(32, 2).toString('base64'), 'ws')
+      const tagX = await computeBundleResourceTag(x.tagKey, 'sha512-AAAA')
+      const tagY = await computeBundleResourceTag(y.tagKey, 'sha512-AAAA')
+      assert.notEqual(tagX, tagY)
+    })
+
+    it('the bundle tag does NOT leak the plaintext integrity', async () => {
+      const { tagKey } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws-1')
+      const tag = await computeBundleResourceTag(tagKey, 'sha512-SECRET-INTEGRITY-AAAA')
+      assert.ok(!tag.includes('SECRET'), 'tag must not embed the plaintext')
+      assert.ok(!tag.includes('INTEGRITY'), 'tag must not embed the plaintext')
+    })
+  })
+
+  describe('wrapBundleContent + unwrapBundleContent', () => {
+    it('round-trips (name, content) through wrap → unwrap', () => {
+      const content = Buffer.from('the actual bundle bytes go here')
+      const wrapped = wrapBundleContent('my-app.bundle.js', content)
+      const got = unwrapBundleContent(wrapped)
+      assert.equal(got.name, 'my-app.bundle.js')
+      assert.equal(Buffer.compare(Buffer.from(got.content), content), 0)
+    })
+
+    it('handles empty content', () => {
+      const wrapped = wrapBundleContent('empty.js', new Uint8Array(0))
+      const got = unwrapBundleContent(wrapped)
+      assert.equal(got.name, 'empty.js')
+      assert.equal(got.content.length, 0)
+    })
+
+    it('handles UTF-8 names with multi-byte characters', () => {
+      const content = Buffer.from('x')
+      const wrapped = wrapBundleContent('日本語.bundle.js', content)
+      const got = unwrapBundleContent(wrapped)
+      assert.equal(got.name, '日本語.bundle.js')
+    })
+
+    it('refuses to wrap a name longer than 65535 bytes', () => {
+      // The u16BE length prefix caps the name at 0xffff bytes.
+      const tooLong = 'a'.repeat(0x10000)
+      assert.throws(() => wrapBundleContent(tooLong, new Uint8Array(0)), /name too long/u)
+    })
+
+    it('refuses to unwrap a truncated payload', () => {
+      assert.throws(() => unwrapBundleContent(new Uint8Array(1)), /truncated/u)
+      // Length-prefix claims more bytes than present.
+      const bad = new Uint8Array([0xff, 0xff, 0x00])
+      assert.throws(() => unwrapBundleContent(bad), /overflows/u)
     })
   })
 

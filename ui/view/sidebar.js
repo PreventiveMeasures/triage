@@ -1069,13 +1069,14 @@ sidebar.addEventListener('drop', async (e) => {
   if (e.dataTransfer.types.includes(BUNDLE_DT)) {
     const integrity = e.dataTransfer.getData(BUNDLE_DT)
     if (!integrity) return
-    // Bundles have no objstore-presence counterpart yet — bytes live
-    // in OPFS only, never uploaded by the workspace sync layer. So
-    // the report-side `deleteRemote(source, filename)` dance has no
-    // bundle analogue here; the membership mutation alone is the
-    // whole operation. (If bundles ever start participating in the
-    // objstore protocol, mirror the deleteRemote step from the
-    // report branch below.)
+    // Same additive-add + scoped-remove shape as the report path
+    // below — multi-workspace membership applies to bundles too.
+    // Note: unlike the report path we DON'T call any remote-delete
+    // here; bundles are content-addressed and may be shared across
+    // workspaces / devices, so dragging a bundle out of one
+    // workspace must not drop the remote copy. Explicit deletion
+    // lives on the bundle row's Delete affordance, not as a side
+    // effect of drag-out.
     if (targetId) await addBundleToWorkspace(integrity, targetId)
     if (sourceWsId && sourceWsId !== targetId) await removeBundleFromWorkspace(integrity, sourceWsId)
     renderSidebar()

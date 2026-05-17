@@ -50,9 +50,12 @@ import {
 } from './objstore-crypto.ts'
 import {
   type ObjstoreKeys,
+  computeBundleResourceTag,
   computeResourceTag,
   decryptObjstorePayload,
   encryptObjstorePayload,
+  unwrapBundleContent,
+  wrapBundleContent,
 } from './objstore-content-crypto.ts'
 
 export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
@@ -100,7 +103,22 @@ export type DeleteResult =
 // (they passed it in). `fetchByTag` reverses the AAD-bound name and
 // returns both fields.
 export type FetchResult = { content: Uint8Array; version: number }
-export type FetchByTagResult = { fileName: string; content: Uint8Array; version: number }
+// Bundle fetch carries the user-friendly name alongside the bytes —
+// peers downloading a bundle they didn't upload themselves need this
+// to render a meaningful sidebar label. The integrity is what the
+// caller passed in.
+export type FetchBundleResult = { name: string; content: Uint8Array; version: number }
+// `fetchByTag` returns a discriminated union: the embedded "name" in
+// the encrypted payload is either a report fileName (kind='report')
+// or a bundle's sha512 integrity (kind='bundle'). The session decides
+// which by round-tripping the embedded name through both tag
+// derivations and matching against the requested resourceTag. Callers
+// that only care about reports can `if (r.kind === 'report')` and
+// discard bundles. The bundle branch additionally unwraps the
+// structured content prefix to surface the user-friendly bundle name.
+export type FetchByTagResult =
+  | { kind: 'report'; fileName: string; content: Uint8Array; version: number }
+  | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number }
 
 export type ObjstoreSessionDeps = {
   // WebSocket URL — `ws://host:port/api/sync` (the same URL the
@@ -155,6 +173,15 @@ export type ObjstoreSession = {
   // `fetchByTag` to surface the inner names.
   onPut(handler: (event: { resourceTag: string; version: number; contentLength: number }) => void): () => void
   onDeleted(handler: (event: { resourceTag: string; version: number }) => void): () => void
+  // Bundle-side put / fetch / delete. Same semantics as the report
+  // counterparts but the tag derives from a sha512 integrity and the
+  // wire HMAC uses a distinct domain-separation prefix. The user-
+  // friendly bundle name rides in a structured content prefix so
+  // peers downloading the bundle see the original name, not just
+  // the integrity.
+  putBundle(opts: { integrity: string; name: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult>
+  fetchBundle(integrity: string): Promise<FetchBundleResult | null>
+  deleteBundle(integrity: string, prevVersion: number | null): Promise<DeleteResult>
   close(): void
 }
 
@@ -680,23 +707,31 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     const raw = await _rawFetch(resourceTag)
     if (!raw) return null
     assertFreshOrLater(resourceTag, raw.meta.version)
-    const { fileName, content } = decryptObjstorePayload(contentKey, raw.bytes, workspaceTag, resourceTag)
-    // Re-derive the tag from the decrypted fileName and assert it
-    // matches the tag we asked for. AAD already pins the (workspace,
-    // tag) tuple at the AEAD layer — but a malicious workspace
-    // participant (anyone with the tagKey) could PUT an encrypted
-    // blob encoding `fileName=X` at the tag for `fileName=Y`, then
-    // a peer's `fetchByTag(tagY)` would surface `X` as the
-    // filename even though `fetch(X)` wouldn't find it (the
-    // round-trip is broken). Refuse the non-round-trippable result
-    // here so callers can rely on `fetchByTag(t).fileName` being a
-    // name they can fetch back. Audit round-1 M2.
-    const expected = await computeResourceTag(tagKey, fileName)
-    if (expected !== resourceTag) {
-      throw new Error('objstore: fetchByTag — decrypted fileName does not derive back to the requested resourceTag (relay or workspace member produced a non-round-trippable tag-name pair)')
+    // The decrypted payload's embedded "name" is one of:
+    //   - a report fileName (most common)
+    //   - a bundle's sha512 integrity (when the PUT was a bundle upload)
+    // Try the report-tag derivation first; on miss, try the bundle-tag
+    // derivation. Both share the same `tagKey` but use different HMAC
+    // prefixes, so a name that's a fileName won't accidentally match
+    // the bundle round-trip and vice versa. Audit round-1 M2 (now
+    // extended): refuse the non-round-trippable result so callers can
+    // rely on the returned identifier being one they can fetch back.
+    const { fileName: embeddedName, content } = decryptObjstorePayload(contentKey, raw.bytes, workspaceTag, resourceTag)
+    const expectedReport = await computeResourceTag(tagKey, embeddedName)
+    if (expectedReport === resourceTag) {
+      noteVersion(resourceTag, raw.meta.version)
+      return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version }
     }
-    noteVersion(resourceTag, raw.meta.version)
-    return { fileName, content, version: raw.meta.version }
+    const expectedBundle = await computeBundleResourceTag(tagKey, embeddedName)
+    if (expectedBundle === resourceTag) {
+      // Bundle path: the content is the structured wrap that
+      // putBundle produced. Unwrap to surface the user-friendly
+      // name so the caller can render a meaningful sidebar label.
+      const { name, content: bundleContent } = unwrapBundleContent(content)
+      noteVersion(resourceTag, raw.meta.version)
+      return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version }
+    }
+    throw new Error('objstore: fetchByTag — decrypted name does not derive back to the requested resourceTag under either the report or bundle tag scheme (relay or workspace member produced a non-round-trippable tag-name pair)')
   }
 
   async function deleteByName(fileName: string, prevVersion: number | null): Promise<DeleteResult> {
@@ -733,12 +768,77 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, contentLength: m.contentLength }))
   }
 
+  // Bundle counterparts of put / fetch / delete. Same wire flow,
+  // same AEAD/AAD binding, same _rawPut / _rawFetch / _rawDelete
+  // round-trip — only the tag derivation differs (uses the bundle
+  // HMAC prefix so bundle tags can't collide with report tags). The
+  // encrypted plaintext encodes the integrity in the same "name"
+  // slot that reports use for fileName; `fetchByTag` discriminates
+  // by attempting both round-trips. Listing + onPut / onDeleted
+  // broadcasts cover both kinds transparently — the caller decides
+  // whether to interpret each tag as a report or a bundle by
+  // comparing against its local maps.
+  async function putBundle(opts: { integrity: string; name: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+    const resourceTag = await computeBundleResourceTag(tagKey, opts.integrity)
+    // Wrap (name, content) into a single bytes blob — the user-
+    // friendly name rides in a structured prefix on the content
+    // slot, leaving the encryption primitive's "name" slot for the
+    // integrity (round-trip verification in `fetchByTag`).
+    const wrapped = wrapBundleContent(opts.name, opts.content)
+    const ciphertext = encryptObjstorePayload(contentKey, opts.integrity, wrapped, workspaceTag, resourceTag)
+    // Mirror the report `put` retry-on-contended shape so a peer
+    // commit-lock hold doesn't surface as a crash to the user.
+    const raw = await retryOnContended(() =>
+      _rawPut({ resourceTag, bytes: ciphertext, prevVersion: opts.prevVersion }))
+    if (raw.ok) {
+      if (opts.prevVersion == null) seenVersions.delete(resourceTag)
+      noteVersion(resourceTag, raw.meta.version)
+      return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
+    }
+    if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
+    if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
+    if (raw.current) noteVersion(resourceTag, raw.current.version)
+    return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+  }
+
+  async function fetchBundle(integrity: string): Promise<FetchBundleResult | null> {
+    const resourceTag = await computeBundleResourceTag(tagKey, integrity)
+    const raw = await _rawFetch(resourceTag)
+    if (!raw) return null
+    assertFreshOrLater(resourceTag, raw.meta.version)
+    const { fileName: decoded, content: wrapped } = decryptObjstorePayload(contentKey, raw.bytes, workspaceTag, resourceTag)
+    // AAD already pins (workspaceTag, resourceTag); the encoded
+    // integrity inside the plaintext is the independent third check.
+    if (decoded !== integrity) {
+      throw new Error(`objstore: bundle-integrity binding mismatch — requested '${integrity}', payload encoded '${decoded}'`)
+    }
+    const { name, content } = unwrapBundleContent(wrapped)
+    noteVersion(resourceTag, raw.meta.version)
+    return { name, content, version: raw.meta.version }
+  }
+
+  async function deleteBundle(integrity: string, prevVersion: number | null): Promise<DeleteResult> {
+    const resourceTag = await computeBundleResourceTag(tagKey, integrity)
+    const raw = await retryOnContended(() => _rawDelete(resourceTag, prevVersion))
+    if (raw.ok) {
+      seenVersions.delete(resourceTag)
+      return raw
+    }
+    if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
+    if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
+    if (raw.current) noteVersion(resourceTag, raw.current.version)
+    return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+  }
+
   return {
     put,
     fetch,
     fetchByTag,
     delete: deleteByName,
     list,
+    putBundle,
+    fetchBundle,
+    deleteBundle,
     onPut(handler) { putHandlers.add(handler); return () => { putHandlers.delete(handler) } },
     onDeleted(handler) { deletedHandlers.add(handler); return () => { deletedHandlers.delete(handler) } },
     close() {

@@ -17,11 +17,14 @@ import { after, before, describe, it } from 'node:test'
 import { createObjstoreSession, deriveObjstoreKeys } from '../client/objstore.ts'
 import { deleteFile, listFiles, readFileBytes, saveFileBytes } from '../client/storage.js'
 import { triageSync } from '../client/triage-sync.ts'
-import { createWorkspace, deleteWorkspace, listWorkspaces, setReportWorkspace } from '../client/workspaces.js'
+import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
 
 const {
-  closeWorkspace, deleteFromRemote, discoverRemoteFileNames, fetchFile, isInRemote,
-  onAutoDownloaded, onChange, openWorkspace, putFile, remoteCount, remoteFileNames,
+  closeWorkspace, deleteBundleFromRemote, deleteFromRemote,
+  discoverRemoteBundleIntegrities, discoverRemoteFileNames,
+  fetchFile, isBundleInRemote, isInRemote,
+  onAutoDownloaded, onChange, openWorkspace, putFile,
+  remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
 } = await import('../ui/view/objstore-presence.js')
 
 async function createWorkspaceWithReports(name, reports) {
@@ -685,6 +688,270 @@ describe('ui/view/objstore-presence', () => {
       await deleteWorkspace(wsA.id)
       await deleteWorkspace(wsB.id)
       await deleteFile(fileName)
+    }
+  })
+
+  // ------------------------------------------------------------------
+  // Bundle-side presence: classification, isBundleInRemote, deletion.
+  //
+  // The `putBundleToRemote` / `fetchBundleFromRemote` paths read or
+  // write OPFS bytes (bundle storage is OPFS-only — `saveBundle`
+  // explicitly throws when OPFS is unavailable). These node-side
+  // tests sidestep that by driving the wire directly through a peer
+  // session's `session.putBundle` and asserting the presence module's
+  // classification + caching is correct.
+  // ------------------------------------------------------------------
+
+  async function createWorkspaceWithBundles(name, bundles) {
+    const ws = await createWorkspace(name)
+    for (const b of bundles) await setBundleWorkspace(b, ws.id)
+    return ws
+  }
+
+  it('isBundleInRemote returns false for any workspace not opened', () => {
+    assert.equal(isBundleInRemote('nonexistent-ws', 'sha512-AAAA'), false)
+  })
+
+  it('peer putBundle → broadcast → isBundleInRemote flips to true for a claimed integrity', async () => {
+    const integrity = 'sha512-presence-bundle-AAAA'
+    const ws = await createWorkspaceWithBundles('presence-bundle-put', [integrity])
+    try {
+      openWorkspace(ws.id)
+      await awaitPresence(() => isBundleInRemote(ws.id, integrity) === false, 'initial false')
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bytes'), prevVersion: null })
+        await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'cloud after peer put')
+      } finally { peer.close() }
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('remoteBundleCount + remoteBundleIntegrities classify peer-uploaded bundles via discovery', async () => {
+    const integrityA = 'sha512-disc-bundle-A'
+    const integrityB = 'sha512-disc-bundle-B'
+    // Workspace doesn't pre-claim the bundles — peer uploads them and
+    // the background discovery worker must classify them as bundles
+    // via the discriminated `fetchByTag` (kind='bundle' round-trip).
+    const ws = await createWorkspaceWithBundles('presence-bundle-discover', [])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity: integrityA, name: 'b.js', content: Buffer.from('A'), prevVersion: null })
+        await peer.putBundle({ integrity: integrityB, name: 'b.js', content: Buffer.from('B'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      // Wait for the discovery pass to classify both tags.
+      await awaitPresence(() => remoteBundleCount(ws.id) === 2, 'remoteBundleCount=2 after discovery')
+      const integrities = remoteBundleIntegrities(ws.id).toSorted()
+      assert.deepEqual(integrities, [integrityA, integrityB].toSorted())
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('discoverRemoteBundleIntegrities awaits in-flight bundle classification', async () => {
+    const integrity = 'sha512-disc-await-bundle'
+    const ws = await createWorkspaceWithBundles('presence-bundle-discover-await', [])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('z'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      // Without awaiting discovery, `remoteBundleIntegrities` may
+      // return [] because the background fetch hasn't classified the
+      // tag yet. `discoverRemoteBundleIntegrities` awaits and returns
+      // the full classified set.
+      const integrities = await discoverRemoteBundleIntegrities(ws.id)
+      assert.deepEqual(integrities, [integrity])
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('deleteBundleFromRemote removes the remote entry + flips isBundleInRemote back', async () => {
+    const integrity = 'sha512-del-bundle-AAAA'
+    const ws = await createWorkspaceWithBundles('presence-bundle-delete', [integrity])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('x'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'cloud after peer put')
+      const result = await deleteBundleFromRemote(ws.id, integrity)
+      assert.equal(result.ok, true, `delete failed: ${JSON.stringify(result)}`)
+      // Synchronous post-delete: the cache flips immediately so an
+      // in-flight fetchByTag whose response is queued can't race-
+      // restore the bundle.
+      assert.equal(isBundleInRemote(ws.id, integrity), false,
+        'synchronous local-cache drop after delete')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('attaching a bundle AFTER openWorkspace pre-derives its tag (membership listener wiring)', async () => {
+    // Pre-fix: the presence module captured `ws.bundles` at boot time
+    // and only pre-derived tags for THOSE integrities. A user
+    // attaching a bundle post-open (via drag-drop) wouldn't get a tag
+    // in `bundleTags` until something else explicitly called
+    // `trackBundle` — and nothing did. Fixed by subscribing to
+    // `onBundleMembershipChanged` and calling `trackBundle` for each
+    // new integrity. This test verifies the wiring.
+    const integrity = 'sha512-attach-after-open-AAAA'
+    const ws = await createWorkspaceWithBundles('attach-after-open', [])
+    try {
+      openWorkspace(ws.id)
+      // Wait for boot to finish so the listeners are registered.
+      await new Promise((resolve) => { setTimeout(resolve, 100) })
+      // Attach AFTER openWorkspace. The membership listener should
+      // call trackBundle which derives + caches the tag.
+      await setBundleWorkspace(integrity, ws.id)
+      // Wait for the listener's async trackBundle to land.
+      await new Promise((resolve) => { setTimeout(resolve, 100) })
+      const peer = await openPeerSession(ws)
+      try {
+        // Peer puts the bundle. The broadcast should flip
+        // `isBundleInRemote` — which uses `bundleTags` for the
+        // synchronous answer. If the tag wasn't derived (pre-fix
+        // behavior), `isBundleInRemote` would stay false until
+        // something else triggered `trackBundle`.
+        await peer.putBundle({ integrity, name: 'attached-later.js', content: Buffer.from('x'), prevVersion: null })
+        await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'isBundleInRemote flips after post-open attach')
+      } finally { peer.close() }
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('remoteBundleName surfaces the user-friendly name post-discovery', async () => {
+    const integrity = 'sha512-name-test-bundle'
+    const ws = await createWorkspaceWithBundles('bundle-name-discovery', [integrity])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity, name: 'my-named-bundle.js', content: Buffer.from('x'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      const { remoteBundleName } = await import('../ui/view/objstore-presence.js')
+      // Pre-discovery `remoteBundleName` returns undefined; the badge
+      // download handler falls back to the integrity prefix until
+      // discovery resolves.
+      await awaitPresence(() => remoteBundleName(ws.id, integrity) !== undefined, 'name discovered')
+      assert.equal(remoteBundleName(ws.id, integrity), 'my-named-bundle.js')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('reports badge count is not inflated by peer-uploaded bundle tags (regression)', async () => {
+    // Pre-fix: the reports badge used `remoteCount` which includes
+    // bundle tags, so a workspace with 0 local reports + 2 peer-
+    // uploaded bundles rendered "2 cloud" on the reports badge and
+    // the download dialog opened empty. The fix splits the count via
+    // `remoteCount - remoteBundleCount`. The presence module exposes
+    // both counts; this test pins that `remoteBundleCount` correctly
+    // captures the bundles so the subtraction in the badge math is
+    // valid.
+    const integA = 'sha512-reports-isolation-A'
+    const integB = 'sha512-reports-isolation-B'
+    const ws = await createWorkspaceWithBundles('reports-isolation', [])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity: integA, name: 'b.js', content: Buffer.from('A'), prevVersion: null })
+        await peer.putBundle({ integrity: integB, name: 'b.js', content: Buffer.from('B'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      // Post-discovery: 2 total tags, both classified as bundles.
+      await awaitPresence(() => remoteBundleCount(ws.id) === 2, 'both bundles classified')
+      assert.equal(remoteCount(ws.id), 2, '2 total remote tags')
+      assert.equal(remoteBundleCount(ws.id), 2, 'both classified as bundles')
+      // The reports badge formula `remoteCount - remoteBundleCount` =
+      // 0 — correct, no reports in cloud.
+      assert.equal(remoteCount(ws.id) - remoteBundleCount(ws.id), 0,
+        'reports cloud count excludes bundle tags')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('fetchBundleFromRemote refuses bytes whose sha512 does not match the requested integrity', async () => {
+    // The content-forgery defense at `objstore-presence.js`'s
+    // `fetchBundleFromRemote`: a workspace member can PUT a blob
+    // whose embedded "name" claims integrity X but whose content
+    // bytes hash to something else. AAD/AEAD/name-binding all pass.
+    // The re-hash on download is the only defense.
+    //
+    // Construct the attack via raw `session.putBundle({integrity: X,
+    // content: <not-hashing-to-X>})` — the session doesn't validate
+    // the bundle hash itself (that's a separate user-driven step in
+    // `saveBundle`). Then the presence-side fetchBundleFromRemote
+    // must return `{ ok: false, reason: 'integrity-mismatch' }`.
+    const forgedIntegrity = 'sha512-FORGED-AAAA'
+    const ws = await createWorkspaceWithBundles('forgery-check', [forgedIntegrity])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        // Put bytes that don't actually hash to `forgedIntegrity`.
+        await peer.putBundle({
+          integrity: forgedIntegrity,
+          name: 'forged.js',
+          content: Buffer.from('not-hashing-to-the-claimed-integrity'),
+          prevVersion: null,
+        })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      await awaitPresence(() => isBundleInRemote(ws.id, forgedIntegrity), 'cloud after peer put')
+      const { fetchBundleFromRemote: fbfr } = await import('../ui/view/objstore-presence.js')
+      const result = await fbfr(ws.id, forgedIntegrity)
+      assert.equal(result.ok, false, 'fetch refuses bytes that do not hash to the requested integrity')
+      assert.equal(result.reason, 'integrity-mismatch')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('bundle and report tags are classified independently — neither pollutes the other', async () => {
+    // Cross-classification pin: a workspace holding both a report and
+    // a bundle should expose them under their respective cache maps.
+    // The total `remoteCount` is 2, but `remoteFileNames` reports 1
+    // and `remoteBundleIntegrities` reports 1 — proving the discovery
+    // worker classifies each tag correctly via the fetchByTag
+    // discriminated round-trip.
+    const integrity = 'sha512-mixed-bundle'
+    const fileName = 'mixed-report.json'
+    const ws = await createWorkspaceWithBundles('presence-mixed', [integrity])
+    await setReportWorkspace(fileName, ws.id)
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.put({ fileName, content: Buffer.from('report-bytes'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bundle-bytes'), prevVersion: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      await awaitPresence(() => remoteCount(ws.id) === 2 && remoteBundleCount(ws.id) === 1, 'both kinds classified')
+      // The post-discovery counts: 2 total, 1 of each kind.
+      assert.equal(remoteCount(ws.id), 2, '2 total remote tags')
+      assert.equal(remoteBundleCount(ws.id), 1, '1 classified as bundle')
+      const fileNames = remoteFileNames(ws.id)
+      assert.deepEqual(fileNames, [fileName], 'report side only')
+      const integrities = remoteBundleIntegrities(ws.id)
+      assert.deepEqual(integrities, [integrity], 'bundle side only')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
     }
   })
 })

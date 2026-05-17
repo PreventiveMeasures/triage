@@ -29,12 +29,15 @@ import { deriveSigningKeypair } from './sync-crypto.ts'
 const HKDF_CONTENT_INFO = 'deepview-objstore.v1.content'
 const HKDF_TAG_INFO = 'deepview-objstore.v1.tag'
 
-// Bytes prepended to each fileName before HMAC, so two payloads
-// with the same fileName but different per-call purposes (none
-// today, but the prefix keeps the option open for a future
-// metadata-tag scheme) can't collide. The literal `\n` separator
-// matches the convention canonicalObjstore* uses.
+// Bytes prepended to each fileName / integrity before HMAC. Domain-
+// separating prefixes prevent a hypothetical bug from cross-mapping
+// a report `resourceTag` to a bundle's `bundleResourceTag` (or
+// vice-versa) when they're both derived from the same `tagKey` —
+// distinct prefixes make the tag spaces disjoint by construction.
+// The literal `\n` separator matches the convention
+// canonicalObjstore* uses.
 const TAG_HMAC_PREFIX = 'objstore-tag\n'
+const BUNDLE_TAG_HMAC_PREFIX = 'objstore-bundle-tag\n'
 
 // AEAD nonce is 12 random bytes per PUT. Reused across multiple
 // PUTs would be a key-recovery vulnerability with ChaCha20-Poly1305
@@ -131,6 +134,20 @@ export async function computeResourceTag(tagKey: Uint8Array, fileName: string): 
   return mac.toBase64({ alphabet: 'base64url', omitPadding: true })
 }
 
+// Bundle-specific resource tag — HMAC-SHA-256(tagKey,
+// 'objstore-bundle-tag\n' || integrity), base64url-no-padding (43
+// chars). Same shape as `computeResourceTag` for reports but with a
+// distinct prefix so the report and bundle tag namespaces don't
+// collide under the same tagKey. `integrity` is the bundle's sha512
+// SRI string ("sha512-…") — peer-deterministic by content, so two
+// peers seeing the same bundle bytes derive the same tag without
+// coordinating.
+export async function computeBundleResourceTag(tagKey: Uint8Array, integrity: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', tagKey as Uint8Array<ArrayBuffer>, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, encodeUtf8(BUNDLE_TAG_HMAC_PREFIX + integrity)))
+  return mac.toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
 // Encrypt (fileName, content) into the wire payload the relay
 // stores opaquely. Wire layout: `nonce(12) || ciphertext`. AEAD
 // binds (workspaceTag, resourceTag) into AAD so the relay can't
@@ -162,6 +179,47 @@ export function encryptObjstorePayload(
   out.set(nonce, 0)
   out.set(ciphertext, AEAD_NONCE_LEN)
   return out
+}
+
+// Bundles carry both the sha512 integrity (for tag round-trip
+// verification) AND a user-friendly name (for display in the sidebar
+// + bundles list). The encryption primitive's "name" slot is
+// reserved for the integrity, so the name rides in a structured
+// content prefix:
+//
+//   wire content slot = u16BE(nameLen) || nameUtf8 || actualBundleBytes
+//
+// `wrapBundleContent` produces that shape; `unwrapBundleContent`
+// reverses it. The maximum name length is the same 65535-byte cap
+// that gates the name slot (the prefix word is u16BE either way).
+// Bundles uploaded before this wrapper layer existed would fail to
+// unwrap; cloud sync is still in pre-release so we don't ship a
+// backward-compat shim.
+export function wrapBundleContent(name: string, content: Uint8Array): Uint8Array {
+  const nameBytes = encodeUtf8(name)
+  if (nameBytes.length > 0xffff) {
+    throw new Error(`bundle name too long: ${nameBytes.length} bytes (max 65535)`)
+  }
+  const out = new Uint8Array(2 + nameBytes.length + content.length)
+  const dv = new DataView(out.buffer)
+  dv.setUint16(0, nameBytes.length, false)
+  out.set(nameBytes, 2)
+  out.set(content, 2 + nameBytes.length)
+  return out
+}
+
+export function unwrapBundleContent(wrapped: Uint8Array): { name: string; content: Uint8Array } {
+  if (wrapped.length < 2) {
+    throw new Error(`bundle wrapped content truncated: ${wrapped.length} bytes`)
+  }
+  const dv = new DataView(wrapped.buffer, wrapped.byteOffset, wrapped.byteLength)
+  const nameLen = dv.getUint16(0, false)
+  if (2 + nameLen > wrapped.length) {
+    throw new Error(`bundle wrapped nameLen ${nameLen} overflows ${wrapped.length}`)
+  }
+  const name = new TextDecoder('utf-8', { fatal: true }).decode(wrapped.subarray(2, 2 + nameLen))
+  const content = new Uint8Array(wrapped.subarray(2 + nameLen))
+  return { name, content }
 }
 
 // Reverse of `encryptObjstorePayload`. Throws on:
