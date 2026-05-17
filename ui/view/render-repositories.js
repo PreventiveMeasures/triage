@@ -268,7 +268,6 @@ function renderRepositoryRow(repo, bucket, isSel) {
       type="button"
       class="packages-row-issues"
       data-repository-row-issues=${repo}
-      title="Open issues"
       aria-label=${`Open issues for ${label}`}
     >Issues →</button>
   </li>`
@@ -291,7 +290,6 @@ function renderRepositoryDetails(repo, bucket) {
       type="button"
       class="bundles-tab bundles-tab-action"
       data-repository-tab="issues"
-      title="Open the repository's matched issues"
     >Issues (${issuesCount}) →</button>` : nothing}
   </div>
   ${renderRepositoryOverview(repo, bucket)}`
