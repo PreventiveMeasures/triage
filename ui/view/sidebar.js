@@ -144,7 +144,7 @@ function fileItemTemplate(n, opts = {}) {
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" title=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
+  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
 function groupHeaderTemplate(label, count, opts = {}) {
@@ -226,7 +226,7 @@ function bundleItemTemplate(bundle, opts = {}) {
     data-bundle-integrity=${integrity}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" title=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+  ><button type="button" class="file-name" data-tooltip=${name}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
 }
 
 // Row for a workspace-claimed bundle whose bytes aren't on this device
@@ -246,7 +246,7 @@ function missingBundleItemTemplate(integrity, workspaceId) {
     class="file-item indented bundle-item bundle-missing"
     data-bundle-integrity=${integrity}
     data-workspace-id=${workspaceId}
-    title=${`Bundle bytes not on this device — drop the matching bundle to attach.\n${integrity}`}
+    data-tooltip="Bundle bytes not on this device — drop the matching bundle to attach."
   ><span class="file-name"><span class="file-icon" aria-hidden="true">?</span><span class="file-label"><em>missing · ${shortPrefix}…</em></span></span></li>`
 }
 
@@ -310,7 +310,7 @@ function workspaceItemTemplate(w, presentCount, missingCount = 0) {
       ? html`${presentCount}<span class="workspace-count-missing" title=${missingTitle}> +${missingCount}</span>`
       : html`<span class="workspace-count-missing" title=${missingTitle}>+${missingCount}</span>`)
     : html`${presentCount}`
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" title=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${presentCount > 0 || missingCount > 0 ? html`<span class="file-count workspace-count">${countLabel}</span>` : nothing}</li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name" data-tooltip=${w.name}>${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${presentCount > 0 || missingCount > 0 ? html`<span class="file-count workspace-count">${countLabel}</span>` : nothing}</li>`
 }
 
 function matchesSearch(name) {
@@ -752,6 +752,50 @@ sidebar.addEventListener('click', async (e) => {
     sidebar.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
+})
+
+// Instant tooltip for truncated sidebar names. A single shared element
+// is appended to <body> and repositioned on each hover, replacing the
+// native title-attribute tooltip which has a browser-imposed delay.
+// Only appears when the .file-label text is actually truncated
+// (scrollWidth > clientWidth), so non-truncated names stay quiet.
+const _sidebarTip = document.createElement('div')
+_sidebarTip.id = 'sidebar-tooltip'
+document.body.appendChild(_sidebarTip)
+
+let _tipTarget = null
+let _tipTimer = null
+
+function _showSidebarTip(el) {
+  _sidebarTip.textContent = el.dataset.tooltip
+  const rect = el.getBoundingClientRect()
+  _sidebarTip.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+  _sidebarTip.style.left = `${Math.round(rect.right + 8)}px`
+  _sidebarTip.classList.add('visible')
+  _tipTarget = el
+}
+
+function _hideSidebarTip() {
+  clearTimeout(_tipTimer)
+  _tipTimer = null
+  _sidebarTip.classList.remove('visible')
+  _tipTarget = null
+}
+
+fileList.addEventListener('mouseover', (e) => {
+  const el = e.target.closest('[data-tooltip]')
+  if (el === _tipTarget) return
+  _hideSidebarTip()
+  if (!el) return
+  const label = el.querySelector('.file-label')
+  if (label && label.scrollWidth <= label.clientWidth) return
+  _tipTimer = setTimeout(() => { _showSidebarTip(el) }, 100)
+})
+
+fileList.addEventListener('mouseout', (e) => {
+  if (!_tipTarget && !_tipTimer) return
+  if (_tipTarget && _tipTarget.contains(e.relatedTarget)) return
+  _hideSidebarTip()
 })
 
 const searchInput = document.querySelector('#sidebar-search-input')

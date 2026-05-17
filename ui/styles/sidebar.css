@@ -1387,3 +1387,33 @@ dialog {
     }
   }
 }
+
+/* Instant tooltip for truncated sidebar names. Fixed-positioned so it
+   floats outside the sidebar's overflow:hidden boundary. Shown only
+   when the label text is actually truncated (checked in sidebar.js).
+   white-space: pre preserves the \n separator in bundle tooltips that
+   show name + integrity on two lines. */
+#sidebar-tooltip {
+  position: fixed;
+  background: rgb(28 28 28 / .95);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: .75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  pointer-events: none;
+  white-space: pre;
+  z-index: 200;
+  box-shadow: var(--shadow-glass);
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity .08s;
+
+  &.visible { opacity: 1; }
+}
+
+body.theme-light #sidebar-tooltip {
+  background: rgb(246 248 250 / .96);
+}
