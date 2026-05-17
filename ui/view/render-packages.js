@@ -320,7 +320,6 @@ function renderPackageRow(pkg, bucket, isSel) {
       type="button"
       class="packages-row-issues"
       data-package-row-issues=${pkg}
-      title="Open issues"
       aria-label=${`Open issues for ${pkg}`}
     >Issues →</button>
   </li>`
@@ -357,7 +356,6 @@ function renderPackageDetails(pkg, bucket) {
       type="button"
       class="bundles-tab bundles-tab-action"
       data-package-tab="issues"
-      title="Open the package's matched issues"
     >Issues (${issuesCount}) →</button>` : nothing}
   </div>
   ${renderPackageOverview(pkg, bucket)}`
