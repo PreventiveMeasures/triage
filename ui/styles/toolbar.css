@@ -325,83 +325,89 @@ view-mode-buttons { display: contents; }
    `.findings-content` so descendant selector is safe. */
 .findings-content.with-details .toolbar { max-width: 1200px; }
 
-/* Severity-filter chips — ported from the DeepView.0 prototype's
-   `.sev-chip` block. Pill-shaped chip with a colored swatch on the
-   left (the severity hue), the severity name, and a count badge.
-   Inactive: chip-bg `var(--bg)`, muted text. Hover lifts text /
-   border. Active: 50%-alpha border + 10%-alpha background tint of
-   the chip's own severity color, so the active state reads as
-   "this severity is highlighted". */
+/* Severity-filter chips — segmented control matching
+   `.triage-selector` / `.source-toggle` so the three filter groups
+   in the toolbar read as siblings. Single bordered, rounded shell;
+   flush buttons inside divided by `border-right` on every chip
+   except the last. Each chip carries a small severity-colored
+   swatch + the tier name + the count as plain tabular-num text
+   (the previous bordered count badge inside the bordered chip
+   read as a box-in-a-box). Active chip takes a low-alpha tint of
+   its own severity color so the highlighted tier stays visually
+   distinguishable from the rest of the group. */
 .sev-chips {
-  display: inline-flex; align-items: center; flex-wrap: wrap;
-  gap: 6px;
-}
-/* Boxy 4px corners + uppercase + tabular monospace count to match
-   the rest of the chrome — `.tag` chips in the page-head, `.badge`
-   severity pills inside finding rows, `.tree-count-chip` swatches
-   on the Files tab. The earlier 999px pills + sentence-case
-   labels stood out against everything around them. */
-.sev-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  /* `height: 30px; box-sizing: border-box` aligns the chip with
-     the toolbar-search pill and the triage-filter group on the
-     same row — they're both fixed at 30px. Without this the chip
-     measured ~25px from content + padding alone, and the
-     `align-items: center` in `.toolbar-row` exposed the height
-     mismatch as a visible step. */
+  display: inline-flex;
   height: 30px; box-sizing: border-box;
-  padding: 0 8px 0 7px;
-  background: transparent;
   border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden;
+}
+.sev-chip {
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: transparent; border: 0;
+  padding: 0 .6rem;
   color: var(--muted);
-  font-size: .7rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .04em;
-  transition: border-color .12s, background .12s, color .12s;
+  font-family: inherit; font-size: .8rem;
+  transition: background .12s, color .12s;
 
-  &:hover { color: var(--text); border-color: var(--accent); }
+  &:not(:last-child) { border-right: 1px solid var(--border); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
   & .sd {
     width: 8px; height: 8px; border-radius: 2px;
-    display: inline-block;
+    flex-shrink: 0;
     background: currentcolor;  /* per-severity rule below sets the real color */
   }
-  & .name { letter-spacing: .03em; }
+  /* Count badge — same 8.5px pill as `.triage-filter .count`, but
+     kept in flex flow (not absolute) so the chip's width tracks the
+     count's digit count: a 1-digit `8` chip is narrower than a
+     3-digit `888` chip, both with the same trailing breathing room.
+     `align-self: flex-start` lifts the badge to the chip's top edge
+     (the rest of the row stays vertically centered) so the count
+     reads as the corner indicator the mark-color filter uses. */
   & .n {
+    align-self: flex-start;
+    /* Negative side margins pull the badge tight to the label on
+       the left and out toward the chip's right edge (the .6rem
+       chip padding + .4rem flex gap left it floating with more
+       breathing room than the corner indicator needs). */
+    margin: 1px -5px 0;
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    font-size: .68rem; color: var(--muted); font-weight: 600;
-    text-transform: none; letter-spacing: 0;
-    background: var(--surface);
-    border: 1px solid var(--border); border-radius: 3px;
-    padding: 0 5px; min-width: 16px;
-    text-align: center; line-height: 15px;
+    font-size: 8.5px; font-weight: 600;
+    background: var(--bg);
+    border-radius: 999px;
+    padding: 0 3px;
+    min-width: 11px;
+    text-align: center; line-height: 11px;
   }
 
   &.active {
     color: var(--text);
-    & .n { color: var(--text); background: var(--bg); }
+    & .n { color: var(--text); }
   }
 
-  /* Per-severity color: swatch always shows the hue, active state
-     tints border + background. `rgb(from var(...) r g b / .5)` /
-     `... / .1` produce alpha variants of the existing severity
-     vars so the chips theme automatically when the severity
-     palette shifts (e.g. dark/light mode). */
-  &.critical .sd      { background: var(--critical); }
-  &.high .sd          { background: var(--high); }
-  &.medium .sd        { background: var(--medium); }
-  &.low .sd           { background: var(--low); }
-  &.high_bug .sd      { background: var(--high-bug); }
-  &.bug .sd           { background: var(--bug); }
+  /* Per-severity hue on the swatch (always visible) + a wash on the
+     active chip's background so the highlight echoes the severity
+     color without the chip needing its own border. `.25` alpha — the
+     prior `.12` was barely visible for the muted-gray `--low`
+     against the dark page bg; .25 keeps vivid colors (critical /
+     high / info) tasteful while lifting the gray-family tiers
+     (low / bug / high-bug) into a clearly active band. */
+  &.critical      .sd { background: var(--critical); }
+  &.high          .sd { background: var(--high); }
+  &.medium        .sd { background: var(--medium); }
+  &.low           .sd { background: var(--low); }
+  &.high_bug      .sd { background: var(--high-bug); }
+  &.bug           .sd { background: var(--bug); }
   &.informational .sd { background: var(--info); }
 
-  &.critical.active      { border-color: rgb(from var(--critical) r g b / .5); background: rgb(from var(--critical) r g b / .1); }
-  &.high.active          { border-color: rgb(from var(--high)     r g b / .5); background: rgb(from var(--high)     r g b / .1); }
-  &.medium.active        { border-color: rgb(from var(--medium)   r g b / .5); background: rgb(from var(--medium)   r g b / .1); }
-  &.low.active           { border-color: rgb(from var(--low)      r g b / .5); background: rgb(from var(--low)      r g b / .1); }
-  &.high_bug.active      { border-color: rgb(from var(--high-bug) r g b / .5); background: rgb(from var(--high-bug) r g b / .1); }
-  &.bug.active           { border-color: rgb(from var(--bug)      r g b / .5); background: rgb(from var(--bug)      r g b / .1); }
-  &.informational.active { border-color: rgb(from var(--info)     r g b / .5); background: rgb(from var(--info)     r g b / .1); }
+  &.critical.active      { background: rgb(from var(--critical) r g b / .25); }
+  &.high.active          { background: rgb(from var(--high)     r g b / .25); }
+  &.medium.active        { background: rgb(from var(--medium)   r g b / .25); }
+  &.low.active           { background: rgb(from var(--low)      r g b / .25); }
+  &.high_bug.active      { background: rgb(from var(--high-bug) r g b / .25); }
+  &.bug.active           { background: rgb(from var(--bug)      r g b / .25); }
+  &.informational.active { background: rgb(from var(--info)     r g b / .25); }
 }
 
 /* Mark-color filter pill — ported from the DeepView.0 prototype's
