@@ -156,7 +156,19 @@ class BundleTerminal extends LitElement {
 
   #onInput = (e) => { this._input = e.target.value }
 
-  #onClickOutput = () => this.#focusInput()
+  // Click-anywhere-to-focus is convenient for "I want to type",
+  // but unconditional refocus also fires at the end of a
+  // drag-select — moving focus into the <input> collapses the
+  // selection inside the shadow root and breaks copy. Bail when
+  // a non-collapsed selection exists so the user can grab output
+  // text. Chromium exposes selections inside shadow roots via
+  // `shadowRoot.getSelection()`; Firefox surfaces them on the
+  // document selection — check both.
+  #onClickOutput = () => {
+    const sel = this.renderRoot.getSelection?.() ?? document.getSelection()
+    if (sel && !sel.isCollapsed) return
+    this.#focusInput()
+  }
 
   render() {
     return html`
