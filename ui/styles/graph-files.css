@@ -138,7 +138,6 @@
   padding: .35rem .65rem;
   font-size: .8rem;
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
   transition: background .12s;
 
   &:hover { background: rgb(from var(--text) r g b / .04); }
@@ -209,7 +208,7 @@
 }
 .tree-table-details-close {
   background: transparent; border: 0; color: var(--muted);
-  font-size: 1rem; line-height: 1; cursor: pointer;
+  font-size: 1rem; line-height: 1;
   padding: .15rem .35rem; border-radius: 3px;
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 }

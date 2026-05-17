@@ -61,7 +61,6 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--rs-fill);
   border: 0;
   box-shadow: 0 1px 3px rgb(0 0 0 / .5);
-  cursor: pointer;
 }
 input[type='range']::-moz-range-thumb {
   pointer-events: auto;
@@ -70,7 +69,6 @@ input[type='range']::-moz-range-thumb {
   background: var(--rs-fill);
   border: 0;
   box-shadow: 0 1px 3px rgb(0 0 0 / .5);
-  cursor: pointer;
 }
 input[type='range']::-webkit-slider-runnable-track {
   background: transparent; height: var(--rs-thumb-size);

@@ -39,7 +39,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
   font-size: .825rem;
 }
-.toolbar label { color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; cursor: pointer; }
+.toolbar label { color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; }
 .toolbar input[type='text'] {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 10rem;
@@ -55,7 +55,7 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 }
 .tab {
   background: transparent; border: 1px solid transparent; border-bottom: none;
-  color: var(--muted); padding: .4rem .75rem; cursor: pointer; font-size: .825rem;
+  color: var(--muted); padding: .4rem .75rem; font-size: .825rem;
   border-radius: 6px 6px 0 0; white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
@@ -105,7 +105,7 @@ details.tool {
 }
 details.tool[open] { padding-bottom: .5rem; }
 details.tool > summary {
-  cursor: pointer; list-style: none; user-select: none;
+  list-style: none; user-select: none;
   display: flex; gap: .4rem; align-items: baseline;
 }
 details.tool > summary::-webkit-details-marker { display: none; }
@@ -135,6 +135,6 @@ details.tool pre {
 .reset-btn {
   display: inline-block; margin-top: 1.5rem; padding: .4rem .9rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text); font-size: .85rem; cursor: pointer;
+  color: var(--text); font-size: .85rem;
 }
 .reset-btn:hover { border-color: var(--accent); }

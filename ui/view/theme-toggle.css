@@ -13,7 +13,7 @@
   color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   box-shadow: var(--shadow-glass);
-  cursor: pointer; font-size: 1rem; line-height: 1;
+  font-size: 1rem; line-height: 1;
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
   transition: border-color .12s, color .12s, background .12s;

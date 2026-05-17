@@ -11,7 +11,7 @@
   & select {
     height: 30px; box-sizing: border-box;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; cursor: pointer;
+    border-radius: 4px; padding: .25rem .4rem; font-size: .8rem;
     &:focus { border-color: var(--accent); outline: none; }
   }
 
@@ -120,8 +120,8 @@
 
   & .checkbox-label {
     display: inline-flex; align-items: center; gap: .25rem;
-    color: var(--muted); cursor: pointer;
-    & input { margin: 0; cursor: pointer; }
+    color: var(--muted);
+    & input { margin: 0; }
   }
 
   /* Trash toggle — flips the render path from "non-deleted" to
@@ -148,7 +148,7 @@
 .trash-btn {
   height: 30px; box-sizing: border-box;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem; cursor: pointer;
+  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem;
   font-family: inherit;
   &:hover { border-color: var(--accent); }
   &.active { border-color: var(--critical); color: var(--critical); }
@@ -174,7 +174,7 @@
 .toolbar .triage-selector { margin-left: auto; }
 .triage-state-btn {
   background: transparent; border: none; color: var(--muted);
-  padding: 0 .55rem; cursor: pointer;
+  padding: 0 .55rem;
   display: inline-flex; align-items: center;
   transition: background .12s, color .12s;
   font-family: inherit; font-size: .8rem;
@@ -214,7 +214,7 @@ view-mode-buttons { display: contents; }
     /* Slightly bumped from .2rem .42rem / 14px icons so the trio
        reads as a primary toolbar control without dominating it.
        Icons are 16px (see VIEW_ICONS in render.js). */
-    padding: .28rem .5rem; cursor: pointer;
+    padding: .28rem .5rem;
     display: inline-flex; align-items: center; justify-content: center;
     transition: background .12s, color .12s;
     font-family: inherit;
@@ -240,7 +240,7 @@ view-mode-buttons { display: contents; }
 
   & .source-chip {
     background: transparent; border: none; color: var(--muted);
-    padding: 0 .55rem; cursor: pointer;
+    padding: 0 .55rem;
     display: inline-flex; align-items: center;
     transition: background .12s, color .12s;
     font-family: inherit; font-size: .8rem;
@@ -356,7 +356,6 @@ view-mode-buttons { display: contents; }
   color: var(--muted);
   font-size: .7rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: .04em;
-  cursor: pointer;
   transition: border-color .12s, background .12s, color .12s;
 
   &:hover { color: var(--text); border-color: var(--accent); }
@@ -431,7 +430,6 @@ view-mode-buttons { display: contents; }
     padding: 0;
     display: grid; place-items: center;
     position: relative;
-    cursor: pointer;
     transition: background .12s;
 
     &:hover { background: rgb(from var(--text) r g b / .06); }

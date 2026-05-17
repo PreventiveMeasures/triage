@@ -154,7 +154,6 @@
   border: 0;
   border-radius: 4px;
   color: var(--muted);
-  cursor: pointer;
   font: 500 16px/1 ui-monospace, monospace;
 
   &:hover { color: var(--accent); background: var(--surface-active); }

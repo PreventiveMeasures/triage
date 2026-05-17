@@ -72,7 +72,7 @@
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 0; border-radius: 4px;
-  cursor: pointer; padding: 0;
+  padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 }
@@ -95,7 +95,7 @@
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 0; border-radius: 4px;
-  cursor: pointer; padding: 0;
+  padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   &.encrypted { color: var(--accent); }
@@ -177,7 +177,6 @@
    exist (controlled by sidebar.js, not CSS). */
 .file-group-header.bundles-header,
 .file-group-header.packages-header {
-  cursor: pointer;
   border-radius: 4px;
   /* Equalize vertical padding on the clickable row-style
      headers — `.file-group-header`'s default is top-heavy
@@ -215,7 +214,7 @@
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 1px solid var(--border); border-radius: 4px;
-  cursor: pointer; padding: 0;
+  padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
 }
@@ -240,7 +239,7 @@
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 1px solid transparent; border-radius: 4px;
-  cursor: pointer; padding: 0;
+  padding: 0;
   opacity: 0;
   transition: opacity .12s ease-out;
 
@@ -290,7 +289,7 @@
   padding: .25rem .45rem;
   background: transparent; color: var(--text);
   border: 1px solid transparent; border-radius: 5px;
-  cursor: pointer; font-family: inherit; font-size: .78rem;
+  font-family: inherit; font-size: .78rem;
   text-align: left;
 
   &:hover { background: rgb(from var(--text) r g b / .04); }
@@ -397,12 +396,12 @@
 
   & button {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
-    border-radius: 4px; padding: .2rem .5rem; cursor: pointer;
+    border-radius: 4px; padding: .2rem .5rem;
     font-size: .72rem; font-family: inherit;
 
     &:hover { color: var(--text); border-color: var(--accent); }
     &.danger:hover { color: var(--critical); border-color: var(--critical); }
-    &[disabled] { opacity: .4; cursor: not-allowed; border-color: var(--border) !important; color: var(--muted) !important; }
+    &[disabled] { opacity: .4; border-color: var(--border) !important; color: var(--muted) !important; }
   }
 }
 
@@ -496,7 +495,7 @@ dialog {
   & .conflict-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .3rem .8rem; cursor: pointer;
+    padding: .3rem .8rem;
     font: inherit; font-size: .78rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -581,7 +580,7 @@ dialog {
     display: flex; flex-direction: column; gap: .15rem;
     padding: .35rem .5rem;
     border: 1px solid var(--border); border-radius: 5px;
-    cursor: pointer; min-width: 0;
+    min-width: 0;
 
     &:has(input:checked) {
       border-color: var(--accent);
@@ -683,13 +682,13 @@ dialog {
   & .te-section button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
     &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
     &.primary:hover { filter: brightness(1.08); }
-    &:disabled { opacity: .5; cursor: not-allowed; }
+    &:disabled { opacity: .5; }
   }
   & input[type='file'] {
     display: block;
@@ -728,7 +727,7 @@ dialog {
   }
   & .te-mode label {
     display: flex; align-items: flex-start; gap: .5rem;
-    font-size: .82rem; cursor: pointer;
+    font-size: .82rem;
     & em { color: var(--muted); font-style: normal; font-size: .74rem; }
   }
   & .te-status {
@@ -757,7 +756,7 @@ dialog {
   & .te-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .3rem .8rem; cursor: pointer;
+    padding: .3rem .8rem;
     font: inherit; font-size: .78rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -821,7 +820,7 @@ dialog {
   & .om-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -915,7 +914,7 @@ dialog {
   & .cd-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -1029,7 +1028,7 @@ dialog {
   & .fl-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover { border-color: var(--accent); color: var(--accent); }
@@ -1087,7 +1086,7 @@ dialog {
   & .nwd-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
@@ -1102,7 +1101,7 @@ dialog {
          its visual feedback against the solid accent fill. */
       &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
     }
-    &:disabled { opacity: .5; cursor: not-allowed; }
+    &:disabled { opacity: .5; }
   }
 }
 
@@ -1166,13 +1165,9 @@ dialog {
     display: flex; align-items: center; gap: .5rem;
     margin-top: .7rem;
     color: var(--text); font-size: .78rem;
-    cursor: pointer;
-
-    & input[type='checkbox'] { cursor: pointer; }
   }
   & .nwd-input:disabled {
     opacity: .5;
-    cursor: not-allowed;
   }
 }
 
@@ -1231,7 +1226,6 @@ dialog {
   & .lwd-option {
     display: flex; align-items: flex-start; gap: .5rem;
     padding: .3rem .15rem;
-    cursor: pointer;
 
     & input[type='radio'] {
       margin: .15rem 0 0;
@@ -1266,7 +1260,7 @@ dialog {
   & .lwd-actions button {
     background: transparent; border: 1px solid var(--border);
     color: var(--text); border-radius: 5px;
-    padding: .35rem .9rem; cursor: pointer;
+    padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
     &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
@@ -1275,7 +1269,7 @@ dialog {
 
       &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
     }
-    &:disabled { opacity: .5; cursor: not-allowed; }
+    &:disabled { opacity: .5; }
   }
 }
 
@@ -1329,7 +1323,6 @@ dialog {
     background: var(--accent, #58a6ff);
     color: var(--bg, #121212);
     border: 0; border-radius: 6px;
-    cursor: pointer;
 
     &:hover { filter: brightness(1.1); }
     &:focus-visible { outline: 2px solid currentcolor; outline-offset: 3px; }
@@ -1353,7 +1346,6 @@ dialog {
     & a {
       color: light-dark(#888, #aaa);
       text-decoration: underline;
-      cursor: pointer;
       &:hover { color: var(--text); }
     }
   }

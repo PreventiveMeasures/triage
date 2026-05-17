@@ -28,7 +28,6 @@
   background: transparent;
   border: 0; border-radius: 4px;
   color: var(--muted);
-  cursor: pointer;
 }
 .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 

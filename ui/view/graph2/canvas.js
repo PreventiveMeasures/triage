@@ -956,7 +956,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const hit = pickNode(sx, sy)
     const prev = hovered
     hovered = hit?.file ?? null
-    canvas.style.cursor = hit ? 'pointer' : 'grab'
+    canvas.style.cursor = hit ? 'default' : 'grab'
     if (hit) showTooltip(hit, e.clientX, e.clientY)
     else if (prev) hideTooltip()
     if (hovered !== prev) requestDraw()

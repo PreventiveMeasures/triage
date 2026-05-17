@@ -34,7 +34,6 @@
    from the host so the line reads as continuous prose. */
 .banner .cmd {
   color: var(--accent, #58a6ff);
-  cursor: pointer;
 }
 .banner .cmd:hover {
   text-decoration: underline;

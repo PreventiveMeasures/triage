@@ -131,7 +131,6 @@
   border: 1px solid var(--border);
   color: var(--muted);
   display: grid; place-items: center;
-  cursor: pointer;
   font-family: inherit;
 
   &:hover { color: var(--accent); border-color: var(--accent); }
@@ -168,7 +167,6 @@
   color: var(--muted);
   font: 400 10px/1 inherit;
   font-family: inherit;
-  cursor: pointer;
 
   &:hover { color: var(--text); background: var(--surface-active); }
 }
@@ -203,7 +201,6 @@
   border-radius: 6px;
   color: var(--muted);
   font: 500 11px/1 inherit;
-  cursor: pointer;
   font-family: inherit;
   white-space: nowrap;
 
@@ -333,7 +330,6 @@
   text-transform: none;
   letter-spacing: 0;
   padding: 2px 7px;
-  cursor: pointer;
 
   &:hover { color: var(--text); background: var(--graph-hover-bg); }
   &.on { background: var(--surface-active); color: var(--accent); }
@@ -456,7 +452,6 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--accent);
-  cursor: pointer;
   box-shadow: var(--shadow-glass);
 
   &:hover { border-color: var(--accent); background: var(--surface-active); }
@@ -478,7 +473,6 @@
   color: var(--accent);
   font: 500 11px/1 inherit;
   font-family: inherit;
-  cursor: pointer;
   box-shadow: var(--shadow-glass);
   white-space: nowrap;
   overflow: hidden;
@@ -505,7 +499,6 @@
     background: transparent;
     border: 0;
     color: var(--muted);
-    cursor: pointer;
     border-bottom: 1px solid var(--graph-divider);
     display: grid; place-items: center;
     font-family: inherit; font-size: 13px;
@@ -773,7 +766,6 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   color: var(--accent);
   border-radius: 4px;
   padding: 2px 8px;
-  cursor: pointer;
   /* Properties spelled out — `font: ... inherit` is invalid as a
      shorthand and was being discarded, leaving the button at the
      inherited 12px and a chunkier height than intended. */
@@ -817,7 +809,6 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   padding: 3px 6px;
   font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   color: var(--accent);
-  cursor: pointer;
   text-align: left;
 
   &:hover { background: var(--graph-hover-bg); }
@@ -914,7 +905,6 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   background: transparent;
   border: 0;
   border-radius: 4px;
-  cursor: pointer;
   font-family: inherit;
   text-align: left;
   width: calc(100% + 12px);
