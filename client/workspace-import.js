@@ -1,6 +1,6 @@
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveFile } from './storage.js'
-import { listWorkspaces, setBundleWorkspace, setReportWorkspace, upsertWorkspace } from './workspaces.js'
+import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
@@ -412,47 +412,22 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
   // resurrected by our deferred upsert — audit C-Import-1.) Unlike
   // reports, no bundle bytes ride the export, so treating "absent" as
   // "empty" would silently detach every locally-attached bundle.
-  const targetId = data.workspace.id
   const bundlesProvided = Array.isArray(data.bundles)
   const importedBundles = bundlesProvided
     ? data.bundles.filter((b) => typeof b === 'string' && b.length > 0)
     : []
 
-  // Single-owner enforcement. `upsertWorkspace` replaces the target
-  // workspace's `reports` / `bundles` lists wholesale but doesn't reach
-  // into OTHER workspaces. Without this pre-pass, an import claiming
-  // an identifier already attached to a different workspace would leave
-  // it claimed by both, violating the at-most-one-workspace invariant
-  // that drag-drop (`setReportWorkspace` / `setBundleWorkspace`)
-  // enforces. Items already in the target are not touched.
-  //
-  // Hoisting: a SINGLE `listWorkspaces()` snapshot drives the owner
-  // lookup for every identifier — vs. one parse per loop iteration in
-  // the prior implementation, which made a 1024-element bundles array
-  // pay K full JSON.parse passes of the workspaces blob. Each detach
-  // call still acquires the Web Lock individually, so a sibling tab's
-  // concurrent mutation between iterations remains visible (the
-  // setReportWorkspace / setBundleWorkspace implementations re-check
-  // ownership under their own lock — the snapshot here is just a
-  // fast-path filter to avoid no-op detach calls).
-  const currentList = listWorkspaces()
-  const reportOwners = new Map()
-  const bundleOwners = new Map()
-  for (const w of currentList) {
-    for (const r of w.reports) if (!reportOwners.has(r)) reportOwners.set(r, w.id)
-    for (const b of w.bundles) if (!bundleOwners.has(b)) bundleOwners.set(b, w.id)
-  }
-  for (const name of savedNames) {
-    const owner = reportOwners.get(name)
-    if (owner !== undefined && owner !== targetId) await setReportWorkspace(name, null)
-  }
-  if (bundlesProvided) {
-    for (const integ of importedBundles) {
-      const owner = bundleOwners.get(integ)
-      if (owner !== undefined && owner !== targetId) await setBundleWorkspace(integ, null)
-    }
-  }
-
+  // Membership is additive: a report or bundle can belong to multiple
+  // workspaces at once. `upsertWorkspace` only touches the target
+  // workspace's `reports` / `bundles` lists, leaving other workspaces'
+  // claims on the same identifier alone — the import grows the target's
+  // membership row without stealing from any prior owner. A file is
+  // "detached" only when zero workspaces list it; an identifier that
+  // also lives in another workspace is not surfaced as unattached.
+  // (The previous detach pre-pass enforced an at-most-one-workspace
+  // invariant; the runtime model now allows multi-owner membership and
+  // the auto-attach path in `ui/view/objstore-presence.js` is the
+  // primary writer that exercises it.)
   const ws = await upsertWorkspace({
     id: data.workspace.id,
     name: data.workspace.name,

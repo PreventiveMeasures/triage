@@ -42,9 +42,25 @@ export function setReportWorkspace(
   filename: string,
   workspaceId: string | null,
 ): Promise<void>
+export function addReportToWorkspace(
+  filename: string,
+  workspaceId: string,
+): Promise<void>
+export function removeReportFromWorkspace(
+  filename: string,
+  workspaceId: string,
+): Promise<void>
 export function setBundleWorkspace(
   integrity: string,
   workspaceId: string | null,
+): Promise<void>
+export function addBundleToWorkspace(
+  integrity: string,
+  workspaceId: string,
+): Promise<void>
+export function removeBundleFromWorkspace(
+  integrity: string,
+  workspaceId: string,
 ): Promise<void>
 
 export type AttachSharedResult =

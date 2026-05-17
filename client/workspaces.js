@@ -470,7 +470,17 @@ function filesSetEqual(a, b) {
 //         full snapshot would mask a sibling tab's concurrent
 //         privateKey rotation or other-list mutation.
 //   M4  — advance lastSeen only for workspaces THIS call modified.
-async function setWorkspaceMembership({ identifier, workspaceId, field, fire }) {
+// `additive: true` skips the source-detach loop — the identifier
+// stays in any other workspace that already lists it, and the
+// target's `reports` row simply grows. A report can be a member of
+// multiple workspaces; "detached" means "listed in zero workspaces".
+// Used by the objstore auto-attach wrapper `addReportToWorkspace`.
+//
+// `from: workspaceId` scopes the detach loop to that ONE workspace
+// instead of iterating every workspace in the blob — used by
+// `removeReportFromWorkspace` (drag-out of one workspace under the
+// multi-workspace model). Leaves the rest of the membership intact.
+async function setWorkspaceMembership({ identifier, workspaceId, field, fire, additive = false, from = undefined }) {
   const result = await mutateWorkspaces((list) => {
     const currentOwnerId = list.find(
       (w) => Array.isArray(w[field]) && w[field].includes(identifier),
@@ -488,20 +498,35 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire }) 
       if (!target) return false
     }
     const aff = new Set()
-    for (const w of list) {
-      if (!Array.isArray(w[field])) w[field] = []
-      if (w[field].includes(identifier)) {
-        w[field] = w[field].filter((x) => x !== identifier)
-        aff.add(w.id)
+    if (!additive) {
+      for (const w of list) {
+        if (from !== undefined && w.id !== from) continue
+        if (!Array.isArray(w[field])) w[field] = []
+        if (w[field].includes(identifier)) {
+          w[field] = w[field].filter((x) => x !== identifier)
+          aff.add(w.id)
+        }
       }
     }
     if (workspaceId) {
       const target = list.find((w) => w.id === workspaceId)
-      if (target && !target[field].includes(identifier)) {
-        target[field].push(identifier)
-        aff.add(target.id)
+      if (target) {
+        if (!Array.isArray(target[field])) target[field] = []
+        if (!target[field].includes(identifier)) {
+          target[field].push(identifier)
+          aff.add(target.id)
+        }
       }
     }
+    // Additive-mode W-4 fix: the early `currentOwnerId === workspaceId`
+    // short-circuit handles the single-owner no-op, but `find()` returns
+    // first-match and under multi-workspace state the identifier can sit
+    // in BOTH the target and some other workspace. In that case the
+    // early check fails (currentOwnerId = the other workspace), the
+    // additive branch skips the detach loop, and the target-attach
+    // dedup leaves `aff` empty — return false here so mutateWorkspaces
+    // skips writeRaw and the cross-tab `storage` ripple it would cause.
+    if (aff.size === 0) return false
     const snap = new Map()
     for (const id of aff) {
       const ws = list.find((w) => w.id === id)
@@ -519,35 +544,48 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire }) 
 }
 
 // Move a report to `workspaceId` (or detach it back to the unfiled
-// list when `workspaceId` is null). A report belongs to at most one
-// workspace at a time; the prior assignment, if any, is dropped first.
-// No-ops cleanly when the target workspace doesn't exist. Fires
+// list when `workspaceId` is null). The prior assignment, if any,
+// is dropped first — used by drag-into-workspace where the UX is
+// "move the row from one workspace to another". A report can be
+// listed in multiple workspaces (see `addReportToWorkspace`); this
+// helper is the explicit "single-owner move" variant. No-ops
+// cleanly when the target workspace doesn't exist. Fires
 // `onReportMembershipChanged` for every workspace whose `reports`
 // list actually changed (so an attach + detach pair notifies both
 // the old owner and the new one); a no-op call (filename already at
 // its destination) fires nothing.
-export function setReportWorkspace(filename, workspaceId) {
-  return setWorkspaceMembership({
-    identifier: filename,
-    workspaceId,
-    field: 'reports',
-    fire: fireReportMembershipChanged,
-  })
-}
+export const setReportWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, workspaceId, field: 'reports', fire: fireReportMembershipChanged })
+
+// Additive twin of `setReportWorkspace`: grow `workspaceId.reports`
+// with `filename` without detaching from any OTHER workspace that
+// already lists it. Used by the objstore auto-attach path so a
+// peer-uploaded matching fileName converges into our membership
+// row without stealing the file from another workspace that has
+// its own (independent) claim.
+export const addReportToWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, workspaceId, field: 'reports', fire: fireReportMembershipChanged, additive: true })
+
+// Scoped detach: remove `filename` from `workspaceId.reports` only,
+// leaving every other workspace's claim on the same identifier
+// alone. Used by the sidebar drag-out path under the multi-
+// workspace model — `setReportWorkspace(filename, null)` strips
+// from ALL workspaces (single-owner-move shape), which makes the
+// dragged report disappear from sibling workspaces that legitimately
+// also list it. No-op when `workspaceId` doesn't list the file or
+// doesn't exist.
+export const removeReportFromWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, field: 'reports', fire: fireReportMembershipChanged, from: workspaceId })
 
 // `bundles` twin of setReportWorkspace — same contract, scoped to
 // the workspace's `bundles` list (sha512-integrity strings). Bundle
 // bytes live in OPFS and aren't transmitted by the workspace sync
 // protocol; this just moves the membership pointer (which IS synced
 // cross-tab via the storage-event propagation, same as reports).
-export function setBundleWorkspace(integrity, workspaceId) {
-  return setWorkspaceMembership({
-    identifier: integrity,
-    workspaceId,
-    field: 'bundles',
-    fire: fireBundleMembershipChanged,
-  })
-}
+export const setBundleWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, workspaceId, field: 'bundles', fire: fireBundleMembershipChanged })
+
+// `bundles` twin of `addReportToWorkspace` — additive add.
+export const addBundleToWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, workspaceId, field: 'bundles', fire: fireBundleMembershipChanged, additive: true })
+
+// `bundles` twin of `removeReportFromWorkspace` — scoped detach.
+export const removeBundleFromWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, field: 'bundles', fire: fireBundleMembershipChanged, from: workspaceId })
 
 // Cross-tab propagation: a sibling tab's `deleteWorkspace` /
 // `upsertWorkspace` (key rotation, re-import) / `setReportWorkspace`

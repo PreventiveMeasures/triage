@@ -688,11 +688,14 @@ describe('export → import round-trip', () => {
       'locally-attached bundles survive a pre-bundles re-import')
   })
 
-  it('import enforces single-owner for REPORTS: claimed names detach from any OTHER workspace', async () => {
-    // Parallel to the bundle test below. The detach pass in
-    // applyWorkspaceImport runs unconditionally for reports (savedNames
-    // always non-null), so a regression special-casing the bundles
-    // branch only would silently break report single-owner.
+  it('import is additive for REPORTS: claimed names stay in any other workspace too', async () => {
+    // Multi-workspace membership model: a report can belong to many
+    // workspaces simultaneously. An import that claims a fileName
+    // already attached to a different workspace MUST NOT steal it —
+    // the other workspace's membership row is preserved, and the
+    // import target additionally lists the same fileName. The
+    // previous single-owner detach pre-pass was removed when the
+    // auto-attach path in objstore-presence flipped to additive.
     const { saveFile } = await import('../client/storage.js')
     const { upsertWorkspace } = await import('../client/workspaces.js')
     const wsA = 'ws-A-r-owner'
@@ -728,16 +731,16 @@ describe('export → import round-trip', () => {
     const list = listWorkspaces()
     const a = list.find((w) => w.id === wsA)
     const b = list.find((w) => w.id === wsB)
-    assert.deepEqual(a.reports, [], 'WS_A no longer owns the shared report')
-    assert.deepEqual(b.reports, [reportName], 'WS_B took ownership on import')
+    assert.deepEqual(a.reports, [reportName], 'WS_A retains the shared report (additive)')
+    assert.deepEqual(b.reports, [reportName], 'WS_B also lists the shared report')
   })
 
-  it('import enforces single-owner: claimed integrities detach from any OTHER workspace', async () => {
-    // Without the detach pass, `upsertWorkspace` (which replaces the
-    // target workspace's `bundles` wholesale but doesn't touch others)
-    // leaves an imported integrity claimed by BOTH the import target
-    // AND any prior owner — violating the at-most-one-workspace
-    // invariant that drag-drop enforces.
+  it('import is additive for BUNDLES: claimed integrities stay in any other workspace too', async () => {
+    // Bundle twin of the report additive-import test above. Pre-fix
+    // the detach pre-pass stripped `sha512-SHARED` from wsA so wsB
+    // alone listed it after import; the model now allows both to
+    // claim it concurrently and the bytes (content-addressed) are
+    // resolved from OPFS by either workspace's view.
     const { upsertWorkspace } = await import('../client/workspaces.js')
     const wsA = 'ws-A-owner'
     const wsB = 'ws-B-imported'
@@ -770,8 +773,8 @@ describe('export → import round-trip', () => {
     const list = listWorkspaces()
     const a = list.find((w) => w.id === wsA)
     const b = list.find((w) => w.id === wsB)
-    assert.deepEqual(a.bundles, [], 'WS_A no longer owns the shared integrity')
-    assert.deepEqual(b.bundles, ['sha512-SHARED'], 'WS_B took ownership on import')
+    assert.deepEqual(a.bundles, ['sha512-SHARED'], 'WS_A retains the shared integrity (additive)')
+    assert.deepEqual(b.bundles, ['sha512-SHARED'], 'WS_B also lists the shared integrity')
   })
 
   it('rejects a `bundles` payload containing non-string entries at parse time', () => {
@@ -827,12 +830,12 @@ describe('export → import round-trip', () => {
     )
   })
 
-  it('oversize import does not partially detach victim workspaces', async () => {
+  it('oversize import does not partially mutate victim workspaces', async () => {
     // parseWorkspaceJson rejects BEFORE applyWorkspaceImport runs, so
     // victim workspaces' memberships are untouched. Pin the contract:
     // even if a future regression splits the cap check into
-    // applyWorkspaceImport (post-saveFile / post-detach), this test
-    // would catch the partial-state leak.
+    // applyWorkspaceImport (post-saveFile), this test would catch the
+    // partial-state leak.
     const { upsertWorkspace } = await import('../client/workspaces.js')
     const victimId = 'ws-victim'
     await upsertWorkspace({

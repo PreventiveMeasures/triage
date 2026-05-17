@@ -7,7 +7,7 @@ import { listBundles, listFiles } from '../../client/storage.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
 import { ensureCounts, getCount } from '../../client/counts.js'
-import { createWorkspace, listWorkspaces, renameWorkspace, setBundleWorkspace, setReportWorkspace } from '../../client/workspaces.js'
+import { addBundleToWorkspace, addReportToWorkspace, createWorkspace, listWorkspaces, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace } from '../../client/workspaces.js'
 import { deleteFromRemote as deleteRemote, isInRemote } from './objstore-presence.js'
 import { migrateLegacyFilenames } from '../../client/migrate-legacy.js'
 import { exportWorkspace } from './workspace-export.js'
@@ -69,6 +69,13 @@ const DEFAULT_SYNC_URL = (() => {
 // uses the private mime so OS file drags (which only carry Files)
 // don't accidentally match.
 const REPORT_DT = 'application/x-deepview-report'
+// Source-workspace mime — encodes the workspace id the dragged row
+// originated from, or the empty string when the row was rendered
+// under the unfiled bucket. Captured at `dragstart` time so a
+// renderSidebar() racing the drop (e.g., onAutoDownloaded firing
+// during the drag) can't desync the drop handler's source lookup.
+// `dataTransfer` survives DOM mutations within the same drag.
+const SOURCE_WS_DT = 'application/x-deepview-source-ws'
 // Companion mime for bundles. Value is the bundle's sha512 integrity
 // string (same key the bundle metadata + setBundleWorkspace use).
 // Separate from REPORT_DT so the drag handlers can tell the two apart
@@ -962,6 +969,12 @@ sidebar.addEventListener('dragstart', (e) => {
     const integrity = bundleEl.dataset.bundleIntegrity
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData(BUNDLE_DT, integrity)
+    // Stash the source workspace ID in dataTransfer so the drop
+    // handler doesn't have to re-derive it from a `.dragging`
+    // element that may have been swapped out by a renderSidebar()
+    // racing the drag. Empty string when dragged from the unfiled
+    // bucket. (Review L1 follow-up.)
+    e.dataTransfer.setData(SOURCE_WS_DT, bundleEl.dataset.workspaceId ?? '')
     // text/plain fallback — paste-into-an-unrelated-textarea is
     // pointless for an integrity hash but consistent with how the
     // report drag works; some browsers also use it as the "ghost
@@ -974,6 +987,7 @@ sidebar.addEventListener('dragstart', (e) => {
   if (!fileEl) return
   e.dataTransfer.effectAllowed = 'move'
   e.dataTransfer.setData(REPORT_DT, fileEl.dataset.file)
+  e.dataTransfer.setData(SOURCE_WS_DT, fileEl.dataset.workspaceId ?? '')
   e.dataTransfer.setData('text/plain', fileEl.dataset.file)
   fileEl.classList.add('dragging')
 })
@@ -1038,6 +1052,20 @@ sidebar.addEventListener('drop', async (e) => {
   clearDragOver()
   const wsTarget = e.target.closest('[data-workspace-id]')
   const targetId = wsTarget ? wsTarget.dataset.workspaceId : null
+  // Source workspace ID — read from `dataTransfer` (stashed at
+  // `dragstart` time) instead of from the live `.dragging` element.
+  // `dataTransfer` survives DOM mutations within the same drag
+  // operation; the `.dragging` element doesn't, so a renderSidebar()
+  // racing the drag (e.g., `onAutoDownloaded` firing because a peer's
+  // report landed on a non-active workspace) would otherwise wipe
+  // the source and silently degrade the move into an additive add.
+  // Empty string in the dataTransfer means "dragged from unfiled".
+  // Under the multi-workspace membership model the drag operation
+  // is "remove from source, add to target" — NOT "detach from
+  // everywhere, attach to target" — so a report listed in both wsA
+  // and wsB stays in wsA when the user drags it out of wsB onto
+  // the unfiled bucket.
+  const sourceWsId = e.dataTransfer.getData(SOURCE_WS_DT) || null
   if (e.dataTransfer.types.includes(BUNDLE_DT)) {
     const integrity = e.dataTransfer.getData(BUNDLE_DT)
     if (!integrity) return
@@ -1048,21 +1076,19 @@ sidebar.addEventListener('drop', async (e) => {
     // whole operation. (If bundles ever start participating in the
     // objstore protocol, mirror the deleteRemote step from the
     // report branch below.)
-    await setBundleWorkspace(integrity, targetId)
+    if (targetId) await addBundleToWorkspace(integrity, targetId)
+    if (sourceWsId && sourceWsId !== targetId) await removeBundleFromWorkspace(integrity, sourceWsId)
     renderSidebar()
     return
   }
   const filename = e.dataTransfer.getData(REPORT_DT)
   if (!filename) return
   // Drag-out of a workspace mirrors the delete dialog's "everywhere"
-  // path: if the source workspace held a remote copy, drop it from
-  // remote BEFORE the membership mutation lands locally. Without
-  // that, the next openWorkspace's auto-download would pull the
-  // file back into the source workspace and the drag-out would
-  // appear to undo itself. A drop INTO another workspace is a
-  // move (also clears the source's remote); the destination
-  // doesn't auto-upload — the user has to do that explicitly
-  // through the badge.
+  // path for the source workspace's REMOTE copy: drop the source's
+  // tag BEFORE the membership mutation lands locally so the next
+  // openWorkspace(source) doesn't auto-download it back. Each
+  // workspace has its own objstore tag (HMAC per workspace key), so
+  // a deleteRemote(source) leaves other workspaces' uploads alone.
   //
   // `deleteRemote` opens the source workspace's presence session
   // on demand if it isn't already active (review r3251765881) —
@@ -1070,13 +1096,11 @@ sidebar.addEventListener('drop', async (e) => {
   // when dragging from a non-active workspace. The remote
   // delete is idempotent on missing rows, so issuing it for a
   // file that wasn't in remote is a free no-op.
-  const sourceWorkspace = listWorkspaces().find(
-    (w) => Array.isArray(w.reports) && w.reports.includes(filename),
-  )
-  if (sourceWorkspace && sourceWorkspace.id !== targetId) {
-    try { await deleteRemote(sourceWorkspace.id, filename) }
-    catch (err) { console.warn(`Failed to remove '${filename}' from ${sourceWorkspace.name} remote:`, err) }
+  if (sourceWsId && sourceWsId !== targetId) {
+    try { await deleteRemote(sourceWsId, filename) }
+    catch (err) { console.warn(`Failed to remove '${filename}' from source workspace ${sourceWsId} remote:`, err) }
   }
-  await setReportWorkspace(filename, targetId)
+  if (targetId) await addReportToWorkspace(filename, targetId)
+  if (sourceWsId && sourceWsId !== targetId) await removeReportFromWorkspace(filename, sourceWsId)
   renderSidebar()
 })

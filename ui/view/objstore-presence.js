@@ -29,7 +29,7 @@
 import { createObjstoreSession, deriveObjstoreKeys } from '../../client/objstore.ts'
 import { computeResourceTag } from '../../client/objstore-content-crypto.ts'
 import { triageSync } from '../../client/triage-sync.ts'
-import { listWorkspaces, setReportWorkspace } from '../../client/workspaces.js'
+import { addReportToWorkspace, listWorkspaces } from '../../client/workspaces.js'
 import { gunzipBytes, listFiles, saveFileBytes } from '../../client/storage.js'
 import { analyzeContent, setCount } from '../../client/counts.js'
 import { decodeUtf8 } from '../../common/utf8.js'
@@ -345,12 +345,26 @@ async function ensureRemoteNames(entry) {
   if (!entry.disposed) notify()
 }
 
-// Decompress + validate + persist a peer-uploaded report. Skipped
-// when the workspace already lists the report (the user dragged it
-// in locally and we're seeing our own broadcast echo), or when
-// the file already exists on disk under a different workspace
-// attachment, or when the bytes don't decompress to a recognized
-// report format (a forged blob from a buggy / malicious peer).
+// Reconcile a peer-uploaded report against local state. Three
+// outcomes depending on what the local fileName resolves to:
+//
+//   1. Our workspace already claims the fileName (echo of our own
+//      upload, or a sibling tab attached it) → skip.
+//   2. The fileName exists locally — whether DETACHED (no workspace
+//      owns it) or already attached to another workspace — →
+//      additively attach the existing copy to OUR workspace
+//      WITHOUT overwriting bytes and WITHOUT detaching from any
+//      other workspace that lists it. Reports can be members of
+//      multiple workspaces; "detached" means "listed in zero
+//      workspaces". The peer's matching upload is the signal that
+//      this workspace is one of the file's homes, so our
+//      `reports` row grows; any other workspace that had the
+//      fileName keeps it (`addReportToWorkspace` is additive).
+//      Local bytes win on conflict (the user may have edits the
+//      peer doesn't yet have); the cloud bytes stay reachable
+//      through the download dialog.
+//   3. The fileName is missing locally → gunzip + validate +
+//      persist + attach (the original download path).
 //
 // `tag` is passed through so each await checkpoint can re-verify
 // the remote-still-claims-this-file invariant: a delete (local OR
@@ -365,24 +379,35 @@ async function ensureRemoteNames(entry) {
 // workspace key (a workspace member) can therefore cause
 // recognized-shape reports to land locally without an explicit
 // dialog confirm — symmetric with how triage-sync silently
-// applies peer-signed changesets. The collision check below
-// refuses to overwrite an existing local fileName; the
-// `analyzeContent` gate refuses non-report blobs.
+// applies peer-signed changesets. Existing local fileNames are
+// never overwritten by peer bytes: branch 2 keeps local bytes
+// as-is, and the new-file branch only writes when the fileName is
+// absent on disk. The `analyzeContent` gate (new-file branch)
+// refuses non-report blobs.
+//
+// Filename-oracle property (branch 2): a workspace member who
+// guesses a fileName the victim has detached locally can PUT
+// that fileName into the workspace and observe the attach via
+// the next `list()`. They never read the victim's bytes (branch
+// 2 doesn't echo them back; the cloud row holds the attacker's
+// own placeholder), but they learn that the fileName exists on
+// the victim's machine. Accepted as a workspace-member trust
+// trade-off: any member could already learn this by uploading a
+// dummy and asking the victim out-of-band; the convergence
+// benefit (no two-client split between "cloud" and "detached")
+// outweighs the disclosure.
 async function maybeAutoDownload(entry, tag, fileName, bytes) {
   if (entry.disposed || !entry.remoteTags.has(tag)) return
-  // Skip if the workspace already claims this fileName — either we
+  const ws = listWorkspaces().find((w) => w.id === entry.workspaceId)
+  // Skip if our workspace already claims this fileName — either we
   // uploaded it ourselves (and the broadcast is the echo) or a
   // sibling tab already attached it.
-  const ws = listWorkspaces().find((w) => w.id === entry.workspaceId)
   if (ws && Array.isArray(ws.reports) && ws.reports.includes(fileName)) return
-  // Skip if the fileName collides with a local report (in any
-  // workspace OR unfiled). Auto-attaching to OUR workspace would
-  // overwrite the prior owner's bytes; leave the dialog to do an
-  // explicit overwrite if the user wants it.
+  let existsLocally
   try {
     const existing = await listFiles()
     if (entry.disposed || !entry.remoteTags.has(tag)) return
-    if (existing.includes(fileName)) return
+    existsLocally = existing.includes(fileName)
   } catch (err) {
     // OPFS listFiles failure (rare — usually a permission / quota
     // issue). Log so the operator sees WHY the download didn't
@@ -390,6 +415,30 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     // retries silently. API ergonomics audit
     // `ui/view/objstore-presence.js:343`.
     console.warn(`auto-download: listFiles failed before saving "${fileName}":`, err)
+    return
+  }
+  if (existsLocally) {
+    // Local copy exists. Additively attach to our workspace; any
+    // other workspace that already lists `fileName` keeps it
+    // (multi-workspace membership). Local bytes are kept as-is
+    // (no `saveFileBytes`) so a user with mid-edit local content
+    // doesn't see it clobbered by the peer's upload.
+    // Re-check the remote-still-claims-this-file invariant right
+    // before the `addReportToWorkspace` Web-Lock await: a delete-
+    // everywhere that lands inside the lock-acquisition window
+    // would otherwise complete the attach for a file the user
+    // just removed from remote.
+    if (entry.disposed || !entry.remoteTags.has(tag)) return
+    try {
+      await addReportToWorkspace(fileName, entry.workspaceId)
+    } catch (err) {
+      console.warn(`auto-download: attaching local "${fileName}" to workspace "${entry.workspaceId}" failed:`, err)
+      return
+    }
+    if (entry.disposed) return
+    for (const cb of autoDownloadListeners) {
+      try { cb(entry.workspaceId, fileName) } catch {}
+    }
     return
   }
   // Validate the decompressed text against `analyzeContent`. A
@@ -413,7 +462,12 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     await saveFileBytes(fileName, bytes)
     if (entry.disposed || !entry.remoteTags.has(tag)) return
     setCount(fileName, result.count, result.source)
-    await setReportWorkspace(fileName, entry.workspaceId)
+    // Final re-check before the membership-mutate await — matches
+    // the branch-2 guard. setCount is synchronous so the only
+    // checkpoint that could race is the addReportToWorkspace lock-
+    // acquisition itself.
+    if (!entry.remoteTags.has(tag)) return
+    await addReportToWorkspace(fileName, entry.workspaceId)
   } catch (err) {
     // OPFS quota-exceeded or workspace-blob lock failure. The user
     // sees nothing — bytes were decrypted and validated but never
