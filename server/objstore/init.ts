@@ -10,7 +10,7 @@ import type { Handle } from './store.ts'
 import { reapOrphans } from './reaper.ts'
 import { type ObjstoreHandlers, createObjstoreHandlers } from './handlers.ts'
 import { type ObjstoreRestDeps } from './rest.ts'
-import { newTokenSecret } from './tokens.ts'
+import { type TokenSecret, newTokenSecret } from './tokens.ts'
 
 export type ObjstoreInitDeps = {
   // Pre-opened storage handle, sharing the SQLite connection with
@@ -21,6 +21,14 @@ export type ObjstoreInitDeps = {
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
+  // HMAC secret for REST bearer tokens. Optional — falls back to a
+  // fresh process-local secret if omitted (the historical single-
+  // process behaviour). Multi-replica deployments MUST supply a
+  // shared secret here so a token minted on one replica's WS plane
+  // validates on another replica's REST plane (the WS-to-REST hop
+  // is not load-balancer-pinned). See server/index.ts boot logic
+  // for the env var (`OBJSTORE_TOKEN_SECRET`).
+  tokenSecret?: TokenSecret
 }
 
 export type ObjstoreInit = {
@@ -36,7 +44,7 @@ export type ObjstoreInit = {
 
 export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   const handle = deps.handle
-  const secret = newTokenSecret()
+  const secret = deps.tokenSecret ?? newTokenSecret()
   const handlers = createObjstoreHandlers({
     handle, secret,
     send: deps.send, broadcast: deps.broadcast,
@@ -68,12 +76,29 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   // can't hand out list / fetch / put-begin against a tag whose
   // on-disk state still has stranded files from a prior crash.
   const startupReap = enqueueSweep()
-  const reapTimer = setInterval(enqueueSweep, deps.reapIntervalMs)
-  reapTimer.unref?.()
+  // Jittered start of the periodic timer. Multi-replica deploys
+  // (Neon + Vercel Blob) commonly boot N replicas in tight lock-
+  // step (deploy rollout, cluster restart) and would otherwise
+  // sync every replica's reaper at the same wall-clock tick,
+  // hammering the DB + blob store with N×readdir+lock-acquire
+  // bursts. A random first-interval delay deconcurrencies the
+  // cluster without changing the long-term sweep cadence.
+  // Jitter range is 0…1× reapIntervalMs (i.e., the next sweep
+  // happens at [interval, 2×interval] after boot); subsequent
+  // sweeps stay at exactly `reapIntervalMs` apart.
+  let reapTimer: ReturnType<typeof setInterval> | null = null
+  const jitterMs = Math.floor(Math.random() * deps.reapIntervalMs)
+  const firstTimer = setTimeout(() => {
+    enqueueSweep()
+    reapTimer = setInterval(enqueueSweep, deps.reapIntervalMs)
+    reapTimer.unref?.()
+  }, deps.reapIntervalMs + jitterMs)
+  firstTimer.unref?.()
   return {
     handlers, restDeps, startupReap,
     stopReaper: async () => {
-      clearInterval(reapTimer)
+      clearTimeout(firstTimer)
+      if (reapTimer) clearInterval(reapTimer)
       // Drain whichever sweep is currently running (startup or
       // periodic) — either could be mid-readdir/unlink at SIGTERM
       // time and would otherwise outlive `handle.close()`.

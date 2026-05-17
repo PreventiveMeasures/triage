@@ -1,22 +1,23 @@
-// Orphan reaper for the v1.objstore filesystem. Two passes:
-//   1. Stranded committed files. Walk every workspace dir under
-//      OBJSTORE_DIR, list `.bin` at the top level, cross-check
-//      against the live table. Files with no row → unlink. Covers
-//      the "DELETE crashed between row-drop and unlink" gap and
-//      the "commit crashed mid-rename" dual-file case.
-//   2. Stale staging. Files in `.staging/` whose row is missing OR
-//      whose row is older than `stagingTtlMs` → unlink + drop row.
+// Orphan reaper for the v1.objstore byte plane. Two passes:
+//   1. Stranded committed blobs. Walk every workspace's live-blob
+//      listing, cross-check against the live table. Blobs with no
+//      row → unlink. Covers the "DELETE crashed between row-drop
+//      and unlink" gap and the "commit crashed mid-promotion" dual-
+//      blob case.
+//   2. Stale staging. Rows in workspace_object_staging older than
+//      `stagingTtlMs` → unlink + drop row. Staging blobs with no
+//      row → unlink (catches a row drop that crashed before the
+//      blob delete).
 //
-// Async (fs/promises) so a periodic sweep over a large filesystem
-// doesn't block the event loop. DB calls are async-shaped wrappers
-// over the sync `node:sqlite` driver — they resolve in the current
-// microtask and stay sub-ms; the readdir / unlink costs are what
-// scale.
+// Backend-agnostic: every storage operation goes through
+// `handle.blob.*`. The FS backend (blob-fs.ts) implements list/
+// unlink against the local filesystem; the Vercel backend (blob-
+// vercel.ts) against the SDK's list / del. The reaper's race-
+// handling discipline — re-check live row / staging row under the
+// per-resource lock before unlinking — is identical for both.
 
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import { type Handle, STAGING_TTL_MS_DEFAULT, isValidStagingId, isValidTag, lockKey } from './store.ts'
-import { stagingFilePath, unlinkIfExists } from './fs.ts'
+import { tryAcquireCommitLock } from './commit-lock.ts'
 
 type StagingRow = {
   workspace_tag: string
@@ -25,47 +26,54 @@ type StagingRow = {
   begun_at: number
 }
 
-async function safeReaddir(dir: string): Promise<string[]> {
-  try { return await readdir(dir) } catch { return [] }
-}
-
-// Sweep `.bin` files at the top level of one workspace dir against
-// the set of live resource_tags. Anything with no row → unlink. The
-// live snapshot we read up front can race a concurrent commit (delete
-// drops the row → put-begin → commit lands a fresh row + file between
-// our snapshot and the unlink). Re-check `selectLiveOne` under the
-// per-resource lock so we never unlink a file the live row points at.
-// PR #4 review.
+// Sweep one workspace's live-blob listing against the live-row set.
+// Anything with no row → unlink. The live snapshot we read up front
+// can race a concurrent commit (delete drops the row → put-begin →
+// commit lands a fresh row + blob between our snapshot and the
+// unlink). Re-check `selectLiveOne` under the per-resource lock so
+// we never unlink a blob the live row points at. PR #4 review.
 async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
   if (!isValidTag(tag)) return
-  const wsDir = join(handle.dir, tag)
-  const entries = await safeReaddir(wsDir)
+  const entries = await handle.blob.listLiveResourceTags(tag)
   if (entries.length === 0) return
   const liveRows = await handle.selectLive.all(tag)
   const live = new Set(liveRows.map((r) => r.resource_tag))
-  for (const name of entries) {
-    if (name === '.staging' || !name.endsWith('.bin')) continue
-    const resourceTag = name.slice(0, -4)
-    // Skip a non-base64url filename — refuse to unlink anything we
-    // didn't write ourselves, in case the dir was operator-seeded
-    // with foreign files.
+  for (const resourceTag of entries) {
+    // Refuse to act on a foreign / malformed name — defense against
+    // an operator-seeded blob, an SDK return shape regression, or a
+    // future migration that introduces an unsanitised input. The
+    // production write paths only ever produce base64url-shaped
+    // resource tags.
     if (!isValidTag(resourceTag)) continue
     if (live.has(resourceTag)) continue
-    await handle.lock.run(lockKey(tag, resourceTag), async () => {
-      // Recheck under the lock — a commit that raced past our snapshot
-      // landed a fresh row + file; the file we're about to unlink IS
-      // that fresh commit's live file. Skip.
-      if (await handle.selectLiveOne.get(tag, resourceTag)) return
-      await unlinkIfExists(join(wsDir, name))
-    })
+    // Try-acquire the DB commit lock (cross-replica gate). If
+    // contended, another replica is mid-commit on this same key —
+    // skip and let it land; we'll re-scan on the next sweep. This
+    // closes the multi-replica race where replica A's reaper would
+    // delete the live blob that replica B is about to commit, but
+    // replica B's `upsertLive` hasn't landed yet. Without the DB
+    // lock, replica A's in-process lock is uncontested (B's lock
+    // is on a different process) and we'd unlink the in-flight
+    // commit's bytes.
+    const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
+    if (!acquired.ok) continue
+    try {
+      await handle.lock.run(lockKey(tag, resourceTag), async () => {
+        // Recheck under the lock — a commit that raced past our snapshot
+        // landed a fresh row + blob; the blob we're about to unlink IS
+        // that fresh commit's live blob. Skip.
+        if (await handle.selectLiveOne.get(tag, resourceTag)) return
+        await handle.blob.unlinkLive(tag, resourceTag)
+      })
+    } finally { await acquired.lock.release() }
   }
 }
 
-// Drop staging rows older than the TTL and unlink their on-disk
-// files. Every row field that flows into a path is re-validated — DB
-// tampering / a future migration that introduces an unsanitised
-// column shouldn't be able to trick the reaper into unlinking
-// outside `handle.dir`. PR #4 review.
+// Drop staging rows older than the TTL and unlink their on-storage
+// blobs. Every row field that flows into a backend call is re-
+// validated — DB tampering / a future migration that introduces an
+// unsanitised column shouldn't be able to trick the reaper into
+// touching unintended keys. PR #4 review.
 async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: number): Promise<void> {
   // Push the staleness filter into SQL so the
   // `workspace_object_staging_begun_at_idx` index handles the scan.
@@ -100,74 +108,76 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
       if (Date.now() - fresh.begun_at < stagingTtlMs) return
       // DB row first, then unlink — symmetric with deleteObject in
       // store.ts. Inverting from the previous unlink-first order
-      // closes a narrow crash window where the file is gone but the
-      // row points at a missing path; the next reaper sweep's
-      // `unlinkIfExists` of an absent file is a no-op, so the
-      // inverted ordering self-heals via the reaper's idempotent
-      // re-sweep. Concurrency audit `server/objstore/reaper.ts:94`.
+      // closes a narrow crash window where the bytes are gone but
+      // the row points at a missing path; the next reaper sweep's
+      // unlink of an absent blob is a no-op, so the inverted
+      // ordering self-heals via the reaper's idempotent re-sweep.
+      // Concurrency audit `server/objstore/reaper.ts:94`.
       await handle.deleteStaging.run(s.workspace_tag, s.resource_tag, s.staging_id)
-      await unlinkIfExists(stagingFilePath(handle.dir, s.workspace_tag, s.staging_id))
+      await handle.blob.unlinkStaging(s.workspace_tag, s.staging_id)
     })
   }
 }
 
-// Sweep `.staging/*.bin` files whose row is missing — happens when
-// a commit dropped the row but crashed before the rename, or after
-// reapStaleStagingRows already nuked the row but the file lingered.
-// Row lookup per-file (vs a snapshot at the caller) closes the race
+// Sweep staging blobs whose row is missing — happens when a commit
+// dropped the row but crashed before the unlink (Vercel: between
+// the post-copy `del(staging)` and the DB delete; FS: not possible
+// since rename removes the staging file), or after
+// reapStaleStagingRows already nuked the row but the unlink failed.
+// Per-blob row lookup (vs a snapshot at the caller) closes the race
 // where a concurrent beginPut between snapshot-time and unlink-time
-// would have its file unlinked while the row was already in DB. The
-// per-file SELECT is sub-ms and sids are 16-byte random — a
+// would have its blob unlinked while the row was already in DB. The
+// per-blob SELECT is sub-ms and sids are 16-byte random — a
 // same-sid beginPut in the microsecond between our SELECT and
-// unlinkIfExists is 1/2^128. Also handles the malformed-row case:
-// a row with valid (workspace_tag, staging_id) but malformed
-// resource_tag still pins its file. PR #4 review H1.
+// unlink is 1/2^128. Also handles the malformed-row case: a row
+// with valid (workspace_tag, staging_id) but malformed resource_tag
+// still pins its blob. PR #4 review H1.
 async function reapOrphanedStagingFiles(handle: Handle, tag: string): Promise<void> {
   if (!isValidTag(tag)) return
-  const stagingDir = join(handle.dir, tag, '.staging')
-  const entries = await safeReaddir(stagingDir)
+  const entries = await handle.blob.listStagingIds(tag)
   if (entries.length === 0) return
-  for (const name of entries) {
-    if (!name.endsWith('.bin')) continue
-    const stagingId = name.slice(0, -4)
+  for (const stagingId of entries) {
     // Same on-disk-foreign-file guard as reapCommittedForTag.
     if (!isValidStagingId(stagingId)) continue
     if (await handle.selectStagingByWsSid.get(tag, stagingId)) continue
-    await unlinkIfExists(join(stagingDir, name))
+    await handle.blob.unlinkStaging(tag, stagingId)
   }
 }
 
 export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING_TTL_MS_DEFAULT): Promise<void> {
   const now = Date.now()
   // Pass 1: tags the live table knows about — cross-check committed
-  // files against live rows.
+  // blobs against live rows.
   const liveTagsRows = await handle.listLiveTags.all()
   const liveTags = liveTagsRows.map((r) => r.workspace_tag)
   for (const tag of liveTags) await reapCommittedForTag(handle, tag)
-  // Whole-workspace deletes leave dirs that the live table doesn't
-  // list. Walk the top-level dir to find them; unlink any orphaned
-  // `.bin` files there too. Same race as `reapCommittedForTag`: a
-  // concurrent put-begin → commit on a tag that wasn't in our
-  // `liveTags` snapshot could land between safeReaddir and unlink.
-  // Re-check `selectLiveOne` under the per-resource lock.
-  const topLevel = await safeReaddir(handle.dir)
+  // Whole-workspace deletes leave residue (dirs / blob-prefixes)
+  // that the live table doesn't list. Walk the backend's top-level
+  // workspace listing to find them; the same per-resource lock +
+  // re-check protects against racing put-begin → commit on a tag
+  // not in our `liveTags` snapshot.
+  const topLevel = await handle.blob.listWorkspaceTags()
   const liveSet = new Set(liveTags)
   for (const tag of topLevel) {
     if (liveSet.has(tag) || !isValidTag(tag)) continue
-    const wsDir = join(handle.dir, tag)
-    for (const name of await safeReaddir(wsDir)) {
-      if (name === '.staging' || !name.endsWith('.bin')) continue
-      const resourceTag = name.slice(0, -4)
+    const stragglers = await handle.blob.listLiveResourceTags(tag)
+    for (const resourceTag of stragglers) {
       if (!isValidTag(resourceTag)) continue
-      await handle.lock.run(lockKey(tag, resourceTag), async () => {
-        if (await handle.selectLiveOne.get(tag, resourceTag)) return
-        await unlinkIfExists(join(wsDir, name))
-      })
+      // Same cross-replica gate as reapCommittedForTag — skip on
+      // contention so an in-flight commit's bytes aren't deleted.
+      const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
+      if (!acquired.ok) continue
+      try {
+        await handle.lock.run(lockKey(tag, resourceTag), async () => {
+          if (await handle.selectLiveOne.get(tag, resourceTag)) return
+          await handle.blob.unlinkLive(tag, resourceTag)
+        })
+      } finally { await acquired.lock.release() }
     }
   }
-  // Pass 2: stale staging rows + orphan staging files. The orphan
-  // sweep does per-file row lookups (no caller-side snapshot), so a
-  // beginPut that lands between our readdir and our unlink has its
+  // Pass 2: stale staging rows + orphan staging blobs. The orphan
+  // sweep does per-blob row lookups (no caller-side snapshot), so a
+  // beginPut that lands between our list and our unlink has its
   // row found by the fresh SELECT. PR #4 review H1.
   await reapStaleStagingRows(handle, now, stagingTtlMs)
   for (const tag of topLevel) {

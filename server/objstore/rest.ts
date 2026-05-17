@@ -24,13 +24,12 @@
 // but the body is not load-bearing for the protocol.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createWriteStream } from 'node:fs'
-import { type FileHandle, open, stat } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
 import { Transform } from 'node:stream'
 import { Buffer } from 'node:buffer'
 import type { WebSocket } from 'ws'
 import {
+  type CommitPutResult,
   type Handle,
   MAX_CONTENT_LENGTH,
   abortPut,
@@ -39,17 +38,22 @@ import {
   isValidTag,
   lockKey,
 } from './store.ts'
-import { liveFilePath, stagingFilePath } from './fs.ts'
+import type { LiveReader } from './blob.ts'
+import { CommitLockContendedError, withCommitLock } from './commit-lock.ts'
 import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
 
-// Server-side filesystem fault codes that should surface as 500
-// `io-error` rather than 400 `aborted`. `pipeline(req, ws)` rejects
-// with the first stream error; the client-side codes (socket close,
-// the manual `overrun`) are everything else. ENOENT is included
-// because `createWriteStream` will reject with it if the
-// `${tag}/.staging` dir was removed out from under us (operator
-// action / external fs activity) — that's a server-side state, not
-// a client-fixable abort. PR #4 review.
+// Server-side fault codes that should surface as 500 `io-error`
+// rather than 400 `aborted`. `pipeline(req, ws)` rejects with the
+// first stream error; the client-side codes (socket close, the
+// manual `overrun`) are everything else. ENOENT is included because
+// `createWriteStream` will reject with it if the `${tag}/.staging`
+// dir was removed out from under us (operator action / external
+// fs activity) — that's a server-side state, not a client-fixable
+// abort. PR #4 review. The Vercel-blob backend surfaces failures
+// through other paths (rejected put promise → caught by the
+// pipeline catch as a plain Error without a `code`); those land in
+// the default `aborted` branch and the operator-facing log line
+// carries the SDK's error message.
 const IO_FAULT_CODES = new Set(['ENOSPC', 'EACCES', 'EROFS', 'EIO', 'EMFILE', 'ENFILE', 'EDQUOT', 'EPERM', 'ENOENT'])
 
 export type ObjstoreRestDeps = {
@@ -59,15 +63,16 @@ export type ObjstoreRestDeps = {
   debug: boolean
 }
 
-// In-flight upload set, keyed by stagingId. A concurrent replay of
-// the same put-token would otherwise let two requests open the same
-// staging file with `flags: 'w'`. After the first commit renames
-// staging → live, the second's still-open fd points at the inode
-// that's now under the live name — its remaining writes would
-// corrupt the committed blob. Reject the second outright;
-// sequential replays still hit the staging-row precheck → 410.
-// PR #4 review.
-const inFlightSids = new Set<string>()
+// Concurrent replay protection: rejected via the DB-backed
+// distributed commit lock taken at PUT start
+// (`server/objstore/commit-lock.ts`). Previously a per-process
+// `Set<string>` of in-flight stagingIds, which broke under multi-
+// replica deployments — two replicas processing the same put-token
+// would each pass their own in-process set. The lock is keyed by
+// (workspace_tag, resource_tag) so it ALSO serializes the upload
+// itself against concurrent commits / deletes / reaper unlinks on
+// the same key, which the prior in-process lock could only do
+// within a single replica.
 
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
 // alphabet, case-sensitive. The `?…` query is permitted but ignored
@@ -173,18 +178,77 @@ async function handleRestPut(
     deny(res, 411, 'length-required'); return
   }
   if (declared !== payload.len) { deny(res, 400, 'length-mismatch'); return }
-  // Reject a concurrent replay of the same put-token — two writers
-  // opening `flags: 'w'` on the same staging path would race the
-  // post-commit rename and corrupt the live file. Sequential replay
-  // still falls through to the row-precheck below → 410. PR #4
-  // review.
-  if (inFlightSids.has(payload.sid)) { deny(res, 410, 'gone'); return }
-  inFlightSids.add(payload.sid)
+  // Distributed commit-lock acquired at PUT start, held across the
+  // entire upload + commit critical section. Cross-replica
+  // serialization against concurrent put / delete / reaper-unlink
+  // on the same (tag, resourceTag). Lock is TTL-leased (5 min by
+  // default, tunable via OBJSTORE_COMMIT_LOCK_LEASE_MS) so a
+  // crashed PUT doesn't permanently pin the key — expires for the
+  // next attempt. Contention returns 503 + reason='contended' so
+  // clients can distinguish a transient lock contention
+  // (retryable) from an expired-staging 410 (re-begin required).
+  // The server already waited up to 2s on the lock inside
+  // tryAcquireCommitLockWithWait, so reaching CommitLockContended
+  // here means the holder is genuinely busy.
   try {
-    await handleRestPutLocked(deps, req, res, route, payload, declared)
-  } finally {
-    inFlightSids.delete(payload.sid)
+    // Pass `lock.holder` into `handleRestPutLocked` → `commitPut`
+    // so the live-row write goes through the atomic
+    // `upsertLiveIfHeld` SQL — guards against a stolen-mid-upload
+    // lease overwriting the live row with bytes from a racing
+    // replica's commit. See `commit-lock.ts:CommitLock.holder`.
+    await withCommitLock(deps.handle, route.tag, route.resourceTag, (lock) =>
+      handleRestPutLocked(deps, req, res, route, payload, declared, lock.holder))
+  } catch (err) {
+    if (err instanceof CommitLockContendedError) {
+      // Don't write a response body if headers were already
+      // committed by handleRestPutLocked (shouldn't be — the
+      // contended path means the inner fn never ran — but
+      // defensive).
+      if (!res.headersSent) {
+        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
+        res.end(JSON.stringify({ error: 'contended' }))
+      }
+      return
+    }
+    throw err
   }
+}
+
+// Map a `commitPut` failure to its wire response. Extracted from
+// `handleRestPutLocked` to keep it under the per-function line cap
+// and to make the wire-mapping ladder its own audit surface — the
+// exhaustiveness `never` guard at the bottom catches a forward-
+// compat hazard where a new `CommitPutResult` reason lands without
+// updating this dispatch.
+function denyCommitFailure(res: ServerResponse, result: Exclude<CommitPutResult, { ok: true }>): void {
+  if (result.reason === 'conflict') {
+    denyConflict(res, result.conflict?.version ?? null)
+    return
+  }
+  if (result.reason === 'no-staging') { deny(res, 410, 'gone'); return }
+  // `lock-lost` — our lease expired (or was stolen) during the
+  // upload phase; the conditional `upsertLiveIfHeld` correctly
+  // skipped the write. Surface as the same 503 'contended' the
+  // server uses for inbound-lock contention so the client's typed
+  // `contended` result handles both shapes identically.
+  if (result.reason === 'lock-lost') {
+    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
+    res.end(JSON.stringify({ error: 'contended' }))
+    return
+  }
+  // `io-error` = FS/disk fault (EACCES/ENOSPC/EIO/racing abort);
+  // server-side, not client-fixable. `size-mismatch` is the
+  // remaining client-data fault — wire-rename to the documented
+  // `length-mismatch` shape so the README enumeration stays
+  // exhaustive.
+  if (result.reason === 'io-error') { deny(res, 500, 'io-error'); return }
+  if (result.reason === 'size-mismatch') { deny(res, 400, 'length-mismatch'); return }
+  // Exhaustiveness guard — a new `CommitPutResult` reason added
+  // without updating this ladder trips the `never` cast at compile
+  // time. Forward-compat hazard called out in audit round-10.
+  const _exhaustive: never = result.reason
+  void _exhaustive
+  deny(res, 500, 'internal')
 }
 
 async function handleRestPutLocked(
@@ -194,6 +258,7 @@ async function handleRestPutLocked(
   route: RouteMatch,
   payload: { sid: string; len: number },
   declared: number,
+  commitLockHolder: string,
 ): Promise<void> {
   // Cheap staging-row precheck — bail before accepting up to
   // MAX_CONTENT_LENGTH bytes for a replayed / expired token. The
@@ -204,7 +269,12 @@ async function handleRestPutLocked(
   }
   const key = lockKey(route.tag, route.resourceTag)
   const abortLocked = () => deps.handle.lock.run(key, () => abortPut(deps.handle, route.tag, route.resourceTag, payload.sid))
-  const stagingPath = stagingFilePath(deps.handle.dir, route.tag, payload.sid)
+  // Open the backend's staging writer. For the FS backend this is a
+  // `createWriteStream` to the canonical staging path; for the
+  // Vercel backend it's a PassThrough whose other end feeds the
+  // SDK's `put`. Both surfaces are awaited via `finalize()` after
+  // the pipeline below.
+  const writer = await deps.handle.blob.openStagingWriter(route.tag, payload.sid)
   // Byte counter as a Transform in the pipeline. EventEmitter delivers
   // chunks to every attached listener, so `req.on('data', count)` +
   // `pipeline(req, ws)` would also work — but the dual-listener
@@ -226,13 +296,29 @@ async function handleRestPutLocked(
       else cb(null, chunk)
     },
   })
-  const ws = createWriteStream(stagingPath, { flags: 'w' })
-  try { await pipeline(req, counter, ws) } catch (err) {
+  try {
+    await pipeline(req, counter, writer.writable)
+    // For the FS backend `finalize` is a no-op (pipeline already
+    // awaited the WriteStream's 'finish'); for the Vercel backend
+    // it awaits the SDK's put-promise so we know the bytes are
+    // durable at the remote before commitPut runs its size check.
+    await writer.finalize()
+  } catch (err) {
+    // Await writer.abort() so a Vercel-backed upload's in-flight
+    // HTTP request has time to settle (rejected with
+    // BlobRequestAbortedError) BEFORE abortLocked → unlinkStaging
+    // runs. Otherwise a late-arriving upload chunk recreates the
+    // staging blob after we've cleaned it. FS backend's abort is
+    // an immediate microtask — no real wait.
+    await writer.abort(err)
     await abortLocked()
     // Branch on `err.code` so a write-side fault (ENOSPC / EACCES /
     // EIO …) surfaces as a 5xx per the README contract, separate
     // from a client-side abort / overrun which stays 400. PR #4
-    // review.
+    // review. Vercel-blob upload failures land here without a
+    // `code` field and route through the 400 `aborted` branch; the
+    // DEBUG=1 log line carries the SDK's error.message for
+    // operator triage.
     const code = (err as NodeJS.ErrnoException)?.code
     if (code !== undefined && IO_FAULT_CODES.has(code)) deny(res, 500, 'io-error')
     else deny(res, 400, 'aborted')
@@ -246,15 +332,18 @@ async function handleRestPutLocked(
     return
   }
   if (received !== declared) { await abortLocked(); deny(res, 400, 'length-mismatch'); return }
-  // Belt-and-braces: confirm on-disk size (catches a writestream
-  // that silently absorbed less, e.g. ENOSPC near the end). A
-  // failure to stat the file we just wrote is an FS-side fault
-  // (EACCES / EIO / racing reaper / abort) — wire string is
-  // `io-error`, mapped to HTTP 500, matching the README contract.
-  let onDisk: number
-  try { onDisk = (await stat(stagingPath)).size } catch {
+  // Belt-and-braces: confirm storage-side size (catches a writer
+  // that silently absorbed less, e.g. ENOSPC near the end on FS,
+  // or a partial multipart upload that the SDK didn't propagate as
+  // a reject). A null result here means the staging slot is gone
+  // entirely (racing reaper / abort), which is an FS-side / backend
+  // fault — wire string is `io-error`, mapped to HTTP 500, matching
+  // the README contract.
+  let onDisk: number | null
+  try { onDisk = await deps.handle.blob.statStaging(route.tag, payload.sid) } catch {
     await abortLocked(); deny(res, 500, 'io-error'); return
   }
+  if (onDisk == null) { await abortLocked(); deny(res, 500, 'io-error'); return }
   if (onDisk !== payload.len) { await abortLocked(); deny(res, 400, 'length-mismatch'); return }
   // Commit ladder: refresh `begun_at` AND commitPut under ONE lock.
   // Refreshing outside the lock leaves a window where the reaper's
@@ -267,42 +356,35 @@ async function handleRestPutLocked(
   const result = await deps.handle.lock.run(key, async () => {
     // Step 1 (lock-protected): refresh begun_at so the reaper's
     // next freshness check inside its own lock-block sees us as
-    // fresh — bounded by the lock against other readers.
+    // fresh — bounded by the lock against other readers. Mostly
+    // belt-and-braces now that the DB commit lock already excludes
+    // the reaper from this key (see commit-lock.ts), but keep it
+    // so a future caller running outside the commit-lock (e.g.
+    // future test fixture / direct-DB tooling) still extends the
+    // staging-row TTL across the upload.
     await deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
     // Step 2 (still under the lock): commit. Precondition recheck
     // + durable rename + DB write are serialised against concurrent
     // commits / deletes / begins on the same (tag, resourceTag).
+    // Thread the post-upload `onDisk` size as `observedSize` so
+    // commitPut skips its own redundant statStaging round-trip
+    // (one fewer Vercel HEAD per PUT). Safe because the staging
+    // blob cannot have been resized between the stat at line 299
+    // and here — the DB commit lock + this in-process lock both
+    // exclude every writer of this stagingId.
     const r = await commitPut(deps.handle, {
       workspaceTag: route.tag, resourceTag: route.resourceTag, stagingId: payload.sid,
+      observedSize: onDisk,
+      // Threading the holder enables the `upsertLiveIfHeld` SQL
+      // gate. A long upload whose lease silently expired mid-
+      // flight (a peer replica's reaper or commit may have stolen)
+      // hits `lock-lost` here instead of blindly overwriting.
+      holder: commitLockHolder,
     })
     if (!r.ok) await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
     return r
   })
-  if (!result.ok) {
-    if (result.reason === 'conflict') {
-      denyConflict(res, result.conflict?.version ?? null)
-      return
-    }
-    if (result.reason === 'no-staging') { deny(res, 410, 'gone'); return }
-    // `io-error` = FS/disk fault (EACCES/ENOSPC/EIO/racing abort);
-    // server-side, not client-fixable. `size-mismatch` is the
-    // remaining client-data fault — wire-rename to the documented
-    // `length-mismatch` shape so the README enumeration stays
-    // exhaustive.
-    if (result.reason === 'io-error') { deny(res, 500, 'io-error'); return }
-    if (result.reason === 'size-mismatch') { deny(res, 400, 'length-mismatch'); return }
-    // Exhaustiveness guard. The four branches above cover every
-    // `CommitPutResult` rejection reason; a future reason added to
-    // the union without updating this ladder would trip the
-    // `never` cast at compile time. Forward-compat hazard called
-    // out in audit round-10. Was previously
-    // `deny(res, 400, result.reason)` — silent passthrough that
-    // would have leaked the raw internal reason as a wire string
-    // bypassing the README's documented enumeration.
-    const _exhaustive: never = result.reason
-    void _exhaustive
-    deny(res, 500, 'internal'); return
-  }
+  if (!result.ok) { denyCommitFailure(res, result); return }
   res.writeHead(200, { 'content-type': 'application/json' })
   res.end(JSON.stringify({
     version: result.row.version,
@@ -322,38 +404,37 @@ async function handleRestPutLocked(
 }
 
 type GetOpened =
-  | { reason: 'ok'; fh: FileHandle; size: number }
+  | { reason: 'ok'; reader: LiveReader }
   | { reason: 'not-found' }
   | { reason: 'unavailable' }
 
 function openLiveUnderLock(
   deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number },
 ): Promise<GetOpened> {
-  // Validate row version + open the fd inside the lock so a
-  // concurrent commit's rename or delete's unlink can't slip between
-  // the row check and the open. Once we hold the open fd, the inode
-  // is pinned even if the path is later overwritten/unlinked — the
-  // bytes we stream are the snapshot the token was issued for.
+  // Validate row version + open the reader inside the lock so a
+  // concurrent commit's promote or delete's unlink can't slip
+  // between the row check and the open. For the FS backend the
+  // open returns a pinned fd (inode stays alive even if the path
+  // is later unlinked / overwritten); for the Vercel backend the
+  // SDK's `get` returns a stream backed by a fetch reader that
+  // streams the bytes the token was issued for. Either way the
+  // snapshot stays consistent for the duration of the response.
   return deps.handle.lock.run<GetOpened>(lockKey(route.tag, route.resourceTag), async (): Promise<GetOpened> => {
     const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
     if (!live || live.version !== payload.ver) return { reason: 'not-found' }
-    const path = liveFilePath(deps.handle.dir, route.tag, route.resourceTag)
-    let fh: FileHandle
-    try { fh = await open(path, 'r') } catch { return { reason: 'unavailable' } }
-    // Wrap stat + size check — a throw between open and the
-    // `await fh.close()` line would otherwise leak the fd until
-    // GC. PR #4 review H8.
-    try {
-      const size = (await fh.stat()).size
-      if (size !== live.content_length) {
-        await fh.close().catch(() => {})
-        return { reason: 'unavailable' }
-      }
-      return { reason: 'ok', fh, size }
-    } catch {
-      await fh.close().catch(() => {})
+    let opened
+    try { opened = await deps.handle.blob.openLiveReader(route.tag, route.resourceTag) }
+    catch { return { reason: 'unavailable' } }
+    if (!opened.ok) return { reason: opened.reason }
+    // Size mismatch between the live row and the on-storage bytes
+    // is a transient inconsistency — reaper will reconcile. Close
+    // the reader before returning so we don't leak the fd / fetch
+    // reader. PR #4 review H8.
+    if (opened.reader.size !== live.content_length) {
+      await opened.reader.close().catch(() => {})
       return { reason: 'unavailable' }
     }
+    return { reason: 'ok', reader: opened.reader }
   })
 }
 
@@ -369,20 +450,20 @@ async function handleRestGet(
   // uniform with "never existed" so a probe can't distinguish.
   const opened = await openLiveUnderLock(deps, route, payload)
   if (opened.reason === 'not-found') { deny(res, 404, 'not-found'); return }
-  // If the live row is there but the file is missing / wrong size,
+  // If the live row is there but the bytes are missing / wrong size,
   // it's a transient inconsistency the reaper will sort out — 503
   // (vs 404) tells the client this is a server-side state, not a
   // "the resource truly isn't there" answer.
   if (opened.reason === 'unavailable') { deny(res, 503, 'unavailable'); return }
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
-    'content-length': String(opened.size),
+    'content-length': String(opened.reader.size),
   })
   // `pipeline` (vs `stream.pipe(res)`) destroys the source when the
   // destination errors — a client that aborts mid-download would
-  // otherwise leak the read-stream fd until GC. The FileHandle's
-  // createReadStream() auto-closes the fd when the stream finishes
-  // or is destroyed; `pipeline` rejecting will bubble to handleRest's
-  // outer catch for `res.destroy()`.
-  await pipeline(opened.fh.createReadStream(), res)
+  // otherwise leak the read-stream fd / fetch reader until GC. The
+  // backend's reader auto-closes its underlying resource when the
+  // stream finishes or is destroyed; `pipeline` rejecting bubbles
+  // to handleRest's outer catch for `res.destroy()`.
+  await pipeline(opened.reader.stream, res)
 }

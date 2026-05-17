@@ -12,12 +12,17 @@
 // connection. Calling `neon()` is cheap; no resource is held to
 // release.
 //
-// Bytes still live on local disk under `OBJSTORE_DIR` regardless of
-// backend — multi-MB blobs don't belong in the DB. The byte plane
-// is single-process today; multi-process / multi-replica support
-// awaits a shared object-storage backend (S3 or similar).
+// Byte plane: passed in as a `BlobBackend` (./blob.ts). The
+// supported pairings selected by server/index.ts are:
+//   - Neon + Vercel Blob Private Storage (multi-replica, the only
+//     pairing that survives a replica restart without local-disk
+//     coordination). Activated by setting BLOB_READ_WRITE_TOKEN
+//     alongside DATABASE_URL.
+//   - Neon + local FS (development / operator escape hatch — bytes
+//     still need to live on a shared filesystem if you run more
+//     than one replica).
 
-import { mkdirSync } from 'node:fs'
+import type { BlobBackend } from './blob.ts'
 import { KeyedAsyncLock } from './lock.ts'
 import type { AllStmt, GetStmt, RunStmt } from '../db-stmt.ts'
 import type { Handle } from './store.ts'
@@ -67,6 +72,20 @@ const SCHEMA_PG = [
    )`,
   `CREATE INDEX IF NOT EXISTS workspace_object_staging_begun_at_idx
      ON workspace_object_staging (begun_at)`,
+  // Distributed commit mutex — see store.ts SCHEMA for rationale.
+  // `expires_at` is set from `(EXTRACT(EPOCH FROM NOW())*1000)::BIGINT
+  // + lease_ms` and the steal predicate also compares against the DB
+  // server's NOW() — NEVER the caller's Date.now(). This anchoring
+  // closes the clock-skew theft scenario where a replica with a
+  // fast wall clock would read a peer's fresh lease as expired and
+  // steal it, causing concurrent commitPut → silent data corruption.
+  `CREATE TABLE IF NOT EXISTS workspace_object_commit_lock (
+     workspace_tag  TEXT   NOT NULL,
+     resource_tag   TEXT   NOT NULL,
+     holder         TEXT   NOT NULL,
+     expires_at     BIGINT NOT NULL,
+     PRIMARY KEY (workspace_tag, resource_tag)
+   )`,
 ]
 
 // BIGINT can round-trip as a JS string when it would lose precision.
@@ -230,6 +249,41 @@ function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string,
   } }
 }
 
+// Conditional upsert that gates on the commit-lock still being
+// held by `holder` with a fresh `expires_at`. Same single-
+// statement atomicity as the SQLite version (the WHERE EXISTS
+// evaluates against the same snapshot as the INSERT). Returns
+// `{ committed: 1 }` on success, undefined when the lease was
+// stolen / expired during the long upload phase. Both `expires_at`
+// and the time comparison anchor to the DB SERVER's NOW(), not
+// the caller's clock — clock-skew between replicas can't cause
+// the gate to incorrectly pass.
+function buildUpsertLiveIfHeld(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, string], { committed: number }> {
+  return { get: async (tag, resourceTag, version, contentHash, contentLength, signature, putAt, holder) => {
+    const rows = await sql(
+      `INSERT INTO workspace_object
+         (workspace_tag, resource_tag, version, content_hash, content_length,
+          signature, put_at)
+       SELECT $1, $2, $3, $4, $5, $6, $7
+       WHERE EXISTS (
+         SELECT 1 FROM workspace_object_commit_lock
+         WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $8
+           AND expires_at > (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+       )
+       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
+         version        = EXCLUDED.version,
+         content_hash   = EXCLUDED.content_hash,
+         content_length = EXCLUDED.content_length,
+         signature      = EXCLUDED.signature,
+         put_at         = EXCLUDED.put_at
+       RETURNING 1 AS committed`,
+      [tag, resourceTag, version, contentHash, contentLength, signature, putAt, holder],
+    ) as Array<{ committed: number | string }>
+    const r = rows[0]
+    return r ? { committed: num(r.committed) } : undefined
+  } }
+}
+
 function buildDeleteLive(sql: NeonSql): RunStmt<[string, string]> {
   return { run: async (tag, resourceTag) => {
     await sql(
@@ -280,7 +334,77 @@ function buildCountLive(sql: NeonSql): GetStmt<[string], { c: number }> {
   } }
 }
 
-export async function openNeonObjstore(connectionString: string, dir: string): Promise<Handle> {
+// Distributed mutex on (workspace_tag, resource_tag). Same
+// INSERT-or-take-expired semantics as the SQLite path:
+//   - No row → INSERT, RETURNING acquired=1.
+//   - Row held by another but expired (expires_at <= server now) →
+//     UPDATE steals the lease, RETURNING acquired=1.
+//   - Row held (by us or by another) and not expired → no row
+//     returned, caller treats as not-acquired. Same-holder refresh
+//     is intentionally NOT supported here (mirror the SQLite path);
+//     letting same-holder transparently re-acquire would defeat
+//     cross-replica serialization in single-process deployments
+//     where reaper + REST PUT share PROCESS_HOLDER_ID.
+//
+// CRITICAL: all time comparisons use Postgres's `NOW()` (server
+// clock), NOT the caller's `Date.now()`. Multi-replica deployments
+// with NTP-disagreement of even seconds would otherwise let a
+// clock-ahead replica read a fresh peer-held lease as expired and
+// steal it → concurrent commitPut → the exact data corruption the
+// lock prevents. The DB has one authoritative clock; we anchor
+// everything to it. Bind order matches the SQLite path:
+// (tag, res, holder, lease_ms, lease_ms).
+function buildTryAcquireCommitLock(sql: NeonSql): GetStmt<[string, string, string, number, number], { acquired: number }> {
+  return { get: async (tag, resourceTag, holder, leaseMsInsert, leaseMsUpdate) => {
+    const rows = await sql(
+      `INSERT INTO workspace_object_commit_lock
+         (workspace_tag, resource_tag, holder, expires_at)
+       VALUES ($1, $2, $3, (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT + $4)
+       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
+         holder     = EXCLUDED.holder,
+         expires_at = (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT + $5
+       WHERE workspace_object_commit_lock.expires_at <= (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+       RETURNING 1 AS acquired`,
+      [tag, resourceTag, holder, leaseMsInsert, leaseMsUpdate],
+    ) as Array<{ acquired: number | string }>
+    const r = rows[0]
+    return r ? { acquired: num(r.acquired) } : undefined
+  } }
+}
+
+function buildReleaseCommitLock(sql: NeonSql): RunStmt<[string, string, string]> {
+  return { run: async (tag, resourceTag, holder) => {
+    await sql(
+      `DELETE FROM workspace_object_commit_lock
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3`,
+      [tag, resourceTag, holder],
+    )
+  } }
+}
+
+function buildReleaseAllCommitLocksFor(sql: NeonSql): RunStmt<[string]> {
+  return { run: async (holder) => {
+    await sql(
+      `DELETE FROM workspace_object_commit_lock WHERE holder = $1`,
+      [holder],
+    )
+  } }
+}
+
+function buildVerifyCommitLockHeld(sql: NeonSql): GetStmt<[string, string, string], { held: number }> {
+  return { get: async (tag, resourceTag, holder) => {
+    const rows = await sql(
+      `SELECT 1 AS held FROM workspace_object_commit_lock
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3
+         AND expires_at > (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT`,
+      [tag, resourceTag, holder],
+    ) as Array<{ held: number | string }>
+    const r = rows[0]
+    return r ? { held: num(r.held) } : undefined
+  } }
+}
+
+export async function openNeonObjstore(connectionString: string, blob: BlobBackend): Promise<Handle> {
   // Same dynamic-import pattern as db-neon.ts — the peer dep is
   // only required when the Neon path was selected. `@ts-ignore`
   // rather than `@ts-expect-error` so an operator who installs the
@@ -288,10 +412,6 @@ export async function openNeonObjstore(connectionString: string, dir: string): P
   // @ts-ignore optional peer dep: '@neondatabase/serverless'
   const mod = (await import('@neondatabase/serverless')) as { neon: (url: string) => NeonSql }
   const sql: NeonSql = mod.neon(connectionString)
-  // Bytes still live on local disk regardless of backend; mirror
-  // the SQLite path's `mkdirSync(dir, { recursive: true })` so
-  // callers can rely on the dir being ready post-open.
-  mkdirSync(dir, { recursive: true })
   // Boot-time durability gate (see db-neon.ts) — `openNeonDb` runs
   // the same assertion when it opens, but `openNeonObjstore` is
   // independently invoked for the objstore plane and an operator
@@ -309,7 +429,9 @@ export async function openNeonObjstore(connectionString: string, dir: string): P
 
   return {
     // `db` intentionally unset — Neon has no `DatabaseSync`.
-    dir,
+    // `dir` intentionally unset — the byte plane goes through the
+    // `blob` backend, which may not have an on-disk layout at all.
+    blob,
     lock: new KeyedAsyncLock<string>(),
     insertStaging: buildInsertStaging(sql),
     selectStaging: buildSelectStaging(sql),
@@ -319,9 +441,14 @@ export async function openNeonObjstore(connectionString: string, dir: string): P
     selectLive: buildSelectLive(sql),
     selectLiveOne: buildSelectLiveOne(sql),
     upsertLive: buildUpsertLive(sql),
+    upsertLiveIfHeld: buildUpsertLiveIfHeld(sql),
     deleteLive: buildDeleteLive(sql),
     listAllStaging: buildListAllStaging(sql),
     listLiveTags: buildListLiveTags(sql),
     countLive: buildCountLive(sql),
+    tryAcquireCommitLock: buildTryAcquireCommitLock(sql),
+    releaseCommitLock: buildReleaseCommitLock(sql),
+    releaseAllCommitLocksFor: buildReleaseAllCommitLocksFor(sql),
+    verifyCommitLockHeld: buildVerifyCommitLockHeld(sql),
   }
 }

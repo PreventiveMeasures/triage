@@ -28,6 +28,7 @@ import {
   listLive,
   lockKey,
 } from './store.ts'
+import { CommitLockContendedError, withCommitLock } from './commit-lock.ts'
 import {
   type ObjstoreDeleteMsg,
   type ObjstoreFetchMsg,
@@ -135,7 +136,24 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   const prev = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
-  const result = await deps.handle.lock.run(lockKey(tag, resourceTag), () => deleteObject(deps.handle, tag, resourceTag, prev))
+  // Two-layer locking: DB lock for cross-replica serialization (a
+  // concurrent commit / delete / reaper-unlink on another replica),
+  // in-process lock as the inner gate (free under single-replica,
+  // also preserves the per-resource fd-lifecycle invariants the
+  // openLiveReader path relies on). A contended DB lock surfaces
+  // as `objstore-delete-error reason: contended` so the client can
+  // retry instead of getting silence.
+  let result
+  try {
+    result = await withCommitLock(deps.handle, tag, resourceTag, () =>
+      deps.handle.lock.run(lockKey(tag, resourceTag), () => deleteObject(deps.handle, tag, resourceTag, prev)))
+  } catch (err) {
+    if (err instanceof CommitLockContendedError) {
+      deps.send(socket, { type: 'objstore-delete-error', workspaceTag: tag, resourceTag, reason: 'contended' })
+      return
+    }
+    throw err
+  }
   if (!result.ok) {
     if (result.reason === 'conflict') deps.send(socket, conflictReply('delete', tag, resourceTag, result.conflict ?? null))
     else deps.send(socket, { type: 'objstore-delete-error', workspaceTag: tag, resourceTag, reason: result.reason })

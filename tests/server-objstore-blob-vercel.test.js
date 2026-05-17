@@ -1,0 +1,436 @@
+// Vercel Blob BlobBackend — unit + integration tests against an
+// injected in-memory stub of the `@vercel/blob` SDK. Avoids the
+// network (no real Vercel store needed) and pins the
+// (BlobBackend → SDK) wiring: that we call the right SDK methods
+// with the right pathnames + options, that errors map to the right
+// surface, and that the staging→live promotion preserves the same
+// crash-safety contract the FS backend implements.
+
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import { Buffer } from 'node:buffer'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { DatabaseSync } from 'node:sqlite'
+
+import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
+import { abortPut, beginPut, commitPut, deleteObject, getLive, lockKey, openObjstore } from '../server/objstore/store.ts'
+import { reapOrphans } from '../server/objstore/reaper.ts'
+
+// 32-byte b64url, 43 chars no padding (CONTENT_HASH_RE)
+function b64u32() { return 'a'.repeat(43) }
+// 64-byte b64url, 86 chars no padding (SIG_RE)
+function b64u64() { return 'a'.repeat(86) }
+
+// Minimal stand-in for the `@vercel/blob` SDK. Keeps an in-memory
+// blob store keyed by pathname so we can assert end-to-end (put →
+// head → copy → del → list) without a network round-trip. The
+// shape matches what `blob-vercel.ts` actually uses; new SDK
+// methods would need to be added here as the backend grows.
+class MockBlobNotFoundError extends Error {
+  constructor() { super('Blob not found'); this.name = 'BlobNotFoundError' }
+}
+
+function mockSdk() {
+  // pathname → { bytes: Buffer }
+  const blobs = new Map()
+  const calls = []  // call log for assertions
+
+  function urlFor(pathname) { return `https://mock.private.blob/${pathname}` }
+
+  async function readToBuffer(body) {
+    if (Buffer.isBuffer(body)) return body
+    if (typeof body === 'string') return Buffer.from(body)
+    // Node Readable
+    const chunks = []
+    for await (const c of body) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c))
+    return Buffer.concat(chunks)
+  }
+
+  return {
+    blobs, calls,
+    sdk: {
+      put: async (pathname, body, options) => {
+        calls.push({ fn: 'put', pathname, options })
+        // Respect AbortSignal — if aborted before/while reading the body,
+        // throw an AbortError to mimic the SDK's documented behavior.
+        const ac = options?.abortSignal
+        if (ac?.aborted) { throw new Error('aborted') }
+        const bytes = await readToBuffer(body)
+        if (ac?.aborted) { throw new Error('aborted') }
+        if (blobs.has(pathname) && !options?.allowOverwrite) {
+          throw new Error('blob exists')
+        }
+        blobs.set(pathname, { bytes })
+        return { url: urlFor(pathname), pathname }
+      },
+      // eslint-disable-next-line require-await
+      head: async (pathname, _opts) => {
+        calls.push({ fn: 'head', pathname })
+        const b = blobs.get(pathname)
+        if (!b) throw new MockBlobNotFoundError()
+        return { size: b.bytes.byteLength, pathname, url: urlFor(pathname) }
+      },
+      // eslint-disable-next-line require-await
+      get: async (pathname, _opts) => {
+        calls.push({ fn: 'get', pathname })
+        const b = blobs.get(pathname)
+        if (!b) throw new MockBlobNotFoundError()
+        // Web ReadableStream wrapping the byte buffer — the backend
+        // converts to a Node Readable via Readable.fromWeb.
+        const bytes = b.bytes
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(bytes))
+            controller.close()
+          },
+        })
+        return {
+          statusCode: 200,
+          stream,
+          blob: { size: bytes.byteLength },
+        }
+      },
+      // eslint-disable-next-line require-await
+      copy: async (fromPathname, toPathname, _opts) => {
+        calls.push({ fn: 'copy', from: fromPathname, to: toPathname })
+        const b = blobs.get(fromPathname)
+        if (!b) throw new MockBlobNotFoundError()
+        // Atomic per the SDK contract — the destination is either
+        // fully written or not at all. Overwrite semantics match
+        // `put` with allowOverwrite (Vercel docs: copy overwrites
+        // unconditionally when toPathname already has a blob).
+        blobs.set(toPathname, { bytes: Buffer.from(b.bytes) })
+        return { url: urlFor(toPathname), pathname: toPathname }
+      },
+      // eslint-disable-next-line require-await
+      del: async (urlOrPathname, _opts) => {
+        calls.push({ fn: 'del', target: urlOrPathname })
+        const keys = Array.isArray(urlOrPathname) ? urlOrPathname : [urlOrPathname]
+        for (const k of keys) {
+          if (!blobs.has(k)) throw new MockBlobNotFoundError()
+          blobs.delete(k)
+        }
+      },
+      // eslint-disable-next-line require-await
+      list: async (options) => {
+        calls.push({ fn: 'list', options })
+        const prefix = options.prefix ?? ''
+        const limit = options.limit ?? 1000
+        // `cursor` is the index to start at — keeps pagination
+        // simple and deterministic for tests.
+        const startIdx = options.cursor == null ? 0 : Number(options.cursor)
+        const all = [...blobs.keys()].filter((k) => k.startsWith(prefix)).toSorted()
+        const matched = all.slice(startIdx, startIdx + limit)
+        // Mode 'folded': split into top-level blobs vs subfolders
+        // relative to the prefix.
+        if (options.mode === 'folded') {
+          const topBlobs = []
+          const folders = new Set()
+          for (const k of matched) {
+            const rest = k.slice(prefix.length)
+            const slash = rest.indexOf('/')
+            if (slash === -1) {
+              topBlobs.push({ pathname: k, size: blobs.get(k).bytes.byteLength })
+            } else {
+              folders.add(`${prefix}${rest.slice(0, slash + 1)}`)
+            }
+          }
+          return {
+            blobs: topBlobs,
+            folders: [...folders],
+            hasMore: startIdx + limit < all.length,
+            cursor: startIdx + limit < all.length ? String(startIdx + limit) : undefined,
+          }
+        }
+        return {
+          blobs: matched.map((k) => ({ pathname: k, size: blobs.get(k).bytes.byteLength })),
+          hasMore: startIdx + limit < all.length,
+          cursor: startIdx + limit < all.length ? String(startIdx + limit) : undefined,
+        }
+      },
+    },
+  }
+}
+
+// Construct a Handle whose DB plane is SQLite (in a temp dir) and
+// whose byte plane is the Vercel BlobBackend driven by a mock SDK.
+// This is the pairing for the test — the same shape production code
+// builds in server/index.ts (modulo SQLite ↔ Neon on the DB plane).
+let counter = 0
+async function freshVercelHandle() {
+  const dir = mkdtempSync(path.join(tmpdir(), `deepview-vercel-${++counter}-`))
+  const db = new DatabaseSync(path.join(dir, 'data.db'))
+  // openObjstore wires the FS-backed handle, then we swap the blob
+  // field. This reuses the schema-bootstrap + statement-prep code
+  // without forking the opener.
+  const handle = openObjstore(db, path.join(dir, 'objstore'))
+  const { sdk, blobs, calls } = mockSdk()
+  const vercel = await openVercelBlobBackend({ token: 'test-token', sdk })
+  handle.blob = vercel
+  // Vercel-backed handles do not carry a `dir` field in production
+  // (server/index.ts builds the Neon handle from openNeonObjstore,
+  // which doesn't set `dir`). Match that shape for the tests so a
+  // stray test that reads handle.dir on the Vercel path would
+  // fail loudly rather than silently using the unused FS root.
+  delete handle.dir
+  return {
+    handle, sdk, blobs, calls,
+    cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }) },
+  }
+}
+
+function fakeBegin(over = {}) {
+  return {
+    workspaceTag: 'ws-1',
+    resourceTag: 'res-1',
+    prevVersion: null,
+    expectedLength: 16,
+    contentHash: b64u32(),
+    signature: b64u64(),
+    ...over,
+  }
+}
+
+// Drive the REST PUT byte path: open a staging writer, stream the
+// bytes through it, await finalize. Mirrors what rest.ts does on
+// production traffic so the byte plane exercises the same surface
+// the SDK-backed implementation has to support.
+async function streamBytesToStaging(handle, tag, sid, bytes) {
+  const writer = await handle.blob.openStagingWriter(tag, sid)
+  await pipeline(Readable.from([bytes]), writer.writable)
+  await writer.finalize()
+}
+
+describe('vercel blob backend — happy path', () => {
+  it('begin → put bytes → commit promotes staging → live', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      assert.equal(begin.ok, true)
+      // Vercel handle: filePath is omitted — pathname is meaningful
+      // only inside the Vercel store, not as an OS path.
+      assert.equal(begin.filePath, undefined)
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      // After streaming, the staging blob exists in the mock store.
+      assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), true)
+      const stagedSize = await handle.blob.statStaging('ws-1', begin.stagingId)
+      assert.equal(stagedSize, 16)
+      const commit = await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      assert.equal(commit.ok, true)
+      assert.equal(commit.row.version, 1)
+      // Post-commit: live blob exists, staging gone (the backend
+      // attempts a best-effort delete after copy).
+      assert.equal(blobs.has('ws-1/res-1.bin'), true)
+      assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), false)
+      assert.equal(blobs.get('ws-1/res-1.bin').bytes.byteLength, 16)
+      // listLive sees the row.
+      const live = await getLive(handle, 'ws-1', 'res-1')
+      assert.deepEqual(live?.version, 1)
+    } finally { cleanup() }
+  })
+
+  it('openLiveReader streams the bytes back', async () => {
+    const { handle, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const payload = Buffer.from('hello-vercel-blob')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin({ expectedLength: payload.byteLength })))
+      assert.equal(begin.ok, true)
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, payload)
+      const c = await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      assert.equal(c.ok, true)
+      const opened = await handle.blob.openLiveReader('ws-1', 'res-1')
+      assert.equal(opened.ok, true)
+      assert.equal(opened.reader.size, payload.byteLength)
+      const chunks = []
+      for await (const chunk of opened.reader.stream) chunks.push(chunk)
+      assert.equal(Buffer.concat(chunks).toString(), payload.toString())
+    } finally { cleanup() }
+  })
+})
+
+describe('vercel blob backend — error & race surfaces', () => {
+  it('statStaging returns null on not-found (not a throw)', async () => {
+    const { handle, cleanup } = await freshVercelHandle()
+    try {
+      const size = await handle.blob.statStaging('ws-1', 'a'.repeat(22))
+      assert.equal(size, null)
+    } finally { cleanup() }
+  })
+
+  it('openLiveReader returns not-found when the blob is missing', async () => {
+    const { handle, cleanup } = await freshVercelHandle()
+    try {
+      const opened = await handle.blob.openLiveReader('ws-1', 'missing-tag')
+      assert.equal(opened.ok, false)
+      assert.equal(opened.reason, 'not-found')
+    } finally { cleanup() }
+  })
+
+  it('unlinkStaging / unlinkLive tolerate not-found (idempotent)', async () => {
+    const { handle, cleanup } = await freshVercelHandle()
+    try {
+      await handle.blob.unlinkStaging('ws-1', 'a'.repeat(22))
+      await handle.blob.unlinkLive('ws-1', 'res-not-there')
+      // No throw means tolerated.
+    } finally { cleanup() }
+  })
+
+  it('abortPut after a partial upload cleans the staging blob and the row', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      assert.equal(begin.ok, true)
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), true)
+      await handle.lock.run(key, () => abortPut(handle, 'ws-1', 'res-1', begin.stagingId))
+      // Staging blob gone, staging row gone.
+      assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), false)
+    } finally { cleanup() }
+  })
+
+  it('deleteObject removes the live row and the live blob', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      assert.equal(blobs.has('ws-1/res-1.bin'), true)
+      const del = await handle.lock.run(key, () => deleteObject(handle, 'ws-1', 'res-1', 1))
+      assert.equal(del.ok, true)
+      assert.equal(del.deletedVersion, 1)
+      assert.equal(blobs.has('ws-1/res-1.bin'), false)
+    } finally { cleanup() }
+  })
+})
+
+describe('vercel blob backend — listing for the reaper', () => {
+  it('lists workspace tags, live resource tags, and staging ids', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      // Seed two workspaces with one live + one staging each.
+      for (const tag of ['ws-A', 'ws-B']) {
+        const key = lockKey(tag, 'r')
+        const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r' })))
+        await streamBytesToStaging(handle, tag, begin.stagingId, Buffer.alloc(16))
+        await handle.lock.run(key, () => commitPut(handle, { workspaceTag: tag, resourceTag: 'r', stagingId: begin.stagingId }))
+        // A second beginPut staged but not committed — staging blob persists.
+        const stagedOnly = await handle.lock.run(lockKey(tag, 'r2'), () => beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r2' })))
+        await streamBytesToStaging(handle, tag, stagedOnly.stagingId, Buffer.alloc(16))
+      }
+      const wsTags = (await handle.blob.listWorkspaceTags()).toSorted()
+      assert.deepEqual(wsTags, ['ws-A', 'ws-B'])
+      for (const tag of ['ws-A', 'ws-B']) {
+        const liveTags = await handle.blob.listLiveResourceTags(tag)
+        assert.deepEqual(liveTags, ['r'])
+        const stagingIds = await handle.blob.listStagingIds(tag)
+        assert.equal(stagingIds.length, 1)
+        // Staging id is 16-byte random base64url — 22 chars.
+        assert.match(stagingIds[0], /^[\w-]{22}$/u)
+        // Sanity: the listed staging id corresponds to a real blob.
+        assert.equal(blobs.has(`${tag}/.staging/${stagingIds[0]}.bin`), true)
+      }
+    } finally { cleanup() }
+  })
+
+  it('reaper drops a stranded live blob whose row was deleted out-of-band', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      assert.equal(blobs.has('ws-1/res-1.bin'), true)
+      // Simulate a row drop without unlink (e.g. crash between
+      // deleteLive.run() and the unlinkLive call). The blob is now
+      // stranded — reaper should pick it up.
+      handle.deleteLive.run('ws-1', 'res-1')
+      await reapOrphans(handle)
+      assert.equal(blobs.has('ws-1/res-1.bin'), false, 'reaper unlinks the stranded live blob')
+    } finally { cleanup() }
+  })
+
+  it('reaper drops a stranded staging blob whose row was never inserted', async () => {
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      // Insert a staging blob WITHOUT a staging row — mimics a
+      // pre-DB-insert crash on the production path. The reaper's
+      // orphan-staging sweep matches per-blob row lookups (no
+      // caller snapshot), so it should clean.
+      const orphanSid = 'a'.repeat(22)
+      const writer = await handle.blob.openStagingWriter('ws-1', orphanSid)
+      await pipeline(Readable.from([Buffer.alloc(8)]), writer.writable)
+      await writer.finalize()
+      assert.equal(blobs.has(`ws-1/.staging/${orphanSid}.bin`), true)
+      await reapOrphans(handle)
+      assert.equal(blobs.has(`ws-1/.staging/${orphanSid}.bin`), false)
+    } finally { cleanup() }
+  })
+})
+
+describe('vercel blob backend — SDK call shape', () => {
+  it('put uses access:private + allowOverwrite + multipart', async () => {
+    const { handle, calls, cleanup } = await freshVercelHandle()
+    try {
+      const writer = await handle.blob.openStagingWriter('ws-1', 'a'.repeat(22))
+      await pipeline(Readable.from([Buffer.alloc(4)]), writer.writable)
+      await writer.finalize()
+      const put = calls.find((c) => c.fn === 'put')
+      assert.ok(put, 'put was called')
+      assert.equal(put.pathname, `ws-1/.staging/${'a'.repeat(22)}.bin`)
+      assert.equal(put.options.access, 'private')
+      assert.equal(put.options.allowOverwrite, true)
+      assert.equal(put.options.multipart, true)
+      assert.equal(put.options.token, 'test-token')
+    } finally { cleanup() }
+  })
+
+  it('copy uses access:private and references the canonical staging+live pathnames', async () => {
+    const { handle, calls, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      const copy = calls.find((c) => c.fn === 'copy')
+      assert.ok(copy)
+      assert.equal(copy.from, `ws-1/.staging/${begin.stagingId}.bin`)
+      assert.equal(copy.to, 'ws-1/res-1.bin')
+    } finally { cleanup() }
+  })
+
+  it('get uses access:private with the token', async () => {
+    const { handle, calls, cleanup } = await freshVercelHandle()
+    try {
+      const key = lockKey('ws-1', 'res-1')
+      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
+      await handle.lock.run(key, () => commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      }))
+      calls.length = 0  // clear call log so we measure just the read
+      const opened = await handle.blob.openLiveReader('ws-1', 'res-1')
+      assert.equal(opened.ok, true)
+      const get = calls.find((c) => c.fn === 'get')
+      assert.ok(get)
+      assert.equal(get.pathname, 'ws-1/res-1.bin')
+    } finally { cleanup() }
+  })
+})

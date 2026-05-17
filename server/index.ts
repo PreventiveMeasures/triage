@@ -73,6 +73,7 @@
 
 import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
+import { Buffer } from 'node:buffer'
 import { randomBytes } from 'node:crypto'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -86,6 +87,8 @@ import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
 import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
+import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
+import { heldLeaseCount, releaseAllForThisProcess, setDefaultLeaseMs } from './objstore/commit-lock.ts'
 import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
 // Wire-message envelope as it lands post-`JSON.parse`. Every field is
@@ -132,6 +135,25 @@ const OBJSTORE_REAP_INTERVAL_MS = Number(env['OBJSTORE_REAP_INTERVAL_MS'] ?? 10 
 if (!Number.isSafeInteger(OBJSTORE_REAP_INTERVAL_MS) || OBJSTORE_REAP_INTERVAL_MS <= 0) {
   console.error(`Invalid OBJSTORE_REAP_INTERVAL_MS: ${env['OBJSTORE_REAP_INTERVAL_MS']}`); process.exit(1)
 }
+// Distributed commit-lock lease duration. The default (5 min) is
+// tuned for Vercel Functions' Pro Max execution cap; self-hosted
+// long-running processes with multi-MB uploads on slow links may
+// bump this. A crashed-held lease without graceful release pins
+// the key for at most this long. Setter passes via opts.leaseMs
+// to withCommitLock at every call site.
+// Range-clamped: too short → the lock effectively doesn't exist
+// (every concurrent caller steals instantly). Too long → a SIGKILL/
+// OOM-crashed holder pins the key for hours/days waiting on TTL
+// expiry. 1 second–1 hour is the operationally-sensible band.
+const OBJSTORE_COMMIT_LOCK_LEASE_MS = Number(env['OBJSTORE_COMMIT_LOCK_LEASE_MS'] ?? 5 * 60 * 1000)
+const LEASE_MS_MIN = 1000
+const LEASE_MS_MAX = 60 * 60 * 1000
+if (!Number.isSafeInteger(OBJSTORE_COMMIT_LOCK_LEASE_MS) || OBJSTORE_COMMIT_LOCK_LEASE_MS < LEASE_MS_MIN || OBJSTORE_COMMIT_LOCK_LEASE_MS > LEASE_MS_MAX) {
+  console.error(`Invalid OBJSTORE_COMMIT_LOCK_LEASE_MS: ${env['OBJSTORE_COMMIT_LOCK_LEASE_MS']}`)
+  console.error(`Must be an integer in [${LEASE_MS_MIN}, ${LEASE_MS_MAX}] (1s..1h). Default is 300000 (5 min).`)
+  process.exit(1)
+}
+setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
 const DEBUG = env['DEBUG'] === '1'
 
 // Same-origin gate for the WS upgrade and REST data plane. We don't
@@ -245,14 +267,39 @@ Environment:
   DATABASE_URL               Neon Postgres connection string; if set,
                              selects the Neon backend instead of
                              SQLite. Requires the optional peer dep
-                             @neondatabase/serverless.
+                             @neondatabase/serverless. The Neon
+                             pairing additionally requires
+                             BLOB_READ_WRITE_TOKEN (Vercel Blob
+                             Private Storage) for the byte plane —
+                             local-FS bytes cannot back a multi-
+                             replica DB plane.
+  BLOB_READ_WRITE_TOKEN      Vercel Blob R/W token (private store).
+                             Required when DATABASE_URL is set;
+                             ignored otherwise. Requires the optional
+                             peer dep @vercel/blob.
+  OBJSTORE_TOKEN_SECRET      Base64 (32 bytes) HMAC secret for REST
+                             bearer tokens. REQUIRED when DATABASE_URL
+                             is set (multi-replica deployments: a
+                             token minted on one replica's WS plane
+                             must validate on another replica's REST
+                             plane). Optional under SQLite (a fresh
+                             per-process secret is minted at boot).
+                             Generate one with:
+                               node -e 'console.log(crypto.randomBytes(32).toString("base64"))'
   OBJSTORE_DIR               object store root (default: ./objstore
-                             next to DB_PATH; the default still uses
-                             DB_PATH's dirname even when DATABASE_URL
-                             selects the Neon backend — set
-                             OBJSTORE_DIR explicitly if you want it
-                             elsewhere)
+                             next to DB_PATH). Used by the local-FS
+                             byte plane only; ignored when
+                             DATABASE_URL + BLOB_READ_WRITE_TOKEN
+                             are set (bytes live in Vercel Blob).
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
+  OBJSTORE_COMMIT_LOCK_LEASE_MS
+                             distributed commit-lock lease duration
+                             (default 300000 = 5 min). A crashed-held
+                             lease pins (workspace_tag, resource_tag)
+                             for at most this long. Bump for self-
+                             hosted deployments where uploads can
+                             legitimately exceed 5 min (e.g. 100 MiB
+                             on a 100 KB/s link).
   TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
                              Host / X-Forwarded-Proto when computing
                              the same-origin gate's expected origin.
@@ -273,25 +320,112 @@ Environment:
   process.exit(0)
 }
 
-// Backend selection. Both planes (workspace_revision + the v1.objstore
-// tables) flow through the same backend, picked by DATABASE_URL
-// presence; absent → SQLite. The Neon files import
-// `@neondatabase/serverless` lazily inside their open functions, so
-// static imports here are safe even on a SQLite-only install where the
-// optional peer dep isn't present. Branch out explicitly (rather than
-// via a ternary) so the SQLite path keeps its `SqliteHandle` narrowing
-// — `sqliteHandle.db` is typed as a non-optional `DatabaseSync` and
-// `openObjstore` accepts it without a non-null assertion.
+// Backend selection. Both planes (workspace_revision DB + the
+// v1.objstore byte store) are picked from env at boot. Two supported
+// pairings:
+//   1. DATABASE_URL set → Neon (workspace_revision + objstore
+//      tables) + Vercel Blob Private Storage (bytes). Requires
+//      BLOB_READ_WRITE_TOKEN — fail fast at boot if missing, since
+//      a local-FS byte plane can't back a multi-replica deployment
+//      (one replica's writes wouldn't be visible to another).
+//   2. DATABASE_URL absent → SQLite + local FS bytes. Single-
+//      process; the only pairing the SQLite plane supports.
+// The Neon / Vercel files import their peer deps lazily inside the
+// open functions, so static imports here are safe even on a SQLite-
+// only install where the optional peer deps aren't present. Branch
+// out explicitly (rather than via a ternary) so the SQLite path
+// keeps its `SqliteHandle` narrowing — `sqliteHandle.db` is typed
+// as a non-optional `DatabaseSync` and `openObjstore` accepts it
+// without a non-null assertion.
 const NEON_URL = env['DATABASE_URL'] ?? null
+const BLOB_TOKEN = env['BLOB_READ_WRITE_TOKEN'] ?? null
+const TOKEN_SECRET_B64 = env['OBJSTORE_TOKEN_SECRET'] ?? null
+// Decode + length-check the HMAC secret upfront so a misconfigured
+// secret fails at boot, not at the first token verification. 32
+// bytes matches `newTokenSecret()` and HMAC-SHA-256's block/output
+// size.
+//
+// `Buffer.from(s, 'base64')` does NOT throw on invalid input — it
+// silently strips non-alphabet characters, so a typo like `+→-`
+// (base64url char in a base64 string) decodes to a DIFFERENT secret
+// without warning. Detect this by re-encoding and comparing — a
+// faithful round-trip should match the input (modulo `=` padding).
+let TOKEN_SECRET: Uint8Array<ArrayBuffer> | null = null
+if (TOKEN_SECRET_B64) {
+  // Trim surrounding whitespace — a copy-pasted env value often
+  // ends in `\n` and Buffer.from(..., 'base64') would silently
+  // strip it, then the typo-detector below would fail with a
+  // misleading "non-base64 characters" message. The trim happens
+  // here so the round-trip comparison sees the same bytes the
+  // decoder saw.
+  const trimmed = TOKEN_SECRET_B64.trim()
+  if (trimmed.length === 0) {
+    console.error('OBJSTORE_TOKEN_SECRET is empty after trimming whitespace')
+    process.exit(1)
+  }
+  const decoded = Buffer.from(trimmed, 'base64')
+  const reencoded = decoded.toString('base64')
+  // Strip trailing `=` padding for the comparison — operators may
+  // omit it. Anything else differing means a silent strip happened
+  // (e.g. a base64url '-' or '_' in a standard base64 secret).
+  const norm = (s: string): string => s.replace(/=+$/u, '')
+  if (norm(reencoded) !== norm(trimmed)) {
+    console.error('OBJSTORE_TOKEN_SECRET contains non-base64 characters (likely a typo, e.g. base64url chars in a base64 secret).')
+    console.error('Regenerate with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
+    process.exit(1)
+  }
+  if (decoded.byteLength !== 32) {
+    console.error(`OBJSTORE_TOKEN_SECRET must decode to 32 bytes (got ${decoded.byteLength})`)
+    process.exit(1)
+  }
+  // `new Uint8Array(decoded)` copies into a fresh ArrayBuffer so the
+  // type matches `TokenSecret = Uint8Array<ArrayBuffer>` (Buffer is
+  // backed by SharedArrayBuffer in some Node configs).
+  TOKEN_SECRET = new Uint8Array(decoded)
+}
 let handle: Handle
 let objstoreHandle: ObjstoreHandle
+let objstoreBanner: string
 if (NEON_URL) {
+  if (!BLOB_TOKEN) {
+    console.error('DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.')
+    console.error('The Neon DB plane requires the Vercel Blob byte plane (local-FS bytes cannot back a multi-replica deployment).')
+    console.error('Set BLOB_READ_WRITE_TOKEN to your Vercel Blob R/W token, or unset DATABASE_URL to fall back to SQLite + local FS.')
+    process.exit(1)
+  }
+  if (!TOKEN_SECRET) {
+    console.error('DATABASE_URL is set but OBJSTORE_TOKEN_SECRET is not.')
+    console.error('Multi-replica deployments need a shared HMAC secret so REST bearer tokens minted on one replica validate on any other.')
+    console.error('Generate one with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
+    process.exit(1)
+  }
   handle = await openNeonDb(NEON_URL)
-  objstoreHandle = await openNeonObjstore(NEON_URL, OBJSTORE_DIR)
+  const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
+  objstoreHandle = await openNeonObjstore(NEON_URL, blob)
+  objstoreBanner = 'objstore: vercel-blob (private)'
 } else {
   const sqliteHandle = openDb(DB_PATH)
   handle = sqliteHandle
   objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR)
+  objstoreBanner = `objstore: ${OBJSTORE_DIR}`
+}
+// Multi-replica deployments behind a load balancer / TLS terminator
+// (the typical Vercel + Neon shape) need TRUST_PROXY=1 to honour
+// X-Forwarded-Host when computing the same-origin gate's expected
+// origin. Otherwise the gate derives the origin from the internal
+// container hostname and rejects every browser request as a
+// cross-origin attempt — silently from the operator's perspective
+// until users report 403s. Fail fast (parallels the
+// BLOB_READ_WRITE_TOKEN / OBJSTORE_TOKEN_SECRET checks above) so
+// a misconfigured deploy doesn't ship a 100%-403 fleet. An
+// operator who genuinely terminates TLS in the container without
+// X-Forwarded-* (rare) can set `TRUST_PROXY=0` to acknowledge.
+if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !== '0' && TRUST_PROXY_ENV !== 'false') {
+  console.error(`DATABASE_URL is set and HOST=${HOST} is not loopback, but TRUST_PROXY is not enabled.`)
+  console.error('Browser requests through a load balancer / TLS terminator will be rejected by the same-origin gate (all 403).')
+  console.error('Set TRUST_PROXY=1 to honour X-Forwarded-Host / X-Forwarded-Proto from the upstream proxy.')
+  console.error('Set TRUST_PROXY=0 if you really terminate TLS in the container without X-Forwarded-* headers (no proxy).')
+  process.exit(1)
 }
 
 // Per-connection challenge nonce (round-9 H2). Issued in a
@@ -478,6 +612,11 @@ const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
   send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
+  // `tokenSecret` is set only when OBJSTORE_TOKEN_SECRET was
+  // provided in env (see TOKEN_SECRET resolution above). Omitted
+  // → initObjstore mints a fresh per-process secret (the pre-PR
+  // behaviour, fine for single-replica).
+  ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
 
 async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
@@ -671,6 +810,24 @@ const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
 
 const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
   if (matchRoute(req.url) != null) {
+    // Shutdown gate. The WS plane gates new messages on
+    // `shuttingDown` at line 906, but REST handlers go through a
+    // separate path and must mirror that gate. Without this, a
+    // REST PUT arriving on an existing keep-alive socket AFTER
+    // SIGTERM but BEFORE `httpServer.close()` finishes draining
+    // could land in `withCommitLock`, acquire a lease, and finish
+    // its `finally { release() }` AFTER the shutdown's
+    // `heldLeaseCount` snapshot — leaving an orphan row in the
+    // commit_lock table that pins the key until TTL expiry. The
+    // 503 + `shutting-down` reason tells the client to retry
+    // against a different replica (the load balancer should have
+    // already drained this one). Transport audit + multi-replica
+    // shutdown ordering review.
+    if (shuttingDown) {
+      res.writeHead(503, { 'content-type': 'application/json', 'connection': 'close' })
+      res.end(JSON.stringify({ error: 'shutting-down' }))
+      return
+    }
     // Same-origin gate. Token IS the auth on REST, but a hostile
     // origin that holds a valid token (e.g. via XSS that read a
     // freshly-minted one) would PUT with its own Origin header — we
@@ -947,9 +1104,10 @@ httpServer.on('listening', () => {
   const addr = httpServer.address()
   const boundPort = typeof addr === 'object' && addr ? addr.port : PORT
   // Differentiate the storage banner by backend so the log line
-  // doesn't claim a misleading DB_PATH under Neon.
+  // doesn't claim a misleading DB_PATH under Neon, or a misleading
+  // OBJSTORE_DIR under Vercel Blob.
   const dbBanner = NEON_URL ? 'db: neon-postgres' : `db: ${DB_PATH}`
-  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, objstore: ${OBJSTORE_DIR})`)
+  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
 // Route bind / post-listen failures through `shutdown` so the
@@ -1059,6 +1217,19 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   // `Promise.allSettled` so a single handler rejection doesn't
   // abort the drain.
   if (inFlight.size > 0) await Promise.allSettled([...inFlight])
+  // Release any commit-lock leases this process still holds. Runs
+  // AFTER the in-flight drain so a PUT that was mid-commit has
+  // already gone through its own finally-release; we mop up only
+  // anything stuck. A rolling restart without this step pins every
+  // held key for the full lease TTL on the new replicas trying to
+  // access them. Tolerant — the DB lease will expire naturally on
+  // failure.
+  const heldBefore = heldLeaseCount()
+  if (heldBefore > 0) {
+    if (DEBUG) console.log(`releasing ${heldBefore} commit-lock lease(s) held by this process`)
+    try { await releaseAllForThisProcess(objstoreHandle) }
+    catch (err) { console.warn('commit-lock shutdown release error:', (err as Error)?.message ?? err) }
+  }
   // objstoreHandle has no `close()`:
   //  - SQLite: it shares the workspace_revision handle's
   //    `DatabaseSync`, which `handle.close()` below closes.
