@@ -16,8 +16,12 @@
      layout), which the chain then divides between the header and
      the graph panel. Non-graph views (table / list / grouped /
      files) are content-sized and behave like block layout under
-     flex-column with default align-stretch. */
-  &.active { display: flex; flex-direction: column; min-height: 100%; }
+     flex-column with default align-stretch. `flex-shrink: 0`
+     prevents the flex algorithm from squishing #report to 100vh
+     when findings overflow — without it, findings are clipped
+     outside the report's painted area and padding-bottom has no
+     effect. */
+  &.active { display: flex; flex-direction: column; min-height: 100%; flex-shrink: 0; }
 
   /* Was `& > header.page-head` (direct child of #report) before
      render.js's Lit refactor. The header is now Lit-rendered into a
@@ -348,6 +352,7 @@
 .bundles-slide-body > .bundle-issues {
   padding: .75rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Code slide — file tree on the left, source viewer on the
@@ -920,7 +925,7 @@
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
-    & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; min-height: 0; }
+    & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
     &.open .bundles-details {
       max-width: 800px;
       /* Stretch only the details column so the panel fills the
@@ -989,6 +994,7 @@
   & .bundles-details-body {
     padding: .75rem;
     overflow-y: auto;
+    overscroll-behavior: contain;
     flex: 1;
     min-height: 0;
     font-size: .78rem;
@@ -1436,6 +1442,7 @@ body.report-fullscreen {
   flex: 1; min-height: 0;
   padding: .75rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
   font-size: .78rem;
   color: var(--text);
 }
@@ -1680,7 +1687,7 @@ body.report-fullscreen {
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
-    & .packages-list { margin-top: 0; max-width: 1200px; overflow-y: auto; min-height: 0; }
+    & .packages-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
     &.open .packages-details {
       max-width: 800px;
       align-self: stretch;
@@ -1722,6 +1729,7 @@ body.report-fullscreen {
   & .packages-details-body {
     padding: .75rem;
     overflow-y: auto;
+    overscroll-behavior: contain;
     flex: 1;
     min-height: 0;
     font-size: .78rem;

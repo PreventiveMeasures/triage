@@ -85,7 +85,19 @@ class RepoChip extends LitElement {
 
   render() {
     if (this.editable && this.editing) {
-      return html`<input
+      const hasUrl = !!this.url
+      const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
+      const cls = hasUrl ? 'chip' : 'chip empty'
+      // Ghost chip holds the host's layout dimensions (width + height)
+      // so the h1 flex row doesn't reflow when the input opens. The
+      // input absolute-positions on top — no flow participation, no
+      // wrapping. `inert` prevents any interaction with the ghost.
+      return html`<span class=${cls} aria-hidden="true" inert>
+        ${GITHUB_ICON}
+        <span class="label">${label}</span>
+        <button type="button" class="edit-btn">${PENCIL_ICON}</button>
+      </span>
+      <input
         type="text"
         .value=${live(this.url)}
         placeholder="user/repo or https://github.com/user/repo"

@@ -20,6 +20,7 @@
 .output {
   flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 14px 6px;
   cursor: text;
 }

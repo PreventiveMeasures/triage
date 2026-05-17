@@ -1,4 +1,10 @@
-:host { display: inline-block; vertical-align: middle; }
+:host {
+  display: inline-block;
+  vertical-align: middle;
+  /* Stacking context so the absolute-positioned edit input
+     sits on top of the ghost chip without affecting flow. */
+  position: relative;
+}
 
 .chip {
   display: inline-flex; align-items: center; gap: .375rem;
@@ -32,19 +38,31 @@
 }
 .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
-/* Editable form — matches the chip's overall footprint so toggling
-   between display and edit doesn't shift the row. The width fits a
-   typical github URL; on narrow viewports the meta-row wraps and
-   the input takes its own line. */
+/* Ghost chip — held in the DOM during edit mode so the host's
+   layout footprint matches display mode (h1 flex row stays put).
+   `visibility: hidden` keeps the box but suppresses paint so the
+   old chip text doesn't bleed through the input's semi-transparent
+   --surface background. `inert` blocks interaction; aria-hidden in
+   the template hides it from AT. */
+.chip[inert] { visibility: hidden; min-width: 19rem; }
+
+/* Edit input — absolutely positioned over the ghost chip so it
+   doesn't participate in flow. Sized exactly to the ghost's
+   footprint via `inset: 0`, so it never spills past the chip's
+   anchor into adjacent h1 items. Long URLs scroll horizontally
+   inside the input — same UX as any other constrained text field. */
 input {
-  width: 16rem; box-sizing: border-box;
-  padding: .15rem .55rem;
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: 0 .55rem;
   background: var(--surface);
   border: 1px solid var(--accent); border-radius: 999px;
   color: var(--text);
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .72rem;
+  font-weight: 400;
   outline: none;
 }
 

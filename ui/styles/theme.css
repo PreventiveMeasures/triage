@@ -174,6 +174,43 @@ body {
   /* Suppress the mobile/touch tap flash — there's no native analogue,
      and the gray rectangle reads as a web artifact on a desktop app. */
   -webkit-tap-highlight-color: transparent;
+  /* Better kerning + ligature matching, especially at the small
+     metadata sizes (.65–.72rem) that crowd a finding row. */
+  text-rendering: optimizelegibility;
+  /* Suppress the browser's elastic overscroll bounce at the viewport
+     edges — the bounce reads as "web page", not "native app". */
+  overscroll-behavior: none;
+}
+
+/* Antialiased text rendering on HiDPI screens only — the default
+   subpixel-AA looks crisp on 1x displays but blurry on Retina /
+   2x+ panels (where each logical px is already 4+ device px).
+   Antialiased matches what native macOS / iOS apps draw. On 1x
+   displays the subpixel-AA stays — it's the right call there. */
+@media (resolution >= 2dppx) {
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Selection picks up the accent color at low alpha so highlighted
+   text reads as part of the theme instead of the OS-default blue
+   strip. Translucent fill lets the underlying text color carry. */
+::selection {
+  background: rgb(from var(--accent) r g b / .35);
+}
+
+/* Press feedback on chrome buttons / tabs — native controls dim
+   while the mouse is held down. Without this, click feels delayed
+   (no signal until release / hover-color swap). Keep it subtle so
+   the active-state styles (e.g. .tab.active background) still read
+   as the dominant signal. */
+button:not(:disabled):active,
+[role='button']:not([aria-disabled='true']):active,
+[role='tab']:active,
+.tab:active {
+  opacity: .7;
 }
 
 /* Native UI shows the arrow cursor (not the I-beam) over chrome and
@@ -259,7 +296,7 @@ a { color: var(--accent); text-decoration: none; }
 /* Main column scrolls independently of the sidebar — body is height-
    constrained + overflow hidden, so the report's tall finding lists
    only push this column, not the sidebar's file list. */
-#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
+#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
 
 /* Hide every not-yet-upgraded custom element. Without this, hosts of
    Lit components (e.g. `<theme-toggle>`) paint as unstyled inline
