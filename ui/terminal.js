@@ -16,7 +16,7 @@ import { createTerminal } from '@preventive/terminal'
 // bytes are static, never user input.
 import terminalCSS from './view/terminal.css'
 
-const BANNER = 'Virtual shell over the bundle source tree. Try `ls`, `find /`, `grep TODO src/...`, `cat src/foo.js | head -n 20`. ↑/↓ for history.'
+const BANNER = 'Virtual shell over the bundle source tree. Try `ls`, `find /`, `grep TODO src/...`, `cat src/foo.js | head -n 20`. ↑/↓ for history, Tab to complete.'
 
 class BundleTerminal extends LitElement {
   // Render-driving state stays as Lit reactive properties: Lit
@@ -30,6 +30,10 @@ class BundleTerminal extends LitElement {
     _lines: { state: true },
     _input: { state: true },
     _cwd: { state: true },
+    // Faint "ghost" continuation rendered behind the input —
+    // suffix-only, so the overlay span has a transparent copy of
+    // `_input` to push it past the caret.
+    _ghost: { state: true },
   }
 
   static styles = unsafeCSS(terminalCSS)
@@ -39,6 +43,19 @@ class BundleTerminal extends LitElement {
   #history = []
   #histIdx = -1
   #draft = ''
+  // Tab-completion cycle state. When `complete()` returns multiple
+  // variants the first Tab fills in [0] and stashes the list here;
+  // repeat Tabs rotate. Any input change invalidates the cycle —
+  // the self-check `items[index] === _input` covers typing, history
+  // navigation, and submit-reset without an explicit reset hook.
+  #completions = null
+  // Ghost-suggestion debounce. Each `_input` mutation reschedules
+  // the timer; the suggestion only materialises ~200ms after typing
+  // (or any other input change) settles. See #scheduleGhost.
+  #ghostTimer = null
+  // Window short enough to feel instant after a pause, long enough
+  // that mid-burst typing doesn't trigger a compute every keystroke.
+  static #GHOST_DELAY_MS = 200
 
   constructor() {
     super()
@@ -46,21 +63,38 @@ class BundleTerminal extends LitElement {
     this._lines = []
     this._input = ''
     this._cwd = '/'
+    this._ghost = ''
   }
 
   // Bind to the current sources map: a Map reference change means
   // a different bundle, so we rebuild the shell and reset history.
   // Idempotent within a bundle — re-renders that pass the same
   // Map reference leave the running session alone.
+  //
+  // The second branch (an `_input` change) is what drives ghost-text
+  // refresh: clear the prior suggestion and rearm the debounce.
+  // Doing it here rather than in `#onInput` covers every path that
+  // mutates the field — typing, history nav, Tab fill, submit-reset,
+  // and the bundle-swap reset above — through a single seam.
   willUpdate(changed) {
-    if (!changed.has('sources') || this.sources === this.#lastSources) return
-    this.#term = this.sources ? createTerminal(this.sources) : null
-    this._cwd = this.#term ? this.#term.cwd() : '/'
-    this._lines = [{ kind: 'banner', text: BANNER }]
-    this.#history = []
-    this.#histIdx = -1
-    this.#draft = ''
-    this.#lastSources = this.sources
+    if (changed.has('sources') && this.sources !== this.#lastSources) {
+      this.#term = this.sources ? createTerminal(this.sources) : null
+      this._cwd = this.#term ? this.#term.cwd() : '/'
+      this._lines = [{ kind: 'banner', text: BANNER }]
+      this.#history = []
+      this.#histIdx = -1
+      this.#draft = ''
+      // An in-progress completion cycle is tied to the previous bundle's
+      // FS / command list — keeping it would let a stale candidate
+      // appear after the swap. Same reasoning for an unsubmitted input.
+      this.#completions = null
+      this._input = ''
+      this.#lastSources = this.sources
+    }
+    if (changed.has('_input')) {
+      this.#cancelGhost()
+      this.#scheduleGhost()
+    }
   }
 
   // Reconnecting after detach (tab flip Terminal → Code → Terminal,
@@ -75,6 +109,14 @@ class BundleTerminal extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     this.updateComplete.then(() => this.#scrollToBottom())
+  }
+
+  // The element is reused across tab flips (see terminal-attach.js),
+  // so a pending ghost timer can outlive a detach. Cancel it — the
+  // reattach path will reschedule on the next `_input` change.
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this.#cancelGhost()
   }
 
   firstUpdated() { this.#focusInput() }
@@ -126,8 +168,75 @@ class BundleTerminal extends LitElement {
   }
 
   #onKeydown = (e) => {
+    // Tab in a browser <input> normally tabs out to the next focusable
+    // element. preventDefault keeps focus here and lets the shell's
+    // completion drive the field instead. #onTab manages the cycle —
+    // skip the reset below.
+    if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); this.#onTab(); return }
+    // Anything else — arrows, characters, Home/End, even bare modifier
+    // taps — ends the current cycle. Without this, Tab+ArrowRight+Tab
+    // would advance the previous cycle instead of starting a fresh one
+    // (the cursor moved but `_input` didn't, so the items[index]
+    // self-check still matched).
+    this.#completions = null
     if (e.key === 'ArrowUp') { e.preventDefault(); this.#historyBack() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); this.#historyForward() }
+  }
+
+  #onTab() {
+    if (!this.#term) return
+    const cycle = this.#completions
+    // Self-check the cycle is still valid: if the field no longer
+    // holds what we last filled in (user typed, history nav, etc.)
+    // the cached items don't describe this input anymore.
+    if (cycle && cycle.items[cycle.index] === this._input) {
+      cycle.index = (cycle.index + 1) % cycle.items.length
+      this._input = cycle.items[cycle.index]
+      return
+    }
+    const items = this.#term.complete(this._input)
+    if (items.length === 0) { this.#completions = null; return }
+    this._input = items[0]
+    // Only enter cycle mode when there's something to rotate
+    // through — a unique completion is a one-shot fill.
+    this.#completions = items.length > 1 ? { items, index: 0 } : null
+  }
+
+  #cancelGhost() {
+    this._ghost = ''
+    if (this.#ghostTimer !== null) {
+      clearTimeout(this.#ghostTimer)
+      this.#ghostTimer = null
+    }
+  }
+
+  #scheduleGhost() {
+    this.#ghostTimer = setTimeout(() => {
+      this.#ghostTimer = null
+      this.#computeGhost()
+    }, BundleTerminal.#GHOST_DELAY_MS)
+  }
+
+  #computeGhost() {
+    if (!this.#term) return
+    // Cycling already commits the user's attention to one candidate
+    // — the second-channel ghost would just be visual noise.
+    if (this.#completions) return
+    // Only suggest at word boundaries: empty line, end of token
+    // (trailing space), or right after a pipe. Mid-token the user
+    // is still naming the current thing, so a "continuation"
+    // floating after the partial word reads as distracting noise
+    // rather than help.
+    const input = this._input
+    if (input !== '' && !input.endsWith(' ') && !input.endsWith('|')) return
+    const items = this.#term.complete(input)
+    if (items.length === 0) return
+    const first = items[0]
+    // `complete()` returns full-line replacements; surface only the
+    // tail beyond what's already typed. Defensive check on the
+    // prefix in case the shell ever returns a non-prefix variant.
+    if (!first.startsWith(input) || first === input) return
+    this._ghost = first.slice(input.length)
   }
 
   #historyBack() {
@@ -177,18 +286,21 @@ class BundleTerminal extends LitElement {
       </div>
       <form class="form" @submit=${this.#onSubmit}>
         <span class="cwd">${this._cwd}</span><span class="sigil">$</span>
-        <input
-          class="input"
-          type="text"
-          aria-label="Terminal command"
-          autocomplete="off"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          .value=${this._input}
-          @input=${this.#onInput}
-          @keydown=${this.#onKeydown}
-        />
+        <div class="input-wrap">
+          ${this._ghost ? html`<div class="ghost" aria-hidden="true"><span class="ghost-pad">${this._input}</span>${this._ghost}</div>` : nothing}
+          <input
+            class="input"
+            type="text"
+            aria-label="Terminal command"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            .value=${this._input}
+            @input=${this.#onInput}
+            @keydown=${this.#onKeydown}
+          />
+        </div>
       </form>
     `
   }

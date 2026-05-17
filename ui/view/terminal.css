@@ -78,15 +78,50 @@
 }
 .form .sigil { flex: 0 0 auto; }
 
-.input {
+/* Wraps the real <input> and the ghost-suggestion overlay so the
+   overlay can absolute-position against the input's box without
+   competing for layout space in the form row. */
+.input-wrap {
   flex: 1 1 auto;
   /* Same min-width override — without it, a long cwd plus the
      input's content width could exceed the row width. */
   min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
   color: inherit;
   font: inherit;
   padding: 0;
+  /* Sit above the ghost so the live caret + selection stay visible. */
+  position: relative;
+}
+
+/* Ghost suggestion: a transparent copy of `_input` pushes the
+   visible tail past where the caret sits, so it reads as a
+   continuation. `white-space: pre` keeps the padding span's width
+   in step with the input's monospace text. `pointer-events: none`
+   + `user-select: none` keep clicks / selection on the real input. */
+.ghost {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  font: inherit;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  color: var(--muted, #8b949e);
+  opacity: .55;
+}
+
+.ghost-pad {
+  color: transparent;
 }
