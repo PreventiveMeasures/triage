@@ -11,6 +11,7 @@ import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js
 import { attachSharedWorkspace, listWorkspaces, syncObservedAfterHydrate } from '../client/workspaces.js'
 import { setRedraw, triageSync } from '../client/triage-sync.ts'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
+import { installSyncAuthResolver } from './view/sync-auth.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
 import { state } from '../client/state.ts'
 import { runLegacyOriginCheck } from './view/origin-check.js'
@@ -91,6 +92,10 @@ onBundleAutoDownloaded(async () => {
 // Same bridge for the report-attach conflict dialog: triage-sync
 // surfaces conflicts via a callback the UI installs here.
 installHydrationConflictResolver()
+// Same bridge for the operator-side password prompt: triage-sync's
+// first-action gate (server's `unauthorized` frame) surfaces here
+// when the cached password isn't present or was rejected.
+installSyncAuthResolver()
 
 // `#share=<base64url>` in the address bar → prompt for the
 // password, decrypt to `{ id, name, privateKey }`, then prompt

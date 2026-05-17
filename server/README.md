@@ -127,6 +127,11 @@ workspace-subscribe {
   signature            // Ed25519 over (domain, tag, from, connectionNonce)
 }
 
+authenticate {
+  password             // UTF-8; gates "first action on a new workspace tag"
+}                      // when server/config.json sets one. See "Operator-
+                       // side password gate" below.
+
 ping                   // application-level liveness probe; no payload needed
 ```
 
@@ -171,6 +176,20 @@ workspace-state {
   ]
 }
 
+authenticated {}       // server accepted the password; per-socket flag
+                       // flips on, every subsequent action bypasses the
+                       // first-action gate
+
+unauthorized {         // gate fired OR `authenticate` was rejected.
+  kind,                // 'gated' | 'auth-failed' — explicit
+                       //   discriminator; callers MUST switch on it
+                       //   rather than infer from field presence.
+  workspaceTag?,       // present when kind='gated'; identifies which
+                       //   action was blocked:
+  base?,               //   + base       → workspace-save blocked
+  resourceTag?,        //   + resourceTag → objstore-put-begin blocked
+}                      // kind='auth-failed' carries no other fields.
+
 pong                   // reply to `ping`
 ```
 
@@ -203,6 +222,91 @@ A subscribe's signature is bound to the per-socket
 can't be replayed from a different TCP connection (the new
 connection's nonce is different; the canonical bytes differ;
 verify fails).
+
+### Operator-side password gate
+
+The relay optionally gates **the very first action against a
+never-before-seen workspace tag** behind a shared password set in
+`server/config.json`. Copy `server/config.example.json` to
+`server/config.json` and set:
+
+```json
+{ "password": "your-shared-secret" }
+```
+
+`server/config.json` is git-ignored; `config.example.json` is the
+documented shape. `password: null` (or a missing file) disables
+the gate, preserving the existing no-config behaviour.
+
+When configured, the gate fires on the first signed `workspace-save`
+or `objstore-put-begin` for a tag whose `workspace_revision` AND
+`workspace_object` tables are both empty. Every other signed action
+(subscribes, saves on an existing tag, all objstore operations on
+an existing tag) bypasses the gate entirely — access control for
+those is the per-message Ed25519 signature, exactly as before. The
+gate only stops a stranger from spinning up *new* workspaces on a
+shared relay.
+
+**`workspace-subscribe` is intentionally NOT gated**, even for a
+tag the server has never seen. A subscribe to an unknown tag
+returns an empty chain — there's nothing to leak, and gating it
+would force every reader to authenticate before they can confirm
+"this workspace has no data on this relay yet" (a fine state to
+read). The gate is for *creating* workspaces, not for *observing*
+their absence.
+
+**Concurrent-creation race (accepted).** `workspaceExists` reads
+outside the per-tag write lock that `commitRevision` later
+acquires. Under concurrent saves on a fresh tag, an unauthenticated
+socket whose `workspaceExists` observes "true" (because an
+authenticated peer's commit landed between this socket's check
+and its commit) skips the gate and commits as the second writer.
+Accepted: the unauthenticated peer still had to produce a valid
+Ed25519 signature (= holds the workspace seed), so the worst case
+is "two concurrent writes both authorising" rather than "stranger
+bypasses auth". Tightening would require moving the gate inside
+`commitRevision`'s lock and is not worth the layer crossing for
+this soft-policy guarantee.
+
+Wire shape:
+
+```
+client → server  authenticate { password }
+server → client  authenticated {}                       // password accepted
+server → client  unauthorized {                         // gate fired or
+  kind,                                                 //   authenticate
+  workspaceTag?, base?, resourceTag?,                   //   rejected; see
+}                                                       //   discriminator
+```
+
+The `unauthorized` frame carries an explicit `kind` discriminator
+— callers MUST switch on it rather than infer from the presence /
+absence of other fields:
+
+- `kind: 'gated'` + `workspaceTag` + `base` — the rejected
+  `workspace-save` (client uses this to clear the matching
+  `pending` slot before prompting).
+- `kind: 'gated'` + `workspaceTag` + `resourceTag` — the rejected
+  `objstore-put-begin`.
+- `kind: 'auth-failed'` — the response to an `authenticate` that
+  failed the password compare; the client distinguishes this from a
+  fresh gating event so it can prompt for a different password
+  rather than treat the frame as a new action block.
+
+Authorization is per-WebSocket (a `WeakMap<WebSocket, boolean>` on
+the server). A reconnect re-authenticates; the client caches the
+password in memory (and in secure-storage, encrypted when the
+passkey vault is enabled) so the resend is automatic and the user
+sees the prompt only once per page load + per password change.
+
+Password comparison runs HMAC-SHA-256 on both sides under a per-
+process random key (32 random bytes minted at boot, never persisted,
+never leaves the module), then `crypto.timingSafeEqual` on the two
+32-byte digests. Fixed-length inputs to `timingSafeEqual` close the
+length-leak window of a raw-bytes compare, and any residual timing
+variance reveals only HMAC bytes that are useless without the per-
+process key.
+
 ## v1.objstore — bundle + report storage
 
 Two-plane protocol on the same listener:

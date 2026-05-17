@@ -48,6 +48,12 @@ export type ObjstoreDeps = {
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
+  // Auth gate for the FIRST put-begin against a never-before-seen
+  // workspace tag. See ObjstoreInitDeps for rationale. Run AFTER
+  // sig verify so `unauthorized` only reaches legitimate signers.
+  // Absent → no gating (no-config default).
+  authGate?: (socket: WebSocket, workspaceTag: string) => Promise<boolean>
+  sendUnauthorized?: (socket: WebSocket, ctx: { kind: 'gated'; workspaceTag: string; resourceTag: string }) => void
 }
 
 function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
@@ -81,6 +87,18 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   if (socket.readyState !== socket.OPEN) return
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
+  // Auth gate for the FIRST action against a never-before-seen
+  // workspace tag (no rows in workspace_revision AND none in
+  // workspace_object). Mirrors handleSave in server/index.ts; runs
+  // AFTER sig verify so `unauthorized` only reaches a legitimate
+  // signer. The gate is config-driven (server/config.json
+  // `password`) and is a no-op when no password is configured.
+  if (deps.authGate && deps.sendUnauthorized && await deps.authGate(socket, tag)) {
+    if (socket.readyState !== socket.OPEN) return
+    if (deps.debug) console.warn(`reject objstore-put-begin: unauthorized (new workspace ${debugTag(tag)})`)
+    deps.sendUnauthorized(socket, { kind: 'gated', workspaceTag: tag, resourceTag })
+    return
+  }
   const prevVersion = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
   // Serialise against concurrent commits / deletes on the same
   // resource so the prev_version recheck inside beginPut isn't

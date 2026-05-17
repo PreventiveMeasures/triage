@@ -74,7 +74,8 @@
 import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -155,6 +156,58 @@ if (!Number.isSafeInteger(OBJSTORE_COMMIT_LOCK_LEASE_MS) || OBJSTORE_COMMIT_LOCK
 }
 setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
 const DEBUG = env['DEBUG'] === '1'
+
+// Optional operator-side config file. Read once at boot; absence is
+// silently fine (preserves the no-auth default — fresh installs and
+// existing deployments without config.json keep working as before).
+// Parse errors fail loud at startup so a typo doesn't silently fall
+// back to "no auth required". `config.example.json` ships with the
+// repo as the documented shape; the real `config.json` is git-
+// ignored so operators can store secrets locally.
+const CONFIG_PATH = env['CONFIG_PATH'] ?? fileURLToPath(new URL('./config.json', import.meta.url))
+type ServerConfig = { password?: string | null }
+function loadConfig(path: string): ServerConfig {
+  let raw: string
+  try { raw = readFileSync(path, 'utf8') } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
+    console.error(`Failed to read ${path}:`, (err as Error)?.message ?? err); process.exit(1)
+  }
+  try { return JSON.parse(raw) as ServerConfig }
+  catch (err) {
+    console.error(`Failed to parse ${path} as JSON:`, (err as Error)?.message ?? err); process.exit(1)
+  }
+}
+const SERVER_CONFIG = loadConfig(CONFIG_PATH)
+// Password is the only auth method today. A non-empty string in
+// config gates first-action (workspace creation) on the wire-level
+// `authenticate { password }` handshake; null / undefined / empty
+// disables the gate (the no-config default — first action is
+// allowed without an authenticate handshake).
+//
+// Comparison is HMAC-SHA-256 under a per-process random key:
+//   * at boot, generate `PASSWORD_HMAC_KEY` (32 random bytes,
+//     static for the process lifetime, never persisted, never
+//     leaves this module);
+//   * compute `CONFIGURED_PASSWORD_HMAC = HMAC(key, configured)`
+//     once at boot and discard the raw configured-password bytes
+//     so a heap snapshot post-boot doesn't expose the plaintext;
+//   * on each `authenticate`, compute the same HMAC over the
+//     submitted password and compare with `timingSafeEqual`.
+// HMAC outputs are fixed at 32 bytes so `timingSafeEqual` runs
+// without a length-equal precondition (no length leak), and even
+// a hypothetical timing leak only exposes HMAC bytes — useless to
+// an attacker without the per-process key. A `null`
+// `CONFIGURED_PASSWORD_HMAC` is the "no gate" sentinel that every
+// other check reads.
+const PASSWORD_HMAC_KEY: Uint8Array<ArrayBuffer> = new Uint8Array(randomBytes(32))
+const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null = (() => {
+  const p = SERVER_CONFIG.password
+  if (p == null || p === '') return null
+  if (typeof p !== 'string') {
+    console.error(`Invalid ${CONFIG_PATH}: "password" must be a string or null`); process.exit(1)
+  }
+  return new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(p, 'utf8').digest())
+})()
 
 // Same-origin gate for the WS upgrade and REST data plane. We don't
 // support cross-origin browser clients, so any Origin header
@@ -316,6 +369,14 @@ Environment:
                              NACK. Default 64. Lower for tests
                              that need to deterministically
                              exercise the cap.
+  CONFIG_PATH                operator config JSON path (default:
+                             server/config.json). Currently the
+                             only field is { "password": "..." }
+                             which gates first-action creation of
+                             a new workspace on the
+                             authenticate { password } handshake.
+                             Missing file / null password →
+                             no gating (default).
   DEBUG=1                    log every message`)
   process.exit(0)
 }
@@ -441,6 +502,52 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
 const socketChallenge = new WeakMap<WebSocket, string>()
 function newChallenge(): string {
   return randomBytes(16).toString('base64url')
+}
+
+// Per-connection authorization flag for the password-gated "first
+// action in a workspace" path. Once a connection completes the
+// `authenticate { password }` handshake, every subsequent action on
+// that socket bypasses the gate — the access-control surface is the
+// per-message Ed25519 signature (the seed-holder is the authorised
+// writer), and once a workspace EXISTS on the server the gate is
+// off for that workspace regardless of which connection touches it.
+// The gate only protects against an unauthenticated client creating
+// a brand-new workspace on the server. WeakMap so a closed socket
+// drops its flag immediately via the close handler's delete.
+const socketAuthorized = new WeakMap<WebSocket, boolean>()
+function isAuthorized(socket: WebSocket): boolean {
+  return socketAuthorized.get(socket) === true
+}
+// `CONFIGURED_PASSWORD_HMAC == null` → no gate; everyone is
+// effectively authorised and every first action proceeds without an
+// `authenticate` handshake. Otherwise the per-socket flag is the
+// live state.
+function requiresAuth(socket: WebSocket): boolean {
+  if (CONFIGURED_PASSWORD_HMAC == null) return false
+  return !isAuthorized(socket)
+}
+// HMAC-based constant-time password compare. Both sides are passed
+// through `HMAC(PASSWORD_HMAC_KEY, …)` so the inputs to
+// `timingSafeEqual` are always 32-byte fixed-length digests — no
+// length-equal precondition, no length leak, and any residual
+// timing variance in the comparator reveals only HMAC bytes that
+// are useless without the per-process key.
+function passwordMatches(submitted: string): boolean {
+  if (CONFIGURED_PASSWORD_HMAC == null) return false
+  const submittedHmac = new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(submitted, 'utf8').digest())
+  return timingSafeEqual(submittedHmac, CONFIGURED_PASSWORD_HMAC)
+}
+// "Workspace exists on the server" gate. The auth requirement only
+// kicks in for the FIRST action against a never-before-seen tag —
+// once any row lands (triage revision or objstore object), the
+// workspace is considered established and signature-gated. Checks
+// both planes so the gate stays consistent regardless of which
+// action the user picks first (workspace-save in the common case;
+// objstore-put-begin for a bundle-first flow).
+async function workspaceExists(tag: string): Promise<boolean> {
+  if (await handle.headFor.get(tag)) return true
+  const c = await objstoreHandle.countLive.get(tag)
+  return (c?.c ?? 0) > 0
 }
 
 // workspaceTag → Set<WebSocket>
@@ -612,12 +719,85 @@ const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
   send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
+  // Auth gate for the FIRST objstore-put-begin against a workspace
+  // that doesn't yet exist on the server. Mirrors handleSave's gate
+  // below; handlers.ts calls this AFTER sig verify so the
+  // `unauthorized` frame only reaches a legitimate signer. Returns
+  // `false` to allow, `true` to deny — handlers.ts emits the
+  // `unauthorized` frame and bails on `true`.
+  authGate: async (socket, tag) => requiresAuth(socket) && !await workspaceExists(tag),
+  sendUnauthorized,
   // `tokenSecret` is set only when OBJSTORE_TOKEN_SECRET was
   // provided in env (see TOKEN_SECRET resolution above). Omitted
   // → initObjstore mints a fresh per-process secret (the pre-PR
   // behaviour, fine for single-replica).
   ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
+
+// Top-level `unauthorized` frame (Server → Client). Sent when:
+//   * A `workspace-save` for a NEW workspace tag arrives on a socket
+//     that hasn't authenticated yet (handleSave below) — `kind:
+//     'gated'`, with `workspaceTag` + `base` so the client can clear
+//     the matching pending save and prompt the user for the password.
+//   * An `objstore-put-begin` hits the same gate (handlers.ts) —
+//     `kind: 'gated'`, with `workspaceTag` + `resourceTag` for the
+//     in-flight putBegin caller.
+//   * The client's `authenticate { password }` was rejected by
+//     `handleAuthenticate` (wrong password) — `kind: 'auth-failed'`,
+//     no other context fields.
+// The explicit `kind` discriminator is the wire-protocol contract:
+// callers MUST switch on it rather than infer from the presence /
+// absence of other fields. A future server change adding context
+// to either branch can't silently misroute under this contract,
+// whereas a field-presence inference would. The client's wire-side
+// dispatcher (client/triage-sync.ts handleMessage) and the objstore
+// client's put-begin recv predicate both pin on `kind`.
+type UnauthorizedContext =
+  | { kind: 'gated'; workspaceTag: string; base: string | null }       // workspace-save gated
+  | { kind: 'gated'; workspaceTag: string; resourceTag: string }       // objstore-put-begin gated
+  | { kind: 'auth-failed' }                                             // authenticate-failed
+function sendUnauthorized(socket: WebSocket, ctx: UnauthorizedContext): void {
+  send(socket, { type: 'unauthorized', ...ctx })
+}
+
+// `authenticate { password }` handler. Constant-time password
+// compare; success flips the per-socket flag and emits
+// `authenticated` (the client's signal to retry any queued
+// pendingSave / pendingSubscribe). Failure emits
+// `unauthorized { kind: 'auth-failed' }` so the client knows its
+// retry loop should ask for a different password rather than treat
+// the message as a new action-gating signal (`kind: 'gated'`).
+//
+// Pre-shape gate: password must be a non-empty string, length-
+// capped so a peer can't make us HMAC megabytes per frame. This
+// handler is fast-inlined OUTSIDE the per-socket MAX_INFLIGHT
+// cap (see the dispatcher's ping/authenticate special-case below),
+// so without the cap a frame-spamming peer would dominate the
+// event loop on `createHmac().update(p)`. 4096 bytes is far above
+// any conceivable real password and well below the WS frame
+// `maxPayload` of 4 MiB.
+const MAX_AUTH_PASSWORD_LEN = 4096
+type AuthenticateMsg = { password?: unknown }
+function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
+  if (typeof msg.password !== 'string' || msg.password.length === 0 || msg.password.length > MAX_AUTH_PASSWORD_LEN) return
+  // No-config short-circuit: if the server isn't gating, treat any
+  // authenticate as success. This lets a client cache its password
+  // and replay it on reconnect even when the server happens to be
+  // un-gated today — the wire shape stays consistent.
+  if (CONFIGURED_PASSWORD_HMAC == null) {
+    socketAuthorized.set(socket, true)
+    send(socket, { type: 'authenticated' })
+    return
+  }
+  if (!passwordMatches(msg.password)) {
+    if (DEBUG) console.warn('authenticate: wrong password')
+    sendUnauthorized(socket, { kind: 'auth-failed' })
+    return
+  }
+  socketAuthorized.set(socket, true)
+  if (DEBUG) console.log('authenticate: success')
+  send(socket, { type: 'authenticated' })
+}
 
 async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // `base` is `string | null`; null is the keyframe-root marker.
@@ -661,6 +841,31 @@ async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   if (msg.ciphertext.length > MAX_CIPHERTEXT_LEN) {
     if (DEBUG) console.warn(`reject save: ciphertext too large (${msg.ciphertext.length} > ${MAX_CIPHERTEXT_LEN})`)
     sendSaveError(socket, tag, msg.base == null || typeof msg.base !== 'string' ? null : msg.base, 'too-large')
+    return
+  }
+  // Auth gate for the FIRST action against a workspace tag that
+  // doesn't yet exist on the server (no rows in workspace_revision
+  // AND none in workspace_object). Once any row lands, the workspace
+  // is established and every signed action flows freely — access
+  // control falls back to the Ed25519 signature for the rest of the
+  // workspace's lifetime. Checked AFTER sig verify so the
+  // `unauthorized` frame only reaches a legitimate signer; shape /
+  // sig attacks still drop silently.
+  //
+  // RACE: `workspaceExists` reads outside the per-tag write lock that
+  // `commitRevision` later acquires. Under concurrent saves on a
+  // fresh tag, an unauthenticated socket whose `workspaceExists`
+  // observes "true" (because an authenticated peer's commit landed
+  // between this socket's check and its commit) skips the gate and
+  // commits as the second writer. Accepted: the unauthenticated peer
+  // still had to produce a valid Ed25519 signature (= holds the
+  // workspace seed), and "two concurrent writes both authorising"
+  // is the worst case. Tightening would require moving the gate
+  // inside `commitRevision`'s lock and is not worth the layer
+  // crossing for the soft-policy guarantee.
+  if (requiresAuth(socket) && !await workspaceExists(tag)) {
+    if (DEBUG) console.warn(`reject save: unauthorized (new workspace ${debugTag(tag)})`)
+    sendUnauthorized(socket, { kind: 'gated', workspaceTag: tag, base: msg.base ?? null })
     return
   }
   // NOTE: Earlier revisions auto-subscribed the sending socket here.
@@ -1005,6 +1210,18 @@ wss.on('connection', (socket: WebSocket, req) => {
       send(socket, { type: 'pong' })
       return
     }
+    // `authenticate` runs synchronously (constant-time bytes compare
+    // — no DB, no I/O), so it shares the same fast-inline path as
+    // `ping` and bypasses the per-socket inflight counter. Keeping
+    // it out of the IIFE pool means an unauthenticated client can
+    // still complete the handshake when the socket is otherwise
+    // saturated (matching the philosophy of the `busy` NACK path
+    // for `workspace-save`: don't strand a recoverable handshake
+    // behind the cap).
+    if (parsed.type === 'authenticate') {
+      handleAuthenticate(socket, parsed as AuthenticateMsg)
+      return
+    }
     const inflightForSocket = socketInflight.get(socket) ?? 0
     if (inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
       if (DEBUG) console.warn(`drop message: socket inflight ${inflightForSocket} >= ${MAX_INFLIGHT_PER_SOCKET}`)
@@ -1084,6 +1301,7 @@ wss.on('connection', (socket: WebSocket, req) => {
     // immediately. Audit round-10 + round-13.
     socketChallenge.delete(socket)
     socketTags.delete(socket)
+    socketAuthorized.delete(socket)
   })
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness

@@ -91,6 +91,14 @@ export type PutResult =
   | { ok: false; reason: 'conflict'; currentVersion: number | null }
   | { ok: false; reason: 'workspace-full' }
   | { ok: false; reason: 'contended' }
+  // Operator-side first-action gate fired: this is the FIRST signed
+  // action against a workspace tag that doesn't yet exist on the
+  // server, and the connection hasn't authenticated. Caller surfaces
+  // this to the user (typically the triage-sync auth dialog is the
+  // path to resolving it — the cached password gets reused on the
+  // next put attempt once the same workspace exists on the server
+  // OR once a fresh password is cached).
+  | { ok: false; reason: 'unauthorized' }
 
 export type DeleteResult =
   | { ok: true; deletedVersion: number }
@@ -317,7 +325,7 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // those frames match an objstore-side predicate; without an
     // explicit drop they'd pile up in `queue` forever on an active
     // workspace. Filter known triage-sync types up-front.
-    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'pong') return
+    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'pong' || msg.type === 'authenticated') return
     // Request-response correlation. First waiter whose predicate
     // matches gets the message; otherwise queue for a later `recv`.
     for (let i = 0; i < waiters.length; i++) {
@@ -446,13 +454,26 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     // workspace-scoped, but this is defense-in-depth: a server
     // routing bug that delivered a different workspace's reply
     // would otherwise correlate on `type` + `resourceTag` alone.
+    //
+    // `unauthorized` with `kind: 'gated'` is the operator-side first-
+    // action gate firing (server/index.ts `requiresAuth` +
+    // `workspaceExists`); the reply carries `workspaceTag +
+    // resourceTag`, mirroring the shape the other branches match
+    // on. Pin on the explicit `kind` discriminator so a future
+    // server-side variant (e.g. a different `'auth-failed'` reply
+    // arriving on this socket) can't accidentally satisfy the
+    // predicate. Surfaced as a typed result so the caller can decide
+    // whether to retry (e.g. after the user authenticates via
+    // triage-sync's dialog).
     const reply = await recv((m) =>
       m.workspaceTag === workspaceTag && m.resourceTag === opts.resourceTag && (
         m.type === 'objstore-put-token' ||
         m.type === 'objstore-put-error' ||
-        m.type === 'objstore-conflict'
+        m.type === 'objstore-conflict' ||
+        (m.type === 'unauthorized' && m['kind'] === 'gated')
       ),
     )
+    if (reply.type === 'unauthorized') return { ok: false, reason: 'unauthorized' }
     if (reply.type === 'objstore-put-error') {
       if (reply['reason'] === 'workspace-full') return { ok: false, reason: 'workspace-full' }
       throw new Error(`objstore: put-error reason='${String(reply['reason'])}'`)
@@ -677,6 +698,7 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     }
     if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
     if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
+    if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
     // A conflict envelope's `current.version` is the server's view
     // of the live row; note it too so a subsequent fetch can't be
     // rolled back below it.
@@ -797,6 +819,7 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
     }
     if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
     if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
+    if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
     if (raw.current) noteVersion(resourceTag, raw.current.version)
     return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
   }
@@ -875,6 +898,7 @@ type RawPutResult =
   | { ok: false; reason: 'conflict'; current: { version: number } | null }
   | { ok: false; reason: 'workspace-full' }
   | { ok: false; reason: 'contended' }
+  | { ok: false; reason: 'unauthorized' }
 
 type RawDeleteResult =
   | { ok: true; deletedVersion: number }

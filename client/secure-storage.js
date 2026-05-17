@@ -45,6 +45,11 @@ export const SECURE_KEYS = Object.freeze([
   'deepview.workspaces',
   'deepview.sync.sessions',
   'deepview.sync.userEnabled',
+  // Cached operator-side sync password (see triage-sync.ts's
+  // first-action-gate handling). Encrypted at rest under the passkey
+  // vault when enabled, plaintext otherwise — same envelope
+  // contract as every other entry in this list.
+  'deepview.sync.password',
   'deepview.repoUrls',
   'deepview.fileCounts',
   'deepview.lastFile',

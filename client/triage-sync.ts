@@ -2,7 +2,7 @@ import { type TriageBucket, state } from './state.ts'
 import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../common/save-error-reason.ts'
-import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, setItem as setSecureItem } from './secure-storage.js'
+import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
 import {
   type SavePayload,
   buildAad,
@@ -190,6 +190,22 @@ type ConflictResolver = (
   context: ConflictResolverContext,
 ) => Promise<{ [key: string]: 'local' | 'imported' } | null | undefined>
 
+// Password prompt for the operator-side first-action gate. The
+// server emits `unauthorized` when the connection tries to create a
+// brand-new workspace without having authenticated; the client
+// invokes this resolver to obtain a password and posts the matching
+// `authenticate { password }` frame. `retry: true` means a prior
+// attempt on this socket failed the password check — the UI should
+// surface "wrong password" rather than re-prompting cold.
+//
+// Returning `null` (or undefined) cancels the auth flow; the
+// `pendingSave` slot remains armed so the user can re-trigger by
+// editing again, or by calling `dismissError` after the dialog
+// closes. Returning a string sends `authenticate { password }`; on
+// success the server replies `authenticated` and queued sessions
+// resume.
+export type AuthenticationResolver = (context: { retry: boolean }) => Promise<string | null | undefined>
+
 export type SyncStatus = 'off' | 'offline' | 'connecting' | 'online' | 'error'
 
 // Wire-message shapes that arrive via the `message` event. JSON-
@@ -211,6 +227,15 @@ type WireMessage = {
   nonce?: unknown
   revisions?: unknown
   reason?: unknown
+  // `unauthorized` carries an explicit `kind` discriminator
+  // (`'gated'` for a blocked first action, `'auth-failed'` for a
+  // rejected `authenticate`) — the dispatcher switches on it
+  // rather than inferring from field presence. May also carry a
+  // resourceTag for the objstore-side gating path; this module
+  // doesn't act on those (objstore.ts handles them) but the field
+  // has to round-trip through the wire-message shape.
+  kind?: unknown
+  resourceTag?: unknown
 }
 
 // Public sessionInfo shape — read-only inspection used by the UI
@@ -238,6 +263,12 @@ const LEGACY_URL_KEY = 'deepview.triageSyncUrl'
 // true: an unconfigured user starts "ready to sync the moment a URL
 // exists".
 const USER_ENABLED_KEY = 'deepview.sync.userEnabled'
+// Operator-side password cache for the first-action gate. Stored
+// via secure-storage so a passkey-enabled vault keeps it encrypted
+// at rest. Single string (one password per page session); on server
+// URL change the cache is dropped because per-server passwords are
+// independent. Hydrated alongside the other secure keys at boot.
+const AUTH_PASSWORD_KEY = 'deepview.sync.password'
 // Per-workspace sync state — `{ [workspaceId]: { serverUrl,
 // baseRevision, baseState } }`. Scoped by `serverUrl` because
 // revision IDs are per-server: switching to a different relay
@@ -264,6 +295,35 @@ let redraw: () => void = () => {}
 // `null` to keep all locals (cancel). Defaults to null → no dialog,
 // gap-only hydration (local-wins).
 let hydrationConflictResolver: ConflictResolver | null = null
+
+// Operator-side password prompt — installed once at app boot via
+// `setAuthenticationResolver(...)`. Invoked when the server emits
+// `unauthorized` for a first-action-against-new-workspace attempt;
+// returns the password the user typed (or null on cancel). Defaults
+// to null — when no resolver is wired (tests, console drivers), the
+// auth flow is a no-op: the pending save sits in `pendingSave` until
+// a future trigger.
+let authenticationResolver: AuthenticationResolver | null = null
+// In-memory cache of the last successfully-used password, plus the
+// secure-storage hydration of the same. On reconnect the wire
+// handler auto-replays the cached value on the FIRST `unauthorized`
+// of the new socket so the user sees the prompt at most once per
+// page load + per password change. Cleared when the server rejects
+// it (the cache is wrong; ask the user again).
+let cachedPassword: string | null = null
+// Per-socket guard so an in-flight `authenticate` doesn't pile up
+// extra concurrent auth flows when multiple sessions hit the gate
+// at once. Reset on socket close (the per-socket auth state has to
+// re-run on the new connection). Also tracks whether we've already
+// tried the cached password on this socket so we don't ping-pong
+// `unauthorized` ↔ `authenticate` if it's wrong.
+let authFlowInFlight = false
+let cachedPasswordTriedOnThisSocket = false
+// Pending resolver for the in-flight `authenticate` round-trip.
+// Resolved by the next `authenticated` (→ true) or
+// `unauthorized { kind: 'auth-failed' }` (→ false) frame; non-null
+// between send and reply only.
+let authResponseResolver: ((ok: boolean) => void) | null = null
 
 let serverUrl = ''
 // User-driven enable/disable, persisted. The sidebar status button
@@ -955,6 +1015,16 @@ onSecureStorageHydrated(() => {
   const r = loadAllSessionsResult()
   if (r.kind === 'unknown-version') setPersistenceDegraded(true)
   else if (r.kind === 'v1' || r.kind === 'legacy') setPersistenceDegraded(false)
+  // Hydrate the cached auth password alongside the sessions blob.
+  // A passkey-enabled vault keeps this encrypted at rest; the
+  // post-unlock cache surfaces the plaintext for the in-memory
+  // replay on the next `unauthorized`. Reset the per-socket replay
+  // guard so a freshly-hydrated cache gets one optimistic attempt
+  // on the live connection (covers the boot-after-unlock path:
+  // socket opens → server gates first save → we replay from cache).
+  const cachedRaw = getSecureItem(AUTH_PASSWORD_KEY)
+  cachedPassword = typeof cachedRaw === 'string' && cachedRaw.length > 0 ? cachedRaw : null
+  cachedPasswordTriedOnThisSocket = false
 })
 
 // Discriminated load result so `mutateAllSessions` can distinguish
@@ -2022,6 +2092,61 @@ async function handleMessage(data: unknown): Promise<void> {
     for (const session of sessions.values()) trySendSubscribe(session)
     return
   }
+  // Server accepted our `authenticate { password }`. Settle the
+  // pending response (caller in `runAuthFlow` waits on it) and kick
+  // every session whose `pendingSave` / `subscribed` was deferred
+  // by the gate. The same socket is now authorised for ANY future
+  // first-action on this connection — handles the unusual case
+  // where one socket creates several brand-new workspaces in a row.
+  if (wire.type === 'authenticated') {
+    if (authResponseResolver) {
+      const r = authResponseResolver
+      authResponseResolver = null
+      r(true)
+    }
+    for (const session of sessions.values()) {
+      trySendSubscribe(session)
+      trySendSave(session)
+    }
+    return
+  }
+  // `unauthorized` — switch on the explicit `kind` discriminator
+  // (server/index.ts:UnauthorizedContext). `'auth-failed'` is the
+  // response to a just-sent `authenticate`; `'gated'` is a per-
+  // action block that needs the auth flow to run. Unknown / missing
+  // `kind` is dropped silently — that's either a buggy server or a
+  // future variant this client doesn't speak yet, and the safe
+  // behaviour is "do nothing" (no spurious dialog, no stuck pending).
+  if (wire.type === 'unauthorized') {
+    if (wire.kind === 'auth-failed') {
+      // Surface to the in-flight resolver so the auth loop re-prompts
+      // with retry=true. Don't kick the auth flow again — `runAuthFlow`'s
+      // while-loop is the canonical retry path and is already running.
+      if (authResponseResolver) {
+        const r = authResponseResolver
+        authResponseResolver = null
+        r(false)
+      }
+      return
+    }
+    if (wire.kind === 'gated') {
+      // Gating signal: scope the pending-save cleanup to the matching
+      // session, then kick the auth flow. Objstore-side gating
+      // (resourceTag present) is handled in client/objstore.ts — this
+      // handler skips the save cleanup for those. Sessions whose tag
+      // we don't recognise just drop the gating context; the auth
+      // flow runs anyway (the user still benefits from authenticating
+      // now even though THIS save was for a workspace we no longer
+      // track).
+      if (typeof wire.workspaceTag === 'string') {
+        const session = getSessionByTag(wire.workspaceTag)
+        if (session && typeof wire.resourceTag !== 'string') handleUnauthorizedForSave(session, wire)
+      }
+      runAuthFlow().catch((err) => { console.warn('Triage sync: auth flow failed:', err) })
+      return
+    }
+    return
+  }
   // Demultiplex by `workspaceTag` — one socket carries traffic for
   // every open session. A tag we don't recognise means the message
   // is for a session we've already closed (or for a workspace this
@@ -2043,6 +2168,103 @@ async function handleMessage(data: unknown): Promise<void> {
     session.subscribeAcked = true
     emitStatusIfChanged()
   }
+}
+
+// `unauthorized { workspaceTag, base }` — the server blocked a
+// `workspace-save` because the workspace tag doesn't exist on the
+// server yet AND this socket hasn't authenticated. Mirror
+// `handleSaveError`'s base-match check so a stale unauthorized for
+// a save we've already rebased past doesn't clobber a fresh
+// pending. The session-side cleanup is the same as the recoverable-
+// save-error branch (clear pending, re-arm pendingSave for the
+// next trigger); the auth flow then runs once on this socket to
+// turn the gate off so the next trySendSave succeeds.
+function handleUnauthorizedForSave(session: Session, wire: WireMessage): void {
+  if (!session.pending) return
+  if (typeof wire.base !== 'string' && wire.base !== null) return
+  if (wire.base !== session.pending.base) return
+  session.pending = null
+  session.pendingSave = true
+}
+
+async function runAuthFlow(): Promise<void> {
+  // Serialise the auth dance — multiple `unauthorized` frames can
+  // arrive in quick succession (two sessions hitting the gate at
+  // the same time, or a same-frame `unauthorized` for an objstore
+  // putBegin landing while a workspace-save is also being prompted)
+  // and we want exactly one outstanding `authenticate` per socket.
+  if (authFlowInFlight) return
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  authFlowInFlight = true
+  try {
+    // First try: if we have a cached password (this page load OR
+    // hydrated from secure-storage) and haven't tried it on this
+    // socket yet, send it silently. The user sees no prompt on the
+    // happy reconnect path.
+    if (cachedPassword != null && !cachedPasswordTriedOnThisSocket) {
+      cachedPasswordTriedOnThisSocket = true
+      const ok = await attemptAuthenticate(cachedPassword)
+      if (ok) return
+      // Cached password is wrong — clear it both in memory and on
+      // disk so a future session doesn't repeat the loop. The
+      // resolver below will prompt the user for a fresh one.
+      cachedPassword = null
+      try { await persistCachedPassword(null) } catch (err) {
+        console.warn('Triage sync: failed to clear cached auth password:', err)
+      }
+    }
+    // Loop: ask the resolver for a password, send authenticate,
+    // succeed → cache + return. Wrong password → prompt again with
+    // retry=true. Resolver returns null → user cancelled; bail.
+    let firstAttempt = true
+    while (true) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return
+      if (!authenticationResolver) return
+      let password: string | null | undefined
+      try {
+        password = await authenticationResolver({ retry: !firstAttempt })
+      } catch (err) {
+        console.warn('Triage sync: authentication resolver threw:', err)
+        return
+      }
+      firstAttempt = false
+      if (password == null || password === '') return
+      const ok = await attemptAuthenticate(password)
+      if (ok) {
+        cachedPassword = password
+        try { await persistCachedPassword(password) } catch (err) {
+          console.warn('Triage sync: failed to cache auth password:', err)
+        }
+        return
+      }
+    }
+  } finally {
+    authFlowInFlight = false
+  }
+}
+
+// Send `authenticate { password }` and await the matching response
+// (`authenticated` → true, `unauthorized { kind: 'auth-failed' }` →
+// false). The pending resolver is single-slot: callers must only
+// invoke from inside the `runAuthFlow` serialiser.
+function attemptAuthenticate(password: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    authResponseResolver = resolve
+    send({ type: 'authenticate', password })
+  })
+}
+
+// Persist the cached password (or wipe it). Secure-storage's
+// `setItem` doesn't accept null; route the wipe through the
+// matching removeItem so a clear is durable across reloads. Errors
+// bubble — the caller logs (caching is best-effort; a write failure
+// shouldn't abort the auth flow that already succeeded on the wire).
+async function persistCachedPassword(password: string | null): Promise<void> {
+  if (password == null) {
+    removeSecureItem(AUTH_PASSWORD_KEY)
+    return
+  }
+  await setSecureItem(AUTH_PASSWORD_KEY, password)
 }
 
 // Server rejected a signed save after sig verify (e.g. ciphertext
@@ -2197,6 +2419,20 @@ function openSocket(): void {
     // session that tries to subscribe before that frame arrives
     // bails on `connectionNonce == null`. Audit round-9 H2.
     connectionNonce = null
+    // Per-socket auth state resets on close. The next socket gets a
+    // fresh chance to replay the cached password (the server's
+    // `socketAuthorized` flag is per-WebSocket and the old one is
+    // gone). An in-flight `attemptAuthenticate` whose response will
+    // never land also resolves false here so the awaiter unblocks
+    // — the `runAuthFlow` while-loop bails on the closed socket and
+    // a fresh flow runs on reconnect when the next `unauthorized`
+    // arrives.
+    cachedPasswordTriedOnThisSocket = false
+    if (authResponseResolver) {
+      const r = authResponseResolver
+      authResponseResolver = null
+      r(false)
+    }
     stopHeartbeat()
     // The pending requests are gone with the socket — mark every
     // session's slot free so the reconnect handler resends.
@@ -2275,6 +2511,20 @@ export function setHydrationConflictResolver(fn: ConflictResolver | null): void 
   hydrationConflictResolver = typeof fn === 'function' ? fn : null
 }
 
+// Wire up the UI's password prompt for the operator-side first-
+// action gate. Called once at app boot from view.js (in lockstep
+// with `installHydrationConflictResolver` and friends). When the
+// server emits `unauthorized` for a never-before-seen workspace
+// tag, this resolver is invoked; its return value is sent over the
+// wire as `authenticate { password }`. Defaults to null — without
+// a resolver wired the auth flow is a no-op: the pending save sits
+// in `pendingSave` until a future trigger and the user has no path
+// to authenticate. Tests / console drivers can keep the null
+// resolver when they don't exercise the gate.
+export function setAuthenticationResolver(fn: AuthenticationResolver | null): void {
+  authenticationResolver = typeof fn === 'function' ? fn : null
+}
+
 // Test-only knob: shortens the heartbeat windows so a unit test
 // doesn't have to wait the production 15s/5s. No-op for any field
 // that isn't a positive number.
@@ -2321,6 +2571,17 @@ export const triageSync = {
     // indefinitely. Empty `next` (sync turning off) skips the prune
     // so a user toggling sync back on doesn't lose their bases.
     if (next) prunePersistedSessions(next)
+    // Server change also invalidates the cached auth password —
+    // different relays may run different (or no) password gates.
+    // Best-effort wipe both in memory and on disk so a user
+    // switching to a new server doesn't have their old password
+    // silently replayed (which would just fail) and doesn't accumulate
+    // stale ciphertext at rest.
+    cachedPassword = null
+    cachedPasswordTriedOnThisSocket = false
+    persistCachedPassword(null).catch((err) => {
+      console.warn('Triage sync: failed to drop cached auth password on server change:', err)
+    })
     closeSocket()
     // Server changed — revision IDs are per-server, so every
     // active session's tracking is stale. Reset each one; if

@@ -21,6 +21,13 @@ export type ObjstoreInitDeps = {
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
+  // Auth gate for the FIRST objstore-put-begin against a workspace
+  // tag that doesn't yet exist on the server. Returns `true` to
+  // DENY (unauthorized), `false` to allow. Called AFTER sig verify
+  // so the resulting `unauthorized` frame only reaches a legitimate
+  // signer. Falsy/missing → no gating (the no-config default).
+  authGate?: (socket: WebSocket, workspaceTag: string) => Promise<boolean>
+  sendUnauthorized?: (socket: WebSocket, ctx: { kind: 'gated'; workspaceTag: string; resourceTag: string }) => void
   // HMAC secret for REST bearer tokens. Optional — falls back to a
   // fresh process-local secret if omitted (the historical single-
   // process behaviour). Multi-replica deployments MUST supply a
@@ -49,6 +56,8 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
     handle, secret,
     send: deps.send, broadcast: deps.broadcast,
     getNonce: deps.getNonce, debug: deps.debug,
+    ...(deps.authGate ? { authGate: deps.authGate } : {}),
+    ...(deps.sendUnauthorized ? { sendUnauthorized: deps.sendUnauthorized } : {}),
   })
   const restDeps: ObjstoreRestDeps = {
     handle, secret, broadcast: deps.broadcast, debug: deps.debug,
