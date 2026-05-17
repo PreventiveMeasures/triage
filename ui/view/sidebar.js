@@ -424,10 +424,11 @@ export async function renderSidebar() {
   // Default buckets — render unfiled reports under their format header.
   // The Reports (default JSON) header is also a drop target for "remove
   // from workspace": dropping a workspace-internal report there detaches
-  // it back to the unfiled list. When no unfiled JSON reports exist but
-  // some workspace has reports, we still render the Reports header (with
-  // count 0) so the unassign affordance stays reachable.
-  const anyWorkspaceHasReports = workspaces.some((w) => w.reports.some((r) => nameSet.has(r)))
+  // it back to the unfiled list. The visibility of an empty Reports
+  // header is gated on `isDraggingReport` (declared at top of file)
+  // inside the GROUP_ORDER loop below — so the drop target reappears
+  // exactly when the user is mid-drag, and stays out of the way
+  // otherwise.
 
   // Bundles section expands inline when the bundles view is the
   // current view (either the list or any individual bundle); on
