@@ -233,6 +233,55 @@
   #report header.page-head { padding-right: 56px; box-sizing: border-box; }
 }
 
+/* WCO mode lays the three floating buttons out as a horizontal row
+   (theme.css), so the clearance the page-head's right edge needs
+   grows from one 30px button to a 3-button strip (~109px). Reserve
+   up to 128px when the OS-paint area (titlebar-area-x + width =
+   right edge of the platform's safe zone) butts close to the
+   header's 1510px content budget; ramp linearly down to 0 once
+   there's room, so wide viewports get no extra padding override.
+
+   Expressed in the property value rather than a media query
+   threshold because env() inside `@media (… <= calc(env(…)))` has
+   patchy browser support, but env() inside a regular calc() in a
+   property value is well-supported across all the engines that
+   ship WCO.
+
+   Two pieces:
+     • ramp     = max(0, 1508 - safe_zone_right). 0 when the safe
+       zone is at or past 1508px, scales up linearly as the safe
+       zone shrinks. Trigger sized so the cap kicks in exactly
+       where the header starts shrinking — sidebar (260) +
+       scrollbar gutter (~0 on Chromium with stable gutter and
+       no overflow) + #report padding (24+24) + header max-width
+       (1200) = 1508 (clearance = 0).
+     • cluster_cap = cluster_width (= the OS-controls cluster
+       width, no clearance constant on top). This plateau is
+       what the badge sits at once the viewport gets narrow
+       enough that the header drops below its 1200px max-width:
+       from that point on the header shrinks 1:1 with the
+       viewport, and an uncapped ramp would push the right edge
+       inward on top of that shrinkage. Tying the cap to
+       cluster_width keeps the badge responsive to OS-controls
+       changes; the floating button row (~109px from the right)
+       sits beneath the OS toolbar vertically so it doesn't need
+       its own horizontal clearance from the badge.
+
+   Final: padding = min(cluster_cap, ramp). Tuned so ramp == cap
+   exactly at the header's shrink-start point — no stationary
+   gap, no 2x sweep, badge moves at 1:1 with the viewport in
+   both regimes, and lands 24px from the OS toolbar's left edge
+   (#report's own right padding) when on the cap plateau. */
+/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  #report header.page-head {
+    padding-right: min(
+      calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)),
+      max(0px, calc(1508px - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)))
+    );
+  }
+}
+
 /* Findings list (cards / table / grouped rows) — max-width
    capped so finding descriptions stay readable at long
    viewport widths. Left-aligned (no auto margin) so the
@@ -282,6 +331,16 @@
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
   flex-shrink: 0;
+}
+
+/* In WCO the OS controls + our floating button row sit anchored
+   to the top-right; without this, the bundles slide bar runs the
+   full main-content width and tucks under both. The shared
+   --wco-right-toolbar var (theme.css) keeps the inset in sync
+   with the seam-cover blob — same calc, single source of truth. */
+/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
 }
 
 .bundles-slide-back {

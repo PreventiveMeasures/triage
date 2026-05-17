@@ -79,8 +79,8 @@ if (mode === 'build') {
   await esbuild.build({
     bundle: true,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true })],
-    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html'],
-    loader: { '.html': 'copy' },
+    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
+    loader: { '.html': 'copy', '.svg': 'copy', '.webmanifest': 'copy' },
     outdir: 'out',
     minify: true,
     // ESM output so the brotli-fallback entry's `export

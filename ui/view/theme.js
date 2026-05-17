@@ -11,17 +11,26 @@ import { LitElement, html, unsafeCSS } from 'lit'
 import themeToggleCSS from './theme-toggle.css'
 
 const THEME_KEY = 'deepview.theme'
+const THEME_COLOR_DARK = '#1a1a1b'
+const THEME_COLOR_LIGHT = '#f6f6fa'
 // Sun glyph reads as "switch to light"; moon reads as "switch to dark".
 // The glyph reflects what clicking would DO, not the current state —
 // matches the affordance pattern used by most editors.
 const ICON_LIGHT = '☀'
 const ICON_DARK = '☾'
 
+function applyThemeColor(light) {
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', light ? THEME_COLOR_LIGHT : THEME_COLOR_DARK)
+}
+
 // Apply the persisted theme at module evaluation time so the body class
 // is set before the custom element is upgraded. Same flash trade-off as
 // the previous implementation (see comment in render() below).
 try {
-  if (localStorage.getItem(THEME_KEY) === 'light') document.body.classList.add('theme-light')
+  const isLight = localStorage.getItem(THEME_KEY) === 'light'
+  if (isLight) document.body.classList.add('theme-light')
+  applyThemeColor(isLight)
 } catch {}
 
 class ThemeToggle extends LitElement {
@@ -56,6 +65,7 @@ class ThemeToggle extends LitElement {
   _toggle = () => {
     this._light = !this._light
     document.body.classList.toggle('theme-light', this._light)
+    applyThemeColor(this._light)
     try { localStorage.setItem(THEME_KEY, this._light ? 'light' : 'dark') } catch {}
   }
 

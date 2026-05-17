@@ -1,0 +1,30 @@
+{
+  "id": "/",
+  "name": "DeepView Results Viewer",
+  "short_name": "DeepView",
+  "description": "Local-first viewer for deepview analyzer results — drop a JSON report and explore findings without uploading anywhere.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "orientation": "any",
+  "background_color": "#1a1a1b",
+  "theme_color": "#1a1a1b",
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

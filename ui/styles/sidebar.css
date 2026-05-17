@@ -66,6 +66,37 @@
   }
 }
 
+/* WCO PWA mode — make the sidebar header the visual home for the
+   OS window controls. `min-height` raises it to the OS titlebar
+   strip so close/min/max paint inside it instead of clipping over
+   the brand row; the `padding-left: max(…, env(titlebar-area-x))`
+   pushes the DeepView wordmark right of the macOS traffic lights
+   (env-x is 0 on Windows / Linux, so the original .75rem padding
+   wins there). The whole strip becomes a drag handle so users can
+   move the window from the brand row. The hamburger collapse
+   button is hidden — collapsing the sidebar in WCO would also
+   hide the OS-controls landing surface, which would visually
+   strand the close button. view.js force-uncollapses on boot
+   when WCO is active so a stale .collapsed flag in localStorage
+   can't reach this state either. */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  .sidebar-header {
+    min-height: env(titlebar-area-height, 0px);
+    padding-left: max(.75rem, env(titlebar-area-x, 0px));
+    -webkit-app-region: drag;
+    app-region: drag;
+
+    & #encryption-toggle {
+      -webkit-app-region: no-drag;
+      app-region: no-drag;
+    }
+
+    & #sidebar-toggle { display: none; }
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
+
 #sidebar-toggle {
   flex-shrink: 0;
   width: 22px; height: 22px;

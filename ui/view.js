@@ -298,7 +298,33 @@ onVaultStateChange(() => {
   // that's about to unload.
   if (await runLegacyOriginCheck()) return
   try {
-    if (localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+    // In WCO mode the sidebar header is the surface the OS controls
+    // overlay onto; collapsing it would strand close / min / max
+    // visually over a 32px strip, so ignore the persisted flag and
+    // pin the sidebar open.
+    const isAppHeader = window.matchMedia?.('(display-mode: window-controls-overlay)').matches
+    if (!isAppHeader && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+    // Installed-PWA modes (standalone OR window-controls-overlay) —
+    // the user launched DeepView as a standalone app, not a browser
+    // tab, so app-level page zoom (ctrl/cmd+wheel, ctrl/cmd+ +/-/0,
+    // touch-pinch) should be inert the way it is in any native app.
+    // Browser tabs keep the default behaviour. matchMedia on
+    // display-mode is the standard installed-PWA detector.
+    const isInstalled = window.matchMedia?.('(display-mode: standalone)').matches || isAppHeader
+    if (isInstalled) {
+      const viewport = document.querySelector('meta[name="viewport"]')
+      if (viewport) viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+      // Desktop ctrl/cmd+wheel = browser zoom; passive: false so
+      // preventDefault actually inhibits it. Canvas / scroll-container
+      // wheel handlers run first (capture phase isn't used here) so
+      // their pan / zoom logic still fires; we just stop the browser
+      // from also taking the event as a zoom command.
+      window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
+      window.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return
+        if (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0') e.preventDefault()
+      })
+    }
   } catch {}
   // Vault enabled-but-locked at boot: skip continueBoot and let
   // the lock overlay (`view/lock-overlay.js`) be the sole unlock

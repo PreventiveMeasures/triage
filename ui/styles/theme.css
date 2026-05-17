@@ -23,6 +23,7 @@
      gradient do the chromatic work. The gradient itself stays — that's
      the "glass" hue the design wants. */
   --bg: #121212;
+  --theme-bar: #1a1a1b;
   --surface: rgb(28 28 28 / .78);
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
@@ -103,6 +104,7 @@
 
 body.theme-light {
   --bg: #fff;
+  --theme-bar: #f6f6fa;
   --surface: rgb(246 248 250 / .72);
   --border: #d1d9e0;
   --text: #1f2328;
@@ -354,6 +356,143 @@ body.show-print-btn #download-btn { display: flex; }
 @media print {
   #print-btn, #download-btn { display: none !important; }
 }
+
+/* Standalone PWA mode (OS title bar above the page, header NOT
+   collapsed into the viewport): mirror the sidebar→main vertical
+   divider with a 1px horizontal divider on top of #main-content
+   so the report doesn't run flush against the OS chrome. The
+   sidebar already has `border-right: 1px solid var(--border)`
+   for the panel split — same colour here keeps the chrome's
+   inner corner reading as a single L-bracket.
+   `(display-mode: standalone)` also matches inside WCO via the
+   display-mode fallback chain; the WCO block below resets it. */
+@media (display-mode: standalone) {
+  #main-content { border-top: 1px solid var(--border); }
+}
+
+/* Window-controls-overlay PWA mode — when DeepView is installed and
+   the host OS supports WCO (Chromium desktop), the OS title bar
+   collapses into the viewport and the close / min / max buttons
+   paint on top of the page at the corner the platform prefers
+   (right on Windows / Linux, left on macOS). The sidebar stays
+   flushed to the top and `.sidebar-header` (sidebar.css) becomes
+   the surface the OS controls visually land on — its `--surface`
+   matte-glass already matches the rest of the sidebar so the
+   strip reads as one panel from top to bottom with no visible
+   seam. Here we hand the page background to the OS as a drag
+   handle (so even the empty space between findings can move the
+   window) and re-lay the right-edge floating stack as a row
+   underneath the OS controls strip so the native close button
+   can take the corner. */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  /* OS-controls cluster width on the side the platform paints them
+     (right on Win/Linux, left on Mac). Shared by:
+       - body::after blob's outer extent (with its own fade pad
+         added on top)
+       - any top-aligned bar that would otherwise run under the
+         floating button row (.bundles-slide-bar etc.) — used as a
+         straight inset, no fade pad needed. */
+  :root {
+    --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  }
+
+  body {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  /* Form controls and the Lit finding components opt out of the
+     body-wide drag so they still receive clicks — everything else
+     (the report's background, the gaps between finding cards,
+     toolbar empty space) inherits drag from body and drags the
+     window when grabbed. `canvas` covers the graph view: without
+     it the body's drag region eats every pointer event landing on
+     the canvas and the graph reads as non-interactive (no pan, no
+     zoom, no node clicks). */
+  button,
+  canvas,
+  input,
+  select,
+  textarea,
+  a[href],
+  dialog,
+  bundle-terminal,
+  finding-card,
+  finding-row,
+  finding-table,
+  [role='button'],
+  [tabindex]:not([tabindex='-1']) {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  /* Anchor row just under the OS controls strip; the cascading
+     right offsets keep the toggle rightmost so the visual order
+     (toggle, print, download — top → bottom in normal mode)
+     reads the same right → left. */
+  theme-toggle,
+  #print-btn,
+  #download-btn {
+    top: calc(env(titlebar-area-height, 33px) + .35rem);
+  }
+  theme-toggle { right: .5rem; }
+  #print-btn   { right: calc(.5rem + 30px + .35rem); }
+  #download-btn { right: calc(.5rem + 2 * (30px + .35rem)); }
+
+  /* In WCO mode there's no OS-painted title-bar strip above the
+     viewport — the buttons land on top of the page itself — so the
+     standalone-mode top divider on #main-content would just paint a
+     stray line across the top of the report. The position:relative
+     + z-index promotes #main-content into its own stacking context
+     ABOVE body::after (which paints the seam-cover blob), so the
+     report's chips / header / toolbars stay fully opaque on top of
+     the blob — main-content has no background so the blob still
+     shows through wherever the report itself is transparent. */
+  #main-content {
+    border-top: 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Soft halo behind the Chromium-painted titlebar area. Pattern
+     lifted from the user-supplied Header_Chip demo: bleed on every
+     side of the OS-paint area, with bleed derived from the area's
+     dims (1.8x horizontal, 2.2x vertical) so the fade scales with
+     the panel. Top/right bleeds extend offscreen because the panel
+     sits at the viewport corner — harmless, the visible fade is
+     the left + bottom edges where the seam meets our page bg. The
+     radial gradient's 100% line lands exactly on the halo's edges
+     (panel-half + bleed on each axis); stops + blur match the demo
+     verbatim, only the color swaps to var(--theme-bar) (with
+     relative-color alphas for the mid stops). */
+  body::after {
+    content: '';
+    position: fixed;
+    pointer-events: none;
+    --halo-bleed-x: calc(var(--wco-right-toolbar) * 1.8);
+    --halo-bleed-y: calc(env(titlebar-area-height, 33px) * 2.2);
+    top: calc(-1 * var(--halo-bleed-y));
+    right: calc(-1 * var(--halo-bleed-x));
+    width: calc(var(--wco-right-toolbar) + 2 * var(--halo-bleed-x));
+    height: calc(env(titlebar-area-height, 33px) + 2 * var(--halo-bleed-y));
+    filter: blur(8px);
+    background: radial-gradient(
+      ellipse
+        calc(var(--wco-right-toolbar) / 2 + var(--halo-bleed-x))
+        calc(env(titlebar-area-height, 33px) / 2 + var(--halo-bleed-y))
+        at 50% 50%,
+      var(--theme-bar) 0%,
+      var(--theme-bar) 30%,
+      rgb(from var(--theme-bar) r g b / .72) 46%,
+      rgb(from var(--theme-bar) r g b / .38) 62%,
+      rgb(from var(--theme-bar) r g b / .15) 78%,
+      rgb(from var(--theme-bar) r g b / .04) 90%,
+      transparent 100%
+    );
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
 /* Honor OS-level "reduce motion" — macOS, Windows, iOS, and Android
    all surface this as an accessibility toggle, and native apps
