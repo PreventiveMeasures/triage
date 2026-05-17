@@ -2044,6 +2044,6 @@ body.report-fullscreen {
 ::view-transition-new(report-view),
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 120ms;
+  animation-duration: 90ms;
   animation-timing-function: linear;
 }
