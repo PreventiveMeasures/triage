@@ -1,4 +1,4 @@
-// Cached references to the static DOM scaffolding declared in view.html.
+// Cached references to the static DOM scaffolding declared in index.html.
 // Looking these up once at module load is cheaper than repeatedly
 // querying — and keeps every consumer module's import list short.
 import { html, render as litRender } from 'lit'

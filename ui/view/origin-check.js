@@ -38,7 +38,7 @@ import { LitElement, html } from 'lit'
 import { hasAnyBundles, listFiles } from '../../client/storage.js'
 import { listWorkspaces } from '../../client/workspaces.js'
 
-const TARGET_URL = 'https://triage.space/view.html'
+const TARGET_URL = 'https://triage.space/'
 
 // Hosts that should redirect / prompt. `pathPrefix` gates GitHub
 // Pages (where chalker.github.io serves multiple projects under

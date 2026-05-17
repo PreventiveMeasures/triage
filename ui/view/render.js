@@ -1026,7 +1026,7 @@ function findingsBodyTemplate(filtered) {
 // findings-tab state and read cleaner as a coherent neighbor.
 
 // Bundle source viewer overlay — rendered into a top-level slot
-// (see view.html) so it can pop over any view: bundles list,
+// (see index.html) so it can pop over any view: bundles list,
 // findings table, packages, repositories. The finding-card's
 // `[Code]` shortcut piggybacks on this — set
 // `state.bundleSourceFile` + load `state.bundleDetails`, render

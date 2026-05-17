@@ -713,7 +713,7 @@ function renderBundleSourceFindingPanel(findings) {
 }
 
 // Public so render.js can mount it into the global overlay slot
-// (`#bundle-source-overlay-slot` in view.html). The modal needs
+// (`#bundle-source-overlay-slot` in index.html). The modal needs
 // to overlay any view — the finding-card's [Code] shortcut
 // pops it from the findings view without switching the user to
 // the bundles view first.

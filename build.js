@@ -88,7 +88,7 @@ if (mode === 'build') {
     // `await import('./brotli-fallback.js')` from view.js gets a
     // real module namespace. With the IIFE default, exports were
     // silently dropped and the dynamic import resolved to an empty
-    // namespace ("brotliDecompress is not a function"). view.html
+    // namespace ("brotliDecompress is not a function"). index.html
     // already loads view.js with `type="module"`, so ESM is
     // expected on the page side too.
     format: 'esm',

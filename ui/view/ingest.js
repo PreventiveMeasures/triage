@@ -862,7 +862,7 @@ dropZone.addEventListener('drop', (e) => {
 // .gz / bundle classification all reuses the existing routing.
 //
 // The `<input type="file">` is created lazily on first activation
-// and parked on document.body — keeping it out of view.html
+// and parked on document.body — keeping it out of index.html
 // means the static markup stays focused on the visible chrome,
 // and the `hidden` attribute keeps it off the layout. Resetting
 // `.value = ''` after each change lets the user re-pick the same

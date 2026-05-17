@@ -1104,7 +1104,7 @@ report.addEventListener('mark-color', (e) => {
 })
 
 // Print button — fixed top-right icon, lives OUTSIDE #report (see
-// view.html / styles/theme.css), so the report-level click delegate
+// index.html / styles/theme.css), so the report-level click delegate
 // can't see it. Attach directly. Two pieces of state get swapped
 // for the duration of the print and restored after the dialog
 // dismisses:
