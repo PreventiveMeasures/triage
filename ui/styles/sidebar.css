@@ -363,7 +363,7 @@
    subtle left border is a tree-line hint that survives across both
    themes. */
 .file-item.indented button.file-name {
-  padding-left: 1.4rem;
+  padding-left: 1.3rem;
 }
 .file-item.indented {
   position: relative;
