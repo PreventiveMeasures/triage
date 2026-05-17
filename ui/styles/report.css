@@ -352,7 +352,7 @@
 .bundles-slide-body > .bundle-issues {
   padding: .75rem;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 /* Code slide — file tree on the left, source viewer on the
@@ -925,7 +925,7 @@
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
-    & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+    & .bundles-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: none; min-height: 0; }
     &.open .bundles-details {
       max-width: 800px;
       /* Stretch only the details column so the panel fills the
@@ -994,7 +994,7 @@
   & .bundles-details-body {
     padding: .75rem;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overscroll-behavior: none;
     flex: 1;
     min-height: 0;
     font-size: .78rem;
@@ -1442,7 +1442,7 @@ body.report-fullscreen {
   flex: 1; min-height: 0;
   padding: .75rem;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   font-size: .78rem;
   color: var(--text);
 }
@@ -1687,7 +1687,7 @@ body.report-fullscreen {
     &.open {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
-    & .packages-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+    & .packages-list { margin-top: 0; max-width: 1200px; overflow-y: auto; overscroll-behavior: none; min-height: 0; }
     &.open .packages-details {
       max-width: 800px;
       align-self: stretch;
@@ -1729,7 +1729,7 @@ body.report-fullscreen {
   & .packages-details-body {
     padding: .75rem;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overscroll-behavior: none;
     flex: 1;
     min-height: 0;
     font-size: .78rem;

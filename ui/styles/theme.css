@@ -296,7 +296,7 @@ a { color: var(--accent); text-decoration: none; }
 /* Main column scrolls independently of the sidebar — body is height-
    constrained + overflow hidden, so the report's tall finding lists
    only push this column, not the sidebar's file list. */
-#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
+#main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: none; }
 
 /* Hide every not-yet-upgraded custom element. Without this, hosts of
    Lit components (e.g. `<theme-toggle>`) paint as unstyled inline
