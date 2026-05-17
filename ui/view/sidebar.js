@@ -83,6 +83,10 @@ const SOURCE_WS_DT = 'application/x-deepview-source-ws'
 // disjoint identifier spaces (filename vs `sha512-…`).
 const BUNDLE_DT = 'application/x-deepview-bundle'
 
+// Set to true while a report row is being dragged so the Reports
+// drop-target header stays visible even when the unfiled list is empty.
+let isDraggingReport = false
+
 // Section header label per group. The default JSON bucket renders
 // under "Reports" — broad enough to fit any analyzer-native dump
 // (deduplicate output, single-run output, etc.) without naming the
@@ -141,7 +145,7 @@ function groupHeaderTemplate(label, count, opts = {}) {
   return html`<li
     class=${cls}
     data-default-reports=${opts.dropTarget ? 'true' : nothing}
-  ><span class="group-label">${label}</span><span class="group-count">${count}</span></li>`
+  ><span class="group-label">${label}</span>${count > 0 ? html`<span class="group-count">${count}</span>` : nothing}</li>`
 }
 
 // Workspaces section header — same chrome as a regular bucket header,
@@ -151,7 +155,7 @@ function groupHeaderTemplate(label, count, opts = {}) {
 // mirroring the "Delete current" button below.
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
 function workspaceHeaderTemplate(count) {
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><span class="group-count">${count}</span><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button><span class="group-count">${count}</span></span></li>`
 }
 
 // Bundles section header — collapsed to a single "BUNDLES (N)"
@@ -480,7 +484,7 @@ export async function renderSidebar() {
     ${GROUP_ORDER.map((g) => {
       const list = buckets.get(g) ?? []
       const isDefault = g === 'default'
-      if (list.length === 0 && !(isDefault && anyWorkspaceHasReports)) return null
+      if (list.length === 0 && !(isDefault && isDraggingReport)) return null
       return html`
         ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })}
         ${list.map((n) => fileItemTemplate(n))}
@@ -990,11 +994,17 @@ sidebar.addEventListener('dragstart', (e) => {
   e.dataTransfer.setData(SOURCE_WS_DT, fileEl.dataset.workspaceId ?? '')
   e.dataTransfer.setData('text/plain', fileEl.dataset.file)
   fileEl.classList.add('dragging')
+  isDraggingReport = true
+  renderSidebar()
 })
 
 sidebar.addEventListener('dragend', () => {
   for (const el of sidebar.querySelectorAll('.dragging')) el.classList.remove('dragging')
   clearDragOver()
+  if (isDraggingReport) {
+    isDraggingReport = false
+    renderSidebar()
+  }
 })
 
 sidebar.addEventListener('dragover', (e) => {

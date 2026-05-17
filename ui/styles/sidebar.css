@@ -125,6 +125,7 @@
     outline: none;
 
     &::placeholder { color: var(--muted); }
+    &:focus::placeholder { color: transparent; }
     &:focus { border-color: var(--accent); background: rgb(from var(--text) r g b / .06); }
     /* Hide the native search-clear ✕ — the user can clear by selecting
        all + delete; the WebKit clear is visually inconsistent with the
@@ -135,7 +136,7 @@
 
 #file-list {
   list-style: none; flex: 1; overflow-y: auto;
-  overscroll-behavior: none;
+  overscroll-behavior: none; scrollbar-gutter: stable;
   padding: 0 .35rem .25rem; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
   scrollbar-width: thin;
@@ -229,7 +230,7 @@
   display: flex; align-items: stretch; gap: .15rem;
 }
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
-.file-item.workspace-item .workspace-count { align-self: center; }
+.file-item.workspace-item .workspace-count { align-self: center; margin-right: .35rem; }
 
 .workspace-share,
 .workspace-export,
@@ -237,15 +238,12 @@
   flex-shrink: 0;
   width: 22px; align-self: center;
   height: 22px;
-  display: grid; place-items: center;
+  display: none; place-items: center;
   background: transparent; color: var(--muted);
   border: 1px solid transparent; border-radius: 4px;
   padding: 0;
-  opacity: 0;
-  transition: opacity .12s ease-out;
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
-  &:focus-visible { opacity: 1; }
 }
 /* Leave button reads as the destructive-but-local action — picks
    up the same critical hue as the bottom-of-sidebar "Delete
@@ -254,12 +252,11 @@
   color: var(--critical, #f87171);
   border-color: var(--critical, #f87171);
 }
-.file-item.workspace-item:hover .workspace-share,
-.file-item.workspace-item:hover .workspace-export,
-.file-item.workspace-item:hover .workspace-leave,
-.file-item.workspace-item:focus-within .workspace-share,
-.file-item.workspace-item:focus-within .workspace-export,
-.file-item.workspace-item:focus-within .workspace-leave { opacity: 1; }
+@media (hover: hover) {
+  .file-item.workspace-item:hover .workspace-share,
+  .file-item.workspace-item:hover .workspace-export,
+  .file-item.workspace-item:hover .workspace-leave { display: grid; }
+}
 
 /* Inline rename input — swapped in over the label span on dblclick.
    Inherits the label's monospace font so the row height doesn't
@@ -287,7 +284,7 @@
 .file-item button.file-name {
   display: flex; align-items: center; gap: .5rem;
   width: 100%; box-sizing: border-box;
-  padding: .25rem .45rem;
+  padding: .2rem .3rem .2rem .45rem;
   background: transparent; color: var(--text);
   border: 1px solid transparent; border-radius: 5px;
   font-family: inherit; font-size: .78rem;
@@ -304,17 +301,14 @@
   }
 }
 
-/* Pill-shaped count chip. Top-level so it styles consistently whether
-   it sits inside the file-name button (per-report rows) or as a
-   sibling on the row (workspace rows, where the rightmost slot is
-   the count). */
+/* Count number alongside file rows and workspace rows. Stripped of
+   pill chrome (no background, padding, or min-width) so it reads as
+   a quiet metadata number rather than a badge. */
 .file-item .file-count {
   flex-shrink: 0;
-  min-width: 1.4rem; padding: 0 .35rem; height: 1rem;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 999px;
-  background: rgb(from var(--text) r g b / .06);
   color: var(--muted);
+  opacity: .65;
   font-size: .68rem; font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
@@ -356,7 +350,7 @@
    still applies, so the row reads as "part of the workspace". */
 .file-item.bundle-missing > .file-name {
   display: flex; align-items: center; gap: .5rem;
-  padding: .25rem .45rem .25rem 1.4rem;
+  padding: .2rem .3rem .2rem 1.4rem;
   color: var(--muted);
   font-size: .78rem; font-style: italic;
   cursor: help;

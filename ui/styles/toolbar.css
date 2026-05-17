@@ -300,6 +300,7 @@ view-mode-buttons { display: contents; }
 
     &:focus { border: 0; }
     &::placeholder { color: var(--muted); }
+    &:focus::placeholder { color: transparent; }
     &::-webkit-search-cancel-button { display: none; }
   }
 }

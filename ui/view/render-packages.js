@@ -151,12 +151,12 @@ function packagesToolbarTemplate(triageCounts) {
       aria-label="Filter packages"
       .value=${live(state.packagesSearchQuery)}
     >
-    <select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${live(state.packagesSortBy)}>
+    <span class="packages-sort-wrap"><select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${live(state.packagesSortBy)}>
       <option value="findings-desc">Findings ↓</option>
       <option value="files-desc">Files ↓</option>
       <option value="reports-desc">Reports ↓</option>
       <option value="name-asc">Name A→Z</option>
-    </select>
+    </select></span>
     ${packagesTriageSelectorTemplate(triageCounts)}
   </div>`
 }

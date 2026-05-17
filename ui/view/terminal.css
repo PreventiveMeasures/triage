@@ -21,6 +21,7 @@
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: none;
+  scrollbar-gutter: stable;
   padding: 12px 14px 6px;
   cursor: text;
 }

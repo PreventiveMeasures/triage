@@ -164,6 +164,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 

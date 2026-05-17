@@ -133,12 +133,12 @@ function repositoriesToolbarTemplate(triageCounts) {
       aria-label="Filter repositories"
       .value=${live(state.repositoriesSearchQuery)}
     >
-    <select id="repositories-sort-select" class="packages-sort" aria-label="Sort repositories" .value=${live(state.repositoriesSortBy)}>
+    <span class="packages-sort-wrap"><select id="repositories-sort-select" class="packages-sort" aria-label="Sort repositories" .value=${live(state.repositoriesSortBy)}>
       <option value="findings-desc">Findings ↓</option>
       <option value="files-desc">Files ↓</option>
       <option value="reports-desc">Reports ↓</option>
       <option value="name-asc">Name A→Z</option>
-    </select>
+    </select></span>
     ${repositoriesTriageSelectorTemplate(triageCounts)}
   </div>`
 }

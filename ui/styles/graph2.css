@@ -874,6 +874,7 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
+  scrollbar-gutter: stable;
   /* Match the scrollbar look of the sidebar / left-tree files. */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
