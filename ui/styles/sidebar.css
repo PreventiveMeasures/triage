@@ -106,32 +106,93 @@
   }
 }
 
+/* The search row is itself the bordered surface — the leading search
+   glyph, the transparent input, and any trailing view buttons all sit
+   inside the same chrome so the buttons read as affixed to the input
+   rather than as standalone neighbors. Focus ring travels with the
+   container (via `:focus-within`) so tabbing into the input lights up
+   the whole strip the same way the bare input used to. */
 .sidebar-search {
-  position: relative;
+  display: flex; align-items: center;
   margin: 0 .55rem .25rem;
+  padding: 0 .25rem 0 .55rem;
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border); border-radius: 5px;
+  transition: background .12s, border-color .12s;
+
+  /* `:has(input:focus)` instead of `:focus-within` — the latter would
+     also fire when tabbing onto a trailing view button, dragging the
+     accent ring onto the chrome for a button focus that has nothing to
+     do with the input. */
+  &:has(input:focus) {
+    border-color: var(--accent);
+    background: rgb(from var(--text) r g b / .06);
+  }
 
   & .sidebar-search-icon {
-    position: absolute;
-    left: .55rem; top: 50%; transform: translateY(-50%);
+    flex-shrink: 0;
     color: var(--muted); pointer-events: none;
+    margin-right: .4rem;
   }
+
   & input {
-    width: 100%; box-sizing: border-box;
-    padding: .3rem .55rem .3rem 1.85rem;
-    background: rgb(from var(--text) r g b / .04);
+    flex: 1; min-width: 0;
+    padding: .3rem 0;
+    background: transparent;
     color: var(--text);
-    border: 1px solid var(--border); border-radius: 5px;
+    border: 0; outline: none;
     font: inherit; font-size: .78rem;
-    outline: none;
 
     &::placeholder { color: var(--muted); }
     &:focus::placeholder { color: transparent; }
-    &:focus { border-color: var(--accent); background: rgb(from var(--text) r g b / .06); }
     /* Hide the native search-clear ✕ — the user can clear by selecting
        all + delete; the WebKit clear is visually inconsistent with the
        rest of the chrome. */
     &::-webkit-search-cancel-button { display: none; }
   }
+}
+
+/* Packages / Repositories navigation buttons — sit flush inside the
+   search row's right edge, sized so the input height drives the row.
+   Borderless icon chrome (the search-row border already frames them);
+   only the background tint + color move on hover / active. The count
+   badge in the top-right corner mirrors the `.triage-filter .count`
+   pattern. Buttons are `hidden` (via the HTML attribute, toggled in
+   sidebar.js) when their respective index is empty. */
+.sidebar-view-btn {
+  position: relative; flex-shrink: 0;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 3px;
+  padding: 0;
+  margin-left: 2px;
+  transition: background .12s, color .12s;
+
+  /* Breathing room between adjacent view buttons + a small nudge off
+     the search row's right edge for the trailing one. */
+  & + & { margin-left: .4rem; }
+  &:last-child { margin-right: .1rem; }
+
+  & svg { width: 14px; height: 14px; }
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+  &.active {
+    color: var(--accent);
+    background: rgb(from var(--text) r g b / .10);
+  }
+
+  & .view-btn-count {
+    position: absolute; top: -4px; right: -4px;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 8.5px; font-weight: 600;
+    border-radius: 999px; padding: 0 3px;
+    min-width: 11px; text-align: center; line-height: 11px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  &.active .view-btn-count { color: var(--accent); }
 }
 
 #file-list {
@@ -170,34 +231,6 @@
   & .group-count {
     font-weight: 500; letter-spacing: .04em;
     color: var(--muted); font-size: .7rem;
-  }
-}
-
-/* Packages / Repositories headers — clickable strips that switch the
-   main pane to a cross-report aggregation view. Hover affordance +
-   accent recolor mirror the sidebar's other clickable rows. */
-.file-group-header.packages-header {
-  border-radius: 4px;
-  /* Equalize vertical padding on the clickable row-style
-     headers — `.file-group-header`'s default is top-heavy
-     (`.45rem .35rem .2rem`) because it's primarily a section
-     divider that needs breathing room above; for these rows
-     the outline / hover bg traces the asymmetric box and the
-     content reads visually offset. Matched padding makes the
-     selection outline + the text inside it look centered. */
-  padding-top: .25rem; padding-bottom: .25rem;
-  transition: background .12s, color .12s;
-
-  &:hover, &:focus-visible { color: var(--accent); background: rgb(from var(--text) r g b / .04); }
-  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-
-  /* "You're here" highlight — mirrors how a file row picks up the
-     accent recolor + outline while its file is loaded. */
-  &.current {
-    color: var(--accent);
-    background: rgb(from var(--text) r g b / .06);
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
   }
 }
 

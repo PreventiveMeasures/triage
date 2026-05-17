@@ -45,6 +45,23 @@
       <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
     </svg>
     <input id="sidebar-search-input" type="search" placeholder="Search reports..." autocomplete="off">
+    <button id="show-packages-btn" type="button" class="sidebar-view-btn" data-action="show-packages" hidden title="Show packages" aria-label="Show packages">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 6h12v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6Z"/>
+        <path d="M2 6l1.6-3.3A1.3 1.3 0 0 1 4.8 2h6.4a1.3 1.3 0 0 1 1.2.7L14 6"/>
+        <path d="M8 2v4"/>
+      </svg>
+      <span class="view-btn-count"></span>
+    </button>
+    <button id="show-repositories-btn" type="button" class="sidebar-view-btn" data-action="show-repositories" hidden title="Show repositories" aria-label="Show repositories">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="4" x2="4" y1="2.5" y2="10"/>
+        <circle cx="12" cy="4" r="2"/>
+        <circle cx="4" cy="12" r="2"/>
+        <path d="M12 6a6 6 0 0 1-6 6"/>
+      </svg>
+      <span class="view-btn-count"></span>
+    </button>
   </div>
   <ul id="file-list"></ul>
   <div class="sidebar-actions">

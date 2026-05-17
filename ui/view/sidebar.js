@@ -87,6 +87,13 @@ const BUNDLE_DT = 'application/x-deepview-bundle'
 // drop-target header stays visible even when the unfiled list is empty.
 let isDraggingReport = false
 
+// Mirror for bundles — keeps the Bundles header visible mid-drag even
+// when no unfiled bundle exists (e.g. every bundle is workspace-claimed
+// and the user is dragging one OUT). Without this the header would be
+// suppressed by its `unfiledBundles.length > 0` gate and the detach
+// drop target would have nothing to light up on.
+let isDraggingBundle = false
+
 // Section header label per group. The default JSON bucket renders
 // under "Reports" — broad enough to fit any analyzer-native dump
 // (deduplicate output, single-run output, etc.) without naming the
@@ -158,30 +165,18 @@ function workspaceHeaderTemplate(count) {
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button><span class="group-count">${count}</span></span></li>`
 }
 
-// Packages section header — collapsed to a single "PACKAGES (N)"
-// strip, sitting under the bundles entry. Clicking it switches to
-// a cross-report view that aggregates findings by package
-// (extracted from each finding's file path the way the graph's
-// `packageOf` does). Hidden when no reports are loaded — there's
-// nothing to aggregate. The `data-action="show-packages"` is the
-// click delegate's hook.
-function packagesHeaderTemplate(count) {
-  const cls = `file-group-header packages-header${state.currentView === 'packages' ? ' current' : ''}`
-  return html`<li class=${cls} data-action="show-packages" role="button" tabindex="0" title="Show packages">
-    <span class="group-label">Packages</span><span class="group-count">${count}</span>
-  </li>`
-}
-
-// Repositories section header — same shape as the Packages
-// header, immediately under it. Routes to the cross-report
-// own-source-by-repo aggregation. Hidden until at least one
-// own-source finding has been indexed (an empty section header
-// would just confuse — the user has nothing to navigate to).
-function repositoriesHeaderTemplate(count) {
-  const cls = `file-group-header packages-header${state.currentView === 'repositories' ? ' current' : ''}`
-  return html`<li class=${cls} data-action="show-repositories" role="button" tabindex="0" title="Show repositories">
-    <span class="group-label">Repositories</span><span class="group-count">${count}</span>
-  </li>`
+// Packages + Repositories live as compact icon buttons to the right of
+// the sidebar search (see index.html), not as in-list section headers.
+// Each button is `hidden` while its index is empty (nothing to navigate
+// to) and gets `.active` when its view is the current one — mirrors the
+// `.current` highlight a file row picks up while its file is loaded.
+function renderViewButton(id, count, viewName) {
+  const btn = document.querySelector(id)
+  if (!btn) return
+  btn.hidden = count === 0
+  btn.classList.toggle('active', state.currentView === viewName)
+  const badge = btn.querySelector('.view-btn-count')
+  if (badge) badge.textContent = String(count)
 }
 
 function bundlesHeaderTemplate(count) {
@@ -427,16 +422,16 @@ export async function renderSidebar() {
   // render under the workspace, matching how reports work. Filter by
   // search query so a name search narrows the visible list (same
   // treatment unfiled reports get at the GROUP_ORDER loop below). The
-  // header itself stays visible whenever ANY bundles exist (even
-  // all-claimed) so it remains the detach drop target for dragging a
-  // bundle out of a workspace; the section renders at the end of the
-  // sidebar, below the report groups.
+  // header is gated on `unfiledBundles.length > 0 || isDraggingBundle`
+  // (mirrors how the Reports default header gates on
+  // `isDraggingReport`) so it stays visible exactly when there's
+  // something to host AND reappears mid-drag as the detach drop target
+  // even if no unfiled bundle exists right now. Renders at the end of
+  // the sidebar, below the report groups.
   const unfiledBundles = bundleNames.filter(
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
-    ${countLoadedPackages() > 0 ? packagesHeaderTemplate(countLoadedPackages()) : null}
-    ${countLoadedRepositories() > 0 ? repositoriesHeaderTemplate(countLoadedRepositories()) : null}
     ${workspaceHeaderTemplate(visibleWorkspaces.length)}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
@@ -476,9 +471,15 @@ export async function renderSidebar() {
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}
-    ${bundleNames.length > 0 ? bundlesHeaderTemplate(unfiledBundles.length) : null}
+    ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate(unfiledBundles.length) : null}
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
+
+  // Packages + Repositories navigation lives in the search row, not in
+  // #file-list — update those buttons here so visibility + counts +
+  // active-view highlight track the same render pass.
+  renderViewButton('#show-packages-btn', countLoadedPackages(), 'packages')
+  renderViewButton('#show-repositories-btn', countLoadedRepositories(), 'repositories')
 
   const deleteBtn = document.querySelector('#delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
@@ -959,6 +960,8 @@ sidebar.addEventListener('dragstart', (e) => {
     // image" caption.
     e.dataTransfer.setData('text/plain', integrity)
     bundleEl.classList.add('dragging')
+    isDraggingBundle = true
+    renderSidebar()
     return
   }
   const fileEl = e.target.closest('.file-item[data-file]')
@@ -975,8 +978,9 @@ sidebar.addEventListener('dragstart', (e) => {
 sidebar.addEventListener('dragend', () => {
   for (const el of sidebar.querySelectorAll('.dragging')) el.classList.remove('dragging')
   clearDragOver()
-  if (isDraggingReport) {
+  if (isDraggingReport || isDraggingBundle) {
     isDraggingReport = false
+    isDraggingBundle = false
     renderSidebar()
   }
 })
