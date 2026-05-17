@@ -1038,7 +1038,29 @@ function mountBundleSourceOverlay() {
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
 
+// Wraps a real view switch in `document.startViewTransition` for a
+// crossfade. In-place re-renders ('findings' with new filters)
+// stay synchronous so callers like `renderKeepFocus` — which reads
+// the new DOM right after `render()` returns — keep working. The
+// initial paint isn't animated (`prev` is null on first call).
+let prevPaintedView = null
+
 export function render() {
+  const prev = prevPaintedView
+  prevPaintedView = state.currentView
+  const viewChanged = prev !== null && prev !== state.currentView
+  if (
+    viewChanged &&
+    typeof document.startViewTransition === 'function' &&
+    !matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    document.startViewTransition(() => renderImpl())
+    return
+  }
+  renderImpl()
+}
+
+function renderImpl() {
   mountBundleSourceOverlay()
   // Recompute the active deps dir before any helper consults it
   // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
