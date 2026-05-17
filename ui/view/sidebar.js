@@ -761,7 +761,7 @@ sidebar.addEventListener('click', async (e) => {
 // (scrollWidth > clientWidth), so non-truncated names stay quiet.
 const _sidebarTip = document.createElement('div')
 _sidebarTip.id = 'sidebar-tooltip'
-document.body.appendChild(_sidebarTip)
+document.body.append(_sidebarTip)
 
 let _tipTarget = null
 let _tipTimer = null
