@@ -41,6 +41,61 @@ import { decodeUtf8 } from '../../common/utf8.js'
 const sessions = new Map()
 const listeners = new Set()
 
+// Persisted tag→name cache, keyed per-workspace in localStorage.
+// Lets a page refresh skip `fetchByTag` for every remote tag we've
+// already decoded — `fetchByTag` downloads the FULL encrypted blob
+// over REST just to read the embedded name, so a workspace with N
+// remote reports + bundles costs N REST round-trips on every boot
+// without this cache.
+//
+// Shape: { names: { tag: fileName }, bundles: { tag: integrity },
+//          bundleNames: { integrity: name } }
+//
+// Trust: this data is workspace-private (filenames, bundle names,
+// HMAC tags); nothing here is secret material. localStorage is the
+// same persistence tier the workspace blob (`deepview.workspaces`)
+// uses for its plaintext `reports` / `bundles` arrays, so the cache
+// doesn't widen the exposure surface.
+//
+// Invalidation: cleared on `onWorkspaceDeleted` and
+// `onWorkspacePrivateKeyChanged` (where the cached HMACs were
+// computed against an old `tagKey` and are now garbage). Pruned
+// after each `session.list()` against the live remote inventory so
+// stale entries from a peer-side delete don't linger.
+const PRESENCE_CACHE_PREFIX = 'deepview.objstore-presence.'
+function presenceCacheKey(workspaceId) { return PRESENCE_CACHE_PREFIX + workspaceId }
+function loadPresenceCache(workspaceId) {
+  try {
+    const raw = localStorage.getItem(presenceCacheKey(workspaceId))
+    if (!raw) return null
+    const obj = JSON.parse(raw)
+    if (!obj || typeof obj !== 'object') return null
+    return {
+      names: obj.names && typeof obj.names === 'object' ? obj.names : {},
+      bundles: obj.bundles && typeof obj.bundles === 'object' ? obj.bundles : {},
+      bundleNames: obj.bundleNames && typeof obj.bundleNames === 'object' ? obj.bundleNames : {},
+    }
+  } catch { return null }
+}
+function savePresenceCache(workspaceId, entry) {
+  try {
+    const payload = {
+      names: Object.fromEntries(entry.remoteNameByTag),
+      bundles: Object.fromEntries(entry.remoteBundleByTag),
+      bundleNames: Object.fromEntries(entry.remoteBundleNameByIntegrity),
+    }
+    localStorage.setItem(presenceCacheKey(workspaceId), JSON.stringify(payload))
+  } catch (err) {
+    // QuotaExceeded or similar. The in-memory cache still works for
+    // this session; the next page refresh will repeat the
+    // `fetchByTag` discovery cycle. Log so the operator sees why.
+    console.warn(`objstore-presence: cache persist failed for ${workspaceId}:`, err)
+  }
+}
+function clearPresenceCache(workspaceId) {
+  try { localStorage.removeItem(presenceCacheKey(workspaceId)) } catch {}
+}
+
 // Shared multiplexed objstore client — one per page. The WebSocket
 // itself lives on the shared `SocketTransport` from
 // `client/sync-transport.ts` so triage-sync and objstore share one
@@ -200,15 +255,41 @@ export function openWorkspace(workspaceId) {
     if (entry.disposed) return
     // Pre-compute fileTags + bundleTags BEFORE opening the WS session
     // so a render racing the boot has its lookups resolve (to `false`)
-    // rather than miss-and-return-false-with-no-cache.
+    // rather than miss-and-return-false-with-no-cache. Stash an
+    // inverse map (tag → name / integrity) for the post-list() step
+    // below — for any remote tag that corresponds to an attached
+    // local report/bundle we can fill `remoteNameByTag` /
+    // `remoteBundleByTag` directly without a `fetchByTag` round-trip
+    // (which would otherwise download the entire encrypted blob over
+    // REST just to read the embedded name).
+    const attachedTagToName = new Map()
     for (const name of ws.reports ?? []) {
-      entry.fileTags.set(name, await computeResourceTag(entry.keys.tagKey, name))
+      const tag = await computeResourceTag(entry.keys.tagKey, name)
+      entry.fileTags.set(name, tag)
+      attachedTagToName.set(tag, name)
     }
     if (entry.disposed) return
+    const attachedTagToIntegrity = new Map()
     for (const integrity of ws.bundles ?? []) {
-      entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
+      const tag = await computeBundleResourceTag(entry.keys.tagKey, integrity)
+      entry.bundleTags.set(integrity, tag)
+      attachedTagToIntegrity.set(tag, integrity)
     }
     if (entry.disposed) return
+    // Bundle names live in local OPFS metadata for attached bundles —
+    // surface them so the download dialog has labels ready without
+    // needing `fetchByTag` to peek inside the encrypted payload.
+    try {
+      const localBundles = await listBundles()
+      if (entry.disposed) return
+      for (const b of localBundles) {
+        if (entry.bundleTags.has(b.integrity)) {
+          entry.remoteBundleNameByIntegrity.set(b.integrity, b.name)
+        }
+      }
+    } catch (err) {
+      console.warn(`objstore-presence: listBundles failed during ${workspaceId} open:`, err)
+    }
     notify()
     const serverUrl = triageSync.getServerUrl()
     if (!serverUrl) return
@@ -225,6 +306,54 @@ export function openWorkspace(workspaceId) {
       const items = await session.list()
       if (entry.disposed) return
       for (const item of items) entry.remoteTags.add(item.resourceTag)
+      // Populate reverse maps from the two cheap sources before
+      // `ensureRemoteNames` falls back to `fetchByTag`:
+      //   (a) attached local reports/bundles (we know tag→name
+      //       because we just computed both)
+      //   (b) the persisted cache from a previous session (peer-
+      //       uploaded blobs we already decoded last time)
+      // Both are gated on the tag being in the live `remoteTags`
+      // set — stale entries from a peer-side delete don't leak into
+      // `remoteFileNames` / `remoteBundleIntegrities`.
+      const cached = loadPresenceCache(workspaceId)
+      let cacheMutated = false
+      for (const tag of entry.remoteTags) {
+        const attachedName = attachedTagToName.get(tag)
+        if (attachedName !== undefined && !entry.remoteNameByTag.has(tag)) {
+          entry.remoteNameByTag.set(tag, attachedName)
+          cacheMutated = true
+        }
+        const attachedIntegrity = attachedTagToIntegrity.get(tag)
+        if (attachedIntegrity !== undefined && !entry.remoteBundleByTag.has(tag)) {
+          entry.remoteBundleByTag.set(tag, attachedIntegrity)
+          cacheMutated = true
+        }
+        if (cached) {
+          const cachedName = cached.names[tag]
+          if (typeof cachedName === 'string' && !entry.remoteNameByTag.has(tag) && !entry.remoteBundleByTag.has(tag)) {
+            entry.remoteNameByTag.set(tag, cachedName)
+            // Mirror the auto-discovery side-effect: ensure
+            // `isInRemote(fileName)` answers true for peer-uploaded
+            // names we'd otherwise only learn about via fetchByTag.
+            entry.fileTags.set(cachedName, tag)
+            cacheMutated = true
+          }
+          const cachedIntegrity = cached.bundles[tag]
+          if (typeof cachedIntegrity === 'string' && !entry.remoteBundleByTag.has(tag) && !entry.remoteNameByTag.has(tag)) {
+            entry.remoteBundleByTag.set(tag, cachedIntegrity)
+            entry.bundleTags.set(cachedIntegrity, tag)
+            const cachedBundleName = cached.bundleNames[cachedIntegrity]
+            if (typeof cachedBundleName === 'string' && !entry.remoteBundleNameByIntegrity.has(cachedIntegrity)) {
+              entry.remoteBundleNameByIntegrity.set(cachedIntegrity, cachedBundleName)
+            }
+            cacheMutated = true
+          }
+        }
+      }
+      // Persist the up-to-date pruned cache: any cached entry whose
+      // tag isn't in `remoteTags` was naturally excluded above, so
+      // `savePresenceCache` writes only the still-valid mappings.
+      if (cacheMutated || cached) savePresenceCache(workspaceId, entry)
       notify()
       // Background-fetch each remote tag's plaintext fileName so
       // the download dialog has names ready when it opens.
@@ -252,9 +381,13 @@ export function openWorkspace(workspaceId) {
         // attached AFTER openWorkspace (via drag-drop, import, or
         // auto-download from another peer), and an onDeleted for
         // that fresh identifier would incorrectly drop its tag from
-        // the local fileTags / bundleTags cache. The cost is one
-        // localStorage parse per delete broadcast — rare enough to
-        // be neutral.
+        // the local fileTags / bundleTags cache. Cost: one
+        // localStorage parse (`listWorkspaces`) plus the
+        // `savePresenceCache` write at the tail of this handler —
+        // a peer-side bulk delete therefore drives N synchronous
+        // localStorage writes. Acceptable for the typical
+        // single-resource delete; a debounce is a follow-up if a
+        // workspace-wipe scenario becomes common.
         const live = listWorkspaces().find((w) => w.id === workspaceId)
         const liveReports = live?.reports ?? []
         const liveBundles = live?.bundles ?? []
@@ -269,6 +402,9 @@ export function openWorkspace(workspaceId) {
           entry.remoteBundleNameByIntegrity.delete(integrity)
           if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
         }
+        // Persist the post-delete state so the dropped tag doesn't
+        // resurrect from cache on the next page refresh.
+        savePresenceCache(workspaceId, entry)
         notify()
       })
     } catch (err) {
@@ -336,9 +472,11 @@ onBundleMembershipChanged((workspaceId) => {
 // now sessions stay alive across switches and cleanup is event-
 // driven. Fire on the workspaces-store delete so any presence
 // session bound to a vanished id releases its transport acquire
-// and zeroes its key material.
+// and zeroes its key material. Also drop the persisted tag→name
+// cache — the workspace is gone, the mappings are dead weight.
 onWorkspaceDeleted((workspaceId) => {
   closeWorkspace(workspaceId)
+  clearPresenceCache(workspaceId)
 })
 
 // Workspace privateKey rotation — the live session's
@@ -346,11 +484,14 @@ onWorkspaceDeleted((workspaceId) => {
 // the OLD private key; subsequent objstore ops would sign with stale
 // material and decrypt remote blobs against the wrong contentKey.
 // Tear down and re-open so the next access derives fresh keys
-// against the new private key. Mirrors triage-sync's handler at
+// against the new private key. Drop the persisted cache too — the
+// cached HMACs were computed under the OLD tagKey, so every entry
+// is garbage under the new one. Mirrors triage-sync's handler at
 // `client/triage-sync.ts:onWorkspacePrivateKeyChanged`.
 onWorkspacePrivateKeyChanged((workspaceId) => {
   if (!sessions.has(workspaceId)) return
   closeWorkspace(workspaceId)
+  clearPresenceCache(workspaceId)
   openWorkspace(workspaceId)
 })
 
@@ -540,7 +681,16 @@ async function ensureRemoteNames(entry) {
   const pending = []
   for (const tag of entry.remoteTags) {
     if (entry.remoteNameByTag.has(tag)) continue
-    if (entry.remoteBundleByTag.has(tag)) continue
+    // Bundles: skip only when we ALSO know the user-friendly name.
+    // For attached bundles with no local OPFS metadata (synthetic
+    // integrities, or a bundle whose `_meta.json` entry was lost),
+    // the openWorkspace boot fills `remoteBundleByTag` but not
+    // `remoteBundleNameByIntegrity` — still fetch so the download
+    // dialog has a meaningful label instead of an integrity prefix.
+    if (entry.remoteBundleByTag.has(tag)) {
+      const integrity = entry.remoteBundleByTag.get(tag)
+      if (entry.remoteBundleNameByIntegrity.has(integrity)) continue
+    }
     let p = entry.inFlight.get(tag)
     if (!p) {
       p = entry.session.fetchByTag(tag).then(
@@ -593,7 +743,11 @@ async function ensureRemoteNames(entry) {
   }
   if (pending.length === 0) return
   await Promise.all(pending)
-  if (!entry.disposed) notify()
+  if (entry.disposed) return
+  // Persist any newly-decoded tag→name mappings so a page refresh
+  // doesn't repeat the (REST-heavy) `fetchByTag` round-trips.
+  savePresenceCache(entry.workspaceId, entry)
+  notify()
 }
 
 // Reconcile a peer-uploaded report against local state. Three
