@@ -100,9 +100,18 @@
      each component having to opt in. Inherits into both themes via
      the `--accent` swap below. */
   accent-color: var(--accent);
+
+  /* Tell the UA to render unstyled native chrome (scrollbars,
+     `<select>` popups, etc.) in dark mode. Without this Chromium
+     defaults to a light-themed scrollbar even on a dark page, so
+     containers that don't set their own `scrollbar-color` (e.g.
+     the bundle code-view's file tree) show as a bright bar over
+     dark surface. body.theme-light flips it below. */
+  color-scheme: dark;
 }
 
 body.theme-light {
+  color-scheme: light;
   --bg: #fff;
   --theme-bar: #f6f6fa;
   --surface: rgb(246 248 250 / .72);
