@@ -85,8 +85,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: none;
 }
-.form .sigil { flex: 0 0 auto; }
+.form .sigil { flex: 0 0 auto; user-select: none; }
 
 /* Wraps the real <input> and the ghost-suggestion overlay so the
    overlay can absolute-position against the input's box without

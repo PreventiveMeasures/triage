@@ -17,6 +17,7 @@
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
   transition: border-color .12s, color .12s, background .12s;
+  cursor: default;
   user-select: none;
 }
 :host(:hover) { border-color: var(--accent); color: var(--accent); }

@@ -246,6 +246,15 @@
    row-internal Lit components also need them; copying them into
    each shadow root keeps the cards self-contained. */
 
+/* Shadow DOM doesn't inherit the global theme.css chrome rule, so
+   reassert non-selectable cursor on display-only chrome here. */
+.badge,
+.tabs,
+.tab,
+.value-label,
+.run-meta,
+.conf-ring { cursor: default; user-select: none; }
+
 .badge {
   display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase;
   padding: .15rem .45rem; border-radius: 3px; letter-spacing: .03em; line-height: 1;
@@ -316,8 +325,18 @@
   & .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
 }
 
+.mark-action-group {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
+  overflow: hidden; margin-right: .25rem;
+}
 .mark-comment,
-.mark-fix,
+.mark-fix {
+  background: transparent; border: 0; color: var(--muted);
+  padding: 0 .25rem; height: 1.4rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  &:not(:last-child) { border-right: 1px solid var(--border); }
+  &:hover { color: var(--accent); background: var(--surface-active); }
+}
 .mark-copy {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
@@ -326,7 +345,7 @@
   &:hover { color: var(--accent); border-color: var(--accent); }
 }
 .mark-comment.has-comment,
-.mark-fix.has-fix { color: var(--accent); border-color: var(--accent); }
+.mark-fix.has-fix { color: var(--accent); }
 /* Pulse the copy button briefly after a successful clipboard
    write so the click is visually acknowledged — the class is
    set + cleared by the events.js handler around the

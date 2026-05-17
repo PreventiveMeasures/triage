@@ -2,6 +2,7 @@
 
 .chip {
   display: inline-flex; align-items: center; gap: .375rem;
+  cursor: default; user-select: none;
   /* Pin to 24px so readonly mode (no pencil button) stays the same
      height as editable mode (which hits 24px naturally from its 18px
      button + .125rem padding + 1px border × 2). The page-header's

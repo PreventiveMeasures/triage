@@ -6,6 +6,7 @@
 
 button {
   width: 14px; height: 14px;
+  user-select: none;
   padding: 0;
   background: transparent;
   border: 1.5px solid currentcolor;

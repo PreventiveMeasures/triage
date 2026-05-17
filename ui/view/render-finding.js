@@ -176,7 +176,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}${commentBtn}${fixBtn}${copyBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span>${copyBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
 }
 
 // Triage menu — chevron button that toggles a popover with the
