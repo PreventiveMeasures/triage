@@ -438,9 +438,13 @@ body.show-print-btn #download-btn { display: flex; }
   [draggable='true'],
   [contenteditable],
   .mono,
+  .findings-content,
+  .tree-view,
+  .tree-view-table,
   [data-select-bundle],
   [data-select-package],
-  [data-select-repository] {
+  [data-select-repository],
+  [data-tree-select] {
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
