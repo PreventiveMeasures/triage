@@ -181,8 +181,9 @@ body {
    scope only — shadow-DOM components (terminal, finding-row,
    finding-card, theme-toggle) set their own user-select where they
    need it. The suffix wildcards catch the project's convention for
-   chrome class names (-title / -meta / -label / -header / -section)
-   so new chrome inherits the treatment without having to touch this
+   chrome class names (-title / -meta / -label / -header / -section /
+   -chip(s) / -count / -bar / -tag(s) / -hint / -stat(s) / -name) so
+   new chrome inherits the treatment without having to touch this
    rule. */
 button,
 summary,
@@ -209,7 +210,27 @@ h6,
 [class$='-header'],
 [class*='-header '],
 [class$='-section'],
-[class*='-section '] {
+[class*='-section '],
+[class$='-chip'],
+[class*='-chip '],
+[class$='-chips'],
+[class*='-chips '],
+[class$='-count'],
+[class*='-count '],
+[class$='-bar'],
+[class*='-bar '],
+[class$='-tag'],
+[class*='-tag '],
+[class$='-tags'],
+[class*='-tags '],
+[class$='-hint'],
+[class*='-hint '],
+[class$='-stat'],
+[class*='-stat '],
+[class$='-stats'],
+[class*='-stats '],
+[class$='-name'],
+[class*='-name '] {
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
