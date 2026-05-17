@@ -181,6 +181,15 @@ class BundleTerminal extends LitElement {
     this.#completions = null
     if (e.key === 'ArrowUp') { e.preventDefault(); this.#historyBack() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); this.#historyForward() }
+    // Rearm the ghost debounce on every non-Tab key. willUpdate
+    // catches keys that mutate `_input` (typing, history nav), but
+    // cursor-only keys (ArrowLeft/Right, Home, End) and bare-cycle-
+    // resets don't trip it — and after we clear `#completions` here
+    // the ghost may newly become relevant. Double-arming on a
+    // char key is harmless: the willUpdate path that follows just
+    // resets the same timer.
+    this.#cancelGhost()
+    this.#scheduleGhost()
   }
 
   #onTab() {
@@ -222,13 +231,21 @@ class BundleTerminal extends LitElement {
     // Cycling already commits the user's attention to one candidate
     // — the second-channel ghost would just be visual noise.
     if (this.#completions) return
-    // Only suggest at word boundaries: empty line, end of token
-    // (trailing space), or right after a pipe. Mid-token the user
-    // is still naming the current thing, so a "continuation"
-    // floating after the partial word reads as distracting noise
-    // rather than help.
+    // Show only where the suggestion is useful and not noisy:
+    //   - At a word boundary (empty / trailing space / trailing
+    //     pipe) any valid first variant is a "what's next" hint.
+    //   - Mid-token (last char in [\w./]), only when the typed
+    //     text isn't already a valid completion on its own.
+    //     Typing `ls` (a real command) shouldn't tease `lsblk`,
+    //     but typing `lsb` (not a command) should.
+    // Other trailing chars (`&`, `>`, redirects, etc.) drop out —
+    // completion in those contexts is too ambiguous to surface as
+    // a passive hint.
     const input = this._input
-    if (input !== '' && !input.endsWith(' ') && !input.endsWith('|')) return
+    const lastChar = input.slice(-1)
+    const atBoundary = input === '' || lastChar === ' ' || lastChar === '|'
+    const inToken = /[\w./]/u.test(lastChar)
+    if (!atBoundary && !inToken) return
     const items = this.#term.complete(input)
     if (items.length === 0) return
     const first = items[0]
@@ -236,6 +253,10 @@ class BundleTerminal extends LitElement {
     // tail beyond what's already typed. Defensive check on the
     // prefix in case the shell ever returns a non-prefix variant.
     if (!first.startsWith(input) || first === input) return
+    // Mid-token: suppress the ghost if the typed text is itself one
+    // of the completion variants — the user already has something
+    // valid, so a "you could extend this" hint is just noise.
+    if (inToken && items.includes(input)) return
     this._ghost = first.slice(input.length)
   }
 
