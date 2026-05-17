@@ -412,8 +412,11 @@ body.show-print-btn #download-btn { display: flex; }
      zoom, no node clicks). */
   button,
   canvas,
+  code,
   input,
+  pre,
   select,
+  summary,
   textarea,
   a[href],
   dialog,
@@ -422,7 +425,13 @@ body.show-print-btn #download-btn { display: flex; }
   finding-row,
   finding-table,
   [role='button'],
-  [tabindex]:not([tabindex='-1']) {
+  [tabindex]:not([tabindex='-1']),
+  [draggable='true'],
+  [contenteditable],
+  .mono,
+  [data-select-bundle],
+  [data-select-package],
+  [data-select-repository] {
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
