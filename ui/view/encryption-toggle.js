@@ -20,7 +20,7 @@ import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, 
 import { openPasskeySetupDialog } from './passkey-setup-dialog.js'
 import { openPasskeyUnlockDialog } from './passkey-unlock-dialog.js'
 import { migrateTriageToPlaintext } from '../../client/triage.js'
-import { migrateOpfsFilesDecrypt } from '../../client/storage.js'
+import { migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt } from '../../client/storage.js'
 import { migrateToPlaintext as migrateSecureStorageToPlaintext } from '../../client/secure-storage.js'
 
 // Two visually distinct lock glyphs, both on a 16×16 viewbox at
@@ -99,9 +99,15 @@ async function handleDisable() {
   try {
     const result = await disableEncryption({
       migrate: async ({ open }) => {
+        // Order mirrors the enable flow in passkey-setup-dialog:
+        // secure-storage → triage → reports → bundles. The four
+        // stores are independent, so the order isn't load-bearing
+        // — but keeping it consistent in both directions makes
+        // partial-migration diagnostics easier to reason about.
+        await migrateSecureStorageToPlaintext({ open })
         await migrateTriageToPlaintext({ open })
         await migrateOpfsFilesDecrypt({ open })
-        await migrateSecureStorageToPlaintext({ open })
+        await migrateOpfsBundlesDecrypt({ open })
       },
     })
     if (result?.disabled) {

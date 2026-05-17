@@ -1124,6 +1124,24 @@ dialog {
       text-transform: uppercase; letter-spacing: .04em;
     }
   }
+
+  /* Acknowledgement checkbox row used by the orphan-setup-resolve
+     flow. The label spans a single row so the checkbox sits inline
+     with its text instead of stacking — the `wsl-field` styling
+     (display:block + uppercase span) is for field labels above
+     inputs, not for inline checkbox acknowledgements. */
+  & .wsl-ack {
+    display: flex; align-items: flex-start; gap: .5rem;
+    margin-top: .6rem;
+    color: var(--text); font-size: .8rem; line-height: 1.4;
+
+    & > input[type='checkbox'] {
+      flex: 0 0 auto;
+      /* Align the checkbox to the first text line. */
+      margin-top: .15rem;
+    }
+    & > span { flex: 1 1 auto; }
+  }
   & .wsl-link {
     display: block; width: 100%; box-sizing: border-box;
     padding: .5rem .65rem;

@@ -35,7 +35,7 @@
 // sidebar.css apply.
 
 import { LitElement, html } from 'lit'
-import { listBundles, listFiles } from '../../client/storage.js'
+import { hasAnyBundles, listFiles } from '../../client/storage.js'
 import { listWorkspaces } from '../../client/workspaces.js'
 
 const TARGET_URL = 'https://triage.space/view.html'
@@ -117,7 +117,14 @@ async function hasLocalData() {
   // to re-drop the originals on the new origin), so a silent
   // redirect would strip them off the legacy origin with no chance
   // to fish out the integrity hashes / filenames first.
-  try { return (await listBundles()).length > 0 } catch { return true }
+  //
+  // Use `hasAnyBundles()` (directory-entry probe) instead of
+  // `listBundles()` here — this code path runs BEFORE the boot
+  // unlock gate, and `listBundles` reads the encrypted
+  // `_meta.json`, which returns `[]` under a locked vault.
+  // Probing directory entries doesn't touch the envelope and
+  // surfaces encrypted bundles correctly.
+  try { return await hasAnyBundles() } catch { return true }
 }
 
 class OriginMigrationDialog extends LitElement {

@@ -129,15 +129,17 @@ function ensureOverlay() {
     )) return
     if (!confirm('Really wipe everything? This cannot be undone.')) return
     try {
-      // `refuseIfEnabled: true` matches the orphan-setup-dialog
-      // wipe path. A sibling tab racing to enable encryption during
-      // our two-confirm window would have its just-enabled vault
-      // destroyed without this guard. The user clicked "Wipe local
-      // data" because their original passkey is lost — that
-      // assumption no longer holds if a sibling just enabled fresh
-      // encryption, so refusing forces them to reload and try
-      // again instead.
-      await wipeAllVaultData({ refuseIfEnabled: true })
+      // Do NOT pass `refuseIfEnabled: true` here. The lock-overlay
+      // is rendered *because* the vault is enabled (and this tab
+      // hasn't unlocked it), so the refuse-check would trip on the
+      // very first click. The earlier audit fix added the flag
+      // by analogy with the orphan-setup-dialog wipe path, but the
+      // two surfaces have inverted preconditions: the orphan path
+      // runs when the vault is NOT enabled (metadata absent) and
+      // wants to detect a sibling racing an enable; the
+      // lost-passkey path runs when the vault IS enabled and the
+      // user has explicitly chosen "wipe everything".
+      await wipeAllVaultData()
     } catch (err) {
       alert(`Wipe failed: ${err?.message ?? err}. Try again or clear localStorage manually via DevTools.`)
       return

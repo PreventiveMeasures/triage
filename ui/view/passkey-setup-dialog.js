@@ -20,7 +20,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, onVaultStateChange, wipeAllVaultData } from '../../client/passkey-vault.js'
 import { migrateTriageToEncrypted } from '../../client/triage.js'
-import { migrateOpfsFilesEncrypt } from '../../client/storage.js'
+import { migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt } from '../../client/storage.js'
 import { migrateToEncrypted as migrateSecureStorageToEncrypted } from '../../client/secure-storage.js'
 
 class PasskeySetupDialog extends LitElement {
@@ -204,14 +204,18 @@ class PasskeySetupDialog extends LitElement {
     this._phase = 'Clearing previous vault state…'
     try {
       await wipeAllVaultData({ refuseIfEnabled: true })
-      this._orphan = false
-      this._orphanAck = false
-      this._phase = ''
-      // Focus the name input on the next paint so the cleared-state
-      // form is ready for the user.
-      await this.updateComplete
-      const input = this.querySelector('input[data-role="name"]')
-      if (input) input.focus()
+      // Reload to drop in-memory state that survives `wipeAllVaultData`:
+      // the bundle-finding / bundle-hash indices, state.bundles /
+      // state.reports / state.findings, the storage.js read cache,
+      // any rendered UI referencing the now-deleted files. Without
+      // the reload, the user could click a finding's "Code →"
+      // affordance and hit "File not found" because the in-memory
+      // index still points at OPFS keys that were wiped. Matches the
+      // lock-overlay wipe path (also reloads). User has to re-trigger
+      // the setup dialog after — acceptable, since wipe is a
+      // destructive one-shot and a fresh start is the intended
+      // outcome.
+      location.reload()
     } catch (err) {
       this._error = `Could not clear previous vault state: ${err?.message ?? err}`
       this._phase = ''
@@ -253,6 +257,8 @@ class PasskeySetupDialog extends LitElement {
           await migrateTriageToEncrypted({ seal })
           this._phase = 'Encrypting report files…'
           await migrateOpfsFilesEncrypt({ seal })
+          this._phase = 'Encrypting bundles…'
+          await migrateOpfsBundlesEncrypt({ seal })
         },
       })
       if (ok) {
@@ -298,7 +304,7 @@ class PasskeySetupDialog extends LitElement {
           the previous passkey was lost — and then register a fresh
           passkey. This is irreversible. There is no backup.
         </p>
-        <label class="wsl-field" style="flex-direction:row;align-items:flex-start;gap:.5rem;">
+        <label class="wsl-ack">
           <input
             type="checkbox"
             data-role="orphan-ack"

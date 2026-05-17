@@ -51,6 +51,17 @@ const VAULT_KEY = 'deepview.passkey.v1'
 // slot rather than stacking a fresh OS-level entry on every cycle.
 // See `enableEncryption` for the read-or-generate dance.
 const USER_ID_KEY = 'deepview.passkey.userId'
+// Marker set by `disableEncryption` on a successful clean disable
+// and cleared by `enableEncryption` / `wipeAllVaultData`. Lets
+// `hasOrphanedUserId()` distinguish the benign "user just disabled"
+// state (USER_ID_KEY present + no metadata + everything is plaintext)
+// from the dangerous "metadata wiped out-of-band" state (USER_ID_KEY
+// present + no metadata + envelopes stranded on disk). Without the
+// marker, the orphan heuristic fires its destructive
+// wipe-acknowledgement on every benign post-disable re-enable —
+// and clearing USER_ID_KEY instead would defeat the OS-slot reuse
+// that makes the persistent userId worthwhile in the first place.
+const CLEAN_DISABLE_KEY = 'deepview.passkey.cleanDisable'
 export const VAULT_LOCK = 'deepview.passkey.v1.write'
 // AAD prefix domain-separators — every encrypted blob is bound to
 // its use AND to the vault identity (userId tag). A triage envelope
@@ -61,6 +72,11 @@ export const VAULT_LOCK = 'deepview.passkey.v1.write'
 // another vault's data.
 const AAD_TRIAGE_PREFIX = 'deepview.triage.v1|'
 const AAD_OPFS_PREFIX = 'deepview.opfs.v1|'
+// Bundles get their own domain-separated prefix so a bundle envelope
+// can't be swapped into the reports slot (or vice versa). The slot
+// argument is either a bundle's SRI integrity (`sha512-...`) for
+// bundle bytes, or `__meta__` for `_meta.json`.
+const AAD_BUNDLE_PREFIX = 'deepview.bundle.v1|'
 
 let sessionKey = null
 // Identity tag (= the userId base64url string from metadata) for
@@ -207,15 +223,27 @@ export function getCurrentIdentityTag() {
 }
 
 // Detect a USER_ID_KEY orphan — the user wiped vault metadata
-// (devtools, profile reset, manual clear) but USER_ID_KEY survived.
+// (devtools, profile reset, manual clear) but USER_ID_KEY survived,
+// leaving envelopes on disk that no future credential can decrypt.
 // Re-enabling without warning would reuse the userId but create a
 // FRESH credential (different PRF output → different content key).
 // All previously-encrypted envelopes on disk would silently become
 // unreadable. Surface to the UI so the user can consciously choose
 // "yes, wipe the old data" or "wait, I want to recover it first".
+//
+// A clean `disableEncryption` migrated everything to plaintext
+// before clearing metadata — there's no abandoned encrypted data
+// to warn about. We disambiguate that benign state from the real
+// orphan by checking `CLEAN_DISABLE_KEY`: present means the last
+// vault transition was a successful disable, so the absent
+// metadata is intentional and the persistent USER_ID_KEY is just
+// the OS-slot-reuse hint waiting for the next enable.
 export function hasOrphanedUserId() {
   if (readMetadata() !== null) return false
-  try { return localStorage.getItem(USER_ID_KEY) !== null } catch { return false }
+  try {
+    if (localStorage.getItem(CLEAN_DISABLE_KEY) === '1') return false
+    return localStorage.getItem(USER_ID_KEY) !== null
+  } catch { return false }
 }
 
 // In-memory session key access — `triage.js` and `storage.js` call
@@ -244,6 +272,19 @@ export function getEnvelopeAadForOpfs(filename) {
     throw new TypeError('passkey vault: OPFS AAD requires a filename string')
   }
   return encodeUtf8(AAD_OPFS_PREFIX + (sessionIdentityTag ?? '') + '|' + filename)
+}
+
+// Bundles use a separate AAD prefix so swapping a bundle envelope
+// into the reports slot (or vice versa) fails AEAD. `slot` is the
+// bundle's SRI integrity for bytes (`sha512-...`) or the literal
+// `'__meta__'` for the bundle-index file — the two share the prefix
+// + identity tag binding but bind to different slots so the index
+// envelope can't be replayed as a bundle and vice versa.
+export function getEnvelopeAadForBundle(slot) {
+  if (typeof slot !== 'string') {
+    throw new TypeError('passkey vault: bundle AAD requires a slot string')
+  }
+  return encodeUtf8(AAD_BUNDLE_PREFIX + (sessionIdentityTag ?? '') + '|' + slot)
 }
 
 // Cross-tab + cross-render listener registry. The triage / storage
@@ -426,11 +467,18 @@ export function enableEncryption({ migrate, userName, rpName, signal, acknowledg
     // (YubiKey etc.) may stack a fresh credential per ceremony
     // regardless of user.id; `signalUnknownCredential` on disable
     // is the only cleanup path for those, and is itself best-effort
-    // (Chrome 132+). First-time enable generates random bytes;
-    // subsequent enables read the stored value. Read INSIDE the
-    // lock so concurrent enable attempts share the same value (the
-    // first writer wins; the second observes the just-written
-    // value).
+    // (Chrome 132+).
+    //
+    // The `CLEAN_DISABLE_KEY` marker (cleared at the end of this
+    // function) is the companion mechanism that keeps the orphan
+    // heuristic accurate: persistent userId without the marker means
+    // metadata was wiped out-of-band and envelopes may be stranded;
+    // persistent userId WITH the marker means the prior disable
+    // already migrated everything to plaintext.
+    //
+    // Read INSIDE the lock so concurrent enable attempts share the
+    // same value (the first writer wins; the second observes the
+    // just-written value).
     const userId = readOrCreateUserId()
     const reg = await registerPasskey({
       userName: userName || 'DeepView user',
@@ -509,6 +557,10 @@ export function enableEncryption({ migrate, userName, rpName, signal, acknowledg
       const sealForKey = (bytes, aad) => sealEnvelope(key, bytes, aad)
       await migrate({ seal: sealForKey })
     }
+    // Clear the clean-disable marker — we're enabled again, so the
+    // next time metadata disappears it'll be a real out-of-band wipe
+    // (orphan) until another successful disableEncryption sets it.
+    try { localStorage.removeItem(CLEAN_DISABLE_KEY) } catch {}
     fireVaultStateChange()
     return true
   })
@@ -530,77 +582,90 @@ export function enableEncryption({ migrate, userName, rpName, signal, acknowledg
 // already cleared metadata before we acquired the lock, the
 // short-circuit at the top of the lock body skips the signal +
 // migration entirely (the sibling has done it).
-export function disableEncryption({ migrate }) {
-  if (!isEncryptionEnabled()) return Promise.resolve({ disabled: false, signalAttempted: false })
+export async function disableEncryption({ migrate }) {
+  if (!isEncryptionEnabled()) return { disabled: false, signalAttempted: false }
   if (!isUnlocked()) throw new Error('passkey: must unlock before disabling encryption')
   disablingInThisTab += 1
-  const promise = navigator.locks.request(VAULT_LOCK, async () => {
-    const meta = readMetadata()
-    if (!meta) return { disabled: false, signalAttempted: false }
-    // Capture `key` INSIDE the lock — a sibling tab disable+re-key
-    // racing our lock wait would have null'd our module-level
-    // sessionKey via the storage-event handler; capturing pre-lock
-    // would leave us with an obsolete CryptoKey reference.
-    const key = sessionKey
-    if (!key) return { disabled: false, signalAttempted: false }
-    // Tear down metadata + session key UP-FRONT so any concurrent
-    // setItem during migration writes plaintext (the post-disable
-    // invariant). Without this, a setItem that lands mid-migration
-    // would seal under the about-to-be-discarded session key and
-    // become permanently unreadable once the metadata is cleared.
-    //
-    // CRITICAL: `sessionIdentityTag` is intentionally KEPT until
-    // after migrate. Triage / OPFS / secure-storage AAD builders
-    // all read it; clearing it pre-migrate produces AAD
-    // `…|<empty>|<key>` that never matches the
-    // `…|<userIdB64>|<key>` AAD the existing envelopes were
-    // sealed with — every `open` throws and the entire disable
-    // flow data-losses. (Found in audit re-run round-N P0.)
-    //
-    // `fireVaultStateChange()` stays at the end so UI listeners see
-    // the disabled state once everything is plaintext on disk, not
-    // mid-migration when half the data is still enveloped.
-    clearMetadata()
-    sessionKey = null
-    sessionCredentialId = null
-    if (typeof migrate === 'function') {
-      const openForKey = (bytes, aad) => openEnvelope(key, bytes, aad)
-      try {
-        await migrate({ open: openForKey })
-      } catch (err) {
-        // Migrate failed partway. Some keys may be plaintext on disk,
-        // others still enveloped. Without rollback, the user is left
-        // with metadata cleared, no sessionKey, and undecryptable
-        // envelope keys/files — permanent data loss with no in-app
-        // recovery.
-        //
-        // Restore vault state so the user can retry the disable. The
-        // partially-plaintext keys re-seal via secure-storage's
-        // hydrate self-heal on the next listener cycle (covers
-        // SECURE_KEYS; triage / OPFS layers see no self-heal but
-        // their plaintext-under-enabled-vault state can be
-        // re-decrypted on retry, then re-written).
-        writeMetadata(meta)
-        sessionKey = key
-        sessionCredentialId = meta.credentialId
-        // sessionIdentityTag was never cleared (still set).
-        fireVaultStateChange()
-        throw err
+  try {
+    return await navigator.locks.request(VAULT_LOCK, async () => {
+      const meta = readMetadata()
+      if (!meta) return { disabled: false, signalAttempted: false }
+      // Capture `key` INSIDE the lock — a sibling tab disable+re-key
+      // racing our lock wait would have null'd our module-level
+      // sessionKey via the storage-event handler; capturing pre-lock
+      // would leave us with an obsolete CryptoKey reference.
+      const key = sessionKey
+      if (!key) return { disabled: false, signalAttempted: false }
+      // Tear down metadata + session key UP-FRONT so any concurrent
+      // setItem during migration writes plaintext (the post-disable
+      // invariant). Without this, a setItem that lands mid-migration
+      // would seal under the about-to-be-discarded session key and
+      // become permanently unreadable once the metadata is cleared.
+      //
+      // CRITICAL: `sessionIdentityTag` is intentionally KEPT until
+      // after migrate. Triage / OPFS / secure-storage AAD builders
+      // all read it; clearing it pre-migrate produces AAD
+      // `…|<empty>|<key>` that never matches the
+      // `…|<userIdB64>|<key>` AAD the existing envelopes were
+      // sealed with — every `open` throws and the entire disable
+      // flow data-losses. (Found in audit re-run round-N P0.)
+      //
+      // `fireVaultStateChange()` stays at the end so UI listeners see
+      // the disabled state once everything is plaintext on disk, not
+      // mid-migration when half the data is still enveloped.
+      clearMetadata()
+      sessionKey = null
+      sessionCredentialId = null
+      if (typeof migrate === 'function') {
+        const openForKey = (bytes, aad) => openEnvelope(key, bytes, aad)
+        try {
+          await migrate({ open: openForKey })
+        } catch (err) {
+          // Migrate failed partway. Some keys may be plaintext on disk,
+          // others still enveloped. Without rollback, the user is left
+          // with metadata cleared, no sessionKey, and undecryptable
+          // envelope keys/files — permanent data loss with no in-app
+          // recovery.
+          //
+          // Restore vault state so the user can retry the disable. The
+          // partially-plaintext keys re-seal via secure-storage's
+          // hydrate self-heal on the next listener cycle (covers
+          // SECURE_KEYS; triage / OPFS layers see no self-heal but
+          // their plaintext-under-enabled-vault state can be
+          // re-decrypted on retry, then re-written).
+          writeMetadata(meta)
+          sessionKey = key
+          sessionCredentialId = meta.credentialId
+          // sessionIdentityTag was never cleared (still set).
+          fireVaultStateChange()
+          throw err
+        }
       }
-    }
-    sessionIdentityTag = null
-    // Signal cleanup AFTER migration: doing it earlier would surface
-    // the OS-level "remove this passkey?" prompt while we're still
-    // decrypting envelopes — if the user accidentally removes the
-    // passkey before migration finishes, any remaining envelope keys
-    // would be unrecoverable. Signal is best-effort; failures
-    // swallowed.
-    const signalAttempted = await signalCredentialRemovedFor(meta).catch(() => false)
-    fireVaultStateChange()
-    return { disabled: true, signalAttempted }
-  })
-  promise.finally(() => { disablingInThisTab -= 1 })
-  return promise
+      sessionIdentityTag = null
+      // Set the clean-disable marker BEFORE the signal call. Keeping
+      // USER_ID_KEY intact (its persistence across cycles is the OS
+      // slot-reuse hint that avoids accumulating a fresh authenticator
+      // entry on every disable/enable), the marker is what tells
+      // `hasOrphanedUserId()` that the absent metadata is intentional
+      // — every envelope was already migrated to plaintext by the
+      // `migrate()` call above, so the next `enableEncryption` can
+      // skip the destructive wipe acknowledgement and re-bind to the
+      // same user.handle slot. Cleared by `enableEncryption` /
+      // `wipeAllVaultData`.
+      try { localStorage.setItem(CLEAN_DISABLE_KEY, '1') } catch {}
+      // Signal cleanup AFTER migration: doing it earlier would surface
+      // the OS-level "remove this passkey?" prompt while we're still
+      // decrypting envelopes — if the user accidentally removes the
+      // passkey before migration finishes, any remaining envelope keys
+      // would be unrecoverable. Signal is best-effort; failures
+      // swallowed.
+      const signalAttempted = await signalCredentialRemovedFor(meta).catch(() => false)
+      fireVaultStateChange()
+      return { disabled: true, signalAttempted }
+    })
+  } finally {
+    disablingInThisTab -= 1
+  }
 }
 
 // Hint the authenticator(s) that the given credential is no longer
@@ -712,99 +777,100 @@ async function wipeOpfsDirectories(dirNames) {
   return failures
 }
 
-export function wipeAllVaultData({ refuseIfEnabled = false } = {}) {
+export async function wipeAllVaultData({ refuseIfEnabled = false } = {}) {
   disablingInThisTab += 1
   wipingInThisTab += 1
-  const promise = navigator.locks.request(VAULT_LOCK, async () => {
-    if (refuseIfEnabled && isEncryptionEnabled()) {
-      throw new Error(
-        'passkey: encryption was just enabled in another tab. Reload this '
-        + 'page to unlock instead of wiping.',
-      )
-    }
-    // Drain any in-flight secure-storage persists BEFORE clearing
-    // disk. Otherwise a background `setItem` queued just before we
-    // acquired the lock would complete its `localStorage.setItem`
-    // AFTER our cleanup, producing a ghost entry that survives
-    // the wipe (and reload — secure-storage's hydrate would cache
-    // it from disk under the disabled vault).
-    await drainSecureStorageWriteChain()
-    const meta = readMetadata()
-    // Best-effort signal first (while metadata is still readable).
-    if (meta) {
-      try {
-        await signalCredentialRemovedFor({
-          credentialId: meta.credentialId,
-          rpId: meta.rpId ?? currentRpId(),
-          userId: meta.userId,
-        })
-      } catch {}
-    }
-    // Clear localStorage keys FIRST so listeners triggered by the
-    // vault-state-change fire see a fully-cleared disk and don't
-    // race with the subsequent `removeItem` calls. Order: vault
-    // metadata + USER_ID_KEY first (so `isEncryptionEnabled()`
-    // returns false for any handler that runs), then the data keys.
-    try { localStorage.removeItem(VAULT_KEY) } catch {}
-    try { localStorage.removeItem(USER_ID_KEY) } catch {}
-    for (const k of [
-      'deepview.workspaces',
-      'deepview.sync.sessions',
-      'deepview.sync.userEnabled',
-      'deepview.repoUrls',
-      'deepview.fileCounts',
-      'deepview.lastFile',
-      'deepview.triage',
-      'deepview.triage.pending',
-      'deepview.passkey.firstImportPrompted',
-      'deepview.viewMode',
-    ]) {
-      try { localStorage.removeItem(k) } catch {}
-    }
-    // The `deepview.report:*` keys are the OPFS-fallback storage
-    // path used by `client/storage.js` when OPFS is unavailable
-    // (file://, some private-browsing modes). Without this sweep
-    // they survive a wipe and resurface as undecryptable ghost
-    // entries under the next vault. Snapshot the keys first since
-    // we mutate the store inside the loop.
-    try {
-      const keys = []
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const k = localStorage.key(i)
-        if (k && k.startsWith('deepview.report:')) keys.push(k)
+  try {
+      return await navigator.locks.request(VAULT_LOCK, async () => {
+      if (refuseIfEnabled && isEncryptionEnabled()) {
+        throw new Error(
+          'passkey: encryption was just enabled in another tab. Reload this '
+          + 'page to unlock instead of wiping.',
+        )
       }
-      for (const k of keys) {
+      // Drain any in-flight secure-storage persists BEFORE clearing
+      // disk. Otherwise a background `setItem` queued just before we
+      // acquired the lock would complete its `localStorage.setItem`
+      // AFTER our cleanup, producing a ghost entry that survives
+      // the wipe (and reload — secure-storage's hydrate would cache
+      // it from disk under the disabled vault).
+      await drainSecureStorageWriteChain()
+      const meta = readMetadata()
+      // Best-effort signal first (while metadata is still readable).
+      if (meta) {
+        try {
+          await signalCredentialRemovedFor({
+            credentialId: meta.credentialId,
+            rpId: meta.rpId ?? currentRpId(),
+            userId: meta.userId,
+          })
+        } catch {}
+      }
+      // Clear localStorage keys FIRST so listeners triggered by the
+      // vault-state-change fire see a fully-cleared disk and don't
+      // race with the subsequent `removeItem` calls. Order: vault
+      // metadata + USER_ID_KEY first (so `isEncryptionEnabled()`
+      // returns false for any handler that runs), then the data keys.
+      try { localStorage.removeItem(VAULT_KEY) } catch {}
+      try { localStorage.removeItem(USER_ID_KEY) } catch {}
+      try { localStorage.removeItem(CLEAN_DISABLE_KEY) } catch {}
+      for (const k of [
+        'deepview.workspaces',
+        'deepview.sync.sessions',
+        'deepview.sync.userEnabled',
+        'deepview.repoUrls',
+        'deepview.fileCounts',
+        'deepview.lastFile',
+        'deepview.triage',
+        'deepview.triage.pending',
+        'deepview.passkey.firstImportPrompted',
+        'deepview.viewMode',
+      ]) {
         try { localStorage.removeItem(k) } catch {}
       }
-    } catch {}
-    // Clear in-memory vault state AFTER the disk state so any
-    // listener triggered by the state change reads a clean disk.
-    sessionKey = null
-    sessionIdentityTag = null
-    sessionCredentialId = null
-    fireVaultStateChange()
-    // Clear OPFS report and bundle directories. Track per-directory
-    // failures so the caller can surface them — without this signal,
-    // a wipe that succeeded on localStorage but failed on OPFS (the
-    // browser quota-locked the dir, an extension blocked the
-    // removeEntry) leaves orphan encrypted files invisible to the
-    // user under the next vault. The user has no in-app affordance
-    // to find them; only DevTools can recover.
-    const opfsFailures = await wipeOpfsDirectories(['deepview-reports', 'deepview-bundles'])
-    if (opfsFailures.length > 0) {
-      throw new Error(
-        'passkey: wipe partially succeeded — localStorage cleared but the '
-        + `following OPFS paths could not be removed: ${opfsFailures.join('; ')}. `
-        + 'Open DevTools → Application → Storage → Origin Private File System '
-        + 'to inspect, or use the browser\'s site-data clear tool to finish.',
-      )
+      // The `deepview.report:*` keys are the OPFS-fallback storage
+      // path used by `client/storage.js` when OPFS is unavailable
+      // (file://, some private-browsing modes). Without this sweep
+      // they survive a wipe and resurface as undecryptable ghost
+      // entries under the next vault. Snapshot the keys first since
+      // we mutate the store inside the loop.
+      try {
+        const keys = []
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const k = localStorage.key(i)
+          if (k && k.startsWith('deepview.report:')) keys.push(k)
+        }
+        for (const k of keys) {
+          try { localStorage.removeItem(k) } catch {}
+        }
+      } catch {}
+      // Clear in-memory vault state AFTER the disk state so any
+      // listener triggered by the state change reads a clean disk.
+      sessionKey = null
+      sessionIdentityTag = null
+      sessionCredentialId = null
+      fireVaultStateChange()
+      // Clear OPFS report and bundle directories. Track per-directory
+      // failures so the caller can surface them — without this signal,
+      // a wipe that succeeded on localStorage but failed on OPFS (the
+      // browser quota-locked the dir, an extension blocked the
+      // removeEntry) leaves orphan encrypted files invisible to the
+      // user under the next vault. The user has no in-app affordance
+      // to find them; only DevTools can recover.
+      const opfsFailures = await wipeOpfsDirectories(['deepview-reports', 'deepview-bundles'])
+      if (opfsFailures.length > 0) {
+        throw new Error(
+          'passkey: wipe partially succeeded — localStorage cleared but the '
+          + `following OPFS paths could not be removed: ${opfsFailures.join('; ')}. `
+          + 'Open DevTools → Application → Storage → Origin Private File System '
+          + 'to inspect, or use the browser\'s site-data clear tool to finish.',
+        )
     }
-  })
-  promise.finally(() => {
+    })
+  } finally {
     disablingInThisTab -= 1
     wipingInThisTab -= 1
-  })
-  return promise
+  }
 }
 
 // Helpers wrapping the low-level crypto with the in-memory key + the
@@ -834,6 +900,16 @@ export function openForOpfs(bytes, filename) {
   return openEnvelope(sessionKey, bytes, getEnvelopeAadForOpfs(filename))
 }
 
+export function sealForBundle(bytes, slot) {
+  if (!sessionKey) return Promise.reject(new Error('passkey: vault locked, cannot seal bundle'))
+  return sealEnvelope(sessionKey, bytes, getEnvelopeAadForBundle(slot))
+}
+
+export function openForBundle(bytes, slot) {
+  if (!sessionKey) return Promise.reject(new Error('passkey: vault locked, cannot open bundle'))
+  return openEnvelope(sessionKey, bytes, getEnvelopeAadForBundle(slot))
+}
+
 // Re-export the magic detection so callers can sniff bytes at the
 // storage boundary without importing the low-level module too. Saves
 // triage.js / storage.js from another import path.
@@ -853,6 +929,9 @@ export const __test__ = {
     // exercises enableEncryption twice would re-use the previous
     // test's id, which can hide bugs in the read-or-generate path.
     try { localStorage.removeItem(USER_ID_KEY) } catch {}
+    // Clear the clean-disable marker so each test starts with
+    // `hasOrphanedUserId()` reflecting only what THIS test set up.
+    try { localStorage.removeItem(CLEAN_DISABLE_KEY) } catch {}
   },
   setSessionKeyForTesting(key, identityTag = 'test-user', credentialId = 'test-cred') {
     sessionKey = key

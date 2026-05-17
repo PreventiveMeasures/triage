@@ -156,6 +156,139 @@ describe('passkey-vault — userId persistence', () => {
   })
 })
 
+describe('passkey-vault — hasOrphanedUserId / CLEAN_DISABLE_KEY semantics', () => {
+  // Regression: after a clean `disableEncryption`, re-enabling
+  // surfaced the destructive "wipe everything" acknowledgement body
+  // in the setup dialog — but the migrate had already converted
+  // every envelope to plaintext, so the warning was a false
+  // positive. The fix introduces a `CLEAN_DISABLE_KEY` marker that
+  // distinguishes "clean post-disable, USER_ID_KEY persists for OS
+  // slot re-use" from "metadata wiped out-of-band, envelopes
+  // stranded under a lost credential". `hasOrphanedUserId()` must
+  // return false in the former and true in the latter.
+
+  it('returns false when no USER_ID_KEY exists (fresh install)', () => {
+    resetVault()
+    assert.equal(vault.hasOrphanedUserId(), false)
+  })
+
+  it('returns false when the vault is currently enabled', () => {
+    resetVault()
+    // Plant a fully-formed metadata entry; the function should
+    // bail at the metadata-present check before reaching
+    // USER_ID_KEY / CLEAN_DISABLE_KEY.
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(1).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    globalThis.localStorage.setItem('deepview.passkey.v1', JSON.stringify({
+      enabled: true,
+      credentialId: 'c',
+      prfSalt: 's',
+      userId: 'u',
+      rpId: 'localhost',
+      createdAt: 1,
+    }))
+    assert.equal(vault.hasOrphanedUserId(), false)
+  })
+
+  it('returns true when USER_ID_KEY present + metadata gone + no clean-disable marker (out-of-band wipe scenario)', () => {
+    // Simulates the DevTools / profile-reset scenario the orphan
+    // warning is designed for: `deepview.passkey.v1` is gone but
+    // `deepview.passkey.userId` survived. Without a clean-disable
+    // marker, this looks like an abandoned vault — re-enable would
+    // mint a fresh credential whose PRF output differs from the
+    // lost one, and any envelopes still on disk would be
+    // unreadable.
+    resetVault()
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(2).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    assert.equal(vault.hasOrphanedUserId(), true)
+  })
+
+  it('returns false when CLEAN_DISABLE_KEY === "1" (post-clean-disable)', () => {
+    // Same on-disk shape as the orphan case (USER_ID_KEY present,
+    // metadata absent) BUT the clean-disable marker is set,
+    // indicating the last vault transition was a successful
+    // `disableEncryption` that already migrated every envelope to
+    // plaintext. No abandoned data → no warning.
+    resetVault()
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(3).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    globalThis.localStorage.setItem('deepview.passkey.cleanDisable', '1')
+    assert.equal(vault.hasOrphanedUserId(), false)
+  })
+
+  it('CLEAN_DISABLE_KEY values other than "1" are not treated as the marker', () => {
+    // Defensive: a corrupted / stale value shouldn't accidentally
+    // suppress the orphan warning. Only the canonical '1' counts.
+    resetVault()
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(4).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    globalThis.localStorage.setItem('deepview.passkey.cleanDisable', 'true')
+    assert.equal(vault.hasOrphanedUserId(), true, 'string "true" is not the marker')
+    globalThis.localStorage.setItem('deepview.passkey.cleanDisable', '0')
+    assert.equal(vault.hasOrphanedUserId(), true, '"0" is not the marker')
+  })
+})
+
+describe('passkey-vault — wipeAllVaultData refuseIfEnabled flag', () => {
+  // Regression: the lock-overlay's "Wipe local data and start
+  // over" path was calling `wipeAllVaultData({ refuseIfEnabled:
+  // true })`. The lock overlay is rendered EXACTLY when the vault
+  // is enabled (and this tab hasn't unlocked it) — so the refuse
+  // check tripped on the very first click and surfaced
+  // "encryption was just enabled in another tab" instead of
+  // wiping. Default (no flag) must succeed when enabled; flag
+  // must throw when enabled (that's the orphan-path
+  // sibling-race guard).
+
+  it('default `wipeAllVaultData()` succeeds even when the vault is enabled (lost-passkey lock-overlay path)', async () => {
+    resetVault()
+    // Plant enabled-vault state on disk.
+    globalThis.localStorage.setItem('deepview.passkey.v1', JSON.stringify({
+      enabled: true,
+      credentialId: 'c',
+      prfSalt: 's',
+      userId: 'u',
+      rpId: 'localhost',
+      createdAt: 1,
+    }))
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(5).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    globalThis.localStorage.setItem('deepview.workspaces', 'some-data')
+    assert.equal(vault.isEncryptionEnabled(), true, 'precondition: vault enabled')
+    // No refuseIfEnabled → wipe should proceed.
+    await vault.wipeAllVaultData()
+    assert.equal(globalThis.localStorage.getItem('deepview.passkey.v1'), null, 'metadata cleared')
+    assert.equal(globalThis.localStorage.getItem('deepview.passkey.userId'), null, 'userId cleared')
+    assert.equal(globalThis.localStorage.getItem('deepview.workspaces'), null, 'workspaces cleared')
+  })
+
+  it('`wipeAllVaultData({ refuseIfEnabled: true })` throws when the vault is enabled (orphan-path sibling-race guard)', async () => {
+    resetVault()
+    globalThis.localStorage.setItem('deepview.passkey.v1', JSON.stringify({
+      enabled: true,
+      credentialId: 'c',
+      prfSalt: 's',
+      userId: 'u',
+      rpId: 'localhost',
+      createdAt: 1,
+    }))
+    await assert.rejects(
+      vault.wipeAllVaultData({ refuseIfEnabled: true }),
+      /enabled in another tab/iu,
+      'refuseIfEnabled trips on enabled vault',
+    )
+    // State must be untouched after the refused wipe.
+    assert.notEqual(globalThis.localStorage.getItem('deepview.passkey.v1'), null, 'metadata still present after refused wipe')
+  })
+
+  it('`wipeAllVaultData({ refuseIfEnabled: true })` succeeds when the vault is NOT enabled (orphan-path normal flow)', async () => {
+    resetVault()
+    // Orphan shape: USER_ID_KEY present, metadata absent.
+    globalThis.localStorage.setItem('deepview.passkey.userId', new Uint8Array(16).fill(6).toBase64({ alphabet: 'base64url', omitPadding: true }))
+    globalThis.localStorage.setItem('deepview.workspaces', 'stale')
+    assert.equal(vault.isEncryptionEnabled(), false, 'precondition: vault not enabled')
+    await vault.wipeAllVaultData({ refuseIfEnabled: true })
+    assert.equal(globalThis.localStorage.getItem('deepview.passkey.userId'), null, 'userId cleared')
+    assert.equal(globalThis.localStorage.getItem('deepview.workspaces'), null, 'workspaces cleared')
+  })
+})
+
 describe('passkey-vault — storage-event re-key detection', () => {
   it('credentialId comparison is the right re-key signal (not userId)', () => {
     // After a sibling-tab disable+re-enable cycle, the new metadata
@@ -266,6 +399,96 @@ describe('passkey-vault — getEnvelopeAad helpers', () => {
     resetVault()
     assert.throws(() => vault.getEnvelopeAadForOpfs(42), /TypeError/u)
     assert.throws(() => vault.getEnvelopeAadForOpfs(null), /TypeError/u)
+  })
+
+  it('bundle AAD is domain-separated from OPFS report AAD', async () => {
+    // Bundles use their own prefix so an OPFS report envelope can't
+    // be swapped into a bundle slot (and vice versa) — open() would
+    // fail AEAD on the mismatched AAD.
+    resetVault()
+    await injectKey()
+    const bundleAad = vault.getEnvelopeAadForBundle('sha512-X')
+    const reportAad = vault.getEnvelopeAadForOpfs('sha512-X')
+    assert.notDeepEqual(bundleAad, reportAad)
+    assert.equal(new TextDecoder().decode(bundleAad), 'deepview.bundle.v1|test-user|sha512-X')
+  })
+
+  it('bundle AAD distinguishes byte slot from meta slot', async () => {
+    // The `__meta__` slot covers `_meta.json` (bundle name+integrity
+    // index). Sealing it under a separate slot prevents replaying a
+    // bundle-bytes envelope as the index (or vice versa).
+    resetVault()
+    await injectKey()
+    const bytesAad = vault.getEnvelopeAadForBundle('sha512-abc')
+    const metaAad = vault.getEnvelopeAadForBundle('__meta__')
+    assert.notDeepEqual(bytesAad, metaAad)
+    assert.equal(new TextDecoder().decode(metaAad), 'deepview.bundle.v1|test-user|__meta__')
+  })
+
+  it('bundle AAD folds in the identity tag', async () => {
+    // Cross-vault swap protection: a bundle envelope from vault A
+    // restored into vault B that happens to share the content key
+    // (iCloud-Keychain shared passkey) would still fail AEAD
+    // because the AAD's identity-tag component differs.
+    resetVault()
+    await injectKey()
+    const a = vault.getEnvelopeAadForBundle('sha512-X')
+    vault.__test__.reset()
+    const k = await injectKeyWithTag('other-user')
+    const b = vault.getEnvelopeAadForBundle('sha512-X')
+    assert.notDeepEqual(a, b)
+    void k
+  })
+
+  it('bundle AAD rejects non-string slots', () => {
+    resetVault()
+    assert.throws(() => vault.getEnvelopeAadForBundle(42), /TypeError/u)
+    assert.throws(() => vault.getEnvelopeAadForBundle(null), /TypeError/u)
+  })
+
+  it('sealForBundle / openForBundle round-trip preserves bytes', async () => {
+    // The seal/open helpers are what saveBundle / readBundle call.
+    // Verifying the round-trip under the bundle AAD ensures the
+    // storage layer can decrypt what it just wrote.
+    resetVault()
+    const { sealEnvelope, openEnvelope } = await import('../client/passkey-crypto.ts')
+    await injectKey()
+    const plaintext = new Uint8Array([10, 20, 30, 40, 50])
+    const sealed = await vault.sealForBundle(plaintext, 'sha512-roundtrip')
+    const opened = await vault.openForBundle(sealed, 'sha512-roundtrip')
+    assert.deepEqual(opened, plaintext)
+    // Defensive: also check that opening with the WRONG slot fails.
+    await assert.rejects(
+      vault.openForBundle(sealed, '__meta__'),
+      /OperationError|AEAD|decrypt/iu,
+      'slot mismatch fails AEAD',
+    )
+    // And opening with the report AAD for the same key string fails too.
+    const sealed2 = await sealEnvelope(
+      await injectKey(),
+      plaintext,
+      vault.getEnvelopeAadForOpfs('sha512-roundtrip'),
+    )
+    await assert.rejects(
+      openEnvelope(await injectKey(), sealed2, vault.getEnvelopeAadForBundle('sha512-roundtrip')),
+      /OperationError|AEAD|decrypt/iu,
+      'cross-domain AAD swap fails',
+    )
+  })
+
+  it('sealForBundle / openForBundle reject when the vault is locked', async () => {
+    // Without a session key, sealing/opening must reject cleanly —
+    // saveBundle / readBundle surface this as a user-visible "vault
+    // locked" error rather than crashing.
+    resetVault()
+    await assert.rejects(
+      vault.sealForBundle(new Uint8Array([1]), 'sha512-x'),
+      /vault locked/iu,
+    )
+    await assert.rejects(
+      vault.openForBundle(new Uint8Array([1]), 'sha512-x'),
+      /vault locked/iu,
+    )
   })
 })
 

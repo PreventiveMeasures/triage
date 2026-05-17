@@ -1,14 +1,19 @@
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import {
   VAULT_LOCK,
+  getEnvelopeAadForBundle,
   getEnvelopeAadForOpfs,
   getSessionKey,
   hasEnvelopeMagic,
   isEncryptionEnabled,
   onVaultStateChange,
+  openForBundle,
   openForOpfs,
+  sealForBundle,
   sealForOpfs,
 } from './passkey-vault.js'
+
+const BUNDLE_META_SLOT = '__meta__'
 
 // Persistent file storage backs the sidebar. OPFS — Origin Private
 // File System — is the preferred layer (real files, larger quota); on
@@ -548,22 +553,80 @@ function integrityToOpfsKey(integrity) {
   return integrity.replaceAll('/', '_')
 }
 
+// `_meta.json` carries the bundle names + integrities (user-visible
+// project names, sample identifiers — sensitive metadata). Sealed
+// under the bundle AAD with the `__meta__` slot when the vault is
+// unlocked; reads peel the envelope before JSON.parse.
+//
+// Failure modes are deliberately distinguished:
+//   - File doesn't exist → return [] (the fresh-vault / freshly-
+//     wiped state).
+//   - Vault is locked + envelope on disk → return [] but log a
+//     warning. The boot flow defers any meta-reading work until
+//     after unlock, so this path is defensive; surfacing an empty
+//     list lets `listBundles` callers operate without throwing.
+//   - Envelope present, vault unlocked, decrypt FAILED (AEAD
+//     verification, tampering, identity-tag mismatch from a backup
+//     restore) → log a warning and return []. Without the log,
+//     a corrupted index becomes indistinguishable from "no
+//     bundles" and the user loses access to bundle bytes that
+//     are still on disk.
+//   - JSON.parse failed → log and return [].
 async function readBundleMeta(dir) {
+  let raw
   try {
     const fh = await dir.getFileHandle(BUNDLE_META_FILE)
     const file = await fh.getFile()
-    const data = JSON.parse(await file.text())
+    raw = new Uint8Array(await file.arrayBuffer())
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'NotFoundError') return []
+    console.warn('readBundleMeta: failed to read _meta.json:', err)
+    return []
+  }
+  let plain = raw
+  if (hasEnvelopeMagic(raw)) {
+    const sessionKey = getSessionKey()
+    if (!sessionKey) {
+      console.warn('readBundleMeta: vault locked, returning empty bundle list')
+      return []
+    }
+    try {
+      plain = await openForBundle(raw, BUNDLE_META_SLOT)
+    } catch (err) {
+      console.warn('readBundleMeta: decrypt failed (tampering, key mismatch, or vault identity drift):', err)
+      return []
+    }
+  }
+  try {
+    const data = JSON.parse(decodeUtf8(plain))
     if (Array.isArray(data)) return data
     return []
-  } catch { return [] }
+  } catch (err) {
+    console.warn('readBundleMeta: JSON.parse failed:', err)
+    return []
+  }
 }
 
 async function writeBundleMeta(dir, meta) {
+  let bytes = encodeUtf8(JSON.stringify(meta))
+  if (isEncryptionEnabled() && !getSessionKey()) {
+    throw new Error('storage: vault locked, cannot save bundle metadata')
+  }
+  const sealedWithKey = getSessionKey()
+  if (sealedWithKey) bytes = await sealForBundle(bytes, BUNDLE_META_SLOT)
+  if (getSessionKey() !== sealedWithKey) {
+    throw new Error('storage: vault state changed mid-save for bundle metadata; retry')
+  }
   try { await dir.removeEntry(BUNDLE_META_FILE) } catch {}
   const fh = await dir.getFileHandle(BUNDLE_META_FILE, { create: true })
   const w = await fh.createWritable()
-  await w.write(JSON.stringify(meta))
-  await w.close()
+  try {
+    await w.write(bytes)
+    await w.close()
+  } catch (err) {
+    try { await w.abort(err) } catch {}
+    throw err
+  }
 }
 
 // `_meta.json` is read-modify-written by `saveBundle` and
@@ -585,6 +648,32 @@ export async function listBundles() {
   if (!dir) return []
   const meta = await readBundleMeta(dir)
   return [...meta].toSorted((a, b) => a.name.localeCompare(b.name))
+}
+
+// Existence-only probe — for callers that need to know whether
+// there are ANY bundles without reading `_meta.json` (which is
+// encrypted and unreadable under a locked vault). The origin-
+// migration check runs BEFORE the boot unlock gate; using
+// `listBundles().length > 0` there would silently report "no
+// bundles" when the user has encrypted bundles they'd lose on a
+// redirect to the new origin.
+//
+// Includes `_meta.json` itself in the count when present — its
+// existence already implies bundle activity even if all bundle
+// bytes were independently removed.
+export async function hasAnyBundles() {
+  // Probe with `create: false` — the existence check runs
+  // pre-redirect from the legacy-origin migration dialog, and a
+  // user who has no bundles shouldn't have a `deepview-bundles/`
+  // OPFS directory materialised by the act of asking. Using the
+  // shared `getOpfsBundlesDir` would create one silently.
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return false
+    const root = await navigator.storage.getDirectory()
+    const dir = await root.getDirectoryHandle(OPFS_BUNDLES_DIR, { create: false })
+    for await (const _ of dir.entries()) return true
+  } catch {}
+  return false
 }
 
 // Persists a dropped bundle. Computes SHA-512 of the ORIGINAL
@@ -609,39 +698,92 @@ export async function saveBundle(name, content) {
   const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
   const integrity = `sha512-${new Uint8Array(hashBuf).toBase64()}`
   const opfsKey = integrityToOpfsKey(integrity)
-  const storeBytes = name.toLowerCase().endsWith('.map')
+  let storeBytes = name.toLowerCase().endsWith('.map')
     ? await gzipBytes(bytes)
     : bytes
-  try { await dir.removeEntry(opfsKey) } catch {}
-  const fh = await dir.getFileHandle(opfsKey, { create: true })
-  const w = await fh.createWritable()
-  await w.write(storeBytes)
-  await w.close()
-  // RMW the metadata under the same-origin Web Lock so a concurrent
-  // saveBundle / deleteBundle can't clobber the entry we just
-  // persisted. Audit round-12 H7.
-  await lockBundleMeta(async () => {
-    const meta = await readBundleMeta(dir)
-    const idx = meta.findIndex((e) => e.integrity === integrity)
-    if (idx >= 0) meta[idx] = { integrity, name }
-    else meta.push({ integrity, name })
-    await writeBundleMeta(dir, meta)
+  // Hold shared VAULT_LOCK so a concurrent enable / disable / wipe
+  // (which acquires exclusive) waits for our seal-and-commit to
+  // finish — mirrors saveFile. Without this, a vault-state flip
+  // mid-save would leave bytes on disk under a state the next
+  // read can't reverse.
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+    // Refuse writes when the vault is enabled-but-locked. Same
+    // invariant as saveFile / saveTriage: nothing lands plaintext
+    // on disk under an enabled vault.
+    if (isEncryptionEnabled() && !getSessionKey()) {
+      throw new Error(`storage: vault locked, cannot save bundle "${name}"`)
+    }
+    // Capture sessionKey BEFORE the async seal so a sibling-tab
+    // disable can't slip in between key-capture and write —
+    // mirrors saveFile's vault-state-consistency check.
+    const sealedWithKey = getSessionKey()
+    if (sealedWithKey) storeBytes = await sealForBundle(storeBytes, integrity)
+    if (getSessionKey() !== sealedWithKey) {
+      throw new Error(`storage: vault state changed mid-save for bundle "${name}"; retry`)
+    }
+    try { await dir.removeEntry(opfsKey) } catch {}
+    const fh = await dir.getFileHandle(opfsKey, { create: true })
+    const w = await fh.createWritable()
+    try {
+      await w.write(storeBytes)
+      await w.close()
+    } catch (err) {
+      try { await w.abort(err) } catch {}
+      throw err
+    }
+    // RMW the metadata under the same-origin Web Lock so a concurrent
+    // saveBundle / deleteBundle can't clobber the entry we just
+    // persisted. Audit round-12 H7.
+    //
+    // On meta-write failure, clean up the just-written bundle bytes
+    // — without this, a transient `_meta.json` write error leaves
+    // sealed bytes on disk with no index entry. `listBundles` would
+    // never surface them (UI blind), but `migrateOpfsBundlesEncrypt`
+    // / `Decrypt` would still walk them on the next vault transition.
+    try {
+      await lockBundleMeta(async () => {
+        const meta = await readBundleMeta(dir)
+        const idx = meta.findIndex((e) => e.integrity === integrity)
+        if (idx >= 0) meta[idx] = { integrity, name }
+        else meta.push({ integrity, name })
+        await writeBundleMeta(dir, meta)
+      })
+    } catch (err) {
+      try { await dir.removeEntry(opfsKey) } catch {}
+      throw err
+    }
+    return { integrity, name }
   })
-  return { integrity, name }
 }
 
 export async function deleteBundle(integrity) {
   const dir = await getOpfsBundlesDir()
   if (!dir) return
-  try { await dir.removeEntry(integrityToOpfsKey(integrity)) } catch {}
-  // Same RMW lock as saveBundle — without it, a deleteBundle whose
-  // readBundleMeta predates a concurrent saveBundle would
-  // writeBundleMeta a meta array missing the freshly-saved entry,
-  // silently undoing the save's metadata insertion. Audit round-12 H7.
-  await lockBundleMeta(async () => {
-    const meta = await readBundleMeta(dir)
-    const filtered = meta.filter((e) => e.integrity !== integrity)
-    await writeBundleMeta(dir, filtered)
+  // Hold shared VAULT_LOCK so vault enable/disable (which acquires
+  // it exclusively) waits for our `_meta.json` RMW to finish.
+  // Without this, an enable/disable migration's `_meta.json`
+  // re-seal/re-decrypt can interleave with `readBundleMeta` →
+  // `writeBundleMeta` here and produce mixed-state on disk
+  // (e.g. meta written plaintext under a vault that's already
+  // back to enabled, or sealed under a key the next read can't
+  // reverse).
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+    try { await dir.removeEntry(integrityToOpfsKey(integrity)) } catch {}
+    // Per-`_meta.json` RMW lock — independent of VAULT_LOCK, serialises
+    // saveBundle vs deleteBundle within the same vault state. Audit
+    // round-12 H7.
+    await lockBundleMeta(async () => {
+      const meta = await readBundleMeta(dir)
+      const filtered = meta.filter((e) => e.integrity !== integrity)
+      // No-op short-circuit: deleting a non-existent integrity (or
+      // deleting from an already-empty meta) would otherwise CREATE
+      // `_meta.json` on disk where none existed. That stale file
+      // makes `hasAnyBundles()` return true for an effectively-empty
+      // bundles dir, suppressing the legacy-origin silent redirect
+      // path. Skip the write when nothing actually changed.
+      if (filtered.length === meta.length) return
+      await writeBundleMeta(dir, filtered)
+    })
   })
 }
 
@@ -650,7 +792,17 @@ export async function readBundle(integrity) {
   if (!dir) throw new Error('OPFS unavailable')
   const fh = await dir.getFileHandle(integrityToOpfsKey(integrity))
   const file = await fh.getFile()
-  const bytes = new Uint8Array(await file.arrayBuffer())
+  let bytes = new Uint8Array(await file.arrayBuffer())
+  // Peel the envelope FIRST when present — saveBundle gzips THEN
+  // seals, so the bytes-on-disk shape is envelope-of-gzip(bytes).
+  // The gzip magic-sniff below operates on the post-decrypt
+  // plaintext.
+  if (hasEnvelopeMagic(bytes)) {
+    if (!getSessionKey()) {
+      throw new Error(`storage: vault locked, cannot read bundle "${integrity}"`)
+    }
+    bytes = await openForBundle(bytes, integrity)
+  }
   // Auto-decompress when the on-disk bytes start with the gzip magic
   // (1f 8b) — saveBundle gzips .map sourcemaps to save OPFS space,
   // but the caller wants the original content. Stasis bundles use
@@ -754,6 +906,110 @@ export async function migrateOpfsFilesDecrypt({ open }) {
     try {
       await rawReadAndWrite(name, (bytes) => {
         if (hasEnvelopeMagic(bytes)) return open(bytes, getEnvelopeAadForOpfs(name))
+        return null  // already plaintext
+      })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotFoundError') continue
+      throw err
+    }
+  }
+}
+
+// Migration for the bundles directory — parallel to the reports
+// migration above. The bundle bytes are sealed under
+// `getEnvelopeAadForBundle(integrity)`; the `_meta.json` is sealed
+// under the `__meta__` slot. Same VAULT_LOCK exclusive-hold
+// contract: the caller blocks concurrent saveBundle / deleteBundle
+// (which acquire shared) from interleaving writes mid-sweep.
+//
+// `_meta.json` lives in the same directory as bundle bytes, so the
+// `listBundleStorageKeys` enumeration includes it; the meta slot
+// dispatches to the meta AAD, every other key uses its integrity
+// (= the on-disk filename, post-`/`→`_`-replacement maps back
+// trivially since we only used `/` → `_`).
+async function listBundleStorageKeys() {
+  const dir = await getOpfsBundlesDir()
+  if (!dir) return { dir: null, keys: [] }
+  const keys = []
+  for await (const [k] of dir.entries()) keys.push(k)
+  return { dir, keys }
+}
+
+// Map an OPFS-key in the bundles directory back to the AAD slot
+// it was sealed under. Bundle bytes are stored at
+// `integrityToOpfsKey(integrity)` (= integrity with `/` → `_`),
+// which is the only transform applied at save time; reverse it
+// here so the AAD slot at migrate / open time matches the slot
+// used at seal time.
+//
+// SHA-512 base64 SRI is always shaped `sha512-` + 88-char base64
+// (`A-Za-z0-9+/=`); canonical base64 never produces `_`, so the
+// unconditional `_` → `/` reverse is unambiguous for the current
+// integrity format. Guard against unexpected filenames (and any
+// future integrity format that legitimately contains `_`) by
+// requiring the canonical `sha512-` prefix — anything else
+// returns null and the caller skips it. This prevents a stray
+// file dropped into `deepview-bundles/` from being silently
+// re-encrypted under a wrong-slot AAD.
+//
+// `BUNDLE_META_SLOT === '__meta__'` is reserved and never
+// collides with a real integrity (88-char base64 can't equal an
+// 8-char literal). The migration test pins this invariant.
+function bundleAadSlotForOpfsKey(opfsKey) {
+  if (opfsKey === BUNDLE_META_FILE) return BUNDLE_META_SLOT
+  if (!opfsKey.startsWith('sha512-')) return null
+  return opfsKey.replaceAll('_', '/')
+}
+
+async function rawReadAndWriteBundle(dir, opfsKey, transform) {
+  const fh = await dir.getFileHandle(opfsKey)
+  const file = await fh.getFile()
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const next = await transform(bytes)
+  if (next === null) return
+  const writeFh = await dir.getFileHandle(opfsKey, { create: true })
+  const writable = await writeFh.createWritable()
+  try {
+    await writable.write(next)
+    await writable.close()
+  } catch (err) {
+    try { await writable.abort(err) } catch {}
+    throw err
+  }
+}
+
+export async function migrateOpfsBundlesEncrypt({ seal }) {
+  const { dir, keys } = await listBundleStorageKeys()
+  if (!dir) return
+  for (const k of keys) {
+    const slot = bundleAadSlotForOpfsKey(k)
+    // null = filename outside the expected shape (`sha512-...` or
+    // `_meta.json`). Skip rather than seal under a misderived AAD —
+    // a stray file dropped here by a future code path or by user
+    // tooling shouldn't be silently re-encrypted under a slot we
+    // can't reverse on read.
+    if (slot === null) continue
+    try {
+      await rawReadAndWriteBundle(dir, k, (bytes) => {
+        if (hasEnvelopeMagic(bytes)) return null  // already enveloped
+        return seal(bytes, getEnvelopeAadForBundle(slot))
+      })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotFoundError') continue
+      throw err
+    }
+  }
+}
+
+export async function migrateOpfsBundlesDecrypt({ open }) {
+  const { dir, keys } = await listBundleStorageKeys()
+  if (!dir) return
+  for (const k of keys) {
+    const slot = bundleAadSlotForOpfsKey(k)
+    if (slot === null) continue
+    try {
+      await rawReadAndWriteBundle(dir, k, (bytes) => {
+        if (hasEnvelopeMagic(bytes)) return open(bytes, getEnvelopeAadForBundle(slot))
         return null  // already plaintext
       })
     } catch (err) {
