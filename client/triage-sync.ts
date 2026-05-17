@@ -3,7 +3,9 @@ import { saveTriage } from './triage.js'
 import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../common/save-error-reason.ts'
 import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, setItem as setSecureItem } from './secure-storage.js'
-import { getCachedSyncPassword, loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync-auth-cache.ts'
+import { loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync-auth-cache.ts'
+import { type AcquireHandle } from './socket-transport.ts'
+import { getSharedTransport, setSharedAuthResolver } from './sync-transport.ts'
 import {
   type SavePayload,
   buildAad,
@@ -301,33 +303,12 @@ let redraw: () => void = () => {}
 let hydrationConflictResolver: ConflictResolver | null = null
 
 // Operator-side password prompt — installed once at app boot via
-// `setAuthenticationResolver(...)`. Invoked when the server emits
-// `unauthorized` for a first-action-against-new-workspace attempt;
-// returns the password the user typed (or null on cancel). Defaults
-// to null — when no resolver is wired (tests, console drivers), the
-// auth flow is a no-op: the pending save sits in `pendingSave` until
-// a future trigger.
-let authenticationResolver: AuthenticationResolver | null = null
-// Per-socket guard so an in-flight `authenticate` doesn't pile up
-// extra concurrent auth flows when multiple sessions hit the gate
-// at once. Reset on socket close (the per-socket auth state has to
-// re-run on the new connection). Also tracks whether we've already
-// tried the cached password on this socket so we don't ping-pong
-// `unauthorized` ↔ `authenticate` if it's wrong.
-//
-// The cached password itself lives in `./sync-auth-cache.ts`
-// (in-memory + secure-storage mirror) and is shared with
-// `client/objstore.ts` so both planes see the same value — without
-// the shared cache, objstore would re-prompt for the same password
-// the triage-sync session just learned.
-let authFlowInFlight = false
-let cachedPasswordTriedOnThisSocket = false
-// Pending resolver for the in-flight `authenticate` round-trip.
-// Resolved by the next `authenticated` (→ true) or
-// `unauthorized { kind: 'auth-failed' }` (→ false) frame; non-null
-// between send and reply only.
-let authResponseResolver: ((ok: boolean) => void) | null = null
-
+// `setAuthenticationResolver(...)`. Lives on the shared transport
+// (see `./sync-transport.ts`) so the same resolver drives both
+// triage-sync and objstore auth gates on a shared socket. Defaults
+// to null — when no resolver is wired (tests, console drivers),
+// the auth flow is a no-op: the pending save sits in `pendingSave`
+// until a future trigger.
 let serverUrl = ''
 // User-driven enable/disable, persisted. The sidebar status button
 // flips this on click. Distinct from `serverUrl` so toggling doesn't
@@ -341,45 +322,26 @@ let userEnabled = true
 // flips it back. Not persisted: visibility recomputes on every
 // load, so the runtime state can rebuild itself from scratch.
 let forcedOff = false
-let socket: WebSocket | null = null
-// Per-connection challenge nonce issued by the server in a
-// `challenge` frame on socket open (round-9 H2). The client signs
-// this nonce into every subscribe so a captured subscribe frame
-// can't be replayed from a different connection. `null` until the
-// frame arrives; `trySendSubscribe` bails when null and is re-kicked
-// from the `challenge` handler. Reset on every socket close /
-// teardown so a new connection picks up the new nonce.
-//
-// Module-global rather than per-socket WeakMap (asymmetric with the
-// server's `socketChallenge: WeakMap<WebSocket, string>` in
-// server/index.ts). Safe because the client only ever has ONE socket
-// open at a time — `openSocket` tears down the prior socket before
-// assigning the new one, and the stale-close guard (the `socket !==
-// ws` check inside the socket's `close` handler) prevents a stale
-// message from the OLD socket from racing the nonce wipe. A
-// WeakMap would be cleaner but is not load-bearing today; audit
-// follow-up flagged it as defense-in-depth.
-let connectionNonce: string | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let reconnectDelayMs = 1_000
-const MAX_RECONNECT_DELAY = 30_000
 
-// Application-level heartbeat. The browser WebSocket API doesn't
-// expose protocol-level ping/pong, and a server that ack'd our
-// subscribe but then silently dropped the route (or a half-open TCP
-// connection that hasn't fired a FIN yet) would leave us stuck on
-// `online` until the next save attempt or TCP keepalive kicked in.
-// We send `{ type: 'ping' }` periodically; the server replies
-// `{ type: 'pong' }`. A missing pong within `pongTimeoutMs` closes
-// the socket — `close` fires immediately, which the existing
-// reconnect path picks up.
+// Shared WebSocket transport. Owns the socket lifecycle, reconnect
+// backoff, per-connection challenge nonce, application-level
+// heartbeat (15s ping / 5s pong timeout default), and the
+// operator-side `authenticate` flow. We hold ONE acquire while
+// `isActive()` (URL + userEnabled + !forcedOff) and release on
+// transition to inactive — the transport's refcount keeps the
+// socket alive as long as ANY consumer wants it (objstore
+// workspace sessions hold their own acquires; toggling sync off
+// without closing workspaces keeps the socket open for objstore).
 //
-// Mutable so tests can shorten the windows; production timings give
-// dead-connection detection within ~20 s without spamming the wire.
-let pingIntervalMs = 15_000
-let pongTimeoutMs = 5_000
-let pingIntervalId: ReturnType<typeof setInterval> | null = null
-let pongTimeoutId: ReturnType<typeof setTimeout> | null = null
+// The transport is the singleton from `./sync-transport.ts` —
+// shared with production objstore via `objstore-presence.js`.
+// The cached password lives in `./sync-auth-cache.ts` (in-memory
+// + secure-storage mirror) and is shared with `client/objstore.ts`
+// so both planes see the same value — without the shared cache,
+// objstore would re-prompt for the same password the triage-sync
+// session just learned.
+const transport = getSharedTransport()
+let transportAcquire: AcquireHandle | null = null
 
 // Keyframe cadence. Client decides — server can't fake the flag
 // because it's bound into the signed canonical bytes (see
@@ -434,7 +396,8 @@ function currentStatus(): SyncStatus {
   for (const session of sessions.values()) {
     if (session.error) return 'error'
   }
-  if (!socket || socket.readyState !== WebSocket.OPEN) return 'offline'
+  const sock = transport.getSocket()
+  if (!sock || sock.readyState !== WebSocket.OPEN) return 'offline'
   // Any session that has sent its subscribe but hasn't received the
   // `workspace-subscribed` ack from the server stays in `connecting`.
   // Sessions still deriving keys (`subscribed === false`) don't
@@ -1027,7 +990,7 @@ onSecureStorageHydrated(() => {
   // after-unlock path: socket opens → server gates first save → we
   // replay from cache).
   loadCachedSyncPasswordFromStorage()
-  cachedPasswordTriedOnThisSocket = false
+  transport.resetCachedReplayGuard()
 })
 
 // Discriminated load result so `mutateAllSessions` can distinguish
@@ -1294,11 +1257,12 @@ function kickKeyDerivation(session: Session): void {
       // Subscribe + flush any pending save now that we have keys.
       // Subscribe gets us broadcast-eligibility regardless of
       // whether there's anything to push.
-      if (socket?.readyState !== WebSocket.OPEN) {
-        // Socket isn't open yet — open it lazily so the very first
-        // openSession of the page-load brings the connection up.
-        // Subsequent openSessions reuse it.
-        if (isActive() && !socket) openSocket()
+      if (transport.getSocket()?.readyState !== WebSocket.OPEN) {
+        // Socket isn't open yet — applyActive() acquires (and the
+        // transport's first acquire opens the socket) so the very
+        // first openSession of the page-load brings the connection
+        // up. Subsequent openSessions reuse the existing acquisition.
+        applyActive()
         return
       }
       trySendSubscribe(session)
@@ -1386,14 +1350,7 @@ function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | It
 // ─────────── transport / wire ───────────
 
 function send(msg: unknown): boolean {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return false
-  try {
-    socket.send(JSON.stringify(msg))
-    return true
-  } catch (err) {
-    console.warn('Triage sync send failed:', err)
-    return false
-  }
+  return transport.send(msg as object)
 }
 
 // Send a `workspace-subscribe` once per session-on-this-socket. The
@@ -1410,26 +1367,29 @@ function send(msg: unknown): boolean {
 // uses.
 function trySendSubscribe(session: Session, force = false): void {
   if (!session) return
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  const sock = transport.getSocket()
+  if (!sock || sock.readyState !== WebSocket.OPEN) return
   if (!force && session.subscribed) return
   if (!session.signingKey || !session.workspaceTag) return
   // The server-issued challenge nonce binds the subscribe sig to
   // this connection; we can't sign until it arrives (round-9 H2).
-  // The `challenge` message handler re-kicks every session's
-  // subscribe attempt the moment the nonce lands, so bailing here
-  // is safe — the legit client always sends `challenge` first.
-  if (connectionNonce == null) return
+  // The transport's `onConnected(nonce)` callback re-kicks every
+  // session's subscribe attempt the moment the nonce lands, so
+  // bailing here is safe — the legit client always sends `challenge`
+  // first.
+  const startNonce = transport.getNonce()
+  if (startNonce == null) return
   // Capture both `from` and the connection nonce BEFORE the await —
   // chain handlers running during the sign promise could otherwise
   // advance baseRevision out from under us, and a socket teardown +
   // reconnect could swap the nonce.
   const fromBase = session.baseRevision
-  const nonce = connectionNonce
+  const startSocket = sock
   const signingKey = session.signingKey
   const workspaceTag = session.workspaceTag
   ;(async () => {
     try {
-      const signature = await signSubscribePayload(signingKey, workspaceTag, fromBase, nonce)
+      const signature = await signSubscribePayload(signingKey, workspaceTag, fromBase, startNonce)
       // Bail if the session was removed (closeSession) during the
       // sign await. Looking it up by id again is cheap and
       // forgery-proof — workspaceId only resolves to one entry.
@@ -1442,14 +1402,14 @@ function trySendSubscribe(session: Session, force = false): void {
       // so re-check the tag identity here to keep the original
       // safety property.
       if (session.workspaceTag !== workspaceTag) return
-      // Bail if the connection nonce moved while we were signing
+      // Bail if the socket OR nonce moved while we were signing
       // (socket close + reconnect during the sign await). The
       // signed canonical is bound to the OLD nonce; sending it now
       // would fail server-side verify against the NEW nonce. The
-      // post-reconnect 'challenge' handler will re-kick this session.
-      if (connectionNonce !== nonce) return
+      // post-reconnect `onConnected` will re-kick this session.
+      if (transport.getSocket() !== startSocket || transport.getNonce() !== startNonce) return
       // Mark subscribed BEFORE sending so re-entrant calls (the
-      // ws 'open' handler firing twice during a flaky reconnect,
+      // onConnected handler firing twice during a flaky reconnect,
       // or trySendSave running back-to-back) don't double up.
       session.subscribed = true
       send({
@@ -1503,7 +1463,8 @@ function trySendSave(session: Session): void {
   // coherent data instead of relying on the reconnect path to paper
   // over the staleness. Audit M4 round-6.
   session.localState = effectiveLocalState(session.baseState, session.ids)
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  const sock = transport.getSocket()
+  if (!sock || sock.readyState !== WebSocket.OPEN) return
   // Once `keyframeInterval` non-keyframe revisions have piled up
   // since the last keyframe, the next save we'd emit anyway is
   // promoted to a keyframe — its changeset is the diff against an
@@ -2063,75 +2024,26 @@ async function handleChain(session: Session, revisions: unknown): Promise<void> 
   }
 }
 
-async function handleMessage(data: unknown): Promise<void> {
-  let msg: unknown
-  try { msg = JSON.parse(data as string) }
-  catch (err) {
-    // A persistent malformed-message storm (server bug, MITM, proxy
-    // injecting HTML for an error page) is otherwise invisible to
-    // operators since the previous catch was empty. Single console
-    // line per malformed frame is acceptable; if it ever floods, a
-    // future debounced surface can replace this. API-ergonomics
-    // audit follow-up `client/triage-sync.ts:1805`.
-    console.warn('Triage sync: dropping malformed wire frame:', err)
-    return
-  }
-  if (!msg || typeof msg !== 'object') return
-  const wire = msg as WireMessage
-  // Heartbeat — stateless, no per-session match needed. Cancel the
-  // outstanding pong-deadline timer; the next interval will start a
-  // fresh round.
-  if (wire.type === 'pong') {
-    if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
-    return
-  }
-  // Server-issued challenge nonce (round-9 H2). Sent once per
-  // socket, before any subscribes can be signed. Store and re-kick
-  // every session's subscribe attempt so the queued subscribe-once-
-  // keys-derived sessions can finally fire.
-  if (wire.type === 'challenge') {
-    if (typeof wire.nonce !== 'string') return
-    connectionNonce = wire.nonce
-    for (const session of sessions.values()) trySendSubscribe(session)
-    return
-  }
-  // Server accepted our `authenticate { password }`. Settle the
-  // pending response (caller in `runAuthFlow` waits on it) and kick
+async function handleMessage(wire: WireMessage): Promise<void> {
+  // Server accepted our `authenticate { password }`. The transport
+  // already resolved the in-flight auth round-trip; we just kick
   // every session whose `pendingSave` / `subscribed` was deferred
   // by the gate. The same socket is now authorised for ANY future
   // first-action on this connection — handles the unusual case
   // where one socket creates several brand-new workspaces in a row.
   if (wire.type === 'authenticated') {
-    if (authResponseResolver) {
-      const r = authResponseResolver
-      authResponseResolver = null
-      r(true)
-    }
     for (const session of sessions.values()) {
       trySendSubscribe(session)
       trySendSave(session)
     }
     return
   }
-  // `unauthorized` — switch on the explicit `kind` discriminator
-  // (server/index.ts:UnauthorizedContext). `'auth-failed'` is the
-  // response to a just-sent `authenticate`; `'gated'` is a per-
-  // action block that needs the auth flow to run. Unknown / missing
-  // `kind` is dropped silently — that's either a buggy server or a
-  // future variant this client doesn't speak yet, and the safe
-  // behaviour is "do nothing" (no spurious dialog, no stuck pending).
+  // `unauthorized.gated` — a per-action block that needs the auth
+  // flow to run. (`auth-failed` is consumed by the transport's
+  // internal authResponseResolver; never reaches consumers.)
+  // Unknown / missing `kind` is dropped silently — buggy server
+  // or future variant; safe behaviour is "do nothing".
   if (wire.type === 'unauthorized') {
-    if (wire.kind === 'auth-failed') {
-      // Surface to the in-flight resolver so the auth loop re-prompts
-      // with retry=true. Don't kick the auth flow again — `runAuthFlow`'s
-      // while-loop is the canonical retry path and is already running.
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(false)
-      }
-      return
-    }
     if (wire.kind === 'gated') {
       // Gating signal: scope the pending-save cleanup to the matching
       // session, then kick the auth flow. Objstore-side gating
@@ -2145,8 +2057,7 @@ async function handleMessage(data: unknown): Promise<void> {
         const session = getSessionByTag(wire.workspaceTag)
         if (session && typeof wire.resourceTag !== 'string') handleUnauthorizedForSave(session, wire)
       }
-      runAuthFlow().catch((err) => { console.warn('Triage sync: auth flow failed:', err) })
-      return
+      transport.runAuthFlow().catch((err) => { console.warn('Triage sync: auth flow failed:', err) })
     }
     return
   }
@@ -2190,72 +2101,6 @@ function handleUnauthorizedForSave(session: Session, wire: WireMessage): void {
   session.pendingSave = true
 }
 
-async function runAuthFlow(): Promise<void> {
-  // Serialise the auth dance — multiple `unauthorized` frames can
-  // arrive in quick succession (two sessions hitting the gate at
-  // the same time, or a same-frame `unauthorized` for an objstore
-  // putBegin landing while a workspace-save is also being prompted)
-  // and we want exactly one outstanding `authenticate` per socket.
-  if (authFlowInFlight) return
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
-  authFlowInFlight = true
-  try {
-    // First try: if we have a cached password (this page load OR
-    // hydrated from secure-storage) and haven't tried it on this
-    // socket yet, send it silently. The user sees no prompt on the
-    // happy reconnect path.
-    const cached = getCachedSyncPassword()
-    if (cached != null && !cachedPasswordTriedOnThisSocket) {
-      cachedPasswordTriedOnThisSocket = true
-      const ok = await attemptAuthenticate(cached)
-      if (ok) return
-      // Cached password is wrong — clear it both in memory and on
-      // disk so a future session doesn't repeat the loop. The
-      // resolver below will prompt the user for a fresh one.
-      try { await setCachedSyncPassword(null) } catch (err) {
-        console.warn('Triage sync: failed to clear cached auth password:', err)
-      }
-    }
-    // Loop: ask the resolver for a password, send authenticate,
-    // succeed → cache + return. Wrong password → prompt again with
-    // retry=true. Resolver returns null → user cancelled; bail.
-    let firstAttempt = true
-    while (true) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return
-      if (!authenticationResolver) return
-      let password: string | null | undefined
-      try {
-        password = await authenticationResolver({ retry: !firstAttempt })
-      } catch (err) {
-        console.warn('Triage sync: authentication resolver threw:', err)
-        return
-      }
-      firstAttempt = false
-      if (password == null || password === '') return
-      const ok = await attemptAuthenticate(password)
-      if (ok) {
-        try { await setCachedSyncPassword(password) } catch (err) {
-          console.warn('Triage sync: failed to cache auth password:', err)
-        }
-        return
-      }
-    }
-  } finally {
-    authFlowInFlight = false
-  }
-}
-
-// Send `authenticate { password }` and await the matching response
-// (`authenticated` → true, `unauthorized { kind: 'auth-failed' }` →
-// false). The pending resolver is single-slot: callers must only
-// invoke from inside the `runAuthFlow` serialiser.
-function attemptAuthenticate(password: string): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    authResponseResolver = resolve
-    send({ type: 'authenticate', password })
-  })
-}
-
 // Server rejected a signed save after sig verify (e.g. ciphertext
 // past the relay's size cap). Without this branch the save sits in
 // `session.pending` forever — the server can never ack it, the
@@ -2297,184 +2142,99 @@ function handleSaveError(session: Session, wire: WireMessage): void {
 
 // ─────────── connection lifecycle ───────────
 
-function startHeartbeat(): void {
-  stopHeartbeat()
-  pingIntervalId = setInterval(() => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return
-    // Don't double-arm: a previous ping is still awaiting its pong.
-    // The existing pongTimeout will close the socket if that one
-    // doesn't land.
-    if (pongTimeoutId) return
-    send({ type: 'ping' })
-    pongTimeoutId = setTimeout(() => {
-      pongTimeoutId = null
-      console.warn('Triage sync: heartbeat timeout; closing socket')
-      try { socket?.close() } catch {}
-    }, pongTimeoutMs)
-  }, pingIntervalMs)
+// Serialize message handlers via a Promise chain — handleAck and
+// handleChain both contain awaits (decrypt, saveTriage,
+// persistSession), and the transport's `onMessage` fires a fresh
+// synchronous invocation per frame, so without the chain two
+// handlers can interleave: one's `rebaseAndPersist` running while
+// the other reads / mutates `session.localState`, double-render(),
+// persistSession with intermediate state, and similar small
+// horrors. The chain forces strictly serial processing so each
+// message sees a settled state before the next runs. Errors are
+// swallowed (logged) so one bad message doesn't break the chain.
+//
+// Compare to objstore's `onTransportMessage` which is itself sync
+// — that consumer's handlers don't await, so the chain isn't
+// needed.
+let messageQueue: Promise<void> = Promise.resolve()
+
+function onTransportMessage(msg: { type?: unknown; [k: string]: unknown }): void {
+  messageQueue = messageQueue.then(() => handleMessage(msg as WireMessage)).catch((err) => {
+    console.warn('Triage sync handler error:', err)
+  })
 }
 
-function stopHeartbeat(): void {
-  if (pingIntervalId) { clearInterval(pingIntervalId); pingIntervalId = null }
-  if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
-}
-
-function clearReconnect(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
+function onTransportConnected(_nonce: string): void {
+  // Re-establish every open session against the freshly opened
+  // socket. baseState / baseRevision survived the disconnect;
+  // subscribed + subscribeAcked were cleared by onTransportDisconnected
+  // and stay false here until each session's trySendSubscribe ack
+  // lands; if there's an overlay (or we hadn't sent the initial
+  // state yet), trySendSave pushes it.
+  //
+  // On first-ever connect of the page there's no preceding
+  // onDisconnected — Session init seeds the same false values
+  // (see `openSession` below), so the contract holds either way.
+  for (const session of sessions.values()) {
+    session.pending = null
+    session.pendingSave = false
+    // NOTE: `session.encrypting` is intentionally NOT cleared
+    // here. An IIFE running across the socket-close boundary
+    // is still in flight; clearing the flag would let a fresh
+    // `trySendSave` (which we kick below) start a parallel
+    // encryption against the new socket. Let the old IIFE drain;
+    // its `send()` will land on the new socket (or no-op if the
+    // socket isn't ready yet) and `pendingSave` re-kicks via
+    // handleAck.
+    trySendSubscribe(session)
+    trySendSave(session)
   }
+  emitStatusIfChanged()
 }
 
-function scheduleReconnect(): void {
-  clearReconnect()
-  if (!serverUrl) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    openSocket()
-  }, reconnectDelayMs)
-  reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY)
-}
-
-function openSocket(): void {
-  if (!serverUrl || socket) return
-  let ws: WebSocket
-  try {
-    ws = new WebSocket(serverUrl)
-  } catch (err) {
-    console.warn('Triage sync: WebSocket constructor failed:', err)
-    scheduleReconnect()
-    return
+function onTransportDisconnected(_reason: string): void {
+  // The pending requests are gone with the socket — mark every
+  // session's slot free so the reconnect handler resends.
+  // `subscribed` / `subscribeAcked` both clear so reconnect
+  // re-subscribes and the status walks `offline → connecting →
+  // online` again per session.
+  // Always raise pendingSave on close so the reconnect-time
+  // trySendSave runs its refreshSessionIds + effectiveLocalState
+  // pass and decides whether to send. The previous
+  // `!statesEqual(localState, baseState)` early-decide was a
+  // microoptimization that depended on `localState` being
+  // perfectly fresh at close-time — fragile across the M4 round-6
+  // refresh-on-bail change, and wrong when state.* edits land
+  // AFTER close (the close handler doesn't re-fire). The
+  // empty-changeset short-circuit inside trySendSave makes the
+  // no-op case cheap, so unconditional `true` here costs us
+  // nothing.
+  for (const session of sessions.values()) {
+    session.pending = null
+    session.subscribed = false
+    session.subscribeAcked = false
+    session.resyncAttempted = false
+    session.pendingSave = true
   }
-  socket = ws
-  ws.addEventListener('open', () => {
-    reconnectDelayMs = 1_000
-    // Re-establish every open session against the freshly opened
-    // socket. baseState / baseRevision survived the disconnect;
-    // subscribed + subscribeAcked reset so we re-subscribe per
-    // session on this fresh socket and walk through `connecting`
-    // until each ack arrives; if there's an overlay (or we hadn't
-    // sent the initial state yet), trySendSave pushes it.
-    for (const session of sessions.values()) {
-      session.pending = null
-      session.pendingSave = false
-      // NOTE: `session.encrypting` is intentionally NOT cleared
-      // here. An IIFE running across the socket-close boundary
-      // is still in flight; clearing the flag would let a fresh
-      // `trySendSave` (which we kick below) start a parallel
-      // encryption against the new socket. Let the old IIFE drain;
-      // its `send()` will land on the new socket (or no-op if the
-      // socket isn't ready yet) and `pendingSave` re-kicks via
-      // handleAck.
-      session.subscribed = false
-      session.subscribeAcked = false
-      session.resyncAttempted = false
-      trySendSubscribe(session)
-      trySendSave(session)
-    }
-    startHeartbeat()
-    emitStatusIfChanged()
-  })
-  // Serialize handlers via a Promise chain — handleAck and
-  // handleChain both contain awaits (decrypt, saveTriage,
-  // persistSession), and the message-event listener fires a fresh
-  // async invocation per message, so without the chain two
-  // handlers can interleave: one's `rebaseAndPersist` running
-  // while the other reads / mutates `session.localState`,
-  // double-render(), persistSession with intermediate state, and
-  // similar small horrors. The chain forces strictly serial
-  // processing so each message sees a settled state before the
-  // next runs. Errors are swallowed (logged) so one bad message
-  // doesn't break the chain.
-  let queue: Promise<void> = Promise.resolve()
-  ws.addEventListener('message', (e: MessageEvent) => {
-    queue = queue.then(() => handleMessage(e.data)).catch((err) => {
-      console.warn('Triage sync handler error:', err)
-    })
-  })
-  ws.addEventListener('close', () => {
-    // STALE CLOSE GUARD. If `socket` already moved on to a new ws
-    // (e.g. setServerUrl swapped servers and the OLD ws's close
-    // event is firing late), every clear below would step on the
-    // NEW ws's state — connectionNonce, subscribed, the reconnect
-    // schedule. Without this guard, a late old-ws close could wipe
-    // the new ws's just-installed challenge nonce, leaving every
-    // session's `trySendSubscribe` bailing on `nonce == null` with
-    // nothing left to re-kick. Audit round-11.
-    if (socket !== ws) return
-    socket = null
-    // Drop the per-connection challenge nonce — a reconnect issues
-    // a fresh one in the new socket's `challenge` frame, and any
-    // session that tries to subscribe before that frame arrives
-    // bails on `connectionNonce == null`. Audit round-9 H2.
-    connectionNonce = null
-    // Per-socket auth state resets on close. The next socket gets a
-    // fresh chance to replay the cached password (the server's
-    // `socketAuthorized` flag is per-WebSocket and the old one is
-    // gone). An in-flight `attemptAuthenticate` whose response will
-    // never land also resolves false here so the awaiter unblocks
-    // — the `runAuthFlow` while-loop bails on the closed socket and
-    // a fresh flow runs on reconnect when the next `unauthorized`
-    // arrives.
-    cachedPasswordTriedOnThisSocket = false
-    if (authResponseResolver) {
-      const r = authResponseResolver
-      authResponseResolver = null
-      r(false)
-    }
-    stopHeartbeat()
-    // The pending requests are gone with the socket — mark every
-    // session's slot free so the reconnect handler resends.
-    // `subscribed` / `subscribeAcked` both clear so reconnect
-    // re-subscribes and the status walks `offline → connecting →
-    // online` again per session.
-    // Always raise pendingSave on close so the reconnect-time
-    // trySendSave runs its refreshSessionIds + effectiveLocalState
-    // pass and decides whether to send. The previous
-    // `!statesEqual(localState, baseState)` early-decide was a
-    // microoptimization that depended on `localState` being
-    // perfectly fresh at close-time — fragile across the M4 round-6
-    // refresh-on-bail change, and wrong when state.* edits land
-    // AFTER close (the close handler doesn't re-fire). The
-    // empty-changeset short-circuit inside trySendSave makes the
-    // no-op case cheap, so unconditional `true` here costs us
-    // nothing.
-    for (const session of sessions.values()) {
-      session.pending = null
-      session.subscribed = false
-      session.subscribeAcked = false
-      session.resyncAttempted = false
-      session.pendingSave = true
-    }
-    emitStatusIfChanged()
-    // Only auto-reconnect when sync is actively wanted — a
-    // user-disabled or sidebar-forced-off socket should stay
-    // closed once it's down.
-    if (isActive()) scheduleReconnect()
-  })
-  ws.addEventListener('error', () => {
-    // Close fires right after — let it own the reconnect schedule.
-  })
+  emitStatusIfChanged()
 }
 
-function closeSocket(): void {
-  clearReconnect()
-  reconnectDelayMs = 1_000
-  // Same reasoning as the close-event handler: drop the
-  // per-connection challenge nonce so a fresh socket's challenge
-  // frame doesn't race a stale-nonce subscribe attempt. Audit
-  // round-9 H2.
-  connectionNonce = null
-  // The close-event handler bails when `socket !== ws` (audit
-  // round-11 stale-close guard), so the heartbeat would otherwise
-  // outlive a `closeSocket()` that isn't followed by `openSocket()`
-  // (setEnabled(false), setForcedOff(true), setServerUrl('')).
-  // Stop it here to keep the timer counts honest.
-  stopHeartbeat()
-  if (socket) {
-    const ws = socket
-    socket = null
-    try { ws.close() } catch {}
+transport.addConsumer({
+  onMessage: onTransportMessage,
+  onConnected: onTransportConnected,
+  onDisconnected: onTransportDisconnected,
+})
+
+// Reconcile the transport acquisition with `isActive()`. Acquires
+// on transition true (opens the socket), releases on transition
+// false (closes it, no reconnect scheduled). Idempotent — safe to
+// call from any setServerUrl/setEnabled/setForcedOff path.
+function applyActive(): void {
+  if (isActive()) {
+    if (!transportAcquire) transportAcquire = transport.acquire()
+  } else if (transportAcquire) {
+    transportAcquire.release()
+    transportAcquire = null
   }
 }
 
@@ -2511,19 +2271,14 @@ export function setHydrationConflictResolver(fn: ConflictResolver | null): void 
 // to authenticate. Tests / console drivers can keep the null
 // resolver when they don't exercise the gate.
 export function setAuthenticationResolver(fn: AuthenticationResolver | null): void {
-  authenticationResolver = typeof fn === 'function' ? fn : null
+  setSharedAuthResolver(fn)
 }
 
 // Test-only knob: shortens the heartbeat windows so a unit test
-// doesn't have to wait the production 15s/5s. No-op for any field
-// that isn't a positive number.
+// doesn't have to wait the production 15s/5s. Delegates to the
+// shared transport (which owns the actual heartbeat).
 export function setHeartbeatTimings(opts: { pingMs?: number, pongMs?: number } = {}): void {
-  const { pingMs, pongMs } = opts
-  if (typeof pingMs === 'number' && pingMs > 0) pingIntervalMs = pingMs
-  if (typeof pongMs === 'number' && pongMs > 0) pongTimeoutMs = pongMs
-  // If a heartbeat is already running (i.e. the socket is open),
-  // restart it so the new interval takes effect immediately.
-  if (pingIntervalId) startHeartbeat()
+  transport.setHeartbeatTimings(opts)
 }
 
 // Test-only knob: lower the keyframe interval so a test can trigger
@@ -2572,12 +2327,15 @@ export const triageSync = {
     // toggles sync off-then-on without restarting the browser.
     // Audit follow-up to the "Password asked each time" regression.
     if (prev && next && prev !== next) {
-      cachedPasswordTriedOnThisSocket = false
       setCachedSyncPassword(null).catch((err) => {
         console.warn('Triage sync: failed to drop cached auth password on server change:', err)
       })
     }
-    closeSocket()
+    // Tell the transport to swap URLs — it tears down the current
+    // socket and (if still acquired against the new URL) re-opens.
+    // applyActive() below reconciles the acquisition: a switch from
+    // a valid URL to empty becomes a release.
+    transport.setServerUrl(next)
     // Server changed — revision IDs are per-server, so every
     // active session's tracking is stale. Reset each one; if
     // there's persisted state for the NEW server (or null when
@@ -2625,13 +2383,15 @@ export const triageSync = {
         kickKeyDerivation(session)
       }
     }
-    if (isActive()) openSocket()
+    applyActive()
     emitStatusIfChanged()
   },
 
   // Persisted user-driven toggle. URL stays put — re-enabling
-  // resumes against the same endpoint. closeSocket() bypasses
-  // reconnect because `isActive()` is now false.
+  // resumes against the same endpoint. applyActive() releases the
+  // transport acquisition when `isActive()` becomes false; the
+  // transport's `release()` tears down the socket without scheduling
+  // reconnect.
   setEnabled(value: boolean): void {
     const next = Boolean(value)
     if (next === userEnabled) return
@@ -2657,9 +2417,7 @@ export const triageSync = {
           kickKeyDerivation(session)
         }
       }
-      if (!socket) openSocket()
     } else {
-      closeSocket()
       for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
@@ -2673,6 +2431,7 @@ export const triageSync = {
         session.resyncAttempted = false
       }
     }
+    applyActive()
     emitStatusIfChanged()
   },
 
@@ -2700,9 +2459,7 @@ export const triageSync = {
           kickKeyDerivation(session)
         }
       }
-      if (!socket) openSocket()
     } else {
-      closeSocket()
       for (const session of sessions.values()) {
         session.pending = null
         session.pendingSave = false
@@ -2713,12 +2470,13 @@ export const triageSync = {
         session.resyncAttempted = false
       }
     }
+    applyActive()
     emitStatusIfChanged()
   },
 
   getServerUrl(): string { return serverUrl },
 
-  get connected(): boolean { return socket?.readyState === WebSocket.OPEN },
+  get connected(): boolean { return transport.getSocket()?.readyState === WebSocket.OPEN },
 
   // Status flag for connection-state indicators. One of:
   //   'off'         no server URL / user disabled / no live workspace
@@ -2845,7 +2603,7 @@ export const triageSync = {
     }
     sessions.set(workspaceId, newSession)
     kickKeyDerivation(newSession)
-    if (isActive() && !socket) openSocket()
+    applyActive()
     emitStatusIfChanged()
   },
 
@@ -2922,7 +2680,7 @@ export const triageSync = {
       changed = true
       if (!session.key || !session.signingKey) {
         kickKeyDerivation(session)
-      } else if (socket?.readyState === WebSocket.OPEN) {
+      } else if (transport.getSocket()?.readyState === WebSocket.OPEN) {
         trySendSubscribe(session)
         trySendSave(session)
       }
@@ -2982,7 +2740,7 @@ try {
   localStorage.removeItem(LEGACY_URL_KEY)
   const savedEnabled = getSecureItem(USER_ENABLED_KEY)
   if (savedEnabled === '0') userEnabled = false
-  if (isActive()) openSocket()
+  applyActive()
 } catch {}
 
 // Live counterpart to the page-load prune below: the moment a

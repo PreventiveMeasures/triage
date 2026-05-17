@@ -61,7 +61,12 @@ import {
   unwrapBundleContent,
   wrapBundleContent,
 } from './objstore-content-crypto.ts'
-import { getCachedSyncPassword, setCachedSyncPassword } from './sync-auth-cache.ts'
+import {
+  type AcquireHandle,
+  type ConsumerHandle,
+  type SocketTransport,
+  createSocketTransport,
+} from './socket-transport.ts'
 
 export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
 
@@ -164,7 +169,18 @@ export type ObjstoreClientDeps = {
   // — including ones on a DIFFERENT workspace session — piggyback
   // on the same socket auth without re-prompting. Omitted → no auth
   // flow runs; gated put-begin returns `unauthorized` immediately.
+  // Ignored when `transport` is provided (the supplied transport
+  // already owns its auth resolver).
   authResolver?: ObjstoreAuthResolver
+  // Optional: a pre-existing `SocketTransport` to share with another
+  // consumer (e.g. the triage-sync singleton from
+  // `./sync-transport.ts`). When provided, this client doesn't own
+  // the transport — `client.close()` releases its acquisitions and
+  // detaches its consumer but DOESN'T call `transport.close()`. When
+  // omitted, the client creates a private transport (current default
+  // — used by `createObjstoreSession` and by tests that need a
+  // peer-broadcast-isolated socket).
+  transport?: SocketTransport
 }
 
 // Backwards-compatible single-session deps. Each `createObjstoreSession`
@@ -258,10 +274,6 @@ const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 // all. Empirically the queue depth is bounded by inflight ops.
 const MAX_QUEUE_SIZE = 64
 
-// Reconnect backoff window (matches triage-sync.ts).
-const INITIAL_RECONNECT_DELAY = 1_000
-const MAX_RECONNECT_DELAY = 30_000
-
 async function signSubscribe(privateKey: CryptoKey, workspaceTag: string, connectionNonce: string): Promise<string> {
   const { encodeUtf8 } = await import('../common/utf8.js')
   const canonical = encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, '', connectionNonce].join('\n'))
@@ -282,8 +294,13 @@ type SessionState = {
   // Per-tag monotonic version watermark — see `noteVersion` below.
   seenVersions: Map<string, number>
   // True once a `workspace-subscribe` for this session has been
-  // ack'd on the CURRENT socket. Reset on disconnect so the next
-  // reconnect re-subscribes via `resubscribeAll`.
+  // SENT on the current socket (flag flips in `sendSubscribeFor`
+  // before the send, with a rollback if the send fails — guards
+  // against a re-entered `onTransportConnected` double-sending
+  // while the ack is in flight). Distinct from the ack-received
+  // signal carried by `subscribedPromise` / `resolveSubscribed`
+  // below. Reset on disconnect so the next `onTransportConnected`
+  // re-subscribes.
   subscribed: boolean
   // Resolves once the next subscribe-ack lands. Pending requests
   // (and `openWorkspace` itself) await this before sending. Re-armed
@@ -299,18 +316,36 @@ type SessionState = {
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
 
-  // Shared transport state. `ws` flips between null (closed /
-  // reconnecting) and an open socket; `connectionNonce` mirrors the
-  // current socket's challenge nonce (used in every signature).
-  let ws: WebSocket | null = null
-  let connectionNonce: string | null = null
+  // Shared WebSocket transport. The transport owns the socket
+  // lifecycle, reconnect backoff, per-connection challenge nonce,
+  // heartbeat, and the `authenticate` flow. We register as a consumer
+  // (onMessage / onConnected / onDisconnected) and hold one
+  // `acquire()` per open workspace session — the transport opens on
+  // the first acquire and tears down on the last release.
+  //
+  // Auth flow lives on the transport because the server's
+  // `socketAuthorized` flag is per-WebSocket: the first session to
+  // hit `unauthorized: gated` calls `transport.runAuthFlow()`;
+  // concurrent gated put-begins on OTHER sessions coalesce on the
+  // in-flight promise and retry their puts on success.
+  // When the caller supplied a transport, share it (don't own its
+  // lifecycle). Otherwise create a private one whose lifecycle is
+  // tied to this client.
+  const ownsTransport = deps.transport === undefined
+  const transport: SocketTransport = deps.transport ?? createSocketTransport(
+    deps.authResolver === undefined
+      ? { serverUrl: deps.serverUrl }
+      : { serverUrl: deps.serverUrl, authResolver: deps.authResolver },
+  )
   let clientClosed = false
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  let reconnectDelayMs = INITIAL_RECONNECT_DELAY
 
-  // Map<workspaceTag, SessionState> — broadcast routing + reconnect
-  // re-subscribe iteration both walk this.
+  // Map<workspaceTag, SessionState> — broadcast routing + onConnected
+  // resubscribe iteration both walk this.
   const sessionsByTag = new Map<string, SessionState>()
+  // Map<workspaceTag, AcquireHandle> — one per open session. Release
+  // on session.close so the transport refcount goes to zero when the
+  // last session closes and the socket tears down.
+  const acquiresByTag = new Map<string, AcquireHandle>()
 
   // Shared queue + waiters across all sessions. Each waiter's
   // predicate already includes `m.workspaceTag === <tag>` so the
@@ -319,107 +354,9 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const queue: WireMessage[] = []
   const waiters: Array<{ predicate: (m: WireMessage) => boolean; resolve: (m: WireMessage) => void; reject: (err: Error) => void }> = []
 
-  // Per-socket auth state for the operator-side first-action gate.
-  // Hoisted from the per-session scope of the pre-multiplex design:
-  // the server's `socketAuthorized` flag is per-WebSocket, so all
-  // sessions on this client share one auth state. The first session
-  // to hit `unauthorized: gated` runs the auth flow; concurrent
-  // gated put-begins on OTHER sessions await the in-flight flow's
-  // result rather than racing a second prompt.
-  let authFlowInFlight: Promise<boolean> | null = null
-  let cachedPasswordTriedOnThisSocket = false
-  let authResponseResolver: ((ok: boolean) => void) | null = null
-
   function noteVersion(state: SessionState, tag: string, version: number): void {
     const prev = state.seenVersions.get(tag) ?? 0
     if (version > prev) state.seenVersions.set(tag, version)
-  }
-
-  function attemptAuthenticate(password: string): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      authResponseResolver = resolve
-      try { sendRaw({ type: 'authenticate', password }) }
-      catch (err) {
-        authResponseResolver = null
-        // Send-after-close: the WebSocket transitioned to CLOSING /
-        // CLOSED between the put-begin reply and our auth attempt.
-        // Bail false so the auth flow doesn't hang.
-        console.warn('objstore: authenticate send failed:', err)
-        resolve(false)
-      }
-    })
-  }
-
-  // Run the gated-put-begin auth flow against this client's socket.
-  // Returns `true` when the socket is now authenticated and the
-  // caller should retry the put-begin; `false` when the user
-  // cancelled / there's no resolver / the cached attempt failed
-  // and no resolver is wired.
-  //
-  // Concurrent callers (e.g. two workspace sessions racing a gated
-  // put on a fresh socket) coalesce on the in-flight promise — the
-  // resolver only prompts the user once, and both callers retry
-  // their puts on success. Audit: pre-multiplex this path returned
-  // `false` for the second caller, surfacing a spurious
-  // `unauthorized` to one of two concurrent uploads. Coalescing
-  // fixes that without changing the prompt-cadence contract.
-  function runAuthFlow(): Promise<boolean> {
-    if (authFlowInFlight) return authFlowInFlight
-    if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.resolve(false)
-    // Pin the socket this flow runs against. The server's
-    // `socketAuthorized` flag is per-WebSocket, so an `authenticate`
-    // attempt is only meaningful on the socket the caller's gated
-    // put-begin was issued on. If the socket transitions mid-flow
-    // (resolver dialog open during a NAT-induced disconnect, e.g.),
-    // bail false so the caller's `_rawPut` waiter — which has
-    // already been rejected by `failPendingWaiters` on the close
-    // event — bubbles up the disconnect error and the next put on
-    // the fresh socket re-enters runAuthFlow, replaying the cached
-    // password fresh on the new socket.
-    const startWs = ws
-    const promise = (async (): Promise<boolean> => {
-      try {
-        // Silent replay of the shared cached password, once per socket.
-        const cached = getCachedSyncPassword()
-        if (cached != null && !cachedPasswordTriedOnThisSocket) {
-          cachedPasswordTriedOnThisSocket = true
-          const ok = await attemptAuthenticate(cached)
-          if (ws !== startWs) return false
-          if (ok) return true
-          // Cache was wrong — drop it so triage-sync doesn't re-replay
-          // the same broken value, then fall through to the resolver.
-          try { await setCachedSyncPassword(null) }
-          catch (err) { console.warn('objstore: failed to clear cached auth password:', err) }
-        }
-        // Prompt loop. `retry=true` after the first attempt so the UI
-        // surfaces "wrong password" rather than re-prompting cold.
-        let firstAttempt = true
-        while (true) {
-          if (ws !== startWs || !ws || ws.readyState !== WebSocket.OPEN) return false
-          if (!deps.authResolver) return false
-          let password: string | null | undefined
-          try { password = await deps.authResolver({ retry: !firstAttempt }) }
-          catch (err) {
-            console.warn('objstore: authentication resolver threw:', err)
-            return false
-          }
-          if (ws !== startWs) return false
-          firstAttempt = false
-          if (password == null || password === '') return false
-          const ok = await attemptAuthenticate(password)
-          if (ws !== startWs) return false
-          if (ok) {
-            try { await setCachedSyncPassword(password) }
-            catch (err) { console.warn('objstore: failed to cache auth password:', err) }
-            return true
-          }
-        }
-      } finally {
-        authFlowInFlight = null
-      }
-    })()
-    authFlowInFlight = promise
-    return promise
   }
 
   function makeSubscribedDeferred(state: Partial<SessionState>): void {
@@ -455,20 +392,51 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     })
   }
 
-  function sendRaw(msg: object): void {
-    if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('objstore: socket not open')
-    ws.send(JSON.stringify(msg))
+  function send(msg: object): void {
+    if (!transport.send(msg)) throw new Error('objstore: socket not open')
   }
 
   // Fail every pending waiter on socket close / error so an in-flight
   // `put` / `fetch` / `delete` / `list` doesn't hang for the full
   // request timeout (10 s default) after the socket is gone. Fires
-  // for caller `close()`, server-initiated shutdown (1001), and
-  // abnormal disconnects.
+  // from the transport's `onDisconnected` callback (which covers
+  // caller `close()`, server-initiated shutdown, and abnormal
+  // disconnects) and from `session.close()` when releasing the last
+  // acquisition tears the transport down.
   function failPendingWaiters(reason: string): void {
     for (const w of waiters.splice(0)) {
       try { w.reject(new Error(`objstore: ${reason}`)) } catch {}
     }
+  }
+
+  // Issue a `workspace-subscribe` for one session against the current
+  // socket. Stale-tolerant: signSubscribe is async; if the socket
+  // transitions during the await, the captured (socket, nonce) pair
+  // won't match and the send is suppressed.
+  function sendSubscribeFor(state: SessionState, nonce: string): void {
+    const startSocket = transport.getSocket()
+    void (async () => {
+      let sig: string
+      try { sig = await signSubscribe(state.signingKey, state.workspaceTag, nonce) }
+      catch (err) {
+        console.warn('objstore: signSubscribe failed:', err)
+        return
+      }
+      if (state.closed || state.subscribed) return
+      if (transport.getSocket() !== startSocket || transport.getNonce() !== nonce) return
+      // Flip `subscribed` BEFORE the send so a re-entrant onConnected
+      // (a double `challenge` frame, a future change that retroactively
+      // replays connect events for late-registered consumers, etc.)
+      // doesn't sign + send a second subscribe while the first's ack
+      // is still in flight. Rollback on send-failure so a fresh
+      // onConnected can retry. Mirrors `trySendSubscribe` in
+      // `client/triage-sync.ts`.
+      state.subscribed = true
+      if (!transport.send({ type: 'workspace-subscribe', workspaceTag: state.workspaceTag, from: null, signature: sig })) {
+        state.subscribed = false
+        console.warn('objstore: workspace-subscribe send failed (socket not open)')
+      }
+    })()
   }
 
   // MUST REMAIN SYNCHRONOUS. The dispatcher fires broadcast handlers
@@ -476,15 +444,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // waiters in arrival order; introducing an `await` here would let
   // two messages interleave (one handler's async work racing the
   // next message's state mutations). Compare to triage-sync's
-  // `queue = queue.then(...)` Promise-chain (client/triage-sync.ts:2389)
-  // — that path needs the chain BECAUSE handleAck/handleChain have
-  // awaits. If a future change adds an await here, mirror that
-  // pattern.
-  function handleMessage(event: MessageEvent): void {
-    let msg: WireMessage
-    try { msg = JSON.parse(typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data as ArrayBuffer)) as WireMessage }
-    catch { return }
-
+  // `queue = queue.then(...)` Promise-chain — that path needs the
+  // chain BECAUSE its consumer-side handler has awaits. If a future
+  // change adds an await here, mirror that pattern.
+  function onTransportMessage(msg: WireMessage): void {
     // Broadcasts dispatch synchronously to the matching session's
     // handlers — never end up in the request-correlation queue. A
     // subscriber that registered AFTER a broadcast arrived missed
@@ -518,45 +481,37 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       return
     }
 
-    // Operator-side auth handshake replies. Pin on the explicit `kind`
-    // discriminator so an `unauthorized` with `kind: 'gated'` (the
-    // put-begin gate signal) still falls through to the recv-predicate
-    // dispatch below, where the in-flight `_rawPut` matches it on
-    // resourceTag.
-    if (msg.type === 'authenticated') {
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(true)
-      }
-      return
-    }
-    if (msg.type === 'unauthorized' && msg['kind'] === 'auth-failed') {
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(false)
-      }
-      return
-    }
-
     // Subscribe-acks resolve the matching session's
-    // `subscribedPromise`. Routed by workspaceTag.
+    // `subscribedPromise`. Routed by workspaceTag. `state.subscribed`
+    // already flipped true at SEND time (see `sendSubscribeFor`) to
+    // guard against double-send on re-entered onConnected; this
+    // handler just unblocks the waiters.
+    //
+    // Edge: a stale ack from the prior socket could arrive after
+    // `onTransportDisconnected` re-armed `subscribedPromise` with a
+    // fresh resolver — resolving here would unblock awaiters early,
+    // before the new socket's proper subscribe lands. Practical
+    // impact is bounded: the server doesn't gate
+    // put-begin/fetch/delete/list on subscription state (only on the
+    // connection-nonce signature), so an op that races through
+    // signs against `transport.getNonce()` of the NEW socket and
+    // verifies server-side. The early unblock is "ops fire a few ms
+    // sooner than the proper-subscribe gate would prefer," not
+    // "wrong-socket op."
     if (msg.type === 'workspace-subscribed' && typeof msg.workspaceTag === 'string') {
       const state = sessionsByTag.get(msg.workspaceTag)
-      if (state && !state.subscribed) {
-        state.subscribed = true
-        state.resolveSubscribed()
-      }
+      if (state) state.resolveSubscribed()
       return
     }
 
-    // Triage-sync frames piggyback on the same socket via the shared
-    // `workspace-subscribe` path (the relay's subscribe contract
-    // delivers BOTH planes' broadcasts to a subscribed socket). None
-    // of those frames match an objstore-side predicate; without an
-    // explicit drop they'd pile up in `queue` forever.
-    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'pong') return
+    // Triage-sync frames may share the socket once both subsystems
+    // multiplex through the same transport. None of those frames
+    // match an objstore-side predicate; without an explicit drop
+    // they'd pile up in `queue` forever. `authenticated` passes
+    // through from the transport (it gates the transport's
+    // runAuthFlow + may interest triage-sync) but objstore doesn't
+    // claim it either.
+    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'authenticated') return
 
     // Request-response correlation. First waiter whose predicate
     // matches gets the message; otherwise queue for a later `recv`.
@@ -581,74 +536,24 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
   }
 
-  function clearReconnect(): void {
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-  }
-
-  function scheduleReconnect(): void {
-    clearReconnect()
-    if (clientClosed) return
-    if (sessionsByTag.size === 0) return  // no live sessions — nothing to keep open
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
-      openSocket()
-    }, reconnectDelayMs)
-    reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY)
-  }
-
-  // Issue fresh `workspace-subscribe` frames for every session whose
-  // current-socket subscription isn't yet acked. Called after the
-  // socket opens + challenge arrives (both initial and reconnect).
-  // Each session's `subscribedPromise` resolves when the matching
-  // `workspace-subscribed` ack lands in `handleMessage`.
-  async function resubscribeAll(): Promise<void> {
-    if (!ws || !connectionNonce) return
-    const nonce = connectionNonce
-    const currentWs = ws
-    // Race guard: this function is async (signSubscribe awaits a
-    // crypto.subtle call); the socket may transition during the await.
-    // After each `await`, re-check that `ws === currentWs` (and is
-    // still OPEN) before sending — a stale send against a stale
-    // socket would either throw (different ws) or land on a fresh
-    // socket with a fresh nonce that doesn't match the signed one.
+  function onTransportConnected(nonce: string): void {
+    // Issue fresh `workspace-subscribe` frames for every session whose
+    // current-socket subscription isn't yet acked. Each session's
+    // `subscribedPromise` resolves when the matching
+    // `workspace-subscribed` ack lands in `onTransportMessage`.
     for (const state of sessionsByTag.values()) {
       if (state.closed || state.subscribed) continue
-      let sig: string
-      try { sig = await signSubscribe(state.signingKey, state.workspaceTag, nonce) }
-      catch (err) {
-        console.warn('objstore: signSubscribe failed:', err)
-        continue
-      }
-      if (ws !== currentWs || ws.readyState !== WebSocket.OPEN) return
-      try { sendRaw({ type: 'workspace-subscribe', workspaceTag: state.workspaceTag, from: null, signature: sig }) }
-      catch (err) { console.warn('objstore: workspace-subscribe send failed:', err) }
+      sendSubscribeFor(state, nonce)
     }
   }
 
-  function openSocket(): void {
-    if (clientClosed) return
-    if (ws) return
-    if (sessionsByTag.size === 0) return
-    let next: WebSocket
-    try { next = new WebSocket(deps.serverUrl) }
-    catch (err) {
-      console.warn('objstore: WebSocket constructor failed:', err)
-      scheduleReconnect()
-      return
-    }
-    ws = next
-    // Per-socket state is rearmed each open: nonce is awaited from
-    // the challenge frame, auth state resets (server's
-    // socketAuthorized is per-socket).
-    connectionNonce = null
-    cachedPasswordTriedOnThisSocket = false
-    if (authResponseResolver) {
-      const r = authResponseResolver
-      authResponseResolver = null
-      r(false)
-    }
-    // Every existing session's subscribed-on-current-socket flag
-    // resets; the next open + challenge re-subscribes all of them.
+  function onTransportDisconnected(reason: string): void {
+    // The pending requests are gone with the socket — reject every
+    // waiter so the caller's promise settles instead of timing out.
+    failPendingWaiters(reason)
+    // Each session's subscribed-on-current-socket flag clears so
+    // the next `onConnected` re-subscribes everyone via a fresh
+    // signed-with-the-new-nonce subscribe.
     for (const state of sessionsByTag.values()) {
       if (state.closed) continue
       if (state.subscribed) {
@@ -656,70 +561,21 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         makeSubscribedDeferred(state)
       }
     }
-
-    next.addEventListener('open', () => {
-      if (ws !== next) return
-      reconnectDelayMs = INITIAL_RECONNECT_DELAY
-      // Wait for the challenge frame, then re-subscribe everyone.
-      // The challenge can arrive synchronously-ish so we register
-      // the recv waiter before any await.
-      ;(async () => {
-        try {
-          const challenge = await recv((m) => m.type === 'challenge')
-          if (ws !== next) return
-          if (typeof challenge['nonce'] !== 'string') throw new TypeError('objstore: challenge frame missing nonce')
-          connectionNonce = challenge['nonce']
-          await resubscribeAll()
-        } catch (err) {
-          console.warn('objstore: handshake failed:', err)
-          try { next.close() } catch {}
-        }
-      })()
-    })
-
-    next.addEventListener('message', handleMessage)
-
-    next.addEventListener('close', () => {
-      // Stale-close guard: if a fresh socket has already replaced
-      // this one (`ws !== next`), every clear below would step on
-      // the new socket's state.
-      if (ws !== next) return
-      ws = null
-      connectionNonce = null
-      cachedPasswordTriedOnThisSocket = false
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(false)
-      }
-      // The pending requests are gone with the socket — reject every
-      // waiter so the caller's promise settles instead of timing out.
-      failPendingWaiters('session closed')
-      // Each session's subscribed-on-current-socket flag clears so
-      // reconnect re-subscribes everyone.
-      for (const state of sessionsByTag.values()) {
-        if (state.closed) continue
-        if (state.subscribed) {
-          state.subscribed = false
-          makeSubscribedDeferred(state)
-        }
-      }
-      if (!clientClosed && sessionsByTag.size > 0) scheduleReconnect()
-    })
-
-    next.addEventListener('error', () => {
-      // `close` fires right after — let it own the reconnect schedule.
-      failPendingWaiters('websocket error')
-    })
   }
+
+  const consumerHandle: ConsumerHandle = transport.addConsumer({
+    onMessage: onTransportMessage,
+    onConnected: onTransportConnected,
+    onDisconnected: onTransportDisconnected,
+  })
 
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
   async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<RawPutResult> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    if (!connectionNonce) throw new Error('objstore: socket not open')
-    const nonce = connectionNonce
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
     const contentHash = await computeContentHash(opts.bytes)
     const fields: ObjstorePutBeginFields = {
       workspaceTag: state.workspaceTag,
@@ -739,7 +595,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     let reply: WireMessage
     let attemptedAuth = false
     while (true) {
-      sendRaw({ type: 'objstore-put-begin', ...fields, signature })
+      send({ type: 'objstore-put-begin', ...fields, signature })
       // Match `workspaceTag` on the reply too — every server reply
       // frame carries it (server/objstore/handlers.ts). On a
       // multiplexed socket the workspaceTag is what disambiguates
@@ -766,7 +622,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       // socketAuthorized for THIS socket; loop back and re-send
       // put-begin. On failure / cancel → fall through to the
       // unauthorized return below.
-      const authed = await runAuthFlow()
+      const authed = await transport.runAuthFlow()
       if (!authed) break
     }
     if (reply.type === 'unauthorized') return { ok: false, reason: 'unauthorized' }
@@ -853,9 +709,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   async function _rawFetch(state: SessionState, resourceTag: string): Promise<{ bytes: Uint8Array; meta: ObjectMeta } | null> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    if (!connectionNonce) throw new Error('objstore: socket not open')
-    const signature = await signObjstoreFetch(state.signingKey, state.workspaceTag, resourceTag, connectionNonce)
-    sendRaw({ type: 'objstore-fetch', workspaceTag: state.workspaceTag, resourceTag, signature })
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
+    const signature = await signObjstoreFetch(state.signingKey, state.workspaceTag, resourceTag, nonce)
+    send({ type: 'objstore-fetch', workspaceTag: state.workspaceTag, resourceTag, signature })
     const reply = await recv((m) =>
       m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
         m.type === 'objstore-fetch-token' ||
@@ -901,10 +758,11 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   async function _rawDelete(state: SessionState, resourceTag: string, prevVersion: number | null): Promise<RawDeleteResult> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    if (!connectionNonce) throw new Error('objstore: socket not open')
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
     const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion }
-    const signature = await signObjstoreDelete(state.signingKey, fields, connectionNonce)
-    sendRaw({ type: 'objstore-delete', ...fields, signature })
+    const signature = await signObjstoreDelete(state.signingKey, fields, nonce)
+    send({ type: 'objstore-delete', ...fields, signature })
     const reply = await recv((m) =>
       m.workspaceTag === state.workspaceTag && m.resourceTag === resourceTag && (
         m.type === 'objstore-deleted-ack' ||
@@ -934,9 +792,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   async function _rawList(state: SessionState): Promise<ObjectMeta[]> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
-    if (!connectionNonce) throw new Error('objstore: socket not open')
-    const signature = await signObjstoreList(state.signingKey, state.workspaceTag, connectionNonce)
-    sendRaw({ type: 'objstore-list', workspaceTag: state.workspaceTag, signature })
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore: socket not open')
+    const signature = await signObjstoreList(state.signingKey, state.workspaceTag, nonce)
+    send({ type: 'objstore-list', workspaceTag: state.workspaceTag, signature })
     const reply = await recv((m) => m.type === 'objstore-list-result' && m.workspaceTag === state.workspaceTag)
     // Match fetch's strictness: any malformed wire shape is a protocol
     // violation, not a "missing data" signal.
@@ -988,32 +847,18 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     sessionsByTag.set(workspaceTag, state as SessionState)
     const full = state as SessionState
 
-    // Kick the socket lifecycle. If the socket is already open + a
-    // challenge has landed, send subscribe immediately; otherwise
-    // openSocket → 'open' handler → resubscribeAll picks us up.
-    if (!ws) {
-      openSocket()
-    } else if (ws.readyState === WebSocket.OPEN && connectionNonce) {
-      // Race-tolerant: signSubscribe is async; if the socket dies
-      // mid-await, capture (currentWs, currentNonce) BEFORE the await
-      // and check BOTH after, so a swap to a fresh socket with a
-      // fresh nonce doesn't land a signed-for-the-old-nonce subscribe
-      // on the new socket (server rejects sig → silent hang until
-      // subscribe-ack timeout). `resubscribeAll` on the new socket's
-      // open will re-issue with the fresh nonce.
-      const currentWs = ws
-      const currentNonce = connectionNonce
-      ;(async () => {
-        try {
-          const sig = await signSubscribe(full.signingKey, workspaceTag, currentNonce)
-          if (ws === currentWs && connectionNonce === currentNonce && ws.readyState === WebSocket.OPEN && !full.subscribed && !full.closed) {
-            sendRaw({ type: 'workspace-subscribe', workspaceTag, from: null, signature: sig })
-          }
-        } catch (err) {
-          console.warn('objstore: workspace-subscribe send failed:', err)
-        }
-      })()
-    }
+    // Acquire a transport reference — the transport opens the socket
+    // on the first acquire and tears it down when the last release
+    // fires. Released on session.close() OR the rollback path below.
+    const acquireHandle = transport.acquire()
+    acquiresByTag.set(workspaceTag, acquireHandle)
+
+    // If the socket is already connected, kick a subscribe immediately
+    // so we don't wait for the next reconnect. Otherwise the
+    // transport's `onConnected(nonce)` callback will pick us up the
+    // moment the challenge frame lands.
+    const currentNonce = transport.getNonce()
+    if (currentNonce) sendSubscribeFor(full, currentNonce)
 
     // Cap the open's wait on the subscribe-ack at `timeoutMs` so a
     // server that silently drops the subscribe (bad sig, etc.)
@@ -1030,25 +875,15 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       if (openTimeout) clearTimeout(openTimeout)
       // Roll back the session entry so a retried openWorkspace works.
       sessionsByTag.delete(workspaceTag)
+      acquiresByTag.delete(workspaceTag)
       full.closed = true
       try { full.contentKey.fill(0) } catch {}
       try { full.tagKey.fill(0) } catch {}
-      // If this was the only/first session, tear the socket down too —
-      // otherwise it stays open with no users, since `scheduleReconnect`
-      // bails on `sessionsByTag.size === 0` and the next `openSocket()`
-      // bails on `if (ws) return`. Symmetric with `session.close()`'s
-      // last-session auto-teardown.
-      if (sessionsByTag.size === 0) {
-        clearReconnect()
-        reconnectDelayMs = INITIAL_RECONNECT_DELAY
-        if (ws) {
-          const stale = ws
-          ws = null
-          connectionNonce = null
-          failPendingWaiters('session closed')
-          try { stale.close() } catch {}
-        }
-      }
+      // Releasing the transport acquisition drops the refcount; if
+      // this was the only/first session, the transport tears the
+      // socket down and our `onTransportDisconnected` drains pending
+      // waiters. No need for a manual teardown here.
+      acquireHandle.release()
       throw err
     }
     if (openTimeout) clearTimeout(openTimeout)
@@ -1214,26 +1049,16 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // because `sessionsByTag.get(workspaceTag)` returns undefined
         // after the delete above.
         //
-        // If this was the last open session, tear the socket down so
-        // we don't keep a connection alive for nothing. Symmetric
-        // with the openSocket-on-first-openWorkspace bootstrap.
-        if (sessionsByTag.size === 0) {
-          clearReconnect()
-          reconnectDelayMs = INITIAL_RECONNECT_DELAY
-          if (ws) {
-            const stale = ws
-            ws = null
-            connectionNonce = null
-            // The stale-close guard in the ws 'close' listener bails
-            // when `ws !== stale` and so SKIPS `failPendingWaiters`;
-            // without this explicit drain, any waiter past the
-            // subscribedPromise gate (i.e. inside `await recv(...)`
-            // for an in-flight put/fetch/delete/list) would hang the
-            // full `requestTimeoutMs` instead of failing fast.
-            failPendingWaiters('session closed')
-            try { stale.close() } catch {}
-          }
-        }
+        // Release the transport acquisition. If this was the last
+        // open session, the transport's refcount drops to zero and
+        // it tears the socket down synchronously — our
+        // `onTransportDisconnected` handler drains pending waiters
+        // before the underlying close() lands, so an in-flight
+        // `_rawPut`/`_rawFetch`/etc. fails fast instead of hanging
+        // for `requestTimeoutMs`.
+        const handle = acquiresByTag.get(workspaceTag)
+        acquiresByTag.delete(workspaceTag)
+        if (handle) handle.release()
       },
     }
   }
@@ -1241,9 +1066,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   function close(): void {
     if (clientClosed) return
     clientClosed = true
-    clearReconnect()
     // Close every open session — wipe keys, drop from the map, reject
-    // pending subscribe waiters.
+    // pending subscribe waiters. We release all acquisitions and then
+    // close the transport: closing the transport triggers
+    // `onTransportDisconnected` which calls `failPendingWaiters`.
     for (const state of sessionsByTag.values()) {
       state.closed = true
       try { state.contentKey.fill(0) } catch {}
@@ -1251,13 +1077,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       try { state.rejectSubscribed(new Error('objstore: client closed')) } catch {}
     }
     sessionsByTag.clear()
-    failPendingWaiters('client closed')
-    if (ws) {
-      const stale = ws
-      ws = null
-      connectionNonce = null
-      try { stale.close() } catch {}
-    }
+    for (const handle of acquiresByTag.values()) handle.release()
+    acquiresByTag.clear()
+    consumerHandle.remove()
+    // Only close the transport when this client owns it. Shared
+    // transports (e.g. the triage-sync singleton) are torn down by
+    // their owner.
+    if (ownsTransport) transport.close()
   }
 
   return { openWorkspace, close }

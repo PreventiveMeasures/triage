@@ -32,63 +32,48 @@
 import { createObjstoreClient, deriveObjstoreKeys } from '../../client/objstore.ts'
 import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
 import { triageSync } from '../../client/triage-sync.ts'
+import { getSharedTransport } from '../../client/sync-transport.ts'
 import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged } from '../../client/workspaces.js'
 import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../../client/storage.js'
 import { analyzeContent, setCount } from '../../client/counts.js'
 import { decodeUtf8 } from '../../common/utf8.js'
-import { openSyncAuthDialog } from './sync-auth-dialog.js'
-
-// Shared resolver for the operator-side first-action gate. The
-// objstore session authenticates independently from triage-sync
-// (separate WebSocket → separate per-socket `socketAuthorized` flag
-// on the server), so when an `objstore-put-begin` against a never-
-// before-seen workspace tag hits the gate the session needs its
-// own resolver to prompt the user. Reuses the same `<sync-auth-
-// dialog>` triage-sync's resolver opens — the dialog UX is identical
-// regardless of which plane triggered it, and the shared
-// `sync-auth-cache` means a successful auth on one plane silently
-// unlocks the other.
-async function objstoreAuthResolver({ retry }) {
-  try {
-    return await openSyncAuthDialog({ retry })
-  } catch (err) {
-    // Stacked-modal failure (another modal is open). Bail null — the
-    // objstore session's `runAuthFlow` treats null as "user cancelled"
-    // and returns the `unauthorized` to the put caller; the user can
-    // re-trigger by uploading again once the blocking modal closes.
-    console.warn('objstore: sync auth dialog failed to open:', err)
-    return null
-  }
-}
 
 const sessions = new Map()
 const listeners = new Set()
 
-// Shared multiplexed client — one WebSocket per `serverUrl`, with
-// every open workspace's session piggybacking on the same socket.
-// Lazily constructed on first openWorkspace; rebuilt if the server
-// URL changes between calls. Closed when the last session closes
-// (via the underlying client's auto-teardown on session.close()).
+// Shared multiplexed objstore client — one per page. The WebSocket
+// itself lives on the shared `SocketTransport` from
+// `client/sync-transport.ts` so triage-sync and objstore share one
+// TCP connection: one heartbeat, one `authenticate` round-trip, one
+// reconnect schedule. The transport's `setServerUrl` is driven by
+// triage-sync; the operator-side auth resolver is wired via
+// `setSharedAuthResolver`. The HTTP origin (REST data-plane) is
+// derived from the WS URL the first time we need a client and
+// captured into the client — we never re-derive because in this
+// app the user only ever has one server URL, and toggling sync
+// off/on goes through the transport's acquire/release without
+// touching this client.
+//
+// Known gap: the console-API path
+// `DeepView.triageSync.setServerUrl('wss://different-host')` swaps
+// the WS plane but leaves this client's captured httpOrigin
+// pointing at the previous derivation — REST PUT/GET tokens issued
+// by the new server would then hit the OLD origin. Accepted as
+// out-of-scope: the supported flows (initial set, off-toggle,
+// on-toggle) all use the same URL.
 let client = null
-let clientServerUrl = null
-let clientHttpOrigin = null
-function ensureClient(serverUrl, httpOrigin) {
-  if (client && (clientServerUrl !== serverUrl || clientHttpOrigin !== httpOrigin)) {
-    // Server URL changed (rare: user retypes the URL, or the
-    // browser-detected default flips). Tear down and rebuild — the
-    // old client's open sessions are gone with `closeWorkspace`
-    // calls from the URL-change-driven session resets in
-    // `switchToWorkspace` / `setServerUrl`.
-    try { client.close() } catch {}
-    client = null
-  }
+function ensureClient(httpOrigin) {
   if (!client) {
     client = createObjstoreClient({
-      serverUrl, httpOrigin,
-      authResolver: objstoreAuthResolver,
+      // `serverUrl` is a deps field for the private-transport
+      // fallback (tests via `createObjstoreSession`); the shared
+      // transport is what carries actual WebSocket traffic here.
+      // Pass empty string so the deps shape stays valid without
+      // pretending to drive the URL.
+      serverUrl: '',
+      httpOrigin,
+      transport: getSharedTransport(),
     })
-    clientServerUrl = serverUrl
-    clientHttpOrigin = httpOrigin
   }
   return client
 }
@@ -230,7 +215,7 @@ export function openWorkspace(workspaceId) {
     const httpOrigin = httpOriginFromWsUrl(serverUrl)
     if (!httpOrigin) return
     try {
-      const c = ensureClient(serverUrl, httpOrigin)
+      const c = ensureClient(httpOrigin)
       const session = await c.openWorkspace(entry.keys)
       if (entry.disposed) {
         try { session.close() } catch {}
