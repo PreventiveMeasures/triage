@@ -2841,8 +2841,17 @@ onWorkspacePrivateKeyChanged((workspaceId) => {
 // the server promptly. No-op when the workspace has no open
 // session.
 onReportMembershipChanged((workspaceId) => {
+  // Open the session if it wasn't already open. Dragging a report
+  // into a workspace the user hasn't navigated to must still
+  // propagate that report's triage state to peers — the act of
+  // attaching is the user's signal that the workspace now claims
+  // those finding-ids, and the next browser to open the workspace
+  // would otherwise see stale data. `openSession` is idempotent on
+  // already-open ids. Mirrors the post-multiplex objstore-presence
+  // membership listeners.
+  triageSync.openSession(workspaceId)
   const session = sessions.get(workspaceId)
-  if (!session) return
+  if (!session) return  // workspace doesn't exist (deleted concurrently)
   const { conflicts, hydrated } = refreshSessionIds(session)
   // Both branches run inside an async IIFE so saveTriage is
   // ordered (no parallel writes to the deepview.triage blob from

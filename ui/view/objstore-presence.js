@@ -449,6 +449,13 @@ export function closeWorkspace(workspaceId) {
 // would then mis-classify whether the local owner is keeping the
 // tag fresh.
 onReportMembershipChanged((workspaceId) => {
+  // Open the presence session if not already — without this, a drag
+  // into a workspace the user hasn't navigated to never gets its
+  // remote subscription / cache populated, so the badge stays
+  // stale and a follow-up putFile / fetchFile races the lazy open.
+  // `openWorkspace` is idempotent on already-open ids; the act of
+  // dropping signals the workspace now wants this report tracked.
+  if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
   const entry = sessions.get(workspaceId)
   if (!entry) return
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
@@ -458,6 +465,11 @@ onReportMembershipChanged((workspaceId) => {
   }
 })
 onBundleMembershipChanged((workspaceId) => {
+  // Mirror the report-side listener: bundles dragged into a
+  // workspace the user hasn't navigated to also need the workspace
+  // tracked in remote presence so the badge + upload affordances
+  // wire up before the user navigates.
+  if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
   const entry = sessions.get(workspaceId)
   if (!entry) return
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
