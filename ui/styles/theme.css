@@ -410,6 +410,21 @@ body.show-print-btn #download-btn { display: flex; }
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
 
+  /* Explicit no-drag baseline on body so floating top-right
+     buttons (theme-toggle, #print-btn, #download-btn — direct
+     children of body) inherit no-drag from a defined value
+     rather than from the property's initial `none`. On Chromium
+     WCO the difference matters: an initial-value inheritance
+     left the buttons' hit-test ambiguous when the page also
+     contained explicit drag regions (#report, #sidebar), making
+     clicks intermittent. With body explicitly no-drag, the drag
+     rules below override only their target subtrees and the
+     rest of the page is unambiguously clickable. */
+  body {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
   /* Drag surfaces — explicit, allow-list style. Inverted from the
      earlier body-drag-with-opt-outs model: that approach broke
      too many things by default (every list row, every text-select,
