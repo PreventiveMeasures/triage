@@ -121,12 +121,12 @@
    `.title em` rules with our theme tokens. */
 .inline-quote {
   background: rgb(from var(--accent) r g b / .1);
-  padding: .05em .35em; border-radius: 3px;
+  padding: 1px; border-radius: 3px;
   color: var(--text);
 }
 .inline-code {
   background: var(--surface-active);
-  padding: .05em .35em; border-radius: 3px;
+  border-radius: 3px;
   border: 1px solid var(--border);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .9em;
