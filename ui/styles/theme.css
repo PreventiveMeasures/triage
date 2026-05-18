@@ -410,19 +410,39 @@ body.show-print-btn #download-btn { display: flex; }
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
 
-  body {
+  /* Drag surfaces — explicit, allow-list style. Inverted from the
+     earlier body-drag-with-opt-outs model: that approach broke
+     too many things by default (every list row, every text-select,
+     every wheel event between rows) and the opt-out list kept
+     drifting. Now the "chrome" of each page is the drag handle:
+     #report's bg + padding + page-head, plus the slide-view's bg
+     + padding + .bundles-slide-bar. Anything else defaults to
+     no-drag, so interactive surfaces work by default. */
+  #report,
+  .bundles-slide-view,
+  .packages-slide-view {
     -webkit-app-region: drag;
     app-region: drag;
   }
 
-  /* Form controls and the Lit finding components opt out of the
-     body-wide drag so they still receive clicks — everything else
-     (the report's background, the gaps between finding cards,
-     toolbar empty space) inherits drag from body and drags the
-     window when grabbed. `canvas` covers the graph view: without
-     it the body's drag region eats every pointer event landing on
-     the canvas and the graph reads as non-interactive (no pan, no
-     zoom, no node clicks). */
+  /* Content surfaces inside the drag chrome — opt back out so
+     wheel / clicks / selection work inside them. */
+  .findings-content,
+  .tree-view,
+  .tree-view-table,
+  .bundles-list,
+  .bundles-details,
+  .packages-list,
+  .packages-details,
+  .bundles-slide-body {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  /* Interactive elements + their containers — also opt out so
+     clicks land on the element instead of starting a window drag.
+     Mostly relevant inside the chrome bars (page-head,
+     bundles-slide-bar) that inherit drag from their parent. */
   button,
   canvas,
   code,
@@ -442,10 +462,6 @@ body.show-print-btn #download-btn { display: flex; }
   [draggable='true'],
   [contenteditable],
   .mono,
-  .findings-content,
-  .tree-view,
-  .tree-view-table,
-  .bundles-slide-body,
   [data-select-bundle],
   [data-select-package],
   [data-select-repository],
