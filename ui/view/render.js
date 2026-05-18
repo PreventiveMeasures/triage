@@ -295,8 +295,7 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
 //
 // Tool name comes from the source marker when every loaded report
 // agrees on one (`Claude Security findings`, `Codex Security
-// findings`, `DeepSec findings`); otherwise it's `DeepView findings`,
-// matching the prior single-vs-mixed selection rule.
+// findings`, `DeepSec findings`); otherwise it's `Findings`.
 function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeFileCount) {
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
@@ -309,7 +308,7 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
     : null
   const titleText = ws
     ? `Workspace: ${ws.name}`
-    : (singleSource ? SOURCE_TITLES[singleSource] : 'DeepView findings')
+    : (singleSource ? SOURCE_TITLES[singleSource] : 'Findings')
 
   // File chip: single-file reports get the filename verbatim with a
   // brand sticker for the source bucket (Claude / Codex / DeepSec /
