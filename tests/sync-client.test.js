@@ -37,7 +37,7 @@ await import('./_polyfills.js')
 const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
-const { upsertWorkspace, deleteWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
+const { upsertWorkspace, deleteWorkspace, addReportToWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
 const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 
 // ─────────── helpers ───────────
@@ -3698,6 +3698,279 @@ describe('triage-sync client', () => {
     localStorage.setItem('deepview.sync.sessions', recovered)
     await hydrateSecureStorage()
     assert.equal(triageSync.persistenceDegraded, false, 'cross-tab clear realigns the latch')
+  })
+
+  // ─────────── membership-drop propagation (PR #118 + refreshSession) ───────────
+
+  it('addReportToWorkspace into a workspace with NO live session auto-opens it and propagates triage', async () => {
+    // Models the drag-into-workspace UI gesture for a workspace the
+    // user hasn't navigated into yet. Pre-fix the membership listener
+    // bailed on `!session`, so the workspace's chain never picked up
+    // the dropped report's triage. Post-fix `openSession` is invoked
+    // synchronously by the listener, and the follow-up `trySendSave`
+    // lands the first revision once key derivation completes.
+    triageSync.closeSession()
+    clearTriageState()
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 'A.md')
+    state.markers.set('finding-A', 'red')
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: [] })
+    triageSync.setServerUrl(serverUrl)
+    assert.equal(triageSync.sessionInfo(wsId), null, 'no session before drop')
+
+    // Drop A.md into the workspace.
+    await addReportToWorkspace('A.md', wsId)
+
+    // Membership listener should auto-open + propagate.
+    await waitFor(() => settledAfterAck(wsId), 'session opened + save ack landed after drop')
+    const info = triageSync.sessionInfo(wsId)
+    assert.ok(info != null && info.baseRevision != null, 'session live + has revision')
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  // ─────────── refreshSession API (issue 3: focus dragged report later) ───────────
+
+  it('refreshSession propagates triage for a report loaded AFTER the session opened', async () => {
+    // Models the bug where a non-focused report is dragged into a
+    // workspace, the user later focuses it, and triage-sync's stale
+    // `session.ids` still excludes the new report's finding-ids until
+    // a re-subscribe forces a rebuild. Post-fix the switch path calls
+    // `triageSync.refreshSession(workspaceId)` after `state.reports`
+    // is repopulated by `ingestReport`, so the next save includes the
+    // freshly-loaded report's ids.
+    triageSync.closeSession()
+    clearTriageState()
+    // Workspace claims TWO reports, but only A is currently loaded
+    // (mirrors single-file view of A in a multi-report workspace).
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 'A.md')
+    state.markers.set('finding-A', 'red')
+    const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md', 'B.md'] })
+    triageSync.openSession(wsId)
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'sync online')
+    await waitFor(() => settledAfterAck(wsId), 'first ack with A only')
+    const baseRevisionAfterA = triageSync.sessionInfo(wsId).baseRevision
+    assert.ok(baseRevisionAfterA, 'first save landed')
+
+    // User edits a finding in B while B is unloaded. With session.ids
+    // stuck on A's ids, this triage IS captured in state.markers but
+    // not propagated by any subsequent save.
+    state.markers.set('finding-B', 'green')
+
+    // Simulate `switchToFile('B.md')`: ingest repopulates
+    // state.reports with B (+ A, if multi-file — here we model the
+    // single-file view path where state.reports is the just-loaded
+    // file). Then the new `refreshSession` call kicks the rebuild.
+    state.reports.length = 0
+    state.reports.push({ fileName: 'B.md', groups: [[{ id: 'finding-B', _id: 'finding-B' }]] })
+    triageSync.refreshSession(wsId)
+
+    // A new save should land carrying finding-B → green. baseRevision
+    // advances; pre-fix it would have stayed at baseRevisionAfterA.
+    await waitFor(
+      () => triageSync.sessionInfo(wsId).baseRevision !== baseRevisionAfterA,
+      'revision advanced after refreshSession picked up the loaded report',
+    )
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('refreshSession on a workspace with no live session is a safe no-op', () => {
+    // Defensive contract: callers (the UI switch paths) invoke
+    // refreshSession without first checking whether a session is
+    // open. The method must silently no-op rather than throw.
+    triageSync.refreshSession('nonexistent-workspace-' + Math.random().toString(36).slice(2))
+  })
+
+  // ─────────── session-preservation across switchToWorkspace (issue 1) ───────────
+
+  it('opening an already-open session is idempotent (no re-subscribe on workspace title click)', async () => {
+    // Models the UI's `switchToWorkspace` post-fix shape:
+    // intersection-close (don't tear down the target session) plus
+    // openSession (no-op if already open) plus refreshSession.
+    // Pre-fix `switchToWorkspace` did a blanket `closeSession()`
+    // followed by `openSession(target)`, which destroyed + recreated
+    // the session struct AND issued a fresh `workspace-subscribe` on
+    // every click of the workspace title.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'first ack')
+    const infoBefore = triageSync.sessionInfo(wsId)
+    const baseRevisionBefore = infoBefore.baseRevision
+    const workspaceTagBefore = infoBefore.workspaceTag
+
+    // Idempotent re-open: nothing should change about the session.
+    // Pre-fix this would have been a no-op only because the prior
+    // closeSession() was called separately; here we exercise just
+    // the openSession path to verify its idempotence contract.
+    triageSync.openSession(wsId)
+    // refreshSession with no state.reports change is a no-op for
+    // propagation purposes — verify it doesn't perturb the session.
+    triageSync.refreshSession(wsId)
+    // Drain microtasks so any spurious save would have queued.
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    const infoAfter = triageSync.sessionInfo(wsId)
+    assert.equal(infoAfter.baseRevision, baseRevisionBefore, 'baseRevision unchanged (no re-subscribe / fresh chain)')
+    assert.equal(infoAfter.workspaceTag, workspaceTagBefore, 'workspaceTag unchanged')
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  // ─────────── multi-workspace and cross-membership scenarios ───────────
+
+  it('same report dropped into TWO workspaces propagates triage to BOTH chains', async () => {
+    // Multi-workspace membership: a report can belong to N workspaces.
+    // Each workspace's chain MUST receive the report's triage —
+    // pre-fix both listeners bailed for the second workspace if the
+    // user hadn't navigated into it, leaving one chain stale.
+    triageSync.closeSession()
+    clearTriageState()
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 'shared.md')
+    state.markers.set('finding-A', 'red')
+    const wsA = `ws-${Math.random().toString(36).slice(2, 8)}`
+    const wsB = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: [] })
+    await upsertWorkspace({ id: wsB, name: wsB, privateKey: randomBase64(), reports: [] })
+    triageSync.setServerUrl(serverUrl)
+
+    // Drop the report into BOTH workspaces.
+    await addReportToWorkspace('shared.md', wsA)
+    await addReportToWorkspace('shared.md', wsB)
+
+    // Each workspace's chain should land its own first revision.
+    await waitFor(() => settledAfterAck(wsA), 'wsA chain acked')
+    await waitFor(() => settledAfterAck(wsB), 'wsB chain acked')
+    const infoA = triageSync.sessionInfo(wsA)
+    const infoB = triageSync.sessionInfo(wsB)
+    assert.ok(infoA?.baseRevision, 'wsA has revision')
+    assert.ok(infoB?.baseRevision, 'wsB has revision')
+    // Distinct workspaces ⇒ distinct workspaceTags ⇒ chains can't
+    // collide on the relay.
+    assert.notEqual(infoA.workspaceTag, infoB.workspaceTag, 'distinct workspace tags')
+    triageSync.closeSession()
+    await deleteWorkspace(wsA)
+    await deleteWorkspace(wsB)
+  })
+
+  it('re-dropping an already-attached report does NOT trigger a spurious save', async () => {
+    // Idempotence: setReportWorkspace / addReportToWorkspace into a
+    // workspace that already claims the file is a no-op on the
+    // workspace blob — and therefore must NOT fire the membership
+    // listener (the workspaces-store dedups). Asserted here so a
+    // regression in the dedup would visibly bump baseRevision.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'first save ack')
+    const baseRevisionBefore = triageSync.sessionInfo(wsId).baseRevision
+
+    // Re-attach the same report — workspaces.js's set-equal guard
+    // should suppress the membership event, so no save fires.
+    await addReportToWorkspace('test.md', wsId)
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    assert.equal(
+      triageSync.sessionInfo(wsId).baseRevision,
+      baseRevisionBefore,
+      'no spurious save on re-attach (baseRevision unchanged)',
+    )
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('detaching a report via setReportWorkspace(name, null) does NOT remove existing chain data', async () => {
+    // Multi-workspace semantics: a report may belong to N workspaces.
+    // Detaching from ONE workspace must not wipe the corresponding
+    // finding-ids from that workspace's chain — a peer who still has
+    // the report attached (in this workspace, in another tab) keeps
+    // seeing the triage. The detach is a local-membership update,
+    // not a remote-deletion request. `refreshAndPropagate` runs the
+    // rebuild + calls `trySendSave`, which computes a changeset of
+    // `baseState` vs `effectiveLocalState(baseState, ids)` and bails
+    // on `changesetEmpty` before encrypting — out-of-scope ids stay
+    // as baseState had them, so no revision lands on the wire.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'attached state acked')
+    const baseRevisionAttached = triageSync.sessionInfo(wsId).baseRevision
+
+    // Detach the report from this workspace.
+    await setReportWorkspace('test.md', null)
+    await new Promise((resolve) => { setTimeout(resolve, 100) })
+
+    // No new revision — the chain's data persists for other peers /
+    // future re-attaches.
+    assert.equal(
+      triageSync.sessionInfo(wsId).baseRevision,
+      baseRevisionAttached,
+      'detach is a local-membership op; no chain revision fired',
+    )
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('drop while sync is offline + enable later: propagates eventually', async () => {
+    // Models the boot-with-sync-disabled-then-enable flow. The
+    // membership listener auto-opens a session even with no server
+    // URL; the session sits in `pendingSave` until the transport
+    // acquires. Once the URL is set the deferred save flushes.
+    triageSync.closeSession()
+    clearTriageState()
+    setReports([{ id: 'finding-A', _id: 'finding-A' }], 'offline.md')
+    state.markers.set('finding-A', 'red')
+    triageSync.setServerUrl('')  // sync offline
+
+    const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
+    await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: [] })
+
+    // Drop into a workspace while offline — session auto-opens but
+    // can't talk to the wire yet. baseRevision stays null.
+    await addReportToWorkspace('offline.md', wsId)
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+    assert.equal(
+      triageSync.sessionInfo(wsId)?.baseRevision,
+      null,
+      'session deferred while offline (no server URL)',
+    )
+
+    // Turn sync on — the queued save should flush.
+    triageSync.setServerUrl(serverUrl)
+    await waitFor(statusOnline, 'sync online')
+    await waitFor(() => settledAfterAck(wsId), 'deferred save flushed after enable')
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
+  })
+
+  it('refreshSession is a no-op when state.reports did not change (no spurious save)', async () => {
+    // Pin the idempotence contract: the UI's switch paths now
+    // unconditionally call `refreshSession` after `ingestReport`,
+    // and a same-file re-render of an unchanged workspace MUST NOT
+    // bump the chain. Otherwise click-spam on the workspace title
+    // would generate fresh revisions for no reason.
+    const wsId = await startSession(['finding-A'])
+    state.markers.set('finding-A', 'red')
+    await saveTriage()
+    await waitFor(() => settledAfterAck(wsId), 'first save ack')
+    const baseRevisionBefore = triageSync.sessionInfo(wsId).baseRevision
+
+    // Call refreshSession repeatedly with no underlying change.
+    triageSync.refreshSession(wsId)
+    triageSync.refreshSession(wsId)
+    triageSync.refreshSession(wsId)
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    assert.equal(
+      triageSync.sessionInfo(wsId).baseRevision,
+      baseRevisionBefore,
+      'no spurious save (baseRevision unchanged)',
+    )
+    triageSync.closeSession(wsId)
+    await deleteWorkspace(wsId)
   })
 })
 

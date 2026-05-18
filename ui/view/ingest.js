@@ -280,11 +280,16 @@ export async function switchToFile(name, content) {
   // freshly-loaded findings (without this it'd run against the
   // empty state.reports we just reset above and the session's
   // initial id-set would be empty until the next save). openSession
-  // is idempotent on already-open ids; same-workspace file switches
-  // re-use the existing session — its `ids` self-refreshes via
-  // `refreshSessionIds` on the next notify / chain.
+  // is idempotent on already-open ids; for those we then
+  // `refreshSession` to pick up newly-in-scope ids from the freshly-
+  // loaded state.reports — without this, a report dragged into the
+  // workspace while a different file was focused would never
+  // propagate its triage when the user finally loads it (the
+  // session was already open with stale ids and openSession's
+  // idempotence would skip the rebuild).
   for (const id of desiredWorkspaceIds) {
     triageSync.openSession(id)
+    triageSync.refreshSession(id)
     openPresence(id)
   }
   await renderSidebar()
@@ -305,14 +310,19 @@ export async function switchToWorkspace(workspaceId) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = ++loadGen
-  // Tear the previous triage-sync sessions down before we touch
-  // state.reports — they're keyed off the old set of loaded reports
-  // and would mis-attribute edits otherwise. Presence sessions stay
-  // alive across switches (the warm cache is the whole point of the
-  // multiplex refactor — see `objstore-presence.js`'s lifecycle
-  // comment); workspace-delete + privateKey-rotation listeners
-  // there drive cleanup when it's actually needed.
-  triageSync.closeSession()
+  // Close triage-sync sessions for OTHER workspaces (not the one we're
+  // switching to). Keeping the target's existing session alive avoids
+  // a close + open + re-subscribe round-trip on every click of the
+  // workspace title. After the ingest loop below, we call
+  // `triageSync.refreshSession(workspaceId)` to bring the session's
+  // id-set up to date with the freshly-loaded state.reports.
+  // Presence sessions stay alive across switches per
+  // `objstore-presence.js`'s lifecycle.
+  for (const info of triageSync.openSessions) {
+    if (info && info.workspaceId !== workspaceId) {
+      triageSync.closeSession(info.workspaceId)
+    }
+  }
   // Same drop-out as switchToFile — opening a workspace lands in
   // findings, not the bundles / packages list.
   if (state.currentView === 'bundles' || state.currentView === 'packages' || state.currentView === 'repositories') {
@@ -370,6 +380,15 @@ export async function switchToWorkspace(workspaceId) {
   // build its workspace-id set. No-op when sync is disabled (no
   // server URL).
   triageSync.openSession(workspaceId)
+  // Refresh the session's id-set: when the session was already open
+  // (intersection-close preserved it across the switch) its `ids`
+  // still reflects the OLD state.reports. Any newly-in-scope ids
+  // (reports loaded just now that weren't loaded before) get their
+  // triage propagated to the workspace's chain. Also covers the case
+  // where a report was dragged into this workspace while a different
+  // file was focused — its finding-ids are only visible to triage-
+  // sync once state.reports actually carries the report.
+  triageSync.refreshSession(workspaceId)
   openPresence(workspaceId)
   await renderSidebar()
 }

@@ -2629,6 +2629,42 @@ export const triageSync = {
     emitStatusIfChanged()
   },
 
+  // Refresh a session's id-set against the live `state.reports` +
+  // `ws.reports`, then propagate any newly-in-scope ids' triage
+  // to the workspace's chain. Idempotent no-op when nothing
+  // changed.
+  //
+  // Called by the UI's switch paths (`switchToFile`,
+  // `switchToWorkspace`) right after `state.reports` has been
+  // populated by `ingestReport`. Without this hook, a session
+  // opened pre-load (e.g. via the membership-changed listener
+  // when a report was dragged in while a different file was
+  // focused) sticks with the stale id-set it had at open time —
+  // loading the report later wouldn't expose its finding-ids to
+  // the chain.
+  //
+  // **Callers MUST `openSession(workspaceId)` first** — this
+  // method intentionally does NOT auto-open. The membership-
+  // changed listener is the canonical creation path (it auto-
+  // opens because a drop is the user's signal that the workspace
+  // should exist on the wire); refreshSession is downstream of
+  // that, called from the UI's switch paths which already invoke
+  // `openSession` for the desired workspace ids. Duplicating the
+  // auto-open here would mask drop-misordering bugs in future
+  // callers (a missing `openSession` would silently no-op and
+  // regress the "issue 3" symptom this method was introduced to
+  // fix). Logged at `console.debug` on the no-session branch so a
+  // missing prelude is grep-able when investigating a missing
+  // propagation.
+  refreshSession(workspaceId: string): void {
+    const session = sessions.get(workspaceId)
+    if (!session) {
+      console.debug('triage-sync: refreshSession bail — no session for', workspaceId, '(caller must openSession first)')
+      return
+    }
+    refreshAndPropagate(session)
+  },
+
   // Read-only inspector keyed by workspaceId. Returns the same
   // shape the single-session API used to expose, just one entry
   // per open session. `null` for a missing id keeps the test /
@@ -2840,24 +2876,31 @@ onWorkspacePrivateKeyChanged((workspaceId) => {
 // a save so any local edits on the now-attached findings reach
 // the server promptly. No-op when the workspace has no open
 // session.
-onReportMembershipChanged((workspaceId) => {
-  // Open the session if it wasn't already open. Dragging a report
-  // into a workspace the user hasn't navigated to must still
-  // propagate that report's triage state to peers — the act of
-  // attaching is the user's signal that the workspace now claims
-  // those finding-ids, and the next browser to open the workspace
-  // would otherwise see stale data. `openSession` is idempotent on
-  // already-open ids. Mirrors the post-multiplex objstore-presence
-  // membership listeners.
-  triageSync.openSession(workspaceId)
-  const session = sessions.get(workspaceId)
-  if (!session) return  // workspace doesn't exist (deleted concurrently)
+// Refresh a session's id-set against the live `state.reports` +
+// `ws.reports` and propagate any newly-in-scope ids to the chain.
+// Called by:
+//   - the `onReportMembershipChanged` listener (a report was
+//     attached / detached from a workspace);
+//   - `triageSync.refreshSession(workspaceId)` (the UI's switch
+//     paths after `state.reports` mutates, so loading a previously-
+//     unloaded report exposes its finding-ids to the workspace's
+//     chain).
+//
+// Branches on whether `refreshSessionIds` found newly-added ids
+// AND whether their hydration surfaced conflicts vs the chain's
+// baseState. Conflict-free path is the common case: either run
+// `saveTriage` (which fans gap-filled state.* into the chain via
+// notify) or `trySendSave` directly when nothing was hydrated.
+function refreshAndPropagate(session: Session): void {
   const { conflicts, hydrated } = refreshSessionIds(session)
   // Both branches run inside an async IIFE so saveTriage is
   // ordered (no parallel writes to the deepview.triage blob from
   // back-to-back attaches), the catch keeps a Web Locks rejection
-  // from leaking as an unhandledrejection, and setReportWorkspace
-  // still returns synchronously to its caller. Audit M-4.
+  // from leaking as an unhandledrejection, and the caller —
+  // `setReportWorkspace` (via the membership listener) or
+  // `switchToFile` / `switchToWorkspace` (via the public
+  // `refreshSession` method) — still returns synchronously.
+  // Audit M-4.
   ;(async () => {
     if (conflicts.length === 0) {
       if (hydrated) await saveTriage()
@@ -2878,7 +2921,22 @@ onReportMembershipChanged((workspaceId) => {
     // Persist state.* (gap-fill + applied decisions) and let the
     // sync layer propagate via saveTriage's notify.
     await saveTriage()
-  })().catch((err) => { console.warn('Triage sync: membership listener failed:', err) })
+  })().catch((err) => { console.warn('Triage sync: refreshAndPropagate failed:', err) })
+}
+
+onReportMembershipChanged((workspaceId) => {
+  // Open the session if it wasn't already open. Dragging a report
+  // into a workspace the user hasn't navigated to must still
+  // propagate that report's triage state to peers — the act of
+  // attaching is the user's signal that the workspace now claims
+  // those finding-ids, and the next browser to open the workspace
+  // would otherwise see stale data. `openSession` is idempotent on
+  // already-open ids. Mirrors the post-multiplex objstore-presence
+  // membership listeners.
+  triageSync.openSession(workspaceId)
+  const session = sessions.get(workspaceId)
+  if (!session) return  // workspace doesn't exist (deleted concurrently)
+  refreshAndPropagate(session)
 })
 
 // Drop persisted session entries whose workspace was deleted
