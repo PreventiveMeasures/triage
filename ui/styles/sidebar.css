@@ -161,6 +161,13 @@
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid var(--border); border-radius: 5px;
   transition: background .12s, border-color .12s;
+  /* The whole search row catches click-to-focus on the input
+     (anywhere in the strip — icon, padding) via the input's
+     `flex: 1` width plus the row's `:focus-within` ring. In
+     WCO mode the sidebar is drag by default, so without this
+     no-drag the icon swallows mousedown as window-drag and
+     the input never receives focus. */
+  -webkit-app-region: no-drag; app-region: no-drag;
 
   /* `:has(input:focus)` instead of `:focus-within` — the latter would
      also fire when tabbing onto a trailing view button, dragging the
@@ -240,6 +247,12 @@
 #file-list {
   list-style: none; flex: 1; overflow-y: auto;
   overscroll-behavior: none; scrollbar-gutter: stable;
+  /* No-drag despite the sidebar being a drag surface — wheel and
+     scrollbar-thumb events on a WCO drag region don't reach the
+     scroller. (The free space below the last item shares the
+     same container so it doesn't drag either; trade-off for
+     reliable scroll.) */
+  -webkit-app-region: no-drag; app-region: no-drag;
   padding: 0 .35rem .25rem; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
   scrollbar-width: thin;
