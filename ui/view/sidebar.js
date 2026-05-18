@@ -835,13 +835,6 @@ const SYNC_LABELS = {
   // give the user an explicit retry.
   error: 'Sync error',
 }
-const SYNC_TITLES = {
-  off: 'Sync off — click to enable',
-  online: 'Online — click to disable sync',
-  offline: 'Offline (reconnecting) — click to disable sync',
-  connecting: 'Connecting (waiting for server) — click to disable sync',
-  error: 'Sync error — click to retry',
-}
 
 function syncButtonVisible() {
   const usableUrl = triageSync.getServerUrl() || DEFAULT_SYNC_URL
@@ -883,16 +876,6 @@ function renderSyncStatus(status) {
   btn.hidden = false
   const s = status ?? triageSync.status
   btn.dataset.status = s
-  let title = SYNC_TITLES[s] ?? ''
-  if (s === 'error') {
-    // Append the first errored session's message so the user sees
-    // *what* broke, not just *that* something did. There's only one
-    // status string per connection; with multiple sessions the
-    // first one wins (typical case is anyway one workspace open).
-    const firstErr = triageSync.openSessions.find((info) => info?.error)?.error
-    if (firstErr) title = `${title}\n${firstErr}`
-  }
-  btn.title = title
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
