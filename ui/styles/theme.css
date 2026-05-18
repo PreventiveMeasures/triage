@@ -315,10 +315,6 @@ a { color: var(--accent); text-decoration: none; }
 #main-content {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
   overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
-  /* Scroll container — must never be a WCO drag region or the wheel
-     wouldn't reach it through body's app-region: drag. Co-located
-     with overflow so the two rules stay in sync. */
-  -webkit-app-region: no-drag; app-region: no-drag;
 }
 
 /* Hide every not-yet-upgraded custom element. Without this, hosts of
