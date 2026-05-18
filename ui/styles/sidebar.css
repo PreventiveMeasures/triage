@@ -81,17 +81,12 @@
    can't reach this state either. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* Whole sidebar is a drag surface — bg + free space inside the
-     header / search row / file list / actions all act as a window
+  /* The whole sidebar inherits drag from body's WCO baseline in
+     theme.css — its bg + the gaps between rows act as a window
      drag handle. Interactive elements inside (buttons, inputs,
-     etc.) opt back out via the central no-drag list in theme.css,
-     so the surrounding container chrome drags but the controls
+     etc.) opt back out via the central no-drag list, so the
+     surrounding container chrome drags but the controls
      themselves stay clickable. */
-  #sidebar {
-    -webkit-app-region: drag;
-    app-region: drag;
-  }
-
   .sidebar-header {
     min-height: env(titlebar-area-height, 0px);
     padding-left: max(.75rem, env(titlebar-area-x, 0px));

@@ -410,38 +410,23 @@ body.show-print-btn #download-btn { display: flex; }
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
 
-  /* Explicit no-drag baseline on body so floating top-right
-     buttons (theme-toggle, #print-btn, #download-btn — direct
-     children of body) inherit no-drag from a defined value
-     rather than from the property's initial `none`. On Chromium
-     WCO the difference matters: an initial-value inheritance
-     left the buttons' hit-test ambiguous when the page also
-     contained explicit drag regions (#report, #sidebar), making
-     clicks intermittent. With body explicitly no-drag, the drag
-     rules below override only their target subtrees and the
-     rest of the page is unambiguously clickable. */
+  /* Body-wide drag baseline — anything that isn't explicitly
+     listed in the no-drag rules below acts as a window drag
+     handle. This is the original model from the first WCO pass;
+     the briefly-tried inverse (allow-list of drag chrome) kept
+     leaving floating top-right buttons in an inheritance limbo
+     where Chromium's hit-test treated their app-region as
+     ambiguous. The exclusion list covers everything that
+     shouldn't drag (every content container + every interactive
+     element), and body = sidebar + report, so the union of
+     opt-outs already covers the surfaces that matter. */
   body {
-    -webkit-app-region: no-drag;
-    app-region: no-drag;
-  }
-
-  /* Drag surfaces — explicit, allow-list style. Inverted from the
-     earlier body-drag-with-opt-outs model: that approach broke
-     too many things by default (every list row, every text-select,
-     every wheel event between rows) and the opt-out list kept
-     drifting. Now the "chrome" of each page is the drag handle:
-     #report's bg + padding + page-head, plus the slide-view's bg
-     + padding + .bundles-slide-bar. Anything else defaults to
-     no-drag, so interactive surfaces work by default. */
-  #report,
-  .bundles-slide-view,
-  .packages-slide-view {
     -webkit-app-region: drag;
     app-region: drag;
   }
 
-  /* Content surfaces inside the drag chrome — opt back out so
-     wheel / clicks / selection work inside them. */
+  /* Content surfaces — opt out so wheel / clicks / selection
+     work inside them. */
   .findings-content,
   .tree-view,
   .tree-view-table,
@@ -456,8 +441,8 @@ body.show-print-btn #download-btn { display: flex; }
 
   /* Interactive elements + their containers — also opt out so
      clicks land on the element instead of starting a window drag.
-     Mostly relevant inside the chrome bars (page-head,
-     bundles-slide-bar) that inherit drag from their parent. */
+     Mostly relevant inside the page-head / .bundles-slide-bar
+     chrome bars that inherit drag from body. */
   button,
   canvas,
   code,
@@ -472,9 +457,6 @@ body.show-print-btn #download-btn { display: flex; }
   finding-card,
   finding-row,
   finding-table,
-  theme-toggle,
-  #print-btn,
-  #download-btn,
   [role='button'],
   [tabindex]:not([tabindex='-1']),
   [draggable='true'],
