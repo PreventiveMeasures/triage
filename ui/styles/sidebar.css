@@ -81,6 +81,22 @@
    can't reach this state either. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
+  /* Whole sidebar is a drag surface — its bg + the gaps between
+     the header / search / list / actions act as a window drag
+     handle. The list (#file-list, above) and the control panels
+     (.sidebar-search, .sidebar-actions, below in the no-drag
+     list) opt back out so their content stays interactive. */
+  #sidebar {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  .sidebar-search,
+  .sidebar-actions {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
   .sidebar-header {
     min-height: env(titlebar-area-height, 0px);
     padding-left: max(.75rem, env(titlebar-area-x, 0px));
