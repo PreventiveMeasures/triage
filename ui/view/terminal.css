@@ -21,6 +21,7 @@
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: none;
+  -webkit-app-region: no-drag; app-region: no-drag;
   scrollbar-gutter: stable;
   padding: 12px 14px 6px;
   cursor: text;

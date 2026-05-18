@@ -215,6 +215,7 @@
 .tree-table-details-body {
   padding: .65rem .8rem;
   overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable; flex: 1;
+  -webkit-app-region: no-drag; app-region: no-drag;
 }
 .tree-detail-name {
   font-size: .9rem; font-weight: 600;

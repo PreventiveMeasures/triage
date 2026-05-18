@@ -229,6 +229,7 @@
 #file-list {
   list-style: none; flex: 1; overflow-y: auto;
   overscroll-behavior: none; scrollbar-gutter: stable;
+  -webkit-app-region: no-drag; app-region: no-drag;
   padding: 0 .35rem .25rem; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
   scrollbar-width: thin;
@@ -563,6 +564,7 @@ dialog {
   & .conflict-list {
     list-style: none; margin: 0; padding: 0;
     max-height: 60vh; overflow-y: auto; overscroll-behavior: none;
+    -webkit-app-region: no-drag; app-region: no-drag;
     display: flex; flex-direction: column; gap: .5rem;
   }
 
