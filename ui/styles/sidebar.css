@@ -81,20 +81,15 @@
    can't reach this state either. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* Whole sidebar is a drag surface — its bg + the gaps between
-     the header / search / list / actions act as a window drag
-     handle. The list (#file-list, above) and the control panels
-     (.sidebar-search, .sidebar-actions, below in the no-drag
-     list) opt back out so their content stays interactive. */
+  /* Whole sidebar is a drag surface — bg + free space inside the
+     header / search row / file list / actions all act as a window
+     drag handle. Interactive elements inside (buttons, inputs,
+     etc.) opt back out via the central no-drag list in theme.css,
+     so the surrounding container chrome drags but the controls
+     themselves stay clickable. */
   #sidebar {
     -webkit-app-region: drag;
     app-region: drag;
-  }
-
-  .sidebar-search,
-  .sidebar-actions {
-    -webkit-app-region: no-drag;
-    app-region: no-drag;
   }
 
   .sidebar-header {
@@ -245,7 +240,6 @@
 #file-list {
   list-style: none; flex: 1; overflow-y: auto;
   overscroll-behavior: none; scrollbar-gutter: stable;
-  -webkit-app-region: no-drag; app-region: no-drag;
   padding: 0 .35rem .25rem; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
   scrollbar-width: thin;
