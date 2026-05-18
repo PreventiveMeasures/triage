@@ -1160,8 +1160,8 @@ wss.on('connection', (socket: WebSocket, req) => {
   socketChallenge.set(socket, nonce)
   send(socket, { type: 'challenge', nonce })
   // Per-socket handlers are DELIBERATELY NOT serialized (vs the
-  // client-side `queue = queue.then(...)` message-dispatch chain
-  // inside `triageSync.openSocket` in `client/triage-sync.ts`).
+  // client-side `messageQueue = messageQueue.then(...)` Promise
+  // chain inside `client/triage-sync.ts:onTransportMessage`).
   // Each inbound frame spawns its own tracked async IIFE; two
   // frames from the same socket can interleave across `await`
   // boundaries inside the handlers. Per-resource correctness is

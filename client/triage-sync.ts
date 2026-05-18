@@ -2305,8 +2305,8 @@ export const triageSync = {
     // `setForcedOff(false)` mirrors the same kick logic but is
     // sidebar-visibility driven, not user-triggerable.) Without this
     // guard, every UI re-render that passes the current URL would
-    // pointlessly closeSocket + reset every session's `pending` /
-    // `pendingSave` / `subscribed`.
+    // pointlessly tear the transport down + reset every session's
+    // `pending` / `pendingSave` / `subscribed`.
     if (next === serverUrl) return
     const prev = serverUrl
     serverUrl = next

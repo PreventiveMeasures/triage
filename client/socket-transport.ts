@@ -2,73 +2,37 @@
 // client-side consumers (`client/triage-sync.ts` and
 // `client/objstore.ts`). Owns the socket lifecycle, reconnect
 // backoff, per-connection challenge nonce, application-level
-// heartbeat, and the operator-side `authenticate` flow. Consumers
-// register a `TransportConsumer` and use `send` / `getNonce` /
-// `getSocket` / `runAuthFlow` to drive their own protocol on top.
+// heartbeat, and the operator-side `authenticate` flow.
 //
-// Lifecycle (refcount):
-//   transport.acquire() → handle.release()
-// Each consumer that wants the socket open holds an acquisition. The
-// socket opens on the first acquire and closes on the last release;
-// reconnect is scheduled only while `acquireCount > 0`. This matches
-// the pre-unification "openSocket on first session, scheduleReconnect
-// bails when sessions.size === 0" pattern from each consumer
-// separately, but lets two consumers coordinate without one tearing
-// the socket out from under the other.
+// Lifecycle (refcount): each consumer that wants the socket open
+// holds a `transport.acquire()` handle. The socket opens on the
+// first acquire and closes on the last release; reconnect is
+// scheduled only while `acquireCount > 0`.
 //
-// Dispatch model:
-//   * `pong` resets the heartbeat timer (transport-internal — never
-//     reaches consumers).
-//   * `challenge { nonce }` populates `connectionNonce` and fans
-//     `onConnected(nonce)` to every consumer. Consumers issue their
-//     subscribes here (or in their addConsumer-time short-circuit
-//     against a pre-existing nonce).
-//   * `unauthorized { kind: 'auth-failed' }` resolves the in-flight
-//     auth round-trip (transport-internal — never reaches consumers,
-//     since no consumer's protocol cares about it).
-//   * `authenticated` resolves the in-flight auth round-trip AND
-//     passes through to consumers, since triage-sync uses it as a
-//     "gate cleared — kick deferred sends" signal.
-//   * Everything else dispatches to every consumer's `onMessage` in
-//     registration order. Consumers narrow on `msg.type` /
-//     `msg.workspaceTag` and drop frames they don't claim.
+// Dispatch: `pong`, `challenge`, and `unauthorized.auth-failed`
+// are transport-internal. `authenticated` passes through (triage-
+// sync uses it as a "kick deferred sends" signal). Everything
+// else fans to consumers in registration order. `handleMessage`
+// MUST stay synchronous — consumers with async handlers chain
+// them inside their own `onMessage` (the triage-sync pattern).
 //
-// Synchronous dispatch invariant: `handleMessage` never `await`s
-// before fanning out to consumers, so per-consumer message order
-// equals wire arrival order. Consumers whose handlers contain awaits
-// (triage-sync) MUST chain those awaits inside `onMessage` (via a
-// Promise queue) — `onMessage` itself must return synchronously.
-// Compare to the parallel invariant in `client/objstore.ts`
-// `handleMessage`.
-//
-// Auth flow:
-//   `runAuthFlow()` is a singleton per-socket — concurrent callers
-//   coalesce on the in-flight promise. The flow:
-//     1. Silent replay of the cached password (once per socket).
-//     2. Resolver prompt loop with `retry: true` on subsequent rounds.
-//     3. On success, cache the password (so the same flow on a future
-//        socket can silent-replay).
-//   The flow pins `startSocket` at entry and bails false on every
-//   step if the socket has swapped (mid-flow disconnect would
-//   otherwise land an authenticate against a fresh socket whose
-//   per-socket gate state has been reset).
+// Auth flow: `runAuthFlow()` is singleton per-socket; concurrent
+// callers coalesce. Pinned to `startSocket` at entry — a mid-flow
+// disconnect bails false rather than landing the authenticate on
+// a fresh socket whose gate state has been reset.
 
 import { getCachedSyncPassword, setCachedSyncPassword } from './sync-auth-cache.ts'
 
 export type AuthResolver = (context: { retry: boolean }) => Promise<string | null | undefined>
 
 export type SocketTransportDeps = {
-  // WebSocket URL. May be the empty string to construct a transport
-  // that won't open until `setServerUrl(url)` populates it.
+  // Empty string is allowed — `setServerUrl(url)` populates later.
   serverUrl: string
-  // Optional operator-side password prompt. Shared between consumers
-  // since the server's `socketAuthorized` flag is per-WebSocket; a
-  // single password unlocks both subsystems' gated actions.
+  // Optional. Shared between consumers since the server's
+  // `socketAuthorized` flag is per-WebSocket.
   authResolver?: AuthResolver
-  // Heartbeat cadence. 0 disables (e.g. unit tests that drive the
-  // socket directly). Defaults match the pre-unification triage-sync
-  // values: ping every 15 s, fail the connection if pong doesn't
-  // land within 5 s.
+  // Heartbeat cadence in ms. 0 disables (test seam). Defaults:
+  // 15 s ping, 5 s pong timeout.
   pingIntervalMs?: number
   pongTimeoutMs?: number
 }
@@ -77,18 +41,13 @@ export type SocketTransportDeps = {
 type WireMessage = { type?: unknown; [k: string]: unknown }
 
 export type TransportConsumer = {
-  // Fires synchronously for every inbound frame the transport doesn't
-  // claim for itself. MUST return synchronously — see the "synchronous
-  // dispatch invariant" comment at the top of the file.
+  // MUST return synchronously (see file-header dispatch invariant).
   onMessage(msg: WireMessage): void
-  // Fires when the socket has been opened AND the server's challenge
-  // frame has landed. `nonce` is bound into every subsequent signed
-  // frame. Consumers issue subscribes here.
+  // Fires after the server's `challenge` frame lands; `nonce` is
+  // bound into every subsequent signed frame.
   onConnected(nonce: string): void
-  // Fires when the socket closes (clean or abnormal) or when the
-  // transport is closed / released. Consumers drain pending waiters
-  // and reset per-socket state. `reason` is a short human-readable
-  // tag, not a stable identifier — don't switch on it.
+  // Fires on socket close / transport-close / release. `reason` is
+  // a human-readable tag, not a stable identifier.
   onDisconnected(reason: string): void
 }
 
@@ -96,59 +55,37 @@ export type AcquireHandle = { release(): void }
 export type ConsumerHandle = { remove(): void }
 
 export type SocketTransport = {
-  // Refcount the "want it open" signal. Each consumer that wants the
-  // socket open holds at least one acquisition; the socket opens on
-  // the first acquire and closes on the last release. Calling
-  // `release` twice is a no-op.
+  // Refcount the "want it open" signal. Socket opens on first
+  // acquire, closes on last release. Double-release is a no-op.
   acquire(): AcquireHandle
-  // Swap the server URL. If the socket is currently open, it's torn
-  // down and re-opened against the new URL — provided some consumer
-  // still holds an acquisition by the time teardown's
-  // `onDisconnected` fan-out has completed. Setting to the same URL
-  // is a no-op. Setting to empty string tears down without
-  // re-opening — `acquire` will be the next trigger when a URL
-  // exists again.
+  // Swap the server URL. Tears down + re-opens (if still acquired).
+  // Same-URL is no-op; empty-string tears down without re-opening.
   setServerUrl(url: string): void
-  // Register a consumer. Order matters for `onMessage` dispatch:
-  // consumers fire in registration order, which is well-defined
-  // because the internal `Set<TransportConsumer>` iterates
-  // insertion-ordered per ECMA-262. Returns a handle whose
-  // `remove()` unregisters.
+  // Consumers fire in registration order (`Set` iterates insertion-
+  // ordered per ECMA-262).
   addConsumer(consumer: TransportConsumer): ConsumerHandle
-  // Send a raw JSON frame. Returns `true` on send, `false` if the
-  // socket isn't OPEN (caller decides whether to throw, queue, or
-  // drop). Send-after-close throws are swallowed and surfaced as
-  // `false`.
+  // Returns false (no throw) when the socket isn't OPEN — caller
+  // decides whether to throw, queue, or drop.
   send(msg: object): boolean
-  // Current per-connection challenge nonce, or null before the
-  // challenge frame lands / after disconnect. Consumers signing
-  // outbound frames bind this nonce into their canonical bytes; an
-  // async signer must capture into a local + re-check before sending.
+  // Null before `challenge` lands / after disconnect. Async signers
+  // must capture into a local + re-check before sending.
   getNonce(): string | null
-  // Current socket reference for stale-checks in consumers' async
-  // IIFEs. `getSocket() !== captured` means the socket has swapped
-  // (closed + reconnected) since the capture.
+  // Stale-check primitive: `getSocket() !== captured` means the
+  // socket has swapped since the capture.
   getSocket(): WebSocket | null
-  // Run the operator-side auth flow against the current socket.
-  // Returns true on successful auth, false on cancel / no resolver /
-  // socket-swap-mid-flow. Singleton per-socket: concurrent callers
-  // coalesce on the in-flight promise.
+  // Singleton per-socket; concurrent callers coalesce. Returns
+  // false on cancel / no resolver / socket-swap-mid-flow.
   runAuthFlow(): Promise<boolean>
-  // Force teardown. Releases all acquisitions, clears the consumer
-  // list, closes the socket. Idempotent. Acquisitions held after
-  // `close()` are stale handles whose `release()` is a no-op.
+  // Force teardown. Idempotent. Acquisitions held after `close()`
+  // are stale handles whose `release()` is a no-op.
   close(): void
-  // Test seam: swap the heartbeat windows at runtime. Restarts the
-  // heartbeat against the new values if it's already running. No-op
-  // for any field that isn't a positive number; pass `0` to disable.
+  // Test seam. Pass `0` to `pingMs` to disable.
   setHeartbeatTimings(opts: { pingMs?: number; pongMs?: number }): void
-  // Re-arm the "silent cached-password replay" so the NEXT
-  // `runAuthFlow()` against the current socket tries the cache
-  // again, even if a prior flow on this same socket already burned
-  // the replay attempt. Used by the boot-after-unlock path: a fresh
-  // cache landing after the auth flow already gave up (no resolver
-  // / cancelled) should get one more silent attempt without
-  // requiring a reconnect.
+  // Re-arm "silent cached-password replay" so the NEXT
+  // `runAuthFlow` against the current socket tries the cache
+  // again. Boot-after-unlock path: a fresh cache landing after the
+  // auth flow already gave up should get one more silent attempt
+  // without forcing a reconnect.
   resetCachedReplayGuard(): void
 }
 
@@ -169,12 +106,9 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   let pingIntervalId: ReturnType<typeof setInterval> | null = null
   let pongTimeoutId: ReturnType<typeof setTimeout> | null = null
 
-  // Per-socket auth state. `authFlowInFlight` coalesces concurrent
-  // `runAuthFlow` callers onto one promise; `cachedPasswordTriedOnThisSocket`
-  // enforces "silent replay once per socket so an `unauthorized` ↔
-  // `authenticate` ping-pong doesn't happen if the cache is wrong";
-  // `authResponseResolver` is the single-slot continuation the next
-  // `authenticated` / `unauthorized.auth-failed` settles.
+  // Per-socket auth state. `cachedPasswordTriedOnThisSocket`
+  // enforces "silent replay once per socket" so a wrong cached
+  // password doesn't ping-pong `unauthorized` ↔ `authenticate`.
   let authFlowInFlight: Promise<boolean> | null = null
   let cachedPasswordTriedOnThisSocket = false
   let authResponseResolver: ((ok: boolean) => void) | null = null
@@ -202,9 +136,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     if (pingIntervalMs <= 0) return
     pingIntervalId = setInterval(() => {
       if (!socket || socket.readyState !== WebSocket.OPEN) return
-      // Don't double-arm: a previous ping is still awaiting its pong.
-      // The existing pongTimeout will close the socket if that one
-      // doesn't land.
+      // Don't double-arm — the existing pongTimeout will close if its pong doesn't land.
       if (pongTimeoutId) return
       send({ type: 'ping' })
       pongTimeoutId = setTimeout(() => {
@@ -241,9 +173,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     }
   }
 
-  // MUST REMAIN SYNCHRONOUS. See the "synchronous dispatch invariant"
-  // comment at the top of the file — consumers whose handlers contain
-  // awaits must chain those inside their own `onMessage`.
+  // MUST REMAIN SYNCHRONOUS — see file-header dispatch invariant.
   function handleMessage(event: MessageEvent): void {
     let msg: WireMessage
     try {
@@ -257,22 +187,18 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     }
     if (!msg || typeof msg !== 'object') return
 
-    // Heartbeat — transport-internal.
     if (msg.type === 'pong') {
       if (pongTimeoutId) { clearTimeout(pongTimeoutId); pongTimeoutId = null }
       return
     }
-    // Challenge — populates nonce, fans `onConnected` to consumers so
-    // they can kick subscribes. Transport-internal (doesn't pass through).
     if (msg.type === 'challenge') {
       if (typeof msg['nonce'] !== 'string') return
       connectionNonce = msg['nonce']
       notifyConnected(connectionNonce)
       return
     }
-    // Auth resolution. `authenticated` ALSO passes through so consumers
-    // can kick deferred sends (triage-sync uses it for trySendSubscribe /
-    // trySendSave on every gated session). `unauthorized.auth-failed` is
+    // `authenticated` also passes through; triage-sync uses it as a
+    // "kick deferred sends" signal. `unauthorized.auth-failed` is
     // purely an auth-flow signal — no consumer claims it.
     if (msg.type === 'authenticated') {
       if (authResponseResolver) {
@@ -310,9 +236,9 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     return new Promise<boolean>((resolve) => {
       authResponseResolver = resolve
       if (!send({ type: 'authenticate', password })) {
-        // Send-after-close: the socket transitioned to CLOSING /
-        // CLOSED between the gating reply and our auth attempt.
-        // Resolve false so the auth flow doesn't hang.
+        // Socket transitioned to CLOSING / CLOSED between the gating
+        // reply and our auth attempt; resolve false so the flow
+        // doesn't hang.
         authResponseResolver = null
         resolve(false)
       }
@@ -322,30 +248,24 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
   function runAuthFlow(): Promise<boolean> {
     if (authFlowInFlight) return authFlowInFlight
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.resolve(false)
-    // Pin the socket this flow runs against. If the socket transitions
-    // mid-flow (resolver dialog open during a NAT-induced reconnect,
-    // e.g.), bail false so the caller's gated send — which has already
-    // been re-armed by the consumer's `onDisconnected` — re-enters the
-    // flow on the fresh socket where the cached-replay-once gate has
-    // reset.
+    // Pin the socket. A mid-flow swap (NAT-induced reconnect during
+    // resolver dialog, etc.) bails false; the caller's gated send,
+    // re-armed by `onDisconnected`, re-enters on the fresh socket.
     const startSocket = socket
     const promise = (async (): Promise<boolean> => {
       try {
-        // Silent replay of the shared cached password, once per socket.
+        // Silent cached-replay, once per socket.
         const cached = getCachedSyncPassword()
         if (cached != null && !cachedPasswordTriedOnThisSocket) {
           cachedPasswordTriedOnThisSocket = true
           const ok = await attemptAuthenticate(cached)
           if (socket !== startSocket) return false
           if (ok) return true
-          // Cached password is wrong — clear it both in memory and on
-          // disk so a future session doesn't repeat the loop. The
-          // resolver below will prompt for a fresh one.
+          // Wrong cache — wipe so the next flow doesn't loop on it.
           try { await setCachedSyncPassword(null) }
           catch (err) { console.warn('socket-transport: failed to clear cached auth password:', err) }
         }
-        // Prompt loop. `retry=true` after the first attempt so the UI
-        // surfaces "wrong password" rather than re-prompting cold.
+        // `retry=true` after the first attempt surfaces "wrong password" in the UI.
         let firstAttempt = true
         while (true) {
           if (socket !== startSocket || !socket || socket.readyState !== WebSocket.OPEN) return false
@@ -408,22 +328,16 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     cachedPasswordTriedOnThisSocket = false
 
     next.addEventListener('open', () => {
-      // Stale-open guard: a fresh socket may already have replaced
-      // this one (setServerUrl mid-handshake, e.g.).
-      if (socket !== next) return
+      if (socket !== next) return  // stale: fresh socket replaced this one
       reconnectDelayMs = INITIAL_RECONNECT_DELAY
       startHeartbeat()
-      // Consumers fire on `challenge`, not `open` — the nonce isn't
-      // available yet here. See `notifyConnected` in handleMessage.
+      // Consumers fire on `challenge`, not `open` — nonce arrives later.
     })
 
     next.addEventListener('message', handleMessage)
 
     next.addEventListener('close', () => {
-      // Stale-close guard: if a fresh socket has already replaced
-      // this one (`socket !== next`), every clear below would step
-      // on the new socket's state.
-      if (socket !== next) return
+      if (socket !== next) return  // stale: don't clobber the replacement's state
       socket = null
       connectionNonce = null
       cachedPasswordTriedOnThisSocket = false
@@ -438,19 +352,13 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     })
 
     next.addEventListener('error', () => {
-      // `close` fires right after — let it own the reconnect schedule.
-      // Errors that don't progress to `close` (rare; mostly mock-WS
-      // test paths) are surfaced by the close-event handler when the
-      // socket eventually settles.
+      // `close` fires right after — let it own reconnect scheduling.
     })
   }
 
   function acquire(): AcquireHandle {
-    if (transportClosed) {
-      // Stale handle. Return a no-op release so callers don't crash on
-      // the cleanup path of a transport they don't realise is closed.
-      return { release() {} }
-    }
+    // Stale-handle: post-close acquires return a no-op release.
+    if (transportClosed) return { release() {} }
     acquireCount += 1
     if (acquireCount === 1 && !socket) openSocket()
     let released = false
@@ -458,10 +366,8 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       release() {
         if (released) return
         released = true
-        // No-op if the transport was closed in the meantime — `close()`
-        // already zeroed `acquireCount`. Decrementing further would
-        // drift it negative (untidy + would mis-interpret a future
-        // `> 0` read).
+        // `close()` zeroed `acquireCount`; further decrements would
+        // drift negative and mis-interpret a future `> 0` read.
         if (transportClosed) return
         acquireCount -= 1
         if (acquireCount === 0) {
@@ -477,11 +383,8 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     if (url === serverUrl) return
     serverUrl = url
     if (socket) teardownCurrentSocket('serverUrl changed')
-    // Reopen iff still wanted. Symmetric with the close-event
-    // handler's reconnect gate: if every consumer's `onDisconnected`
-    // released its acquisition (none does today, but the contract
-    // doesn't forbid it), the socket stays closed per refcount
-    // semantics — "no consumer wants it" means don't reopen.
+    // Reopen iff still wanted — symmetric with the close-event
+    // reconnect gate. "No consumer wants it" means don't reopen.
     if (acquireCount > 0 && serverUrl) openSocket()
   }
 
@@ -510,8 +413,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     const { pingMs, pongMs } = opts
     if (typeof pingMs === 'number' && pingMs >= 0) pingIntervalMs = pingMs
     if (typeof pongMs === 'number' && pongMs > 0) pongTimeoutMs = pongMs
-    // If a heartbeat is already running (i.e. the socket is open),
-    // restart it so the new interval takes effect immediately.
+    // Restart in place so the new interval takes effect immediately.
     if (pingIntervalId) startHeartbeat()
   }
 

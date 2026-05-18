@@ -1,33 +1,20 @@
 // Tracks which reports of an open workspace are present in the
-// objstore remote inventory. Used by the header sync-status badge
-// to flip between "local" (default) and "cloud" (the workspace
-// holds an objstore resource for this fileName).
+// objstore remote inventory. Drives the header sync-status badge's
+// "local" vs "cloud" indicator for each fileName.
 //
-// Lifecycle: openWorkspace(id) is called from `ingest.js` when a
-// workspace becomes the active scope (switchToFile / switchToWorkspace
-// hooks). Sessions STAY OPEN across workspace switches — the shared
-// transport multiplexes all of them on one socket, and keeping the
-// per-workspace subscription alive lets a return-visit hit the
-// already-warm `remoteTags` cache instead of refetching every blob
-// via `fetchByTag`. Cleanup is event-driven, not switch-driven:
-// `onWorkspaceDeleted` tears the session down when the workspace
-// is actually gone; `onWorkspacePrivateKeyChanged` tears down and
-// re-opens so the stale keys don't outlive the rotation.
+// Lifecycle: `openWorkspace(id)` called from ingest.js when the
+// workspace becomes active. Sessions STAY OPEN across switches —
+// the shared transport multiplexes them, and the warm `remoteTags`
+// cache means return-visits don't refetch via `fetchByTag`.
+// Cleanup is event-driven: `onWorkspaceDeleted` tears the session
+// down; `onWorkspacePrivateKeyChanged` tears down + re-opens
+// against fresh keys.
 //
-// Tag mapping: the objstore session encrypts (fileName, content)
-// internally and uses HMAC-SHA-256(tagKey, fileName) as the wire
-// `resourceTag`. The presence module mirrors the HMAC so the
-// synchronous render path can answer `isInRemote(workspaceId,
-// fileName)` without an await — same key, same input → same tag,
-// so the cached `remoteTags` set is comparable against the locally
-// computed tag for any fileName the workspace knows.
-//
-// The HMAC is one-way (the relay can't reverse it; nor can a peer
-// without the tagKey). To enumerate remote files by fileName (for
-// the download dialog), the presence module fetches each remote
-// tag via `session.fetchByTag(tag)` — which decrypts the inner
-// blob, surfaces the encoded fileName, and verifies the
-// tag-to-name rebinding.
+// Tag mapping: the wire `resourceTag` is HMAC-SHA-256(tagKey,
+// fileName) — deterministic + one-way, so the synchronous render
+// path computes the same tag locally and compares it against the
+// cached remote set without an await. Enumerating remote files BY
+// name requires `fetchByTag` (decrypt + read embedded name).
 
 import { createObjstoreClient, deriveObjstoreKeys } from '../../client/objstore.ts'
 import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
