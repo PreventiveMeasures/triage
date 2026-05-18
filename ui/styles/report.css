@@ -29,17 +29,17 @@
     view-transition-name: report-view;
 
     /* Inner views that own their own scroll (bundle terminal,
-       code viewer, packages slide) need #report itself to track
-       #main-content's viewport height — otherwise the flex chain
-       that lands at `.output` (overflow-y: auto) has no bounded
-       parent, .output grows to its content size instead of its
-       allotted space, and the wheel scrolls the whole page rather
-       than just the inner pane. Revert to the default flex-shrink
-       when those slide-mode views are mounted; the findings-list
-       overflow concern that motivated `flex-shrink: 0` doesn't
-       apply to those views (their inner pane is fixed-height +
-       internally scrollable). */
-    &:has(.bundles-slide-view, .packages-slide-view) { flex-shrink: 1; }
+       code viewer, packages slide, kanban board) need #report
+       itself to track #main-content's viewport height — otherwise
+       the flex chain that lands at `.output` / `.kanban-board`
+       (overflow: auto) has no bounded parent, that pane grows to
+       its content size instead of its allotted space, and the
+       wheel scrolls the whole page rather than just the inner
+       pane. Revert to the default flex-shrink when those views
+       are mounted; the findings-list overflow concern that
+       motivated `flex-shrink: 0` doesn't apply to those views
+       (their inner pane is fixed-height + internally scrollable). */
+    &:has(.bundles-slide-view, .packages-slide-view, .findings-content.with-kanban) { flex-shrink: 1; }
   }
 
   /* Was `& > header.page-head` (direct child of #report) before
@@ -1369,6 +1369,40 @@
    1fr stage + 300px sidebar grid can use the full viewport,
    matching how the Graph tab renders. */
 .findings-content.with-graph { max-width: none; }
+/* Kanban view-mode lays five status columns side-by-side; drop
+   the readability cap so they have room to breathe horizontally
+   on wide screens. The flex chain (#report → .findings-content
+   .with-kanban → .kanban-board) lets the board fill the remaining
+   viewport height under the toolbar so only the column bodies
+   scroll. `#findings-body-slot` collapses out of layout with
+   `display: contents` so the kanban-board is a direct flex-child
+   of the wrapper — same trick the graph view uses for its slot
+   (see graph2.css). */
+.findings-content.with-kanban {
+  max-width: none;
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+}
+/* Body slot becomes its own flex container that the kanban board
+   fills. Earlier attempts used `display: contents` (the graph
+   view's trick), but the slot is the target of a Lit `litRender`
+   call — Lit emits comment-marker nodes inside it for its parts,
+   and `display: contents` made them visible flex-children of
+   `.findings-content`, which in some browsers shifted the flex
+   distribution enough that the kanban-board's `flex: 1` lost its
+   height bound. Explicit flex on the slot is more reliable. */
+.findings-content.with-kanban #findings-body-slot {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* The toolbar's default `margin-bottom: 1rem` was pushing the
+   kanban-board exactly one rem past the viewport (the symptom
+   the user reported as "1rem too large"). Graph view doesn't hit
+   this because it doesn't render the findings toolbar at all.
+   The toolbar's own border + glass shadow already visually
+   separates it from the board below, so dropping the margin
+   here costs nothing visually. */
+.findings-content.with-kanban .toolbar { margin-bottom: .5rem; }
 
 /* Fullscreen — graph topbar's ⛶ button toggles
    `body.report-fullscreen`. Hides the chrome and lets the graph2
@@ -1393,7 +1427,11 @@ body.report-fullscreen {
 .bundle-source-overlay {
   position: fixed; inset: 0;
   z-index: 50;
-  background: rgb(0 0 0 / .55);
+  /* Theme-aware dim — matches `meta[name="theme-color"]` (the
+     same variable the kanban modal's dim uses) so light mode
+     dims to off-white and dark mode dims to the near-black
+     instead of an always-dark scrim. */
+  background: rgb(from var(--theme-bar) r g b / .75);
   display: flex; align-items: stretch; justify-content: center;
   padding: 2.5rem 1.5rem;
 }

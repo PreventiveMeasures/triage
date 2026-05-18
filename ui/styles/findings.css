@@ -172,3 +172,434 @@
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
+
+/* ── Kanban view ────────────────────────────────────────────────────
+   One column per triage bucket (Active / Fixed / Invalid / Deleted /
+   Ignored). The board fills the entire viewport height (via the
+   `.findings-content.with-kanban` flex chain below) and only the
+   column bodies scroll. The wrapper drops its max-width cap so the
+   five columns lay out edge-to-edge; columns overflow horizontally
+   inside the board itself when the viewport is too narrow.
+
+   Cards are plain divs (`<div class="kanban-card">`) with a floated
+   severity chip top-right; the title flows around it. file:line
+   sits along the bottom with the optional confidence number on the
+   right. */
+.kanban-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(200px, 1fr);
+  /* Force the implicit row to fill the board's height instead of
+     auto-sizing to content. Without this, an `auto` row sized to
+     `max(column content heights)` makes the board outgrow its
+     parent whenever any column has more cards than fit — and the
+     per-column `overflow-y: auto` never kicks in because the
+     column itself was given enough height for everything. `minmax
+     (0, 1fr)` clamps the row to the parent (flex: 1 inside the
+     bounded findings-content), letting the column bodies scroll. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: .4rem;
+  overflow-x: auto;
+  flex: 1; min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { height: 6px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* Columns derive their height from the grid row (which fills the
+   board via flex: 1) — no `max-height` heuristic needed. Each
+   column body owns the vertical scroll via overflow-y: auto and
+   flex: 1 below the column header. */
+.kanban-column {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+  transition: border-color .12s, background .12s;
+}
+
+/* drag-over state — applied by events.js while a card is over the
+   column. Accent border + faint inner tint so the drop target reads
+   immediately. */
+.kanban-column.drag-over {
+  border-color: var(--accent);
+  background: rgb(from var(--accent) r g b / .08);
+}
+
+.kanban-column-header {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .5rem;
+  padding: .35rem .55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted);
+
+  & .count {
+    font-weight: 500; font-size: .7rem;
+    color: var(--muted);
+    padding: 0 .35rem; border-radius: 999px;
+    background: rgb(from var(--text) r g b / .08);
+  }
+}
+
+/* Per-column accent — the header label adopts the same bucket color
+   used by .triage-state-btn.active.triage-state-* so the kanban
+   columns read at a glance even without their labels. */
+.kanban-column-untriaged .kanban-column-header .label { color: var(--text); }
+.kanban-column-fixed     .kanban-column-header .label { color: var(--green, #4ade80); }
+.kanban-column-invalid   .kanban-column-header .label { color: var(--muted); }
+.kanban-column-deleted   .kanban-column-header .label { color: var(--critical); }
+.kanban-column-ignored   .kanban-column-header .label { color: var(--accent, #2563eb); }
+
+.kanban-column-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .3rem;
+  display: flex; flex-direction: column; gap: .25rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+.kanban-empty {
+  color: var(--muted);
+  font-size: .75rem;
+  text-align: center;
+  padding: .75rem .5rem;
+  font-style: italic;
+}
+
+/* Compact kanban card — block layout so the floated severity chip
+   in the top-right lets the title text flow around it. The bottom
+   row holds file:line + an optional grey confidence digit, kept
+   single-line so the card height varies only with title length. */
+/* Compact kanban card — three-area grid: title clamps to three
+   lines on the left, severity chip in the top-right corner,
+   meta row (file:line + confidence) across both columns at the
+   bottom. The grid layout was preferred over float-flow because
+   `-webkit-line-clamp` (needed for the ellipsis on truncated
+   titles) requires `display: -webkit-box`, which doesn't cooperate
+   with floated children; a column reservation for the chip is a
+   small layout cost for getting the ellipsis back. */
+.kanban-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'title badge'
+    'meta  meta';
+  gap: .1rem .35rem;
+  padding: .25rem .35rem;
+  background: var(--bg, transparent);
+  border-radius: 4px;
+  font-size: .75rem;
+  cursor: grab; user-select: none;
+  transition: background .12s, opacity .12s;
+
+  /* Borderless by default — the column's body padding + the inter-
+     card gap already separates cards visually. Hover gets a faint
+     fill so the click target remains discoverable, and conflict
+     cards keep their dashed outline since the indicator carries
+     meaning. */
+  &:hover { background: rgb(from var(--text) r g b / .05); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  &:active { cursor: grabbing; }
+  &.dragging { opacity: .45; cursor: grabbing; }
+  &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
+  &.mark-red   { background: var(--mark-red-bg); }
+  &.mark-blue  { background: var(--mark-blue-bg); }
+  &.mark-green { background: var(--mark-green-bg); }
+  &.mark-gray  { background: var(--mark-gray-bg); }
+}
+
+.kanban-card .kanban-badge {
+  grid-area: badge;
+  align-self: start;
+  margin-top: .05rem;
+  padding: .05rem .25rem;
+  min-width: 1.1rem;
+  border-radius: 3px;
+  text-align: center;
+  font-size: .62rem; font-weight: 700;
+  line-height: 1.25;
+  user-select: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  &.sev-critical      { background: var(--critical); color: #fff; }
+  &.sev-high          { background: var(--high); color: #fff; }
+  &.sev-medium        { background: var(--medium); color: #000; }
+  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
+  &.sev-high_bug      { background: var(--high-bug); color: #fff; }
+  &.sev-bug           { background: var(--bug); color: #fff; }
+  &.sev-informational { background: var(--info); color: #fff; }
+}
+
+.kanban-card .kanban-title {
+  grid-area: title;
+  font-size: 1em; line-height: 1.3;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  /* Cap to three lines with trailing ellipsis. `-webkit-line-clamp`
+     ships in every browser we target and behaves consistently with
+     the (newer) standalone `line-clamp` property. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kanban-card .kanban-meta {
+  grid-area: meta;
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: .35rem;
+  font-size: .65rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  & .kanban-loc {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; flex: 1 1 auto;
+  }
+  & .kanban-conf {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ── Kanban detail modal ────────────────────────────────────────────
+   Centered overlay opened from a kanban card click. The wrapping
+   backdrop catches outside-clicks; the inner panel holds a real
+   `<finding-card>` for full detail (tabs, action buttons, the
+   description body). Open / close animations run as a single
+   view transition — see the
+   `::view-transition-{new|old}(kanban-detail-modal)` rules below. */
+.kanban-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid; place-items: center;
+  padding: 1rem;
+  /* Click-pass-through: cards stay interactive while the modal is
+     open so re-clicking the active card toggles it closed; clicks
+     not on the modal bubble up to the close-on-outside fallthrough
+     in the report click handler. */
+  pointer-events: none;
+}
+
+/* Dim layer — a separate sibling of the modal that animates
+   independently. Keeping the dim on its own element with its own
+   `view-transition-name` means the dim's opacity fade doesn't
+   propagate down to (or visually compete with) the modal's
+   clip-path animation. */
+.kanban-detail-dim {
+  position: fixed;
+  inset: 0;
+  /* Theme color (the same value the `meta[name="theme-color"]`
+     gets) — `--theme-bar` is the canonical variable for it
+     (`#1a1a1b` dark / `#f6f6fa` light), distinct from `--bg`
+     which is the page surface (`#121212` / `#fff`). */
+  background: rgb(from var(--theme-bar) r g b / .75);
+  pointer-events: none;
+  view-transition-name: kanban-detail-dim;
+}
+
+.kanban-detail-modal {
+  position: relative;
+  /* Wider than the previous 560px cap — finding descriptions
+     can include long lines of code spans that clipped on the
+     right edge at the smaller cap. Caps at viewport too so
+     narrow displays still get a sensible inset. */
+  width: min(900px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  background: var(--bg, var(--surface));
+  border: 1px solid var(--border); border-radius: 8px;
+  /* Tighter shadow — the previous 12px/40px stack visibly flickered
+     during view-transition snapshots as the modal morphed sizes,
+     because the shadow extent scaled with the snapshot bitmap. */
+  box-shadow: 0 4px 14px rgb(0 0 0 / .25);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  view-transition-name: kanban-detail-modal;
+  /* The backdrop is pointer-events: none; explicitly re-enable
+     pointer events on the modal panel itself so clicks inside still
+     reach buttons / tabs. */
+  pointer-events: auto;
+
+  /* Mirror the card's color marker on the modal so a red-tagged
+     finding opens into a red-tinted detail panel — the visual
+     continuity also reinforces the "modal came out of this card"
+     metaphor that the shared view-transition sets up. */
+  &.has-conflict { border-color: var(--accent); border-style: dashed; }
+  &.mark-red   { background: var(--mark-red-bg);   border-color: var(--mark-red-tab-border); }
+  &.mark-blue  { background: var(--mark-blue-bg);  border-color: var(--mark-blue-tab-border); }
+  &.mark-green { background: var(--mark-green-bg); border-color: var(--mark-green-tab-border); }
+  &.mark-gray  { background: var(--mark-gray-bg);  border-color: var(--mark-gray-tab-border); }
+}
+
+.kanban-detail-close {
+  position: absolute; top: .25rem; right: .25rem; z-index: 1;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--muted);
+  font: 500 16px/1 ui-monospace, monospace;
+  cursor: pointer;
+
+  &:hover { color: var(--accent); background: var(--surface-active); }
+}
+
+.kanban-detail-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .5rem .5rem .4rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* Modal open / close transition. events.js dynamically stamps
+   `view-transition-name: kanban-detail-modal` on the clicked card
+   so the browser pairs the card (old snapshot) with the modal
+   (new snapshot, name supplied by CSS above) and morphs position
+   + size between them — the modal flies out of the card, and on
+   close flies back into it. Only the morph speed is overridden;
+   the default crossfade of `::view-transition-{old,new}` runs
+   alongside at the same duration so the contents swap mid-flight.
+   The backdrop is named separately so its own fade is independent
+   of the morph (the morph wraps a single group; the backdrop is
+   the surrounding dim). */
+/* Shared-element fly transition (open: card → modal, close:
+   modal → card). The source card is stamped with
+   `view-transition-name: kanban-detail-modal` via inline style
+   in events.js around each transition; the browser pairs the
+   card and modal snapshots by name and the GROUP pseudo morphs
+   position + size between them via its default transform
+   animation.
+
+   OLD / NEW pseudos animate `clip-path` rather than opacity.
+   Opacity-crossfading two snapshots over a translucent layer
+   reads as a washed-out frame at the midpoint (the
+   "bright → dark → bright" effect). Clip-path keeps both at
+   full opacity throughout.
+
+   The pseudos are CENTERED inside the image-pair via `top: 50%;
+   left: 50%; translate: -50% -50%`. The spec default puts each
+   pseudo at the top-left of the image-pair sized to its
+   captured element's natural rect — so the small OLD card
+   (~200×60) and the larger NEW modal (~560×400) sat at offset
+   positions and their clip-path centers landed at different
+   points. Centering aligns the clip-path centers so both
+   converge on the same visual point. (The `translate` property
+   is independent of the `transform` property the browser uses
+   for the GROUP's morph animation, so they compose.)
+
+   The clip's minimum size is NOT zero — it's the source card's
+   own dimensions (set from a real `.kanban-card` measurement in
+   events.js as the CSS variables `--kanban-clip-card-w/h`).
+   The modal's clip can't shrink past the card's footprint, so
+   at the "small" end of the animation the modal's visible
+   area exactly overlaps the card's visible area, producing a
+   single rect rather than two-rectangles-at-different-sizes.
+   The card pseudo is itself card-sized, so the same calc
+   evaluates to `inset(0)` for it and the card just stays
+   visible (overlapped by the modal at full alpha).
+
+   `animation-fill-mode: forwards` holds the terminal keyframe
+   until the pseudo is detached — otherwise the pseudo snaps
+   back to its `from` clip-path for one frame and the modal
+   briefly reappears at the end of close. */
+:root {
+  /* Fallback when no .kanban-card is mounted to measure. */
+  --kanban-clip-card-w: 180px;
+  --kanban-clip-card-h: 56px;
+}
+
+@keyframes kanban-clip-hide {
+  0%   { clip-path: inset(0); }
+  100% { clip-path: inset(
+    max(0px, calc(50% - var(--kanban-clip-card-h) / 2))
+    max(0px, calc(50% - var(--kanban-clip-card-w) / 2))
+  ); }
+}
+@keyframes kanban-clip-reveal {
+  0%   { clip-path: inset(
+    max(0px, calc(50% - var(--kanban-clip-card-h) / 2))
+    max(0px, calc(50% - var(--kanban-clip-card-w) / 2))
+  ); }
+  100% { clip-path: inset(0); }
+}
+@keyframes kanban-fade-in  { 0% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes kanban-fade-out { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+::view-transition-group(kanban-detail-modal) {
+  /* Force the modal group to paint above the dim group's pseudo.
+     Without this z-index, the browser's default pseudo ordering
+     puts the dim — which is a NEW-only element — visually on top
+     of the modal pair (OLD card + NEW modal) during the morph,
+     so the modal looks dimmed-out / darker than its final state
+     until the very last frame. */
+  z-index: 2;
+  animation-duration: .2s;
+  animation-timing-function: cubic-bezier(.3, 0, .2, 1);
+}
+::view-transition-group(kanban-detail-dim) {
+  z-index: 1;
+}
+::view-transition-old(kanban-detail-modal),
+::view-transition-new(kanban-detail-modal) {
+  inset: auto;
+  top: 50%; left: 50%;
+  translate: -50% -50%;
+}
+::view-transition-old(kanban-detail-modal) {
+  animation: kanban-clip-hide .16s cubic-bezier(.4, 0, 1, 1) forwards;
+}
+::view-transition-new(kanban-detail-modal) {
+  animation: kanban-clip-reveal .18s cubic-bezier(0, 0, .25, 1) forwards;
+}
+
+/* On open, hide the card-side pseudo (OLD = card). The card
+   snapshot has a different proportion than the modal (~200×60
+   vs ~560×400) and was visible underneath the modal's clip-
+   path animation as a mis-sized stub. events.js stamps
+   `kanban-opening` on <html> around the open transition so we
+   can target the OLD here. The close path keeps both pseudos
+   visible — debugging that direction is deferred. */
+html.kanban-opening::view-transition-old(kanban-detail-modal) {
+  visibility: hidden;
+}
+
+/* Dim layer fades on its own track. Plain opacity is fine here
+   because the dim is on a SEPARATE element from the modal — the
+   modal's own (clip-path) animation isn't affected. */
+::view-transition-new(kanban-detail-dim) {
+  animation: kanban-fade-in .16s ease-out forwards;
+}
+::view-transition-old(kanban-detail-dim) {
+  animation: kanban-fade-out .14s ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(kanban-detail-modal),
+  ::view-transition-new(kanban-detail-modal),
+  ::view-transition-old(kanban-detail-modal),
+  ::view-transition-new(kanban-detail-dim),
+  ::view-transition-old(kanban-detail-dim) { animation-duration: .01s; }
+}

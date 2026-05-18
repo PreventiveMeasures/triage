@@ -3,9 +3,9 @@ import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, s
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
-const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table'])
+const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban'])
 
-export type ViewMode = 'table' | 'list' | 'grouped'
+export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban'
 export type CurrentView = 'findings' | 'files' | 'bundles'
 export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
 
@@ -62,6 +62,7 @@ export interface State {
   filesViewMode: 'table' | 'list'
   filesSearch: string
   filesSelectedFile: string | null
+  kanbanPopoverGid: string | null
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -366,6 +367,11 @@ export const state: State = store<State>({
   // Currently-selected file in the Files-tab table view (null = no
   // selection, details panel hidden). Re-clicking the row clears it.
   filesSelectedFile: null,
+  // Kanban view: gid of the group whose detail popover is currently
+  // open (null = no popover). Session-only — not persisted, since the
+  // popover is a transient inspection affordance. Re-clicking the
+  // same card (or clicking the backdrop / pressing Esc) clears it.
+  kanbanPopoverGid: null,
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes

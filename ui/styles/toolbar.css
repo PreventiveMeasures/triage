@@ -191,12 +191,10 @@
 /* `<view-mode-buttons>` styles live outside `.toolbar` so the same
    chrome lands wherever the component is mounted — the findings
    toolbar AND the Files-tab `.tree-toolbar`. `display: contents`
-   on the host flattens it out of layout so the View: label and the
-   icon group become direct flex items of whichever toolbar row
-   wraps them, picking up its `gap` (the label's slight negative
-   margin tightens that gap to a comfortable label↔group spacing). */
+   on the host flattens it out of layout so the icon group becomes
+   a direct flex item of whichever toolbar row wraps it, picking
+   up its `gap` alongside the sort dropdown and filter chips. */
 view-mode-buttons { display: contents; }
-.view-mode-label { color: var(--muted); margin-right: -.4rem; }
 
 .view-mode-group {
   display: inline-flex;

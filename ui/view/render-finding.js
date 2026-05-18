@@ -22,7 +22,7 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 //   informational → info (shortened so it fits the shared badge slot)
 //   high_bug      → "high bug" (underscore → space, reads naturally
 //                   under the shared text-transform: uppercase)
-function badgeLabel(severity) {
+export function badgeLabel(severity) {
   if (severity === 'informational') return 'info'
   return severity.replaceAll('_', ' ')
 }
@@ -31,7 +31,7 @@ function badgeLabel(severity) {
 // Markdown findings begin with a literal title line; JSON findings
 // usually have a one-paragraph description and the whole thing
 // becomes the title. CSS handles the visual ellipsis if it overflows.
-function firstLine(text) {
+export function firstLine(text) {
   if (!text) return ''
   for (const line of text.split('\n')) {
     if (line.trim()) return line.trim()

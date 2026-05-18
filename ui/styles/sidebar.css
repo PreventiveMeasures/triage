@@ -66,6 +66,14 @@
   }
 }
 
+/* Body-level duplicate of `.sidebar-header` (sibling of #sidebar in
+   HTML). Hidden by default; the `@media (display-mode:
+   window-controls-overlay)` block below flips this on. Ordered
+   AFTER the `.sidebar-header { display: flex; … }` rule so its
+   `display: none` wins the cascade in non-WCO modes (both rules
+   are single-class specificity). */
+.sidebar-header-wco { display: none; }
+
 /* WCO PWA mode — make the sidebar header the visual home for the
    OS window controls. `min-height` raises it to the OS titlebar
    strip so close/min/max paint inside it instead of clipping over
@@ -100,6 +108,40 @@
 
     & #sidebar-toggle { display: none; }
   }
+
+  /* In WCO mode the body-level duplicate paints the brand above
+     all page-level backdrops, while the rest of the sidebar
+     (including the lock, the file list, etc.) stays in its
+     normal stacking context and dims with the page when a modal
+     opens. The user's preference: "sidebar below by the backdrop,
+     app name above". So we hide ONLY the brand inside the
+     original (visibility, so the flex layout next to the lock
+     stays intact) and show the duplicate's brand on top via
+     position: fixed + z-index above the page backdrops. */
+  #sidebar > .sidebar-header .brand { visibility: hidden; }
+  .sidebar-header-wco {
+    display: flex;
+    position: fixed;
+    top: 0; left: 0;
+    width: 260px;
+    z-index: 250;
+    box-sizing: border-box;
+    /* Click-pass-through: the only interactive element along the
+       top of the sidebar (the lock) lives in the in-sidebar
+       header underneath, and our duplicate covers the same
+       column. Without `pointer-events: none` here, clicks on the
+       lock area land on the duplicate and the lock is
+       unreachable in WCO mode. The drag-handle behavior is
+       provided by `app-region: drag` (the OS handles drag at the
+       compositor level, independent of pointer-events). */
+    pointer-events: none;
+  }
+  /* Sidebar is hidden via `.empty` when there's nothing to show —
+     no point pinning a drag strip above an empty column. */
+  body:has(#sidebar.empty) .sidebar-header-wco { display: none; }
+  /* Collapsed sidebar shrinks to 32px; match the width so the
+     drag handle's footprint stays glued to the sidebar column. */
+  body:has(#sidebar.collapsed) .sidebar-header-wco { width: 32px; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
@@ -554,7 +596,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .conflict-head h3 {
     margin: 0 0 .25rem; font-size: 1rem; font-weight: 600;
@@ -736,7 +778,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .te-head h3 {
     margin: 0 0 .25rem; font-size: 1rem; font-weight: 600;
@@ -852,7 +894,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .om-head h3 {
     margin: 0 0 .35rem; font-size: 1rem; font-weight: 600;
@@ -919,7 +961,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .cd-head h3 {
     margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
@@ -1014,7 +1056,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .fl-head h3 {
     margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
@@ -1128,7 +1170,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .nwd-head h3 {
     margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
@@ -1272,7 +1314,7 @@ dialog {
   margin-inline: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / .35);
 
-  &::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(2px); }
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 
   & .lwd-head h3 {
     margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;

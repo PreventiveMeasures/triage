@@ -7,10 +7,10 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { state } from '../../client/state.ts'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel } from './format.js'
+import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { applyFilters, applySorting } from './filters.js'
-import { findingCardGid } from './render-finding.js'
+import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
@@ -759,12 +759,14 @@ function triageSelectorTemplate(triageCounts) {
 }
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags) {
-  const { showSource, showConfidence, showPriority, showGraphMode } = flags
-  // The findings tab gains a 4th "graph" view-mode option when a
-  // tree-bearing report is loaded (showGraphMode). Switching to it
-  // replaces the table / list / grouped body with the graph2 canvas
-  // — see the findings-graph slot in render() below.
-  const viewModes = showGraphMode ? 'table,list,grouped,graph' : 'table,list,grouped'
+  const { showSource, showConfidence, showPriority, showGraphMode, kanbanMode } = flags
+  // The findings tab gains a "graph" view-mode option when a
+  // tree-bearing report is loaded (showGraphMode). The kanban mode
+  // (status board) sits between grouped and graph. Switching to
+  // graph replaces the table / list / grouped / kanban body with
+  // the graph2 canvas — see the findings-graph slot in render()
+  // below.
+  const viewModes = showGraphMode ? 'table,list,grouped,kanban,graph' : 'table,list,grouped,kanban'
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
   const srcChip = (value, label) => html`<button
     type="button"
@@ -820,7 +822,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
             aria-label="Confidence range"></range-slider>
           <conf-range-mirror id="conf-range-vals" class="conf-vals" for="conf-range" .low=${state.filterConfMin} .high=${state.filterConfMax}></conf-range-mirror>
         </div>` : nothing}
-      ${triageSelectorTemplate(triageCounts)}
+      ${kanbanMode ? nothing : triageSelectorTemplate(triageCounts)}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -890,6 +892,90 @@ function findingCardPlaceholder(g, inGroup = false) {
     : html`<finding-card data-gid=${gid}></finding-card>`
 }
 
+// Compact kanban card — tiny colored letter-chip + multi-line
+// title + file:line. The full card (tabs, action buttons, the
+// description body) lives behind a click that opens a centered
+// modal (see kanbanDetailTemplate). The whole card is draggable;
+// `data-kanban-source` lets the drop-zone predicate in events.js
+// tell us apart from any other element with `data-gid`.
+const SEVERITY_LETTERS = {
+  critical:      'C',
+  high:          'H',
+  medium:        'M',
+  low:           'L',
+  high_bug:      'H',
+  bug:           'B',
+  informational: 'i',
+}
+function kanbanCardTemplate(g) {
+  const groupSt = groupState(g)
+  const active = activeTabFor(g)
+  const title = firstLine(stripExportMarker(active.description, active.exportName)) || '(untitled finding)'
+  const classes = { 'kanban-card': true, 'has-conflict': groupSt.hasConflict }
+  if (!groupSt.hasConflict && groupSt.commonColor) classes[`mark-${groupSt.commonColor}`] = true
+  const lineNum = parseInt(active.line, 10)
+  const lineSuffix = Number.isFinite(lineNum) ? `:${lineNum}` : ''
+  const letter = SEVERITY_LETTERS[active.severity] ?? '?'
+  return html`<div
+    class=${classMap(classes)}
+    data-gid=${groupKey(g)}
+    data-kanban-source
+    draggable="true"
+    role="button"
+    tabindex="0"
+    aria-label=${`Open details for ${title}`}
+  >
+    <span
+      class=${`kanban-badge sev-${active.severity}`}
+      title=${badgeLabel(active.severity)}
+      aria-label=${badgeLabel(active.severity)}
+    >${letter}</span>
+    <span class="kanban-title">${title}</span>
+    <div class="kanban-meta">
+      <span class="kanban-loc">${active.file}${lineSuffix}</span>
+      ${active.confidence === undefined || active.confidence === null
+        ? nothing
+        : html`<span class="kanban-conf" title=${`Confidence ${active.confidence}/10`}>${active.confidence}</span>`}
+    </div>
+  </div>`
+}
+
+// Detail modal — opens on kanban-card click, wrapped in
+// `document.startViewTransition` so the open / close animations
+// run as a single view transition (the scale + opacity keyframes
+// against `::view-transition-{new|old}(kanban-detail-modal)` in
+// findings.css drive the visual). Clicking the backdrop (anywhere
+// outside the modal) or pressing Esc clears `state.kanbanPopoverGid`
+// — both transitions go through the same renderImpl path so the
+// animation is symmetric. The modal carries the source group's
+// mark color (or its conflict outline) on its host so a colored
+// finding's detail view reads consistently with its card.
+function kanbanDetailTemplate(focusGroup) {
+  if (!focusGroup) return nothing
+  const groupSt = groupState(focusGroup)
+  const modalClasses = { 'kanban-detail-modal': true, 'has-conflict': groupSt.hasConflict }
+  if (!groupSt.hasConflict && groupSt.commonColor) modalClasses[`mark-${groupSt.commonColor}`] = true
+  // The dim sibling is a separate layer (its own view-transition-
+  // name) so its opacity fade doesn't drag the modal's clip-path
+  // animation with it. The modal animates by clip alone (no opacity
+  // shift), keeping its background + border at full alpha throughout
+  // the morph between the source card and the centered modal box.
+  return html`<div class="kanban-detail-backdrop">
+    <div class="kanban-detail-dim"></div>
+    <div class=${classMap(modalClasses)} role="dialog" aria-modal="true">
+      <button
+        type="button"
+        class="kanban-detail-close"
+        title="Close details"
+        aria-label="Close details"
+      >×</button>
+      <div class="kanban-detail-body">
+        ${findingCardPlaceholder(focusGroup)}
+      </div>
+    </div>
+  </div>`
+}
+
 function findingsBodyTemplate(filtered) {
   if (state.viewMode === 'table') {
     // Table view is always flat. For 'file' sort we still want
@@ -933,6 +1019,65 @@ function findingsBodyTemplate(filtered) {
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
     </div>`
+  }
+  if (state.viewMode === 'kanban') {
+    // Status board: one column per triage bucket. Each filtered
+    // group lands in exactly one column based on `groupState(g)
+    // .commonTriage` — null = the Active column (live, untriaged).
+    // The kanban view intentionally bypasses `state.shownTriage`
+    // (handled by the caller) so every column is populated from
+    // the same filter-respecting input set.
+    //
+    // Cards are intentionally compact (badge + one-line title +
+    // file:line), so a column holds many at a glance. Clicking a
+    // card opens a centered popover with the full `<finding-card>`
+    // for the same group — the entry point for triage actions,
+    // tabs, and comments while the column itself stays uncluttered.
+    // Drag-and-drop ([data-kanban-source] / [data-kanban-target])
+    // moves the card between status columns; the handler lives in
+    // events.js.
+    const columns = [
+      { key: 'untriaged', label: 'Untriaged', target: 'untriaged' },
+      { key: 'fixed',     label: 'Fixed',     target: 'fixed' },
+      { key: 'invalid',   label: 'Invalid',   target: 'invalid' },
+      { key: 'deleted',   label: 'Deleted',   target: 'deleted' },
+      { key: 'ignored',   label: 'Ignored',   target: 'ignored' },
+    ]
+    const buckets = new Map(columns.map((c) => [c.key, []]))
+    for (const g of filtered) {
+      const t = groupState(g).commonTriage
+      const key = t ?? 'untriaged'
+      const slot = buckets.get(key)
+      if (slot) slot.push(g)
+    }
+    // Surface the focused group's details modal in the same body
+    // template so the popover's lifecycle is bound to the kanban
+    // view's lifecycle; switching to a different view-mode unmounts
+    // it. The render() caller wraps state.kanbanPopoverGid mutations
+    // in `document.startViewTransition` so the modal scales in / out.
+    const focusGroup = state.kanbanPopoverGid
+      ? filtered.find((g) => groupKey(g) === state.kanbanPopoverGid)
+      : null
+    return html`<div class="kanban-board">
+      ${repeat(columns, (c) => c.key, (c) => {
+        const items = buckets.get(c.key)
+        return html`<div
+          class=${`kanban-column kanban-column-${c.key}`}
+          data-kanban-target=${c.target}
+        >
+          <div class="kanban-column-header">
+            <span class="label">${c.label}</span>
+            <span class="count">${items.length}</span>
+          </div>
+          <div class="kanban-column-body">
+            ${items.length === 0
+              ? html`<div class="kanban-empty">No ${c.label.toLowerCase()} findings.</div>`
+              : repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g))}
+          </div>
+        </div>`
+      })}
+    </div>
+    ${kanbanDetailTemplate(focusGroup)}`
   }
   if (state.viewMode === 'grouped') {
     // Group groups by file. All tabs in a dedup group share the same
@@ -1072,12 +1217,14 @@ function renderImpl() {
   // findings view with a report loaded AND a printable view-mode
   // (table / list / grouped). The graph view-mode and the Files
   // view both have non-printable bodies (canvas + per-file tree),
-  // so the button hides for those. Toggled via a body class so the
-  // button itself doesn't need to re-render.
+  // and the kanban view shows a board layout that doesn't read on
+  // paper, so the button hides for those. Toggled via a body class
+  // so the button itself doesn't need to re-render.
   document.body.classList.toggle('show-print-btn',
     state.reports.length > 0 &&
     state.currentView === 'findings' &&
-    state.viewMode !== 'graph')
+    state.viewMode !== 'graph' &&
+    state.viewMode !== 'kanban')
   // Bundles view — paints from `state.bundles` (cached by
   // renderSidebar's listBundles call), so it stays paint-only here.
   // Lives before the reports-gate below because the bundles list is
@@ -1202,7 +1349,13 @@ function renderImpl() {
     const t = groupState(g).commonTriage
     if (t) triageCounts[t]++
   }
-  const allGroups = mergedGroups.filter((g) => groupState(g).commonTriage === state.shownTriage)
+  // Kanban view shows every triage bucket as a column, so it
+  // ignores the shownTriage single-bucket filter entirely; every
+  // other view-mode (table / list / grouped / graph) honours it.
+  const isKanban = state.viewMode === 'kanban'
+  const allGroups = isKanban
+    ? mergedGroups
+    : mergedGroups.filter((g) => groupState(g).commonTriage === state.shownTriage)
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(state.reports.map((r) => r.type))]
@@ -1376,6 +1529,7 @@ function renderImpl() {
   let wrapperClass = 'findings-content'
   if (tableWithDetails) wrapperClass += ' with-details'
   if (renderGraphInBody) wrapperClass += ' with-graph'
+  if (isKanban) wrapperClass += ' with-kanban'
 
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
@@ -1387,6 +1541,7 @@ function renderImpl() {
       showConfidence: hasAnyConfidence,
       showPriority: hasAnyPriority,
       showGraphMode: treeAvailable,
+      kanbanMode: isKanban,
     })
 
     // Empty-state line — slot-based so the typeLabel (which can carry
@@ -1496,7 +1651,7 @@ function renderImpl() {
     if (graphSlot) {
       const viewModeRow = html`<view-mode-buttons
         mode=${state.viewMode}
-        modes="table,list,grouped,graph"
+        modes="table,list,grouped,kanban,graph"
       ></view-mode-buttons>`
       litRender(renderGraph2Layout(g2DataForBody.graph, { extraTopRow: viewModeRow }), graphSlot)
       // Populate the right-panel selection slot + the top-packages

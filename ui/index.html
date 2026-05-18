@@ -34,6 +34,25 @@
   </svg>
 </button>
 
+<!-- WCO duplicate of the sidebar-header. Hidden by default; shown
+     via CSS only when `@media (display-mode: window-controls-overlay)`
+     matches. Lives outside #sidebar so it escapes #sidebar's stacking
+     context (which is trapped under the page-level fixed backdrops
+     by the sidebar's own backdrop-filter). Only the brand is
+     duplicated — the interactive buttons (sidebar-toggle,
+     encryption-toggle) stay single-instance in the in-sidebar
+     header. The drag-handle / OS-controls-landing strip is what
+     this duplicate exists to provide; the actual lock + hamburger
+     buttons are still functional through the regular sidebar
+     header (visible underneath since both occupy the same column
+     position). -->
+<div class="sidebar-header sidebar-header-wco" aria-hidden="true">
+  <h2 class="brand">
+    <span class="brand-name">DeepView</span>
+    <span class="brand-tag">dev</span>
+  </h2>
+</div>
+
 <aside id="sidebar">
   <div class="sidebar-header">
     <h2 class="brand">

@@ -1082,6 +1082,331 @@ report.addEventListener('row-select', (e) => {
   render()
 })
 
+// Kanban drag-and-drop. A `<finding-row class="kanban-card">` is
+// draggable; the `.kanban-column` elements advertise themselves as
+// drop zones via `data-kanban-target=<active|fixed|invalid|deleted
+// |ignored>`. On drop we mirror the existing `[data-triage-action]`
+// menu's mutation rules (conflict groups apply to the active tab
+// only, consistent groups apply to every tab), then `saveTriage()`
+// + render() to repaint the board.
+const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
+
+function setGroupTriage(group, target) {
+  const groupSt = groupState(group)
+  const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
+  for (const f of targets) {
+    const key = tabKey(f)
+    const iKey = ignoredKey(f)
+    if (target === 'untriaged') {
+      state.triageState.delete(key)
+      state.ignoredIds.delete(iKey)
+    } else if (target === 'ignored') {
+      state.ignoredIds.add(iKey)
+      state.triageState.delete(key)
+    } else {
+      state.triageState.set(key, target)
+      state.ignoredIds.delete(iKey)
+    }
+  }
+}
+
+function clearKanbanDragChrome() {
+  for (const el of report.querySelectorAll('.kanban-card.dragging')) {
+    el.classList.remove('dragging')
+  }
+  for (const el of report.querySelectorAll('.kanban-column.drag-over')) {
+    el.classList.remove('drag-over')
+  }
+}
+
+report.addEventListener('dragstart', (e) => {
+  const card = e.target.closest?.('.kanban-card[data-kanban-source]')
+  if (!card || !e.dataTransfer) return
+  const gid = card.dataset.gid
+  if (!gid) return
+  // Setting both a private type (for our drop predicate) and a
+  // plain-text fallback (so dragging out of the app shows the gid
+  // rather than nothing). `effectAllowed = 'move'` matches the
+  // semantics — the card leaves its source column.
+  e.dataTransfer.setData(KANBAN_DATA_TYPE, gid)
+  e.dataTransfer.setData('text/plain', gid)
+  e.dataTransfer.effectAllowed = 'move'
+  card.classList.add('dragging')
+})
+
+report.addEventListener('dragend', () => {
+  clearKanbanDragChrome()
+})
+
+report.addEventListener('dragover', (e) => {
+  if (!e.dataTransfer?.types.includes(KANBAN_DATA_TYPE)) return
+  const col = e.target.closest?.('.kanban-column[data-kanban-target]')
+  if (!col) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  if (!col.classList.contains('drag-over')) {
+    for (const other of report.querySelectorAll('.kanban-column.drag-over')) {
+      if (other !== col) other.classList.remove('drag-over')
+    }
+    col.classList.add('drag-over')
+  }
+})
+
+report.addEventListener('dragleave', (e) => {
+  const col = e.target.closest?.('.kanban-column[data-kanban-target]')
+  if (!col) return
+  // `dragleave` also fires on entering child elements; only clear
+  // the highlight when the pointer actually left the column box.
+  if (col.contains(e.relatedTarget)) return
+  col.classList.remove('drag-over')
+})
+
+report.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.types.includes(KANBAN_DATA_TYPE)) return
+  const col = e.target.closest?.('.kanban-column[data-kanban-target]')
+  if (!col) {
+    clearKanbanDragChrome()
+    return
+  }
+  e.preventDefault()
+  const gid = e.dataTransfer.getData(KANBAN_DATA_TYPE)
+  const target = col.dataset.kanbanTarget
+  clearKanbanDragChrome()
+  if (!gid || !target) return
+  const group = findGroupById(gid)
+  if (!group) return
+  // No-op drops (same column) skip the persist + render churn —
+  // groupState read is cheap relative to a full re-render.
+  const currentTriage = groupState(group).commonTriage ?? 'untriaged'
+  if (currentTriage === target) return
+  setGroupTriage(group, target)
+  // Paint first; persist after. saveTriage's synchronous portion
+  // does a localStorage.setItem of the (potentially large)
+  // pending-key JSON which can stall the next frame; doing it
+  // after render() means the card visibly snaps to the new column
+  // immediately and the persistence work happens off the critical
+  // path. The async compress / seal already runs on its own
+  // microtask chain after this point.
+  render()
+  queueMicrotask(saveTriage)
+})
+
+// Kanban detail popover — open / close via document.startViewTransition
+// so the modal animates in / out via the CSS keyframes attached to
+// `::view-transition-{new,old}(kanban-detail-modal)` in findings.css.
+// We intentionally do NOT use a shared-element pairing (the card
+// doesn't get the same view-transition-name): the morph between a
+// 200×60 card and a 560×~400 modal causes visible drop-shadow
+// flicker and, more importantly, leaves the view-transition state
+// in a sometimes-stuck shape (next click takes no effect, the one
+// after that does — the "every third click" report). Letting the
+// modal animate in place against the unchanged kanban board is
+// stable and still feels snappy.
+// True between `startViewTransition` and the resolution of its
+// `.finished` promise. Used to swallow rapid follow-up open / close
+// clicks that would otherwise call `startViewTransition` against
+// the still-active prior transition — the browser would
+// `skipTransition()` the prior one, forcing its update callback to
+// run synchronously against the just-updated state, which left
+// the page in an inconsistent shape (the "rapid-double-click then
+// nothing ever opens again" report). Card-to-card switches still
+// go through (they don't start a transition).
+let kanbanTransitioning = false
+
+function kanbanCardEl(gid) {
+  if (!gid) return null
+  return report.querySelector(`.kanban-card[data-gid="${CSS.escape(gid)}"]`)
+}
+
+// Measure a representative kanban card and stamp its dimensions as
+// CSS custom properties on the document root. The clip-path
+// keyframes (kanban-clip-hide / kanban-clip-reveal in findings.css)
+// use these to set the floor of the modal pseudo's clip animation
+// — the modal never shrinks past card-sized, so its "small" frame
+// exactly overlaps the source card instead of going to a zero-area
+// inner rect that would expose the OLD modal snapshot's leftover
+// edges (the "two rectangles overlapping" report). Falls back to the
+// :root defaults if no card is mounted; uses the actual stamped
+// source card when provided, else the first card in the board.
+//
+// The user note: "underestimating size is ok, overestimating might
+// make the animation bad" — Math.floor of the measured rect plays
+// it safe.
+function updateKanbanClipVars(stampedCard) {
+  const card = stampedCard ?? report.querySelector('.kanban-card')
+  if (!card) return
+  const rect = card.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return
+  document.documentElement.style.setProperty(
+    '--kanban-clip-card-w',
+    `${Math.floor(rect.width)}px`,
+  )
+  document.documentElement.style.setProperty(
+    '--kanban-clip-card-h',
+    `${Math.floor(rect.height)}px`,
+  )
+}
+
+function setKanbanPopoverGid(next) {
+  const prev = state.kanbanPopoverGid
+  if (prev === next) return
+  const opening = prev === null && next !== null
+  const closing = prev !== null && next === null
+
+  // Plain render path: no API available, or card-to-card switch
+  // (modal stays open, contents swap in place). Card switches stay
+  // allowed during an in-flight transition because they don't
+  // start a new one — only a render().
+  if (!document.startViewTransition || (!opening && !closing)) {
+    state.kanbanPopoverGid = next
+    render()
+    return
+  }
+
+  // Open / close are gated on the lock. Successive rapid clicks
+  // are ignored until the in-flight animation completes — without
+  // this the View Transitions API's `skipTransition()` race left
+  // the page in a state where no further transition would render.
+  if (kanbanTransitioning) return
+  kanbanTransitioning = true
+
+  // Direction class on <html> so the CSS can hide the card-side
+  // pseudo for the duration of the transition. The card snapshot
+  // sits at a different proportion than the modal snapshot (its
+  // natural ~200×60 vs the modal's ~560×400), and during the
+  // morph it's visible underneath the scaling modal as a
+  // mis-proportioned stub. Hiding it leaves only the modal
+  // pseudo's clip-path animation visible. CSS uses the direction
+  // to pick the right pseudo: ::view-transition-old for opening
+  // (OLD = card), ::view-transition-new for closing (NEW = card).
+  const directionClass = opening ? 'kanban-opening' : 'kanban-closing'
+  document.documentElement.classList.add(directionClass)
+
+  // Shared-element pairing: the modal has `view-transition-name:
+  // kanban-detail-modal` in CSS; we stamp the source card with
+  // the same name via inline style. The browser pairs the
+  // snapshots by name and the GROUP pseudo morphs position +
+  // size between them, so the modal flies out of the card on
+  // open and back into it on close. The inline-style bookkeeping
+  // is safe because the lock above guarantees only one transition
+  // is ever in flight at a time.
+  //
+  // Safety-net timeout: ViewTransition.finished is supposed to
+  // settle (resolve or reject) when the transition ends, but
+  // some browser builds get stuck and never settle if the
+  // transition is interrupted oddly — that would leave the lock
+  // held forever and "no clicks open the modal until reload".
+  // 600ms is generous (animation runs in ~200ms); the setTimeout
+  // is cleared on a clean settle.
+  const unlock = (card) => {
+    if (card) card.style.viewTransitionName = ''
+    document.documentElement.classList.remove(directionClass)
+    kanbanTransitioning = false
+  }
+
+  if (opening) {
+    const card = kanbanCardEl(next)
+    if (card) {
+      // Set CSS clip-size vars from the actual source card, and
+      // forcing layout via getBoundingClientRect inside that helper
+      // doubles as a style-flush so the inline view-transition-name
+      // is committed before the snapshot capture below.
+      updateKanbanClipVars(card)
+      card.style.viewTransitionName = 'kanban-detail-modal'
+      // One more layout read to commit the just-set inline style
+      // into the style tree the browser uses for the old snapshot.
+      card.getBoundingClientRect()
+    } else {
+      updateKanbanClipVars()
+    }
+    state.kanbanPopoverGid = next
+    const t = document.startViewTransition(() => {
+      render()
+      // Clear inline name inside the callback so the NEW snapshot
+      // has exactly one element holding `kanban-detail-modal` —
+      // the modal (via CSS). Two elements with the same name
+      // would make the browser skip the pairing.
+      if (card) card.style.viewTransitionName = ''
+    })
+    const safety = setTimeout(() => unlock(card), 600)
+    ;(async () => {
+      try { await t.finished } catch {}
+      clearTimeout(safety)
+      unlock(card)
+    })()
+    return
+  }
+
+  // closing — invert: stamp the destination (the formerly-focused
+  // card) inside the callback after render() has removed the modal,
+  // so the NEW snapshot holds the name and the browser morphs the
+  // OLD modal back into the card.
+  updateKanbanClipVars()
+  state.kanbanPopoverGid = next
+  let closeCard = null
+  const t = document.startViewTransition(() => {
+    render()
+    closeCard = kanbanCardEl(prev)
+    if (closeCard) {
+      // Refresh the clip-size vars from the now-re-rendered target
+      // card in case its size shifted (different content, different
+      // column).
+      updateKanbanClipVars(closeCard)
+      closeCard.style.viewTransitionName = 'kanban-detail-modal'
+    }
+  })
+  const safety = setTimeout(() => unlock(closeCard ?? kanbanCardEl(prev)), 600)
+  ;(async () => {
+    try { await t.finished } catch {}
+    clearTimeout(safety)
+    unlock(closeCard ?? kanbanCardEl(prev))
+  })()
+}
+
+report.addEventListener('click', (e) => {
+  // × button inside the modal — close. Listed first so the card
+  // toggle below doesn't intercept clicks landing here when the
+  // card and modal overlap z-wise (they don't, but cheap to
+  // sequence).
+  if (e.target.closest?.('.kanban-detail-close')) {
+    setKanbanPopoverGid(null)
+    return
+  }
+  // Kanban card — open / toggle / switch. Backdrop is
+  // pointer-events: none in CSS so this branch can also fire for
+  // clicks landing on a card that's visually behind the backdrop
+  // — re-clicking the active card toggles the modal closed
+  // without needing a separate trip through the backdrop.
+  const card = e.target.closest?.('.kanban-card[data-kanban-source]')
+  if (card) {
+    // Skip when the user is grabbing text (selection clicks fire
+    // a click after mouseup with a non-empty selection range).
+    if (window.getSelection?.()?.toString()) return
+    const gid = card.dataset.gid
+    if (!gid) return
+    setKanbanPopoverGid(state.kanbanPopoverGid === gid ? null : gid)
+    return
+  }
+  // Click inside the modal panel — no-op (action buttons inside
+  // run via their own delegates higher up in this file).
+  if (e.target.closest?.('.kanban-detail-modal')) return
+  // Click anywhere else while the modal is open → close. With the
+  // backdrop set to pointer-events: none, these clicks bubble up
+  // from whatever non-modal, non-card DOM was under the cursor
+  // (a column header, empty column body, the kanban board gutter).
+  if (state.kanbanPopoverGid) setKanbanPopoverGid(null)
+})
+
+// Esc dismisses the popover. Bound to document so it fires
+// regardless of focus location — the modal isn't a `<dialog>`
+// (we manage focus + light dismiss ourselves to keep view-transition
+// in the driver's seat).
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return
+  if (!state.kanbanPopoverGid) return
+  setKanbanPopoverGid(null)
+})
+
 // mark-color fires from `<color-marker>` (composed:true) when one of
 // its dots is clicked. Color applies to the ACTIVE tab only (per
 // spec rule 4); clicking the currently-marked color toggles it off.
@@ -1307,6 +1632,10 @@ report.addEventListener('view-mode-change', (e) => {
   // Persist so the user's preferred view sticks across reloads —
   // state.js reads it back on boot.
   try { localStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch {}
+  // Switching away from kanban drops the popover gid — the modal
+  // only renders inside the kanban template, so a stale gid here
+  // would leak across view-mode changes when the user returns.
+  if (state.viewMode !== 'kanban') state.kanbanPopoverGid = null
   render()
 })
 

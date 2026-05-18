@@ -1,8 +1,8 @@
 // `<view-mode-buttons>` — icon-button group for the toolbar's
-// View: chooser. One button per mode (`table` / `list` / `grouped`),
-// each carrying an inline SVG glyph that previews the layout it
-// switches to. The active button picks up an outline + accent
-// recolor via the toolbar's CSS.
+// View: chooser. One button per mode (`table` / `list` / `grouped`
+// / `kanban` / `graph`), each carrying an inline SVG glyph that
+// previews the layout it switches to. The active button picks up
+// an outline + accent recolor via the toolbar's CSS.
 //
 // Replaces an inline `for (const mode of ...)` loop in render.js
 // that interpolated the icon SVGs as raw strings, plus the
@@ -14,7 +14,7 @@
 // per click delegation chain.
 //
 // Properties:
-//   * `mode` — current `state.viewMode` (`table` | `list` | `grouped`).
+//   * `mode` — current `state.viewMode` (`table` | `list` | `grouped` | `kanban` | `graph`).
 //
 // Events (bubble + composed:true):
 //   * `view-mode-change(detail.mode)` — fired on click. The host
@@ -48,6 +48,18 @@ const VIEW_ICONS = {
     <rect x="5" y="11.4" width="9" height="1.3"/>
     <rect x="5" y="13.2" width="9" height="1.3"/>
   </svg>`,
+  // kanban  — three columns with stacked cards, status-board layout
+  kanban: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+    <rect x="1.5" y="2" width="3.8" height="12" rx=".6" fill="none" stroke="currentColor" stroke-width="1"/>
+    <rect x="6.1" y="2" width="3.8" height="12" rx=".6" fill="none" stroke="currentColor" stroke-width="1"/>
+    <rect x="10.7" y="2" width="3.8" height="12" rx=".6" fill="none" stroke="currentColor" stroke-width="1"/>
+    <rect x="2.4" y="3.6" width="2" height="1.4" rx=".2"/>
+    <rect x="2.4" y="5.6" width="2" height="1.4" rx=".2"/>
+    <rect x="7" y="3.6" width="2" height="1.4" rx=".2"/>
+    <rect x="11.6" y="3.6" width="2" height="1.4" rx=".2"/>
+    <rect x="11.6" y="5.6" width="2" height="1.4" rx=".2"/>
+    <rect x="11.6" y="7.6" width="2" height="1.4" rx=".2"/>
+  </svg>`,
   // graph   — three nodes connected by edges
   graph: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
     <line x1="4.5" y1="4.5" x2="11.5" y2="6.5"/>
@@ -63,10 +75,11 @@ const VIEW_TITLES = {
   table:   'Table view (compact rows, click a row to expand)',
   list:    'List view (flat, one card per finding)',
   grouped: 'List view, grouped by file',
+  kanban:  'Kanban board, columns grouped by triage status',
   graph:   'Graph view (canvas with imports / exports)',
 }
 
-const MODES = ['table', 'list', 'grouped', 'graph']
+const MODES = ['table', 'list', 'grouped', 'kanban', 'graph']
 
 class ViewModeButtons extends LitElement {
   static properties = {
@@ -98,8 +111,11 @@ class ViewModeButtons extends LitElement {
   render() {
     const allowed = this.modes.split(',').map((s) => s.trim()).filter((s) => MODES.includes(s))
     const list = allowed.length > 0 ? allowed : MODES
-    return html`<span class="view-mode-label">View:</span>
-      <div class="view-mode-group" role="group" aria-label="View mode">
+    // No leading "View:" label — the per-button SVG icons + their
+    // tooltips carry the affordance on their own, and dropping the
+    // word shortens the toolbar so the sort dropdown sits flush
+    // against the icon group.
+    return html`<div class="view-mode-group" role="group" aria-label="View mode">
         ${list.map((m) => html`<button
           type="button"
           class=${classMap({ 'view-mode-btn': true, active: this.mode === m })}
