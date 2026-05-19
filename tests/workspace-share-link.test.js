@@ -28,7 +28,12 @@ function fakeUuid() {
   return crypto.randomUUID()
 }
 
-describe('workspace share-link', () => {
+// PBKDF2 (3M iterations, ~700 ms each) dominates per-test cost.
+// WebCrypto runs derivations on libuv's threadpool, so parallel
+// `it`s share up to UV_THREADPOOL_SIZE cores instead of serialising
+// on one. Tests are independent — fresh ciphertext per test, no
+// shared state.
+describe('workspace share-link', { concurrency: true }, () => {
   it('round-trips id + name + privateKey through a password-encrypted link', async () => {
     // Use a random UUID for `id` so it does NOT match the derived
     // value — exercises the explicit-id branch on both encode and

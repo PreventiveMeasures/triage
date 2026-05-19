@@ -163,7 +163,11 @@ async function fetchBlob(c, sk, tag, resourceTag, httpOrigin) {
   return { meta: tok, body: buf }
 }
 
-describe('v1.objstore server (REST-primary)', () => {
+// Each `it` mints fresh keypairs (= fresh workspaceTag) so the
+// per-tag chain on the shared server is isolated; parallel `it`s
+// don't collide. Concurrency cuts wall-time roughly to the slowest
+// single test.
+describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
   let httpOrigin, server, serverDir, serverUrl
 
   before(async () => {

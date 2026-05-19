@@ -133,7 +133,12 @@ function assertContinuousChain(revisions, from = null) {
   return prevId
 }
 
-describe('triage-sync server races', () => {
+// Each `it` mints a fresh keypair (= fresh workspaceTag) so the
+// per-tag chain is isolated; parallel `it`s don't collide on data.
+// Concurrency is safe even though these are race-condition tests —
+// the races they assert on are scoped to a single workspaceTag /
+// socket, not cross-test ordering.
+describe('triage-sync server races', { concurrency: true }, () => {
   let server, serverUrl
 
   before(async () => {
