@@ -9,7 +9,7 @@
 // native <dialog> for focus-trap + Esc-to-cancel, light-DOM render
 // so global stylesheet rules in sidebar.css apply.
 import { LitElement, html, nothing } from 'lit'
-import { buildShareUrl, encodeShareLink } from '../../client/workspace-share-link.js'
+import { buildShareUrl, encodeShareLink } from '../../client/index.js'
 import { makeStackedModalError } from './dom.js'
 
 class WorkspaceShareLinkDialog extends LitElement {

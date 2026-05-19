@@ -16,13 +16,7 @@
 // cached remote set without an await. Enumerating remote files BY
 // name requires `fetchByTag` (decrypt + read embedded name).
 
-import { createObjstoreClient, deriveObjstoreKeys } from '../../client/objstore.ts'
-import { computeBundleResourceTag, computeResourceTag } from '../../client/objstore-content-crypto.ts'
-import { triageSync } from '../../client/triage-sync.ts'
-import { getSharedTransport } from '../../client/sync-transport.ts'
-import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from '../../client/workspaces.js'
-import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../../client/storage.js'
-import { analyzeContent, setCount } from '../../client/counts.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, computeBundleResourceTag, computeResourceTag, createObjstoreClient, deriveObjstoreKeys, getSharedTransport, gunzipBytes, listBundles, listFiles, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged, readBundle, saveBundle, saveFileBytes, setCount, triageSync } from '../../client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 
 const sessions = new Map()

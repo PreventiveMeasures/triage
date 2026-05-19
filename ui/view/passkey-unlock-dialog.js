@@ -11,7 +11,7 @@
 // up via the vault-state listener wired in view.js).
 
 import { LitElement, html, nothing } from 'lit'
-import { unlockEncryption } from '../../client/passkey-vault.js'
+import { unlockEncryption } from '../../client/index.js'
 
 class PasskeyUnlockDialog extends LitElement {
   static properties = {

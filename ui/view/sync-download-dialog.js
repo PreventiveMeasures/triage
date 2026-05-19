@@ -16,9 +16,7 @@
 
 import { LitElement, html, nothing } from 'lit'
 import { decodeUtf8 } from '../../common/utf8.js'
-import { gunzipBytes, saveFileBytes } from '../../client/storage.js'
-import { addBundleToWorkspace, addReportToWorkspace } from '../../client/workspaces.js'
-import { analyzeContent, setCount } from '../../client/counts.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount } from '../../client/index.js'
 import { fetchBundleFromRemote, fetchFile } from './objstore-presence.js'
 
 function bundleShortLabel(integrity) {

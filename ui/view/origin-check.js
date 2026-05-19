@@ -35,8 +35,7 @@
 // sidebar.css apply.
 
 import { LitElement, html } from 'lit'
-import { hasAnyBundles, listFiles } from '../../client/storage.js'
-import { listWorkspaces } from '../../client/workspaces.js'
+import { hasAnyBundles, listFiles, listWorkspaces } from '../../client/index.js'
 
 const TARGET_URL = 'https://triage.space/'
 

@@ -10,7 +10,7 @@
 // — the pending save sits in `pendingSave` until a future trigger
 // (the user can re-edit, or pick "retry" once they remember the
 // password).
-import { setAuthenticationResolver } from '../../client/triage-sync.ts'
+import { setAuthenticationResolver } from '../../client/index.js'
 import { openSyncAuthDialog } from './sync-auth-dialog.js'
 
 export function installSyncAuthResolver() {

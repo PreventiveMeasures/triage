@@ -1,10 +1,10 @@
-import { state } from '../../client/state.ts'
 import {
   applyWorkspaceImport,
+  isEncryptedBundle,
   parseWorkspaceBundleBytes,
   readBundleBytes,
-} from '../../client/workspace-import.js'
-import { isEncryptedBundle } from '../../client/workspace-bundle-crypto.js'
+  state,
+} from '../../client/index.js'
 import { render } from './render.js'
 import { resolveTriageConflicts } from './triage-conflict-dialog.js'
 import { openWorkspaceUnlockBundleDialog } from './workspace-unlock-bundle-dialog.js'

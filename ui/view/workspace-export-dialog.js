@@ -4,7 +4,7 @@
 // warning, and relabels the primary button. Native <dialog> + light DOM
 // for the same chrome the share-link dialogs use.
 import { LitElement, html, nothing } from 'lit'
-import { buildWorkspaceExportBundle } from '../../client/workspace-export.js'
+import { buildWorkspaceExportBundle } from '../../client/index.js'
 import { downloadBlob, makeStackedModalError } from './dom.js'
 
 class WorkspaceExportDialog extends LitElement {

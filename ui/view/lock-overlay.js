@@ -13,7 +13,7 @@
 // dedicated dialog adds an extra click for no value: the overlay
 // itself IS the unlock prompt.
 
-import { isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '../../client/passkey-vault.js'
+import { isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '../../client/index.js'
 
 let overlayEl = null
 let busy = false

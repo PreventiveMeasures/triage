@@ -1,12 +1,10 @@
-import { VIEW_MODE_KEY, saveRepoUrlFor, state } from '../../client/state.ts'
+import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '../../client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
-import { saveTriage } from '../../client/triage.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
-import { getPackagesIndex, subscribeToBundleFindingIndex } from '../../client/bundle-finding-index.js'
 import { openCommentDialog } from './comment-dialog.js'
 import { openFixLinkDialog } from './fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
@@ -81,12 +79,9 @@ function renderPreservingScrollOf(selector) {
   const after = document.querySelector(selector)
   if (after) after.scrollTop = top
 }
-import { deleteBundle, listBundles } from '../../client/storage.js'
-import { dropBundleFromHashIndex } from '../../client/bundle-hash-index.js'
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { switchToFile } from './ingest.js'
-import { setBundleWorkspace } from '../../client/workspaces.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
