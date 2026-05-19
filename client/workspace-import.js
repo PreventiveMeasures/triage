@@ -1,5 +1,5 @@
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
-import { saveFile } from './storage.js'
+import { saveBundle, saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
@@ -51,6 +51,26 @@ const EXPORT_VERSION = 1
 const MAX_BUNDLES_PER_EXPORT = 1024
 const MAX_REPORTS_PER_EXPORT = 1024
 const MAX_BUNDLE_INTEGRITY_LEN = 200
+// Per-blob raw-byte ceiling for `bundleBlobs.data`. Bytes are
+// base64-encoded on the wire (~4/3 expansion), so the encoded length
+// is capped a bit above the raw target. 100 MiB raw covers every
+// plausible .map / .stasis.code.br shipped by the analyzer and keeps
+// the import's memory footprint bounded — a crafted 4 GB blob would
+// otherwise allocate the decoded buffer at decode time.
+const MAX_BUNDLE_BLOB_BYTES = 100 * 1024 * 1024
+const MAX_BUNDLE_BLOB_DATA_LEN = Math.ceil(MAX_BUNDLE_BLOB_BYTES * 4 / 3) + 16
+// Display-name cap on `bundleBlobs.name`. Far longer than any
+// realistic .map / .stasis filename and shorter than the workspace-
+// name cap so a crafted export can't bloat OPFS bundle metadata.
+const MAX_BUNDLE_BLOB_NAME_LEN = 512
+// Distinct count cap for `bundleBlobs` — bytes-heavy, so the
+// 1024-pointer cap on `bundles` would otherwise let a payload sit at
+// ~136 GiB of gunzipped JSON in memory before validation could run.
+// 64 covers any realistic workspace (the integrity-pointer side
+// still gets the 1024 ceiling for the orphan-pointer carrier shape)
+// while bounding the worst-case decode-time memory at ~6.4 GiB raw
+// across the whole blob set.
+const MAX_BUNDLE_BLOBS_PER_EXPORT = 64
 
 function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
@@ -95,6 +115,44 @@ function validateExportShape(data) {
       if (typeof b !== 'string') return 'bundles entries must be strings'
       if (b.length > MAX_BUNDLE_INTEGRITY_LEN) {
         return `bundle integrity exceeds per-entry length cap (${MAX_BUNDLE_INTEGRITY_LEN})`
+      }
+    }
+  }
+  // `bundleBlobs` carries the actual bundle bytes (base64-encoded)
+  // when the sender opts in. Validated symmetrically with `bundles`
+  // — distinct (tighter) count cap because bundle bytes are heavy
+  // (see MAX_BUNDLE_BLOBS_PER_EXPORT), plus per-entry shape and
+  // per-blob size limits so a 4 GB blob can't blow up the import
+  // before its decode runs.
+  if (data.bundleBlobs !== undefined) {
+    if (!Array.isArray(data.bundleBlobs)) return 'bundleBlobs field must be an array when present'
+    if (data.bundleBlobs.length > MAX_BUNDLE_BLOBS_PER_EXPORT) {
+      return `bundleBlobs count (${data.bundleBlobs.length}) exceeds cap (${MAX_BUNDLE_BLOBS_PER_EXPORT})`
+    }
+    for (const b of data.bundleBlobs) {
+      if (!b || typeof b !== 'object' || Array.isArray(b)) return 'bundleBlobs entries must be objects'
+      if (typeof b.integrity !== 'string' || b.integrity.length === 0) {
+        return 'bundleBlobs.integrity must be a non-empty string'
+      }
+      if (b.integrity.length > MAX_BUNDLE_INTEGRITY_LEN) {
+        return `bundleBlobs.integrity exceeds per-entry length cap (${MAX_BUNDLE_INTEGRITY_LEN})`
+      }
+      if (typeof b.name !== 'string' || b.name.length === 0) {
+        return 'bundleBlobs.name must be a non-empty string'
+      }
+      if (b.name.length > MAX_BUNDLE_BLOB_NAME_LEN) {
+        return `bundleBlobs.name exceeds per-entry length cap (${MAX_BUNDLE_BLOB_NAME_LEN})`
+      }
+      // Defence-in-depth: NULs in display names break sidebar
+      // lookups and audit-log scraping, and `_meta.json`'s JSON
+      // serialisation embeds the name verbatim. The integrity (NOT
+      // the name) is the OPFS storage key in saveBundle, so this
+      // isn't a storage-boundary check — it's a downstream-display
+      // hygiene check.
+      if (b.name.includes('\0')) return 'bundleBlobs.name cannot contain NUL'
+      if (typeof b.data !== 'string') return 'bundleBlobs.data must be a base64 string'
+      if (b.data.length > MAX_BUNDLE_BLOB_DATA_LEN) {
+        return `bundleBlobs.data exceeds per-blob size cap (${MAX_BUNDLE_BLOB_BYTES} bytes raw)`
       }
     }
   }
@@ -336,6 +394,48 @@ function dropIgnoredFor(id) {
   }
 }
 
+// Persist any base64-encoded bundle bytes that ride alongside the
+// integrity pointers. The bytes are content-addressed (saveBundle
+// recomputes the SHA-512 from the decoded buffer), so a tampered
+// payload lands under its TRUE integrity — never under an attacker-
+// chosen one. Best-effort: a per-blob failure is logged and the
+// import continues, mirroring the reports-save loop above.
+//
+// CRITICAL: bundleBlobs are CONSUMED here and intentionally NOT
+// propagated into `upsertWorkspace`'s payload — bundle bytes live in
+// OPFS, only the integrities ride in the persisted workspace blob.
+// Any future caller of this helper must keep that invariant or risk
+// inflating the localStorage workspaces row by megabytes.
+async function persistImportedBundleBlobs(blobs) {
+  if (!Array.isArray(blobs)) return
+  for (const blob of blobs) {
+    let bytes
+    try {
+      bytes = Uint8Array.fromBase64(blob.data)
+    } catch (err) {
+      console.warn(`Workspace import: failed to decode bundle ${blob.integrity}: ${err?.message ?? err}`)
+      continue
+    }
+    try {
+      const result = await saveBundle(blob.name, bytes)
+      // Tamper-resistance invariant: saveBundle ALWAYS keys the
+      // OPFS write by the SHA-512 it computes from `bytes`, NEVER by
+      // `blob.integrity`. A future refactor MUST preserve this — if
+      // a caller ever trusts the claimed integrity instead of the
+      // computed one, a malicious export could plant bytes under a
+      // legitimate-looking integrity. The mismatch warn below is the
+      // operator-visible breadcrumb (the workspace's `bundles`
+      // pointer for the claimed hash is an orphan after a tamper);
+      // it's not a defence in itself.
+      if (result?.integrity !== blob.integrity) {
+        console.warn(`Workspace import: bundle ${blob.name} integrity mismatch (claimed ${blob.integrity}, computed ${result?.integrity})`)
+      }
+    } catch (err) {
+      console.warn(`Workspace import: failed to save bundle ${blob.name}: ${err?.message ?? err}`)
+    }
+  }
+}
+
 // Apply a parsed workspace export to the active client state.
 // Saves the bundled reports to OPFS, upserts the workspace, merges
 // triage (deferring to `conflictResolver` on disagreement), and
@@ -363,6 +463,17 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     } catch (err) {
       console.warn(`Workspace import: failed to save ${r.name}: ${err.message}`)
     }
+  }
+
+  // Persist any inline bundle bytes BEFORE upsertWorkspace so a
+  // subsequent sidebar render sees the bytes-on-disk match for the
+  // integrity pointers we're about to pin. Note: `data.bundleBlobs`
+  // is the ONLY path that feeds bundle bytes into local OPFS through
+  // the import pipeline; the `upsertWorkspace` call below sees only
+  // the integrity strings (via `data.bundles`), keeping the
+  // workspaces row bytes-free.
+  if (Array.isArray(data.bundleBlobs) && data.bundleBlobs.length > 0) {
+    await persistImportedBundleBlobs(data.bundleBlobs)
   }
 
   // Round-9 M1: merge the bundle's triage BEFORE upsertWorkspace.
@@ -394,14 +505,15 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
     : new Map()
   await mergeTriage(data.triage, conflictResolver, lookup)
 
-  // Bundle membership rides through as pointers (sha512 integrities);
-  // the bundle bytes themselves are NOT in the export. Filter to
-  // non-empty strings so a malformed payload can't seed the workspace
-  // blob with garbage. Integrities that don't resolve to a locally-
-  // stored bundle stay in the workspace's `bundles` list — the sidebar
-  // render skips them defensively, and a future drop of the matching
-  // bytes auto-claims via setBundleWorkspace (content-addressed, same
-  // hash = same bundle).
+  // Bundle membership rides through as pointers (sha512 integrities).
+  // Bytes — when shipped — rode in `data.bundleBlobs` and were already
+  // persisted to OPFS above; only the integrity strings make it into
+  // the workspace blob. Filter to non-empty strings so a malformed
+  // payload can't seed the workspace with garbage. Integrities that
+  // don't resolve to a locally-stored bundle stay in the workspace's
+  // `bundles` list — the sidebar render skips them defensively, and
+  // a future drop of the matching bytes auto-claims via
+  // setBundleWorkspace (content-addressed, same hash = same bundle).
   //
   // `data.bundles` is OPTIONAL — older exports predate the field. When
   // it's omitted, we tell upsertWorkspace to PRESERVE the target's
@@ -409,9 +521,9 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
   // existing list INSIDE upsertWorkspace's lock, so a sibling tab can't
   // race a detach between our read and our write. (Reading outside the
   // lock would let a sibling-tab `setBundleWorkspace(X, null)` get
-  // resurrected by our deferred upsert — audit C-Import-1.) Unlike
-  // reports, no bundle bytes ride the export, so treating "absent" as
-  // "empty" would silently detach every locally-attached bundle.
+  // resurrected by our deferred upsert — audit C-Import-1.) Treating
+  // "absent" as "empty" would silently detach every locally-attached
+  // bundle.
   const bundlesProvided = Array.isArray(data.bundles)
   const importedBundles = bundlesProvided
     ? data.bundles.filter((b) => typeof b === 'string' && b.length > 0)
