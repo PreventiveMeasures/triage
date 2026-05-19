@@ -8,6 +8,14 @@ import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { pkgRelative } from './data.js'
 import { groupState } from '../group.js'
+// Side-import — registers `customElements.define('graph-layout',
+// ...)` so the `<graph-layout>` element returned below is hydrated
+// the first time it lands in the DOM. The cycle here is benign:
+// graph-layout.js imports `renderTopBar / renderStage /
+// renderRightPanel` from this file, but only calls them inside
+// `render()` (post-define), so the ES-module dance settles before
+// the first instance ever calls into the helpers.
+import './graph-layout.js'
 
 // Build the entire v2 layout as a Lit template — three columns:
 // left panel (palette / stats / issues / display / options), stage
@@ -29,15 +37,23 @@ import { groupState } from '../group.js'
 // Findings-tab embed to host the view-mode chooser inside the
 // graph's own toolbar instead of stacking a separate findings
 // toolbar above the canvas.
+// Returns a `<graph-layout>` host element. The component owns the
+// chrome (three-column layout) in its shadow DOM via `static styles`,
+// so the inner template is just a property handoff. Side-effect
+// imports the component definition so the first `litRender` call
+// site doesn't have to.
 export function renderGraph2Layout(graph, options = {}) {
-  return html`<div class="graph2-layout">
-    ${renderTopBar(graph, options)}
-    ${renderStage(graph)}
-    ${renderRightPanel()}
-  </div>`
+  return html`<graph-layout .graph=${graph} .options=${options}></graph-layout>`
 }
 
-function renderTopBar(graph, options) {
+// Topbar / stage / right-panel templates — exported so the
+// `<graph-layout>` shadow-DOM host (in `./graph-layout.js`) can
+// compose them into its render output. Keeping the per-section
+// helpers as plain functions here lets the refresh helpers in
+// view/render.js continue to call `renderSelectionCard`,
+// `renderFocusOverlay`, `renderTopPkgsBlock` without going through
+// the host element.
+export function renderTopBar(graph, options) {
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
   const triageCountsOverride = options.triageCounts
@@ -275,7 +291,7 @@ export function renderSevChips(counts) {
   </div>`
 }
 
-function renderStage(graph) {
+export function renderStage(graph) {
   // Bottom-left stats — file/package/edge/hub/issue counts. The
   // earlier "X of Y visible" readout is gone: every node stays on
   // screen now (filters / solo soft-dim instead of hiding), so
@@ -357,7 +373,7 @@ export function renderFocusOverlay(graph) {
     </svg></button>`
 }
 
-function renderRightPanel() {
+export function renderRightPanel() {
   // The selection-card area and top-packages block are populated
   // by `refreshGraph2Sidebar` / `refreshGraph2TopPkgs` (in
   // view/render.js) which `litRender` directly into these slots.

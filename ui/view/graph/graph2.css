@@ -10,15 +10,28 @@
    "this node has issues" / "this is package X" regardless of the
    surrounding chrome's lightness. */
 
+/* Custom-element host. The flex chain (#main-content → #report →
+   .findings-content.with-graph → graph-layout) sizes the host;
+   `height: 100%` lets the inner `.graph2-layout` grid fill it
+   without re-flexing on every node. `min-height: 0` keeps the
+   host from inheriting the default min-content floor that would
+   stop it shrinking inside a flex column. */
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
 .graph2-layout {
   display: grid;
   grid-template-columns: 1fr 300px;
   /* Topbar row sized `auto`; stage row takes the rest. The layout's
      height comes from the flex chain in the .with-graph wrapper
      (#main-content → #report → .findings-content.with-graph →
-     .graph2-layout), which fills the viewport's remaining space
-     below the page header. */
+     graph-layout host → :host height:100%), which fills the
+     viewport's remaining space below the page header. */
   grid-template-rows: auto 1fr;
+  height: 100%;
   /* `right` spans both rows so the sidebar starts at the very
      top of the layout, alongside the topbar — its first row
      (Selection title + inline fullscreen) sits at the same Y
@@ -69,13 +82,11 @@
    .findings-content directly, picking up flex: 1 cleanly. */
 .findings-content.with-graph #findings-graph-slot { display: contents; }
 
-.findings-content.with-graph .graph2-layout {
-  flex: 1; min-height: 0;
-  border-radius: 6px;
-  box-shadow: var(--shadow-glass);
-  background: transparent;
-  margin-bottom: 0;
-}
+/* The `.findings-content.with-graph` ancestor selector lives in
+   the LIGHT-DOM cascade (report.css), targeting the `graph-layout`
+   host directly — selectors can't cross the shadow boundary. The
+   matching rule there sets `flex: 1`, glass shadow, etc. on the
+   host. Nothing in shadow scope to do here. */
 
 /* ── Top bar ───────────────────────────────────────────────── */
 /* Padding / gap / font-size all match the findings `.toolbar`
@@ -943,5 +954,10 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 /* Print: the graph is interactive-only. Hide it on paper so the
    print path doesn't dump a giant black box. */
 @media print {
-  .graph2-layout { display: none !important; }
+  /* Host-level hide so the print path doesn't reserve layout space
+     for the empty shell. `.graph2-layout` lives inside the shadow
+     DOM so the previous `.graph2-layout { display: none }` would
+     have been unreachable from the print media-query in the
+     shadow CSS anyway. */
+  :host { display: none !important; }
 }

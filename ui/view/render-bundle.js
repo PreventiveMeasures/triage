@@ -304,15 +304,19 @@ export function buildBundleGraphData(details) {
 
 export function refreshBundleGraphSidebar() {
   if (!_currentBundleGraph) return
-  const area = document.querySelector('#g2-selection-area')
+  const root = document.querySelector('graph-layout')?.shadowRoot
+  if (!root) return
+  const area = root.querySelector('#g2-selection-area')
   if (area) litRender(renderSelectionCard(_currentBundleGraph), area)
-  const focusSlot = document.querySelector('#g2-focus-overlay-slot')
+  const focusSlot = root.querySelector('#g2-focus-overlay-slot')
   if (focusSlot) litRender(renderFocusOverlay(_currentBundleGraph), focusSlot)
 }
 
 export function refreshBundleGraphTopPkgs() {
   if (!_currentBundleGraph) return
-  const block = document.querySelector('#g2-top-pkgs-block')
+  const root = document.querySelector('graph-layout')?.shadowRoot
+  if (!root) return
+  const block = root.querySelector('#g2-top-pkgs-block')
   if (block) litRender(renderTopPkgsBlock(_currentBundleGraph), block)
 }
 

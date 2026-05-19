@@ -130,7 +130,9 @@ export function buildGraph2Data() {
 // would orphan the cache and the next render would try to
 // `insertBefore` on a null parent (TypeError on the next click).
 export function refreshGraph2Sidebar() {
-  const area = document.querySelector('#g2-selection-area')
+  const root = document.querySelector('graph-layout')?.shadowRoot
+  if (!root) return
+  const area = root.querySelector('#g2-selection-area')
   if (!area) return
   const data = buildGraph2Data()
   if (!data) return
@@ -140,7 +142,7 @@ export function refreshGraph2Sidebar() {
   // card does, so refresh both from the same trigger. Slot
   // element is rendered unconditionally by renderStage; we just
   // swap its content via the same lit-managed update.
-  const focusSlot = document.querySelector('#g2-focus-overlay-slot')
+  const focusSlot = root.querySelector('#g2-focus-overlay-slot')
   if (focusSlot) litRender(renderFocusOverlay(data.graph), focusSlot)
 }
 
@@ -150,7 +152,9 @@ export function refreshGraph2Sidebar() {
 // its cached PartInfo on the container; manually clearing
 // `innerHTML` would break the cache.
 export function refreshGraph2TopPkgs() {
-  const block = document.querySelector('#g2-top-pkgs-block')
+  const root = document.querySelector('graph-layout')?.shadowRoot
+  if (!root) return
+  const block = root.querySelector('#g2-top-pkgs-block')
   if (!block) return
   const data = buildGraph2Data()
   if (!data) return
@@ -1495,9 +1499,19 @@ function renderImpl() {
             const hideAllFiles = graph.edges.length === 0
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
             litRender(renderGraph2Layout(graph, { hideAllFiles, triageCounts }), graphSlot)
-            refreshBundleGraphSidebar()
-            refreshBundleGraphTopPkgs()
-            attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
+            // `<graph-layout>` populates its shadow DOM on the
+            // first reactive update (one microtask after the host
+            // is connected); refresh + canvas attach need that
+            // shadow tree to exist, so wait for updateComplete.
+            // Microtasks drain before any user input fires, so the
+            // interactive state is consistent by the time a click
+            // could land.
+            graphSlot.querySelector('graph-layout').updateComplete.then(() => {
+              refreshBundleGraphSidebar()
+              refreshBundleGraphTopPkgs()
+              attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
+              return null
+            }).catch(() => {})
           }
         }
       }
@@ -1908,9 +1922,15 @@ function renderImpl() {
       // its own `litRender` so subsequent clicks diff against a
       // single Lit cache per slot, instead of the parent layout's
       // cache + the per-slot cache stepping on each other.
-      refreshGraph2Sidebar()
-      refreshGraph2TopPkgs()
-      attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
+      // Wait for `<graph-layout>`'s first reactive update so its
+      // shadow tree (canvas, slots, controls) exists before the
+      // refresh helpers + canvas attach try to read it.
+      graphSlot.querySelector('graph-layout').updateComplete.then(() => {
+        refreshGraph2Sidebar()
+        refreshGraph2TopPkgs()
+        attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
+        return null
+      }).catch(() => {})
     }
   }
 

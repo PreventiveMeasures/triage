@@ -425,7 +425,7 @@
   flex: 1;
   min-height: 0;
 }
-.bundles-slide-body > .bundle-graph-slot > .graph2-layout {
+.bundles-slide-body > .bundle-graph-slot > graph-layout {
   flex: 1;
   min-height: 0;
   border: none;
@@ -1127,7 +1127,7 @@
     min-height: 0;
     width: 100%;
   }
-  & .bundle-graph-slot > .graph2-layout {
+  & .bundle-graph-slot > graph-layout {
     flex: 1;
     min-height: 0;
     border: none;
@@ -1386,6 +1386,20 @@
    1fr stage + 300px sidebar grid can use the full viewport,
    matching how the Graph tab renders. */
 .findings-content.with-graph { max-width: none; }
+/* Findings-tab graph chrome — `<graph-layout>` is a shadow-DOM
+   custom element, so the box-level styles (flex participation,
+   border-radius, glass shadow) sit on the host in light DOM. The
+   inner `.graph2-layout` grid lives in the component's shadow CSS
+   (graph/graph2.css) and fills the host via `:host { height: 100%
+   }`. Mirrors the bundle-slot host rule a thousand lines up. */
+.findings-content.with-graph graph-layout {
+  flex: 1;
+  min-height: 0;
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  background: transparent;
+  margin-bottom: 0;
+}
 /* Kanban view-mode lays five status columns side-by-side; drop
    the readability cap so they have room to breathe horizontally
    on wide screens. The flex chain (#report → .findings-content

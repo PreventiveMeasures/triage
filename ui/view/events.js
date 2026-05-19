@@ -681,7 +681,7 @@ report.addEventListener('click', (e) => {
   // the more specific selectors hit before the generic tab/click
   // handlers below. The slider input event is wired separately
   // (input event listener at the bottom of this file).
-  const g2Pkg = e.target.closest('[data-g2-pkg]')
+  const g2Pkg = pathClosest(e, '[data-g2-pkg]')
   if (g2Pkg) {
     const pkg = g2Pkg.dataset.g2Pkg
     // Clicking a package row (Top packages list) toggles solo on
@@ -707,7 +707,7 @@ report.addEventListener('click', (e) => {
   // the same canvas redraw + Top-packages refresh as the old
   // `[data-g2-sev]` click delegate did.)
 
-  const g2Select = e.target.closest('[data-g2-select]')
+  const g2Select = pathClosest(e, '[data-g2-select]')
   if (g2Select) {
     graph2.selected = g2Select.dataset.g2Select
     refreshActiveGraphSidebar()
@@ -715,13 +715,13 @@ report.addEventListener('click', (e) => {
   }
   // Top-packages mini-tabs (Issues / Files). Pure right-panel
   // change — re-render just the block, leave the canvas alone.
-  const g2TopPkgs = e.target.closest('[data-g2-top-pkgs]')
+  const g2TopPkgs = pathClosest(e, '[data-g2-top-pkgs]')
   if (g2TopPkgs) {
     graph2.topPkgsTab = g2TopPkgs.dataset.g2TopPkgs
     refreshActiveGraphTopPkgs()
     return
   }
-  const g2JumpFindings = e.target.closest('[data-g2-jump-findings]')
+  const g2JumpFindings = pathClosest(e, '[data-g2-jump-findings]')
   if (g2JumpFindings) {
     resetFilters()
     state.filterConfMin = 0
@@ -736,7 +736,7 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  const g2JumpFile = e.target.closest('[data-g2-jump-file]')
+  const g2JumpFile = pathClosest(e, '[data-g2-jump-file]')
   if (g2JumpFile) {
     const targetFile = g2JumpFile.dataset.g2JumpFile
     state.currentView = 'files'
@@ -753,9 +753,9 @@ report.addEventListener('click', (e) => {
   // when the input shows its placeholder (i.e. empty), so no
   // re-render is needed; the button just disappears once the
   // input value is cleared.
-  if (e.target.closest('#g2-path-filter-clear')) {
+  if (pathClosest(e, '#g2-path-filter-clear')) {
     graph2.pathFilter = ''
-    const input = document.querySelector('#g2-path-filter')
+    const input = document.querySelector('graph-layout')?.shadowRoot?.querySelector('#g2-path-filter')
     if (input) input.value = ''
     graph2.graphState?.requestDraw?.()
     return
@@ -765,7 +765,7 @@ report.addEventListener('click', (e) => {
   // and .graph2-layout to the viewport, and v2's ResizeObserver on
   // the stage element will fire when the size change lands so the
   // canvas refits without explicit wiring.
-  if (e.target.closest('#g2-fullscreen')) {
+  if (pathClosest(e, '#g2-fullscreen')) {
     document.body.classList.toggle('report-fullscreen')
     return
   }
@@ -773,7 +773,7 @@ report.addEventListener('click', (e) => {
   // graph rebuilds with different nodes / edges / layout. Tear
   // down the v2 canvas (rAF + observers + window listeners) so
   // render() can re-attach against the new set.
-  const g2ShowAll = e.target.closest('[data-g2-show-all]')
+  const g2ShowAll = pathClosest(e, '[data-g2-show-all]')
   if (g2ShowAll) {
     graph2.showAll = !graph2.showAll
     graph2.layoutCache = null
@@ -790,7 +790,7 @@ report.addEventListener('click', (e) => {
   // re-clicking the active button). Same canvas teardown +
   // cache invalidation the prior trash toggle did so the graph
   // rebuilds against the new file set.
-  const g2TriageBtn = e.target.closest('.graph2-triage-selector [data-triage-show]')
+  const g2TriageBtn = pathClosest(e, '.graph2-triage-selector [data-triage-show]')
   if (g2TriageBtn) {
     const next = g2TriageBtn.dataset.triageShow
     state.shownTriage = state.shownTriage === next ? null : next
@@ -805,7 +805,7 @@ report.addEventListener('click', (e) => {
   // v1-style rendering. Selection is preserved when the file
   // belongs to the package being focused, so the right panel
   // keeps showing it; cleared otherwise.
-  const g2FocusPkg = e.target.closest('[data-g2-focus-pkg]')
+  const g2FocusPkg = pathClosest(e, '[data-g2-focus-pkg]')
   if (g2FocusPkg) {
     graph2.focusedPkg = g2FocusPkg.dataset.g2FocusPkg
     graph2.layoutCache = null
@@ -817,7 +817,7 @@ report.addEventListener('click', (e) => {
   // spiral over the whole file set. Selection is kept (it's
   // valid in both modes since the file still exists in the
   // full graph).
-  if (e.target.closest('#g2-back-to-full')) {
+  if (pathClosest(e, '#g2-back-to-full')) {
     graph2.focusedPkg = null
     graph2.layoutCache = null
     cleanupGraph2()
@@ -1686,8 +1686,15 @@ report.addEventListener('range-change', (e) => {
 })
 
 report.addEventListener('input', (e) => {
-  const id = e.target.id
-  const val = e.target.value
+  // composedPath()[0] is the real input — `e.target` retargets to
+  // the shadow host (`<graph-layout>`) for events crossing the
+  // graph's shadow boundary, so reading `e.target.id` would miss
+  // the `#g2-path-filter` branch below. Light-DOM inputs still
+  // give themselves as path[0], so the other branches are
+  // unaffected.
+  const src = e.composedPath()[0]
+  const id = src?.id
+  const val = src?.value
   if (id === 'filter-search') { state.filterInclude = val; renderKeepFocus(id) }
   else if (id === 'filter-files-search') { state.filesSearch = val; renderKeepFocus(id) }
   else if (id === 'g2-path-filter') {
@@ -1724,7 +1731,11 @@ report.addEventListener('severity-toggle', (e) => {
     // instead of re-rendering through render.js.
     if (graph2.selectedSeverities.has(sev)) graph2.selectedSeverities.delete(sev)
     else graph2.selectedSeverities.add(sev)
-    e.target.selected = [...graph2.selectedSeverities]
+    // composedPath()[0] is the actual `<severity-chips>` element
+    // when this fires from inside the graph's shadow DOM; `e.target`
+    // would be retargeted to `<graph-layout>` and setting
+    // `.selected` on the host would do nothing.
+    e.composedPath()[0].selected = [...graph2.selectedSeverities]
     graph2.graphState?.requestDraw?.()
     refreshActiveGraphTopPkgs()
     return
@@ -1745,7 +1756,10 @@ report.addEventListener('color-toggle', (e) => {
     // render() would tear down the canvas's rAF loop / hover state.
     if (graph2.selectedColors.has(col)) graph2.selectedColors.delete(col)
     else graph2.selectedColors.add(col)
-    e.target.selected = [...graph2.selectedColors]
+    // composedPath()[0] is the actual `<triage-filter>` element
+    // when this fires from inside the graph's shadow DOM; see the
+    // sibling severity-toggle comment for the retargeting rationale.
+    e.composedPath()[0].selected = [...graph2.selectedColors]
     graph2.graphState?.requestDraw?.()
     refreshActiveGraphTopPkgs()
     return
