@@ -8,7 +8,7 @@
 // row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
 // command behavior lives in `@preventive/terminal`.
 
-import { LitElement, html, nothing, unsafeCSS } from 'lit'
+import { LitElement, html, nothing, unsafeCSS } from './view/frontend-global.js'
 import { createTerminal } from '@preventive/terminal'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
