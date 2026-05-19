@@ -1451,75 +1451,87 @@ report.addEventListener('mark-color', (e) => {
 //     `tableSelectedGid` isn't bound to viewMode so the row
 //     selection survives the round trip.
 //
-// Critical timing detail: `<finding-card>` is a Lit element whose
-// render is scheduled in a microtask, so a naive
-// `render(); window.print()` snapshots empty card shells (Lit
-// hasn't painted yet — only the file / location headers, which
-// land synchronously through innerHTML, show up). Awaiting every
-// card's `updateComplete` promise after the swap is what makes
-// the swap actually visible in the printed output. Microtasks
-// drain through the await chain in user-gesture context, so
-// `window.print()` still pops a dialog without the browser
-// suppressing it as automation.
+// The swap/restore lifecycle is owned by a beforeprint/afterprint
+// pair so non-button entry points (Ctrl+P, browser menu, print
+// extensions) get the same printable layout. The pair alone isn't
+// enough, though: `<finding-card>` is a Lit element whose render is
+// scheduled in a microtask, so going from beforeprint straight to
+// the browser snapshot prints empty card shells — only the
+// file/location headers, which land synchronously through
+// innerHTML, show up. The button handler covers that by running
+// the swap eagerly and awaiting every card's `updateComplete`
+// BEFORE calling `window.print()`; beforeprint then no-ops because
+// `prepareForPrint` is idempotent on the saved-state sentinel. The
+// Ctrl+P / menu path can't insert that await between the event and
+// the snapshot and is best-effort — the mode swap and title
+// rewrite land, but finding bodies may print blank on the first
+// shot (a second print after Lit has caught up renders fully).
+// Microtasks drain through the await chain in user-gesture
+// context, so `window.print()` still pops a dialog without the
+// browser suppressing it as automation.
 //
-// Tried earlier and didn't help: a beforeprint/afterprint hook
-// pair, on the theory that the browser drains microtasks between
-// event-handler return and snapshot. It didn't, at least not
-// reliably; the explicit await is the deterministic fix.
-// Re-entrancy guard for the print flow. The handler is async (it
-// awaits per-card updateComplete before opening the print dialog),
-// so a second click during that await would capture a fresh
-// `oldMode` from the already-swapped state — when both runs settle
-// they'd restore the wrong mode and strand the user in 'list'.
-let printing = false
+// Saved-state vars hold the values to restore on afterprint; a
+// non-null `printSavedMode` doubles as the re-entrancy guard so
+// the click handler doesn't race itself across the await and
+// beforeprint doesn't clobber state the click handler captured.
+let printSavedMode = null
+let printSavedTitle = null
+
+function prepareForPrint() {
+  if (printSavedMode !== null) return
+  if (state.reports.length === 0) return
+  printSavedMode = state.viewMode
+  printSavedTitle = document.title
+  if (state.viewMode === 'table') {
+    state.viewMode = 'list'
+    render()
+  }
+  const fileNames = state.reports.map((r) => r.fileName)
+  let target = ''
+  if (fileNames.length === 1) target = fileNames[0]
+  else if (fileNames.length > 1) target = commonPrefix(fileNames)
+  // Strip the `.json` suffix so a "Save as PDF" doesn't end up
+  // named `<report>.json.pdf`. Also handles a stripped trailing
+  // `.` from a partial common prefix like `security-foo.j` —
+  // only `.json` exactly at the end gets removed.
+  target = target.replace(/\.json$/u, '')
+  if (target) document.title = target
+}
+
+function restoreAfterPrint() {
+  if (printSavedMode === null) return
+  if (state.viewMode !== printSavedMode) {
+    state.viewMode = printSavedMode
+    render()
+  }
+  document.title = printSavedTitle
+  printSavedMode = null
+  printSavedTitle = null
+}
+
+window.addEventListener('beforeprint', prepareForPrint)
+window.addEventListener('afterprint', restoreAfterPrint)
+
 document.querySelector('#print-btn').addEventListener('click', async () => {
   if (state.reports.length === 0) return
-  if (printing) return
-  printing = true
-  // Captured up front so the `finally` can restore them even if
-  // anything inside the try throws (a finding-card's
-  // updateComplete rejecting, window.print itself rejecting on
-  // some browsers, etc.). Without this the title would stay
-  // hijacked and viewMode stranded in 'list'.
-  const oldMode = state.viewMode
-  const oldTitle = document.title
-  let modeSwapped = false
-  let titleSwapped = false
+  if (printSavedMode !== null) return
+  prepareForPrint()
   try {
-    if (oldMode === 'table') {
-      state.viewMode = 'list'
-      modeSwapped = true
-      render()
-      // Wait for Lit's batched per-card update to land before
-      // letting the browser snapshot. `updateComplete` resolves
-      // after the element's render() has applied its template;
-      // doing this on every card is overkill in steady-state but
-      // cheap enough relative to dialog-modal time.
-      await Promise.all(
-        [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
-      )
-    }
-    const fileNames = state.reports.map((r) => r.fileName)
-    let target = ''
-    if (fileNames.length === 1) target = fileNames[0]
-    else if (fileNames.length > 1) target = commonPrefix(fileNames)
-    // Strip the `.json` suffix so a "Save as PDF" doesn't end up
-    // named `<report>.json.pdf`. Also handles a stripped trailing
-    // `.` from a partial common prefix like `security-foo.j` —
-    // only `.json` exactly at the end gets removed.
-    target = target.replace(/\.json$/u, '')
-    if (target) {
-      document.title = target
-      titleSwapped = true
-    }
+    // `updateComplete` resolves after the element's render() has
+    // applied its template; doing this on every card is overkill
+    // in steady-state but cheap enough relative to dialog-modal
+    // time.
+    await Promise.all(
+      [...report.querySelectorAll('finding-card')].map((c) => c.updateComplete),
+    )
     window.print()
-  } finally {
-    if (titleSwapped) document.title = oldTitle
-    if (modeSwapped && state.viewMode !== oldMode) {
-      state.viewMode = oldMode
-      render()
-    }
-    printing = false
+  } catch (e) {
+    // If window.print() never fires, afterprint won't either —
+    // restore manually so the page isn't stranded in list mode.
+    // Safe to call even if afterprint has already run; the
+    // sentinel check no-ops it.
+    restoreAfterPrint()
+    throw e
   }
 })
 
