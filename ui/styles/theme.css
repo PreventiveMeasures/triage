@@ -334,10 +334,9 @@ a { color: var(--accent); text-decoration: none; }
   display: none;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
+  background: transparent;
   color: var(--muted);
   border: 0; border-radius: 6px;
-  box-shadow: var(--shadow-glass);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   align-items: center; justify-content: center;

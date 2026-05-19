@@ -9,10 +9,9 @@
   position: fixed; top: .5rem; right: .5rem;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
+  background: transparent;
   color: var(--muted);
   border: 0; border-radius: 6px;
-  box-shadow: var(--shadow-glass);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
@@ -22,15 +21,4 @@
 }
 :host(:hover) { color: var(--text); }
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* Fullscreen graph: drop the chip chrome so the toggle reads as a
-   bare icon over the canvas. The `body.report-fullscreen` class
-   sits outside the component's shadow root, so we reach across the
-   boundary with `:host-context()`. Hover still recolors the icon
-   (border-color is moot once it's transparent). */
-:host-context(body.report-fullscreen) {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
 @media print { :host { display: none !important; } }
