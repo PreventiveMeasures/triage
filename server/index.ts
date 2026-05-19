@@ -303,12 +303,40 @@ const MAX_INFLIGHT_PER_SOCKET = (() => {
 })()
 const socketInflight = new WeakMap<WebSocket, number>()
 
+// Per-socket liveness tracker for the server-driven heartbeat
+// (see `heartbeatTimer` below). The connection handler seeds an
+// entry `true` and re-arms it on each `pong`; the periodic sweep
+// terminates any socket whose value is `false` (didn't pong since
+// the last tick) and pings everyone else. WeakMap so a closed
+// socket's entry GCs alongside the WebSocket — no manual cleanup
+// in the close handler.
+const socketAlive = new WeakMap<WebSocket, boolean>()
+
 // REST PUT idle-body timeout. A slow-loris client trickling bytes
 // within the declared Content-Length holds the staging fd and an
 // inFlightSids slot until the global staging TTL reaps it. Aborting
 // the per-chunk-idle period closes that window. Transport audit
 // `server/objstore/rest.ts:218`.
 const REST_PUT_IDLE_TIMEOUT_MS = 30_000
+
+// Server-driven WS heartbeat. Every `HEARTBEAT_INTERVAL_MS` we walk
+// `wss.clients`, terminate anyone who didn't pong since the last
+// tick, and ping the rest. The client-initiated `{type:'ping'}` /
+// `{type:'pong'}` JSON heartbeat the protocol already had only
+// catches the case where the CLIENT notices the socket's gone — it
+// can't recover an FD when the client itself has wandered off
+// (battery-killed background tab, mid-transfer NAT timeout, a
+// hostile non-browser client that opens the socket and never
+// speaks again). The same-origin upgrade gate allows missing
+// Origin headers through (legitimate non-browser callers), so a
+// hostile CLI can stack arbitrarily many idle sockets without it.
+// Kernel TCP keepalive is hours by default; without this interval
+// each abandoned socket pins its `wss.clients` Set entry,
+// `socketChallenge` / `socketAuthorized` / `socketTags` WeakMap
+// entries, and an FD until the kernel reclaims it. Two ticks max
+// from silence to termination, so the longest a dead socket
+// survives is ~2 × HEARTBEAT_INTERVAL_MS.
+const HEARTBEAT_INTERVAL_MS = 30_000
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`Usage: node server/index.ts
@@ -1149,6 +1177,13 @@ let pendingExitCode = 0
 
 wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
+  // Seed the heartbeat tracker `true`. The periodic sweep flips it
+  // to `false` after each `ping()`; the `pong` listener flips it
+  // back. A socket the sweep observes still `false` on the next
+  // tick gets terminated — that's the only thing closing FDs for
+  // an idle non-browser client.
+  socketAlive.set(socket, true)
+  socket.on('pong', () => { socketAlive.set(socket, true) })
   // Issue a per-connection challenge nonce BEFORE the client can
   // send anything that needs it. The client signs this nonce into
   // every `workspace-subscribe` (see canonicalSubscribe in
@@ -1312,6 +1347,29 @@ wss.on('connection', (socket: WebSocket, req) => {
   socket.on('error', (err: Error) => { console.warn('Socket error:', err?.message ?? err) })
 })
 
+// Periodic heartbeat sweep. Two-tick liveness window: a socket
+// that doesn't `pong` within `HEARTBEAT_INTERVAL_MS` of our `ping`
+// sees its tracker flip to `false`; on the NEXT tick we terminate.
+// `try/catch` shrugs at any peer that races us into CLOSING / CLOSED
+// (`ws.ping` / `ws.terminate` throw in that state) — the close
+// event handles cleanup either way.
+//
+// `unref` so the timer alone doesn't keep the event loop alive
+// (parity with `terminateTimer` in `shutdown` below). Cleared in
+// `shutdown` so a graceful SIGTERM doesn't fire one last ping race
+// after `wss.close` resolved.
+const heartbeatTimer = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (socketAlive.get(ws) === false) {
+      try { ws.terminate() } catch {}
+      continue
+    }
+    socketAlive.set(ws, false)
+    try { ws.ping() } catch {}
+  }
+}, HEARTBEAT_INTERVAL_MS)
+heartbeatTimer.unref?.()
+
 httpServer.on('listening', () => {
   // Read the actual bound port from `httpServer.address()` rather
   // than the `PORT` env constant. Operators (and the test harness)
@@ -1372,6 +1430,11 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   shuttingDown = true
   pendingExitCode = exitCode
   console.log('Shutting down…')
+  // Stop the heartbeat so a tick can't fire mid-shutdown and ping
+  // a socket the close-loop below already started tearing down.
+  // `unref` already kept it from holding the loop open; this is
+  // the symmetric explicit teardown.
+  clearInterval(heartbeatTimer)
   // Send a 1001 (going away) close frame to every open socket BEFORE
   // shutting the listener. Lets clients distinguish a server-initiated
   // graceful shutdown from a network drop, so they can skip their

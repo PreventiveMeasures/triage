@@ -113,6 +113,17 @@ export type CommitResult =
 // test-only fixture SQL) are SQLite-coupled by construction —
 // passing them a Neon-backed Handle is the operator's mistake to
 // catch at the `if (DATABASE_URL)` switch in `server/index.ts`.
+//
+// `tryCommit` is the backend-specific atomic-commit primitive that
+// `commitRevision` dispatches through. SQLite uses an in-process
+// per-tag `KeyedAsyncLock`; Neon wraps the four checks + INSERT in
+// a pipelined transaction whose first statement is
+// `pg_advisory_xact_lock` — the only way to serialise commits per-
+// tag across multiple replicas connected to the same Neon database.
+// Without that lock, two replicas can both pass the head-check
+// while only one of their `MAX(seq)` reads observes the other's
+// INSERT — different seq, same base, no PK conflict → silent chain
+// fork.
 export type Handle = {
   db?: DatabaseSync
   headFor: GetStmt<[string], { id: string }>
@@ -124,6 +135,7 @@ export type Handle = {
   chainFromSeq: AllStmt<[string, number], RevisionRow>
   revisionExists: GetStmt<[string, string], unknown>
   insertRevision: RunStmt<[string, number, string, string | null, number, string, string, string, number]>
+  tryCommit: (input: RevisionInsert) => Promise<CommitResult>
   close: () => Promise<void>
 }
 
@@ -143,14 +155,6 @@ export type SqliteHandle = Handle & { db: DatabaseSync }
 // under-serialise the wrong critical section. WeakMap so a closed
 // handle's lock is GC'd alongside it without a manual delete.
 const writeLocks = new WeakMap<Handle, KeyedAsyncLock<string>>()
-
-// Internal helper used by alternative backends (currently just
-// `db-neon.ts`) to register their handle's lock without touching
-// the module-private `writeLocks` map directly. Underscore-prefix
-// signals "internal API, do not call from application code".
-export function _attachWriteLock(handle: Handle): void {
-  writeLocks.set(handle, new KeyedAsyncLock<string>())
-}
 
 export function openDb(path: string): SqliteHandle {
   mkdirSync(dirname(path), { recursive: true })
@@ -261,6 +265,7 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
         (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)),
+    tryCommit: (input) => commitRevisionViaWriteLock(handle, input),
     // Match the wrap{Get,All,Run} contract: async-wrapped so a sync
     // throw from `db.close()` (already closed, locked transaction, …)
     // surfaces as a Promise rejection rather than escaping the
@@ -319,7 +324,7 @@ export async function revisionExists(handle: Handle, tag: string, id: string): P
 //     "PRIMARY KEY must be unique". Match both so a future Node
 //     `node:sqlite` change can't silently turn a recoverable
 //     conflict into an unhandled rejection.
-function isUniqueViolation(err: unknown): boolean {
+export function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof Error)) return false
   const code = (err as { code?: string }).code
   if (code === '23505') return true
@@ -339,10 +344,41 @@ function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
-// Atomic commit of a single revision. Dup-id check, base-equality
-// check, MAX(seq) computation, and INSERT all run inside one
-// `writeLock.run(tag, …)` block — the previously sync-atomic span
-// in `handleSave`'s post-signature path. Without the lock:
+// Atomic commit of a single revision. Backends dispatch through
+// `handle.tryCommit` (set up at openDb / openNeonDb time):
+//
+//   • SQLite uses `commitRevisionViaWriteLock` (below) — a per-tag
+//     `KeyedAsyncLock` serialises the four checks + INSERT against
+//     concurrent saves in the same process. Single-process is the
+//     only supported SQLite deployment shape.
+//   • Neon wraps the same four checks + INSERT in a pipelined
+//     transaction whose first statement is
+//     `pg_advisory_xact_lock` — the advisory lock is database-wide,
+//     so it serialises commits per-tag ACROSS replicas. The in-
+//     process per-tag lock alone can't do this; without the
+//     advisory lock, replica B's `MAX(seq)` read can land between
+//     replica A's head-check and INSERT (both see the same head;
+//     B sees A's just-committed seq) so B computes a different seq
+//     and INSERTs against the same `base` — different seq, same
+//     base, no PK conflict → silent chain fork. See `db-neon.ts`'s
+//     `tryCommitNeon` for the per-statement rationale.
+export function commitRevision(handle: Handle, input: RevisionInsert): Promise<CommitResult> {
+  // A hand-rolled Handle literal (e.g. a test mock) won't carry a
+  // `tryCommit` impl. Surface as a Promise rejection rather than a
+  // sync TypeError so the function's Promise-returning contract
+  // holds for every caller. Matches the previous-shape error
+  // string ("handle not opened via openDb") so existing tests /
+  // log alerts that match on it keep firing.
+  if (typeof handle.tryCommit !== 'function') {
+    return Promise.reject(new Error('commitRevision: handle not opened via openDb'))
+  }
+  return handle.tryCommit(input)
+}
+
+// SQLite-style atomic commit: dup-id check, base-equality check,
+// MAX(seq) computation, and INSERT all run inside one
+// `writeLock.run(tag, …)` block. Within one process the lock closes
+// both concurrency hazards:
 //
 //   • Concurrent saves with the same `base` and DIFFERENT id would
 //     both pass an out-of-lock base-match check, both insert, and
@@ -352,34 +388,34 @@ function isUniqueViolation(err: unknown): boolean {
 //     out-of-lock dup recheck, both reach INSERT, and the second
 //     would throw on UNIQUE — the originator never sees an ack.
 //
-// Within one process the lock closes both manifestations.
-//
-// ACROSS processes — supported on the Neon backend — the in-process
-// lock can't serialise; two Node processes connected to the same DB
-// can both pass all four pre-INSERT checks and both INSERT. The
-// `PRIMARY KEY (workspace_tag, seq)` and `UNIQUE (workspace_tag, id)`
-// constraints are the multi-process backstops: at least one loser's
-// INSERT raises a unique-violation. The `try` below catches it and
-// refetches `revisionExists` + `headFor` while still under our own
-// per-`workspace_tag` lock. The refetch reads from whatever is
-// committed in the DB at refetch time — possibly advanced past the
-// immediate winner by a third process — and that's intentional:
-// the recovery is read-after-write-failure with no isolation-level
-// assumption, and any committed head we see is a valid stale-base
-// target. Returns the standard `duplicate` / `stale-base` outcome;
-// the caller's WS handler renders these as ack-only /
-// `workspace-state` catch-up. No silent failure, no chain fork.
-export function commitRevision(
+// ACROSS processes / connections the in-process lock can't
+// serialise. The Neon path's `tryCommitNeon` uses an advisory lock
+// for that case; the SQLite path doesn't support multi-process
+// deployments (single SQLite file, single Node process). The PK /
+// UNIQUE catch below is the residual backstop against the unlikely
+// SQLite-multi-connection scenario (e.g. a test fixture opening
+// two `openDb` handles to the same file). The refetch reads from
+// whatever is committed in the DB at refetch time — possibly
+// advanced past the immediate winner by a third connection — and
+// that's intentional: the recovery is read-after-write-failure
+// with no isolation-level assumption, and any committed head we
+// see is a valid stale-base target. Returns the standard
+// `duplicate` / `stale-base` outcome; the caller's WS handler
+// renders these as ack-only / `workspace-state` catch-up. No
+// silent failure, no chain fork.
+export function commitRevisionViaWriteLock(
   handle: Handle,
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
 ): Promise<CommitResult> {
   const lock = writeLocks.get(handle)
-  // The WeakMap is populated by `openDbInner`; the only way to hit
-  // this is to construct a `Handle` literal by hand (e.g. a test
-  // mock). Surface as a rejection rather than a sync throw so the
-  // function's Promise-returning contract holds for every caller —
-  // an unawaited write would otherwise leak an uncaught exception.
-  if (!lock) return Promise.reject(new Error('commitRevision: handle not opened via openDb'))
+  // The WeakMap is populated by `openDbInner` only (the Neon
+  // backend doesn't use an in-process lock — see `db-neon.ts`);
+  // the only way to hit this is to construct a `Handle` literal by
+  // hand (e.g. a test mock). Surface as a rejection rather than a
+  // sync throw so the function's Promise-returning contract holds
+  // for every caller — an unawaited write would otherwise leak an
+  // uncaught exception.
+  if (!lock) return Promise.reject(new Error('commitRevisionViaWriteLock: handle not opened via openDb'))
   return lock.run(tag, async () => {
     if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
     const headRow = await handle.headFor.get(tag)
