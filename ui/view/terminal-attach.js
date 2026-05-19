@@ -26,13 +26,14 @@ let cached = null
 function loadTerminal() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
-    // Path held in a variable so esbuild can't statically resolve
-    // it — keeps terminal.js (and the prismjs-sized lit + shell
-    // payload it pulls) out of the main bundle. Browser resolves
-    // it against the page URL, so this works at any deploy path.
+    // Path held in a variable + the `@vite-ignore` annotation tells
+    // the bundler to leave this dynamic import alone — keeps
+    // terminal.js (and the prismjs-sized lit + shell payload it
+    // pulls) out of the main bundle. Browser resolves it against the
+    // page URL, so this works at any deploy path.
     const path = './terminal.js'
     try {
-      return await import(path)
+      return await import(/* @vite-ignore */ path)
     } catch (err) {
       // Don't pin the module to a rejected promise — a transient
       // failure (offline at first attach, stale service-worker

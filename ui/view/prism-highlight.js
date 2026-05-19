@@ -13,12 +13,12 @@ let loadPromise = null
 function loadPrism() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
-    // Path held in a variable so esbuild can't statically resolve
-    // it — keeps prismjs out of the main bundle. The browser
-    // resolves the URL relative to the page; works at any deploy
-    // path (root or subdirectory).
+    // Path held in a variable + the `@vite-ignore` annotation tells
+    // the bundler to leave this dynamic import alone — keeps prismjs
+    // out of the main bundle. The browser resolves the URL relative
+    // to the page; works at any deploy path (root or subdirectory).
     const path = './prism.js'
-    return await import(path)
+    return await import(/* @vite-ignore */ path)
   })()
   return loadPromise
 }

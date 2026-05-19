@@ -4,13 +4,14 @@
 //   1. `DecompressionStream('br')` / `'brotli'` — modern Chromium
 //      (138+) ships brotli natively. No extra cost on those
 //      browsers.
-//   2. `brotli-fallback.js` — a separate esbuild entry point that
+//   2. `brotli-fallback.js` — a separate bundler entry point that
 //      bundles the foliojs `brotli` decoder (~200KB after minify).
 //      Pulled in via `await import('./brotli-fallback.js')` only
 //      when the page actually hits a brotli payload AND native
-//      detection failed; the import is a runtime string so esbuild
-//      doesn't statically resolve it into the main bundle, the
-//      browser resolves it against the page URL.
+//      detection failed; the import is a runtime string + the
+//      `@vite-ignore` annotation so the bundler doesn't statically
+//      resolve it into the main bundle, the browser resolves it
+//      against the page URL.
 //
 // Older revisions of this module experimented with a SW Content-
 // Encoding echo trick and a Cache API echo trick. Both returned the
@@ -57,13 +58,14 @@ async function unregisterSW() {
 function loadFallback() {
   if (fallbackPromise) return fallbackPromise
   fallbackPromise = (async () => {
-    // The path is held in a variable so esbuild can't statically
-    // resolve it — that keeps `brotli-fallback.js` (and the
-    // foliojs/brotli decoder it pulls in) out of the main view.js
-    // bundle. The browser resolves the URL relative to the page,
-    // so it works at any deploy path (root or subdirectory).
+    // The path is held in a variable + the `@vite-ignore` annotation
+    // tells the bundler to leave this dynamic import alone — that
+    // keeps `brotli-fallback.js` (and the foliojs/brotli decoder it
+    // pulls in) out of the main view.js bundle. The browser resolves
+    // the URL relative to the page, so it works at any deploy path
+    // (root or subdirectory).
     const path = './brotli-fallback.js'
-    return await import(path)
+    return await import(/* @vite-ignore */ path)
   })()
   return fallbackPromise
 }

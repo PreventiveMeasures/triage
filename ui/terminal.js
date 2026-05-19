@@ -1,4 +1,4 @@
-// Bundle-source terminal UI — separate esbuild entry point so the
+// Bundle-source terminal UI — separate bundler entry point so the
 // virtual-shell runtime (`@preventive/terminal`) and the lit
 // component don't land in the main view.js bundle. `ui/view/
 // terminal-attach.js` `await import('./terminal.js')`s this module
