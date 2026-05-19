@@ -853,13 +853,20 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            per-finding type on a native dump). Friendly labels for
            the source-marked imports (DeepSec / Codex Security /
            Claude Security) come from ANALYZER_LABELS. Shares the
-           sort dropdown's wrapper styling so the two pills line up. -->
+           sort dropdown's wrapper styling so the two pills line up.
+           The select.value is bound through live() so a report
+           switch that clears state.filterAnalyzer (resetFilters /
+           stale-filter guard) actually updates the visible
+           selection — without it, Lit setting selected attributes
+           on the existing options does not move the browser-native
+           select.value, so the dropdown reads as the old choice
+           while the filter applies All. -->
       ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
-        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer">
-          <option value="" ?selected=${state.filterAnalyzer === ''}>All analyzers</option>
+        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer" .value=${live(state.filterAnalyzer)}>
+          <option value="">All analyzers</option>
           ${analyzerOptions.map((a) => {
             const value = a == null ? 'null' : a
-            return html`<option value=${value} ?selected=${state.filterAnalyzer === value}>${analyzerLabel(a)}</option>`
+            return html`<option value=${value}>${analyzerLabel(a)}</option>`
           })}
         </select>
       </span>` : nothing}
