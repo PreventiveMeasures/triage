@@ -32,10 +32,23 @@
 // duplicated `client/triage.js` would receive the notifier and the
 // main bundle's `saveTriage` would never fan the change out.
 
+import { getSecureItem } from '#client/index.js'
 import { applyDefaultSyncHost } from '#client/sync-host.js'
 
 let realModule = null
 let loadPromise = null
+
+// True when the user hasn't explicitly disabled sync. Defaults to
+// true (matches `triage-sync.ts`'s `userEnabled` default), and is
+// only false when the persisted flag is the literal '0'. Read
+// through `getSecureItem` so a hydrated cache returns the user's
+// actual choice — pre-hydrate reads return null and default to
+// "wants sync", which is the safe fallback (worst case: a single
+// unwanted chunk load that the user can disable from the sidebar).
+function userWantsSync() {
+  try { return getSecureItem('deepview.sync.userEnabled') !== '0' }
+  catch { return true }
+}
 
 function loadSyncOnce() {
   if (loadPromise) return loadPromise
@@ -151,17 +164,28 @@ export function setHydrationConflictResolver(fn) {
 }
 
 // Async wrappers for explicit-action endpoints — these trigger the
-// load because the caller is awaiting the result and a no-op would
-// silently strand them. Each is a single-line proxy.
-export async function fetchFile(...args) { return (await loadSyncOnce()).fetchFile(...args) }
-export async function fetchBundleFromRemote(...args) { return (await loadSyncOnce()).fetchBundleFromRemote(...args) }
-export async function putFile(...args) { return (await loadSyncOnce()).putFile(...args) }
-export async function putBundleToRemote(...args) { return (await loadSyncOnce()).putBundleToRemote(...args) }
-export async function deleteFromRemote(...args) { return (await loadSyncOnce()).deleteFromRemote(...args) }
-export async function openWorkspace(...args) { return (await loadSyncOnce()).openWorkspace(...args) }
-export async function closeWorkspace(...args) { return (await loadSyncOnce()).closeWorkspace(...args) }
-export async function discoverRemoteFileNames(...args) { return (await loadSyncOnce()).discoverRemoteFileNames(...args) }
-export async function discoverRemoteBundleIntegrities(...args) { return (await loadSyncOnce()).discoverRemoteBundleIntegrities(...args) }
+// load when sync is wanted. When the user has opted out
+// (`userWantsSync()` is false), the call no-ops: the upload /
+// download / discovery UIs are gated on `triageSync.status` which
+// stays `'off'` while sync isn't loaded, so the only way these
+// wrappers fire from the "wants sync = false" state is incidental
+// (ingest.js's `openPresence(id)` on every workspace switch is
+// the main one). No-op'ing avoids dragging the lazy chunk in just
+// to immediately discard it.
+async function callIfWanted(method, args) {
+  if (!userWantsSync() && !realModule) return undefined
+  return (await loadSyncOnce())[method](...args)
+}
+
+export function fetchFile(...args) { return callIfWanted('fetchFile', args) }
+export function fetchBundleFromRemote(...args) { return callIfWanted('fetchBundleFromRemote', args) }
+export function putFile(...args) { return callIfWanted('putFile', args) }
+export function putBundleToRemote(...args) { return callIfWanted('putBundleToRemote', args) }
+export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemote', args) }
+export function openWorkspace(...args) { return callIfWanted('openWorkspace', args) }
+export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
+export function discoverRemoteFileNames(...args) { return callIfWanted('discoverRemoteFileNames', args) }
+export function discoverRemoteBundleIntegrities(...args) { return callIfWanted('discoverRemoteBundleIntegrities', args) }
 
 // `triageSync` proxy — mirrors the real object's shape. Methods that
 // represent "online intent" (`setEnabled(true)`) trigger the load;
@@ -178,17 +202,40 @@ export const triageSync = {
 
   // `setEnabled(true)` is the canonical "switch to online" trigger.
   // Always loads sync — even if the user is enabling for the first
-  // time mid-session. `setEnabled(false)` and the queryable getter
-  // do NOT load: a disable on an unloaded sync is a no-op (sync is
-  // already effectively off), and the persisted flag stays
-  // untouched. A subsequent re-enable will load and pick up the
-  // current persisted state.
+  // time mid-session.
+  //
+  // `setEnabled(false)` is "switch to offline": it closes every
+  // objstore-presence session (release the transport acquires they
+  // hold) BEFORE calling triage-sync's setEnabled, so the WS
+  // actually disconnects instead of staying open behind the
+  // surviving presence acquires. Without this, the user toggles
+  // "Sync off" but the socket lingers as long as any workspace has
+  // an open presence session — and ingest.js keeps presence open
+  // across workspace switches by design.
+  //
+  // If sync was never loaded, disable is a fast path: nothing to
+  // tear down; we still hand `false` to a queue-able `deferCall`
+  // so the persisted `userEnabled` flag flips to '0' once a future
+  // load lands (otherwise the persisted flag would stay at its
+  // default and the next reload would auto-resume).
   setEnabled(value) {
     if (value === true) {
       return loadSyncOnce().then((m) => m.triageSync.setEnabled(true)).catch((err) => {
         console.warn('client-sync: setEnabled load failed:', err)
         return null
       })
+    }
+    if (realModule) {
+      // Close every presence session so its transport acquire
+      // releases. `openWorkspaceIds()` snapshots the keys; iterate
+      // a copy because `closeWorkspace` mutates the live map.
+      for (const id of realModule.openWorkspaceIds()) {
+        try { realModule.closeWorkspace(id) } catch (err) {
+          console.warn(`client-sync: closeWorkspace(${id}) failed during disable:`, err)
+        }
+      }
+      realModule.triageSync.setEnabled(false)
+      return
     }
     deferCall('setEnabled', [value])
   },

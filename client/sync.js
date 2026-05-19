@@ -19,6 +19,7 @@ export {
   onBundleAutoDownloaded,
   onChange,
   openWorkspace,
+  openWorkspaceIds,
   putBundleToRemote,
   putFile,
   remoteBundleName,
