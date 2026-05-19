@@ -584,6 +584,18 @@
 .line-num a { color: inherit; }
 .line-num a:hover { color: var(--accent); }
 
+/* npm chip in the focus view's line-row — small accent-tinted pill
+   so the upstream link reads as supplementary metadata next to the
+   file:line github link rather than competing with it. */
+.npm-link {
+  display: inline-block;
+  padding: 0 .4rem;
+  border: 1px solid var(--border); border-radius: 3px;
+  font-size: .72rem; font-weight: 500;
+  color: var(--muted); text-decoration: none;
+}
+.npm-link:hover { border-color: var(--accent); color: var(--accent); }
+
 /* Print rules — moved out of styles/print.css's `.finding {…}` block
    because that selector would no longer reach across the shadow
    boundary. The host-level `:host` rules let us preserve the
@@ -600,6 +612,10 @@
   .finding-code-btn { display: none !important; }
   /* Same — clipboard copy button has no paper meaning. */
   .mark-copy { display: none !important; }
+  /* Drop the on-screen pill chrome from the npm chip — on paper
+     the boxed outline next to the file:line reads inconsistently
+     with the surrounding flat text. */
+  .npm-link { border: 0; padding: 0; }
   :host(.triage-fixed),
   :host(.triage-invalid),
   :host(.triage-deleted),

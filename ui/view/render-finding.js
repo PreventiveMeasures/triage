@@ -351,6 +351,35 @@ function confTemplate(f) {
     <div class="value-label">Confidence</div>`
 }
 
+// Permissive npm-package-name shape — lowercase / digits / `-_.`
+// with an optional `@scope/` prefix. Anything outside this set
+// (whitespace, `?`, `#`, `..`, multiple slashes, etc.) suppresses
+// the link rather than producing a URL that points at the wrong
+// npm page.
+const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
+
+// npm chip — small accent-tinted pill linking to npmjs.com. Returns
+// `nothing` when the stamp is absent or malformed. Version is
+// `encodeURIComponent`'d (semver tags are URL-safe but pre-release
+// builds can carry `+` which would otherwise read as a space).
+function npmChipTemplate(npm) {
+  const name = npm?.name
+  if (typeof name !== 'string' || !NPM_NAME_RE.test(name)) return nothing
+  const version = npm?.version
+  const hasVersion = typeof version === 'string' && version.length > 0
+  const href = hasVersion
+    ? `https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`
+    : `https://www.npmjs.com/package/${name}`
+  const label = hasVersion ? `${name}@${version}` : name
+  return html`<span class="line-num"><a
+    class="npm-link"
+    href=${href}
+    target="_blank"
+    rel="noopener noreferrer"
+    title=${`Open ${label} on npmjs.com`}
+  >npm: ${label}</a></span>`
+}
+
 // One tab body — finding-left (badge column) + the right-side stack
 // (line row, description, recommendation, conf reason). Only the
 // active body is `display: grid` on screen; print mode shows them
@@ -378,6 +407,22 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<span class="line-num">${locLink}, ${exportName}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
+  // npm chip in the focused finding view's line-row — surfaces the
+  // upstream package + version when the analyzer stamped
+  // `package: { npm: { name, version? } }` on the finding. Links to
+  // the package page on npmjs.com (versioned permalink when the
+  // version is known). The list / grouped / table-details variants
+  // don't render this — the focus view has more horizontal room and
+  // is the workbench surface, so the extra chip reads as orientation
+  // rather than noise.
+  //
+  // Name is regex-validated to npm's character set (lowercase /
+  // digits / `-_.` plus an optional `@scope/` prefix) before being
+  // interpolated into the URL path — Lit auto-escapes attribute
+  // values so XSS isn't a risk, but a malformed stamp ("foo?bar",
+  // "../bar", whitespace) would otherwise produce a link to the
+  // wrong page. Invalid names suppress the chip entirely.
+  const npmChip = context === 'focus' ? npmChipTemplate(f.package?.npm) : nothing
   // "Code →" shortcut — when this finding's `fileHash` is present
   // in any bundle the analyzer was run against (per-finding
   // `_bundleHashes`, stamped by ingest), the button points at the
@@ -417,6 +462,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     <div>
       <div class="line-row">
         ${lineRowMain}
+        ${npmChip}
         ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>

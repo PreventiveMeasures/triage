@@ -12,18 +12,24 @@
 // repo book-keeping; `findingDedupeKey` is threaded in from the
 // index module to avoid a circular import.
 
-// Version extractor — surfaces the installed version when the path
-// carries pnpm's `.pnpm/<encoded-name>@<version>/node_modules/<name>/...`
-// shape. Scoped names are encoded with `+` (e.g.
-// `@scope/name` → `@scope+name`), and a `_<peer-deps>` suffix may
-// follow the version when pnpm pinned a peer-dep variant (e.g.
-// `foo@1.2.3_react@18.0.0`). Peer-dep stripping has to happen
-// BEFORE the last-`@` split — otherwise `lastIndexOf('@')` finds
-// the peer's own `@`, not the package's, and the version comes
-// back as the peer-dep major. Returns null for plain
-// `node_modules/<pkg>/` paths (no version available); the
-// Packages view treats null as a single unversioned bucket.
-export function packageVersionOf(file) {
+// Version extractor — prefers the analyzer-stamped
+// `f.package.npm.version` (the report finding shape carries
+// `package: { npm: { name, version? } }` when the analyzer can
+// identify the upstream package). Falls back to pnpm's
+// `.pnpm/<encoded-name>@<version>/node_modules/<name>/...` shape on
+// `f.file`. Scoped names are encoded with `+` (e.g. `@scope/name` →
+// `@scope+name`), and a `_<peer-deps>` suffix may follow the version
+// when pnpm pinned a peer-dep variant (e.g. `foo@1.2.3_react@18.0.0`).
+// Peer-dep stripping has to happen BEFORE the last-`@` split —
+// otherwise `lastIndexOf('@')` finds the peer's own `@`, not the
+// package's, and the version comes back as the peer-dep major.
+// Returns null when neither signal is available (plain
+// `node_modules/<pkg>/` paths with no stamped version); the Packages
+// view treats null as a single unversioned bucket.
+export function packageVersionOf(f) {
+  const stamped = f?.package?.npm?.version
+  if (typeof stamped === 'string' && stamped) return stamped
+  const file = f?.file
   if (!file) return null
   const m = /(?:^|\/)node_modules\/\.pnpm\/([^/]+)\/node_modules\//u.exec(file)
   if (!m) return null
