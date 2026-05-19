@@ -75,10 +75,10 @@ import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
@@ -1041,6 +1041,53 @@ function isUpgradePath(url: string | undefined): boolean {
 
 const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
 
+// Static-file plane: serve the production UI bundle that `build.js
+// build` writes to `out/`. The directory is enumerated once at boot
+// and every regular file's bytes are slurped into `STATIC_FILES`
+// keyed by basename. The HTTP handler answers GETs against that
+// fixed whitelist with a plain `Map.get(name)` — the request URL is
+// never joined with a filesystem path. The only on-disk paths we
+// ever open are `join(STATIC_DIR, dirent.name)` from `readdirSync`
+// at boot, where every `name` came from the kernel's directory
+// listing rather than from request input. The handler therefore has
+// no path-traversal surface at all: `..`, percent-encoded slashes,
+// nested subpaths and absolute-form URIs all just produce a key that
+// isn't in the map and 404.
+const STATIC_DIR = fileURLToPath(new URL('../out', import.meta.url))
+const STATIC_CONTENT_TYPE: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
+}
+type StaticEntry = { body: Buffer, type: string }
+const STATIC_FILES: ReadonlyMap<string, StaticEntry> = (() => {
+  const map = new Map<string, StaticEntry>()
+  let entries
+  try { entries = readdirSync(STATIC_DIR, { withFileTypes: true }) } catch (err) {
+    // Missing `out/` is the pre-build case — the operator hasn't run
+    // `node --run build` yet. Log once and skip; the API/WS planes
+    // are still functional, just no UI is served.
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      console.warn(`static: ${STATIC_DIR} missing — UI not served (run \`node --run build\`)`)
+      return map
+    }
+    throw err
+  }
+  for (const entry of entries) {
+    // `isFile()` filters out subdirectories, symlinks, FIFOs etc.
+    // Only regular files directly inside `out/` are addressable —
+    // the build emits a flat tree, and dropping anything else keeps
+    // the surface minimal even if a stray non-file entry sneaks in.
+    if (!entry.isFile()) continue
+    const body = readFileSync(join(STATIC_DIR, entry.name))
+    const type = STATIC_CONTENT_TYPE[extname(entry.name)] ?? 'application/octet-stream'
+    map.set(entry.name, { body, type })
+  }
+  return map
+})()
+
 const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
   if (matchRoute(req.url) != null) {
     // Shutdown gate. The WS plane gates new messages on
@@ -1103,6 +1150,25 @@ const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     })
     track(p)
     return
+  }
+  // Static-file plane (see STATIC_FILES). GET maps `/` to
+  // `index.html` and every other path to its leading-slash-stripped
+  // form, which we look up as a key in the in-memory map. The
+  // request URL never touches the filesystem; an attempt to escape
+  // (`..`, encoded slashes, nested paths, absolute-form URIs) just
+  // produces a key the map doesn't hold and falls through to 404.
+  if (req.method === 'GET' && typeof req.url === 'string') {
+    const path = req.url.split('?', 1)[0]!
+    const name = path === '/' ? 'index.html' : path.startsWith('/') ? path.slice(1) : null
+    const file = name == null ? undefined : STATIC_FILES.get(name)
+    if (file) {
+      res.writeHead(200, {
+        'content-type': file.type,
+        'content-length': file.body.byteLength,
+      })
+      res.end(file.body)
+      return
+    }
   }
   // `Connection: close` so an HTTP/1.1 keep-alive client doesn't
   // hold the socket open expecting more requests on a server that
