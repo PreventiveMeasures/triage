@@ -109,3 +109,15 @@ if (typeof navigator !== 'undefined' && !navigator.locks) {
     value: locksPolyfill,
   })
 }
+
+// Install the default `SyncHost` wiring for `client/sync/*` modules.
+// Tests import the sync modules directly (no `ui/view.js` boot), so
+// the install hook has to run here to fire the deferred listener
+// registrations + persisted-flag restore. Idempotent: the install
+// passes the same module-scoped host instance on every call, and
+// `installSyncHost` no-ops on a same-instance re-install. Runs LAST
+// so the localStorage + navigator.locks shims above are in place
+// for the install's bootstrap path (`getSecureItem`,
+// `prunePersistedSessions`).
+const { installDefaultSyncHost } = await import('../client/sync.js')
+installDefaultSyncHost()

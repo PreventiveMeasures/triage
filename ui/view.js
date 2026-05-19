@@ -6,7 +6,16 @@
 // the time `addFiles` calls `renderSidebar`.
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
-import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from '#client/sync.js'
+import { installDefaultSyncHost, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from '#client/sync.js'
+
+// Wire the dependency-injection seam for `client/sync/` BEFORE any
+// sync entry point fires. `installDefaultSyncHost` builds a host
+// from the rest of `client/` and installs it. Listener registrations
+// and boot-time secure-storage reads in `client/sync/*` defer to
+// this install; the `triageSync.*` methods are reachable but inert
+// until the host is installed. See `client/sync/host.ts` for the
+// contract.
+installDefaultSyncHost()
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'

@@ -2,6 +2,21 @@
 // surface (objstore presence + triage-sync). Split from
 // `#client/index.js` so importing storage / vault / counts doesn't
 // drag the sync transport into the bundle's import graph.
+//
+// Also wires the dependency-injection seam: `client/sync/*` modules
+// declare what they need from the rest of `client/` via a
+// `SyncHost` interface (see `./sync/host.ts`) and reach the live
+// implementation through `syncHost()`. `installDefaultSyncHost`
+// composes the host from concrete `client/` exports — UI boot calls
+// it once.
+
+import { state } from './state.ts'
+import { analyzeContent, setCount } from './counts.js'
+import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
+import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from './storage.js'
+import { saveTriage } from './triage.js'
+import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
+import { installSyncHost } from './sync/host.ts'
 
 export {
   closeWorkspace,
@@ -28,3 +43,37 @@ export {
   setRedraw,
   triageSync,
 } from './sync/triage-sync.ts'
+
+export { installSyncHost } from './sync/host.ts'
+
+// Compose + install the default host. Called once from `ui/view.js`
+// boot. Re-call is a no-op via `installSyncHost`'s same-instance
+// guard (the host object is module-scoped so subsequent calls pass
+// the identical reference).
+const defaultHost = {
+  get state() { return state },
+  listWorkspaces,
+  addReportToWorkspace,
+  addBundleToWorkspace,
+  onReportMembershipChanged,
+  onBundleMembershipChanged,
+  onWorkspaceDeleted,
+  onWorkspacePrivateKeyChanged,
+  analyzeContent,
+  setCount,
+  gunzipBytes,
+  listBundles,
+  listFiles,
+  readBundle,
+  saveBundle,
+  saveFileBytes,
+  saveTriage,
+  getSecureItem,
+  setSecureItem,
+  removeSecureItem,
+  onSecureStorageHydrated,
+}
+
+export function installDefaultSyncHost() {
+  installSyncHost(defaultHost)
+}

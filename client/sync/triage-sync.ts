@@ -1,8 +1,19 @@
-import { type TriageBucket, state } from '../state.ts'
-import { saveTriage } from '../triage.js'
-import { listWorkspaces, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from '../workspaces.js'
+import type { State } from '../state.ts'
+import { type SyncHostWorkspace, type TriageBucket, onSyncHostInstalled } from './host.ts'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../../common/save-error-reason.ts'
-import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, setItem as setSecureItem } from '../secure-storage.js'
+
+// Late-bound host accessors. Populated by the `onSyncHostInstalled`
+// hook at the bottom of this file before any entry point fires; until
+// then the `triageSync` object's methods are reachable but inert
+// (key derivation / open-session paths bail on missing host calls).
+// Direct references read cleaner at each call site than
+// `syncHost().listWorkspaces()` and let the existing closure-captured
+// pattern stay unchanged.
+let state!: State
+let listWorkspaces!: () => SyncHostWorkspace[]
+let saveTriage!: () => Promise<unknown>
+let getSecureItem!: (key: string) => string | null
+let setSecureItem!: (key: string, value: string) => Promise<void>
 import { loadCachedSyncPasswordFromStorage, setCachedSyncPassword } from './sync-auth-cache.ts'
 import { type AcquireHandle } from './socket-transport.ts'
 import { getSharedTransport, setSharedAuthResolver } from './sync-transport.ts'
@@ -977,7 +988,10 @@ function setPersistenceDegraded(next: boolean): void {
 // state from a failed write should persist across the empty
 // transition until a SUCCESSFUL save proves the underlying issue
 // (quota, vault-locked) is resolved.
-onSecureStorageHydrated(() => {
+// Secure-storage hydrate handler is registered from the bottom-of-
+// file `onSyncHostInstalled` block so module init doesn't reach for
+// a host that hasn't been installed yet.
+function handleSecureStorageHydrated(): void {
   const r = loadAllSessionsResult()
   if (r.kind === 'unknown-version') setPersistenceDegraded(true)
   else if (r.kind === 'v1' || r.kind === 'legacy') setPersistenceDegraded(false)
@@ -991,7 +1005,7 @@ onSecureStorageHydrated(() => {
   // replay from cache).
   loadCachedSyncPasswordFromStorage()
   transport.resetCachedReplayGuard()
-})
+}
 
 // Discriminated load result so `mutateAllSessions` can distinguish
 // "blob doesn't exist / is unparseable / is legacy / is current"
@@ -2767,102 +2781,140 @@ export const triageSync = {
   },
 }
 
-// Restore the user's persisted enable flag on module load. The
-// server URL is NOT persisted — the per-origin detected default
-// (see `DEFAULT_SYNC_URL` in ui/view/sidebar.js) primes `serverUrl`
-// via `setServerUrl`, so any previously-stored URL is purged here
-// to avoid resurrecting stale endpoints from older builds.
-try {
-  localStorage.removeItem(LEGACY_URL_KEY)
-  const savedEnabled = getSecureItem(USER_ENABLED_KEY)
-  if (savedEnabled === '0') userEnabled = false
-  applyActive()
-} catch {}
+// Boot wiring — workspaces / secure-storage listeners and the
+// persisted-flag restore both reach into the host, so they run
+// inside `onSyncHostInstalled` rather than at module init. The host
+// is installed once by `ui/view.js` before any `triageSync.*` entry
+// point fires (see `client/sync/host.ts` for the contract).
+onSyncHostInstalled((host) => {
+  state = host.state
+  listWorkspaces = host.listWorkspaces
+  saveTriage = host.saveTriage
+  getSecureItem = host.getSecureItem
+  setSecureItem = host.setSecureItem
 
-// Live counterpart to the page-load prune below: the moment a
-// workspace is deleted via `deleteWorkspace`, drop its in-memory
-// session and its persisted-base entry. Without this the session
-// keeps trying to encrypt / sign saves for an id the rest of the
-// app considers gone, and the persistence blob carries the dead
-// base around until the next page load. Registered BEFORE
-// prunePersistedSessions so a deletion that lands between
-// registration and the prune still has its handler wired up
-// (audit L5; defensive against any future caller that synchronously
-// deletes during init).
-onWorkspaceDeleted((workspaceId) => {
-  const removed = sessions.delete(workspaceId)
-  // Fire-and-forget — guard the rejection (Web Locks can fail on
-  // tab teardown) so it can't surface as an unhandledrejection.
-  // Audit M-3 (round 2).
-  dropPersistedSession(workspaceId).catch((err) => {
-    console.warn('Triage sync: dropPersistedSession lock failed:', err)
-  })
-  if (removed) emitStatusIfChanged()
-})
+  host.onSecureStorageHydrated(handleSecureStorageHydrated)
 
-// Workspace privateKey rotation (re-import of a re-keyed bundle, or
-// a future "rotate key" affordance): the live session has cached
-// `signingKey` / `workspaceTag` / `key` derived from the OLD key.
-// Continuing to use them would route saves to an orphan workspaceTag
-// on the server and silently drop the user's edits on the floor.
-// Tear the session down (in-memory + persisted base both — the
-// persisted chain was content-addressed under the old workspaceTag,
-// useless to the new identity) and re-open so kickKeyDerivation
-// picks up the fresh key via listWorkspaces().
-onWorkspacePrivateKeyChanged((workspaceId) => {
-  const oldSession = sessions.get(workspaceId)
-  if (!oldSession) {
-    // No live session, but a stale persisted base for the OLD
-    // identity would mislead a future openSession (see audit H2).
-    // Drop fire-and-forget; the rejection guard below mirrors the
-    // open-session branch.
+  // Restore the user's persisted enable flag on module load. The
+  // server URL is NOT persisted — the per-origin detected default
+  // (see `DEFAULT_SYNC_URL` in ui/view/sidebar.js) primes `serverUrl`
+  // via `setServerUrl`, so any previously-stored URL is purged here
+  // to avoid resurrecting stale endpoints from older builds.
+  try {
+    localStorage.removeItem(LEGACY_URL_KEY)
+    const savedEnabled = getSecureItem(USER_ENABLED_KEY)
+    if (savedEnabled === '0') userEnabled = false
+    applyActive()
+  } catch {}
+
+  // Live counterpart to the page-load prune below: the moment a
+  // workspace is deleted via `deleteWorkspace`, drop its in-memory
+  // session and its persisted-base entry. Without this the session
+  // keeps trying to encrypt / sign saves for an id the rest of the
+  // app considers gone, and the persistence blob carries the dead
+  // base around until the next page load. Registered BEFORE
+  // prunePersistedSessions so a deletion that lands between
+  // registration and the prune still has its handler wired up
+  // (audit L5; defensive against any future caller that synchronously
+  // deletes during init).
+  host.onWorkspaceDeleted((workspaceId) => {
+    const removed = sessions.delete(workspaceId)
+    // Fire-and-forget — guard the rejection (Web Locks can fail on
+    // tab teardown) so it can't surface as an unhandledrejection.
+    // Audit M-3 (round 2).
     dropPersistedSession(workspaceId).catch((err) => {
       console.warn('Triage sync: dropPersistedSession lock failed:', err)
     })
-    return
-  }
-  // Disarm the OLD session synchronously: clear the keys / tag so
-  // any `notify()` landing during the dropPersistedSession await
-  // routes through trySendSave's no-keys bail (raises pendingSave
-  // and returns) instead of pushing a save under the now-orphan
-  // OLD workspaceTag. Without this, an edit during the rotation
-  // gap would land on a chain the new identity doesn't own —
-  // not data loss (the new session re-emits state.* on first save
-  // post-derivation) but cosmetic chain growth on a chain nobody
-  // reads. The session entry stays in `sessions` so iteration
-  // doesn't skip the workspace; it gets replaced atomically by
-  // openSession after the drop completes. Audit L2 round-6.
-  oldSession.signingKey = null
-  oldSession.key = null
-  oldSession.verifyingKey = null
-  oldSession.workspaceTag = null
-  // Await the persisted-base wipe BEFORE reopening — `openSession`
-  // calls `loadPersistedSession` (a lock-free read of the same
-  // blob), so without the await it would race the lock-scheduled
-  // mutator and restore the OLD identity's `baseRevision` /
-  // `baseState` into the new session. The new session's first
-  // subscribe would then carry a `from` that the server doesn't
-  // recognize under the new tag, and the next save could clobber
-  // the (just-rotated) chain. Audit H2.
-  ;(async () => {
-    await dropPersistedSession(workspaceId)
-    sessions.delete(workspaceId)
-    triageSync.openSession(workspaceId)
-    emitStatusIfChanged()
-  })().catch((err) => {
-    // Web Locks reject on tab teardown / abort signals; without
-    // this catch the IIFE rejection escapes as an unhandledrejection
-    // AND `sessions.delete` + `openSession` never run, leaving the
-    // session entry stranded with `signingKey = key = workspaceTag
-    // = null` (set synchronously above by the disarm step). Every
-    // subsequent `notify()` would then short-circuit in
-    // `trySendSave` and the workspace silently stops syncing. Log
-    // and explicitly clean up so a later `dismissError` /
-    // re-import has a coherent state to work from.
-    console.warn('Triage sync: privateKey rotation IIFE failed:', err)
-    sessions.delete(workspaceId)
-    emitStatusIfChanged()
+    if (removed) emitStatusIfChanged()
   })
+
+  // Workspace privateKey rotation (re-import of a re-keyed bundle, or
+  // a future "rotate key" affordance): the live session has cached
+  // `signingKey` / `workspaceTag` / `key` derived from the OLD key.
+  // Continuing to use them would route saves to an orphan workspaceTag
+  // on the server and silently drop the user's edits on the floor.
+  // Tear the session down (in-memory + persisted base both — the
+  // persisted chain was content-addressed under the old workspaceTag,
+  // useless to the new identity) and re-open so kickKeyDerivation
+  // picks up the fresh key via listWorkspaces().
+  host.onWorkspacePrivateKeyChanged((workspaceId) => {
+    const oldSession = sessions.get(workspaceId)
+    if (!oldSession) {
+      // No live session, but a stale persisted base for the OLD
+      // identity would mislead a future openSession (see audit H2).
+      // Drop fire-and-forget; the rejection guard below mirrors the
+      // open-session branch.
+      dropPersistedSession(workspaceId).catch((err) => {
+        console.warn('Triage sync: dropPersistedSession lock failed:', err)
+      })
+      return
+    }
+    // Disarm the OLD session synchronously: clear the keys / tag so
+    // any `notify()` landing during the dropPersistedSession await
+    // routes through trySendSave's no-keys bail (raises pendingSave
+    // and returns) instead of pushing a save under the now-orphan
+    // OLD workspaceTag. Without this, an edit during the rotation
+    // gap would land on a chain the new identity doesn't own —
+    // not data loss (the new session re-emits state.* on first save
+    // post-derivation) but cosmetic chain growth on a chain nobody
+    // reads. The session entry stays in `sessions` so iteration
+    // doesn't skip the workspace; it gets replaced atomically by
+    // openSession after the drop completes. Audit L2 round-6.
+    oldSession.signingKey = null
+    oldSession.key = null
+    oldSession.verifyingKey = null
+    oldSession.workspaceTag = null
+    // Await the persisted-base wipe BEFORE reopening — `openSession`
+    // calls `loadPersistedSession` (a lock-free read of the same
+    // blob), so without the await it would race the lock-scheduled
+    // mutator and restore the OLD identity's `baseRevision` /
+    // `baseState` into the new session. The new session's first
+    // subscribe would then carry a `from` that the server doesn't
+    // recognize under the new tag, and the next save could clobber
+    // the (just-rotated) chain. Audit H2.
+    ;(async () => {
+      await dropPersistedSession(workspaceId)
+      sessions.delete(workspaceId)
+      triageSync.openSession(workspaceId)
+      emitStatusIfChanged()
+    })().catch((err) => {
+      // Web Locks reject on tab teardown / abort signals; without
+      // this catch the IIFE rejection escapes as an unhandledrejection
+      // AND `sessions.delete` + `openSession` never run, leaving the
+      // session entry stranded with `signingKey = key = workspaceTag
+      // = null` (set synchronously above by the disarm step). Every
+      // subsequent `notify()` would then short-circuit in
+      // `trySendSave` and the workspace silently stops syncing. Log
+      // and explicitly clean up so a later `dismissError` /
+      // re-import has a coherent state to work from.
+      console.warn('Triage sync: privateKey rotation IIFE failed:', err)
+      sessions.delete(workspaceId)
+      emitStatusIfChanged()
+    })
+  })
+
+  host.onReportMembershipChanged((workspaceId) => {
+    // Open the session if it wasn't already open. Dragging a report
+    // into a workspace the user hasn't navigated to must still
+    // propagate that report's triage state to peers — the act of
+    // attaching is the user's signal that the workspace now claims
+    // those finding-ids, and the next browser to open the workspace
+    // would otherwise see stale data. `openSession` is idempotent on
+    // already-open ids. Mirrors the post-multiplex objstore-presence
+    // membership listeners.
+    triageSync.openSession(workspaceId)
+    const session = sessions.get(workspaceId)
+    if (!session) return  // workspace doesn't exist (deleted concurrently)
+    refreshAndPropagate(session)
+  })
+
+  // Drop persisted session entries whose workspace was deleted
+  // while we were away. One-time pass on host install — workspaces
+  // are loaded synchronously from localStorage so `listWorkspaces()`
+  // is ready by the time the host installs. Runs AFTER the lifecycle
+  // listeners are wired so any synchronous deletion during init
+  // wouldn't bypass the live handler (audit L5).
+  prunePersistedSessions()
 })
 
 // Workspace report-membership change (drag a report in/out of a
@@ -2924,25 +2976,3 @@ function refreshAndPropagate(session: Session): void {
   })().catch((err) => { console.warn('Triage sync: refreshAndPropagate failed:', err) })
 }
 
-onReportMembershipChanged((workspaceId) => {
-  // Open the session if it wasn't already open. Dragging a report
-  // into a workspace the user hasn't navigated to must still
-  // propagate that report's triage state to peers — the act of
-  // attaching is the user's signal that the workspace now claims
-  // those finding-ids, and the next browser to open the workspace
-  // would otherwise see stale data. `openSession` is idempotent on
-  // already-open ids. Mirrors the post-multiplex objstore-presence
-  // membership listeners.
-  triageSync.openSession(workspaceId)
-  const session = sessions.get(workspaceId)
-  if (!session) return  // workspace doesn't exist (deleted concurrently)
-  refreshAndPropagate(session)
-})
-
-// Drop persisted session entries whose workspace was deleted
-// while we were away. One-time pass on module load — workspaces
-// are loaded synchronously from localStorage so `listWorkspaces()`
-// is ready by now. Runs AFTER the lifecycle listeners are wired so
-// any synchronous deletion during init wouldn't bypass the live
-// handler (audit L5).
-prunePersistedSessions()
