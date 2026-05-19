@@ -156,14 +156,6 @@ export type SqliteHandle = Handle & { db: DatabaseSync }
 // handle's lock is GC'd alongside it without a manual delete.
 const writeLocks = new WeakMap<Handle, KeyedAsyncLock<string>>()
 
-// Internal helper used by alternative backends (currently just
-// `db-neon.ts`) to register their handle's lock without touching
-// the module-private `writeLocks` map directly. Underscore-prefix
-// signals "internal API, do not call from application code".
-export function _attachWriteLock(handle: Handle): void {
-  writeLocks.set(handle, new KeyedAsyncLock<string>())
-}
-
 export function openDb(path: string): SqliteHandle {
   mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
@@ -332,7 +324,7 @@ export async function revisionExists(handle: Handle, tag: string, id: string): P
 //     "PRIMARY KEY must be unique". Match both so a future Node
 //     `node:sqlite` change can't silently turn a recoverable
 //     conflict into an unhandled rejection.
-function isUniqueViolation(err: unknown): boolean {
+export function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof Error)) return false
   const code = (err as { code?: string }).code
   if (code === '23505') return true
@@ -416,7 +408,8 @@ export function commitRevisionViaWriteLock(
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
 ): Promise<CommitResult> {
   const lock = writeLocks.get(handle)
-  // The WeakMap is populated by `openDbInner` / `_attachWriteLock`;
+  // The WeakMap is populated by `openDbInner` only (the Neon
+  // backend doesn't use an in-process lock — see `db-neon.ts`);
   // the only way to hit this is to construct a `Handle` literal by
   // hand (e.g. a test mock). Surface as a rejection rather than a
   // sync throw so the function's Promise-returning contract holds

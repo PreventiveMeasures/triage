@@ -12,15 +12,16 @@
 //
 // API shape: `neon(connectionString)` returns a tagged-template +
 // callable function. We use the function-call form
-// `sql(text, params)`. Per-statement transactions are not used by
-// `commitRevision` — Neon's HTTP transport doesn't carry session
-// state across calls, so the module-private per-(workspace_tag)
-// `writeLock` from `./db.ts` (registered via `_attachWriteLock`) is
-// what keeps `commitRevision`'s dup-check + base-check + MAX(seq) +
-// INSERT atomic against concurrent saves. DDL bootstrap (below)
-// DOES use the driver's `transaction([...])` pipelined-transaction
-// API so the schema creates either fully or not at all on a
-// transient network failure mid-DDL.
+// `sql(text, params)`. `tryCommitNeon` (below) folds the dup-check
+// + head-check + gated INSERT into a single pipelined
+// `sql.transaction([...])` whose first statement is a
+// `pg_advisory_xact_lock` keyed on `workspace_tag` — that lock is
+// database-wide, so it serialises commits per-tag across replicas
+// (the in-process `KeyedAsyncLock` from `./db.ts` only serialises
+// within one Node process, useless against a sibling replica). DDL
+// bootstrap (below) also uses pipelined transactions so the schema
+// creates either fully or not at all on a transient network
+// failure mid-DDL.
 //
 // Durability: the SQLite path sets `PRAGMA synchronous = FULL` so
 // `workspace-save-ack` is only emitted after the row is fsynced.
@@ -36,7 +37,7 @@
 // ack-implies-durable contract that `workspace-save-ack` carries.
 
 import type { AllStmt, GetStmt, RunStmt } from './db-stmt.ts'
-import { type CommitResult, type Handle, type RevisionInsert, type RevisionRow, _attachWriteLock } from './db.ts'
+import { type CommitResult, type Handle, type RevisionInsert, type RevisionRow, isUniqueViolation } from './db.ts'
 
 // Minimal structural type for the `neon()` callable. We don't pull
 // `@neondatabase/serverless`'s types in at the top level because
@@ -299,42 +300,69 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
     const baseNorm = base ?? null
     const keyframeCol = keyframe === true ? 1 : 0
     const createdAt = Date.now()
-    const results = await sql.transaction([
-      // Per-tag advisory lock. `hashtext` returns an int4; combined
-      // with the int4 namespace, the pair uniquely identifies this
-      // tag's lock. False collisions across distinct tags (birthday-
-      // bound at ~65k tags by int4 width) merely cause those two
-      // tags' commits to serialise — correctness is unaffected,
-      // throughput on the colliding pair degrades to the slower of
-      // the two flows. Acceptable for a small-collision-rate space.
-      sql(`SELECT pg_advisory_xact_lock($1, hashtext($2))`, [COMMIT_LOCK_NAMESPACE, tag]),
-      // Dup-id check.
-      sql(`SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`, [tag, id]),
-      // Current head id (NULL when the chain is empty).
-      sql(`SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`, [tag]),
-      // Gated INSERT. `seq` is computed via the same MAX(seq)
-      // subquery as the head-check's snapshot. The WHERE clause
-      // re-asserts both gates so the INSERT is a no-op when either
-      // fails. RETURNING seq lets us discriminate inserted vs
-      // not-inserted by row count.
-      //
-      // `IS NOT DISTINCT FROM` is the NULL-safe equality needed to
-      // match `base = NULL` on the first revision against the
-      // empty-chain head (also NULL). Plain `=` would always be
-      // NULL → false → first revision would never insert.
-      sql(
-        `INSERT INTO workspace_revision
-           (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
-         SELECT $1,
-                COALESCE((SELECT MAX(seq) FROM workspace_revision WHERE workspace_tag = $1), 0) + 1,
-                $2, $3, $4, $5, $6, $7, $8
-         WHERE NOT EXISTS (SELECT 1 FROM workspace_revision WHERE workspace_tag = $1 AND id = $2)
-           AND (SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1)
-               IS NOT DISTINCT FROM $3
-         RETURNING seq`,
-        [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
-      ),
-    ])
+    let results: unknown[][]
+    try {
+      results = await sql.transaction([
+        // Per-tag advisory lock. `hashtext` returns an int4; combined
+        // with the int4 namespace, the pair uniquely identifies this
+        // tag's lock. False collisions across distinct tags (birthday-
+        // bound at ~65k tags by int4 width) merely cause those two
+        // tags' commits to serialise — correctness is unaffected,
+        // throughput on the colliding pair degrades to the slower of
+        // the two flows. Acceptable for a small-collision-rate space.
+        sql(`SELECT pg_advisory_xact_lock($1, hashtext($2))`, [COMMIT_LOCK_NAMESPACE, tag]),
+        // Dup-id check.
+        sql(`SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`, [tag, id]),
+        // Current head id (NULL when the chain is empty).
+        sql(`SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`, [tag]),
+        // Gated INSERT. `seq` is computed via the same MAX(seq)
+        // subquery as the head-check's snapshot. The WHERE clause
+        // re-asserts both gates so the INSERT is a no-op when either
+        // fails. RETURNING seq lets us discriminate inserted vs
+        // not-inserted by row count.
+        //
+        // `IS NOT DISTINCT FROM` is the NULL-safe equality needed to
+        // match `base = NULL` on the first revision against the
+        // empty-chain head (also NULL). Plain `=` would always be
+        // NULL → false → first revision would never insert.
+        sql(
+          `INSERT INTO workspace_revision
+             (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+           SELECT $1,
+                  COALESCE((SELECT MAX(seq) FROM workspace_revision WHERE workspace_tag = $1), 0) + 1,
+                  $2, $3, $4, $5, $6, $7, $8
+           WHERE NOT EXISTS (SELECT 1 FROM workspace_revision WHERE workspace_tag = $1 AND id = $2)
+             AND (SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1)
+                 IS NOT DISTINCT FROM $3
+           RETURNING seq`,
+          [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
+        ),
+      ])
+    } catch (err) {
+      // The advisory lock makes a unique-violation unreachable from
+      // our gated INSERT during normal operation — concurrent
+      // `tryCommitNeon` callers serialise on the lock, and the
+      // WHERE clause gates against the only race that could still
+      // collide. A direct INSERT bypassing the lock (admin migration,
+      // manual repair script, future code path) can still race us
+      // through the (workspace_tag, seq) PK or the (workspace_tag, id)
+      // UNIQUE. Mirror the SQLite path's recovery — refetch and
+      // route the outcome through `inserted` / `stale-base` — so the
+      // originator gets a workspace-state catch-up instead of a raw
+      // driver rejection escaping to `handleSave`'s IIFE. Other
+      // errors (network, syntax, type mismatch) rethrow.
+      if (!isUniqueViolation(err)) throw err
+      const dupRows = await sql(
+        `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`,
+        [tag, id],
+      ) as Array<unknown>
+      if (dupRows.length > 0) return { kind: 'inserted' }
+      const headRows = await sql(
+        `SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`,
+        [tag],
+      ) as Array<{ id: string }>
+      return { kind: 'stale-base', head: headRows[0]?.id ?? null }
+    }
     const dupRows = results[1] as Array<unknown>
     const headRows = results[2] as Array<{ id: string }>
     const insertRows = results[3] as Array<unknown>
@@ -398,6 +426,11 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
     // across backends.
     close: async () => {},
   }
-  _attachWriteLock(handle)
+  // No in-process write lock: `tryCommitNeon` uses
+  // `pg_advisory_xact_lock` for cross-replica serialisation, and an
+  // in-process lock on top would be redundant (same-process callers
+  // still serialise on the advisory lock — at the cost of one extra
+  // Postgres backend held briefly per concurrent caller, which the
+  // typical "one pending save per session" pattern doesn't hit).
   return handle
 }
