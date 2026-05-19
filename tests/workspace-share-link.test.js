@@ -4,6 +4,7 @@
 // message, and that crafted payloads are rejected up front. No DOM /
 // no browser — the pure module only needs `crypto.subtle` (Node 24+).
 
+import './_password-crypto-mock.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 

@@ -16,11 +16,11 @@
 // is still observable.
 
 import { encodeUtf8 } from '../common/utf8.js'
+import { PBKDF2_ITERATIONS } from './password-crypto-params.js'
 
 export const WIRE_VERSION = 1
 const SALT_LEN = 16
 const NONCE_LEN = 12
-const PBKDF2_ITERATIONS = 3000000
 // version + salt + nonce + 16-byte GCM tag.
 export const MIN_WIRE_LEN = 1 + SALT_LEN + NONCE_LEN + 16
 // AAD covers the prefix that lives outside the ciphertext: version

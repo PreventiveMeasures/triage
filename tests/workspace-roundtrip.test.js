@@ -12,6 +12,7 @@
 // --js-base-64 --test tests/workspace-roundtrip.test.js`.
 
 import './_polyfills.js'
+import './_password-crypto-mock.js'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { before, beforeEach, describe, it } from 'node:test'
