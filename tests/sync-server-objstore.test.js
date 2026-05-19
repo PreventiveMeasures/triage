@@ -216,6 +216,10 @@ describe('v1.objstore server (REST-primary)', () => {
         ...process.env, PORT: '0', HOST: '127.0.0.1',
         DB_PATH: path.join(serverDir, 'data.db'),
         OBJSTORE_DIR: path.join(serverDir, 'objstore'),
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

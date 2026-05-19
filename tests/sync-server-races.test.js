@@ -180,7 +180,14 @@ describe('triage-sync server races', () => {
   before(async () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-races-'))
     serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
+      env: {
+        ...process.env, PORT: '0', HOST: '127.0.0.1',
+        DB_PATH: path.join(serverDir, 'data.db'),
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const port = await awaitListeningPort(serverProc)
@@ -1299,6 +1306,10 @@ describe('triage-sync server: busy NACK at MAX_INFLIGHT_PER_SOCKET cap', () => {
         HOST: '127.0.0.1',
         DB_PATH: path.join(serverDir, 'data.db'),
         MAX_INFLIGHT_PER_SOCKET: '1',
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

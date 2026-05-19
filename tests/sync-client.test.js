@@ -101,7 +101,14 @@ describe('triage-sync client', () => {
     const port = 19500 + Math.floor(Math.random() * 500)
     serverUrl = `ws://127.0.0.1:${port}/api/sync`
     serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
+      env: {
+        ...process.env, PORT: String(port), HOST: '127.0.0.1',
+        DB_PATH: path.join(serverDir, 'data.db'),
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     await new Promise((resolve, reject) => {
@@ -2955,7 +2962,14 @@ describe('triage-sync client', () => {
     const serverDir2 = mkdtempSync(path.join(tmpdir(), 'deepview-client-2-'))
     const serverUrl2 = `ws://127.0.0.1:${port2}/api/sync`
     const serverProc2 = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port2), HOST: '127.0.0.1', DB_PATH: path.join(serverDir2, 'data.db') },
+      env: {
+        ...process.env, PORT: String(port2), HOST: '127.0.0.1',
+        DB_PATH: path.join(serverDir2, 'data.db'),
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir2, 'config.json'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     try {

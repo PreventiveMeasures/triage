@@ -191,7 +191,14 @@ describe('triage-sync server', () => {
     // their own server (e.g. tests/sync-server-objstore.test.js).
     // The actual port arrives via stdout in the listening-banner.
     serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
+      env: {
+        ...process.env, PORT: '0', HOST: '127.0.0.1',
+        DB_PATH: path.join(serverDir, 'data.db'),
+        // Point at a non-existent file inside the test tmp dir so a
+        // developer's local `server/config.json` can't gate first-
+        // action with a password.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const port = await awaitListeningPort(serverProc)
@@ -1080,7 +1087,7 @@ describe('triage-sync server: graceful shutdown', () => {
   it('sends close code 1001 (going away) to live clients on SIGTERM', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     try {
@@ -1124,7 +1131,7 @@ describe('triage-sync server: graceful shutdown', () => {
     const { createHash } = await import('node:crypto')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-stuck-'))
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tcp
@@ -1188,7 +1195,7 @@ describe('triage-sync server: graceful shutdown', () => {
     const { default: net } = await import('node:net')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-keepalive-'))
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db') },
+      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tcp
@@ -1237,7 +1244,7 @@ describe('triage-sync server: same-origin gate', () => {
     const { default: net } = await import('node:net')
     const dir = mkdtempSync(path.join(tmpdir(), 'deepview-origin-'))
     const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', DB_PATH: path.join(dir, 'data.db'), ...env },
+      env: { ...process.env, PORT: '0', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json'), ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     // Raw-TCP upgrade so we can set Origin / X-Forwarded-* freely

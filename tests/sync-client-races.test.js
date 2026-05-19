@@ -90,6 +90,10 @@ async function bootServer(serverDir, preferredPort = null) {
       PORT: preferredPort == null ? '0' : String(preferredPort),
       HOST: '127.0.0.1',
       DB_PATH: path.join(serverDir, 'data.db'),
+      // Point at a non-existent file inside the test tmp dir so a
+      // developer's local `server/config.json` can't gate first-
+      // action with a password.
+      CONFIG_PATH: path.join(serverDir, 'config.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

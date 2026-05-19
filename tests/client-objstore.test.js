@@ -85,6 +85,10 @@ describe('client/objstore session', () => {
         ...process.env, PORT: '0', HOST: '127.0.0.1',
         DB_PATH: path.join(serverDir, 'data.db'),
         OBJSTORE_DIR: path.join(serverDir, 'objstore'),
+        // Point at a file inside the per-test tmp dir that doesn't
+        // exist, so a developer's local `server/config.json` (which
+        // may set a password and gate first-action) can't leak in.
+        CONFIG_PATH: path.join(serverDir, 'config.json'),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
