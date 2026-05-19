@@ -274,6 +274,14 @@ const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 // all. Empirically the queue depth is bounded by inflight ops.
 const MAX_QUEUE_SIZE = 64
 
+// REST GET vs concurrent commit: a token minted at v1 can race a
+// commitPut that lands v2 before the GET reaches the server, which
+// then 404s (token-ver mismatch) or 503s (mid-promote bytes/meta
+// desync). Cap retries small — the race window is microseconds, so
+// the next attempt usually picks up the stable post-commit state.
+const REST_RACE_MAX_ATTEMPTS = 4
+const REST_RACE_BACKOFF_MS = 15
+
 async function signSubscribe(privateKey: CryptoKey, workspaceTag: string, connectionNonce: string): Promise<string> {
   const { encodeUtf8 } = await import('../common/utf8.js')
   const canonical = encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, '', connectionNonce].join('\n'))
@@ -627,7 +635,43 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   // Wire-level FETCH — returns raw ciphertext + meta. `fetch` /
   // `fetchByTag` (public) wrap this with decryption.
+  //
+  // A concurrent commit/delete can land between the WS token-issue
+  // and the REST GET. The server's openLiveUnderLock gates on the
+  // token's `ver` matching the current live row, so the racing
+  // outcomes the GET observes are:
+  //   - REST 404 "not-found": row was at v1 when token issued, now
+  //     at v2 (or deleted) — token is stale.
+  //   - REST 503 "unavailable": row exists at the token's version
+  //     but the bytes/size momentarily diverge (the commitPut
+  //     promote/upsert window, or a reaper sweep on a stranded blob).
+  // Both states are transient: re-issuing the WS fetch picks up the
+  // current live row (or a stable not-found if the resource is truly
+  // gone). Without this retry, a CAS PUT v2 that races a concurrent
+  // fetch can surface null even though one of v1/v2 is always live —
+  // violating the atomicity contract pinned by
+  // `tests/objstore-client-races.test.js` ('GET races concurrent
+  // PUT v2'). Bounded so a constantly-thrashed resource still
+  // eventually surfaces null rather than spinning.
   async function _rawFetch(state: SessionState, resourceTag: string): Promise<{ bytes: Uint8Array; meta: ObjectMeta } | null> {
+    for (let attempt = 0; attempt < REST_RACE_MAX_ATTEMPTS; attempt++) {
+      const r = await _rawFetchOnce(state, resourceTag)
+      if (r.kind === 'ok') return r.value
+      if (r.kind === 'not-found') return null
+      // r.kind === 'retry' — REST 404 or 503 against a token the
+      // server minted. Re-issue the WS fetch.
+      if (attempt + 1 < REST_RACE_MAX_ATTEMPTS) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, REST_RACE_BACKOFF_MS) })
+      }
+    }
+    return null
+  }
+
+  async function _rawFetchOnce(state: SessionState, resourceTag: string): Promise<
+    | { kind: 'ok'; value: { bytes: Uint8Array; meta: ObjectMeta } }
+    | { kind: 'not-found' }
+    | { kind: 'retry' }
+  > {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
@@ -640,7 +684,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         m.type === 'objstore-fetch-not-found'
       ),
     )
-    if (reply.type === 'objstore-fetch-not-found') return null
+    if (reply.type === 'objstore-fetch-not-found') return { kind: 'not-found' }
     if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string' || !isObjectMeta(reply)) {
       throw new TypeError('objstore: malformed fetch-token (missing urlPath / token / metadata)')
     }
@@ -650,10 +694,11 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       headers: { 'authorization': `Bearer ${reply['token']}` },
     })
     if (!res.ok) {
-      // 404: live row deleted between token-issue and GET (same
-      // shape as the WS `objstore-fetch-not-found` reply).
-      // 503: row present but file missing / size diverged (fs fault).
-      if (res.status === 404) return null
+      // 404: live row deleted or advanced past the token's version.
+      // 503: row present but file missing / size diverged (commitPut
+      // promote-vs-upsert window, or reaper sweep).
+      // Both are transient — re-issue the WS fetch.
+      if (res.status === 404 || res.status === 503) return { kind: 'retry' }
       let body = ''
       try { body = await res.text() } catch {}
       throw new Error(`objstore: REST GET failed ${res.status} ${body.slice(0, 200)}`)
@@ -665,7 +710,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (actualHash !== meta.contentHash) {
       throw new Error(`objstore: contentHash mismatch — expected ${meta.contentHash.slice(0, 16)}…, got ${actualHash.slice(0, 16)}…`)
     }
-    return { bytes, meta }
+    return { kind: 'ok', value: { bytes, meta } }
   }
 
   // Wire-level DELETE. `delete` (public) is the encrypting wrapper —
