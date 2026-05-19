@@ -101,20 +101,22 @@ export function renderPackagesView() {
   // Mirrors the bundles-view pattern: selectedBundle stays sticky
   // across re-renders unless the entry is gone.
   //
-  // Version pin: if the currently-selected version slot is gone
-  // (no findings under the active triage filter), but the package
-  // still has other versions, fall back to the latest remaining
-  // version. The user dropping into an empty per-version row
-  // would otherwise see "no findings" with no recourse.
+  // Version pin: look up the user's pinned slot in the package's
+  // version list — `null` is a valid key (the "unknown version"
+  // slot for findings under plain `node_modules/<pkg>/` paths
+  // alongside `.pnpm/<pkg>@<v>/...` siblings), so we don't gate
+  // the lookup on `pinned !== null`. When the lookup misses (the
+  // pinned slot dropped out under the active triage filter) but
+  // exactly one version slot remains, fall back to that slot so
+  // the user lands on a populated detail panel; otherwise the
+  // details panel covers the whole package aggregate.
   const selected = state.selectedPackage
   const selectedEntry = selected ? filtered.find(([pkg]) => pkg === selected) ?? null : null
   let selectedVersionEntry = null
   if (selectedEntry) {
     const versionList = selectedEntry[1].versions
     const pinned = state.selectedPackageVersion
-    if (pinned !== null) {
-      selectedVersionEntry = versionList.find(([v]) => v === pinned) ?? null
-    }
+    selectedVersionEntry = versionList.find(([v]) => v === pinned) ?? null
     if (!selectedVersionEntry && versionList.length === 1) {
       selectedVersionEntry = versionList[0]
     }
@@ -123,8 +125,7 @@ export function renderPackagesView() {
   // specific version is pinned (multi-version package or single-
   // version package whose lone slot has a known version), the
   // per-version slice surfaces; otherwise the aggregate row
-  // covers the whole package (unversioned `node_modules/<pkg>/`
-  // installs).
+  // covers the whole package.
   const selectedBucket = selectedVersionEntry
     ? selectedVersionEntry[1]
     : (selectedEntry ? selectedEntry[1] : null)
@@ -136,7 +137,7 @@ export function renderPackagesView() {
     return renderPackageSlide(
       selectedEntry[0],
       selectedBucket,
-      selectedVersionEntry ? selectedVersionEntry[0] : null,
+      selectedVersionEntry ? selectedVersionEntry[0] : undefined,
     )
   }
   // Apply the user-typed search filter + sort to the visible list
@@ -184,7 +185,7 @@ export function renderPackagesView() {
               <button type="button" class="packages-details-close" data-deselect-package title="Close details" aria-label="Close details">×</button>
             </header>
             <div class="packages-details-body">
-              ${renderPackageDetails(selectedEntry[0], selectedBucket, selectedVersionEntry ? selectedVersionEntry[0] : null)}
+              ${renderPackageDetails(selectedEntry[0], selectedBucket, selectedVersionEntry ? selectedVersionEntry[0] : undefined)}
             </div>
           </aside>` : nothing}
         </div>`}
@@ -357,7 +358,7 @@ function renderPackageSlide(pkg, bucket, version) {
   const emptyMsg = mode === 'live'
     ? 'No live issues for this package.'
     : `No ${mode} issues for this package.`
-  const titleSuffix = version === null ? '' : ` @ ${version}`
+  const titleSuffix = typeof version === 'string' ? ` @ ${version}` : ''
   return html`<div class="packages-view packages-slide-view">
     <header class="bundles-slide-bar">
       <button
@@ -515,17 +516,24 @@ function renderExpandButton(pkg, expanded, otherCount) {
 // finding count there reflects every live (non invalid/deleted)
 // finding for the package, independent of the page's triage
 // selector. `bucket` is the triage-filtered slice from
-// renderPackagesView. `version` is the per-version slot when the
-// row is one of a multi-version package (or the single-known-
-// version slot of a `'single'` row); null for the aggregate.
+// renderPackagesView. `version` is the per-version slot the
+// detail panel is scoped to: a known string for `.pnpm/<pkg>@<v>/...`
+// findings, `null` for findings under plain `node_modules/<pkg>/`
+// paths (the "unknown version" slot — still a real slot, not
+// the aggregate), or `undefined` for the package-wide aggregate
+// when no specific slot is pinned.
 function renderPackageDetails(pkg, bucket, version) {
   // Issue count for the action-tab label uses the same filter the
   // bundle Issues tab applies (`mode: 'issues'`): strip invalid +
   // deleted, keep everything else. Pulled from the raw OPFS bucket
   // so the count doesn't shrink to 0 when the page's triage
   // selector flips off the live findings.
+  //
+  // `version` passes straight through: `packageFindingsByFile`
+  // already distinguishes `undefined` (aggregate) from `null`
+  // (the unknown-version slot — a real key in `byVersion`).
   const rawBucket = getPackagesIndex().get(pkg)
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, 'live', version ?? undefined) : new Map()
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, 'live', version) : new Map()
   const issuesCount = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   return html`<div class="bundles-tabs" role="tablist">
     <button
