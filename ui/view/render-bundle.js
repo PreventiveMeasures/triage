@@ -61,18 +61,20 @@ import { render } from './render.js'
 // `_currentBundleGraph` reference to feed the right-panel templates.
 let _currentBundleGraph = null
 
-// File → set of resolved import paths. Stasis carries imports under
-// `json.imports['<type>']['<file>']['<spec>']`; we union across all
-// resolution kinds (node, import, module-sync, ...) and dedupe per
-// file. Sourcemaps have no import info, so the map is empty.
+// File → set of resolved import paths. The stasis Bundle exposes
+// imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
+// (see `@exodus/stasis/bundle`); we union resolved targets across
+// all condition keys (node, import, module-sync, ...) and dedupe
+// per parent file. Sourcemaps have no import info, so the map is
+// empty.
 function bundleImportsAsMap(details) {
   const result = new Map()
-  if (!details || details.kind !== 'stasis' || !details.json) return result
-  for (const byFile of Object.values(details.json.imports ?? {})) {
-    for (const [file, specMap] of Object.entries(byFile ?? {})) {
-      if (!result.has(file)) result.set(file, new Set())
-      for (const resolved of Object.values(specMap ?? {})) {
-        if (typeof resolved === 'string') result.get(file).add(resolved)
+  if (!details || details.kind !== 'stasis' || !details.bundle) return result
+  for (const byParent of details.bundle.imports.values()) {
+    for (const [parent, specMap] of byParent) {
+      if (!result.has(parent)) result.set(parent, new Set())
+      for (const resolved of specMap.values()) {
+        if (typeof resolved === 'string') result.get(parent).add(resolved)
       }
     }
   }
@@ -1091,7 +1093,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
 // state.bundleSourceFile; null shows a placeholder asking the
 // user to pick a file.
 function renderBundleCodeView(details) {
-  if (!details || !details.json) return nothing
+  if (!details || (!details.json && !details.bundle)) return nothing
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
@@ -1356,7 +1358,7 @@ function formatFindingLine(line) {
 }
 
 function renderBundleIssuesList(details) {
-  if (!details || !details.json) return nothing
+  if (!details || (!details.json && !details.bundle)) return nothing
   if (!details.fileHashes) {
     return html`<div class="bundle-issues-empty">Computing file hashes…</div>`
   }
@@ -1594,21 +1596,24 @@ function renderBundleDetails(entry, details) {
     `
     return renderBundleSourcesPanel(meta, extras, sources, sizes)
   }
-  if (details.kind === 'stasis' && details.json) {
-    const json = details.json
-    const sourceMap = json.sources ?? {}
-    const sourceNames = Object.keys(sourceMap)
-    const importTypes = json.imports ? Object.keys(json.imports) : []
-    const sizes = sourceNames.map((s) => typeof sourceMap[s] === 'string'
-      ? new TextEncoder().encode(sourceMap[s]).byteLength
-      : null)
+  if (details.kind === 'stasis' && details.bundle) {
+    const bundle = details.bundle
+    const sourceMap = bundle.sources
+    const sourceNames = [...sourceMap.keys()]
+    const importTypes = [...bundle.imports.keys()]
+    const sizes = sourceNames.map((s) => {
+      const content = sourceMap.get(s)
+      return typeof content === 'string'
+        ? new TextEncoder().encode(content).byteLength
+        : null
+    })
     const extras = importTypes.length > 0
       ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>`
       : nothing
     return renderBundleSourcesPanel(meta, extras, sourceNames, sizes)
   }
-  // Stasis without parsed JSON — likely a brotli decompression that
-  // failed silently (no error path filled in). Fall back to the
-  // metadata block above plus a generic "not parsed" line.
+  // Stasis without a parsed bundle — likely a brotli decompression
+  // that failed silently (no error path filled in). Fall back to
+  // the metadata block above plus a generic "not parsed" line.
   return html`${meta}<div class="bundles-detail-stasis">Bundle contents not parsed.</div>`
 }

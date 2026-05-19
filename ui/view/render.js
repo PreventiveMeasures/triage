@@ -1262,7 +1262,7 @@ function renderImpl() {
         state.selectedBundle &&
         state.bundleDetailsTab === 'graph' &&
         state.bundleDetails &&
-        state.bundleDetails.json
+        (state.bundleDetails.json || state.bundleDetails.bundle)
       ) {
         const graphSlot = document.querySelector('#bundle-graph-slot')
         if (graphSlot) {
@@ -1289,7 +1289,7 @@ function renderImpl() {
         state.selectedBundle &&
         state.bundleDetailsTab === 'terminal' &&
         state.bundleDetails &&
-        state.bundleDetails.json
+        (state.bundleDetails.json || state.bundleDetails.bundle)
       ) {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
