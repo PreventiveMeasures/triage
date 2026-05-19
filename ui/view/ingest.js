@@ -1,6 +1,6 @@
 import { render as litRender, nothing } from 'lit'
 import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
-import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, triageSync } from '#client/sync.js'
+import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
