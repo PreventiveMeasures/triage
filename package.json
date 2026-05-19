@@ -34,7 +34,7 @@
     "build": "node build.js build",
     "serve": "node build.js serve",
     "server": "node server/index.ts",
-    "test": "node --js-base-64 --test ./tests/*.test.js"
+    "test": "node --js-base-64 --experimental-test-module-mocks --test ./tests/*.test.js"
   },
   "devDependencies": {
     "@exodus/stasis": "^1.0.0-alpha.1",

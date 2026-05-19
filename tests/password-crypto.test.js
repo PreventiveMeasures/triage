@@ -1,6 +1,7 @@
 // Direct tests for the shared password-encryption primitive: result-
 // envelope shape, magic-byte sniff, programmer-error throws.
 
+import './_password-crypto-mock.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
