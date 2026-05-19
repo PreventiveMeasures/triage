@@ -21,9 +21,19 @@
 // `Vary` header tells caches to keep separate buckets per encoding,
 // and a revalidation arrives under the same Accept-Encoding the
 // cached entry was stored against, so the single ETag suffices.
+//
+// Preload extraction: at boot, HTML files have their
+// `<link rel="preload">` / `<link rel="modulepreload">` tags lifted
+// into a `Link` response header (RFC 8288) and dropped from the
+// served body. The header arrives with the response headers — before
+// HTML body parsing — so the browser can start the sub-resource
+// fetches a round-trip earlier than the in-body tag would allow. The
+// stripped body is what ETag + compression are computed against, so
+// `out/index.html` on disk and the bytes we serve diverge by exactly
+// the lifted tags.
 
 import type { IncomingMessage as HttpRequest, ServerResponse } from 'node:http'
-import type { Buffer } from 'node:buffer'
+import { Buffer } from 'node:buffer'
 import { readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib'
@@ -54,6 +64,7 @@ type StaticEntry = {
   identity: Buffer
   gzip: Buffer | null
   br: Buffer | null
+  link: string | null
 }
 
 export type StaticHandler = (req: HttpRequest, res: ServerResponse) => boolean
@@ -87,6 +98,7 @@ export function loadStatic(staticDir: string): StaticHandler {
       // bind the freshening to the right variant under Vary.
       const headers: Record<string, string | number> = { 'etag': entry.etag, 'cache-control': 'no-cache', 'vary': 'accept-encoding' }
       if (encoding != null) headers['content-encoding'] = encoding
+      if (entry.link != null) headers['link'] = entry.link
       res.writeHead(304, headers)
       res.end()
       return true
@@ -99,6 +111,7 @@ export function loadStatic(staticDir: string): StaticHandler {
       'vary': 'accept-encoding',
     }
     if (encoding != null) headers['content-encoding'] = encoding
+    if (entry.link != null) headers['link'] = entry.link
     res.writeHead(200, headers)
     // HEAD shares the GET response headers but never carries a body.
     // Node won't drop it for us — caller must skip the write.
@@ -133,8 +146,20 @@ function readStaticFiles(staticDir: string): ReadonlyMap<string, StaticEntry> {
 
 function buildEntry(staticDir: string, name: string): StaticEntry {
   const ext = extname(name)
-  const identity = readFileSync(join(staticDir, name))
+  const raw = readFileSync(join(staticDir, name))
   const type = CONTENT_TYPE[ext] ?? 'application/octet-stream'
+  // HTML: lift `<link rel="(module)preload" …>` into a Link header
+  // and drop the tags from the served body so the bytes ship without
+  // the now-redundant in-body hint. ETag + compression run against
+  // the stripped body — the on-disk file and the served body diverge
+  // by exactly the lifted tags.
+  let identity = raw
+  let link: string | null = null
+  if (ext === '.html') {
+    const extracted = extractPreloadLinks(raw.toString('utf8'))
+    link = extracted.link
+    if (link != null) identity = Buffer.from(extracted.html, 'utf8')
+  }
   // 16 bytes of SHA-256 (32 hex chars) — plenty for revalidation
   // collision-resistance against the ~tens of files we load.
   const etag = `"${createHash('sha256').update(identity).digest('hex').slice(0, 32)}"`
@@ -150,7 +175,61 @@ function buildEntry(staticDir: string, name: string): StaticEntry {
     },
   }) : null
   const gzip = isCompressible ? gzipSync(identity, { level: 9 }) : null
-  return { type, etag, identity, gzip, br }
+  return { type, etag, identity, gzip, br, link }
+}
+
+// Walk every `<link …>` in `html`. For `rel="preload"` /
+// `rel="modulepreload"`, accumulate an RFC 8288 Link-header form and
+// strip the tag (plus its trailing whitespace) from the body. Every
+// other rel value is preserved verbatim. Returns the (possibly
+// modified) HTML and the comma-joined Link header value, or
+// `link: null` if no preload tags were found.
+function extractPreloadLinks(html: string): { html: string, link: string | null } {
+  const links: string[] = []
+  // `[^>]*` is greedy but stops at `>`, so it spans multi-line tag
+  // attribute soup, including newlines inside the attr list. Trailing
+  // `\s*` swallows the line break a stripped tag would otherwise
+  // leave behind so the body collapses cleanly.
+  const tagRe = /<link\b[^>]*>\s*/giu
+  const stripped = html.replace(tagRe, (match) => {
+    const attrs = parseLinkAttrs(match)
+    const rel = (attrs['rel'] ?? '').toLowerCase()
+    if (rel !== 'preload' && rel !== 'modulepreload') return match
+    const href = attrs['href']
+    if (!href) return match
+    let value = `<${normalizeHref(href)}>; rel=${rel}`
+    if (rel === 'preload' && attrs['as']) value += `; as=${attrs['as']}`
+    if (attrs['type']) value += `; type="${attrs['type']}"`
+    if ('crossorigin' in attrs) value += attrs['crossorigin'] ? `; crossorigin=${attrs['crossorigin']}` : '; crossorigin'
+    links.push(value)
+    return ''
+  })
+  return { html: stripped, link: links.length === 0 ? null : links.join(', ') }
+}
+
+// Minimal HTML attribute parser scoped to a single `<link …>` tag.
+// Handles double-quoted, single-quoted, and bare attribute values,
+// plus boolean attributes (e.g. `crossorigin`). Lowercases names so
+// downstream comparisons can use canonical keys. Not a general HTML
+// parser — the build emits well-formed tags and that's the only
+// surface we run on.
+function parseLinkAttrs(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  const inner = tag.replace(/^<link\b/iu, '').replace(/\/?>\s*$/u, '')
+  const re = /([a-z_][\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/giu
+  for (const m of inner.matchAll(re)) {
+    attrs[m[1]!.toLowerCase()] = m[2] ?? m[3] ?? m[4] ?? ''
+  }
+  return attrs
+}
+
+// Normalise `href` to a root-relative URL. The build emits
+// `./foo.css`-style same-dir hrefs; Link header URIs resolve against
+// the response URL so `./foo.css` would also work, but root-relative
+// reads correctly regardless of which page the header rides on.
+function normalizeHref(href: string): string {
+  const stripped = href.startsWith('./') ? href.slice(2) : href
+  return stripped.startsWith('/') ? stripped : `/${stripped}`
 }
 
 // Prefer brotli over gzip over identity. Both compressed variants
