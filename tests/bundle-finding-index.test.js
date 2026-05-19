@@ -43,6 +43,7 @@ const {
   reportsForFindingByRepo,
   subscribeToBundleFindingIndex,
 } = await import('../client/bundle-finding-index.js')
+const { compareVersionsDesc } = await import('../client/bundle-finding-versions.js')
 
 // Each test gets a unique report-name suffix so the in-memory storage
 // cache (which doesn't get cleared between tests) doesn't bleed
@@ -293,6 +294,98 @@ describe('bundle-finding-index — package-keyed view', () => {
     assert.equal(bucket.files.get(`node_modules/${tag}/a.js`).length, 2)
     assert.equal(bucket.files.get(`node_modules/${tag}/b.js`).length, 1)
     assert.deepEqual([...bucket.reports].toSorted(), [r1, r2].toSorted())
+  })
+})
+
+describe('bundle-finding-index — per-version sub-buckets', () => {
+  it('splits a package by version pulled from .pnpm path segments', async () => {
+    const tag = `versioned-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-v1-a`, severity: 'high', file: `node_modules/.pnpm/${tag}@1.0.0/node_modules/${tag}/a.js`, description: 'v1a' },
+        { id: `${tag}-v1-b`, severity: 'high', file: `node_modules/.pnpm/${tag}@1.0.0/node_modules/${tag}/b.js`, description: 'v1b' },
+        { id: `${tag}-v2-a`, severity: 'low', file: `node_modules/.pnpm/${tag}@2.0.0/node_modules/${tag}/a.js`, description: 'v2a' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket.byVersion instanceof Map, 'byVersion present')
+    assert.equal(bucket.byVersion.size, 2, 'two version slots')
+    assert.equal(bucket.byVersion.get('1.0.0').findings.length, 2, 'v1 has both findings')
+    assert.equal(bucket.byVersion.get('2.0.0').findings.length, 1, 'v2 has one finding')
+  })
+
+  it('strips pnpm peer-dep suffix from the encoded segment', async () => {
+    const tag = `peer-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f`, severity: 'high', file: `node_modules/.pnpm/${tag}@1.2.3_react@18.0.0/node_modules/${tag}/x.js`, description: 'p' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket.byVersion.get('1.2.3'), 'bare version, no peer-dep tail')
+  })
+
+  it('extracts the version for @scope/name packages encoded with `+`', async () => {
+    const tag = `scoped${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f`, severity: 'high', file: `node_modules/.pnpm/@chalker+${tag}@5.6.7/node_modules/@chalker/${tag}/x.js`, description: 's' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(`@chalker/${tag}`)
+    assert.ok(bucket, 'scoped package bucketed')
+    assert.ok(bucket.byVersion.get('5.6.7'), 'scoped version extracted')
+  })
+
+  it('files outside a .pnpm shim land in the null version slot', async () => {
+    const tag = `plain-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/lib/a.js`, description: 'plain' },
+        { id: `${tag}-f2`, severity: 'high', file: `node_modules/.pnpm/${tag}@9.9.9/node_modules/${tag}/lib/b.js`, description: 'pnpm' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket.byVersion.get(null), 'null slot for plain node_modules path')
+    assert.ok(bucket.byVersion.get('9.9.9'), 'known version slot for pnpm path')
+    assert.equal(bucket.findings.length, 2, 'aggregate still carries both')
+  })
+})
+
+describe('bundle-finding-index — version comparator', () => {
+  // `compareVersionsDesc` runs in descending order, so a negative
+  // result means the first argument is the "newer" (sorts earlier).
+  const newer = (a, b) => assert.ok(compareVersionsDesc(a, b) < 0, `${a} ranks above ${b}`)
+  const equal = (a, b) => assert.equal(compareVersionsDesc(a, b), 0, `${a} equals ${b}`)
+
+  it('ranks higher major / minor / patch first', () => {
+    newer('2.0.0', '1.0.0')
+    newer('1.2.0', '1.1.9')
+    newer('1.0.5', '1.0.4')
+  })
+
+  it('compares numeric segments numerically, not lexically', () => {
+    newer('1.10.0', '1.2.0')
+    newer('1.0.10', '1.0.2')
+  })
+
+  it('release > pre-release on the same base', () => {
+    newer('1.0.0', '1.0.0-beta.1')
+    newer('1.0.0-beta.2', '1.0.0-beta.1')
+  })
+
+  it('null versions sort last', () => {
+    newer('0.0.1', null)
+    assert.ok(compareVersionsDesc(null, '0.0.1') > 0, 'null after a known version')
+    equal(null, null)
+  })
+
+  it('equal inputs return 0', () => {
+    equal('1.2.3', '1.2.3')
   })
 })
 

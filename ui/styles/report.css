@@ -1348,7 +1348,7 @@
     /* Per-row delete — hairline outline matches the sidebar's
        "Delete current" button. The trash glyph sits to the left
        of the text so the destructive nature reads at a glance;
-       the icon inherits the hover colour via `currentColor`. */
+       the icon inherits the hover colour via `currentcolor`. */
     & .bundles-delete {
       flex-shrink: 0;
       display: inline-flex; align-items: center; gap: .35rem;
@@ -2002,11 +2002,31 @@ body.report-fullscreen {
     flex: 1; min-width: 0;
     display: flex; flex-direction: column;
   }
+  /* Wrapper that holds the package name + the expand chevron on
+     one line, so the chevron sits immediately after the name
+     rather than at the right edge of the row alongside [Issues
+     →]. The name still ellipses (`min-width: 0` propagates the
+     row's width budget) and the chevron stays a fixed-size
+     trailing anchor. */
+  & .packages-name-line {
+    display: flex; align-items: center; gap: .4rem;
+    min-width: 0;
+  }
   & .packages-name {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .82rem;
     font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  /* Version chip rendered inline after the package name —
+     `@1.2.3` for pnpm-shaped paths, omitted for plain
+     `node_modules/<pkg>/` installs (no version available).
+     Slightly muted so the package name keeps primary weight. */
+  & .packages-version {
+    color: var(--muted);
+    font-weight: 500;
+    margin-left: .15rem;
   }
   & .packages-row-meta {
     color: var(--muted);
@@ -2018,6 +2038,45 @@ body.report-fullscreen {
     display: flex; flex-wrap: wrap;
     gap: .2rem;
     justify-content: flex-end;
+  }
+  /* Expand chevron on a multi-version package's headline row —
+     toggles `state.expandedPackages` membership so the older
+     versions surface as sub-rows underneath. Rotates 180° on
+     expand so the affordance reads as a directional toggle.
+     Sits to the LEFT of the [Issues →] button so both chrome
+     pieces stay clustered at the row's right edge. */
+  & .packages-row-expand {
+    flex-shrink: 0;
+    margin-left: .25rem;
+    padding: .15rem .5rem .15rem .4rem;
+    display: inline-flex; align-items: center; gap: .3rem;
+    background: transparent;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--muted);
+    font: inherit; font-size: .72rem; font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    &:hover { border-color: var(--accent); color: var(--accent); }
+    & .packages-row-expand-chevron {
+      display: inline-block;
+      width: .35rem; height: .35rem;
+      border-right: 1.5px solid currentcolor;
+      border-bottom: 1.5px solid currentcolor;
+      transform: translateY(-1px) rotate(45deg);
+      transition: transform .15s;
+    }
+    &.expanded .packages-row-expand-chevron {
+      transform: translateY(2px) rotate(-135deg);
+    }
+  }
+  /* Older-version sub-row revealed by the headline's chevron.
+     Indent + de-emphasise so the parent / child relationship
+     reads visually; the row remains fully selectable, with its
+     own [Issues →] shortcut scoped to that version's findings. */
+  & .packages-row-other {
+    padding-left: 1.75rem;
+    background: rgb(from var(--text) r g b / .015);
+    & .packages-name { font-weight: 500; }
   }
   /* Row-level [Issues →] shortcut, far right. Same visual
      weight as the bundle-row [Code →] button — pill chrome that
