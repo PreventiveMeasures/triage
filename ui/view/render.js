@@ -166,6 +166,21 @@ const SOURCE_TITLES = {
   'deepsec': 'DeepSec findings',
 }
 
+// Friendly labels for the analyzer-filter dropdown options. Source-
+// marked imports surface as the upstream product name (matching how
+// SOURCE_TITLES names them in the page header); native analyzer
+// types (security / correctness / etc.) and the null-analyzer
+// sentinel pass through as-is.
+const ANALYZER_LABELS = {
+  'claude-security': 'Claude Security',
+  'codex-security': 'Codex Security',
+  'deepsec': 'DeepSec',
+}
+function analyzerLabel(a) {
+  if (a == null) return 'null'
+  return ANALYZER_LABELS[a] ?? a
+}
+
 
 // Build the repo-chip element for the page header. The actual visual
 // (three modes — editable+collapsed, editable+expanded, read-only)
@@ -756,7 +771,7 @@ function triageSelectorTemplate(triageCounts) {
   </div>`
 }
 
-function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags) {
+function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, kanbanMode } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The kanban mode
@@ -794,6 +809,24 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
         </select>
       </span>
+      <!-- Analyzer dropdown — visible only when the loaded reports
+           involve more than one distinct analyzer (otherwise there is
+           nothing to choose between). Single-select with an empty
+           default ("All analyzers" = no filter); the 'null' option
+           targets findings whose effective analyzer is absent (no
+           per-finding type on a native dump). Friendly labels for
+           the source-marked imports (DeepSec / Codex Security /
+           Claude Security) come from ANALYZER_LABELS. Shares the
+           sort dropdown's wrapper styling so the two pills line up. -->
+      ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
+        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer">
+          <option value="" ?selected=${state.filterAnalyzer === ''}>All analyzers</option>
+          ${analyzerOptions.map((a) => {
+            const value = a == null ? 'null' : a
+            return html`<option value=${value} ?selected=${state.filterAnalyzer === value}>${analyzerLabel(a)}</option>`
+          })}
+        </select>
+      </span>` : nothing}
       ${showSource ? html`<div class="sep"></div>
         <div class="source-toggle" role="group" aria-label="Source filter">
           ${srcChip('own', 'Sources')}
@@ -1410,6 +1443,32 @@ function renderImpl() {
     }
   }
   const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
+  // Distinct analyzers across the loaded reports — feeds the
+  // toolbar's analyzer dropdown. Built from mergedGroups (not the
+  // shownTriage-filtered allGroups) so the option list stays stable
+  // when the user flips between live and trash views. Sorted for a
+  // stable display order: known source-marked imports first (in
+  // ANALYZER_LABELS' order), the null sentinel last, the rest
+  // alphabetical between them.
+  const analyzerSet = new Set()
+  for (const g of mergedGroups) {
+    for (const f of g) analyzerSet.add(f._analyzer ?? null)
+  }
+  const knownOrder = Object.keys(ANALYZER_LABELS)
+  const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
+    const ai = a == null ? Infinity : (knownOrder.indexOf(a) === -1 ? knownOrder.length : knownOrder.indexOf(a))
+    const bi = b == null ? Infinity : (knownOrder.indexOf(b) === -1 ? knownOrder.length : knownOrder.indexOf(b))
+    if (ai !== bi) return ai - bi
+    return String(a ?? '').localeCompare(String(b ?? ''))
+  })
+  // If the previously-selected analyzer is no longer present (report
+  // unload / workspace switch), clear the filter so a stale
+  // selection can't silently empty the list. Matches the same
+  // guard pattern used for source / confidence / sort below.
+  if (state.filterAnalyzer) {
+    const want = state.filterAnalyzer === 'null' ? null : state.filterAnalyzer
+    if (!analyzerSet.has(want)) state.filterAnalyzer = ''
+  }
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -1540,7 +1599,7 @@ function renderImpl() {
       showPriority: hasAnyPriority,
       showGraphMode: treeAvailable,
       kanbanMode: isKanban,
-    })
+    }, analyzerOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's

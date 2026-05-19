@@ -1536,6 +1536,7 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
+  else if (id === 'analyzer-select') { state.filterAnalyzer = val; render() }
   else if (id === 'packages-sort-select') { state.packagesSortBy = val; render() }
   else if (id === 'repositories-sort-select') { state.repositoriesSortBy = val; render() }
 })

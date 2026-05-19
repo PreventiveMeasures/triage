@@ -43,6 +43,7 @@ export interface State {
   filterSeverities: Set<string>
   filterColors: Set<string>
   filterSources: Set<string>
+  filterAnalyzer: string
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -276,6 +277,15 @@ export const state: State = store<State>({
   // chip switches to it (clearing the other), clicking the active
   // chip again clears the set entirely.
   filterSources: new Set<string>(),
+  // Analyzer filter — single-select dropdown above the toolbar. Empty
+  // string = no filter. Otherwise the value matches a finding's
+  // `_analyzer` (the report's `source` for DeepSec / Codex Security /
+  // Claude Security imports, or the per-finding `type` for analyzer-
+  // native JSON dumps). The literal string `'null'` selects findings
+  // whose effective analyzer is absent (`_analyzer === null`). The
+  // selector is hidden when the loaded reports involve only one
+  // distinct analyzer — there's nothing to choose between.
+  filterAnalyzer: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when
