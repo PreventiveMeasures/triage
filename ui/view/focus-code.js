@@ -41,17 +41,21 @@ function kickHighlight(integrity, file, content) {
     const html = await prismHighlight(content, lang)
     highlightCache.set(key, html ?? null)
     highlightPending.delete(key)
-    render()
+    state.focusCodeTick++
+    queueMicrotask(render)
   })()
 }
 
 async function loadSources(integrity) {
-  if (sourcesCache.has(integrity)) return
+  // Already loaded or in-flight — nothing to do. We intentionally
+  // don't cache the "state.bundles hasn't listed this integrity"
+  // path below: that list is populated asynchronously on first
+  // sidebar render and may lag a focus-view click, so the next
+  // render's call should be free to retry.
+  const existing = sourcesCache.get(integrity)
+  if (existing && (existing.loading || existing.sources)) return
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
-  if (!entry) {
-    sourcesCache.set(integrity, { sources: null, loading: false, error: 'bundle missing' })
-    return
-  }
+  if (!entry) return
   sourcesCache.set(integrity, { sources: null, loading: true, error: null })
   try {
     const details = await buildBundleDetails(integrity, entry)
@@ -60,7 +64,16 @@ async function loadSources(integrity) {
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
-  render()
+  // Defer to a fresh microtask so the render runs cleanly outside
+  // the await-resolution stack. Without this, render() executes
+  // mid-resolution chain and the parent template's Lit diff occasionally
+  // commits before the focus-pane-code branch sees the new cache —
+  // the panel stays on the "Loading…" frame until the next manual
+  // render (navigation, filter change). queueMicrotask + a state
+  // tick (so observer-util consumers in the page also re-flow)
+  // robustly resolves both cases.
+  state.focusCodeTick++
+  queueMicrotask(render)
 }
 
 // Resolve a finding to its bundle source. Returns:

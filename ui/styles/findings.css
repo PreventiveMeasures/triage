@@ -810,8 +810,13 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   font-variant-numeric: tabular-nums;
 }
 .focus-code-line-active {
-  background: rgb(from var(--accent) r g b / .18);
-  color: var(--text);
+  /* Subtle accent tint on the gutter row that matches the
+     finding's line — strong enough to spot the relevant slot at a
+     glance, soft enough to not compete with the source code
+     content next to it. The bold + accent text color carries
+     most of the affordance. */
+  background: rgb(from var(--accent) r g b / .08);
+  color: var(--accent);
   font-weight: 600;
 }
 .focus-code-source {

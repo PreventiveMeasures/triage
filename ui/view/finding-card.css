@@ -503,14 +503,33 @@
   flex-wrap: wrap;
 }
 :host([context='focus']) .mark-comment,
-:host([context='focus']) .mark-fix {
-  height: 1.75rem;
-  padding: 0 .45rem;
-}
+:host([context='focus']) .mark-fix,
 :host([context='focus']) .mark-copy {
   height: 1.75rem;
-  padding: 0 .45rem;
+  padding: 0 .55rem;
+  gap: .35rem;
+  display: inline-flex; align-items: center;
+  font-size: .72rem;
 }
+:host([context='focus']) .mark-btn-label {
+  /* Label text after the icon — slightly muted so the icon stays
+     the primary visual cue and the label reads as supporting
+     context rather than competing for attention. */
+  color: inherit;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+
+/* Subtle mark-color tints for the focus context. The list / table
+   views paint the card's full surface in the chosen mark color so
+   it stands out from the row's neighbours. In the focus view the
+   card is already the only finding on screen, so a saturated tint
+   feels heavy — drop the alpha so the marker reads as an accent
+   rather than a wash. */
+:host([context='focus'].mark-red) .card   { background: rgb(from var(--mark-red-bg) r g b / .25); }
+:host([context='focus'].mark-blue) .card  { background: rgb(from var(--mark-blue-bg) r g b / .25); }
+:host([context='focus'].mark-green) .card { background: rgb(from var(--mark-green-bg) r g b / .25); }
+:host([context='focus'].mark-gray) .card  { background: rgb(from var(--mark-gray-bg) r g b / .25); }
 
 /* Comment + fix-link blocks in the tab body. Quote-style notes
    below the description / recommendation / confidence reason when

@@ -1178,6 +1178,10 @@ function findingsBodyTemplate(filtered) {
     // `{ loading: true }` while the first load is in flight (the
     // load triggers render() on settle), or the resolved
     // `{ content, file, line, highlighted }` once ready.
+    // The `focusCodeTick` read subscribes any observer-util-tracked
+    // ancestor to the cache's settle events so the DOM picks up
+    // the new content on the same frame.
+    void state.focusCodeTick
     const code = getFocusCode(focused)
     const mainClass = code ? 'focus-main with-code' : 'focus-main'
     const atStart = focusedIdx === 0

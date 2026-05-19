@@ -148,20 +148,27 @@ function reportChipTemplate(group) {
 // `{ detail: { color } }` — events.js's delegate on `report`
 // resolves the gid via the same `[data-gid]` walk used for the
 // other buttons.
-function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
+function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = null) {
   const reportChip = reportChipTemplate(group)
   const activeColor = state.markers.get(activeKey) ?? null
   const activeComment = state.comments.get(activeKey) ?? ''
   const activeFix = state.fixes.get(activeKey) ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
-  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}</button>`
-  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}</button>`
+  const isFocus = context === 'focus'
+  // Focus-view variant gives each button a text label after the
+  // icon so the row reads as primary chrome (`[ ⌐ Comment ]`,
+  // `[ ⚙ Fix link ]`, `[ ⎘ Copy ]`). The list-view default keeps
+  // icons-only for compactness.
+  const commentLabel = activeComment ? 'Edit comment' : 'Comment'
+  const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
+  const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard.
   // Click handler lives in events.js; it picks the active tab via
   // the same gid lookup the comment / fix flows use.
-  const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
@@ -175,7 +182,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey) {
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span>${copyBtn}${picker}${triageMenuTemplate(group, menuTitle)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span>${copyBtn}${picker}${triageMenuTemplate(group, menuTitle, context)}`
 }
 
 // Triage menu — chevron button that toggles a popover with the
@@ -228,7 +235,7 @@ function positionTriagePopover(e) {
   popover.style.left = `${left}px`
 }
 
-function triageMenuTemplate(group, title) {
+function triageMenuTemplate(group, title, context = null) {
   const gid = tabKey(group[0])
   const groupSt = groupState(group)
   const activeTab = activeTabFor(group)
@@ -246,19 +253,36 @@ function triageMenuTemplate(group, title) {
   const inTriageView = Boolean(state.shownTriage)
   const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
   // Action order: triage states first (Fixed / Invalid / Delete),
-  // then Ignore. In a triage/ignored view, prepend Restore so the
-  // current bucket can be cleared in one click; the active bucket
-  // is removed from the list (clicking the labeled chip is a
-  // no-op without it).
+  // then Ignore.
+  //
+  // Focus-view variant always shows all four states as toggleable
+  // chips with the currently-active state marked `.active` (visually
+  // pressed). Clicking the active state toggles it off (the same
+  // semantic the events.js handler already implements for any
+  // duplicate click), so there's no need for a separate "Restore"
+  // entry — the user reaches the same outcome by clicking the
+  // pressed chip.
+  //
+  // List-view variant (the dropdown) still prepends Restore when
+  // we're in a triage view, and excludes the current state from
+  // the action list — that pattern reads better as a popover menu
+  // where seeing the active bucket in the list (without a "press"
+  // affordance) would be confusing.
   const ALL_ACTIONS = ['fixed', 'invalid', 'deleted', 'ignored']
-  const actions = inTriageView
-    ? [
-        { key: 'restore', label: 'Restore' },
-        ...ALL_ACTIONS
-          .filter((s) => s !== state.shownTriage)
-          .map((s) => ({ key: s, label: ACTION_LABELS[s] })),
-      ]
-    : ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
+  const isFocus = context === 'focus'
+  let actions
+  if (isFocus) {
+    actions = ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
+  } else if (inTriageView) {
+    actions = [
+      { key: 'restore', label: 'Restore' },
+      ...ALL_ACTIONS
+        .filter((s) => s !== state.shownTriage)
+        .map((s) => ({ key: s, label: ACTION_LABELS[s] })),
+    ]
+  } else {
+    actions = ALL_ACTIONS.map((s) => ({ key: s, label: ACTION_LABELS[s] }))
+  }
   const btnClasses = ['mark-triage-menu']
   if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
   // Stable popover id derived from gid — escape so
@@ -332,7 +356,7 @@ function confTemplate(f) {
 // active body is `display: grid` on screen; print mode shows them
 // all stacked. `idx` / `total` feed the print-only "N of M" subhead;
 // suppressed for single-tab groups via the default args.
-function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
+function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const key = tabKey(f)
   const comment = state.comments.get(key) ?? ''
   const fix = state.fixes.get(key) ?? ''
@@ -363,7 +387,11 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1) {
   // without a hash, or hashes the analyzer didn't list any
   // bundle for, never get a button.
   let codeButton = nothing
-  if (f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
+  // Focus view already renders the source inline next to the
+  // finding-card — surfacing a second "Code" button in the badge
+  // rail would be redundant. The list / grouped / table-details
+  // views keep it as their primary path into the bundle viewer.
+  if (context !== 'focus' && f.fileHash && Array.isArray(f._bundleHashes) && f._bundleHashes.length > 0) {
     const allowed = new Set(f._bundleHashes)
     const match = bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.has(integrity))
     if (match) {
@@ -440,7 +468,8 @@ export function findingCardClasses(g) {
 // The action row in workspace mode carries a wide report-name chip
 // at its left, which would otherwise squeeze the commit-ref span on
 // the same row and force the hash to wrap mid-line.
-export function findingCardInnerTemplate(g) {
+export function findingCardInnerTemplate(g, opts = {}) {
+  const { context = null } = opts
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)
   const active = activeTabFor(g)
@@ -450,14 +479,14 @@ export function findingCardInnerTemplate(g) {
     : nothing
   const liftCommit = state.currentWorkspace && commitRef !== nothing
   return html`
-    ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length))}
+    ${sortedTabs.map((f, i) => tabBodyTemplate(f, tabKey(f) === activeKey, i, sortedTabs.length, context))}
     ${liftCommit ? html`<div class="marks-commit-row">${commitRef}</div>` : nothing}
     <div class="marks">
       <div class="marks-left">
         ${liftCommit ? nothing : commitRef}
         ${sortedTabs.length > 1 ? html`<div class="tabs">${sortedTabs.map((f) => tabTemplate(f, tabKey(f) === activeKey))}</div>` : nothing}
       </div>
-      ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey)}
+      ${actionButtonsTemplate(g, sortedTabs, groupSt, activeKey, context)}
     </div>
   `
 }

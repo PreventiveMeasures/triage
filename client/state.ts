@@ -67,6 +67,7 @@ export interface State {
   filesSelectedFile: string | null
   kanbanPopoverGid: string | null
   focusGid: string | null
+  focusCodeTick: number
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -414,6 +415,15 @@ export const state: State = store<State>({
   // advances the queue to the next slot rather than jumping back to
   // the top.
   focusGid: null,
+  // Tick incremented every time the focus view's inline Code panel
+  // settles a new bundle source / Prism highlight. The focus body
+  // template reads it so observer-util consumers see the cache
+  // change as a state mutation — without this, the cache lived
+  // entirely in module-scope Maps and `render()` calls after async
+  // loads occasionally didn't propagate down to the DOM until the
+  // next manual render (the user reproduced this as "code loads
+  // but doesn't appear until I navigate").
+  focusCodeTick: 0,
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes
