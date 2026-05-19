@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, setSecureItem, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
@@ -81,7 +81,7 @@ function renderPreservingScrollOf(selector) {
 }
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { LAST_FILE_KEY, switchToFile } from './ingest.js'
+import { LAST_FILE_KEY, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -185,7 +185,7 @@ report.addEventListener('click', (e) => {
     state.bundleDetailsTab = 'code'
     graph2.showAll = true
     state.shownTriage = null
-    setSecureItem(LAST_FILE_KEY, `b:${integrity}`).catch(() => {})
+    persistLastBundle(integrity, 'code')
     if (state.bundleDetails?.integrity === integrity) {
       // Already parsed — just paint the new tab choice.
       render()
@@ -438,6 +438,7 @@ report.addEventListener('click', (e) => {
       state.bundleDetailsTab = tab
       state.bundleSourceFile = null
       state.bundleSourceFindingIdx = null
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
     }
     return
@@ -453,6 +454,7 @@ report.addEventListener('click', (e) => {
     state.bundleSourceFindingIdx = null
     state.bundleCodeSearchQuery = ''
     state.bundleCodeSearchMode = 'files'
+    if (state.selectedBundle) persistLastBundle(state.selectedBundle)
     render()
     return
   }
@@ -590,7 +592,7 @@ report.addEventListener('click', (e) => {
     const integrity = selBundle.dataset.selectBundle
     if (state.selectedBundle === integrity) return
     state.selectedBundle = integrity
-    setSecureItem(LAST_FILE_KEY, `b:${integrity}`).catch(() => {})
+    persistLastBundle(integrity)
     state.bundleDetails = null
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null

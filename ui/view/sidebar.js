@@ -1,10 +1,10 @@
 import { html, render as litRender, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setSecureItem, state, triageSync } from '#client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, triageSync } from '#client/index.js'
 import { fileList, sidebar } from './dom.js'
 import { render } from './render.js'
-import { LAST_FILE_KEY, deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
+import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { deleteFromRemote as deleteRemote, isInRemote } from './objstore-presence.js'
 import { exportWorkspace } from './workspace-export.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
@@ -535,7 +535,7 @@ sidebar.addEventListener('click', async (e) => {
     state.bundleDetailsTab = 'packages'
     graph2.showAll = true
     state.shownTriage = null
-    setSecureItem(LAST_FILE_KEY, `b:${integrity}`).catch(() => {})
+    persistLastBundle(integrity)
     render()
     renderSidebar()
     openBundle(integrity)

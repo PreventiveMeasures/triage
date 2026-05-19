@@ -26,9 +26,25 @@ const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // the user picks back up where they left off. The stored value is the
 // OPFS filename for a single-file view; prefixed with `ws:` for a
 // workspace view; or prefixed with `b:` followed by the SRI-shaped
-// integrity for a bundle view. Mutually exclusive — one current
-// selection at a time, last-clicked wins.
+// integrity for a bundle view, optionally followed by a space and the
+// active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
+// current selection at a time, last-clicked wins.
 export const LAST_FILE_KEY = 'deepview.lastFile'
+// Sub-tabs in the bundles details panel — the tab strip rendered by
+// render-bundle.js, the data-bundle-tab click handler in events.js,
+// and the boot-time restore in view.js all key off this list.
+// 'packages' is the default and is omitted from the LAST_FILE_KEY
+// suffix; an unrecognised value on restore falls back to 'packages'.
+export const BUNDLE_TABS = new Set(['packages', 'files', 'reports', 'graph', 'issues', 'code', 'terminal'])
+
+// Persist a bundle selection to LAST_FILE_KEY, encoding the active
+// sub-tab as `b:<integrity> <tab>`. The default 'packages' tab is
+// dropped from the suffix so the round-trip lands on a clean
+// `b:<integrity>` when nothing further is meaningful.
+export function persistLastBundle(integrity, tab = 'packages') {
+  const suffix = tab && tab !== 'packages' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''
+  setSecureItem(LAST_FILE_KEY, `b:${integrity}${suffix}`).catch(() => {})
+}
 
 // Generation token shared by every async load path
 // (switchToFile / switchToWorkspace / deleteCurrent). Bumped at
@@ -173,7 +189,7 @@ export async function addFiles(files) {
     state.bundleCodeSearchMode = 'files'
     state.shownTriage = null
     graph2.showAll = true
-    setSecureItem(LAST_FILE_KEY, `b:${lastBundleIntegrity}`).catch(() => {})
+    persistLastBundle(lastBundleIntegrity)
     render()
     await renderSidebar()
     openBundle(lastBundleIntegrity)
