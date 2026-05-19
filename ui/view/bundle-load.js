@@ -7,6 +7,7 @@
 // flow. Three near-identical copies used to live across
 // `events.js` + `ingest.js`; consolidating here means the next
 // fix to e.g. error handling lands in one place.
+import { Bundle } from '@exodus/stasis/bundle'
 import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
 import { hasBundleFileHashes, recordBundleFileHashes } from '../../client/bundle-hash-index.js'
 import { readBundle } from '../../client/storage.js'
@@ -23,22 +24,30 @@ import { computeBundleFileHashes } from './render-bundle.js'
 // as a fallback shape rather than thrown — the caller assigns
 // `state.bundleDetails` unconditionally; the render path shows a
 // "failed to parse" placeholder when `details.error` is set.
+//
+// Sourcemap → `details.json` carries the raw `.map` JSON. Stasis
+// → `details.bundle` carries an `@exodus/stasis` `Bundle` instance
+// (handles v0 + v1 layouts uniformly; .sources / .imports / .modules
+// are Map-shaped APIs the render path consumes).
 async function buildBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
     const isMap = entry.name.toLowerCase().endsWith('.map')
     const kind = isMap ? 'sourcemap' : 'stasis'
     try {
-      // Stasis bundles are brotli-compressed JSON snapshots (see
-      // src/loaders/stasis.js); brotliDecompress dispatches to
-      // native DecompressionStream when available and falls
-      // through to the SW echo trick when it's not (see
-      // view/brotli-decompress.js).
-      const decoded = isMap
-        ? decodeUtf8(bytes)
-        : decodeUtf8(await brotliDecompress(bytes))
-      const json = JSON.parse(decoded)
-      return { integrity, kind, size: bytes.byteLength, json }
+      if (isMap) {
+        const json = JSON.parse(decodeUtf8(bytes))
+        return { integrity, kind, size: bytes.byteLength, json }
+      }
+      // Stasis bundles are brotli-compressed JSON snapshots;
+      // brotliDecompress dispatches to native DecompressionStream
+      // when available and falls through to the SW echo trick when
+      // it's not (see view/brotli-decompress.js). Bundle.parseCode
+      // validates the wrapper (version, scope, asserts on tampered
+      // shapes) and normalizes both v0 and v1 layouts.
+      const decoded = decodeUtf8(await brotliDecompress(bytes))
+      const bundle = Bundle.parseCode(decoded)
+      return { integrity, kind, size: bytes.byteLength, bundle }
     } catch (err) {
       return { integrity, kind, size: bytes.byteLength, error: err.message }
     }
@@ -47,15 +56,15 @@ async function buildBundleDetails(integrity, entry) {
   }
 }
 
-// Background SHA-512 hashing of every source file in
-// `details.json` so the bundle graph + Issues tab can join
-// findings by fileHash. No-op when there's no parsed json (load
-// failed). Caller has already set `state.bundleDetails = details`
-// and rendered; this attaches `fileHashes` once it lands and
-// triggers a re-render. Stale resolves (user clicked another
-// row mid-hash) drop silently.
+// Background SHA-512 hashing of every source file in the parsed
+// bundle so the bundle graph + Issues tab can join findings by
+// fileHash. No-op when neither parse slot landed (load failed).
+// Caller has already set `state.bundleDetails = details` and
+// rendered; this attaches `fileHashes` once it lands and triggers
+// a re-render. Stale resolves (user clicked another row mid-hash)
+// drop silently.
 function kickFileHashes(details) {
-  if (!details?.json) return
+  if (!details?.json && !details?.bundle) return
   ;(async () => {
     try {
       const fileHashes = await computeBundleFileHashes(details)
@@ -85,7 +94,7 @@ export async function prefetchBundleHashes(integrity) {
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
   if (!entry) return
   const details = await buildBundleDetails(integrity, entry)
-  if (!details?.json) return
+  if (!details?.json && !details?.bundle) return
   try {
     const fileHashes = await computeBundleFileHashes(details)
     recordBundleFileHashes(integrity, fileHashes)
