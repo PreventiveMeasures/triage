@@ -521,15 +521,19 @@
 }
 
 /* Subtle mark-color tints for the focus context. The list / table
-   views paint the card's full surface in the chosen mark color so
-   it stands out from the row's neighbours. In the focus view the
-   card is already the only finding on screen, so a saturated tint
-   feels heavy — drop the alpha so the marker reads as an accent
-   rather than a wash. */
-:host([context='focus'].mark-red) .card   { background: rgb(from var(--mark-red-bg) r g b / .25); }
-:host([context='focus'].mark-blue) .card  { background: rgb(from var(--mark-blue-bg) r g b / .25); }
-:host([context='focus'].mark-green) .card { background: rgb(from var(--mark-green-bg) r g b / .25); }
-:host([context='focus'].mark-gray) .card  { background: rgb(from var(--mark-gray-bg) r g b / .25); }
+   views paint the card's full surface in the saturated mark
+   color so it stands out from row neighbours. In the focus view
+   the card is the only finding on screen and is already framed
+   in its own glass panel, so a full-saturation tint feels heavy.
+   `color-mix` against the solid page `--bg` (NOT --surface, which
+   is itself translucent — alpha-stacking that against an alpha
+   surface produced a muddy mid-toned wash, the bug the user
+   pointed out) gives a clean opaque tint that reads as the
+   intended mark hue but at a third of its weight. */
+:host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 32%, var(--bg)); }
+:host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 32%, var(--bg)); }
+:host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 32%, var(--bg)); }
+:host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 32%, var(--bg)); }
 
 /* Comment + fix-link blocks in the tab body. Quote-style notes
    below the description / recommendation / confidence reason when

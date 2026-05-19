@@ -718,6 +718,10 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
+  /* Clip the inner `.card` (shadow-DOM, square corners) to the
+     wrapper's rounded outline so a mark-tinted card doesn't leak
+     past the curve onto the surrounding `--surface` underneath. */
+  overflow: hidden;
 }
 
 /* Code panel — file path bar pinned at the top, source body
