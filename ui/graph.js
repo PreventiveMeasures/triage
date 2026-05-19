@@ -29,6 +29,15 @@ import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './v
 
 export { attachGraph2Interaction } from './view/graph/canvas.js'
 
+// Cross-bundle sharing seam — re-export the lazy bundle's
+// `_swapImpl` so the main-bundle attach helper can point our
+// `graph2` proxy at the main bundle's live `_impl`. Without this
+// swap, every lazy-side `graph2.X` write/read would touch a
+// separate copy and the canvas would never see chip / severity /
+// path-filter clicks coming from `events.js`. See
+// `view/graph/state.js` for the proxy contract.
+export { _swapImpl as _swapGraph2Impl } from './view/graph/state.js'
+
 // Repaint the right-panel selection card + the top-right canvas
 // drill-in overlay slot. Both surfaces depend on the same
 // selection / solo / focus state (graph2 module-state in

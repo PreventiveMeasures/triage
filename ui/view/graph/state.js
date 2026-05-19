@@ -1,77 +1,129 @@
-// Graph v2 tab — mutable state. Mirrors graph/state.js: a single
-// shared object the renderer + canvas + event handlers all read and
-// mutate, plus a cleanup hook the canvas owns so re-attach can drop
-// stale listeners and rAF callbacks.
+// Graph v2 tab — mutable state. A single shared object the
+// renderer + canvas + event handlers all read and mutate, plus a
+// cleanup hook the canvas owns so re-attach can drop stale
+// listeners and rAF callbacks.
 //
-// Most fields here back UI controls in the left/topbar panels: the
-// segmented controls (layout, edge mode, hub mode), the sliders
-// (edge opacity / node size), the toggle rows (halos / hub
-// highlight / labels / issues-only), the severity-row filter, and
-// the palette solo / hidden + search state. Defaults are tuned to
-// read well on the small typical DeepView graph (10–80 files) so
-// the empty state is informative even before any user input.
-export const graph2 = {
-  // Include clean files (no own / subtree findings) in the
-  // canvas. Off by default so the layout focuses on
-  // issue-bearing code. Toggled via the topbar's "All files"
-  // button. Was tree.showAll back when the legacy v0 graph
-  // shared this flag with v2; v0 is gone, so the field lives
-  // here directly.
-  showAll: false,
-  selected: null,        // file path or null
-  // Package focus mode — when set, the canvas drops the spiral
-  // and renders ONLY this package's intra-imports in graph v1
-  // style (single hue, arrowheads, file labels). null = full
-  // graph; reset on report swap and on the back-button click.
-  focusedPkg: null,
-  // Right-panel "Top packages" sort axis. Same role as graph v1's
-  // hubs Issues/Imports tab — issues-first by default so the user
-  // lands on the actionable list, files for "what's the codebase
-  // shape" exploration.
-  topPkgsTab: 'issues',  // 'issues' | 'files'
-  // Visual constants — were sliders / toggles in the Display
-  // section before it was removed. Canvas reads them as fixed
-  // values now; tune the defaults here when needed.
-  edgeOpacity: 0.22,
-  nodeSize: 1.0,
-  showLabels: false,
-  // Severity highlight filter — empty = no filter, every node
-  // draws at full opacity (the default). When 1+ severities are
-  // selected, matching nodes stay full opacity and everything
-  // else dims to 0.1; the previous boolean-per-severity model
-  // and the standalone "Show only issues" toggle both collapse
-  // into this single set (selecting all four = the old
-  // issues-only behavior, automatically).
-  selectedSeverities: new Set(),
-  // Mark-color highlight filter — same shape as the severity set.
-  // Empty = no filter. When non-empty, a node stays full-opacity
-  // only if at least one finding on that file carries one of the
-  // selected colors (with severity filter AND-combined when both
-  // are active). Mirrors the findings-tab triage filter so the
-  // canvas highlight matches what the table would show.
-  selectedColors: new Set(),
-  // Path-substring filter. Empty = no filter. Non-empty =
-  // case-insensitive substring match; non-matching nodes
-  // dim to 0.1 (same soft-dim path as solo / severity).
-  pathFilter: '',
-  // Package solo — narrows the canvas highlight to a single
-  // package via the Top-packages list click. `hidden` is a
-  // legacy hide-set that nothing currently writes to, kept as
-  // an empty Set so nodeVisible can still read it without an
-  // undefined check.
-  hidden: new Set(),
-  solo: null,
-  // Per-render canvas state — owned by canvas.js, re-built on every
-  // attach. Cleanup tears down listeners + rAF + ResizeObserver.
-  graphState: null,
-  // Layout result cache, keyed off (mode, files, w, h).
-  // Recomputed when the user switches layouts or the underlying file
-  // set changes (showAll on graph v1 invalidates v2's cache too via
-  // cleanupGraph2 in events.js).
-  layoutCache: null,
+// Most fields back UI controls in the topbar / right-panel: the
+// "All files" toggle, severity / triage-color highlight sets,
+// path-substring filter, package solo + focus drill-in, the
+// per-render canvas handle (live `requestDraw` + `_cleanup`), and
+// the layout cache. Defaults are tuned to read well on the small
+// typical DeepView graph (10–80 files) so the empty state is
+// informative even before any user input.
+//
+// Cross-bundle sharing: this module is bundled into BOTH `view.js`
+// (main, statically reached via events.js / ingest.js / sidebar.js /
+// render*.js) AND `graph.js` (lazy, reached via graph-layout.js /
+// canvas.js / graph/render.js). Each bundle gets its own copy of
+// the module — without coordination, each side would hold a
+// SEPARATE `graph2` object, and writes from the main bundle's
+// click handlers (severity chip toggle, path filter, etc.) would
+// never reach the lazy bundle's canvas. To share, the exported
+// `graph2` is a `Proxy` that forwards every property access through
+// a swappable internal `_impl`. The graph-attach helper calls
+// `_swapImpl(mainBundleImpl)` on the lazy module after load, so
+// both proxies end up driving the SAME underlying object.
+// Mutations to nested values (`graph2.selectedSeverities.add(...)`,
+// `graph2.hidden.clear()`) hit the live Set / object directly —
+// the proxy is only at the top level, so nested-state mutations
+// are observable across both bundles too.
+
+function createImpl() {
+  return {
+    // Include clean files (no own / subtree findings) in the
+    // canvas. Off by default so the layout focuses on
+    // issue-bearing code. Toggled via the topbar's "All files"
+    // button.
+    showAll: false,
+    selected: null,        // file path or null
+    // Package focus mode — when set, the canvas drops the spiral
+    // and renders ONLY this package's intra-imports in graph v1
+    // style (single hue, arrowheads, file labels). null = full
+    // graph; reset on report swap and on the back-button click.
+    focusedPkg: null,
+    // Right-panel "Top packages" sort axis. Same role as graph v1's
+    // hubs Issues/Imports tab — issues-first by default so the user
+    // lands on the actionable list, files for "what's the codebase
+    // shape" exploration.
+    topPkgsTab: 'issues',  // 'issues' | 'files'
+    // Visual constants — were sliders / toggles in the Display
+    // section before it was removed. Canvas reads them as fixed
+    // values now; tune the defaults here when needed.
+    edgeOpacity: 0.22,
+    nodeSize: 1.0,
+    showLabels: false,
+    // Severity highlight filter — empty = no filter, every node
+    // draws at full opacity (the default). When 1+ severities are
+    // selected, matching nodes stay full opacity and everything
+    // else dims to 0.1; the previous boolean-per-severity model
+    // and the standalone "Show only issues" toggle both collapse
+    // into this single set (selecting all four = the old
+    // issues-only behavior, automatically).
+    selectedSeverities: new Set(),
+    // Mark-color highlight filter — same shape as the severity set.
+    // Empty = no filter. When non-empty, a node stays full-opacity
+    // only if at least one finding on that file carries one of the
+    // selected colors (with severity filter AND-combined when both
+    // are active). Mirrors the findings-tab triage filter so the
+    // canvas highlight matches what the table would show.
+    selectedColors: new Set(),
+    // Path-substring filter. Empty = no filter. Non-empty =
+    // case-insensitive substring match; non-matching nodes
+    // dim to 0.1 (same soft-dim path as solo / severity).
+    pathFilter: '',
+    // Package solo — narrows the canvas highlight to a single
+    // package via the Top-packages list click. `hidden` is a
+    // legacy hide-set that nothing currently writes to, kept as
+    // an empty Set so nodeVisible can still read it without an
+    // undefined check.
+    hidden: new Set(),
+    solo: null,
+    // Per-render canvas state — owned by canvas.js, re-built on
+    // every attach. Cleanup tears down listeners + rAF +
+    // ResizeObserver.
+    graphState: null,
+    // Layout result cache, keyed off (mode, files, w, h).
+    // Recomputed when the user switches layouts or the underlying
+    // file set changes (showAll on graph v1 invalidates v2's cache
+    // too via cleanupGraph2 in events.js).
+    layoutCache: null,
+  }
 }
+
+let _impl = createImpl()
+
+// Top-level Proxy. Property reads / writes / membership checks
+// flow through `_impl` so swapping `_impl` (via `_swapImpl`)
+// retargets the entire `graph2` object atomically.
+export const graph2 = new Proxy(_impl, {
+  get(_t, prop) { return _impl[prop] },
+  set(_t, prop, value) { _impl[prop] = value; return true },
+  has(_t, prop) { return prop in _impl },
+  deleteProperty(_t, prop) { return delete _impl[prop] },
+  ownKeys() { return Reflect.ownKeys(_impl) },
+  getOwnPropertyDescriptor(_t, prop) { return Object.getOwnPropertyDescriptor(_impl, prop) },
+})
 
 export function cleanupGraph2() {
   if (graph2.graphState?._cleanup) graph2.graphState._cleanup()
   graph2.graphState = null
+}
+
+// Cross-bundle sharing seam. The graph-attach helper calls
+// `_swapImpl(mainImpl)` on the lazy bundle's instance of this
+// module so both bundles' `graph2` proxies forward to the same
+// underlying object. No-op when `newImpl` is falsy (defensive — a
+// caller passing null would silently leave the proxy pointing at
+// a freed copy otherwise).
+export function _swapImpl(newImpl) {
+  if (newImpl) _impl = newImpl
+}
+
+// Read-side companion — exposes the live `_impl` so the
+// graph-attach helper (running in the main bundle) can hand the
+// main-bundle copy off to the lazy bundle's `_swapImpl`. The two
+// functions are paired and only called by graph-attach during the
+// `await import('./graph.js')` settle path.
+export function _currentImpl() {
+  return _impl
 }
