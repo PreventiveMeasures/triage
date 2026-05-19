@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit'
-import { state } from '#client/index.js'
 
 // Severity ranking — higher = more severe. The ladder splits into
 // two stacks: vulnerabilities on top (critical → low) and bug-class
@@ -197,16 +196,18 @@ function repoBaseUrl(s) {
 // `githubRepo` (the per-finding `repo.github` value, e.g. `lodash/lodash`)
 // wins over the user-typed repo URL when available — it points at the
 // actual upstream of a node_modules dependency rather than at the project
-// repo, which doesn't carry node_modules sources. Falls back to
-// `repoFallback` (the per-report URL stamped on each finding at ingest)
-// when given, or `state.repoUrl` (the active single-file mode setting)
-// otherwise. Workspace mode passes per-finding fallbacks because each
-// report carries its own github setting; single-file mode leaves
-// `repoFallback` undefined and the global URL drives the chip.
+// repo, which doesn't carry node_modules sources. `repoFallback` is the
+// resolved per-finding URL (stamped at ingest as `_repoFallback`); the
+// caller is responsible for OR-ing in `state.repoUrl` when it wants the
+// post-ingest single-file-mode URL changes to flow through. Keeping the
+// state read at the call site is what lets this module stay free of any
+// `#client/...` import — `view/format.js` is in the dependency chain of
+// the lazy `ui/graph.js` bundle (via `SEVERITIES` / `formatBytes`), and
+// pulling in `state` would drag the whole client aggregator with it.
 export function fileUrl(file, githubRepo, repoFallback) {
   if (githubRepo) return `https://github.com/${githubRepo}/blob/HEAD/${stripPackagePrefix(file)}`
   if (isModule(file)) return null
-  const base = repoBaseUrl(repoFallback ?? state.repoUrl)
+  const base = repoBaseUrl(repoFallback)
   if (!base) return null
   return `${base}/blob/HEAD/${file}`
 }

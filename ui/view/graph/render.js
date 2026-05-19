@@ -3,11 +3,9 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { SEVERITIES, formatBytes } from '../format.js'
-import { state } from '#client/index.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { pkgRelative } from './data.js'
-import { groupState } from '../group.js'
 // `<graph-layout>` is defined in `./graph-layout.js`, which lives
 // behind the lazy entry `ui/graph.js` (loaded by
 // `view/graph-attach.js` the first time the graph is shown).
@@ -47,7 +45,9 @@ import { groupState } from '../group.js'
 export function renderTopBar(graph, options) {
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
-  const triageCountsOverride = options.triageCounts
+  const triageCounts = options.triageCounts ?? { fixed: 0, invalid: 0, deleted: 0 }
+  const triageStates = options.triageStates ?? ['fixed', 'invalid', 'deleted']
+  const shownTriage = options.shownTriage ?? null
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -84,35 +84,21 @@ export function renderTopBar(graph, options) {
   const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
   // Triage state selector — replaces the prior single Trash button.
-  // Three buttons (Fixed / Invalid / Deleted) carry data-triage-show
-  // for the events.js delegate (state.shownTriage flip + canvas
-  // teardown). Counts come either from the bundle path (precomputed
-  // overrides for state.reports-empty bundle-only sessions) or by
-  // walking state.reports' groups for the findings-tab graph.
-  // Bundle path passes a precomputed override (without `ignored` —
-  // ignore is per-report and intentionally absent from the bundle
-  // selector since the bundle aggregates findings across reports).
-  // The report-graph path counts buckets including `ignored` so
-  // its selector renders the fourth button when applicable.
-  let triageCounts
-  let triageStates
-  if (triageCountsOverride && typeof triageCountsOverride === 'object') {
-    triageCounts = triageCountsOverride
-    triageStates = ['fixed', 'invalid', 'deleted']
-  } else {
-    triageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
-    const allGroups = state.reports.flatMap((r) => r.groups)
-    for (const g of allGroups) {
-      const t = groupState(g).commonTriage
-      if (t) triageCounts[t]++
-    }
-    triageStates = ['fixed', 'invalid', 'deleted', 'ignored']
-  }
+  // Buttons (Fixed / Invalid / Deleted, plus Ignored in the
+  // findings-tab graph) carry data-triage-show for the events.js
+  // delegate (state.shownTriage flip + canvas teardown). The
+  // bundle path passes precomputed counts without `ignored`
+  // (ignore is per-report and intentionally absent from the bundle
+  // selector since the bundle aggregates findings across reports);
+  // the findings-tab path passes counts including `ignored` so its
+  // selector renders the fourth button when applicable. Caller is
+  // also responsible for `shownTriage` (mirrors `state.shownTriage`)
+  // so this template stays uncoupled from the global state shape.
   const triageTotal = triageStates.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
-  const triageBtn = (triageTotal > 0 || state.shownTriage) ? html`<div class="triage-selector graph2-triage-selector" role="group" aria-label="Triage view">
+  const triageBtn = (triageTotal > 0 || shownTriage) ? html`<div class="triage-selector graph2-triage-selector" role="group" aria-label="Triage view">
     ${triageStates.map((s) => {
       const n = triageCounts[s] ?? 0
-      const active = state.shownTriage === s
+      const active = shownTriage === s
       if (n === 0 && !active) return null
       return html`<button
         type="button"
@@ -420,11 +406,11 @@ export function renderTopPkgsBlock(graph) {
 //   1. A file is selected (canvas click) → file card
 //   2. A package is solo'd (palette swatch or top-pkgs click) → pkg card
 //   3. Neither → empty placeholder
-export function renderSelectionCard(graph) {
+export function renderSelectionCard(graph, ctx = {}) {
   const file = graph2.selected
   if (file) {
     const n = graph.nodeByFile.get(file)
-    if (n) return renderFileCard(graph, n, file)
+    if (n) return renderFileCard(graph, n, file, ctx)
     return html`<div class="g2-empty-state">
       <strong>File not in current view</strong>Adjust filters or pick another file.
     </div>`
@@ -435,7 +421,7 @@ export function renderSelectionCard(graph) {
   return html`<div class="g2-empty-state">Click a node or a package row to inspect.</div>`
 }
 
-function renderFileCard(graph, n, file) {
+function renderFileCard(graph, n, file, ctx) {
   const col = pkgColor(n.pkg)
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
   const relPath = pkgRelative(file, n.pkg)
@@ -493,7 +479,7 @@ function renderFileCard(graph, n, file) {
          top-left back button. -->
     <div class="g2-sel-jumps">
       ${n.totalIssues > 0 ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
-      ${state.currentView === 'bundles'
+      ${ctx.isBundleContext
         ? (n.origFile ? html`<button type="button" class="g2-sel-jump" data-bundle-view-source=${n.origFile}>View source →</button>` : null)
         : html`<button type="button" class="g2-sel-jump" data-g2-jump-file=${file}>Files →</button>`}
     </div>

@@ -83,7 +83,7 @@ function renderHighlighted(text) {
 // views) so file + line live together in one slot. Returns a
 // TemplateResult when we have a source URL, plain text otherwise.
 function rowLocationTemplate(f) {
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback)
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const text = Number.isFinite(lineNum) ? `${f.file}:${f.line}` : f.file
   if (!url) return text
@@ -395,7 +395,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // grouped modes hide the `.line-row` via `:host([in-group])` since
   // `.flat-group-loc` / `.file-header` already paint the same info
   // above the card. exportName joins with a comma when present.
-  const url = fileUrl(f.file, f.repo?.github, f._repoFallback)
+  const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const hasLine = Number.isFinite(lineNum)
   const locText = hasLine ? `${f.file}:${f.line}` : f.file

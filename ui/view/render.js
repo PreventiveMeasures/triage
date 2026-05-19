@@ -136,7 +136,11 @@ export function refreshGraph2Sidebar() {
   if (!area) return
   const data = buildGraph2Data()
   if (!data) return
-  litRender(renderSelectionCard(data.graph), area)
+  // Pass through whether we're in a bundle context — the selection
+  // card branches between Files → and View source → buttons. The
+  // graph render code doesn't import `state` (kept out of the lazy
+  // `ui/graph.js` bundle), so the caller threads it in here.
+  litRender(renderSelectionCard(data.graph, { isBundleContext: state.currentView === 'bundles' }), area)
   // The top-right canvas overlay (drill-in icon button) depends
   // on the same selection / solo / focus state the selection
   // card does, so refresh both from the same trigger. Slot
@@ -1329,7 +1333,7 @@ function findingsBodyTemplate(filtered) {
       const probe = primaryTab(items[0])
       return html`<div class="file-group">
         <div class="file-header">
-          <span>${fileLink(file, probe?.repo?.github, probe?._repoFallback)}</span>
+          <span>${fileLink(file, probe?.repo?.github, probe?._repoFallback ?? state.repoUrl)}</span>
           <span class="count">${items.length}</span>
         </div>
         <div class="file-body">${repeat(items, (g) => findingCardGid(g), (g) => findingCardPlaceholder(g))}</div>
@@ -1355,11 +1359,11 @@ function findingsBodyTemplate(filtered) {
   // active tab automatically.
   return html`${repeat(items, (g) => findingCardGid(g), (g) => {
     const p = activeTabFor(g)
-    const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback)
+    const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback ?? state.repoUrl)
     const meta = formatRunMeta(p)
     return html`<div class="flat-group">
       <div class="flat-group-loc">
-        <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback)}</span>
+        <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback ?? state.repoUrl)}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${p.exportName ? html`<span class="meta">${p.exportName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
@@ -1498,6 +1502,18 @@ function renderImpl() {
             // so the toggle would have nothing to filter against).
             const hideAllFiles = graph.edges.length === 0
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
+            // Pass `state.shownTriage` through as an option (the
+            // graph render code doesn't import the client `state`
+            // shape itself — keeps the lazy `ui/graph.js` bundle
+            // free of secure-storage / workspaces / etc.). The
+            // bundle path always uses the 3-bucket triage selector
+            // (no `ignored` — that's a per-report concern).
+            const options = {
+              hideAllFiles,
+              triageCounts,
+              triageStates: ['fixed', 'invalid', 'deleted'],
+              shownTriage: state.shownTriage,
+            }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
             // CSS + canvas.js); subsequent opens are a no-op
@@ -1505,7 +1521,7 @@ function renderImpl() {
             // post-load sequence: render the host, await its first
             // shadow update, fire the refresh helpers + wire the
             // canvas interaction.
-            attachGraphLayout(graphSlot, graph, { hideAllFiles, triageCounts },
+            attachGraphLayout(graphSlot, graph, options,
               refreshBundleGraphSidebar, refreshBundleGraphTopPkgs)
           }
         }
@@ -1909,6 +1925,25 @@ function renderImpl() {
         mode=${state.viewMode}
         modes="table,list,grouped,focus,kanban,graph"
       ></view-mode-buttons>`
+      // Triage bucket counts across every loaded report's groups —
+      // the findings-tab graph's topbar uses this for its triage
+      // selector (Fixed / Invalid / Deleted / Ignored). Computed
+      // here (in the main bundle) rather than inside
+      // `renderTopBar` so the lazy `ui/graph.js` bundle stays free
+      // of `groupState` / `state` imports.
+      const findingsTriageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
+      for (const r of state.reports) {
+        for (const g of r.groups) {
+          const t = groupState(g).commonTriage
+          if (t) findingsTriageCounts[t]++
+        }
+      }
+      const options = {
+        extraTopRow: viewModeRow,
+        triageCounts: findingsTriageCounts,
+        triageStates: ['fixed', 'invalid', 'deleted', 'ignored'],
+        shownTriage: state.shownTriage,
+      }
       // First open of the graph view-mode kicks the dynamic
       // import of `ui/graph.js`; subsequent opens reuse the
       // cached module. attachGraphLayout handles render → await
@@ -1917,7 +1952,7 @@ function renderImpl() {
       // helper runs its own `litRender` into the appropriate
       // shadow-DOM slot, so subsequent clicks diff against a
       // single Lit cache per slot.
-      attachGraphLayout(graphSlot, g2DataForBody.graph, { extraTopRow: viewModeRow },
+      attachGraphLayout(graphSlot, g2DataForBody.graph, options,
         refreshGraph2Sidebar, refreshGraph2TopPkgs)
     }
   }
