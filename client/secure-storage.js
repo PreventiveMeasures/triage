@@ -248,6 +248,18 @@ async function persist(key, value) {
 // vault — breaking the "everything is encrypted at rest under an
 // enabled vault" invariant. The audit flagged this concrete leak.
 export async function hydrate() {
+  if (!hydratedOnce) {
+    // Vault-state listener is registered here rather than at module
+    // init to keep the passkey-vault ↔ secure-storage cycle benign:
+    // passkey-vault statically imports `drainWriteChain` from this
+    // module, so a top-level `onVaultStateChange(...)` call would
+    // execute before passkey-vault's `listeners` const is reached,
+    // hitting a TDZ. By the time `hydrate()` is invoked from
+    // continueBoot, both modules are fully evaluated.
+    onVaultStateChange(() => {
+      hydrate().catch((err) => console.warn('secure-storage rehydrate:', err))
+    })
+  }
   hydratedOnce = true
   // Preserve in-flight optimistic writes. Without this, a hydrate
   // firing between a `setItem`'s sync cache.set and its persist
@@ -454,14 +466,6 @@ export async function drainWriteChain() {
   pendingValues.clear()
   writeChain.clear()
 }
-
-// Vault state change handler — re-hydrate so unlock / disable /
-// sibling-re-enable picks up the new shape. Skipped before the
-// first explicit hydrate() (= boot flow hasn't called us yet).
-onVaultStateChange(() => {
-  if (!hydratedOnce) return
-  hydrate().catch((err) => console.warn('secure-storage rehydrate:', err))
-})
 
 // Cross-tab propagation: a sibling tab's setItem fires a storage
 // event in this tab. Re-hydrate the affected key so the next

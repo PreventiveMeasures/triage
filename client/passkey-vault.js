@@ -28,19 +28,13 @@
 
 import { assertPasskey, deriveContentKey, hasEnvelopeMagic, importContentKey, isPasskeySupported, openEnvelope, probePrfSupport, registerPasskey, sealEnvelope } from './passkey-crypto.ts'
 import { encodeUtf8 } from '../common/utf8.js'
+import { drainWriteChain as drainSecureStorageWriteChain } from './secure-storage.js'
 
-// `secure-storage` imports from this module (vault state), so a
-// static import here would form a cycle that breaks the
-// module-level `onVaultStateChange(...)` registration in
-// secure-storage (it accesses `listeners` before this module
-// finishes evaluating its `const` declaration). Dynamic-import the
-// drain helper from `wipeAllVaultData` instead — the cycle resolves
-// because by the time `wipeAllVaultData` is invoked, both modules
-// are fully evaluated.
-async function drainSecureStorageWriteChain() {
-  const mod = await import('./secure-storage.js')
-  await mod.drainWriteChain()
-}
+// secure-storage's vault-state listener registration runs from
+// inside its `hydrate()` (not at module init) so the cycle this
+// module's `drainSecureStorageWriteChain` import creates stays
+// benign — top-level code in secure-storage doesn't reach into the
+// `listeners` const here while it's still in TDZ.
 
 const VAULT_KEY = 'deepview.passkey.v1'
 // Separate from VAULT_KEY so it survives a disableEncryption cycle.
