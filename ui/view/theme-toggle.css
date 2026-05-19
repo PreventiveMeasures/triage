@@ -19,6 +19,6 @@
   cursor: default;
   user-select: none;
 }
-:host(:hover) { color: var(--text); }
+:host(:hover) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media print { :host { display: none !important; } }

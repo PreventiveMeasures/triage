@@ -342,7 +342,7 @@ a { color: var(--accent); text-decoration: none; }
   align-items: center; justify-content: center;
   transition: color .12s, background .12s;
 
-  &:hover { color: var(--text); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   & svg { display: block; }
 }
 
