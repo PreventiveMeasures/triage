@@ -81,10 +81,23 @@ const isStaleLoad = (captured) => captured !== loadGen
 // the shape — bundles are archived as-is so the analyzer pipeline
 // can consume them later.
 function bundleKind(name) {
-  const lower = name.toLowerCase()
+  const lower = stripDownloadDup(name.toLowerCase())
   if (lower.endsWith('.map')) return 'sourcemap'
   if (lower === 'stasis.code.br' || lower.endsWith('.stasis.code.br')) return 'stasis'
   return null
+}
+
+// Browsers (Chrome / Firefox / Safari) prepend ` (N)` to the LAST
+// `.ext` segment when re-downloading a duplicate file —
+// `foo.deepview-workspace.enc` becomes `foo.deepview-workspace (1).enc`,
+// `bar.stasis.code.br` becomes `bar.stasis.code (1).br`. Strip a
+// single trailing ` (\d+)` immediately before the final extension so
+// drop-routing matches the canonical filename. Conservative: only
+// the rightmost occurrence (lookahead pins it to the last `.foo`),
+// and only when the trailer is bare digits — a legitimate name like
+// `foo (final).enc` is left alone.
+function stripDownloadDup(name) {
+  return name.replace(/ \(\d+\)(?=\.[^.]*$)/u, '')
 }
 
 export async function addFiles(files) {
@@ -109,8 +122,10 @@ export async function addFiles(files) {
       // Route plaintext gzip and encrypted bundles to workspace import
       // BEFORE the file.text() read — UTF-8 decoding would mangle the
       // binary bytes. importWorkspaceFromGzip throws if the payload
-      // doesn't match our export shape.
-      const lower = file.name.toLowerCase()
+      // doesn't match our export shape. `stripDownloadDup` normalises
+      // browser-added ` (N)` duplicate suffixes so a redownloaded
+      // `foo.deepview-workspace (1).enc` still routes here.
+      const lower = stripDownloadDup(file.name.toLowerCase())
       if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
         await importWorkspaceFromGzip(file)
         continue
@@ -129,7 +144,7 @@ export async function addFiles(files) {
         continue
       }
       const content = await file.text()
-      if (file.name.toLowerCase().endsWith('.csv')) {
+      if (lower.endsWith('.csv')) {
         const scans = parseCodexCsvToScans(content)
         for (const { displayName, data } of scans) {
           const codexName = displayName.replaceAll('/', '__') + '.codex'
