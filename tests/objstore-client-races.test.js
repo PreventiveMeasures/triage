@@ -44,7 +44,16 @@ async function makeKeys() {
 //   const seen = pendingPut(b, (e) => e.version === 1)
 //   await a.put(...)
 //   await seen
-function pendingPut(session, predicate, label = 'put broadcast', timeoutMs = 5_000) {
+//
+// Timeout is a backstop for a genuinely-missed broadcast (server
+// died, listener attached too late), NOT a per-op deadline. Several
+// tests pre-arm a listener and then run a sequence of awaits before
+// it fires; the suite also runs with `concurrency: true` and is
+// often launched alongside other server-spawning files, so a single
+// PUT under CI contention can take a few seconds before the
+// broadcast leaves the server. 30 s is loose enough to absorb that
+// contention while still bounding a true hang.
+function pendingPut(session, predicate, label = 'put broadcast', timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => { off(); reject(new Error(`pendingPut timeout: ${label}`)) }, timeoutMs)
     const off = session.onPut((e) => {
@@ -53,7 +62,7 @@ function pendingPut(session, predicate, label = 'put broadcast', timeoutMs = 5_0
   })
 }
 
-function pendingDelete(session, predicate, label = 'delete broadcast', timeoutMs = 5_000) {
+function pendingDelete(session, predicate, label = 'delete broadcast', timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => { off(); reject(new Error(`pendingDelete timeout: ${label}`)) }, timeoutMs)
     const off = session.onDeleted((e) => {
