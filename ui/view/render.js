@@ -5,7 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
-import { isBundleInRemote, isInRemote, listWorkspaces, remoteCount, state, triageSync } from '#client/index.js'
+import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, listBundles, listWorkspaces, remoteBundleName, remoteCount, state, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -31,6 +31,8 @@ import {
   setCurrentBundleGraph,
 } from './render-bundle.js'
 import { getFocusCode } from './focus-code.js'
+import { openSyncUploadDialog } from './sync-upload-dialog.js'
+import { openSyncDownloadDialog } from './sync-download-dialog.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -622,7 +624,6 @@ async function openUploadFromBadge({ workspaceId, items }) {
   // source of truth for the local label — pull it once and join.
   const bundleItems = items.filter((i) => i.kind === 'bundle')
   if (bundleItems.length > 0) {
-    const { listBundles } = await import('#client/index.js')
     const meta = await listBundles()
     const labelByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
     for (const item of bundleItems) {
@@ -630,7 +631,6 @@ async function openUploadFromBadge({ workspaceId, items }) {
       if (name) item.label = name
     }
   }
-  const { openSyncUploadDialog } = await import('./sync-upload-dialog.js')
   await openSyncUploadDialog({ workspaceId, items })
 }
 
@@ -645,11 +645,6 @@ async function openDownloadFromBadge({ workspaceId, localFileNames, localBundles
   // `discoverRemote*` awaits every in-flight + queues any not-yet-
   // started discovery, returning the complete decoded set for each
   // kind.
-  const {
-    discoverRemoteBundleIntegrities,
-    discoverRemoteFileNames,
-    remoteBundleName,
-  } = await import('#client/index.js')
   const [remoteReports, remoteBundles] = await Promise.all([
     discoverRemoteFileNames(workspaceId),
     discoverRemoteBundleIntegrities(workspaceId),
@@ -670,7 +665,6 @@ async function openDownloadFromBadge({ workspaceId, localFileNames, localBundles
         return label ? { kind: 'bundle', identifier: i, label } : { kind: 'bundle', identifier: i }
       }),
   ]
-  const { openSyncDownloadDialog } = await import('./sync-download-dialog.js')
   await openSyncDownloadDialog({ workspaceId, items })
 }
 
