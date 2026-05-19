@@ -3,27 +3,11 @@
 // means a v2 bump, not an in-place edit — `client/sync-crypto.js`
 // has the implementation, this file is the contract.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 import { encodeUtf8 } from '../common/utf8.js'
-
-// Polyfill `localStorage` so the client modules import cleanly in
-// Node — sync-crypto itself doesn't read it, but its module graph
-// does at load time.
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = (() => {
-    const m = new Map()
-    return {
-      getItem: (k) => (m.has(k) ? m.get(k) : null),
-      setItem: (k, v) => { m.set(k, String(v)) },
-      removeItem: (k) => { m.delete(k) },
-      clear: () => { m.clear() },
-      get length() { return m.size },
-      key: (i) => [...m.keys()][i] ?? null,
-    }
-  })()
-}
 
 const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync-crypto.ts')
 

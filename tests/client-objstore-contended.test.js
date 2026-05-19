@@ -7,6 +7,7 @@
 // point so the test runs instantly regardless of the production
 // backoff schedule (100–200, 200–400, 400–800 ms jittered).
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 

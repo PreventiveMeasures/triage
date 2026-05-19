@@ -11,23 +11,9 @@
 // setter on the prototype chain, so `out['__proto__'] = entry`
 // becomes an inert own data property.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-
-function createLocalStorage() {
-  const store = new Map()
-  return {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => { store.set(k, String(v)) },
-    removeItem: (k) => { store.delete(k) },
-    clear: () => { store.clear() },
-    get length() { return store.size },
-    key: (i) => Array.from(store.keys())[i] ?? null,
-  }
-}
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = createLocalStorage()
-}
 
 const { applyChangeset } = await import('../client/triage-sync.ts')
 

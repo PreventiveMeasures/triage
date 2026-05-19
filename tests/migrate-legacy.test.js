@@ -8,23 +8,9 @@
 // each test loads a fresh module instance (cache-busted import) to
 // re-run the migration cleanly.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-
-function createLocalStorage() {
-  const store = new Map()
-  return {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => { store.set(k, String(v)) },
-    removeItem: (k) => { store.delete(k) },
-    clear: () => { store.clear() },
-    get length() { return store.size },
-    key: (i) => Array.from(store.keys())[i] ?? null,
-  }
-}
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = createLocalStorage()
-}
 
 // Import the modules once — fresh `migrate-legacy` instance per test
 // is the only one that needs cache-busting. storage / counts /

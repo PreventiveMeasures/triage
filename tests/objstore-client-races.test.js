@@ -17,6 +17,7 @@
 // token after delete-recreate land here too — the storage-layer
 // tests can't model the wire token round-trip.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { spawn } from 'node:child_process'

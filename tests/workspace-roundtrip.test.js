@@ -11,25 +11,10 @@
 // passes the flag; running this file directly needs `node
 // --js-base-64 --test tests/workspace-roundtrip.test.js`.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { before, beforeEach, describe, it } from 'node:test'
-
-function createLocalStorage() {
-  const store = new Map()
-  return {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => { store.set(k, String(v)) },
-    removeItem: (k) => { store.delete(k) },
-    clear: () => { store.clear() },
-    get length() { return store.size },
-    key: (i) => Array.from(store.keys())[i] ?? null,
-  }
-}
-
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = createLocalStorage()
-}
 
 const { state } = await import('../client/state.ts')
 const {
