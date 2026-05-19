@@ -39,12 +39,17 @@ function awaitEvent(label, subscribe, timeoutMs = 5_000) {
   })
 }
 
-describe('client/objstore session', () => {
-  let httpOrigin, server, serverDir, serverUrl
+// Each `it` makes fresh keypairs (= fresh workspaceTag), so the
+// per-test server state is isolated. Running them concurrently
+// against the shared spawned server cuts wall-time roughly to the
+// slowest single test. The confidentiality test that walks the
+// on-disk objstore is split into its own (sequential) describe
+// below, so it doesn't race with the concurrent writers here.
+describe('client/objstore session', { concurrency: true }, () => {
+  let httpOrigin, server, serverUrl
 
   before(async () => {
     server = await bootServer()
-    serverDir = server.serverDir
     serverUrl = server.serverUrl
     httpOrigin = server.httpOrigin
   })
@@ -402,8 +407,12 @@ describe('client/objstore session', () => {
     await new Promise((resolve) => { probe.close(resolve) })
     const badUrl = `ws://127.0.0.1:${port}/api/sync`
     const badOrigin = `http://127.0.0.1:${port}`
+    // Override the 10 s default — the assertion is that the call
+    // rejects, not how long the default would have made us wait.
+    // 500 ms is plenty for a loopback connect to either succeed or
+    // fail with ECONNREFUSED; longer would just slow the suite.
     await assert.rejects(
-      createObjstoreSession({ serverUrl: badUrl, httpOrigin: badOrigin, keys }),
+      createObjstoreSession({ serverUrl: badUrl, httpOrigin: badOrigin, keys, requestTimeoutMs: 500 }),
     )
   })
 
@@ -424,49 +433,6 @@ describe('client/objstore session', () => {
     session.close()
   })
 
-  it('confidentiality: relay-stored bytes contain neither plaintext fileName nor plaintext content', async () => {
-    // The strongest privacy assertion this test suite makes — open a
-    // session, PUT a payload with recognisable plaintext substrings
-    // (a fileName + a magic-number content), then open the OPFS dir
-    // the server wrote to and confirm neither substring appears
-    // anywhere in the on-disk bytes.
-    const { keys } = await makeKeys()
-    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
-    const MAGIC_FILE = 'SECRET-FILENAME-DO-NOT-LEAK.json'
-    const MAGIC_CONTENT = 'PLAINTEXT-CANARY-XYZZY'
-    try {
-      const put = await session.put({
-        fileName: MAGIC_FILE,
-        content: Buffer.from(MAGIC_CONTENT, 'utf8'),
-        prevVersion: null,
-      })
-      assert.equal(put.ok, true)
-    } finally { session.close() }
-    // Wait a tick for the REST commit to flush to disk before we
-    // walk the OBJSTORE_DIR.
-    await new Promise((r) => { setTimeout(r, 100) })
-    const { readdirSync, readFileSync, statSync } = await import('node:fs')
-    function walk(dir) {
-      const out = []
-      for (const entry of readdirSync(dir)) {
-        const full = path.join(dir, entry)
-        const s = statSync(full)
-        if (s.isDirectory()) out.push(...walk(full))
-        else out.push(full)
-      }
-      return out
-    }
-    const objstoreDir = path.join(serverDir, 'objstore')
-    const files = walk(objstoreDir)
-    assert.ok(files.length > 0, 'objstore committed at least one file')
-    const seenFileName = new TextEncoder().encode(MAGIC_FILE)
-    const seenContent = new TextEncoder().encode(MAGIC_CONTENT)
-    for (const f of files) {
-      const bytes = readFileSync(f)
-      assert.ok(!indexOfBytes(bytes, seenFileName), `on-disk file ${f} contains the plaintext fileName`)
-      assert.ok(!indexOfBytes(bytes, seenContent), `on-disk file ${f} contains the plaintext content`)
-    }
-  })
 
   it('integrity: AAD binding prevents a tampered or swapped blob from decrypting', async () => {
     // The AEAD AAD is (workspaceTag || resourceTag) so a relay that
@@ -714,6 +680,66 @@ describe('client/objstore session', () => {
       const kinds = decoded.map((d) => d.kind).toSorted()
       assert.deepEqual(kinds, ['bundle', 'report'])
     } finally { session.close() }
+  })
+})
+
+// Confidentiality test owns its own spawned server because it walks
+// the entire OBJSTORE_DIR on disk after a PUT — running it inside
+// the concurrent-suite describe would race with the other tests'
+// in-flight `.staging` files and tear-down deletes. Cheaper to spin
+// a second tiny server than to surrender the suite's concurrency.
+describe('client/objstore session: on-disk confidentiality', () => {
+  let httpOrigin, server, serverDir, serverUrl
+  before(async () => {
+    server = await bootServer()
+    serverDir = server.serverDir
+    serverUrl = server.serverUrl
+    httpOrigin = server.httpOrigin
+  })
+  after(async () => { if (server) await server.teardown() })
+
+  it('relay-stored bytes contain neither plaintext fileName nor plaintext content', async () => {
+    // The strongest privacy assertion this test suite makes — open a
+    // session, PUT a payload with recognisable plaintext substrings
+    // (a fileName + a magic-number content), then open the OPFS dir
+    // the server wrote to and confirm neither substring appears
+    // anywhere in the on-disk bytes.
+    const { keys } = await makeKeys()
+    const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    const MAGIC_FILE = 'SECRET-FILENAME-DO-NOT-LEAK.json'
+    const MAGIC_CONTENT = 'PLAINTEXT-CANARY-XYZZY'
+    try {
+      const put = await session.put({
+        fileName: MAGIC_FILE,
+        content: Buffer.from(MAGIC_CONTENT, 'utf8'),
+        prevVersion: null,
+      })
+      assert.equal(put.ok, true)
+    } finally { session.close() }
+    // Wait a tick for the REST commit to flush to disk before we
+    // walk the OBJSTORE_DIR.
+    await new Promise((r) => { setTimeout(r, 100) })
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    function walk(dir) {
+      const out = []
+      for (const entry of readdirSync(dir)) {
+        const full = path.join(dir, entry)
+        const s = statSync(full)
+        if (s.isDirectory()) out.push(...walk(full))
+        else out.push(full)
+      }
+      return out
+    }
+    const objstoreDir = path.join(serverDir, 'objstore')
+    const files = walk(objstoreDir)
+    assert.ok(files.length > 0, 'objstore committed at least one file')
+    const seenFileName = new TextEncoder().encode(MAGIC_FILE)
+    const seenContent = new TextEncoder().encode(MAGIC_CONTENT)
+    for (const f of files) {
+      const bytes = readFileSync(f)
+      assert.ok(!indexOfBytes(bytes, seenFileName), `on-disk file ${f} contains the plaintext fileName`)
+      assert.ok(!indexOfBytes(bytes, seenContent), `on-disk file ${f} contains the plaintext content`)
+    }
   })
 })
 

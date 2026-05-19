@@ -17,7 +17,11 @@ function randomBytes(n) {
   return buf
 }
 
-describe('workspace-bundle-crypto', () => {
+// PBKDF2 (3M iterations) dominates per-test cost. WebCrypto runs
+// derivations on libuv's threadpool, so parallel `it`s share up to
+// UV_THREADPOOL_SIZE cores instead of serialising on one. Tests
+// are independent — fresh ciphertext per test, no shared state.
+describe('workspace-bundle-crypto', { concurrency: true }, () => {
   it('round-trips a gzipped-JSON-shaped payload through a password-encrypted bundle', async () => {
     const plaintext = randomBytes(4096)
     const password = 'correct horse battery staple'

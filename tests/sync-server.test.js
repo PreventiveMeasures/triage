@@ -139,7 +139,11 @@ async function subscribe(c, sk, tag, from = null) {
   return { ack, chain }
 }
 
-describe('triage-sync server', () => {
+// Each `it` mints a fresh keypair (= fresh workspaceTag), so
+// per-tag chain state on the shared server is isolated; parallel
+// `it`s don't collide on data. Concurrency lets the slowest test
+// dominate wall-time instead of the sum.
+describe('triage-sync server', { concurrency: true }, () => {
   let server, serverUrl
 
   before(async () => {

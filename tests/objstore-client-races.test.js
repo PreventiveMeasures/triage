@@ -62,7 +62,11 @@ function pendingDelete(session, predicate, label = 'delete broadcast', timeoutMs
   })
 }
 
-describe('objstore client/server races', () => {
+// Each `it` opens its own sessions with fresh keypairs, so the
+// per-workspace chain on the shared server is isolated. Concurrency
+// trades wall-time for raised socket-/file-descriptor pressure on
+// the spawned server — safe given the file's modest test count.
+describe('objstore client/server races', { concurrency: true }, () => {
   let httpOrigin, server, serverUrl
 
   before(async () => {

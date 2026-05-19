@@ -19,7 +19,13 @@ function randomBytes(n) {
   return buf
 }
 
-describe('password-crypto', () => {
+// PBKDF2 (3M iterations) is the per-test bottleneck — each
+// encrypt/decrypt pair burns ~1.4 s. WebCrypto runs the derivation
+// on libuv's threadpool, so concurrent `it`s share up to
+// UV_THREADPOOL_SIZE cores (default 4) instead of serialising on
+// one. The tests are otherwise independent — fresh ciphertext per
+// test, no shared state.
+describe('password-crypto', { concurrency: true }, () => {
   it('round-trips arbitrary bytes through the encrypt/decrypt pair', async () => {
     const plaintext = randomBytes(256)
     const wire = await encryptWithPassword(plaintext, 'pw')
