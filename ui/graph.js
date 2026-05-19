@@ -26,6 +26,7 @@
 import { render as litRender } from 'lit'
 import './view/graph/graph-layout.js'
 import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './view/graph/render.js'
+import { buildGraph } from './view/graph/data.js'
 
 export { attachGraph2Interaction } from './view/graph/canvas.js'
 
@@ -47,9 +48,10 @@ export { _swapImpl as _swapGraph2Impl } from './view/graph/state.js'
 // bundle state and call us here — the rendering itself lands in
 // this lazy bundle so its dependencies (graph/render.js + chunky
 // per-card templates) stay out of view.js.
-export function refreshSidebar(graph, ctx) {
+export function refreshSidebar(prep, ctx) {
   const root = document.querySelector('graph-layout')?.shadowRoot
   if (!root) return
+  const graph = buildGraphFromPrep(prep)
   const area = root.querySelector('#g2-selection-area')
   if (area) litRender(renderSelectionCard(graph, ctx), area)
   const focusSlot = root.querySelector('#g2-focus-overlay-slot')
@@ -59,9 +61,29 @@ export function refreshSidebar(graph, ctx) {
 // Repaint just the right-panel Top-packages block — fires when
 // the user flips the Issues / Files mini-tab so the canvas's rAF
 // + hover state aren't torn down by a full render() cycle.
-export function refreshTopPkgs(graph) {
+export function refreshTopPkgs(prep) {
   const root = document.querySelector('graph-layout')?.shadowRoot
   if (!root) return
   const block = root.querySelector('#g2-top-pkgs-block')
-  if (block) litRender(renderTopPkgsBlock(graph), block)
+  if (!block) return
+  litRender(renderTopPkgsBlock(buildGraphFromPrep(prep)), block)
+}
+
+// `prep` is the raw-inputs shape `buildGraph2Data` /
+// `buildBundleGraphData` in the main bundle assembles from
+// `state.reports` / `state.bundleDetails`. The actual
+// `buildGraph(...)` call lives here so its implementation (and
+// the `data.js` module it lives in) stays out of the main bundle.
+//
+// `prep.options.pkgOf` (bundle-only) drives package classification
+// at buildGraph time; `prep.strippedToOrig` (bundle-only) stamps
+// each node's `origFile` so the selection card's "View source →"
+// button can hand the unstripped path back to the source viewer.
+export function buildGraphFromPrep(prep) {
+  const graph = buildGraph(prep.treeData, prep.files, prep.ownCounts, prep.transitiveCounts,
+    prep.severitySets, prep.colorSets, prep.fileFindings, prep.options)
+  if (prep.strippedToOrig) {
+    for (const n of graph.nodes) n.origFile = prep.strippedToOrig.get(n.file)
+  }
+  return graph
 }

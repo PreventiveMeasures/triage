@@ -41,7 +41,6 @@ import { computeFileHash } from '../../common/finding-id.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts, pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
-import { buildGraph } from './graph/data.js'
 import { loadedGraphMod } from './graph-attach.js'
 // `render` is the orchestrator over in `render.js`; bundle code
 // calls it back after async source-highlight completes so the
@@ -57,8 +56,12 @@ import { render } from './render.js'
 // pieces below (refreshBundleGraphSidebar / refreshBundleGraphTopPkgs)
 // mirror their findings-tab counterparts so the same renderGraph2Layout
 // can render against either data source: each call uses the cached
-// `_currentBundleGraph` reference to feed the right-panel templates.
-let _currentBundleGraph = null
+// `_currentBundlePrep` reference to feed the right-panel templates.
+// Stores the raw-inputs shape (NOT the built graph) since the
+// `buildGraph` call lives in the lazy `ui/graph.js` module — the
+// refresh helpers below dispatch this prep to the lazy module on
+// each chip click, and the lazy module rebuilds the graph there.
+let _currentBundlePrep = null
 
 // File → set of resolved import paths. The stasis Bundle exposes
 // imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
@@ -283,23 +286,39 @@ export function buildBundleGraphData(details) {
   const files = graph2.showAll
     ? allFiles
     : [...bundleReachableFromIssueFiles(tree, ownCounts)]
-  // Pass `bundlePkgOf` so node packaging recognizes both
+  // Stripped→original mapping the lazy `buildGraphFromPrep`
+  // applies to each node's `origFile` field — the selection
+  // card's "View source →" button hands the unstripped path
+  // to the source viewer (which reads from `bundleSourcesAsMap`,
+  // keyed by the original path). Findings-tab graph nodes don't
+  // get `origFile` populated, so the button stays bundle-only.
+  const strippedToOrig = new Map()
+  for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
+  // `hasEdges` lets the main bundle render path decide whether
+  // to hide the "All files" toggle without having to build the
+  // graph first (the lazy `buildGraph` is the only thing that
+  // knows the final edge count — but tree-level imports already
+  // tell us if the bundle has any). Sourcemap bundles have no
+  // import info, so the toggle would have nothing to filter
+  // against.
+  let hasEdges = false
+  for (const meta of Object.values(tree)) {
+    if (meta?.imports && meta.imports.length > 0) { hasEdges = true; break }
+  }
+  // Raw-inputs shape — lazy `ui/graph.js` does the actual
+  // `buildGraph(...)` call inside `buildGraphFromPrep`. `pkgOf`
+  // rides along in `options` so node packaging recognizes both
   // `node_modules/` and `dependencies/` regardless of what the
   // global depsDir picked from state.reports — the report-driven
   // depsDir would otherwise miss bundle paths under whichever
   // dir the loaded reports don't use.
-  const graph = buildGraph(tree, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, {
-    pkgOf: bundlePkgOf,
-  })
-  // Stash the stripped→original mapping on each node so the
-  // selection card's "View source →" button can hand the unstripped
-  // path to the source viewer (which reads from bundleSourcesAsMap,
-  // which keys by the original path). Findings-tab graph nodes
-  // don't get `origFile` populated, so the button stays bundle-only.
-  const strippedToOrig = new Map()
-  for (const [orig, stripped] of origToStripped) strippedToOrig.set(stripped, orig)
-  for (const n of graph.nodes) n.origFile = strippedToOrig.get(n.file)
-  return graph
+  return {
+    treeData: tree, files, ownCounts, transitiveCounts,
+    severitySets, colorSets, fileFindings,
+    options: { pkgOf: bundlePkgOf },
+    strippedToOrig,
+    hasEdges,
+  }
 }
 
 // Always bundle context here — these helpers are only used for
@@ -308,21 +327,21 @@ export function buildBundleGraphData(details) {
 // Dispatch into the lazy `ui/graph.js` module so its
 // `<graph-layout>` shadow-DOM render code stays out of view.js.
 export function refreshBundleGraphSidebar() {
-  if (!_currentBundleGraph) return
+  if (!_currentBundlePrep) return
   const mod = loadedGraphMod()
   if (!mod) return
-  mod.refreshSidebar(_currentBundleGraph, { isBundleContext: true })
+  mod.refreshSidebar(_currentBundlePrep, { isBundleContext: true })
 }
 
 export function refreshBundleGraphTopPkgs() {
-  if (!_currentBundleGraph) return
+  if (!_currentBundlePrep) return
   const mod = loadedGraphMod()
   if (!mod) return
-  mod.refreshTopPkgs(_currentBundleGraph)
+  mod.refreshTopPkgs(_currentBundlePrep)
 }
 
-export function setCurrentBundleGraph(graph) {
-  _currentBundleGraph = graph
+export function setCurrentBundleGraphPrep(prep) {
+  _currentBundlePrep = prep
 }
 function bundlePkgOf(path) {
   // Bundle paths land under either `node_modules/<pkg>/...` or
