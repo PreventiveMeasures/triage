@@ -86,6 +86,7 @@ import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
 import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
+import { loadStatic } from './static.ts'
 import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
@@ -1041,6 +1042,13 @@ function isUpgradePath(url: string | undefined): boolean {
 
 const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
 
+// Static-file plane (see `./static.ts`). The directory is the
+// `build.js build` output sibling to this file; the loader handles
+// directory enumeration, pre-compression, and ETag derivation. The
+// returned handler is plugged into the HTTP request handler below
+// after the `/api/objstore/...` REST branch.
+const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)))
+
 const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
   if (matchRoute(req.url) != null) {
     // Shutdown gate. The WS plane gates new messages on
@@ -1104,6 +1112,7 @@ const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     track(p)
     return
   }
+  if (handleStatic(req, res)) return
   // `Connection: close` so an HTTP/1.1 keep-alive client doesn't
   // hold the socket open expecting more requests on a server that
   // only serves a small REST surface — same reason `socket.end(...)`
