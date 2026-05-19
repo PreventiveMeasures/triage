@@ -1599,7 +1599,21 @@ function renderBundleDetails(entry, details) {
     const bundle = details.bundle
     const sourceMap = bundle.sources
     const sourceNames = [...sourceMap.keys()]
-    const importTypes = [...bundle.imports.keys()]
+    // Each `bundle.imports` key is either `*` or a `, `-joined
+    // condition set (see `State#conditionsKey` in @exodus/stasis);
+    // a bundle commonly carries several keys whose underlying
+    // conditions overlap (`node, import` + `node, require`),
+    // so split / dedupe / sort surfaces a clean unique list of
+    // conditions rather than a comma-joined wall of raw keys.
+    // The optional ` (with: {...})` import-attributes suffix
+    // belongs to the condition it follows; strip it so attribute
+    // flavors collapse back into their base condition.
+    const importKinds = new Set()
+    for (const key of bundle.imports.keys()) {
+      const base = key.replace(/\s*\(with: .*\)\s*$/u, '')
+      for (const cond of base.split(', ')) importKinds.add(cond)
+    }
+    const sortedKinds = [...importKinds].toSorted()
     const sizes = sourceNames.map((s) => {
       const content = sourceMap.get(s)
       return typeof content === 'string'
@@ -1608,8 +1622,8 @@ function renderBundleDetails(entry, details) {
     })
     const extras = html`
       <dt>Version</dt><dd>${String(bundle.version)}</dd>
-      ${importTypes.length > 0
-        ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>`
+      ${sortedKinds.length > 0
+        ? html`<dt>Resolution kinds</dt><dd>${sortedKinds.join(', ')}</dd>`
         : nothing}
     `
     return renderBundleSourcesPanel(meta, extras, sourceNames, sizes)
