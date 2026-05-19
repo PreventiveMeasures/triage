@@ -378,6 +378,27 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     ? html`<span class="line-num">${locLink}, ${exportName}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
+  // npm chip in the focused finding view's line-row — surfaces the
+  // upstream package + version when the analyzer stamped
+  // `package: { npm: { name, version? } }` on the finding. Links to
+  // the package page on npmjs.com (versioned permalink when the
+  // version is known). The list / grouped / table-details variants
+  // don't render this — the focus view has more horizontal room and
+  // is the workbench surface, so the extra chip reads as orientation
+  // rather than noise.
+  const npmName = f.package?.npm?.name
+  const npmVersion = f.package?.npm?.version
+  const npmChip = context === 'focus' && typeof npmName === 'string' && npmName
+    ? html`<span class="line-num"><a
+        class="npm-link"
+        href=${typeof npmVersion === 'string' && npmVersion
+          ? `https://www.npmjs.com/package/${npmName}/v/${encodeURIComponent(npmVersion)}`
+          : `https://www.npmjs.com/package/${npmName}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title=${`Open ${npmName}${npmVersion ? `@${npmVersion}` : ''} on npmjs.com`}
+      >npm: ${npmName}${npmVersion ? `@${npmVersion}` : nothing}</a></span>`
+    : nothing
   // "Code →" shortcut — when this finding's `fileHash` is present
   // in any bundle the analyzer was run against (per-finding
   // `_bundleHashes`, stamped by ingest), the button points at the
@@ -417,6 +438,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
     <div>
       <div class="line-row">
         ${lineRowMain}
+        ${npmChip}
         ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>

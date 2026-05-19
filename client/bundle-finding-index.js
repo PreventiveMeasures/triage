@@ -47,21 +47,24 @@ const byRepo = new Map()
 // every report. Audit round-8 H1.
 const contributionsByName = new Map()
 
-// Package extractor — matches `node_modules/<pkg>/...` and
-// `dependencies/<pkg>/...` (both conventions are common); whichever
-// the report uses, the matched name surfaces. Walks past pnpm's
+// Package extractor — prefers the analyzer-stamped `f.package.npm.name`
+// (the report finding shape carries `package: { npm: { name, version? } }`
+// when the analyzer was able to identify the upstream package directly);
+// otherwise matches `node_modules/<pkg>/...` and `dependencies/<pkg>/...`
+// against the file path (both conventions are common). Walks past pnpm's
 // synthetic `.pnpm/<name>@<ver>/node_modules/<name>` shim so
 // `@noble/hashes` / `ws` / etc. surface as themselves rather than
-// under `.pnpm`. Returns null when the path is OWN source
-// (`src/...`, `tests/...`, repo-root files) — the Packages view
-// only aggregates third-party deps; own source clutters the page
-// with "src" / "tests" / "playground" pseudo-packages that aren't
-// what the user thinks of as a package.
-function packageOf(file) {
-  if (!file) return null
+// under `.pnpm`. Returns null when the finding carries no stamped
+// package AND the path is OWN source (`src/...`, `tests/...`, repo-root
+// files) — the Packages view only aggregates third-party deps; own
+// source clutters the page with "src" / "tests" / "playground"
+// pseudo-packages that aren't what the user thinks of as a package.
+function packageOf(f) {
+  if (typeof f?.package?.npm?.name === 'string' && f.package.npm.name) return f.package.npm.name
+  if (!f?.file) return null
   const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
   let m
-  while ((m = re.exec(file)) !== null) {
+  while ((m = re.exec(f.file)) !== null) {
     if (m[1] !== '.pnpm') return m[1]
   }
   return null
@@ -276,9 +279,9 @@ function indexFindingByHash(f, key, name) {
 // under the package. The Packages view splits the row by version
 // when more than one version slot is populated.
 function indexFindingByPackage(f, key, name) {
-  const pkg = packageOf(f.file)
+  const pkg = packageOf(f)
   if (!pkg) return false
-  const version = packageVersionOf(f.file)
+  const version = packageVersionOf(f)
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
     // `_keyReports` tracks which reports contributed each key so
@@ -327,7 +330,7 @@ function indexFindingByPackage(f, key, name) {
 // nowhere to bucket them. Returns true on a fresh dedupe key,
 // matching the package path's contract.
 function indexFindingByRepo(f, key, name, reportFallback) {
-  if (packageOf(f.file) !== null) return false
+  if (packageOf(f) !== null) return false
   const repo = repoOf(f, reportFallback)
   if (!repo) return false
   let rBucket = byRepo.get(repo)

@@ -356,6 +356,90 @@ describe('bundle-finding-index — per-version sub-buckets', () => {
   })
 })
 
+// Report findings can carry `package: { npm: { name, version? } }`
+// when the analyzer has identified the upstream package directly
+// (no path-guessing). The index prefers that signal over the file-
+// path extraction; the path remains the fallback (so reports that
+// don't stamp `package.npm` still bucket correctly).
+describe('bundle-finding-index — analyzer-stamped package.npm overrides path extraction', () => {
+  it('uses package.npm.name to bucket a finding under a path-disagreeing package', async () => {
+    const tag = `stamped-${Date.now()}`
+    await seedReport({
+      findings: [
+        // file path would bucket under `src/foo.js` (own source) but
+        // the analyzer stamped the real upstream — the stamped name wins.
+        { id: `${tag}-f1`, severity: 'high', file: 'src/foo.js', description: 'stamped', package: { npm: { name: tag } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket, 'package bucketed under stamped name, not path extraction')
+    assert.equal(bucket.findings.length, 1)
+  })
+
+  it('uses package.npm.version for the per-version slot on plain node_modules paths', async () => {
+    const tag = `stamped-ver-${Date.now()}`
+    await seedReport({
+      findings: [
+        // path has no .pnpm shim → path extraction would land in
+        // the null slot. The stamped version overrides that.
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', package: { npm: { name: tag, version: '3.2.1' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket.byVersion.get('3.2.1'), 'stamped version slot present')
+    assert.equal(bucket.byVersion.get(null), undefined, 'null slot skipped when version stamped')
+  })
+
+  it('prefers stamped name over the file-path package when they disagree', async () => {
+    const tag = `stamped-mismatch-${Date.now()}`
+    const wrongFromPath = `other-${tag}`
+    await seedReport({
+      findings: [
+        // Path says `wrongFromPath`, stamp says `tag` — stamp wins.
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${wrongFromPath}/x.js`, description: 'd', package: { npm: { name: tag } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag), 'stamped name wins')
+    assert.equal(getPackagesIndex().get(wrongFromPath), undefined, 'path-derived name is not used when stamp is present')
+  })
+
+  it('falls back to the file-path package when the stamp is absent or empty', async () => {
+    const tag = `unstamped-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'no-stamp' },
+        // empty stamp doesn't count — falls back to path extraction.
+        { id: `${tag}-f2`, severity: 'high', file: `node_modules/${tag}/y.js`, description: 'empty-stamp', package: { npm: { name: '' } } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket, 'unstamped + empty-stamped findings still land under the path-extracted package')
+    assert.equal(bucket.findings.length, 2)
+  })
+
+  it('keeps a stamp-only finding (no file) out of the repository index', async () => {
+    // A finding with only a stamp + a non-deps source file should still
+    // be classified as "in a package", so the repository index skips it.
+    const tag = `stamp-skips-repo-${Date.now()}`
+    await seedReport({
+      findings: [
+        // own-source file path + package stamp + a repo signal.
+        // Without the package stamp, this would land in the
+        // repositories index (own source + a github URL). The stamp
+        // promotes it to "in a package", so repositories skip it.
+        { id: `${tag}-f1`, severity: 'high', file: 'src/own.js', description: 'd', package: { npm: { name: tag } }, repo: { github: `acme/${tag}` } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag), 'finding lands in packages via stamp')
+    assert.equal(getRepositoriesIndex().get(`acme/${tag}`), undefined, 'stamped finding skipped from repositories')
+  })
+})
+
 describe('bundle-finding-index — version comparator', () => {
   // `compareVersionsDesc` runs in descending order, so a negative
   // result means the first argument is the "newer" (sorts earlier).
