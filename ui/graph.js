@@ -23,7 +23,7 @@
 // data-fetch + ctx assembly (which needs the `state` aggregator)
 // and dispatch into the loaded module.
 
-import { render as litRender } from 'lit'
+import { render as litRender } from './view/frontend-global.js'
 import './view/graph/graph-layout.js'
 import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './view/graph/render.js'
 

@@ -4,9 +4,23 @@
 // actually makes the page interactive. The order is mostly free; we
 // import sidebar before ingest so the sidebar click delegate exists by
 // the time `addFiles` calls `renderSidebar`.
+import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
+import { StateElement } from '@rray/frontend/state-element'
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
 import { installDefaultSyncHost, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from '#client/sync.js'
+
+// Publish lit + StateElement on a Symbol-keyed global so the lazy
+// bundles (`ui/terminal.js`, `ui/graph.js`) can read them through
+// `./view/frontend-global.js` instead of pulling lit through their
+// own entry-point imports. The main view.js bundle already pays for
+// lit via the imports below, so the publish itself costs nothing,
+// and the lazy chunks stop re-importing the lit module specifier at
+// their top level. Done before `installDefaultSyncHost()` (and well
+// before any user-driven `import('./terminal.js')` /
+// `import('./graph.js')`) so the slot is populated by the time a
+// lazy bundle's wrapper module reads it.
+globalThis[Symbol.for('@rray/frontend')] = { LitElement, html, nothing, render: litRender, unsafeCSS, StateElement }
 
 // Wire the dependency-injection seam for `client/sync/` BEFORE any
 // sync entry point fires. `installDefaultSyncHost` builds a host
