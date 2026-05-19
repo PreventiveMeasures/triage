@@ -303,13 +303,13 @@ function tabTemplate(f, isActive) {
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key}><span class="tab-label"><span class=${`badge ${f.severity}`}>${badgeLabel(f.severity)}</span> ${f.confidence === undefined ? nothing : html`<span class="tab-conf">${f.confidence}/10</span>`}</span></button>`
 }
 
-// Confidence display for the finding-left badge column. Table mode
-// (where the card is shown as the side-details panel of a selected
-// row) renders a conic-gradient ring colored by severity, matching
-// the design prototype. List / grouped modes keep the plain
-// "<n>/10" stack so the cards stay compact.
+// Confidence display for the finding-left badge column. The table
+// view's side-details panel and the focus view's centered card
+// both render a conic-gradient ring colored by severity (matching
+// the design prototype); list / grouped modes keep the plain
+// "<n>/10" stack so the regular cards stay compact.
 function confTemplate(f) {
-  if (state.viewMode === 'table') {
+  if (state.viewMode === 'table' || state.viewMode === 'focus') {
     // Arc length in viewBox units. The circle's radius is 15.9155
     // (circumference ≈ 100), so stroke-dasharray = "<conf*10> 100"
     // draws an N% arc with the remainder invisible (no track ring).

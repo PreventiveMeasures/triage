@@ -1455,35 +1455,21 @@ function setFocusGid(gid) {
   // so only it scrolls — the page stays put.
   const card = report.querySelector('.focus-side-card.active')
   if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  // Same nearest-scroll trick for the inline Code panel: align the
+  // gutter row carrying the finding's line so the user sees the
+  // relevant source on entry. Falls through silently when the
+  // panel isn't mounted (no bundle code for this finding) or the
+  // line isn't a number.
+  const codeLine = report.querySelector('.focus-code-line-active')
+  if (codeLine) codeLine.scrollIntoView({ block: 'center', behavior: 'instant' })
 }
 
-report.addEventListener('click', (e) => {
-  const card = e.target.closest?.('.focus-side-card[data-focus-select]')
-  if (!card) return
-  // Skip when the user is text-selecting (click fires after mouseup
-  // with a non-empty selection range, same gotcha the kanban card
-  // handler dodges).
-  if (window.getSelection?.()?.toString()) return
-  const gid = card.dataset.gid
-  if (gid) setFocusGid(gid)
-})
-
-// Arrow / J / K keyboard navigation through the focus-view queue.
-// Bound to document so the key fires from anywhere in the page,
-// guarded so it only acts when the focus view is the one mounted
-// AND the user isn't typing in a text field (Search, Repo, etc.).
-document.addEventListener('keydown', (e) => {
-  if (state.viewMode !== 'focus' || state.currentView !== 'findings') return
-  if (e.metaKey || e.ctrlKey || e.altKey) return
-  const tag = e.target.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return
-  let direction = 0
-  if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') direction = 1
-  else if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') direction = -1
-  else return
-  // Walk the rendered queue rather than re-deriving the filtered
-  // list — the DOM is the single source of truth for the current
-  // ordering (sort + filter) and we already paid for the build.
+// Move the focus by `direction` (+1 = next, -1 = previous), walked
+// off the rendered queue. Shared by the forward/back buttons in
+// the main-pane top bar and the arrow/J-K/H-L keyboard handler.
+// Both paths land here so the no-op guard (already at the end)
+// and the gid lookup behave identically.
+function navigateFocus(direction) {
   const cards = report.querySelectorAll('.focus-side-card[data-focus-select]')
   if (cards.length === 0) return
   let idx = -1
@@ -1496,9 +1482,52 @@ document.addEventListener('keydown', (e) => {
     ? (direction > 0 ? 0 : cards.length - 1)
     : Math.min(Math.max(idx + direction, 0), cards.length - 1)
   if (nextIdx === idx) return
-  e.preventDefault()
   const nextGid = cards[nextIdx].dataset.gid
   if (nextGid) setFocusGid(nextGid)
+}
+
+report.addEventListener('click', (e) => {
+  // Forward / back buttons in the main-pane top bar — same
+  // navigation path as the keyboard handler below.
+  const navBtn = e.target.closest?.('[data-focus-nav]')
+  if (navBtn) {
+    navigateFocus(navBtn.dataset.focusNav === 'next' ? 1 : -1)
+    return
+  }
+  const card = e.target.closest?.('.focus-side-card[data-focus-select]')
+  if (!card) return
+  // Skip when the user is text-selecting (click fires after mouseup
+  // with a non-empty selection range, same gotcha the kanban card
+  // handler dodges).
+  if (window.getSelection?.()?.toString()) return
+  const gid = card.dataset.gid
+  if (gid) setFocusGid(gid)
+})
+
+// Keyboard navigation through the focus-view queue. Bound to
+// document so the key fires from anywhere in the page, guarded so
+// it only acts when the focus view is the one mounted AND the
+// user isn't typing in a text field (Search, Repo, etc.).
+//
+// Bound keys (all clamp at the ends, no wrap):
+//   ← / ArrowLeft  / k / K / h / H   → previous finding
+//   → / ArrowRight / j / J / l / L   → next finding
+//
+// ArrowUp / ArrowDown intentionally don't navigate — the focused
+// finding-card's description can be tall enough to scroll, and
+// hijacking up/down would steal the user's natural way of reading
+// past the fold.
+document.addEventListener('keydown', (e) => {
+  if (state.viewMode !== 'focus' || state.currentView !== 'findings') return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const tag = e.target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return
+  let direction = 0
+  if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J' || e.key === 'l' || e.key === 'L') direction = 1
+  else if (e.key === 'ArrowLeft' || e.key === 'k' || e.key === 'K' || e.key === 'h' || e.key === 'H') direction = -1
+  else return
+  e.preventDefault()
+  navigateFocus(direction)
 })
 
 // mark-color fires from `<color-marker>` (composed:true) when one of

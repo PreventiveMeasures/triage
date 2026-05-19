@@ -31,6 +31,7 @@ import {
   renderBundlesList,
   setCurrentBundleGraph,
 } from './render-bundle.js'
+import { getFocusCode } from './focus-code.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -938,11 +939,22 @@ let persistentFindingTable = null
 // attribute set in HTML). Cleared at the top of each render.
 const pendingFindingCards = new Map()
 
-function findingCardPlaceholder(g, inGroup = false) {
+function findingCardPlaceholder(g, inGroup = false, context = null) {
   const gid = findingCardGid(g)
   pendingFindingCards.set(gid, { group: g, inGroup })
-  return inGroup
-    ? html`<finding-card data-gid=${gid} in-group></finding-card>`
+  // `context` (currently only `'focus'`) reflects as a `context=`
+  // attribute on the host so `<finding-card>`'s shadow CSS can
+  // target the focus-view variant — inlined triage menu, expanded
+  // action chrome — via `:host([context="focus"])`. The default
+  // (no attribute) keeps every existing call site rendering
+  // unchanged.
+  if (inGroup) {
+    return context
+      ? html`<finding-card data-gid=${gid} in-group context=${context}></finding-card>`
+      : html`<finding-card data-gid=${gid} in-group></finding-card>`
+  }
+  return context
+    ? html`<finding-card data-gid=${gid} context=${context}></finding-card>`
     : html`<finding-card data-gid=${gid}></finding-card>`
 }
 
@@ -1017,6 +1029,31 @@ function kanbanCardTemplate(g, opts = {}) {
     aria-current=${active ? 'true' : 'false'}
     aria-label=${`Focus on ${title}`}
   >${inner}</div>`
+}
+
+// Per-line rendering for the focus view's inline Code panel.
+// Two-column layout (gutter + source) mirroring the bundle source
+// viewer's structure — line numbers in a sticky narrow rail, the
+// source body as either Prism-highlighted markup (when the
+// language is supported) or plain text. The focused finding's line
+// gets `.focus-code-line-active` so the row stands out; the panel's
+// post-render scroll handler (see events.js) brings it into view.
+function focusCodeLinesTemplate(code) {
+  const { content, line, highlighted } = code
+  const lineCount = content.split('\n').length
+  const digits = String(lineCount).length
+  return html`<div class="focus-code-lines" style=${styleMap({ '--lineno-width': `${digits}ch` })}>
+    <aside class="focus-code-gutter" aria-hidden="true">
+      ${Array.from({ length: lineCount }, (_, i) => {
+        const ln = i + 1
+        const classes = { 'focus-code-lineno': true, 'focus-code-line-active': ln === line }
+        return html`<div class=${classMap(classes)} data-focus-code-line=${ln}>${ln}</div>`
+      })}
+    </aside>
+    <pre class="focus-code-source"><code>${typeof highlighted === 'string'
+      ? unsafeHTML(highlighted)
+      : content}</code></pre>
+  </div>`
 }
 
 // Detail modal — opens on kanban-card click, wrapped in
@@ -1136,11 +1173,58 @@ function findingsBodyTemplate(filtered) {
     }
     prevFocusedIdx = focusedIdx
     const focused = filtered[focusedIdx]
+    // Lazy bundle-source fetch for the inline Code panel. Returns
+    // `null` when this finding has no bundle code reference,
+    // `{ loading: true }` while the first load is in flight (the
+    // load triggers render() on settle), or the resolved
+    // `{ content, file, line, highlighted }` once ready.
+    const code = getFocusCode(focused)
+    const mainClass = code ? 'focus-main with-code' : 'focus-main'
+    const atStart = focusedIdx === 0
+    const atEnd = focusedIdx === filtered.length - 1
     return html`<div class="focus-view">
-      <div class="focus-main">
-        <div class="focus-card-wrapper">
-          ${findingCardPlaceholder(focused)}
+      <div class=${mainClass}>
+        <!-- Top toolbar: prev / counter / next. Buttons also
+             respond to ArrowLeft / ArrowRight / J / K / H / L
+             in events.js's keydown handler, so a focused user
+             can walk the queue without leaving the keyboard. -->
+        <div class="focus-nav-bar">
+          <button
+            type="button"
+            class="focus-nav-btn"
+            data-focus-nav="prev"
+            ?disabled=${atStart}
+            title="Previous finding (←)"
+            aria-label="Previous finding"
+          ><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 3 5 8l5 5"/>
+          </svg></button>
+          <span class="focus-nav-position">${focusedIdx + 1} <span class="focus-nav-position-sep">of</span> ${filtered.length}</span>
+          <button
+            type="button"
+            class="focus-nav-btn"
+            data-focus-nav="next"
+            ?disabled=${atEnd}
+            title="Next finding (→)"
+            aria-label="Next finding"
+          ><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 3 11 8l-5 5"/>
+          </svg></button>
         </div>
+        <div class="focus-pane focus-pane-card">
+          <div class="focus-card-wrapper">
+            ${findingCardPlaceholder(focused, false, 'focus')}
+          </div>
+        </div>
+        ${code ? html`<div class="focus-pane focus-pane-code">
+          ${code.loading
+            ? html`<div class="focus-code-empty">Loading source…</div>`
+            : html`<header class="focus-code-bar" title=${code.file}>
+                <span class="focus-code-file">${code.file}</span>
+                ${code.line ? html`<span class="focus-code-line">:${code.line}</span>` : nothing}
+              </header>
+              <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
+        </div>` : nothing}
       </div>
       <aside class="focus-sidebar" aria-label="Up next">
         <div class="focus-sidebar-header">

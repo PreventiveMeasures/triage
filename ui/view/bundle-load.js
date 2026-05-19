@@ -26,7 +26,12 @@ import { computeBundleFileHashes } from './render-bundle.js'
 // → `details.bundle` carries an `@exodus/stasis` `Bundle` instance
 // (handles v0 + v1 layouts uniformly; .sources / .imports / .modules
 // are Map-shaped APIs the render path consumes).
-async function buildBundleDetails(integrity, entry) {
+//
+// Exported so non-state-mutating callers (focus view's inline code
+// panel, prefetchBundleHashes below) can parse a bundle without
+// touching `state.bundleDetails`. The two openBundle / prefetch
+// pipelines in this file both go through this helper.
+export async function buildBundleDetails(integrity, entry) {
   try {
     const bytes = await readBundle(integrity)
     const isMap = entry.name.toLowerCase().endsWith('.map')

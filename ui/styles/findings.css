@@ -623,45 +623,190 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 }
 
 /* ── Focus view ─────────────────────────────────────────────────────
-   One finding at a time, full-detail, centered in the main pane,
-   with a vertical "up next" queue of compact kanban-style cards
-   on the right. The board-style flex chain
+   One finding at a time, full-detail, in the main pane, with a
+   vertical "up next" queue of compact kanban-style cards on the
+   right. The board-style flex chain
    (#report → .findings-content.with-focus → .focus-view) bounds
    the layout to the viewport so the main pane and the sidebar
    scroll independently — the toolbar stays pinned. */
 .focus-view {
   display: grid;
-  /* Cap the queue at 280px so the main pane keeps the lion's share
-     of the viewport for the finding-card; on narrow viewports the
-     queue collapses below via the @media rule near the bottom of
+  /* Narrow queue at 240px keeps the main pane wide; the queue's
+     cards still fit comfortably (the kanban-card title clamp + meta
+     row are sized for ~200px content). Narrow viewports collapse
+     the queue below the main via the @media rule at the bottom of
      this file. */
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: .75rem;
   flex: 1; min-height: 0;
 }
 
+/* Main pane layout — by default a single column for the
+   finding-card; gains a second column for the inline Code panel
+   when the focused finding has a bundle-source reference
+   (`.focus-main.with-code`). A small top bar (`.focus-nav-bar`)
+   spans both columns and carries the prev / counter / next
+   controls. */
 .focus-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: .5rem .75rem;
+  min-width: 0; min-height: 0;
+}
+.focus-main.with-code {
+  /* Roughly 5:6 — the source code typically needs a bit more
+     horizontal room than the finding-card so wide lines don't
+     wrap aggressively. */
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+}
+
+/* Prev / position / next, pinned at the top of the main pane.
+   Spans both columns when the Code panel is mounted so it reads
+   as a single header above both panes. */
+.focus-nav-bar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: .5rem;
+  padding: .25rem;
+}
+.focus-nav-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+
+  &:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  &:disabled {
+    opacity: .4;
+  }
+}
+.focus-nav-position {
+  font-size: .72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+
+  & .focus-nav-position-sep {
+    margin: 0 .15rem;
+  }
+}
+
+/* Each pane (card / code) is its own scroll container so the
+   nav bar and the queue stay pinned while the inner content
+   moves. The card pane horizontally centers the finding-card on
+   wide viewports via `margin-inline: auto`; code grows to fill. */
+.focus-pane {
   min-width: 0; min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  display: flex; justify-content: center;
-  padding: .25rem 0;
 
   &::-webkit-scrollbar { width: 6px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* The finding-card centers inside the main pane but stops at a
-   readable width — long descriptions on a wide monitor would
-   otherwise stretch to the full pane, sacrificing readability for
-   no gain. Mirrors the table-view details panel's max-width
-   (800px) so the focused finding renders the same here as it
-   would in the table+details layout. */
+/* The finding-card stops at a wide-but-readable cap. Without the
+   Code panel mounted, the pane scrolls vertically and the
+   finding-card centers; with the Code panel mounted, the card
+   column is itself narrower and the cap rarely kicks in. */
 .focus-card-wrapper {
   width: 100%;
-  max-width: 800px;
+  max-width: 1100px;
+  margin-inline: auto;
+}
+
+/* Code panel — file path bar pinned at the top, source body
+   scrolling below. The whole pane sits inside its own glass
+   card so the panel reads as a distinct surface from the
+   finding-card. */
+.focus-pane-code {
+  display: flex; flex-direction: column;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden;
+}
+.focus-code-bar {
+  flex-shrink: 0;
+  padding: .35rem .55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .7rem; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: flex; align-items: baseline; gap: .25rem;
+  white-space: nowrap; overflow: hidden;
+
+  & .focus-code-file {
+    overflow: hidden; text-overflow: ellipsis;
+    color: var(--text);
+  }
+  & .focus-code-line {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+}
+.focus-code-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 6px; height: 6px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+.focus-code-empty {
+  flex: 1; min-height: 0;
+  display: grid; place-items: center;
+  color: var(--muted);
+  font-size: .8rem; font-style: italic;
+}
+
+.focus-code-lines {
+  display: grid;
+  /* The gutter rail's width follows the digit count of the
+     highest line number; set per-render via inline
+     `--lineno-width` so 4-digit files don't waste horizontal
+     space and 5-digit files don't truncate. */
+  grid-template-columns: calc(var(--lineno-width, 4ch) + 1.4rem) minmax(0, 1fr);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .75rem;
+  line-height: 1.45;
+}
+.focus-code-gutter {
+  background: rgb(from var(--text) r g b / .03);
+  border-right: 1px solid var(--border);
+  padding: .25rem 0;
+  user-select: none;
+}
+.focus-code-lineno {
+  padding: 0 .5rem 0 .35rem;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.focus-code-line-active {
+  background: rgb(from var(--accent) r g b / .18);
+  color: var(--text);
+  font-weight: 600;
+}
+.focus-code-source {
+  margin: 0;
+  padding: .25rem .5rem;
+  background: transparent;
+  white-space: pre;
+  overflow: visible;
+
+  & code {
+    font: inherit;
+    background: transparent;
+  }
 }
 
 .focus-sidebar {
@@ -708,13 +853,14 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 
 /* `.focus-side-card` reuses `.kanban-card` (badge + clamped title
    + meta) for visual consistency with the kanban view's untriaged
-   column. The variant tweaks: cursor is `pointer` not `grab` (no
-   drag), and the active card picks up an accent outline + tint
+   column. Drops the kanban variant's `cursor: grab` (no drag) —
+   we use the default cursor so the card doesn't visually pretend
+   to be draggable. Active card picks up an accent outline + tint
    to anchor the queue against the centered finding. */
 .kanban-card.focus-side-card {
-  cursor: pointer;
+  cursor: default;
 
-  &:active { cursor: pointer; }
+  &:active { cursor: default; }
 
   &.active {
     background: rgb(from var(--accent) r g b / .14);
@@ -733,7 +879,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 
 /* Narrow viewports: stack the queue under the main pane so the
    finding-card keeps its full width instead of being squeezed
-   into the leftover gap next to a 280px sidebar. The queue caps
+   into the leftover gap next to a 240px sidebar. The queue caps
    its height so the page doesn't grow to fit everything — the
    focus view still owns the viewport. */
 @media (width <= 900px) {
@@ -742,4 +888,14 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
     grid-template-rows: minmax(0, 1fr) auto;
   }
   .focus-sidebar { max-height: 40vh; }
+}
+
+/* Below a usable two-pane width, fold the Code panel under the
+   finding-card so each pane keeps enough horizontal room to read.
+   The nav bar still spans the (now single) column. */
+@media (width <= 1200px) {
+  .focus-main.with-code {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
