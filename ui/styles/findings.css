@@ -711,7 +711,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
    so the panel's own border lands cleanly. */
 .focus-card-wrapper {
   width: 100%;
-  max-width: 1100px;
   margin-inline: auto;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
@@ -722,6 +721,14 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
      wrapper's rounded outline so a mark-tinted card doesn't leak
      past the curve onto the surrounding `--surface` underneath. */
   overflow: hidden;
+}
+/* Cap the wrapper at a comfy reading width ONLY when the Code
+   panel is alongside it. Without code, the wrapper fills the
+   main pane so the finding-card sits visually centered between
+   the sidebar and the viewport edge instead of pinching in a
+   narrow strip with empty space to either side. */
+.focus-main.with-code .focus-card-wrapper {
+  max-width: 1100px;
 }
 
 /* Code panel — file path bar pinned at the top, source body
