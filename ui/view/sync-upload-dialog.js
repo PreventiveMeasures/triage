@@ -14,7 +14,8 @@
 //     `{ kind, identifier }`.
 
 import { LitElement, html, nothing } from 'lit'
-import { putBundleToRemote, putFile, readFileBytes } from '#client/index.js'
+import { readFileBytes } from '#client/index.js'
+import { putBundleToRemote, putFile } from '#client/sync.js'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`

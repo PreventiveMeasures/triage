@@ -16,7 +16,8 @@
 
 import { LitElement, html, nothing } from 'lit'
 import { decodeUtf8 } from '../../common/utf8.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, fetchBundleFromRemote, fetchFile, gunzipBytes, saveFileBytes, setCount, state } from '#client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount, state } from '#client/index.js'
+import { fetchBundleFromRemote, fetchFile } from '#client/sync.js'
 import { switchToWorkspace } from './ingest.js'
 
 function bundleShortLabel(integrity) {

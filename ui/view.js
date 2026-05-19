@@ -5,7 +5,8 @@
 // import sidebar before ingest so the sidebar click delegate exists by
 // the time `addFiles` calls `renderSidebar`.
 import { sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
+import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
+import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from '#client/sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'

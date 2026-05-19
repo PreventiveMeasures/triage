@@ -38,25 +38,6 @@ export { buildFindingLookupForLoadedReports } from './finding-lookup.js'
 export { migrateLegacyFilenames } from './migrate-legacy.js'
 
 export {
-  closeWorkspace,
-  deleteFromRemote,
-  discoverRemoteBundleIntegrities,
-  discoverRemoteFileNames,
-  fetchBundleFromRemote,
-  fetchFile,
-  isBundleInRemote,
-  isInRemote,
-  onAutoDownloaded,
-  onBundleAutoDownloaded,
-  onChange,
-  openWorkspace,
-  putBundleToRemote,
-  putFile,
-  remoteBundleName,
-  remoteCount,
-} from './sync/objstore-presence.js'
-
-export {
   disableEncryption,
   enableEncryption,
   hasOrphanedUserId,
@@ -114,13 +95,6 @@ export {
   analyzeTriageImpact,
   pruneOrphanTriage,
 } from './triage-gc.js'
-
-export {
-  setAuthenticationResolver,
-  setHydrationConflictResolver,
-  setRedraw,
-  triageSync,
-} from './sync/triage-sync.ts'
 
 export {
   loadPromise as triageLoadPromise,

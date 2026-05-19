@@ -1,4 +1,5 @@
-import { buildFindingLookupForLoadedReports, setHydrationConflictResolver } from '#client/index.js'
+import { buildFindingLookupForLoadedReports } from '#client/index.js'
+import { setHydrationConflictResolver } from '#client/sync.js'
 import { resolveTriageConflicts } from './triage-conflict-dialog.js'
 
 // Wires the per-finding conflict dialog into both the report-attach
