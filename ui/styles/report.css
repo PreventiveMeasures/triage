@@ -30,20 +30,22 @@
 
     /* Inner views that own their own scroll (bundle terminal,
        code viewer, packages slide, kanban board, bundles/packages
-       details panels) need #report itself to track #main-content's
-       viewport height — otherwise the flex chain that lands at
-       `.output` / `.kanban-board` / `.bundles-details-body`
-       (overflow: auto) has no bounded parent, that pane grows to
-       its content size instead of its allotted space, and the
-       wheel scrolls the whole page rather than just the inner
-       pane. Revert to the default flex-shrink when those views
-       are mounted; the findings-list overflow concern that
-       motivated `flex-shrink: 0` doesn't apply to those views
-       (their inner pane is fixed-height + internally scrollable). */
+       list + details panels) need #report itself to track #main-
+       content's viewport height — otherwise the flex chain that
+       lands at `.output` / `.kanban-board` / `.bundles-list` /
+       `.bundles-details-body` (overflow: auto) has no bounded
+       parent, that pane grows to its content size instead of its
+       allotted space, and the wheel scrolls the whole page rather
+       than just the inner pane. Revert to the default flex-shrink
+       when those views are mounted; the findings-list overflow
+       concern that motivated `flex-shrink: 0` doesn't apply to
+       those views (their inner pane is fixed-height + internally
+       scrollable). `.bundles-view` / `.packages-view` covers both
+       the regular list view and the slide variant (which carries
+       both classes), so no separate slide-view entries needed. */
     &:has(
-      .bundles-slide-view, .packages-slide-view,
-      .findings-content.with-kanban,
-      .bundles-view.with-details, .packages-view.with-details
+      .bundles-view, .packages-view,
+      .findings-content.with-kanban
     ) { flex-shrink: 1; }
   }
 
@@ -1000,6 +1002,13 @@
   & .bundles-layout {
     display: grid;
     grid-template-columns: 1fr;
+    /* `minmax(0, 1fr)` (not the implicit `auto`) so the row never
+       grows past the grid container's bounded height — without it
+       a long list pushes the row past the viewport and the page
+       scrolls instead of the list. Combined with `max-height: 100%`
+       on the list below, the list stays content-sized when short
+       and scrolls internally when tall. */
+    grid-template-rows: minmax(0, 1fr);
     gap: 1rem;
     flex: 1;
     min-height: 0;
@@ -1013,7 +1022,7 @@
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
     & .bundles-list {
-      margin-top: 0; max-width: 1200px; min-height: 0;
+      margin-top: 0; max-width: 1200px; min-height: 0; max-height: 100%;
       overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
       -webkit-app-region: no-drag; app-region: no-drag;
     }
@@ -1813,6 +1822,10 @@ body.report-fullscreen {
   & .packages-layout {
     display: grid;
     grid-template-columns: 1fr;
+    /* See `.bundles-layout` — `minmax(0, 1fr)` bounds the row to
+       the grid container so a long list scrolls internally rather
+       than pushing the page. */
+    grid-template-rows: minmax(0, 1fr);
     gap: 1rem;
     flex: 1;
     min-height: 0;
@@ -1822,7 +1835,7 @@ body.report-fullscreen {
       grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     }
     & .packages-list {
-      margin-top: 0; max-width: 1200px; min-height: 0;
+      margin-top: 0; max-width: 1200px; min-height: 0; max-height: 100%;
       overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
       -webkit-app-region: no-drag; app-region: no-drag;
     }
