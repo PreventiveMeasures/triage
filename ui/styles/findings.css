@@ -644,13 +644,17 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 /* Main pane layout — by default a single column for the
    finding-card; gains a second column for the inline Code panel
    when the focused finding has a bundle-source reference
-   (`.focus-main.with-code`). A small top bar (`.focus-nav-bar`)
-   spans both columns and carries the prev / counter / next
-   controls. */
+   (`.focus-main.with-code`). The nav bar (`.focus-nav-bar`)
+   carries the prev / counter / next controls; in the with-code
+   layout it pins above the CARD column only so the code panel
+   can run the full height. */
 .focus-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'nav'
+    'card';
   gap: .5rem .75rem;
   min-width: 0; min-height: 0;
 }
@@ -659,13 +663,15 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
      horizontal room than the finding-card so wide lines don't
      wrap aggressively. */
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  grid-template-areas:
+    'nav  code'
+    'card code';
 }
+.focus-pane-card { grid-area: card; }
 
-/* Prev / position / next, pinned at the top of the main pane.
-   Spans both columns when the Code panel is mounted so it reads
-   as a single header above both panes. */
+/* Prev / position / next, pinned above the card column. */
 .focus-nav-bar {
-  grid-column: 1 / -1;
+  grid-area: nav;
   display: flex; align-items: center; gap: .5rem;
   padding: .25rem;
 }
@@ -712,14 +718,24 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* The finding-card stops at a wide-but-readable cap. Without the
-   Code panel mounted, the pane scrolls vertically and the
-   finding-card centers; with the Code panel mounted, the card
-   column is itself narrower and the cap rarely kicks in. */
+/* The finding-card sits inside its own glass panel so it reads
+   as a distinct surface against the page background (matching
+   the Code panel + sidebar). The wrapper stops at a wide-but-
+   readable cap; without the Code panel mounted the pane scrolls
+   vertically and the wrapper centers, and with the Code panel
+   mounted the card column is itself narrower so the cap rarely
+   kicks in. `:host(:last-child) .card { border-bottom: none }` in
+   finding-card.css already strips the inner card's bottom border
+   so the panel's own border lands cleanly. */
 .focus-card-wrapper {
   width: 100%;
   max-width: 1100px;
   margin-inline: auto;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
 }
 
 /* Code panel — file path bar pinned at the top, source body
@@ -727,9 +743,11 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
    card so the panel reads as a distinct surface from the
    finding-card. */
 .focus-pane-code {
+  grid-area: code;
   display: flex; flex-direction: column;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
 .focus-code-bar {
@@ -892,10 +910,14 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 
 /* Below a usable two-pane width, fold the Code panel under the
    finding-card so each pane keeps enough horizontal room to read.
-   The nav bar still spans the (now single) column. */
+   The nav bar moves back to its single-column slot at the top. */
 @media (width <= 1200px) {
   .focus-main.with-code {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'nav'
+      'card'
+      'code';
   }
 }
