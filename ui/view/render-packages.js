@@ -450,15 +450,17 @@ function renderPackageRow(row, selectedPkg, selectedVer) {
   >
     <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
-      <span class="packages-name">
-        ${pkg}${version === null ? nothing : html`<span class="packages-version">@${version}</span>`}
-      </span>
+      <div class="packages-name-line">
+        <span class="packages-name">
+          ${pkg}${version === null ? nothing : html`<span class="packages-version">@${version}</span>`}
+        </span>
+        ${kind === 'latest' ? renderExpandButton(pkg, row.expanded, row.totalVersions - 1) : nothing}
+      </div>
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">
       ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
-    ${kind === 'latest' ? renderExpandButton(pkg, row.expanded, row.totalVersions - 1) : nothing}
     <button
       type="button"
       class="packages-row-issues"

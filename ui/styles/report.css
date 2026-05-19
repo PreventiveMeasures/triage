@@ -2002,11 +2002,22 @@ body.report-fullscreen {
     flex: 1; min-width: 0;
     display: flex; flex-direction: column;
   }
+  /* Wrapper that holds the package name + the expand chevron on
+     one line, so the chevron sits immediately after the name
+     rather than at the right edge of the row alongside [Issues
+     →]. The name still ellipses (`min-width: 0` propagates the
+     row's width budget) and the chevron stays a fixed-size
+     trailing anchor. */
+  & .packages-name-line {
+    display: flex; align-items: center; gap: .4rem;
+    min-width: 0;
+  }
   & .packages-name {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .82rem;
     font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
   }
   /* Version chip rendered inline after the package name —
      `@1.2.3` for pnpm-shaped paths, omitted for plain
