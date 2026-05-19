@@ -3,7 +3,7 @@ import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
 import { pkgRelative } from './data.js'
-import { forceLayout, pkgColor } from '../graph/utils.js'
+import { forceLayout, pkgColor } from './utils.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high so they pop above the package hue, calmer tones

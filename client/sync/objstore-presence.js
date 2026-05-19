@@ -16,7 +16,13 @@
 // cached remote set without an await. Enumerating remote files BY
 // name requires `fetchByTag` (decrypt + read embedded name).
 
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, computeBundleResourceTag, computeResourceTag, createObjstoreClient, deriveObjstoreKeys, getSharedTransport, gunzipBytes, listBundles, listFiles, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged, readBundle, saveBundle, saveFileBytes, setCount, triageSync } from '#client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from '../workspaces.js'
+import { analyzeContent, setCount } from '../counts.js'
+import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../storage.js'
+import { computeBundleResourceTag, computeResourceTag, deriveObjstoreKeys } from './objstore-content-crypto.ts'
+import { createObjstoreClient } from './objstore.ts'
+import { getSharedTransport } from './sync-transport.ts'
+import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
 
 const sessions = new Map()
@@ -79,7 +85,7 @@ function clearPresenceCache(workspaceId) {
 
 // Shared multiplexed objstore client — one per page. The WebSocket
 // itself lives on the shared `SocketTransport` from
-// `client/sync-transport.ts` so triage-sync and objstore share one
+// `client/sync/sync-transport.ts` so triage-sync and objstore share one
 // TCP connection: one heartbeat, one `authenticate` round-trip, one
 // reconnect schedule. The transport's `setServerUrl` is driven by
 // triage-sync; the operator-side auth resolver is wired via
@@ -146,7 +152,7 @@ function notify() {
 // surface as DOMException too). Falling back to `String(err)`
 // instead of bare `err` avoids producing `[object Object]` in the
 // thrown message. Memory-lifecycle audit follow-up
-// `ui/view/objstore-presence.js:374`.
+// `client/sync/objstore-presence.js:374`.
 //
 // Edge cases:
 //   - `new Error('')` (empty message) → Error branch skips empty
@@ -409,7 +415,7 @@ export function closeWorkspace(workspaceId) {
   // wrappers inside `client.openWorkspace`), but the original
   // `entry.keys` Uint8Arrays we passed in stay live until the entry
   // is GC'd. Match the wipe contract documented at
-  // `client/objstore.ts:close()`.
+  // `client/sync/objstore.ts:close()`.
   if (entry.keys) {
     try { entry.keys.contentKey.fill(0) } catch {}
     try { entry.keys.tagKey.fill(0) } catch {}
@@ -480,7 +486,7 @@ onWorkspaceDeleted((workspaceId) => {
 // against the new private key. Drop the persisted cache too — the
 // cached HMACs were computed under the OLD tagKey, so every entry
 // is garbage under the new one. Mirrors triage-sync's handler at
-// `client/triage-sync.ts:onWorkspacePrivateKeyChanged`.
+// `client/sync/triage-sync.ts:onWorkspacePrivateKeyChanged`.
 onWorkspacePrivateKeyChanged((workspaceId) => {
   if (!sessions.has(workspaceId)) return
   closeWorkspace(workspaceId)
@@ -811,7 +817,7 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     // issue). Log so the operator sees WHY the download didn't
     // appear; without this every subsequent ensureRemoteNames pass
     // retries silently. API ergonomics audit
-    // `ui/view/objstore-presence.js:343`.
+    // `client/sync/objstore-presence.js:343`.
     console.warn(`auto-download: listFiles failed before saving "${fileName}":`, err)
     return
   }
@@ -872,7 +878,7 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     // persisted, and the next ensureRemoteNames pass repeats the
     // whole gunzip + validate cycle. Log so quota / persistence
     // failures surface in devtools. API ergonomics audit
-    // `ui/view/objstore-presence.js:358`.
+    // `client/sync/objstore-presence.js:358`.
     console.warn(`auto-download: persisting "${fileName}" to workspace "${entry.workspaceId}" failed:`, err)
     return
   }

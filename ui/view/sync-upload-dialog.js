@@ -14,8 +14,7 @@
 //     `{ kind, identifier }`.
 
 import { LitElement, html, nothing } from 'lit'
-import { readFileBytes } from '#client/index.js'
-import { putBundleToRemote, putFile } from './objstore-presence.js'
+import { putBundleToRemote, putFile, readFileBytes } from '#client/index.js'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`

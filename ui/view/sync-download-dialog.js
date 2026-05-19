@@ -16,8 +16,7 @@
 
 import { LitElement, html, nothing } from 'lit'
 import { decodeUtf8 } from '../../common/utf8.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount } from '#client/index.js'
-import { fetchBundleFromRemote, fetchFile } from './objstore-presence.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, fetchBundleFromRemote, fetchFile, gunzipBytes, saveFileBytes, setCount } from '#client/index.js'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`

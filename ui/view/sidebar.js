@@ -1,11 +1,10 @@
 import { html, render as litRender, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, triageSync } from '#client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, deleteFromRemote as deleteRemote, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, isInRemote, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, triageSync } from '#client/index.js'
 import { fileList, sidebar } from './dom.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
-import { deleteFromRemote as deleteRemote, isInRemote } from './objstore-presence.js'
 import { exportWorkspace } from './workspace-export.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './leave-workspace-dialog.js'
@@ -13,7 +12,7 @@ import { openWorkspaceShareLinkDialog } from './workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './delete-report-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { openBundle } from './bundle-load.js'
-import { graph2 } from './graph2/state.js'
+import { graph2 } from './graph/state.js'
 
 // Distinct package count across every report the OPFS finding
 // index has scanned (NOT just state.reports — Packages aggregates

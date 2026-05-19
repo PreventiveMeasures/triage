@@ -5,7 +5,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { state } from '#client/index.js'
 import { graph2 } from './state.js'
-import { pkgColor } from '../graph/utils.js'
+import { pkgColor } from './utils.js'
 import { pkgRelative } from './data.js'
 import { groupState } from '../group.js'
 

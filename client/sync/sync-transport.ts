@@ -1,6 +1,6 @@
 // Singleton `SocketTransport` shared between the two v1 triage-sync
-// consumers: `client/triage-sync.ts` and the production wiring of
-// `client/objstore.ts` (via `ui/view/objstore-presence.js`). Both
+// consumers: `client/sync/triage-sync.ts` and the production wiring
+// of `client/sync/objstore.ts` (via `client/sync/objstore-presence.js`). Both
 // target the same relay; one WebSocket carries both planes.
 //
 // Lifecycle: triage-sync holds an acquire while `isActive()` (URL
