@@ -8,6 +8,8 @@ import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
 import { renderSidebar } from './view/sidebar.js'
 import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { openBundle } from './view/bundle-load.js'
+import { graph2 } from './view/graph2/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
@@ -214,6 +216,28 @@ async function continueBoot() {
     if (last.startsWith('ws:')) {
       const id = last.slice(3)
       if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
+    } else if (last.startsWith('b:')) {
+      // Bundle restore — mirrors the bundle-only-drop branch in
+      // `addFiles` / the sidebar's `bundleEl` click handler. The
+      // bundles list was populated by the `renderSidebar()` above,
+      // so we can synchronously check membership; missing entries
+      // (deleted in another tab between sessions) silently fall
+      // through to the empty drop-zone state.
+      const integrity = last.slice(2)
+      if ((state.bundles ?? []).some((b) => b.integrity === integrity)) {
+        state.currentView = 'bundles'
+        state.selectedBundle = integrity
+        state.bundleDetails = null
+        state.bundleSourceFile = null
+        state.bundleSourceFindingIdx = null
+        state.bundleCodeSearchQuery = ''
+        state.bundleCodeSearchMode = 'files'
+        state.bundleDetailsTab = 'packages'
+        state.shownTriage = null
+        graph2.showAll = true
+        render()
+        openBundle(integrity)
+      }
     } else {
       const names = await listFiles()
       if (names.includes(last)) await switchToFile(last)

@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, setSecureItem, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
@@ -81,7 +81,7 @@ function renderPreservingScrollOf(selector) {
 }
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { switchToFile } from './ingest.js'
+import { LAST_FILE_KEY, switchToFile } from './ingest.js'
 import { treeAnchor } from './graph/utils.js'
 import { graph2, cleanupGraph2 } from './graph2/state.js'
 
@@ -185,6 +185,7 @@ report.addEventListener('click', (e) => {
     state.bundleDetailsTab = 'code'
     graph2.showAll = true
     state.shownTriage = null
+    setSecureItem(LAST_FILE_KEY, `b:${integrity}`).catch(() => {})
     if (state.bundleDetails?.integrity === integrity) {
       // Already parsed — just paint the new tab choice.
       render()
@@ -223,11 +224,16 @@ report.addEventListener('click', (e) => {
       // surprising and useless. The detach call cleans the JSON.
       await setBundleWorkspace(integrity, null)
       // Drop the open panel if it was pointing at the deleted row.
+      // Also clear the persisted last-view pointer when it was
+      // pinned to this bundle so a reload doesn't try to restore a
+      // bundle we just dropped from OPFS. Mirrors deleteCurrent's
+      // `removeSecureItem(LAST_FILE_KEY)` for files.
       if (state.selectedBundle === integrity) {
         state.selectedBundle = null
         state.bundleDetails = null
         state.bundleSourceFile = null
         state.bundleSourceFindingIdx = null
+        removeSecureItem(LAST_FILE_KEY)
       }
       // Prune the cross-bundle hash index so the finding-card's
       // "Code →" lookup stops surfacing this bundle as a match.
@@ -584,6 +590,7 @@ report.addEventListener('click', (e) => {
     const integrity = selBundle.dataset.selectBundle
     if (state.selectedBundle === integrity) return
     state.selectedBundle = integrity
+    setSecureItem(LAST_FILE_KEY, `b:${integrity}`).catch(() => {})
     state.bundleDetails = null
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
