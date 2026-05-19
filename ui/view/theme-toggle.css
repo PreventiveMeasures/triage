@@ -6,7 +6,7 @@
    carries its own copy there. */
 
 :host {
-  position: fixed; top: .5rem; right: .5rem;
+  position: absolute; top: .5rem; right: .5rem;
   z-index: 1000;
   width: 30px; height: 30px;
   background: transparent;
