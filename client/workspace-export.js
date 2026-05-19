@@ -56,12 +56,14 @@ function safeFilename(name) {
 }
 
 // Best-effort fetch of bundle bytes for the workspace's `bundles`
-// integrity list. Skips entries we don't have locally (orphan
-// pointers from a prior import) so the export stays a snapshot of
-// what THIS device can actually ship. `readBundle` returns the
-// uncompressed bytes (the storage layer peels gzip / envelope), so
-// the recipient's `saveBundle` recomputes the same SHA-512 integrity
-// from the round-tripped bytes — content-addressed by design.
+// integrity list. Skips pointers that don't resolve locally
+// (cross-workspace orphans, pre-migration entries, or bundles a
+// peer auto-attached without shipping the bytes) so the export
+// stays a snapshot of what THIS device can actually hand off.
+// `readBundle` returns the uncompressed bytes (the storage layer
+// peels gzip / envelope), so the recipient's `saveBundle`
+// recomputes the same SHA-512 integrity from the round-tripped
+// bytes — content-addressed by design.
 async function readBundleBlobs(integrities) {
   if (!Array.isArray(integrities) || integrities.length === 0) return []
   const meta = await listBundles()
@@ -74,6 +76,11 @@ async function readBundleBlobs(integrities) {
     try {
       bytes = await readBundle(integrity)
     } catch (err) {
+      // Per-blob best effort: one failed read (sealed bundle under a
+      // locked vault, transient OPFS hiccup, partial-write corruption)
+      // shouldn't abort the export — the orphan pointer still rides
+      // through `bundles`, and the recipient can drop the bytes later
+      // to resolve it.
       console.warn(`Workspace export: failed to read bundle ${integrity}: ${err?.message ?? err}`)
       continue
     }

@@ -63,6 +63,14 @@ const MAX_BUNDLE_BLOB_DATA_LEN = Math.ceil(MAX_BUNDLE_BLOB_BYTES * 4 / 3) + 16
 // realistic .map / .stasis filename and shorter than the workspace-
 // name cap so a crafted export can't bloat OPFS bundle metadata.
 const MAX_BUNDLE_BLOB_NAME_LEN = 512
+// Distinct count cap for `bundleBlobs` — bytes-heavy, so the
+// 1024-pointer cap on `bundles` would otherwise let a payload sit at
+// ~136 GiB of gunzipped JSON in memory before validation could run.
+// 64 covers any realistic workspace (the integrity-pointer side
+// still gets the 1024 ceiling for the orphan-pointer carrier shape)
+// while bounding the worst-case decode-time memory at ~6.4 GiB raw
+// across the whole blob set.
+const MAX_BUNDLE_BLOBS_PER_EXPORT = 64
 
 function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
@@ -112,13 +120,14 @@ function validateExportShape(data) {
   }
   // `bundleBlobs` carries the actual bundle bytes (base64-encoded)
   // when the sender opts in. Validated symmetrically with `bundles`
-  // — count cap matches the integrity cap, plus per-entry shape
-  // and per-blob size limits so a 4 GB blob can't blow up the import
+  // — distinct (tighter) count cap because bundle bytes are heavy
+  // (see MAX_BUNDLE_BLOBS_PER_EXPORT), plus per-entry shape and
+  // per-blob size limits so a 4 GB blob can't blow up the import
   // before its decode runs.
   if (data.bundleBlobs !== undefined) {
     if (!Array.isArray(data.bundleBlobs)) return 'bundleBlobs field must be an array when present'
-    if (data.bundleBlobs.length > MAX_BUNDLES_PER_EXPORT) {
-      return `bundleBlobs count (${data.bundleBlobs.length}) exceeds cap (${MAX_BUNDLES_PER_EXPORT})`
+    if (data.bundleBlobs.length > MAX_BUNDLE_BLOBS_PER_EXPORT) {
+      return `bundleBlobs count (${data.bundleBlobs.length}) exceeds cap (${MAX_BUNDLE_BLOBS_PER_EXPORT})`
     }
     for (const b of data.bundleBlobs) {
       if (!b || typeof b !== 'object' || Array.isArray(b)) return 'bundleBlobs entries must be objects'
@@ -134,9 +143,12 @@ function validateExportShape(data) {
       if (b.name.length > MAX_BUNDLE_BLOB_NAME_LEN) {
         return `bundleBlobs.name exceeds per-entry length cap (${MAX_BUNDLE_BLOB_NAME_LEN})`
       }
-      // saveBundle rejects names containing NUL at the storage
-      // boundary; gate at validate-time so the cap-violation message
-      // is surfaced before any side effects.
+      // Defence-in-depth: NULs in display names break sidebar
+      // lookups and audit-log scraping, and `_meta.json`'s JSON
+      // serialisation embeds the name verbatim. The integrity (NOT
+      // the name) is the OPFS storage key in saveBundle, so this
+      // isn't a storage-boundary check — it's a downstream-display
+      // hygiene check.
       if (b.name.includes('\0')) return 'bundleBlobs.name cannot contain NUL'
       if (typeof b.data !== 'string') return 'bundleBlobs.data must be a base64 string'
       if (b.data.length > MAX_BUNDLE_BLOB_DATA_LEN) {
@@ -406,12 +418,15 @@ async function persistImportedBundleBlobs(blobs) {
     }
     try {
       const result = await saveBundle(blob.name, bytes)
-      // Defence-in-depth integrity check — saveBundle ALWAYS writes
-      // under the computed hash, so a mismatch here just means the
-      // claimed integrity in `data.bundles` won't resolve to the
-      // saved bytes (orphan pointer). Surface the discrepancy so an
-      // operator chasing "this workspace's bundles disappeared" has
-      // a breadcrumb.
+      // Tamper-resistance invariant: saveBundle ALWAYS keys the
+      // OPFS write by the SHA-512 it computes from `bytes`, NEVER by
+      // `blob.integrity`. A future refactor MUST preserve this — if
+      // a caller ever trusts the claimed integrity instead of the
+      // computed one, a malicious export could plant bytes under a
+      // legitimate-looking integrity. The mismatch warn below is the
+      // operator-visible breadcrumb (the workspace's `bundles`
+      // pointer for the claimed hash is an orphan after a tamper);
+      // it's not a defence in itself.
       if (result?.integrity !== blob.integrity) {
         console.warn(`Workspace import: bundle ${blob.name} integrity mismatch (claimed ${blob.integrity}, computed ${result?.integrity})`)
       }

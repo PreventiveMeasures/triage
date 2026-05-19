@@ -1337,10 +1337,11 @@ describe('bundleBlobs — wire-shape validator', () => {
     }), false)
   })
 
-  it('rejects a bundleBlobs array exceeding the count cap (parallel DoS guard)', () => {
-    // Symmetric with the `bundles` count guard. saveBundle takes a
-    // Web Lock per call, so 50k entries would freeze the import.
-    const huge = Array.from({ length: 1025 }, (_, i) => ({
+  it('rejects a bundleBlobs array exceeding the count cap (memory-DoS guard)', () => {
+    // bundleBlobs caps tighter (64) than bundles (1024) because each
+    // entry can carry ~133 MiB of base64 payload — at the integrity-
+    // pointer cap, worst-case JSON in memory would be ~136 GiB.
+    const huge = Array.from({ length: 65 }, (_, i) => ({
       integrity: `sha512-X${i}`,
       name: `x${i}`,
       data: '',
@@ -1351,6 +1352,18 @@ describe('bundleBlobs — wire-shape validator', () => {
       reports: [],
       bundleBlobs: huge,
     }), false)
+    // 64 is accepted (boundary).
+    const ok = Array.from({ length: 64 }, (_, i) => ({
+      integrity: `sha512-X${i}`,
+      name: `x${i}`,
+      data: '',
+    }))
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: ok,
+    }), true)
   })
 
   it('parseWorkspaceJson surfaces the bundleBlobs cap reason verbatim', () => {
@@ -1367,7 +1380,7 @@ describe('bundleBlobs — wire-shape validator', () => {
         createdAt: 1,
       },
       reports: [],
-      bundleBlobs: Array.from({ length: 1025 }, (_, i) => ({
+      bundleBlobs: Array.from({ length: 65 }, (_, i) => ({
         integrity: `sha512-X${i}`,
         name: `x${i}`,
         data: '',
@@ -1375,7 +1388,7 @@ describe('bundleBlobs — wire-shape validator', () => {
     }
     assert.throws(
       () => parseWorkspaceJson(JSON.stringify(payload)),
-      /bundleBlobs count \(1025\) exceeds cap \(1024\)/u,
+      /bundleBlobs count \(65\) exceeds cap \(64\)/u,
     )
   })
 })
