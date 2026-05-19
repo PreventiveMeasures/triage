@@ -330,20 +330,19 @@ a { color: var(--accent); text-decoration: none; }
    sibling `<theme-toggle>` Lit component carries an equivalent rule in
    its shadow DOM (see view/theme.js). */
 #print-btn, #download-btn {
-  position: fixed; right: .5rem;
+  position: absolute; right: .5rem;
   display: none;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: var(--shadow-glass);
+  background: transparent;
+  color: var(--muted);
+  border: 0; border-radius: 6px;
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   align-items: center; justify-content: center;
-  transition: border-color .12s, color .12s, background .12s;
+  transition: color .12s, background .12s;
 
-  &:hover { border-color: var(--accent); color: var(--accent); }
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   & svg { display: block; }
 }
 
