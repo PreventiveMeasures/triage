@@ -496,12 +496,26 @@
 
 /* Larger action chrome in focus context — the row carries more
    air around the buttons (extra gap, slightly taller buttons)
-   so the centered triage UI doesn't read as a footnote. */
+   so the centered triage UI doesn't read as a footnote. The
+   list-view default indents the marks row by the badge column's
+   width (`padding-left: 4.75rem`) so .marks-left aligns under
+   the description; in focus mode we drop that indent so the
+   action row spans the full card width below the left rail too.
+   Bumps the top margin a touch + adds a hairline divider so the
+   widened row reads as its own band, not as text trailing off
+   the description. */
 :host([context='focus']) .marks {
   gap: .5rem;
   margin-top: .65rem;
+  padding-left: 0;
+  padding-top: .55rem;
+  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
+/* Workspace-mode commit lift moves up out of `.marks-left` into
+   its own row. Same un-indent rule so the lifted line spans the
+   full card width too. */
+:host([context='focus']) .marks-commit-row { padding-left: 0; }
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
 :host([context='focus']) .mark-copy {
