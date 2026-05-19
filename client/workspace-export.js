@@ -1,5 +1,5 @@
 import { loadRepoUrlFor, state } from './state.ts'
-import { readFile } from './storage.js'
+import { listBundles, readBundle, readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
@@ -55,13 +55,49 @@ function safeFilename(name) {
   return cleaned || 'workspace'
 }
 
+// Best-effort fetch of bundle bytes for the workspace's `bundles`
+// integrity list. Skips entries we don't have locally (orphan
+// pointers from a prior import) so the export stays a snapshot of
+// what THIS device can actually ship. `readBundle` returns the
+// uncompressed bytes (the storage layer peels gzip / envelope), so
+// the recipient's `saveBundle` recomputes the same SHA-512 integrity
+// from the round-tripped bytes — content-addressed by design.
+async function readBundleBlobs(integrities) {
+  if (!Array.isArray(integrities) || integrities.length === 0) return []
+  const meta = await listBundles()
+  const nameByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
+  const blobs = []
+  for (const integrity of integrities) {
+    const name = nameByIntegrity.get(integrity)
+    if (!name) continue
+    let bytes
+    try {
+      bytes = await readBundle(integrity)
+    } catch (err) {
+      console.warn(`Workspace export: failed to read bundle ${integrity}: ${err?.message ?? err}`)
+      continue
+    }
+    blobs.push({ integrity, name, data: bytes.toBase64() })
+  }
+  return blobs
+}
+
 // Build the export payload object. Reads the workspace's reports
 // from OPFS, derives finding ids per report, filters in-memory
 // triage by id-membership, and bundles per-report repo URLs.
 // Side effect: drops stale workspace report references when their
 // OPFS entry is gone (defensive prune — matches the original
 // inline behaviour).
-export async function buildWorkspaceExportPayload(workspace) {
+//
+// `includeBundleBytes: true` opts into shipping the actual bundle
+// bytes alongside the integrity pointers — useful when handing a
+// workspace off to a recipient who doesn't already have the bundles
+// locally. Bytes ride as `bundleBlobs: [{ integrity, name, data }]`
+// where `data` is base64 of the raw uncompressed bundle bytes. The
+// integrities still ride in the `bundles` list (back-compat), so a
+// receiver that ignores `bundleBlobs` sees the same orphan-pointer
+// shape as a pre-bytes export.
+export async function buildWorkspaceExportPayload(workspace, { includeBundleBytes = false } = {}) {
   const reports = []
   const claimedIds = new Set()
   for (const name of workspace.reports ?? []) {
@@ -149,18 +185,20 @@ export async function buildWorkspaceExportPayload(workspace) {
   }
 
   // Bundle membership rides as a top-level list of sha512 integrities
-  // — symmetric with `reports`, but bytes-free: bundle blobs can be
-  // tens of MB, content-addressed by SHA-512, so shipping the bytes
-  // alongside reports would balloon the export for little benefit. A
-  // receiver that already has the matching bundle in their OPFS will
-  // auto-claim it into the workspace on import (same address = same
-  // bytes); a receiver who doesn't gets a pointer that the sidebar
-  // skips at render time. Filter to string values just in case the
-  // in-memory workspace blob got a junk entry from elsewhere — the
-  // import side does the same defensive check.
+  // — symmetric with `reports`. Bytes-free by default: bundle blobs
+  // can be tens of MB, content-addressed by SHA-512, so shipping the
+  // bytes alongside reports would balloon the export when the
+  // recipient already has them. A receiver that already has the
+  // matching bundle in their OPFS will auto-claim it into the
+  // workspace on import (same address = same bytes); a receiver who
+  // doesn't gets a pointer that the sidebar skips at render time.
+  // Senders who want to hand off bundles inline can opt into the
+  // separate `bundleBlobs` field below. Filter to string values just
+  // in case the in-memory workspace blob got a junk entry from
+  // elsewhere — the import side does the same defensive check.
   const bundles = (workspace.bundles ?? []).filter((b) => typeof b === 'string' && b.length > 0)
 
-  return {
+  const payload = {
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     workspace: {
@@ -174,6 +212,18 @@ export async function buildWorkspaceExportPayload(workspace) {
     repoUrls,
     triage,
   }
+
+  // Optional bundle bytes — only included when the caller opts in
+  // AND the workspace has bundles that resolve locally. Omitted (not
+  // empty array) when there's nothing to ship so the validator's
+  // `bundleBlobs === undefined` short-circuit stays the common path
+  // for back-compat exports.
+  if (includeBundleBytes) {
+    const blobs = await readBundleBlobs(bundles)
+    if (blobs.length > 0) payload.bundleBlobs = blobs
+  }
+
+  return payload
 }
 
 async function gzip(text) {
@@ -183,19 +233,19 @@ async function gzip(text) {
 
 // Returns `{ blob, filename }` ready for the UI download wrapper.
 // Filename uses the workspace name sanitized to a portable charset.
-export async function buildWorkspaceExportGzip(workspace) {
-  const payload = await buildWorkspaceExportPayload(workspace)
+export async function buildWorkspaceExportGzip(workspace, { includeBundleBytes = false } = {}) {
+  const payload = await buildWorkspaceExportPayload(workspace, { includeBundleBytes })
   const blob = await gzip(JSON.stringify(payload))
   return { blob, filename: `${safeFilename(workspace.name)}.deepview-workspace.json.gz` }
 }
 
 // AES-GCM-wrapped variant of the gzipped bundle. The `.enc` suffix
 // pairs with the import path's filename + magic-byte routing.
-export async function buildWorkspaceExportEncrypted(workspace, password) {
+export async function buildWorkspaceExportEncrypted(workspace, password, { includeBundleBytes = false } = {}) {
   if (typeof password !== 'string' || !password) {
     throw new TypeError('buildWorkspaceExportEncrypted: password required')
   }
-  const { blob: gzipBlob } = await buildWorkspaceExportGzip(workspace)
+  const { blob: gzipBlob } = await buildWorkspaceExportGzip(workspace, { includeBundleBytes })
   const plaintext = new Uint8Array(await gzipBlob.arrayBuffer())
   const encrypted = await encryptBundle(plaintext, password)
   const blob = new Blob([encrypted], { type: 'application/octet-stream' })
@@ -204,9 +254,11 @@ export async function buildWorkspaceExportEncrypted(workspace, password) {
 
 // Dispatches on `password`: empty → plaintext gzip, set → encrypted.
 // Caller owns the explicit opt-out UX when calling without one.
-export async function buildWorkspaceExportBundle(workspace, { password } = {}) {
+// `includeBundleBytes: true` ships base64'd bundle bytes alongside
+// the integrity pointers — see `buildWorkspaceExportPayload`.
+export async function buildWorkspaceExportBundle(workspace, { password, includeBundleBytes = false } = {}) {
   if (typeof password === 'string' && password) {
-    return await buildWorkspaceExportEncrypted(workspace, password)
+    return await buildWorkspaceExportEncrypted(workspace, password, { includeBundleBytes })
   }
-  return await buildWorkspaceExportGzip(workspace)
+  return await buildWorkspaceExportGzip(workspace, { includeBundleBytes })
 }

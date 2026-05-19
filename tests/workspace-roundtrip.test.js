@@ -1209,3 +1209,314 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
       'genuine file-missing pruned the workspace-report association')
   })
 })
+
+// `bundleBlobs` — optional inline bundle-bytes shipment. Validator
+// gates the wire shape; the payload-builder omits the field unless
+// the caller opts in AND the workspace has bundles that resolve
+// locally; the import path persists bytes to OPFS and strips them
+// from the persisted workspace blob.
+describe('bundleBlobs — wire-shape validator', () => {
+  it('accepts a well-formed bundleBlobs array', () => {
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundles: ['sha512-A'],
+      bundleBlobs: [{ integrity: 'sha512-A', name: 'foo.map', data: 'AAAA' }],
+    }), true)
+  })
+
+  it('accepts an explicit `bundleBlobs: undefined` (back-compat)', () => {
+    // Distinct from "field omitted" coverage: the back-compat path is
+    // the validator sentinel for "older / opt-out export", so an
+    // explicit undefined must still pass — pin the boundary.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: undefined,
+    }), true)
+  })
+
+  it('rejects a non-array bundleBlobs', () => {
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: 'oops',
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: { 0: { integrity: 'sha512-A', name: 'x', data: '' } },
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: null,
+    }), false)
+  })
+
+  it('rejects bundleBlobs entries with bad shape', () => {
+    // Array entries (typeof [] === 'object') — symmetric with the
+    // triage-array audit WI-1 in mergeTriage. Without an explicit
+    // Array.isArray guard the validator would let them through and
+    // applyWorkspaceImport would try to read .integrity off an array.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [[]],
+    }), false)
+    // Missing integrity / name / data.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ name: 'x', data: 'AAAA' }],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', data: 'AAAA' }],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', name: 'x' }],
+    }), false)
+    // Empty integrity / name.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: '', name: 'x', data: 'AAAA' }],
+    }), false)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', name: '', data: 'AAAA' }],
+    }), false)
+    // Non-string data.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', name: 'x', data: 123 }],
+    }), false)
+  })
+
+  it('rejects a NUL in bundleBlobs.name (storage boundary mirror)', () => {
+    // saveBundle rejects NUL-bearing names at the storage layer; the
+    // validator front-loads the check so the import path doesn't
+    // run side effects before failing.
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', name: 'foo\0bar', data: 'AAAA' }],
+    }), false)
+  })
+
+  it('rejects an oversized bundleBlobs.data payload', () => {
+    // 100 MiB raw → ~133 MiB base64 + slack. The check uses the
+    // encoded length so a malicious 4 GB blob can't blow up the
+    // decode buffer.
+    const cap = Math.ceil(100 * 1024 * 1024 * 4 / 3) + 16
+    const tooLong = 'A'.repeat(cap + 1)
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: [{ integrity: 'sha512-A', name: 'x', data: tooLong }],
+    }), false)
+  })
+
+  it('rejects a bundleBlobs array exceeding the count cap (parallel DoS guard)', () => {
+    // Symmetric with the `bundles` count guard. saveBundle takes a
+    // Web Lock per call, so 50k entries would freeze the import.
+    const huge = Array.from({ length: 1025 }, (_, i) => ({
+      integrity: `sha512-X${i}`,
+      name: `x${i}`,
+      data: '',
+    }))
+    assert.equal(isWorkspaceExport({
+      version: 1,
+      workspace: { id: 'a', name: 'b', privateKey: 'c' },
+      reports: [],
+      bundleBlobs: huge,
+    }), false)
+  })
+
+  it('parseWorkspaceJson surfaces the bundleBlobs cap reason verbatim', () => {
+    // Like the bundles-cap test above: a user opening a slightly-over-
+    // limit export should see the specific reason, not a generic
+    // "not a deepview workspace export" message.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-blobs-oversize',
+        name: 'O',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundleBlobs: Array.from({ length: 1025 }, (_, i) => ({
+        integrity: `sha512-X${i}`,
+        name: `x${i}`,
+        data: '',
+      })),
+    }
+    assert.throws(
+      () => parseWorkspaceJson(JSON.stringify(payload)),
+      /bundleBlobs count \(1025\) exceeds cap \(1024\)/u,
+    )
+  })
+})
+
+describe('bundleBlobs — export payload shape', () => {
+  beforeEach(clearState)
+
+  it('omits the field by default (back-compat with opt-out exports)', async () => {
+    const ws = makeWorkspace({ bundles: ['sha512-A', 'sha512-B'] })
+    const payload = await buildWorkspaceExportPayload(ws)
+    assert.equal(payload.bundleBlobs, undefined,
+      'no bundleBlobs unless includeBundleBytes opt-in')
+    // `bundles` integrities still ride through — the bytes-free pointer
+    // shape is the legacy default.
+    assert.deepEqual(payload.bundles, ['sha512-A', 'sha512-B'])
+  })
+
+  it('omits the field when opted in but no bundles resolve locally', async () => {
+    // OPFS is unavailable in the Node test env, so `listBundles()`
+    // returns []. Every integrity in workspace.bundles will be an
+    // orphan pointer; the payload should still pass shape validation
+    // and just omit `bundleBlobs`.
+    const ws = makeWorkspace({ bundles: ['sha512-MISSING'] })
+    const payload = await buildWorkspaceExportPayload(ws, { includeBundleBytes: true })
+    assert.equal(payload.bundleBlobs, undefined,
+      'unresolved integrities produce no bundleBlobs entry')
+    assert.deepEqual(payload.bundles, ['sha512-MISSING'])
+  })
+
+  it('omits the field when the workspace has no bundles', async () => {
+    const ws = makeWorkspace({ bundles: [] })
+    const payload = await buildWorkspaceExportPayload(ws, { includeBundleBytes: true })
+    assert.equal(payload.bundleBlobs, undefined)
+  })
+
+  it('the build wrappers forward `includeBundleBytes` to the payload builder', async () => {
+    // Smoke-test the option threading from the public wrappers all
+    // the way down. With no local bundles the bytes side is a no-op,
+    // but the payload-builder still receives the flag.
+    const ws = makeWorkspace({ bundles: [] })
+    const { blob: gzBlob } = await buildWorkspaceExportGzip(ws, { includeBundleBytes: true })
+    assert.ok(gzBlob)
+    const enc = await buildWorkspaceExportEncrypted(ws, 'pw', { includeBundleBytes: true })
+    assert.ok(enc.blob)
+    const bundle = await buildWorkspaceExportBundle(ws, { password: '', includeBundleBytes: true })
+    assert.ok(bundle.blob)
+  })
+})
+
+describe('bundleBlobs — import strips bytes before persisting workspace', () => {
+  beforeEach(clearState)
+
+  it('the persisted workspace blob never contains bundleBlobs', async () => {
+    // The whole point of the strip-before-store contract: even a
+    // payload that ships bundleBlobs must not leak the base64 bytes
+    // into localStorage's workspaces row. The OPFS-save step will
+    // fail under Node (no OPFS) but the workspace upsert still runs
+    // and the bundleBlobs field must NOT find its way onto the
+    // persisted object.
+    const integrity = 'sha512-RAWBYTES'
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-strip',
+        name: 'Strip',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: [integrity],
+      bundleBlobs: [{ integrity, name: 'foo.map', data: 'AAECAwQFBgcICQ==' }],
+      repoUrls: {},
+      triage: {},
+    }
+    const data = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(data)
+    const restored = listWorkspaces().find((w) => w.id === 'ws-strip')
+    assert.ok(restored, 'workspace landed')
+    assert.equal('bundleBlobs' in restored, false,
+      'bundleBlobs never persisted on the workspace blob')
+    assert.equal('data' in restored, false, 'no base64 data leaked')
+    // The integrity pointer still rides in `bundles` (the workspace's
+    // membership list).
+    assert.deepEqual(restored.bundles, [integrity])
+    // Defense in depth: serialize the persisted shape and verify the
+    // base64 payload doesn't appear anywhere — a future regression
+    // that aliased the bytes through another field would trip this.
+    const serialized = JSON.stringify(restored)
+    assert.equal(serialized.includes('AAECAwQFBgcICQ=='), false,
+      'base64 bytes do not appear anywhere in the persisted workspace')
+  })
+
+  it('imports cleanly when bundleBlobs is absent', async () => {
+    // Negative control: no bundleBlobs → no bytes saved, no
+    // persistence quirks. Same contract as a pre-bundleBlobs export.
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-noblobs',
+        name: 'NoBlobs',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: ['sha512-Z'],
+      repoUrls: {},
+      triage: {},
+    }
+    const data = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(data)
+    const restored = listWorkspaces().find((w) => w.id === 'ws-noblobs')
+    assert.deepEqual(restored.bundles, ['sha512-Z'])
+    assert.equal('bundleBlobs' in restored, false)
+  })
+
+  it('an empty bundleBlobs array imports cleanly', async () => {
+    // The `Array.isArray && length > 0` gate in applyWorkspaceImport
+    // is what keeps the import a no-op on empty input; pin that so a
+    // future refactor doesn't accidentally trigger the saveBundle
+    // loop on []. (No OPFS in tests, so the loop would synth-throw
+    // and leak warnings.)
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: 'ws-emptyblobs',
+        name: 'EmptyBlobs',
+        privateKey: Buffer.from(new Uint8Array(32)).toString('base64'),
+        createdAt: 1,
+      },
+      reports: [],
+      bundles: [],
+      bundleBlobs: [],
+      repoUrls: {},
+      triage: {},
+    }
+    const data = parseWorkspaceJson(JSON.stringify(payload))
+    await applyWorkspaceImport(data)
+    const restored = listWorkspaces().find((w) => w.id === 'ws-emptyblobs')
+    assert.deepEqual(restored.bundles, [])
+  })
+})

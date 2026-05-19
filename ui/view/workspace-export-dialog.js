@@ -13,6 +13,7 @@ class WorkspaceExportDialog extends LitElement {
     _password: { state: true },
     _confirm: { state: true },
     _noPassword: { state: true },
+    _includeBundleBytes: { state: true },
     _busy: { state: true },
     _error: { state: true },
     _settled: { state: true },
@@ -26,6 +27,7 @@ class WorkspaceExportDialog extends LitElement {
     this._password = ''
     this._confirm = ''
     this._noPassword = false
+    this._includeBundleBytes = false
     this._busy = false
     this._error = ''
     this._settled = false
@@ -91,6 +93,10 @@ class WorkspaceExportDialog extends LitElement {
       this._confirm = ''
     }
   }
+  _onIncludeBundleBytesToggle = (e) => {
+    this._includeBundleBytes = e.target.checked
+    this._error = ''
+  }
 
   _canExport() {
     if (this._busy) return false
@@ -109,6 +115,7 @@ class WorkspaceExportDialog extends LitElement {
     try {
       const { blob, filename } = await buildWorkspaceExportBundle(this.workspace, {
         password: this._noPassword ? undefined : this._password,
+        includeBundleBytes: this._includeBundleBytes,
       })
       // PBKDF2 takes hundreds of ms; the user may have hit Cancel in the
       // meantime. Skip the download (and the success-resolve) if so.
@@ -132,14 +139,14 @@ class WorkspaceExportDialog extends LitElement {
 
   _body() {
     const passwordsMatch = !this._password || !this._confirm || this._password === this._confirm
+    const bundleCount = Array.isArray(this.workspace?.bundles) ? this.workspace.bundles.length : 0
     return html`
       <p class="nwd-note">
         The export file carries this workspace's reports, triage state,
-        comments, fixes, references to attached bundles (the integrities
-        only — the bundle bytes are not included in this file), and
-        its private key. Encrypting the file with a password ensures
-        only those with the password can attach the workspace after
-        download.
+        comments, fixes, references to attached bundles (integrities only
+        by default), and its private key. Encrypting the file with a
+        password ensures only those with the password can attach the
+        workspace after download.
       </p>
       <label class="wsl-field">
         <span>Password</span>
@@ -185,6 +192,16 @@ class WorkspaceExportDialog extends LitElement {
         >
         <span>Export without password (not recommended)</span>
       </label>
+      ${bundleCount > 0 ? html`
+        <label class="wsl-optout">
+          <input
+            type="checkbox"
+            .checked=${this._includeBundleBytes}
+            @change=${this._onIncludeBundleBytesToggle}
+          >
+          <span>Include bundle bytes (${bundleCount} bundle${bundleCount === 1 ? '' : 's'}; significantly larger file)</span>
+        </label>
+      ` : nothing}
       ${this._noPassword ? html`
         <p class="wsl-error wsl-warning">
           Anyone who obtains this file can attach the workspace and
