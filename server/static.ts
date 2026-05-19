@@ -78,12 +78,19 @@ export function loadStatic(staticDir: string): StaticHandler {
     const entry = name == null ? undefined : files.get(name)
     if (!entry) return false
     const ifNoneMatch = req.headers['if-none-match']
+    const { body, encoding } = pickEncoding(req.headers['accept-encoding'], entry)
     if (typeof ifNoneMatch === 'string' && matchesETag(ifNoneMatch, entry.etag)) {
-      res.writeHead(304, { 'etag': entry.etag, 'cache-control': 'no-cache', 'vary': 'accept-encoding' })
+      // 304 echoes the variant headers that would have accompanied
+      // the 200 for the same request (RFC 9111 §4.3.4): the cached
+      // entity already has a `Content-Encoding` matching this
+      // negotiation, so re-asserting it lets a strict shared cache
+      // bind the freshening to the right variant under Vary.
+      const headers: Record<string, string | number> = { 'etag': entry.etag, 'cache-control': 'no-cache', 'vary': 'accept-encoding' }
+      if (encoding != null) headers['content-encoding'] = encoding
+      res.writeHead(304, headers)
       res.end()
       return true
     }
-    const { body, encoding } = pickEncoding(req.headers['accept-encoding'], entry)
     const headers: Record<string, string | number> = {
       'content-type': entry.type,
       'content-length': body.byteLength,
@@ -148,11 +155,15 @@ function buildEntry(staticDir: string, name: string): StaticEntry {
 
 // Prefer brotli over gzip over identity. Both compressed variants
 // are pre-computed; runtime cost is one Accept-Encoding parse +
-// a Buffer reference pick.
+// a Buffer reference pick. Node surfaces repeated `Accept-Encoding`
+// headers as `string[]` (it's not on the list-fold whitelist) — join
+// before parsing so the array case doesn't silently fall through to
+// identity and miss compression.
 function pickEncoding(accept: string | string[] | undefined, entry: StaticEntry): { body: Buffer, encoding: string | null } {
-  if (typeof accept === 'string') {
-    if (entry.br && acceptsEncoding(accept, 'br')) return { body: entry.br, encoding: 'br' }
-    if (entry.gzip && acceptsEncoding(accept, 'gzip')) return { body: entry.gzip, encoding: 'gzip' }
+  const header = Array.isArray(accept) ? accept.join(',') : accept
+  if (typeof header === 'string') {
+    if (entry.br && acceptsEncoding(header, 'br')) return { body: entry.br, encoding: 'br' }
+    if (entry.gzip && acceptsEncoding(header, 'gzip')) return { body: entry.gzip, encoding: 'gzip' }
   }
   return { body: entry.identity, encoding: null }
 }
