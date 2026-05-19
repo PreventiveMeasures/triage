@@ -1,4 +1,4 @@
-// End-to-end tests for `ui/view/objstore-presence.js` against a
+// End-to-end tests for `client/sync/objstore-presence.js` against a
 // spawned `server/index.ts` relay. Validates the cache wiring:
 // openWorkspace opens an encrypted objstore session, snapshots
 // `list()`, decodes each remote tag back to a fileName via
@@ -22,7 +22,7 @@ const {
   fetchFile, isBundleInRemote, isInRemote,
   onAutoDownloaded, onChange, openWorkspace, putFile,
   remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
-} = await import('../ui/view/objstore-presence.js')
+} = await import('../client/sync/objstore-presence.js')
 
 async function createWorkspaceWithReports(name, reports) {
   const ws = await createWorkspace(name)
@@ -52,7 +52,7 @@ function awaitPresence(predicate, label, timeoutMs = 5_000) {
   })
 }
 
-describe('ui/view/objstore-presence', () => {
+describe('client/sync/objstore-presence', () => {
   let httpOrigin, server, serverUrl
 
   before(async () => {
@@ -792,7 +792,7 @@ describe('ui/view/objstore-presence', () => {
         await peer.putBundle({ integrity, name: 'my-named-bundle.js', content: Buffer.from('x'), prevVersion: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
-      const { remoteBundleName } = await import('../ui/view/objstore-presence.js')
+      const { remoteBundleName } = await import('../client/sync/objstore-presence.js')
       // Pre-discovery `remoteBundleName` returns undefined; the badge
       // download handler falls back to the integrity prefix until
       // discovery resolves.
@@ -864,7 +864,7 @@ describe('ui/view/objstore-presence', () => {
       } finally { peer.close() }
       openWorkspace(ws.id)
       await awaitPresence(() => isBundleInRemote(ws.id, forgedIntegrity), 'cloud after peer put')
-      const { fetchBundleFromRemote: fbfr } = await import('../ui/view/objstore-presence.js')
+      const { fetchBundleFromRemote: fbfr } = await import('../client/sync/objstore-presence.js')
       const result = await fbfr(ws.id, forgedIntegrity)
       assert.equal(result.ok, false, 'fetch refuses bytes that do not hash to the requested integrity')
       assert.equal(result.reason, 'integrity-mismatch')

@@ -38,14 +38,23 @@ export { buildFindingLookupForLoadedReports } from './finding-lookup.js'
 export { migrateLegacyFilenames } from './migrate-legacy.js'
 
 export {
-  computeBundleResourceTag,
-  computeResourceTag,
-} from './sync/objstore-content-crypto.ts'
-
-export {
-  createObjstoreClient,
-  deriveObjstoreKeys,
-} from './sync/objstore.ts'
+  closeWorkspace,
+  deleteFromRemote,
+  discoverRemoteBundleIntegrities,
+  discoverRemoteFileNames,
+  fetchBundleFromRemote,
+  fetchFile,
+  isBundleInRemote,
+  isInRemote,
+  onAutoDownloaded,
+  onBundleAutoDownloaded,
+  onChange,
+  openWorkspace,
+  putBundleToRemote,
+  putFile,
+  remoteBundleName,
+  remoteCount,
+} from './sync/objstore-presence.js'
 
 export {
   disableEncryption,
@@ -94,8 +103,6 @@ export {
   saveFile,
   saveFileBytes,
 } from './storage.js'
-
-export { getSharedTransport } from './sync/sync-transport.ts'
 
 export {
   applyTriageImport,
@@ -146,10 +153,6 @@ export {
   createWorkspace,
   deleteWorkspace,
   listWorkspaces,
-  onBundleMembershipChanged,
-  onReportMembershipChanged,
-  onWorkspaceDeleted,
-  onWorkspacePrivateKeyChanged,
   removeBundleFromWorkspace,
   removeReportFromWorkspace,
   renameWorkspace,

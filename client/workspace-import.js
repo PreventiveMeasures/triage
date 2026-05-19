@@ -538,7 +538,7 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
   // also lives in another workspace is not surfaced as unattached.
   // (The previous detach pre-pass enforced an at-most-one-workspace
   // invariant; the runtime model now allows multi-owner membership and
-  // the auto-attach path in `ui/view/objstore-presence.js` is the
+  // the auto-attach path in `client/sync/objstore-presence.js` is the
   // primary writer that exercises it.)
   const ws = await upsertWorkspace({
     id: data.workspace.id,

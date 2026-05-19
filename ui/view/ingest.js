@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise, triageSync } from '#client/index.js'
+import { analyzeContent, closeWorkspace as closePresence, deleteFile, deleteFromRemote as deletePresence, deleteWorkspace, listWorkspaces, loadRepoUrlFor, openWorkspace as openPresence, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
@@ -12,7 +12,6 @@ import { parseCodexCsvToScans } from '../../common/parse-codex.js'
 import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
-import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence } from './objstore-presence.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report

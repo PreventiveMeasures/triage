@@ -5,14 +5,13 @@
 // import sidebar before ingest so the sidebar click delegate exists by
 // the time `addFiles` calls `renderSidebar`.
 import { sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
+import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
 import { graph2 } from './view/graph2/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
-import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange } from './view/objstore-presence.js'
 import { runLegacyOriginCheck } from './view/origin-check.js'
 import { render } from './view/render.js'
 import { openWorkspaceUnlockLinkDialog } from './view/workspace-unlock-link-dialog.js'

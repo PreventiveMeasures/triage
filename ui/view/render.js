@@ -5,7 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
-import { listWorkspaces, state, triageSync } from '#client/index.js'
+import { isBundleInRemote, isInRemote, listWorkspaces, remoteCount, state, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -15,7 +15,6 @@ import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/uti
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph2/state.js'
 import { buildGraph } from './graph2/data.js'
-import { isBundleInRemote, isInRemote, remoteCount } from './objstore-presence.js'
 import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
 import { attachGraph2Interaction } from './graph2/canvas.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -650,7 +649,7 @@ async function openDownloadFromBadge({ workspaceId, localFileNames, localBundles
     discoverRemoteBundleIntegrities,
     discoverRemoteFileNames,
     remoteBundleName,
-  } = await import('./objstore-presence.js')
+  } = await import('#client/index.js')
   const [remoteReports, remoteBundles] = await Promise.all([
     discoverRemoteFileNames(workspaceId),
     discoverRemoteBundleIntegrities(workspaceId),
