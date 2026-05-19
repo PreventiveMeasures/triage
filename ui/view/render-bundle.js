@@ -1606,9 +1606,12 @@ function renderBundleDetails(entry, details) {
         ? new TextEncoder().encode(content).byteLength
         : null
     })
-    const extras = importTypes.length > 0
-      ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>`
-      : nothing
+    const extras = html`
+      <dt>Version</dt><dd>${String(bundle.version)}</dd>
+      ${importTypes.length > 0
+        ? html`<dt>Resolution kinds</dt><dd>${importTypes.join(', ')}</dd>`
+        : nothing}
+    `
     return renderBundleSourcesPanel(meta, extras, sourceNames, sizes)
   }
   // Stasis without a parsed bundle — likely a brotli decompression
