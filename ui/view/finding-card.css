@@ -426,6 +426,129 @@
 .triage-menu-invalid:hover { color: var(--muted); }
 .triage-menu-deleted:hover { color: var(--critical); }
 
+/* Focus-view context — set via the `context="focus"` attribute on
+   the host (see findingCardPlaceholder in render.js). Two visual
+   tweaks make the focus view's centered card feel like a
+   workbench rather than a list row:
+     1. The triage menu's chevron button is hidden and the popover
+        content is inlined into the action strip, so Fixed /
+        Invalid / Delete / Ignore each become a one-click button
+        instead of a dropdown. The popover element is forced out
+        of its `display: none` resting state via `display: flex`,
+        positioned statically (`position: revert`) so it lays out
+        as a normal sibling of the marks-left block instead of
+        floating in the top layer.
+     2. Slightly larger action button hit targets — the focus
+        view has more vertical room and the bottom action row is
+        the primary triage affordance, so beefing up its tap
+        size reads as intentional rather than cramped. */
+:host([context='focus']) .triage-menu-wrap > .mark-triage-menu { display: none; }
+:host([context='focus']) .triage-menu-wrap {
+  /* Wrap is a flex carrier so the inlined popover (its only
+     remaining child once the chevron button is hidden) stretches
+     naturally next to the rest of the action row. */
+  display: inline-flex;
+}
+:host([context='focus']) .triage-menu[popover] {
+  /* User-agent CSS sets [popover] to position: fixed; inset: 0;
+     and (when closed) display: none. Force overrides to take it
+     out of the top layer's flow and into the action row. The
+     !important is necessary on `display` because the implicit
+     "display: none when popover not open" rule wins otherwise. */
+  position: static; inset: auto;
+  display: inline-flex !important;
+  flex-flow: row wrap;
+  margin: 0; padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  min-width: 0;
+  gap: .25rem;
+}
+:host([context='focus']) .triage-menu-item {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: .2rem .5rem;
+  border-radius: 3px;
+  font-size: .72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+:host([context='focus']) .triage-menu-item.active {
+  background: rgb(from var(--accent) r g b / .12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+:host([context='focus']) .triage-menu-item:hover { background: var(--surface-active); }
+:host([context='focus']) .triage-menu-fixed.active {
+  background: rgb(from var(--green, #4ade80) r g b / .12);
+  border-color: var(--green, #4ade80);
+  color: var(--green, #4ade80);
+}
+:host([context='focus']) .triage-menu-deleted.active {
+  background: rgb(from var(--critical) r g b / .12);
+  border-color: var(--critical);
+  color: var(--critical);
+}
+:host([context='focus']) .triage-menu-item.active::before { content: ''; margin: 0; }
+
+/* Larger action chrome in focus context — the row carries more
+   air around the buttons (extra gap, slightly taller buttons)
+   so the centered triage UI doesn't read as a footnote. The
+   list-view default indents the marks row by the badge column's
+   width (`padding-left: 4.75rem`) so .marks-left aligns under
+   the description; in focus mode we drop that indent so the
+   action row spans the full card width below the left rail too.
+   Bumps the top margin a touch + adds a hairline divider so the
+   widened row reads as its own band, not as text trailing off
+   the description. */
+:host([context='focus']) .marks {
+  gap: .5rem;
+  margin-top: .65rem;
+  padding-left: 0;
+  padding-top: .55rem;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+/* Workspace-mode commit lift moves up out of `.marks-left` into
+   its own row. Same un-indent rule so the lifted line spans the
+   full card width too. */
+:host([context='focus']) .marks-commit-row { padding-left: 0; }
+:host([context='focus']) .mark-comment,
+:host([context='focus']) .mark-fix,
+:host([context='focus']) .mark-copy {
+  height: 1.75rem;
+  padding: 0 .55rem;
+  gap: .35rem;
+  display: inline-flex; align-items: center;
+  font-size: .72rem;
+}
+:host([context='focus']) .mark-btn-label {
+  /* Label text after the icon — slightly muted so the icon stays
+     the primary visual cue and the label reads as supporting
+     context rather than competing for attention. */
+  color: inherit;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+
+/* Subtle mark-color tints for the focus context. The list / table
+   views paint the card's full surface in the saturated mark
+   color so it stands out from row neighbours. In the focus view
+   the card is the only finding on screen and is already framed
+   in its own glass panel, so a full-saturation tint feels heavy.
+   `color-mix` against the solid page `--bg` (NOT --surface, which
+   is itself translucent — alpha-stacking that against an alpha
+   surface produced a muddy mid-toned wash, the bug the user
+   pointed out) gives a clean opaque tint that reads as the
+   intended mark hue but at a fraction of its weight. */
+:host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 15%, var(--bg)); }
+
 /* Comment + fix-link blocks in the tab body. Quote-style notes
    below the description / recommendation / confidence reason when
    the active tab carries a free-text annotation or a fix URL. */

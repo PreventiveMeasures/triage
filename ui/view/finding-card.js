@@ -44,6 +44,11 @@ class FindingCard extends StateElement {
   static properties = {
     group: { attribute: false },
     inGroup: { type: Boolean, attribute: 'in-group', reflect: true },
+    // Caller-stamped variant flag — `'focus'` opts into the inlined
+    // triage actions + expanded button labels variants emitted by
+    // `findingCardInnerTemplate`. Reflected so the same value reaches
+    // the shadow CSS via `:host([context='focus'])`.
+    context: { type: String, reflect: true },
   }
 
   static styles = unsafeCSS(cardCSS)
@@ -52,6 +57,7 @@ class FindingCard extends StateElement {
     super()
     this.group = null
     this.inGroup = false
+    this.context = null
   }
 
   render() {
@@ -67,7 +73,7 @@ class FindingCard extends StateElement {
     // host so the global `* { padding: 0 }` reset in theme.css can't
     // override our padding/border via the shadow boundary's
     // outer-wins-over-inner cascade rule. See finding-card.css.
-    return html`<div class="card">${findingCardInnerTemplate(this.group)}</div>`
+    return html`<div class="card">${findingCardInnerTemplate(this.group, { context: this.context })}</div>`
   }
 
   connectedCallback() {

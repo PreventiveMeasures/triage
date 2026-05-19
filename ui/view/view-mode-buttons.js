@@ -1,8 +1,8 @@
 // `<view-mode-buttons>` — icon-button group for the toolbar's
 // View: chooser. One button per mode (`table` / `list` / `grouped`
-// / `kanban` / `graph`), each carrying an inline SVG glyph that
-// previews the layout it switches to. The active button picks up
-// an outline + accent recolor via the toolbar's CSS.
+// / `focus` / `kanban` / `graph`), each carrying an inline SVG glyph
+// that previews the layout it switches to. The active button picks
+// up an outline + accent recolor via the toolbar's CSS.
 //
 // Replaces an inline `for (const mode of ...)` loop in render.js
 // that interpolated the icon SVGs as raw strings, plus the
@@ -14,7 +14,7 @@
 // per click delegation chain.
 //
 // Properties:
-//   * `mode` — current `state.viewMode` (`table` | `list` | `grouped` | `kanban` | `graph`).
+//   * `mode` — current `state.viewMode` (`table` | `list` | `grouped` | `focus` | `kanban` | `graph`).
 //
 // Events (bubble + composed:true):
 //   * `view-mode-change(detail.mode)` — fired on click. The host
@@ -60,6 +60,18 @@ const VIEW_ICONS = {
     <rect x="11.6" y="5.6" width="2" height="1.4" rx=".2"/>
     <rect x="11.6" y="7.6" width="2" height="1.4" rx=".2"/>
   </svg>`,
+  // focus   — large primary card on the left + three stacked
+  // small cards on the right, mirroring the focus-view layout
+  // (one finding centered, a queue of upcoming findings beside it).
+  focus: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+    <rect x="1.5" y="2.5" width="8.5" height="11" rx=".6" fill="none" stroke="currentColor" stroke-width="1"/>
+    <rect x="3" y="4.4" width="5.5" height="1"/>
+    <rect x="3" y="6.4" width="5.5" height="1"/>
+    <rect x="3" y="8.4" width="3.5" height="1"/>
+    <rect x="11.2" y="2.5" width="3.3" height="2.5" rx=".4" fill="currentColor" opacity=".55"/>
+    <rect x="11.2" y="5.7" width="3.3" height="2.5" rx=".4" fill="currentColor" opacity=".35"/>
+    <rect x="11.2" y="8.9" width="3.3" height="2.5" rx=".4" fill="currentColor" opacity=".22"/>
+  </svg>`,
   // graph   — three nodes connected by edges
   graph: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
     <line x1="4.5" y1="4.5" x2="11.5" y2="6.5"/>
@@ -75,11 +87,12 @@ const VIEW_TITLES = {
   table:   'Table view (compact rows, click a row to expand)',
   list:    'List view (flat, one card per finding)',
   grouped: 'List view, grouped by file',
+  focus:   'Focus view (one finding centered + a queue of next findings)',
   kanban:  'Kanban board, columns grouped by triage status',
   graph:   'Graph view (canvas with imports / exports)',
 }
 
-const MODES = ['table', 'list', 'grouped', 'kanban', 'graph']
+const MODES = ['table', 'list', 'grouped', 'focus', 'kanban', 'graph']
 
 class ViewModeButtons extends LitElement {
   static properties = {
