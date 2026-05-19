@@ -529,11 +529,11 @@
    is itself translucent — alpha-stacking that against an alpha
    surface produced a muddy mid-toned wash, the bug the user
    pointed out) gives a clean opaque tint that reads as the
-   intended mark hue but at a third of its weight. */
-:host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 32%, var(--bg)); }
-:host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 32%, var(--bg)); }
-:host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 32%, var(--bg)); }
-:host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 32%, var(--bg)); }
+   intended mark hue but at a fraction of its weight. */
+:host([context='focus'].mark-red) .card   { background: color-mix(in srgb, var(--mark-red-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-blue) .card  { background: color-mix(in srgb, var(--mark-blue-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-green) .card { background: color-mix(in srgb, var(--mark-green-bg) 15%, var(--bg)); }
+:host([context='focus'].mark-gray) .card  { background: color-mix(in srgb, var(--mark-gray-bg) 15%, var(--bg)); }
 
 /* Comment + fix-link blocks in the tab body. Quote-style notes
    below the description / recommendation / confidence reason when
