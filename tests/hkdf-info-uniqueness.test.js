@@ -24,26 +24,12 @@
 // the case where the constants are imported from a shared module
 // that changes one value. Both layers together pin both vectors.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Buffer } from 'node:buffer'
-
-// Polyfill localStorage for the client modules' import graph.
-if (globalThis.localStorage === undefined) {
-  globalThis.localStorage = (() => {
-    const m = new Map()
-    return {
-      getItem: (k) => (m.has(k) ? m.get(k) : null),
-      setItem: (k, v) => { m.set(k, String(v)) },
-      removeItem: (k) => { m.delete(k) },
-      clear: () => { m.clear() },
-      get length() { return m.size },
-      key: (i) => [...m.keys()][i] ?? null,
-    }
-  })()
-}
 
 const { deriveSessionKey, deriveSigningKeypair } = await import('../client/sync-crypto.ts')
 const { deriveObjstoreKeys } = await import('../client/objstore-content-crypto.ts')

@@ -6,6 +6,7 @@
 // process — the server only ever sees ciphertext + opaque HMAC
 // resource tags.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { spawn } from 'node:child_process'

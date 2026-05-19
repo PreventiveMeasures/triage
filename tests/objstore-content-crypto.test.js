@@ -4,6 +4,7 @@
 // The server-driven path is exercised separately in
 // `tests/client-objstore.test.js`.
 
+import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
