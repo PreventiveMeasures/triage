@@ -29,9 +29,10 @@
     view-transition-name: report-view;
 
     /* Inner views that own their own scroll (bundle terminal,
-       code viewer, packages slide, kanban board) need #report
-       itself to track #main-content's viewport height — otherwise
-       the flex chain that lands at `.output` / `.kanban-board`
+       code viewer, packages slide, kanban board, bundles/packages
+       details panels) need #report itself to track #main-content's
+       viewport height — otherwise the flex chain that lands at
+       `.output` / `.kanban-board` / `.bundles-details-body`
        (overflow: auto) has no bounded parent, that pane grows to
        its content size instead of its allotted space, and the
        wheel scrolls the whole page rather than just the inner
@@ -39,7 +40,11 @@
        are mounted; the findings-list overflow concern that
        motivated `flex-shrink: 0` doesn't apply to those views
        (their inner pane is fixed-height + internally scrollable). */
-    &:has(.bundles-slide-view, .packages-slide-view, .findings-content.with-kanban) { flex-shrink: 1; }
+    &:has(
+      .bundles-slide-view, .packages-slide-view,
+      .findings-content.with-kanban,
+      .bundles-view.with-details, .packages-view.with-details
+    ) { flex-shrink: 1; }
   }
 
   /* Was `& > header.page-head` (direct child of #report) before
