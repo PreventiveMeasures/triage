@@ -8,16 +8,13 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
 import { createObjstoreSession, deriveObjstoreKeys } from '../client/objstore.ts'
 import { deleteFile, listFiles, readFileBytes, saveFileBytes } from '../client/storage.js'
 import { triageSync } from '../client/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
+import { bootServer } from './_helpers.js'
 
 const {
   closeWorkspace, deleteBundleFromRemote, deleteFromRemote,
@@ -31,40 +28,6 @@ async function createWorkspaceWithReports(name, reports) {
   const ws = await createWorkspace(name)
   for (const r of reports) await setReportWorkspace(r, ws.id)
   return ws
-}
-
-function awaitListeningPort(proc, timeoutMs = 5_000) {
-  return new Promise((resolve, reject) => {
-    let buf = ''
-    let stderrBuf = ''
-    let settled = false
-    function onData(d) {
-      buf += String(d)
-      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
-      if (m) finish(null, Number(m[1]))
-    }
-    function onErrData(d) { stderrBuf += String(d) }
-    function onExit(code, signal) {
-      const detail = stderrBuf.slice(0, 400).trim() || `exit ${code}, signal ${signal}`
-      finish(new Error(`server exited during boot: ${detail}`))
-    }
-    function onError(err) { finish(err) }
-    function finish(err, port) {
-      if (settled) return
-      settled = true
-      clearTimeout(t)
-      proc.stdout.removeListener('data', onData)
-      proc.stderr.removeListener('data', onErrData)
-      proc.removeListener('exit', onExit)
-      proc.removeListener('error', onError)
-      if (err) reject(err); else resolve(port)
-    }
-    const t = setTimeout(() => finish(new Error('server boot timeout')), timeoutMs)
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', onErrData)
-    proc.once('exit', onExit)
-    proc.once('error', onError)
-  })
 }
 
 // Wait until `predicate()` returns truthy, polling on each
@@ -90,34 +53,18 @@ function awaitPresence(predicate, label, timeoutMs = 5_000) {
 }
 
 describe('ui/view/objstore-presence', () => {
-  let httpOrigin, serverDir, serverProc, serverUrl
+  let httpOrigin, server, serverUrl
 
   before(async () => {
-    serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-presence-'))
-    serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: {
-        ...process.env, PORT: '0', HOST: '127.0.0.1',
-        DB_PATH: path.join(serverDir, 'data.db'),
-        OBJSTORE_DIR: path.join(serverDir, 'objstore'),
-        // Point at a non-existent file inside the test tmp dir so a
-        // developer's local `server/config.json` can't gate first-
-        // action with a password.
-        CONFIG_PATH: path.join(serverDir, 'config.json'),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const port = await awaitListeningPort(serverProc)
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
-    httpOrigin = `http://127.0.0.1:${port}`
+    server = await bootServer()
+    serverUrl = server.serverUrl
+    httpOrigin = server.httpOrigin
     triageSync.setServerUrl(serverUrl)
   })
 
   after(async () => {
     triageSync.setServerUrl('')
-    if (!serverProc) return
-    serverProc.kill('SIGTERM')
-    await new Promise((resolve) => { serverProc.once('exit', resolve) })
-    rmSync(serverDir, { recursive: true, force: true })
+    if (server) await server.teardown()
   })
 
   // Helper — open a parallel encrypted objstore session for the

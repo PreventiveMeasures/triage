@@ -9,47 +9,11 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 
 import { createObjstoreSession, deriveObjstoreKeys } from '../client/objstore.ts'
-
-function awaitListeningPort(proc, timeoutMs = 5_000) {
-  return new Promise((resolve, reject) => {
-    let buf = ''
-    let stderrBuf = ''
-    let settled = false
-    function onData(d) {
-      buf += String(d)
-      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
-      if (m) finish(null, Number(m[1]))
-    }
-    function onErrData(d) { stderrBuf += String(d) }
-    function onExit(code, signal) {
-      const detail = stderrBuf.slice(0, 400).trim() || `exit ${code}, signal ${signal}`
-      finish(new Error(`server exited during boot: ${detail}`))
-    }
-    function onError(err) { finish(err) }
-    function finish(err, port) {
-      if (settled) return
-      settled = true
-      clearTimeout(t)
-      proc.stdout.removeListener('data', onData)
-      proc.stderr.removeListener('data', onErrData)
-      proc.removeListener('exit', onExit)
-      proc.removeListener('error', onError)
-      if (err) reject(err); else resolve(port)
-    }
-    const t = setTimeout(() => finish(new Error('server boot timeout')), timeoutMs)
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', onErrData)
-    proc.once('exit', onExit)
-    proc.once('error', onError)
-  })
-}
+import { bootServer } from './_helpers.js'
 
 // Create a fresh workspace's full key bundle. Generates 32 random
 // bytes + a random UUID, then walks `deriveObjstoreKeys` to derive
@@ -76,32 +40,17 @@ function awaitEvent(label, subscribe, timeoutMs = 5_000) {
 }
 
 describe('client/objstore session', () => {
-  let httpOrigin, serverDir, serverProc, serverUrl
+  let httpOrigin, server, serverDir, serverUrl
 
   before(async () => {
-    serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-client-objstore-'))
-    serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: {
-        ...process.env, PORT: '0', HOST: '127.0.0.1',
-        DB_PATH: path.join(serverDir, 'data.db'),
-        OBJSTORE_DIR: path.join(serverDir, 'objstore'),
-        // Point at a file inside the per-test tmp dir that doesn't
-        // exist, so a developer's local `server/config.json` (which
-        // may set a password and gate first-action) can't leak in.
-        CONFIG_PATH: path.join(serverDir, 'config.json'),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const port = await awaitListeningPort(serverProc)
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
-    httpOrigin = `http://127.0.0.1:${port}`
+    server = await bootServer()
+    serverDir = server.serverDir
+    serverUrl = server.serverUrl
+    httpOrigin = server.httpOrigin
   })
 
   after(async () => {
-    if (!serverProc) return
-    serverProc.kill('SIGTERM')
-    await new Promise((resolve) => { serverProc.once('exit', resolve) })
-    rmSync(serverDir, { recursive: true, force: true })
+    if (server) await server.teardown()
   })
 
   it('put → list → fetch → delete round-trip', async () => {

@@ -11,12 +11,11 @@
 
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 import { encodeUtf8 } from '../common/utf8.js'
+import { bootServer } from './_helpers.js'
 
 // Native WebSocket is the same constructor the browser uses, so the
 // tests exercise the exact API surface the production client lives
@@ -28,47 +27,6 @@ const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 
 function b64url(bytes) { return Buffer.from(bytes).toString('base64url') }
-
-// Boot a spawned `server/index.ts` and resolve the OS-assigned port
-// from the listening banner. Accumulates stdout across `data` chunks
-// (child_process can split lines arbitrarily, so regex-per-chunk
-// misses a fragmented banner and times out). Removes the data
-// listeners on resolve/reject so no leaks survive the boot phase.
-function awaitListeningPort(proc, timeoutMs = 5_000) {
-  return new Promise((resolve, reject) => {
-    let buf = ''
-    let stderrBuf = ''
-    let settled = false
-    function onData(d) {
-      buf += String(d)
-      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
-      if (m) finish(null, Number(m[1]))
-    }
-    function onErrData(d) { stderrBuf += String(d) }
-    function onExit(code, signal) {
-      // Child died before printing the listening banner — surface the
-      // real reason (stderr first 400 chars) instead of timing out.
-      const detail = stderrBuf.slice(0, 400).trim() || `exit ${code}, signal ${signal}`
-      finish(new Error(`server exited during boot: ${detail}`))
-    }
-    function onError(err) { finish(err) }
-    function finish(err, port) {
-      if (settled) return
-      settled = true
-      clearTimeout(t)
-      proc.stdout.removeListener('data', onData)
-      proc.stderr.removeListener('data', onErrData)
-      proc.removeListener('exit', onExit)
-      proc.removeListener('error', onError)
-      if (err) reject(err); else resolve(port)
-    }
-    const t = setTimeout(() => finish(new Error('server boot timeout')), timeoutMs)
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', onErrData)
-    proc.once('exit', onExit)
-    proc.once('error', onError)
-  })
-}
 
 async function makeKp() {
   const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
@@ -182,34 +140,15 @@ async function subscribe(c, sk, tag, from = null) {
 }
 
 describe('triage-sync server', () => {
-  let serverDir, serverProc, serverUrl
+  let server, serverUrl
 
   before(async () => {
-    serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-'))
-    // `PORT: '0'` → OS-assigned ephemeral. Avoids collisions when
-    // `node --test` runs this file in parallel with others that spawn
-    // their own server (e.g. tests/sync-server-objstore.test.js).
-    // The actual port arrives via stdout in the listening-banner.
-    serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: {
-        ...process.env, PORT: '0', HOST: '127.0.0.1',
-        DB_PATH: path.join(serverDir, 'data.db'),
-        // Point at a non-existent file inside the test tmp dir so a
-        // developer's local `server/config.json` can't gate first-
-        // action with a password.
-        CONFIG_PATH: path.join(serverDir, 'config.json'),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const port = await awaitListeningPort(serverProc)
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
+    server = await bootServer()
+    serverUrl = server.serverUrl
   })
 
   after(async () => {
-    if (!serverProc) return
-    serverProc.kill('SIGTERM')
-    await new Promise((resolve) => { serverProc.once('exit', resolve) })
-    rmSync(serverDir, { recursive: true, force: true })
+    if (server) await server.teardown()
   })
 
   it('subscribe responds with workspace-subscribed + empty chain for a fresh tag', async () => {
@@ -1085,15 +1024,9 @@ describe('triage-sync server CLI', () => {
 // doesn't take down the suite-wide instance the other tests share.
 describe('triage-sync server: graceful shutdown', () => {
   it('sends close code 1001 (going away) to live clients on SIGTERM', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-'))
-    const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const { proc, serverUrl, teardown } = await bootServer()
     try {
-      const port = await awaitListeningPort(proc)
-      const url = `ws://127.0.0.1:${port}/api/sync`
-      const ws = new WebSocket(url)
+      const ws = new WebSocket(serverUrl)
       await new Promise((resolve, reject) => {
         ws.addEventListener('open', resolve, { once: true })
         ws.addEventListener('error', (e) => reject(e.error ?? new Error('ws error')), { once: true })
@@ -1112,10 +1045,7 @@ describe('triage-sync server: graceful shutdown', () => {
       // as a code mismatch here.
       assert.equal(closeEvent.code, 1001, 'graceful shutdown emits 1001')
       await new Promise((resolve) => { proc.once('exit', resolve) })
-    } finally {
-      if (proc.exitCode == null) proc.kill('SIGKILL')
-      rmSync(dir, { recursive: true, force: true })
-    }
+    } finally { await teardown() }
   })
 
   it('force-terminates an unresponsive client (audit round-11 F4)', async () => {
@@ -1129,14 +1059,9 @@ describe('triage-sync server: graceful shutdown', () => {
     // pong). The server must still exit within a small grace.
     const { default: net } = await import('node:net')
     const { createHash } = await import('node:crypto')
-    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-stuck-'))
-    const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const { proc, port, teardown } = await bootServer()
     let tcp
     try {
-      const port = await awaitListeningPort(proc)
       // Manual WebSocket handshake — `ws`-library client sockets
       // auto-respond to close frames, which is exactly what we need
       // to NOT do here.
@@ -1181,8 +1106,7 @@ describe('triage-sync server: graceful shutdown', () => {
       assert.ok(elapsed >= 800, `expected shutdown ≥ 800 ms (grace fired); got ${elapsed} ms`)
     } finally {
       try { tcp?.destroy() } catch {}
-      if (proc.exitCode == null) proc.kill('SIGKILL')
-      rmSync(dir, { recursive: true, force: true })
+      await teardown()
     }
   })
 
@@ -1193,14 +1117,9 @@ describe('triage-sync server: graceful shutdown', () => {
     // shutdown's `closeAllConnections()` fallback inside the
     // terminate timer kicks in within the same 1 s grace.
     const { default: net } = await import('node:net')
-    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-shutdown-keepalive-'))
-    const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json') },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const { proc, port, teardown } = await bootServer()
     let tcp
     try {
-      const port = await awaitListeningPort(proc)
       tcp = net.connect({ host: '127.0.0.1', port })
       tcp.on('error', () => {})
       tcp.on('data', () => {})  // consume + ignore server response
@@ -1223,8 +1142,7 @@ describe('triage-sync server: graceful shutdown', () => {
       assert.ok(elapsed < 5_000, `expected shutdown < 5 s with HTTP fallback; got ${elapsed} ms`)
     } finally {
       try { tcp?.destroy() } catch {}
-      if (proc.exitCode == null) proc.kill('SIGKILL')
-      rmSync(dir, { recursive: true, force: true })
+      await teardown()
     }
   })
 })
@@ -1242,11 +1160,7 @@ describe('triage-sync server: graceful shutdown', () => {
 describe('triage-sync server: same-origin gate', () => {
   async function withSpawnedServer(env, body) {
     const { default: net } = await import('node:net')
-    const dir = mkdtempSync(path.join(tmpdir(), 'deepview-origin-'))
-    const proc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: '0', DB_PATH: path.join(dir, 'data.db'), CONFIG_PATH: path.join(dir, 'config.json'), ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const { port: serverPort, teardown } = await bootServer({ env })
     // Raw-TCP upgrade so we can set Origin / X-Forwarded-* freely
     // (undici's `fetch` refuses `Upgrade: websocket`; the `ws`
     // client only sets Origin from the constructor in some Node
@@ -1279,13 +1193,8 @@ describe('triage-sync server: same-origin gate', () => {
       })
     }
     try {
-      const port = await awaitListeningPort(proc)
-      await body(port, rawUpgrade)
-    } finally {
-      proc.kill('SIGTERM')
-      await new Promise((resolve) => { proc.once('exit', resolve) })
-      rmSync(dir, { recursive: true, force: true })
-    }
+      await body(serverPort, rawUpgrade)
+    } finally { await teardown() }
   }
 
   it('HOST=127.0.0.1 (loopback): trusts X-Forwarded-* by default, gate accepts proxy-forwarded match', async () => {

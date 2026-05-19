@@ -21,7 +21,6 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -34,6 +33,7 @@ import { DatabaseSync } from 'node:sqlite'
 // `hasHexBuiltin` at first import. Same pattern as sync-client.test.js.
 await import('./_polyfills.js')
 
+const { bootServer } = await import('./_helpers.js')
 const { triageSync } = await import('../client/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
@@ -74,48 +74,6 @@ function settledAfterAck(workspaceId) {
   return info != null && info.baseRevision != null && info.pending == null && !info.encrypting
 }
 
-// Boot the server with an OS-assigned port by default (PORT: '0'
-// avoids collisions across parallel test files) and return both
-// the process and the discovered port. Same shape as the helper
-// in tests/objstore-client-races.test.js — keeps both spawned-
-// server suites consistent.
-//
-// `preferredPort` is for restart-style tests that need the new
-// process bound to the same address so the client's `serverUrl`
-// stays valid; pass `null` (default) to let the OS pick.
-async function bootServer(serverDir, preferredPort = null) {
-  const proc = spawn(process.execPath, ['server/index.ts'], {
-    env: {
-      ...process.env,
-      PORT: preferredPort == null ? '0' : String(preferredPort),
-      HOST: '127.0.0.1',
-      DB_PATH: path.join(serverDir, 'data.db'),
-      // Point at a non-existent file inside the test tmp dir so a
-      // developer's local `server/config.json` can't gate first-
-      // action with a password.
-      CONFIG_PATH: path.join(serverDir, 'config.json'),
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  const port = await new Promise((resolve, reject) => {
-    let buf = ''
-    const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-    function onData(d) {
-      buf += String(d)
-      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
-      if (m) { clearTimeout(t); proc.stdout.removeListener('data', onData); resolve(Number(m[1])) }
-    }
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', () => {})
-  })
-  return { proc, port }
-}
-
-async function killServer(proc) {
-  proc.kill('SIGTERM')
-  await new Promise((resolve) => { proc.once('exit', resolve) })
-}
-
 // Count chain revisions for a given workspace_tag directly from
 // the server's SQLite file. Avoids the round-trip cost (and key
 // material) of spinning up a raw WS subscriber just to read a
@@ -132,20 +90,22 @@ function countChainRevisions(serverDir, workspaceTag) {
 }
 
 describe('triage-sync client races', () => {
-  let port, serverDir, serverProc, serverUrl
+  // Caller-owned tmp dir so restart-style tests can kill-and-reboot
+  // the server against the same DB. `bootServer({ dir })` leaves the
+  // dir alone on teardown; we mkdtemp + rmSync here.
+  let port, server, serverDir, serverUrl
 
   before(async () => {
     serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-client-races-'))
-    const booted = await bootServer(serverDir)
-    serverProc = booted.proc
-    port = booted.port
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
+    server = await bootServer({ dir: serverDir })
+    port = server.port
+    serverUrl = server.serverUrl
   })
 
   after(async () => {
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    if (serverProc) await killServer(serverProc)
+    if (server) await server.teardown()
     rmSync(serverDir, { recursive: true, force: true })
   })
 
@@ -272,10 +232,10 @@ describe('triage-sync client races', () => {
       const baseAfterFirstSave = triageSync.sessionInfo(wsId).baseRevision
       assert.ok(baseAfterFirstSave, 'baseline base set')
       // Kill + restart server with the same DB path.
-      await killServer(serverProc)
+      await server.teardown()
       // Restart on the SAME port so the client's `serverUrl` stays
       // valid — reconnect should land on the same address.
-      serverProc = (await bootServer(serverDir, port)).proc
+      server = await bootServer({ dir: serverDir, env: { PORT: String(port) } })
       // Client should reconnect and re-subscribe. Wait for online.
       await waitFor(statusOnline, 'reconnected after restart', 10_000)
       // The session's base should be EITHER the pre-restart base
