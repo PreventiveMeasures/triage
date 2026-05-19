@@ -190,7 +190,7 @@ function repoChipTemplate(repoInputUseful, knownRepo) {
     return nothing
   }
   if (repoInputUseful) {
-    return html`<repo-chip url=${state.repoUrl} editable ?editing=${state.repoEditing}></repo-chip>`
+    return html`<repo-chip url=${state.repoUrl} editable ?editing=${state.repoEditing} ?empty=${!state.repoUrl}></repo-chip>`
   }
   if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
   return nothing
