@@ -13,6 +13,7 @@ import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
+import { openPasskeyUnlockDialog } from './passkey-unlock-dialog.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).
@@ -276,11 +277,8 @@ export async function switchToFile(name, content) {
       if (isStaleLoad(gen)) return
       // A "vault locked" failure is actionable: prompt the user to
       // unlock and retry on success. Mirrors the boot-time prompt
-      // for users who dismissed it earlier in the session. Imported
-      // lazily so the storage module's import tree doesn't pull in
-      // a Lit-using dialog at boot time.
+      // for users who dismissed it earlier in the session.
       if (err && err.message?.includes('vault locked')) {
-        const { openPasskeyUnlockDialog } = await import('./passkey-unlock-dialog.js')
         const ok = await openPasskeyUnlockDialog()
         if (ok && !isStaleLoad(gen)) {
           await switchToFile(name)

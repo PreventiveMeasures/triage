@@ -6,6 +6,7 @@ import { fileList, sidebar } from './dom.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { exportWorkspace } from './workspace-export.js'
+import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openNewWorkspaceDialog } from './new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './leave-workspace-dialog.js'
 import { openWorkspaceShareLinkDialog } from './workspace-share-link-dialog.js'
@@ -560,7 +561,6 @@ sidebar.addEventListener('click', async (e) => {
       // encryption opt-in before the workspace's private key lands
       // on disk. Same idempotent flag as the drop path; the prompt
       // only fires once.
-      const { maybePromptFirstUse } = await import('./first-import-prompt.js')
       await maybePromptFirstUse()
       await createWorkspace(name)
       renderSidebar()
