@@ -23,7 +23,11 @@ import { maybePromptFirstImport } from './first-import-prompt.js'
 // deduplicated dump.
 const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // localStorage key for the last-viewed file — restored on page load so
-// the user picks back up where they left off.
+// the user picks back up where they left off. The stored value is the
+// OPFS filename for a single-file view; prefixed with `ws:` for a
+// workspace view; or prefixed with `b:` followed by the SRI-shaped
+// integrity for a bundle view. Mutually exclusive — one current
+// selection at a time, last-clicked wins.
 export const LAST_FILE_KEY = 'deepview.lastFile'
 
 // Generation token shared by every async load path
@@ -169,6 +173,7 @@ export async function addFiles(files) {
     state.bundleCodeSearchMode = 'files'
     state.shownTriage = null
     graph2.showAll = true
+    setSecureItem(LAST_FILE_KEY, `b:${lastBundleIntegrity}`).catch(() => {})
     render()
     await renderSidebar()
     openBundle(lastBundleIntegrity)
