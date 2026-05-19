@@ -1,0 +1,12 @@
+*~
+node_modules
+package-lock.json
+out
+coverage
+doc
+playground
+*.tgz
+.cache
+.claude/worktrees/
+server/data/
+server/config.json

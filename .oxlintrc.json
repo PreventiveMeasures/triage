@@ -1,0 +1,119 @@
+{
+  "env": {
+    "node": true,
+    "browser": true
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error"
+  },
+  "plugins": [
+    "import",
+    "node",
+    "promise",
+    "unicorn"
+  ],
+  "rules": {
+    "no-await-in-loop": "off",
+    "no-warning-comments": "off",
+    "no-inline-comments": "off",
+    "no-underscore-dangle": "off",
+    "curly": [
+      "error",
+      "multi-line"
+    ],
+    "eqeqeq": [
+      "error",
+      "smart"
+    ],
+    "sort-imports": [
+      "error",
+      {
+        "ignoreDeclarationSort": true
+      }
+    ],
+    "max-lines": [
+      "error",
+      {
+        "max": 300,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "max-lines-per-function": [
+      "error",
+      {
+        "max": 80,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "no-undef": "error",
+    "node/handle-callback-err": "error",
+    "node/no-path-concat": "error",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-anonymous-default-export": "error",
+    "unicorn/no-array-callback-reference": "off",
+    "unicorn/no-useless-spread": "off",
+    "unicorn/no-useless-undefined": "off",
+    "unicorn/prefer-math-trunc": "off",
+    "unicorn/prefer-top-level-await": "off",
+    "import/max-dependencies": "off",
+    "import/no-unassigned-import": "off"
+  },
+  "overrides": [
+    {
+      "files": [
+        "tests/**"
+      ],
+      "rules": {
+        "max-lines-per-function": "off",
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": [
+        "client/triage-sync.js",
+        "client/triage-sync.ts",
+        "client/sync-crypto.js",
+        "client/sync-crypto.ts",
+        "client/objstore.ts",
+        "client/socket-transport.ts",
+        "client/storage.js",
+        "client/passkey-vault.js",
+        "client/passkey-crypto.ts",
+        "client/workspaces.js",
+        "server/index.ts",
+        "server/objstore/store.ts",
+        "server/objstore/store-neon.ts"
+      ],
+      "rules": {
+        "max-lines": "off",
+        "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
+        "ui/**/*.js"
+      ],
+      "rules": {
+        "max-depth": "off",
+        "max-lines-per-function": "off",
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": [
+        "ui/logs.js"
+      ],
+      "rules": {
+        "no-await-in-loop": "off",
+        "no-warning-comments": "off",
+        "curly": "off",
+        "eqeqeq": "off"
+      }
+    }
+  ]
+}
