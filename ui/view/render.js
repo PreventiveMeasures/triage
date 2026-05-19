@@ -16,8 +16,8 @@ import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/uti
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph/state.js'
 import { buildGraph } from './graph/data.js'
-import { renderFocusOverlay, renderGraph2Layout, renderSelectionCard, renderTopPkgsBlock } from './graph/render.js'
-import { attachGraph2Interaction } from './graph/canvas.js'
+import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './graph/render.js'
+import { attachGraphLayout } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
@@ -1498,20 +1498,15 @@ function renderImpl() {
             // so the toggle would have nothing to filter against).
             const hideAllFiles = graph.edges.length === 0
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
-            litRender(renderGraph2Layout(graph, { hideAllFiles, triageCounts }), graphSlot)
-            // `<graph-layout>` populates its shadow DOM on the
-            // first reactive update (one microtask after the host
-            // is connected); refresh + canvas attach need that
-            // shadow tree to exist, so wait for updateComplete.
-            // Microtasks drain before any user input fires, so the
-            // interactive state is consistent by the time a click
-            // could land.
-            graphSlot.querySelector('graph-layout').updateComplete.then(() => {
-              refreshBundleGraphSidebar()
-              refreshBundleGraphTopPkgs()
-              attachGraph2Interaction(graphSlot, graph, refreshBundleGraphSidebar)
-              return null
-            }).catch(() => {})
+            // First open of the graph tab triggers the dynamic
+            // import of `ui/graph.js` (LitElement + ~37 KB shadow
+            // CSS + canvas.js); subsequent opens are a no-op
+            // module-cache hit. attachGraphLayout owns the
+            // post-load sequence: render the host, await its first
+            // shadow update, fire the refresh helpers + wire the
+            // canvas interaction.
+            attachGraphLayout(graphSlot, graph, { hideAllFiles, triageCounts },
+              refreshBundleGraphSidebar, refreshBundleGraphTopPkgs)
           }
         }
       }
@@ -1914,23 +1909,16 @@ function renderImpl() {
         mode=${state.viewMode}
         modes="table,list,grouped,focus,kanban,graph"
       ></view-mode-buttons>`
-      litRender(renderGraph2Layout(g2DataForBody.graph, { extraTopRow: viewModeRow }), graphSlot)
-      // Populate the right-panel selection slot + the top-packages
-      // block + the canvas's drill-in overlay slot via the same
-      // refresh helpers the canvas's click handlers use later.
-      // Slots are emitted empty by renderGraph2Layout — each runs
-      // its own `litRender` so subsequent clicks diff against a
-      // single Lit cache per slot, instead of the parent layout's
-      // cache + the per-slot cache stepping on each other.
-      // Wait for `<graph-layout>`'s first reactive update so its
-      // shadow tree (canvas, slots, controls) exists before the
-      // refresh helpers + canvas attach try to read it.
-      graphSlot.querySelector('graph-layout').updateComplete.then(() => {
-        refreshGraph2Sidebar()
-        refreshGraph2TopPkgs()
-        attachGraph2Interaction(report, g2DataForBody.graph, refreshGraph2Sidebar)
-        return null
-      }).catch(() => {})
+      // First open of the graph view-mode kicks the dynamic
+      // import of `ui/graph.js`; subsequent opens reuse the
+      // cached module. attachGraphLayout handles render → await
+      // updateComplete → fire refresh helpers → wire canvas.
+      // Slots are emitted empty by `<graph-layout>` — each refresh
+      // helper runs its own `litRender` into the appropriate
+      // shadow-DOM slot, so subsequent clicks diff against a
+      // single Lit cache per slot.
+      attachGraphLayout(graphSlot, g2DataForBody.graph, { extraTopRow: viewModeRow },
+        refreshGraph2Sidebar, refreshGraph2TopPkgs)
     }
   }
 
