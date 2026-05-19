@@ -17,10 +17,14 @@ const THEME_COLOR_LIGHT = '#f6f6fa'
 // not over the WCO title-bar strip, whose background is driven by
 // `theme-color`. Left alone, the toolbar stays at full brightness while
 // the page dims, and the seam between them is jarring. While the dialog
-// is open, swap theme-color to an approximation of the scrim composite
-// so the strip blends in. Alpha matches Chrome's scrim by eye; if the
-// browser ever exposes the scrim to CSS we can drop this.
-const SCRIM_ALPHA = 0.4
+// is open, swap theme-color to a pre-darkened value that visually
+// matches the scrim composite over the base background. The
+// composite-vs-alpha approach is intentional: a single alpha doesn't
+// map the same way across light and dark base colors, and the scrim
+// itself isn't exposed to CSS or the page. If the browser ever exposes
+// it we can drop this.
+const THEME_COLOR_DARK_DIM = '#0a0a0a'
+const THEME_COLOR_LIGHT_DIM = '#646464'
 // Sun glyph reads as "switch to light"; moon reads as "switch to dark".
 // The glyph reflects what clicking would DO, not the current state —
 // matches the affordance pattern used by most editors.
@@ -30,20 +34,12 @@ const ICON_DARK = '☾'
 let currentLight = false
 let printDialogOpen = false
 
-function dimHex(hex, alpha) {
-  const k = 1 - alpha
-  const r = Math.round(parseInt(hex.slice(1, 3), 16) * k)
-  const g = Math.round(parseInt(hex.slice(3, 5), 16) * k)
-  const b = Math.round(parseInt(hex.slice(5, 7), 16) * k)
-  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')
-}
-
 function applyThemeColor(light) {
   currentLight = light
   const base = light ? THEME_COLOR_LIGHT : THEME_COLOR_DARK
-  const value = printDialogOpen ? dimHex(base, SCRIM_ALPHA) : base
+  const dim = light ? THEME_COLOR_LIGHT_DIM : THEME_COLOR_DARK_DIM
   const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.setAttribute('content', value)
+  if (meta) meta.setAttribute('content', printDialogOpen ? dim : base)
 }
 
 window.addEventListener('beforeprint', () => {
