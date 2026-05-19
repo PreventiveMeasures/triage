@@ -10,13 +10,29 @@
    "this node has issues" / "this is package X" regardless of the
    surrounding chrome's lightness. */
 
-.graph2-layout {
+/* Global box / margin / padding reset — mirrors `styles/theme.css:1`
+   which the rest of the page already gets. Shadow DOM doesn't
+   inherit cross-tree style rules, so without this reset the chips
+   inside the topbar (`.sev-chip`, `.triage-filter`, buttons, the
+   path-filter input) compute against `box-sizing: content-box` +
+   browser-default margins and visibly mis-size relative to their
+   light-DOM counterparts in the findings tab. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Custom-element host — owns the three-column grid AND the panel
+   chrome (border + radius + bg) that the layout originally carried.
+   Putting it on `:host` keeps the chrome edge on the outermost box
+   the parent sees, so the bundle / findings / standalone size +
+   shape overrides land on a single element instead of stacking
+   against the inner wrapper. `min-height: 0` so the host shrinks
+   below children's intrinsic sizes inside the parent flex column. */
+:host {
   display: grid;
   grid-template-columns: 1fr 300px;
   /* Topbar row sized `auto`; stage row takes the rest. The layout's
      height comes from the flex chain in the .with-graph wrapper
      (#main-content → #report → .findings-content.with-graph →
-     .graph2-layout), which fills the viewport's remaining space
+     graph-layout) so the host fills #report's remaining space
      below the page header. */
   grid-template-rows: auto 1fr;
   /* `right` spans both rows so the sidebar starts at the very
@@ -28,6 +44,7 @@
   grid-template-areas:
     'topbar right'
     'stage  right';
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
@@ -37,45 +54,23 @@
   font-size: 12px;
 }
 
-/* Findings view's graph view-mode — panel chrome matches `.toolbar`
-   (6px radius + glass shadow) so toggling between table/list/grouped
-   and graph view-modes re-renders without a visible chrome jump.
-   The topbar already owns its `--surface` background + `.6rem .75rem`
-   padding; what's left is the outer panel's radius and shadow.
+/* Inner wrapper — `display: contents` removes its own box from
+   layout so its three children (topbar / stage / right) become
+   direct grid children of `:host` and pick up the grid-area
+   assignments above. Keeping the wrapper in the template (vs.
+   emitting three siblings from `render()`) preserves the existing
+   structural class so any external selector targeting
+   `.graph2-layout` inside the shadow tree still matches. */
+.graph2-layout { display: contents; }
 
-   `background: transparent` is critical: `--surface` is rgba (≈0.78
-   alpha), so what's underneath shows through. With opaque
-   `--graph-canvas-bg` (#0c0c0c) behind it the topbar would tint
-   darker than the findings `.toolbar`'s see-through-to-page-bg look.
-   Dropping the layout's bg here lets the page bg show through the
-   topbar's alpha channel exactly the way findings does.
-
-   Flex chain: the wrapper is flex-column + flex: 1 (filling #report's
-   remaining space below the header), and .graph2-layout flex: 1
-   inside that takes whatever's left. `min-height: 0` on both is
-   required so the chain can shrink below the children's intrinsic
-   sizes; without it the inner grid would push out and break the
-   chain. */
-.findings-content.with-graph {
-  display: flex; flex-direction: column;
-  flex: 1; min-height: 0;
-}
-
-/* Transparent in layout — render() emits #findings-graph-slot as a
-   wrapper for the litRender of the graph layout, but it sits
-   between .findings-content (flex column) and .graph2-layout
-   (flex: 1) and breaks the flex chain. `display: contents` drops
-   the slot's own box so .graph2-layout becomes a layout-child of
-   .findings-content directly, picking up flex: 1 cleanly. */
-.findings-content.with-graph #findings-graph-slot { display: contents; }
-
-.findings-content.with-graph .graph2-layout {
-  flex: 1; min-height: 0;
-  border-radius: 6px;
-  box-shadow: var(--shadow-glass);
-  background: transparent;
-  margin-bottom: 0;
-}
+/* Findings-view chrome (6px radius + glass shadow + transparent
+   panel bg) lives in the LIGHT-DOM cascade (report.css) targeting
+   `.findings-content.with-graph graph-layout` — selectors don't
+   cross the shadow boundary, so the override has to be applied to
+   the host from outside. Same for the flex-chain rules on
+   `.findings-content.with-graph` itself + the
+   `display: contents` on `#findings-graph-slot` (both moved to
+   report.css so the chain survives the move into shadow DOM). */
 
 /* ── Top bar ───────────────────────────────────────────────── */
 /* Padding / gap / font-size all match the findings `.toolbar`
@@ -598,8 +593,12 @@
 /* Light-theme override for medium chips in v2. Without this, the
    medium chip's default `color: #000` reads as black-on-darkamber
    once --medium darkens for light theme, hard to read. */
-body.theme-light .graph2-right .tree-count-chip.medium,
-body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
+/* `:host-context()` walks up across the shadow boundary so the
+   `body.theme-light` ancestor in light DOM still gates the rule
+   from inside our shadow stylesheet. The selector matches the
+   host element when any ancestor satisfies the argument. */
+:host-context(body.theme-light) .graph2-right .tree-count-chip.medium,
+:host-context(body.theme-light) .g2-tooltip .tree-count-chip.medium { color: #fff; }
 
 /* ── Selection card ─────────────────────────────────────────── */
 .g2-selection-card {
@@ -943,5 +942,10 @@ body.theme-light .g2-tooltip .tree-count-chip.medium { color: #fff; }
 /* Print: the graph is interactive-only. Hide it on paper so the
    print path doesn't dump a giant black box. */
 @media print {
-  .graph2-layout { display: none !important; }
+  /* Host-level hide so the print path doesn't reserve layout space
+     for the empty shell. `.graph2-layout` lives inside the shadow
+     DOM so the previous `.graph2-layout { display: none }` would
+     have been unreachable from the print media-query in the
+     shadow CSS anyway. */
+  :host { display: none !important; }
 }

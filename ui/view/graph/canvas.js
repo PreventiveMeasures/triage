@@ -86,10 +86,18 @@ function alphaHex(a) {
 // selection card after a click (it already owns the data context
 // the card needs).
 export function attachGraph2Interaction(container, graph, refreshSidebar) {
-  const canvas = container.querySelector('#g2-canvas')
-  const tooltip = container.querySelector('#g2-tooltip')
-  const stage = container.querySelector('.graph2-stage')
-  const zoomEl = container.querySelector('#g2-zoom-pct')
+  // Pierce the `<graph-layout>` shadow root — the canvas + corner
+  // overlays + zoom controls all live inside it. Callers pass the
+  // outer slot (`#findings-graph-slot` / `#bundle-graph-slot` /
+  // the `#report` host) without knowing whether the layout is
+  // shadowed; finding it here keeps the call site simple.
+  const host = container.querySelector('graph-layout')
+  const root = host?.shadowRoot
+  if (!root) return
+  const canvas = root.querySelector('#g2-canvas')
+  const tooltip = root.querySelector('#g2-tooltip')
+  const stage = root.querySelector('.graph2-stage')
+  const zoomEl = root.querySelector('#g2-zoom-pct')
 
   if (!canvas) return
 
@@ -1028,9 +1036,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     viewport.ty = cy - wy * viewport.k
     requestDraw()
   }
-  const zIn = container.querySelector('#g2-zoom-in')
-  const zOut = container.querySelector('#g2-zoom-out')
-  const zFit = container.querySelector('#g2-zoom-fit')
+  const zIn = root.querySelector('#g2-zoom-in')
+  const zOut = root.querySelector('#g2-zoom-out')
+  const zFit = root.querySelector('#g2-zoom-fit')
   zIn?.addEventListener('click', () => zoomTo(viewport.k * 1.4))
   zOut?.addEventListener('click', () => zoomTo(viewport.k / 1.4))
   zFit?.addEventListener('click', () => { fitToView(); requestDraw() })

@@ -14,6 +14,12 @@
   body { background: #fff; color: #000; line-height: 1.35; display: block; }
 
   .toolbar, .stats { display: none !important; }
+  /* Graph view is interactive-only; hide the whole host so the
+     print path doesn't dump a giant black box. Mirror lives in
+     graph/graph2.css as `@media print { :host { display: none } }`
+     but having the rule on the light-DOM host too is a no-cost
+     belt-and-suspenders against shadow-CSS @media-print edge cases. */
+  graph-layout { display: none !important; }
   #drop-zone, #sidebar { display: none !important; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }

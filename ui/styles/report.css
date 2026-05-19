@@ -425,7 +425,7 @@
   flex: 1;
   min-height: 0;
 }
-.bundles-slide-body > .bundle-graph-slot > .graph2-layout {
+.bundles-slide-body > .bundle-graph-slot > graph-layout {
   flex: 1;
   min-height: 0;
   border: none;
@@ -1127,7 +1127,7 @@
     min-height: 0;
     width: 100%;
   }
-  & .bundle-graph-slot > .graph2-layout {
+  & .bundle-graph-slot > graph-layout {
     flex: 1;
     min-height: 0;
     border: none;
@@ -1385,7 +1385,47 @@
    the standalone Graph tab. Drop the readability cap so the
    1fr stage + 300px sidebar grid can use the full viewport,
    matching how the Graph tab renders. */
-.findings-content.with-graph { max-width: none; }
+/* Findings-tab graph plumbing. All four rules used to share scope
+   with `.graph2-layout` inside `styles/graph2.css`, but the layout
+   moved into the `<graph-layout>` shadow DOM — selectors can't
+   cross the boundary, so the ancestor / host-targeting parts live
+   here in the light-DOM cascade. The remaining shadow-internal
+   rules (chrome, grid template) stay in `graph/graph2.css`.
+
+   `.findings-content.with-graph` itself: flex column so its
+   `graph-layout` child can flex-grow to fill the remaining
+   viewport height below the page header.
+
+   `#findings-graph-slot`: `display: contents` removes the slot's
+   own box from layout so `<graph-layout>` becomes a direct flex
+   child of `.findings-content`, picking up `flex: 1` cleanly
+   without a parent box that would break the flex chain.
+
+   `graph-layout` (the host): `flex: 1; min-height: 0` lets it
+   absorb the remaining height. `border-radius: 6px` +
+   `box-shadow: var(--shadow-glass)` + `background: transparent`
+   override the host defaults (8px, no shadow, opaque canvas bg)
+   so the findings-tab graph reads as a glass-panel slot matching
+   the toolbar's chrome instead of the standalone graph's heavier
+   card look. */
+.findings-content.with-graph {
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.findings-content.with-graph #findings-graph-slot {
+  display: contents;
+}
+.findings-content.with-graph graph-layout {
+  flex: 1;
+  min-height: 0;
+  border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  background: transparent;
+  margin-bottom: 0;
+}
 /* Kanban view-mode lays five status columns side-by-side; drop
    the readability cap so they have room to breathe horizontally
    on wide screens. The flex chain (#report → .findings-content
