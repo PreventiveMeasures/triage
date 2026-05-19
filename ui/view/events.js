@@ -558,7 +558,7 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  const sourceOpen = e.target.closest('[data-bundle-view-source]')
+  const sourceOpen = pathClosest(e, '[data-bundle-view-source]')
   if (sourceOpen) {
     const path = sourceOpen.dataset.bundleViewSource
     if (!path) return
