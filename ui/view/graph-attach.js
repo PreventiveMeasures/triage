@@ -9,6 +9,16 @@
 import { html, render as litRender } from 'lit'
 
 let loadPromise = null
+// Resolved module reference, cached after the first successful
+// `loadGraph()` so synchronous callers (the refresh wrappers in
+// `view/render.js` / `view/render-bundle.js`, fired from
+// `events.js` click handlers) can dispatch into the lazy module
+// without awaiting. `null` means the graph has never been opened
+// in this session — those callers no-op, which is fine because
+// there's no graph DOM to refresh in that state either.
+let loaded = null
+
+export function loadedGraphMod() { return loaded }
 
 function loadGraph() {
   if (loadPromise) return loadPromise
@@ -20,7 +30,9 @@ function loadGraph() {
     // works at any deploy path.
     const path = './graph.js'
     try {
-      return await import(path)
+      const mod = await import(path)
+      loaded = mod
+      return mod
     } catch (err) {
       // Don't pin the module to a rejected promise — a transient
       // failure (offline at first attach, stale service-worker

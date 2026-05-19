@@ -16,8 +16,7 @@ import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/uti
 import { renderTreeView } from './graph/files.js'
 import { graph2 } from './graph/state.js'
 import { buildGraph } from './graph/data.js'
-import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './graph/render.js'
-import { attachGraphLayout } from './graph-attach.js'
+import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
 import { fileHasFindings, packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
@@ -129,40 +128,26 @@ export function buildGraph2Data() {
 // so we feed the new template directly; clearing `innerHTML` first
 // would orphan the cache and the next render would try to
 // `insertBefore` on a null parent (TypeError on the next click).
+// Wrappers — assemble graph data + bundle-context flag from main-
+// bundle state, then dispatch into the lazy `ui/graph.js` module
+// for the actual `<graph-layout>` shadow-DOM render. No-op when
+// the graph has never been opened in this session
+// (`loadedGraphMod()` returns null) — there's no shadow tree to
+// refresh in that state either.
 export function refreshGraph2Sidebar() {
-  const root = document.querySelector('graph-layout')?.shadowRoot
-  if (!root) return
-  const area = root.querySelector('#g2-selection-area')
-  if (!area) return
+  const mod = loadedGraphMod()
+  if (!mod) return
   const data = buildGraph2Data()
   if (!data) return
-  // Pass through whether we're in a bundle context — the selection
-  // card branches between Files → and View source → buttons. The
-  // graph render code doesn't import `state` (kept out of the lazy
-  // `ui/graph.js` bundle), so the caller threads it in here.
-  litRender(renderSelectionCard(data.graph, { isBundleContext: state.currentView === 'bundles' }), area)
-  // The top-right canvas overlay (drill-in icon button) depends
-  // on the same selection / solo / focus state the selection
-  // card does, so refresh both from the same trigger. Slot
-  // element is rendered unconditionally by renderStage; we just
-  // swap its content via the same lit-managed update.
-  const focusSlot = root.querySelector('#g2-focus-overlay-slot')
-  if (focusSlot) litRender(renderFocusOverlay(data.graph), focusSlot)
+  mod.refreshSidebar(data.graph, { isBundleContext: state.currentView === 'bundles' })
 }
 
-// Re-render only the right-panel "Top packages" block. Called when
-// the user flips the Issues/Files mini-tab. Same canvas-preserving
-// pattern as refreshGraph2Sidebar — let `litRender` diff against
-// its cached PartInfo on the container; manually clearing
-// `innerHTML` would break the cache.
 export function refreshGraph2TopPkgs() {
-  const root = document.querySelector('graph-layout')?.shadowRoot
-  if (!root) return
-  const block = root.querySelector('#g2-top-pkgs-block')
-  if (!block) return
+  const mod = loadedGraphMod()
+  if (!mod) return
   const data = buildGraph2Data()
   if (!data) return
-  litRender(renderTopPkgsBlock(data.graph), block)
+  mod.refreshTopPkgs(data.graph)
 }
 
 

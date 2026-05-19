@@ -25,7 +25,7 @@
 // `setCurrentBundleGraph`, `countBundleTriageBuckets`,
 // `refreshBundleGraphSidebar`, and `refreshBundleGraphTopPkgs`
 // from this module.
-import { html, render as litRender, nothing } from 'lit'
+import { html, nothing } from 'lit'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
@@ -42,7 +42,7 @@ import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts, pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
 import { buildGraph } from './graph/data.js'
-import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './graph/render.js'
+import { loadedGraphMod } from './graph-attach.js'
 // `render` is the orchestrator over in `render.js`; bundle code
 // calls it back after async source-highlight completes so the
 // next render() pass picks up the cached HTML. Module-level
@@ -302,25 +302,23 @@ export function buildBundleGraphData(details) {
   return graph
 }
 
+// Always bundle context here — these helpers are only used for
+// the bundle Graph tab. The selection card branches between
+// Files → and View source → buttons; bundle ↦ View source.
+// Dispatch into the lazy `ui/graph.js` module so its
+// `<graph-layout>` shadow-DOM render code stays out of view.js.
 export function refreshBundleGraphSidebar() {
   if (!_currentBundleGraph) return
-  const root = document.querySelector('graph-layout')?.shadowRoot
-  if (!root) return
-  const area = root.querySelector('#g2-selection-area')
-  // Always bundle context here — this refresh helper is only used
-  // for the bundle Graph tab. The selection card branches between
-  // Files → and View source → buttons; bundle ↦ View source.
-  if (area) litRender(renderSelectionCard(_currentBundleGraph, { isBundleContext: true }), area)
-  const focusSlot = root.querySelector('#g2-focus-overlay-slot')
-  if (focusSlot) litRender(renderFocusOverlay(_currentBundleGraph), focusSlot)
+  const mod = loadedGraphMod()
+  if (!mod) return
+  mod.refreshSidebar(_currentBundleGraph, { isBundleContext: true })
 }
 
 export function refreshBundleGraphTopPkgs() {
   if (!_currentBundleGraph) return
-  const root = document.querySelector('graph-layout')?.shadowRoot
-  if (!root) return
-  const block = root.querySelector('#g2-top-pkgs-block')
-  if (block) litRender(renderTopPkgsBlock(_currentBundleGraph), block)
+  const mod = loadedGraphMod()
+  if (!mod) return
+  mod.refreshTopPkgs(_currentBundleGraph)
 }
 
 export function setCurrentBundleGraph(graph) {
