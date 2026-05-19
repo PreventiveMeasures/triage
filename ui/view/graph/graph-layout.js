@@ -13,10 +13,9 @@
 // inside the topbar render with classes from `styles/toolbar.css`,
 // and the per-severity count chips in the selection sidebar
 // (`renderSevChips` → `.tree-count-chip`) come from
-// `styles/graph-files.css` — both files get inlined into our
+// `styles/tree-count-chip.css` — both files get inlined into our
 // shadow styles so those classes pick up the same styling the rest
-// of the page already gives them. Net cost is ~10KB of text-loaded
-// CSS bundled once per component instance.
+// of the page already gives them.
 //
 // Refresh helpers (refreshGraph2Sidebar / refreshGraph2TopPkgs /
 // refreshGraph2FocusOverlay in render.js, and the bundle siblings
@@ -32,7 +31,7 @@
 // host element when an event crosses the shadow boundary).
 import { LitElement, html, unsafeCSS } from 'lit'
 import graph2CSS from './graph2.css'
-import graphFilesCSS from '../../styles/graph-files.css'
+import treeCountChipCSS from '../../styles/tree-count-chip.css'
 import toolbarCSS from '../../styles/toolbar.css'
 import { renderRightPanel, renderStage, renderTopBar } from './render.js'
 
@@ -42,7 +41,7 @@ class GraphLayout extends LitElement {
     options: { attribute: false },
   }
 
-  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(graphFilesCSS), unsafeCSS(graph2CSS)]
+  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS)]
 
   constructor() {
     super()

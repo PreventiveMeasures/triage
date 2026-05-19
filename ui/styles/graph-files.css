@@ -18,21 +18,13 @@
   & .name { flex: 1; min-width: 0; }
 }
 
-.tree-count-chips { display: inline-flex; gap: .25rem; flex-wrap: wrap; }
-
-.tree-count-chip {
-  display: inline-block; font-size: .65rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .03em;
-  padding: .1rem .4rem; border-radius: 3px; line-height: 1.3;
-
-  &.critical      { background: var(--critical); color: #fff; }
-  &.high          { background: var(--high); color: #fff; }
-  &.medium        { background: var(--medium); color: #000; }
-  &.low           { background: var(--low); color: #000; }
-  &.high_bug      { background: var(--high-bug); color: #fff; }
-  &.bug           { background: var(--bug); color: #fff; }
-  &.informational { background: var(--info); color: #fff; }
-}
+/* `.tree-count-chip` + `.tree-count-chips` moved to
+   `styles/tree-count-chip.css` so the rules can be reused inside
+   the `<graph-layout>` shadow tree without bundling the rest of
+   the Files-tab chrome here. The split file is `@import`-ed by
+   `view.css` so the light-DOM call sites in this file (and in
+   render-bundle.js / render-packages.js / render-repositories.js)
+   keep resolving. */
 
 .tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 
