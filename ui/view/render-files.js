@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { state } from '#client/index.js'
-import { SEVERITIES, formatBytes } from '../format.js'
-import { treeAnchor } from './utils.js'
+import { SEVERITIES, formatBytes } from './format.js'
+import { treeAnchor } from './graph/utils.js'
 
 // Render the Files tab. Two view modes:
 //

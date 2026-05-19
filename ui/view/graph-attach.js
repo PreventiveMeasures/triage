@@ -59,12 +59,19 @@ function loadGraph() {
 // canvas's per-click sidebar refresh is bound to `refreshSidebar`
 // so node selections re-paint the selection card in place.
 //
+// `prep` is the raw-inputs shape `buildGraph2Data` /
+// `buildBundleGraphData` assemble from main-bundle state
+// (`state.reports` / `state.bundleDetails`). The lazy module's
+// `buildGraphFromPrep(prep)` does the actual `buildGraph(...)`
+// call — keeps the graph-data assembly out of the main bundle.
+//
 // Returns the host element on success, or null on a module-load
 // failure (with the error text written into the slot so the user
 // sees what went wrong instead of an empty panel).
-export async function attachGraphLayout(slot, graph, options, refreshSidebar, refreshTopPkgs) {
+export async function attachGraphLayout(slot, prep, options, refreshSidebar, refreshTopPkgs) {
   try {
     const mod = await loadGraph()
+    const graph = mod.buildGraphFromPrep(prep)
     litRender(html`<graph-layout .graph=${graph} .options=${options}></graph-layout>`, slot)
     const host = slot.querySelector('graph-layout')
     // Lit's first render is microtask-async, so the shadow tree
