@@ -20,10 +20,6 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
 
 // MUST run before any client module loads — `_polyfills.js` shims
 // `localStorage` / `navigator.locks` and (critically) drops the
@@ -31,6 +27,8 @@ import path from 'node:path'
 // builds expose under `--js-base-64`, before @noble/hashes captures
 // `hasHexBuiltin` at first import.
 await import('./_polyfills.js')
+
+const { bootServer } = await import('./_helpers.js')
 
 // ─────────── client modules ───────────
 
@@ -94,33 +92,17 @@ function settledAfterAck(workspaceId) {
 // ─────────── server fixture + per-test workspace ───────────
 
 describe('triage-sync client', () => {
-  let serverDir, serverProc, serverUrl
+  let server, serverUrl
 
   before(async () => {
-    serverDir = mkdtempSync(path.join(tmpdir(), 'deepview-client-'))
-    const port = 19500 + Math.floor(Math.random() * 500)
-    serverUrl = `ws://127.0.0.1:${port}/api/sync`
-    serverProc = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: path.join(serverDir, 'data.db') },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('server boot timeout')), 5_000)
-      serverProc.stdout.on('data', (d) => {
-        if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-      })
-      serverProc.stderr.on('data', () => {})
-    })
+    server = await bootServer()
+    serverUrl = server.serverUrl
   })
 
   after(async () => {
     triageSync.closeSession()
     triageSync.setServerUrl('')
-    if (serverProc) {
-      serverProc.kill('SIGTERM')
-      await new Promise((resolve) => { serverProc.once('exit', resolve) })
-    }
-    rmSync(serverDir, { recursive: true, force: true })
+    if (server) await server.teardown()
   })
 
   // Each scenario gets its own workspace + reports so tests don't
@@ -2951,22 +2933,8 @@ describe('triage-sync client', () => {
     // rejects with an empty chain), but the session must
     // self-recover so the next user edit lands cleanly on the new
     // server's chain. Pin the high-level outcome.
-    const port2 = 19500 + Math.floor(Math.random() * 500) + 500
-    const serverDir2 = mkdtempSync(path.join(tmpdir(), 'deepview-client-2-'))
-    const serverUrl2 = `ws://127.0.0.1:${port2}/api/sync`
-    const serverProc2 = spawn(process.execPath, ['server/index.ts'], {
-      env: { ...process.env, PORT: String(port2), HOST: '127.0.0.1', DB_PATH: path.join(serverDir2, 'data.db') },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const server2 = await bootServer()
     try {
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('server2 boot timeout')), 5_000)
-        serverProc2.stdout.on('data', (d) => {
-          if (String(d).includes('triage-sync server')) { clearTimeout(t); resolve() }
-        })
-        serverProc2.stderr.on('data', () => {})
-      })
-
       const wsId = await startSession(['finding-X'])
       state.markers.set('finding-X', 'red')
       await saveTriage()
@@ -2976,7 +2944,7 @@ describe('triage-sync client', () => {
       // await saveTriage so the encrypt is racing with setServerUrl.
       state.markers.set('finding-X', 'green')
       const saveP = saveTriage()
-      triageSync.setServerUrl(serverUrl2)
+      triageSync.setServerUrl(server2.serverUrl)
 
       // Both promises must complete without throwing; the in-flight
       // save's send may land on server2 with a stale base (rejected),
@@ -2995,9 +2963,7 @@ describe('triage-sync client', () => {
       await deleteWorkspace(wsId)
     } finally {
       triageSync.setServerUrl(serverUrl)
-      serverProc2.kill('SIGTERM')
-      await new Promise((resolve) => { serverProc2.once('exit', resolve) })
-      rmSync(serverDir2, { recursive: true, force: true })
+      await server2.teardown()
     }
   })
 

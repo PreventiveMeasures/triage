@@ -29,50 +29,13 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 import { encodeUtf8 } from '../common/utf8.js'
+import { bootServer as bootSharedServer } from './_helpers.js'
 
 const SAVE_DOMAIN = 'deepview-triage-sync.v1.save'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 const OBJSTORE_PUT_DOMAIN = 'deepview-objstore.v1.put'
 
 function b64url(bytes) { return Buffer.from(bytes).toString('base64url') }
-
-// Boot a spawned `server/index.ts` and resolve the OS-assigned port
-// from the listening banner. Mirrors the helper in sync-server.test.js
-// but inlined here so this file is self-contained (different fixture
-// shape: per-test server + per-test config.json + per-test temp dir).
-function awaitListeningPort(proc, timeoutMs = 5_000) {
-  return new Promise((resolve, reject) => {
-    let buf = ''
-    let stderrBuf = ''
-    let settled = false
-    function onData(d) {
-      buf += String(d)
-      const m = /ws:\/\/[^:]+:(\d+)\//u.exec(buf)
-      if (m) finish(null, Number(m[1]))
-    }
-    function onErrData(d) { stderrBuf += String(d) }
-    function onExit(code, signal) {
-      const detail = stderrBuf.slice(0, 400).trim() || `exit ${code}, signal ${signal}`
-      finish(new Error(`server exited during boot: ${detail}`))
-    }
-    function onError(err) { finish(err) }
-    function finish(err, port) {
-      if (settled) return
-      settled = true
-      clearTimeout(t)
-      proc.stdout.removeListener('data', onData)
-      proc.stderr.removeListener('data', onErrData)
-      proc.removeListener('exit', onExit)
-      proc.removeListener('error', onError)
-      if (err) reject(err); else resolve(port)
-    }
-    const t = setTimeout(() => finish(new Error('server boot timeout')), timeoutMs)
-    proc.stdout.on('data', onData)
-    proc.stderr.on('data', onErrData)
-    proc.once('exit', onExit)
-    proc.once('error', onError)
-  })
-}
 
 async function makeKp() {
   const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
@@ -177,27 +140,21 @@ function connect(url) {
 // teardown hook. `configBody` of `undefined` means "no config.json"
 // — exercises the no-config default (gate disabled). Each call gets
 // its own temp dir so DB / config files don't leak between tests.
+//
+// Pre-writes the config file before calling the shared `bootServer`
+// (which defaults CONFIG_PATH to `<dir>/config.json`); the shared
+// helper handles spawn + listen + teardown + dir cleanup.
 async function bootServer(configBody) {
   const dir = mkdtempSync(path.join(tmpdir(), 'deepview-sync-auth-'))
-  const configPath = path.join(dir, 'config.json')
-  if (configBody !== undefined) writeFileSync(configPath, JSON.stringify(configBody))
-  const env = {
-    ...process.env,
-    PORT: '0',
-    HOST: '127.0.0.1',
-    DB_PATH: path.join(dir, 'data.db'),
-    CONFIG_PATH: configPath,
+  if (configBody !== undefined) {
+    writeFileSync(path.join(dir, 'config.json'), JSON.stringify(configBody))
   }
-  const proc = spawn(process.execPath, ['server/index.ts'], {
-    env, stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  const port = await awaitListeningPort(proc)
+  const server = await bootSharedServer({ dir })
   return {
-    url: `ws://127.0.0.1:${port}/api/sync`,
-    httpOrigin: `http://127.0.0.1:${port}`,
+    url: server.serverUrl,
+    httpOrigin: server.httpOrigin,
     teardown: async () => {
-      proc.kill('SIGTERM')
-      await new Promise((resolve) => { proc.once('exit', resolve) })
+      await server.teardown()
       rmSync(dir, { recursive: true, force: true })
     },
   }
