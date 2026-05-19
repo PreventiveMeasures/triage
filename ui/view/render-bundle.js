@@ -307,7 +307,10 @@ export function refreshBundleGraphSidebar() {
   const root = document.querySelector('graph-layout')?.shadowRoot
   if (!root) return
   const area = root.querySelector('#g2-selection-area')
-  if (area) litRender(renderSelectionCard(_currentBundleGraph), area)
+  // Always bundle context here — this refresh helper is only used
+  // for the bundle Graph tab. The selection card branches between
+  // Files → and View source → buttons; bundle ↦ View source.
+  if (area) litRender(renderSelectionCard(_currentBundleGraph, { isBundleContext: true }), area)
   const focusSlot = root.querySelector('#g2-focus-overlay-slot')
   if (focusSlot) litRender(renderFocusOverlay(_currentBundleGraph), focusSlot)
 }
