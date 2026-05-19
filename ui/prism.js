@@ -6,32 +6,31 @@
 // `await import('./prism.js')`s this file lazily on first
 // use; the dynamic import URL is a runtime string so esbuild leaves
 // it alone and the browser resolves it against the page's URL.
+// prismjs/prism.js publishes itself to `window.Prism` as a side
+// effect of its IIFE, so the language packs (plain scripts that
+// reference `Prism` as a free global) resolve correctly once they
+// run. ES module evaluation order matches the import order here,
+// so the dependency chains (clike → javascript → tsx, markup → ...)
+// stay correct. clike is a base grammar that javascript / typescript
+// extend; markup is a base for html.
 import Prism from 'prismjs/prism.js'
+import 'prismjs/components/prism-markup.js'
+import 'prismjs/components/prism-clike.js'
+import 'prismjs/components/prism-javascript.js'
+import 'prismjs/components/prism-jsx.js'
+import 'prismjs/components/prism-typescript.js'
+import 'prismjs/components/prism-tsx.js'
+import 'prismjs/components/prism-json.js'
+import 'prismjs/components/prism-css.js'
+import 'prismjs/components/prism-yaml.js'
+import 'prismjs/components/prism-bash.js'
+import 'prismjs/components/prism-markdown.js'
+import 'prismjs/components/prism-solidity.js'
 
-// Components reference `Prism` as a global (they're plain scripts,
-// not modules), so attach the imported namespace to globalThis
-// before pulling in the language packs. The `await import()` chain
-// below ensures execution order: each language imports run AFTER
-// this assignment, even though static imports would hoist past it.
+// Suppress auto-highlightAll. Prism checks `manual` from a
+// DOMContentLoaded callback, which fires after this module body
+// runs, so setting it here is in time.
 Prism.manual = true
-globalThis.Prism = Prism
-
-// Languages to support out of the box. Each component registers
-// itself on `Prism.languages` as a side-effect — once loaded,
-// `highlight()` below can pick it up by name. clike is a base
-// grammar that javascript / typescript extend; markup is a base
-// for html. Order within each chain matters; await keeps it.
-await import('prismjs/components/prism-markup.js')
-await import('prismjs/components/prism-clike.js')
-await import('prismjs/components/prism-javascript.js')
-await import('prismjs/components/prism-jsx.js')
-await import('prismjs/components/prism-typescript.js')
-await import('prismjs/components/prism-tsx.js')
-await import('prismjs/components/prism-json.js')
-await import('prismjs/components/prism-css.js')
-await import('prismjs/components/prism-yaml.js')
-await import('prismjs/components/prism-bash.js')
-await import('prismjs/components/prism-markdown.js')
 
 // Returns highlighted HTML for `code` under `lang`, or null when
 // the language isn't loaded. Caller falls back to plain text on

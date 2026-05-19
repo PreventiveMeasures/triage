@@ -34,6 +34,7 @@ const EXT_TO_LANG = {
   yml: 'yaml', yaml: 'yaml',
   sh: 'bash', bash: 'bash',
   md: 'markdown', markdown: 'markdown',
+  sol: 'solidity',
 }
 
 export function langForPath(path) {
