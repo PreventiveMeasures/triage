@@ -723,6 +723,24 @@ report.addEventListener('click', (e) => {
   }
   const g2JumpFindings = pathClosest(e, '[data-g2-jump-findings]')
   if (g2JumpFindings) {
+    // Bundle context — the file selected in the canvas lives inside
+    // a bundle, not in `state.reports`, so flipping
+    // `state.currentView = 'findings'` would navigate out of the
+    // bundle entirely (and pre-shadow-DOM the click silently no-op'd
+    // because `e.target.closest` couldn't reach across the boundary,
+    // hiding the same destructive jump). Switch to the bundle's
+    // Issues tab instead so the click stays bundle-local — that's
+    // the closest analog to "show me this file's findings" inside a
+    // bundle.
+    if (state.currentView === 'bundles') {
+      if (state.bundleDetailsTab === 'graph') cleanupGraph2()
+      state.bundleDetailsTab = 'issues'
+      state.bundleSourceFile = null
+      state.bundleSourceFindingIdx = null
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'issues')
+      render()
+      return
+    }
     resetFilters()
     state.filterConfMin = 0
     state.filterInclude = g2JumpFindings.dataset.g2JumpFindings
