@@ -47,7 +47,7 @@ await import('./_polyfills.js')
 
 const { state } = await import('../client/state.ts')
 const { saveTriage, reloadTriageFromStorage } = await import('../client/triage.js')
-const { triageSync } = await import('../client/triage-sync.ts')
+const { triageSync } = await import('../client/sync/triage-sync.ts')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
@@ -449,7 +449,7 @@ describe('sessions blob persistence (Web Locks)', () => {
     // read and write. Without the lock those microtasks would
     // interleave and one entry would be lost; with the lock they
     // serialize and both entries land.
-    const { mutateAllSessions } = await import('../client/triage-sync.ts')
+    const { mutateAllSessions } = await import('../client/sync/triage-sync.ts')
     const order = []
     await Promise.all([
       mutateAllSessions(async (all) => {

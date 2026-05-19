@@ -40,12 +40,12 @@ export { migrateLegacyFilenames } from './migrate-legacy.js'
 export {
   computeBundleResourceTag,
   computeResourceTag,
-} from './objstore-content-crypto.ts'
+} from './sync/objstore-content-crypto.ts'
 
 export {
   createObjstoreClient,
   deriveObjstoreKeys,
-} from './objstore.ts'
+} from './sync/objstore.ts'
 
 export {
   disableEncryption,
@@ -95,7 +95,7 @@ export {
   saveFileBytes,
 } from './storage.js'
 
-export { getSharedTransport } from './sync-transport.ts'
+export { getSharedTransport } from './sync/sync-transport.ts'
 
 export {
   applyTriageImport,
@@ -113,7 +113,7 @@ export {
   setHydrationConflictResolver,
   setRedraw,
   triageSync,
-} from './triage-sync.ts'
+} from './sync/triage-sync.ts'
 
 export {
   loadPromise as triageLoadPromise,

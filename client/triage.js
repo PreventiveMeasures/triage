@@ -1,5 +1,5 @@
 import { state } from './state.ts'
-import { triageSync } from './triage-sync.ts'
+import { triageSync } from './sync/triage-sync.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import {
   VAULT_LOCK,

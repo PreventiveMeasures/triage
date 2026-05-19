@@ -34,7 +34,7 @@ import { DatabaseSync } from 'node:sqlite'
 await import('./_polyfills.js')
 
 const { bootServer } = await import('./_helpers.js')
-const { triageSync } = await import('../client/triage-sync.ts')
+const { triageSync } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')

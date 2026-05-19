@@ -19,8 +19,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 await import('./_polyfills.js')
 
-const { createSocketTransport } = await import('../client/socket-transport.ts')
-const { setCachedSyncPassword } = await import('../client/sync-auth-cache.ts')
+const { createSocketTransport } = await import('../client/sync/socket-transport.ts')
+const { setCachedSyncPassword } = await import('../client/sync/sync-auth-cache.ts')
 
 // ─────────── fake WebSocket ───────────
 //

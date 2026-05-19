@@ -17,8 +17,8 @@ import {
   encryptObjstorePayload,
   unwrapBundleContent,
   wrapBundleContent,
-} from '../client/objstore-content-crypto.ts'
-import { deriveSigningKeypair } from '../client/sync-crypto.ts'
+} from '../client/sync/objstore-content-crypto.ts'
+import { deriveSigningKeypair } from '../client/sync/sync-crypto.ts'
 
 const FIXED_KEY_BASE64 = Buffer.alloc(32, 0xaa).toString('base64')
 

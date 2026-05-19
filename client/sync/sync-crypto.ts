@@ -1,6 +1,6 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { decodeUtf8, encodeUtf8 } from '../../common/utf8.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
 // changesets travel encrypted through the relay server. The server

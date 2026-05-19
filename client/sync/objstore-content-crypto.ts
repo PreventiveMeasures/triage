@@ -23,7 +23,7 @@
 // leaking any one key reveals nothing about the others.
 
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
-import { encodeUtf8 } from '../common/utf8.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 import { deriveSigningKeypair } from './sync-crypto.ts'
 
 const HKDF_CONTENT_INFO = 'deepview-objstore.v1.content'
