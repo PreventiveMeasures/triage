@@ -13,16 +13,43 @@ import themeToggleCSS from './theme-toggle.css'
 const THEME_KEY = 'deepview.theme'
 const THEME_COLOR_DARK = '#1a1a1b'
 const THEME_COLOR_LIGHT = '#f6f6fa'
+// Chrome paints the print-preview scrim over the web-contents rect but
+// not over the WCO title-bar strip, whose background is driven by
+// `theme-color`. Left alone, the toolbar stays at full brightness while
+// the page dims, and the seam between them is jarring. While the dialog
+// is open, swap theme-color to a pre-darkened value that visually
+// matches the scrim composite over the base background. The
+// composite-vs-alpha approach is intentional: a single alpha doesn't
+// map the same way across light and dark base colors, and the scrim
+// itself isn't exposed to CSS or the page. If the browser ever exposes
+// it we can drop this.
+const THEME_COLOR_DARK_DIM = '#0a0a0a'
+const THEME_COLOR_LIGHT_DIM = '#646464'
 // Sun glyph reads as "switch to light"; moon reads as "switch to dark".
 // The glyph reflects what clicking would DO, not the current state —
 // matches the affordance pattern used by most editors.
 const ICON_LIGHT = '☀'
 const ICON_DARK = '☾'
 
+let currentLight = false
+let printDialogOpen = false
+
 function applyThemeColor(light) {
+  currentLight = light
+  const base = light ? THEME_COLOR_LIGHT : THEME_COLOR_DARK
+  const dim = light ? THEME_COLOR_LIGHT_DIM : THEME_COLOR_DARK_DIM
   const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.setAttribute('content', light ? THEME_COLOR_LIGHT : THEME_COLOR_DARK)
+  if (meta) meta.setAttribute('content', printDialogOpen ? dim : base)
 }
+
+window.addEventListener('beforeprint', () => {
+  printDialogOpen = true
+  applyThemeColor(currentLight)
+})
+window.addEventListener('afterprint', () => {
+  printDialogOpen = false
+  applyThemeColor(currentLight)
+})
 
 // Apply the persisted theme at module evaluation time so the body class
 // is set before the custom element is upgraded. Same flash trade-off as

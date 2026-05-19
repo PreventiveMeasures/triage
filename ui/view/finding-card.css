@@ -525,4 +525,10 @@
   /* Strip on-screen link colors so a linked filename reads
      identically to the bare-text fallback. */
   a, .line-num, .line-num a { color: inherit; }
+
+  /* Inline `` `code` `` spans carry a 1px border + tinted background
+     on screen to read as a chip; on paper the border crowds dense
+     prose and the chip chrome reads as visual noise. Keep the
+     monospace font so code still distinguishes from prose. */
+  .inline-code { border: 0; background: transparent; padding: 0; }
 }
