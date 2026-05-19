@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadPromise, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeItem as removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setItem as setSecureItem, state, triageSync } from '../../client/index.js'
+import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise, triageSync } from '../../client/index.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
@@ -632,7 +632,7 @@ export async function ingestReport(name, content, gen = null) {
     // Persistent triage (markers/deletedIds keyed by uuid) is loaded
     // once at module init; await it before rendering so the first
     // drop already shows stored marks/deletions for matching findings.
-    await loadPromise
+    await triageLoadPromise
     if (stale()) return
     // Primary input is JSON (the analyzer's native dump format).
     // When that fails, walk the markdown parser chain: DeepSec

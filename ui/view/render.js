@@ -605,7 +605,7 @@ async function openUploadFromBadge({ workspaceId, items }) {
   // source of truth for the local label — pull it once and join.
   const bundleItems = items.filter((i) => i.kind === 'bundle')
   if (bundleItems.length > 0) {
-    const { listBundles } = await import('../../client/storage.js')
+    const { listBundles } = await import('../../client/index.js')
     const meta = await listBundles()
     const labelByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
     for (const item of bundleItems) {

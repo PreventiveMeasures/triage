@@ -59,12 +59,12 @@ export {
 } from './passkey-vault.js'
 
 export {
-  getItem,
-  hydrate,
-  migrateToEncrypted,
-  migrateToPlaintext,
-  removeItem,
-  setItem,
+  getItem as getSecureItem,
+  hydrate as hydrateSecureStorage,
+  migrateToEncrypted as migrateSecureStorageToEncrypted,
+  migrateToPlaintext as migrateSecureStorageToPlaintext,
+  removeItem as removeSecureItem,
+  setItem as setSecureItem,
 } from './secure-storage.js'
 
 export {
@@ -114,7 +114,7 @@ export {
 } from './triage-sync.ts'
 
 export {
-  loadPromise,
+  loadPromise as triageLoadPromise,
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,

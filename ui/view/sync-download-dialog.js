@@ -131,7 +131,7 @@ class SyncDownloadDialog extends LitElement {
     // r3242639406 guard in the old download-dialog).
     if (downloaded.some((d) => d.kind === 'report')) {
       try {
-        const { state } = await import('../../client/state.ts')
+        const { state } = await import('../../client/index.js')
         if (state.currentWorkspace === this.workspaceId) {
           const { switchToWorkspace } = await import('./ingest.js')
           await switchToWorkspace(this.workspaceId)
