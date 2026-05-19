@@ -472,14 +472,15 @@ function renderPackageRow(row, selectedPkg, selectedVer) {
 }
 
 // Does the rendered row match the selected (pkg, version) pin?
-// Single-row packages match when the package name does — the row
-// has no version pin to compare against. Multi-version rows
-// match only when the version pin lines up too; `latest` rows
-// also match when the pin is null (the selection landed before
-// the user explicitly picked a version slot — pin the headline).
+// The caller already gated on package name equality; this check
+// only decides which version slot inside that package matches.
+// Single-row packages always match — the row IS the only slot
+// for the package, regardless of whether the pin is null or
+// happens to be that single slot's version. Multi-version rows
+// match strictly on the version pin so clicking a non-latest row
+// moves the highlight there instead of clinging to the latest.
 function versionMatchesSelection(row, selectedVer) {
   if (row.kind === 'single') return true
-  if (selectedVer === null) return row.kind === 'latest'
   return row.version === selectedVer
 }
 
