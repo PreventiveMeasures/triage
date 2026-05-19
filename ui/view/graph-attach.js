@@ -7,6 +7,7 @@
 // downloaded + parsed once per session.
 
 import { html, render as litRender } from 'lit'
+import { _currentImpl as _mainGraph2Impl } from './graph/state.js'
 
 let loadPromise = null
 // Resolved module reference, cached after the first successful
@@ -31,6 +32,12 @@ function loadGraph() {
     const path = './graph.js'
     try {
       const mod = await import(path)
+      // Cross-bundle sharing — point the lazy `graph2` proxy at
+      // the main bundle's live `_impl` so subsequent reads/writes
+      // on either side touch the same underlying object. Without
+      // this, events.js mutations (severity chips, path filter,
+      // showAll, selection) would never reach the canvas.
+      mod._swapGraph2Impl(_mainGraph2Impl())
       loaded = mod
       return mod
     } catch (err) {
