@@ -281,10 +281,13 @@ export const state: State = store<State>({
   // string = no filter. Otherwise the value matches a finding's
   // `_analyzer` (the report's `source` for DeepSec / Codex Security /
   // Claude Security imports, or the per-finding `type` for analyzer-
-  // native JSON dumps). The literal string `'null'` selects findings
-  // whose effective analyzer is absent (`_analyzer === null`). The
-  // selector is hidden when the loaded reports involve only one
-  // distinct analyzer — there's nothing to choose between.
+  // native JSON dumps). `NULL_ANALYZER_SENTINEL` (a null character,
+  // exported from view/filters.js) selects findings whose effective
+  // analyzer is absent (`_analyzer === null`) — picked over the bare
+  // word `'null'` so a legitimate analyzer literally named `"null"`
+  // stays distinguishable. The selector is hidden when the loaded
+  // reports involve only one distinct analyzer — there's nothing to
+  // choose between.
   filterAnalyzer: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no

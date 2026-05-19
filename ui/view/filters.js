@@ -2,6 +2,15 @@ import { state } from '#client/index.js'
 import { SEVERITY_ORDER, findingText, isModule } from './format.js'
 import { primaryTab, tabKey } from './group.js'
 
+// Stand-in for the "no analyzer" bucket in the analyzer dropdown.
+// Plain `'null'` would collide with a legitimate analyzer whose
+// literal name is `"null"` (the user clarified this is a valid
+// name) — both options would render as `<option value="null">` and
+// the dropdown would conflate them. A NUL character is unlikely to
+// be a real analyzer name and survives roundtrip through HTML
+// option values + state.filterAnalyzer fine.
+export const NULL_ANALYZER_SENTINEL = '\u0000'
+
 export function resetFilters() {
   state.filterSeverities = new Set()
   state.filterColors = new Set()
@@ -45,14 +54,16 @@ export function matchesFilters(f) {
   }
   // Analyzer filter — single-select dropdown. Empty = no filter.
   // Findings with no analyzer (`_analyzer === null`) match the
-  // literal sentinel string `'null'` so the dropdown can offer that
-  // bucket; otherwise it's a straight string equality. `applyFilters`
-  // below runs the predicate at the GROUP level via `g.some(...)`, so
-  // a dedup group is shown in full when any one of its entries
-  // matches — same group-visibility behaviour as severity / color.
+  // NULL_ANALYZER_SENTINEL (a null character — chosen so the option
+  // can't collide with a legitimate analyzer literally named "null",
+  // which is a valid value); other values compare as straight string
+  // equality. `applyFilters` below runs the predicate at the GROUP
+  // level via `g.some(...)`, so a dedup group is shown in full when
+  // any one of its entries matches — same group-visibility behaviour
+  // as severity / color.
   if (state.filterAnalyzer) {
     const a = f._analyzer ?? null
-    const want = state.filterAnalyzer === 'null' ? null : state.filterAnalyzer
+    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
     if (a !== want) return false
   }
   // Confidence range. The slider's bounds (0..10) always have a

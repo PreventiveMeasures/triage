@@ -9,7 +9,7 @@ import { listWorkspaces, state, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { applyFilters, applySorting } from './filters.js'
+import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -169,15 +169,17 @@ const SOURCE_TITLES = {
 // Friendly labels for the analyzer-filter dropdown options. Source-
 // marked imports surface as the upstream product name (matching how
 // SOURCE_TITLES names them in the page header); native analyzer
-// types (security / correctness / etc.) and the null-analyzer
-// sentinel pass through as-is.
+// strings (security / correctness / etc.) pass through as-is. The
+// missing-analyzer bucket gets `(none)` rather than the bare word
+// `null` so a finding whose literal analyzer string is `"null"`
+// (a valid name) stays distinguishable in the dropdown.
 const ANALYZER_LABELS = {
   'claude-security': 'Claude Security',
   'codex-security': 'Codex Security',
   'deepsec': 'DeepSec',
 }
 function analyzerLabel(a) {
-  if (a == null) return 'null'
+  if (a == null) return '(none)'
   return ANALYZER_LABELS[a] ?? a
 }
 
@@ -848,24 +850,28 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <!-- Analyzer dropdown — visible only when the loaded reports
            involve more than one distinct analyzer (otherwise there is
            nothing to choose between). Single-select with an empty
-           default ("All analyzers" = no filter); the 'null' option
-           targets findings whose effective analyzer is absent (no
-           per-finding type on a native dump). Friendly labels for
-           the source-marked imports (DeepSec / Codex Security /
-           Claude Security) come from ANALYZER_LABELS. Shares the
-           sort dropdown's wrapper styling so the two pills line up.
-           The select.value is bound through live() so a report
-           switch that clears state.filterAnalyzer (resetFilters /
-           stale-filter guard) actually updates the visible
-           selection — without it, Lit setting selected attributes
-           on the existing options does not move the browser-native
-           select.value, so the dropdown reads as the old choice
-           while the filter applies All. -->
+           default ("All analyzers" = no filter); a finding whose
+           effective analyzer is absent (no per-finding type on a
+           native dump) gets a synthetic "(none)" option whose value
+           is the NULL_ANALYZER_SENTINEL — that sentinel can't collide
+           with a legitimate analyzer literally named "null"
+           (a valid analyzer name), which would otherwise resolve to
+           the same <option value="null"> and be indistinguishable in
+           the dropdown. Friendly labels for the source-marked
+           imports (DeepSec / Codex Security / Claude Security) come
+           from ANALYZER_LABELS. Shares the sort dropdown's wrapper
+           styling so the two pills line up. The select.value is
+           bound through live() so a report switch that clears
+           state.filterAnalyzer (resetFilters / stale-filter guard)
+           actually updates the visible selection — without it, Lit
+           setting selected attributes on the existing options does
+           not move the browser-native select.value, so the dropdown
+           reads as the old choice while the filter applies All. -->
       ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
         <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer" .value=${live(state.filterAnalyzer)}>
           <option value="">All analyzers</option>
           ${analyzerOptions.map((a) => {
-            const value = a == null ? 'null' : a
+            const value = a == null ? NULL_ANALYZER_SENTINEL : a
             return html`<option value=${value}>${analyzerLabel(a)}</option>`
           })}
         </select>
@@ -1473,7 +1479,7 @@ function renderImpl() {
   // selection can't silently empty the list. Matches the same
   // guard pattern used for source / confidence / sort below.
   if (state.filterAnalyzer) {
-    const want = state.filterAnalyzer === 'null' ? null : state.filterAnalyzer
+    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
     if (!analyzerSet.has(want)) state.filterAnalyzer = ''
   }
   // If a previously-loaded report had node_modules and the user
