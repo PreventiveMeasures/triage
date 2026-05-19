@@ -23,6 +23,9 @@
   "engines": {
     "node": ">=24.14.0"
   },
+  "imports": {
+    "#client/index.js": "./client/index.js"
+  },
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
     "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server/ ./client/ ./ui/",

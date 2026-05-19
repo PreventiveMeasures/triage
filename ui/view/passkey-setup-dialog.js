@@ -18,10 +18,7 @@
 // race a competing enable.
 
 import { LitElement, html, nothing } from 'lit'
-import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, onVaultStateChange, wipeAllVaultData } from '../../client/passkey-vault.js'
-import { migrateTriageToEncrypted } from '../../client/triage.js'
-import { migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt } from '../../client/storage.js'
-import { migrateToEncrypted as migrateSecureStorageToEncrypted } from '../../client/secure-storage.js'
+import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt, migrateSecureStorageToEncrypted, migrateTriageToEncrypted, onVaultStateChange, wipeAllVaultData } from '#client/index.js'
 
 class PasskeySetupDialog extends LitElement {
   static properties = {

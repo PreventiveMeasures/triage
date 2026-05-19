@@ -8,10 +8,7 @@
 // `events.js` + `ingest.js`; consolidating here means the next
 // fix to e.g. error handling lands in one place.
 import { Bundle } from '@exodus/stasis/bundle'
-import { ensureBundleFindingsIndexed } from '../../client/bundle-finding-index.js'
-import { hasBundleFileHashes, recordBundleFileHashes } from '../../client/bundle-hash-index.js'
-import { readBundle } from '../../client/storage.js'
-import { state } from '../../client/state.ts'
+import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { brotliDecompress } from './brotli-decompress.js'
 import { render } from './render.js'

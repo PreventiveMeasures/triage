@@ -15,7 +15,7 @@
 // for that, but the encryption icon in the sidebar header is
 // still always available for an explicit later enable.
 
-import { isEncryptionEnabled, isPasskeyEnvironmentSupported } from '../../client/passkey-vault.js'
+import { isEncryptionEnabled, isPasskeyEnvironmentSupported } from '#client/index.js'
 import { openPasskeySetupDialog } from './passkey-setup-dialog.js'
 
 const PROMPTED_KEY = 'deepview.passkey.firstImportPrompted'

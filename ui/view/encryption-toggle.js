@@ -16,12 +16,9 @@
 // there's no path forward and the button would just be confusing.
 
 import { html, render as litRender } from 'lit'
-import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange } from '../../client/passkey-vault.js'
+import { disableEncryption, isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
 import { openPasskeySetupDialog } from './passkey-setup-dialog.js'
 import { openPasskeyUnlockDialog } from './passkey-unlock-dialog.js'
-import { migrateTriageToPlaintext } from '../../client/triage.js'
-import { migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt } from '../../client/storage.js'
-import { migrateToPlaintext as migrateSecureStorageToPlaintext } from '../../client/secure-storage.js'
 
 // Two visually distinct lock glyphs, both on a 16×16 viewbox at
 // 13×13 render size with stroke-width 1.4 (matching the
