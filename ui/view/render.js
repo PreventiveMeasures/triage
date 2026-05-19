@@ -9,7 +9,7 @@ import { listWorkspaces, state, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { applyFilters, applySorting } from './filters.js'
+import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
 import { renderTreeView } from './graph/files.js'
@@ -164,6 +164,23 @@ const SOURCE_TITLES = {
   'claude-security': 'Claude Security findings',
   'codex-security': 'Codex Security findings',
   'deepsec': 'DeepSec findings',
+}
+
+// Friendly labels for the analyzer-filter dropdown options. Source-
+// marked imports surface as the upstream product name (matching how
+// SOURCE_TITLES names them in the page header); native analyzer
+// strings (security / correctness / etc.) pass through as-is. The
+// missing-analyzer bucket gets `(none)` rather than the bare word
+// `null` so a finding whose literal analyzer string is `"null"`
+// (a valid name) stays distinguishable in the dropdown.
+const ANALYZER_LABELS = {
+  'claude-security': 'Claude Security',
+  'codex-security': 'Codex Security',
+  'deepsec': 'DeepSec',
+}
+function analyzerLabel(a) {
+  if (a == null) return '(none)'
+  return ANALYZER_LABELS[a] ?? a
 }
 
 
@@ -756,7 +773,7 @@ function triageSelectorTemplate(triageCounts) {
   </div>`
 }
 
-function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags) {
+function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, kanbanMode } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The kanban mode
@@ -830,6 +847,35 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
          needs. -->
     <div class="toolbar-row sev-row">
       ${severityChipsTemplate(counts)}
+      <!-- Analyzer dropdown — visible only when the loaded reports
+           involve more than one distinct analyzer (otherwise there is
+           nothing to choose between). Single-select with an empty
+           default ("All analyzers" = no filter); a finding whose
+           effective analyzer is absent (no per-finding type on a
+           native dump) gets a synthetic "(none)" option whose value
+           is the NULL_ANALYZER_SENTINEL — that sentinel can't collide
+           with a legitimate analyzer literally named "null"
+           (a valid analyzer name), which would otherwise resolve to
+           the same <option value="null"> and be indistinguishable in
+           the dropdown. Friendly labels for the source-marked
+           imports (DeepSec / Codex Security / Claude Security) come
+           from ANALYZER_LABELS. Shares the sort dropdown's wrapper
+           styling so the two pills line up. The select.value is
+           bound through live() so a report switch that clears
+           state.filterAnalyzer (resetFilters / stale-filter guard)
+           actually updates the visible selection — without it, Lit
+           setting selected attributes on the existing options does
+           not move the browser-native select.value, so the dropdown
+           reads as the old choice while the filter applies All. -->
+      ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
+        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer" .value=${live(state.filterAnalyzer)}>
+          <option value="">All analyzers</option>
+          ${analyzerOptions.map((a) => {
+            const value = a == null ? NULL_ANALYZER_SENTINEL : a
+            return html`<option value=${value}>${analyzerLabel(a)}</option>`
+          })}
+        </select>
+      </span>` : nothing}
       ${triageFilterTemplate(colorCounts)}
       <!-- Search field + result count grouped into a single flex item
            so they wrap as a unit — when the row is too narrow to keep
@@ -1410,6 +1456,32 @@ function renderImpl() {
     }
   }
   const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
+  // Distinct analyzers across the loaded reports — feeds the
+  // toolbar's analyzer dropdown. Built from mergedGroups (not the
+  // shownTriage-filtered allGroups) so the option list stays stable
+  // when the user flips between live and trash views. Sorted for a
+  // stable display order: known source-marked imports first (in
+  // ANALYZER_LABELS' order), the null sentinel last, the rest
+  // alphabetical between them.
+  const analyzerSet = new Set()
+  for (const g of mergedGroups) {
+    for (const f of g) analyzerSet.add(f._analyzer ?? null)
+  }
+  const knownOrder = Object.keys(ANALYZER_LABELS)
+  const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
+    const ai = a == null ? Infinity : (knownOrder.indexOf(a) === -1 ? knownOrder.length : knownOrder.indexOf(a))
+    const bi = b == null ? Infinity : (knownOrder.indexOf(b) === -1 ? knownOrder.length : knownOrder.indexOf(b))
+    if (ai !== bi) return ai - bi
+    return String(a ?? '').localeCompare(String(b ?? ''))
+  })
+  // If the previously-selected analyzer is no longer present (report
+  // unload / workspace switch), clear the filter so a stale
+  // selection can't silently empty the list. Matches the same
+  // guard pattern used for source / confidence / sort below.
+  if (state.filterAnalyzer) {
+    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
+    if (!analyzerSet.has(want)) state.filterAnalyzer = ''
+  }
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -1540,7 +1612,7 @@ function renderImpl() {
       showPriority: hasAnyPriority,
       showGraphMode: treeAvailable,
       kanbanMode: isKanban,
-    })
+    }, analyzerOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's

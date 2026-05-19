@@ -766,6 +766,13 @@ export async function ingestReport(name, content, gen = null) {
             }
           }
         }
+        // Effective analyzer string used by the toolbar's analyzer
+        // filter. Source-marked reports (deepsec / codex-security /
+        // claude-security) carry their tool name as the analyzer; for
+        // native JSON dumps the per-finding `type` is the analyzer
+        // (and can be undefined → stamped as null so the "no analyzer"
+        // bucket has a stable sentinel).
+        filled._analyzer = data.source ?? (filled.type ?? null)
         stamped.push(filled)
       }
       groups.push(stamped)
