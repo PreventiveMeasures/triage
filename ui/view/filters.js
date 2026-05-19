@@ -45,11 +45,20 @@ export function matchesFilters(f) {
   // Confidence range. The slider's bounds (0..10) always have a
   // value; the special positions are 0 (lower) and 10 (upper):
   //   * lower at 0 → undefined-confidence findings pass through;
-  //     anything above 0 means "must have a known confidence"
+  //     anything above 0 means "must have a known confidence",
+  //     EXCEPT findings flagged `critical: true` (the boolean,
+  //     distinct from `severity: 'critical'`) which join the 10
+  //     bucket and pass any floor.
   //   * upper at 10 → no upper cap; allows the rare confidence > 10
-  //     entries through. Anything below 10 caps strictly.
+  //     entries through. Anything below 10 caps strictly — including
+  //     the critical-flagged stand-ins, since their effective value
+  //     is 10.
   if (f.confidence === undefined) {
-    if (state.filterConfMin > 0) return false
+    if (f.critical === true) {
+      if (state.filterConfMax < 10) return false
+    } else if (state.filterConfMin > 0) {
+      return false
+    }
   } else {
     if (f.confidence < state.filterConfMin) return false
     if (state.filterConfMax < 10 && f.confidence > state.filterConfMax) return false
@@ -91,6 +100,24 @@ function numericSorter(field, dir, missing) {
   }
 }
 
+// Confidence sort variant. `critical: true` findings (the boolean
+// flag, not the severity label) without an explicit confidence join
+// the 10 bucket and rank above actual confidence-10 entries in both
+// directions, so the most-important unscored items stay visible at
+// the top of the 10s.
+function confidenceSorter(dir) {
+  const missing = dir === 'desc' ? -1 : 11
+  return (pa, pb) => {
+    const aCrit = pa.confidence === undefined && pa.critical === true
+    const bCrit = pb.confidence === undefined && pb.critical === true
+    const va = pa.confidence ?? (aCrit ? 10 : missing)
+    const vb = pb.confidence ?? (bCrit ? 10 : missing)
+    return (dir === 'desc' ? vb - va : va - vb)
+      || (aCrit === bCrit ? 0 : aCrit ? -1 : 1)
+      || pa.file.localeCompare(pb.file)
+  }
+}
+
 // Per-mode primary-tab comparator. Severity stays explicit because
 // it carries a three-key lex order (severity rank, then file, then
 // line) — collapsing it into the numeric helper would lose the
@@ -100,8 +127,8 @@ const SORTERS = {
     (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
     || pa.file.localeCompare(pb.file)
     || parseInt(pa.line, 10) - parseInt(pb.line, 10),
-  'confidence-desc': numericSorter('confidence', 'desc', -1),
-  'confidence-asc':  numericSorter('confidence', 'asc',  11),
+  'confidence-desc': confidenceSorter('desc'),
+  'confidence-asc':  confidenceSorter('asc'),
   'priority-desc':   numericSorter('priority',   'desc', -1),
   'priority-asc':    numericSorter('priority',   'asc',  11),
 }
