@@ -324,6 +324,7 @@
    uses for #findings-graph-slot. */
 #bundles-slot { display: contents; }
 #packages-slot { display: contents; }
+#repositories-slot { display: contents; }
 
 /* Bundle slide — the full-width view for Graph / Issues. Replaces
    the bundles list + details panel with a header bar (back button
