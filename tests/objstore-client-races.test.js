@@ -22,7 +22,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/objstore.ts'
+import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
 import { bootServer } from './_helpers.js'
 
 // Generate fresh workspace keys (single workspaceId per call).

@@ -23,7 +23,7 @@
 // non-empty URLs — the boot-time initial set and the off-toggle are
 // not invalidations).
 
-import { getItem as getSecureItem, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
+import { getItem as getSecureItem, removeItem as removeSecureItem, setItem as setSecureItem } from '../secure-storage.js'
 
 const KEY = 'deepview.sync.password'
 

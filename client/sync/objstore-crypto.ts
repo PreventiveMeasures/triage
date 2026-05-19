@@ -7,7 +7,7 @@
 // / subscribe signature can't be replayed as a PUT / DELETE / LIST /
 // FETCH and vice versa.
 
-import { encodeUtf8 } from '../common/utf8.js'
+import { encodeUtf8 } from '../../common/utf8.js'
 
 const PUT_DOMAIN = 'deepview-objstore.v1.put'
 const DELETE_DOMAIN = 'deepview-objstore.v1.delete'

@@ -15,7 +15,7 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { applyChangeset } = await import('../client/triage-sync.ts')
+const { applyChangeset } = await import('../client/sync/triage-sync.ts')
 
 describe('triage-sync — applyChangeset prototype-pollution defense', () => {
   it('a `__proto__` key in the changeset does not mutate the returned out\'s prototype chain', () => {

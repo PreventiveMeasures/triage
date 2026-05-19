@@ -32,7 +32,7 @@ const { bootServer } = await import('./_helpers.js')
 
 // ─────────── client modules ───────────
 
-const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval } = await import('../client/triage-sync.ts')
+const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, addReportToWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
@@ -209,7 +209,7 @@ describe('triage-sync client', () => {
     // any UI prompt. Now a resolver registered via
     // setHydrationConflictResolver fires on chain-receive too, with
     // a `'chain'` context tag.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
@@ -264,7 +264,7 @@ describe('triage-sync client', () => {
     // user picks "local" (or cancels — null decisions). The local
     // value then propagates to the chain on the next save (audit
     // round-1 rebase semantics).
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
@@ -306,7 +306,7 @@ describe('triage-sync client', () => {
     // two-way (overlay vs newBaseState) path skipped because
     // `localEntry` was null — applyChangeset replayed the delete on
     // top of the new chain value and the peer's change disappeared.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
@@ -358,7 +358,7 @@ describe('triage-sync client', () => {
     // path skipped because `chainEntry` was undefined — the
     // overlay-wins merge replayed the user's value on top of the
     // empty chain entry and the peer's delete disappeared.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     state.markers.set('finding-A', 'red')
     await saveTriage()
@@ -418,7 +418,7 @@ describe('triage-sync client', () => {
     // baseState and fired the dialog again with the same
     // conflicts. Now handleChain short-circuits when the chain
     // didn't advance baseRevision.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     // Sync up to a known baseline so baseRevision is set.
     state.markers.set('finding-A', 'red')
@@ -1231,7 +1231,7 @@ describe('triage-sync client', () => {
     // the chain's value, the next save's diff against the
     // (already-matching) baseState is empty, and the chain stays
     // on the imported value.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1298,7 +1298,7 @@ describe('triage-sync client', () => {
     // value wins; the diff against baseState produces a save that
     // pushes the local value to the chain (the gap-only behaviour
     // that this PR's resolver layer is built on).
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1360,7 +1360,7 @@ describe('triage-sync client', () => {
 
   it('hydration on attach with cancelled resolver (returns null) keeps local everywhere', async () => {
     // Cancel = same outcome as picking "local" for every conflict.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -1418,7 +1418,7 @@ describe('triage-sync client', () => {
   it('hydration on attach without a registered resolver falls back to gap-only (local-wins)', async () => {
     // No resolver wired (the triage-sync default). Conflicts are
     // silently resolved to local-wins; no dialog shows.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     setHydrationConflictResolver(null)
     triageSync.closeSession()
     clearTriageState()
@@ -2480,7 +2480,7 @@ describe('triage-sync client', () => {
     // their fresh edit. applyHydrationDecisions re-checks current
     // state.* against `c.local` and skips the imported assignment
     // when they no longer match.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     triageSync.closeSession()
     clearTriageState()
     state.reports.length = 0
@@ -3243,7 +3243,7 @@ describe('triage-sync client', () => {
     // privateKey via openSession), then immediately rotate the
     // privateKey + dismissError; verify the resulting workspaceTag
     // is the NEW key's, not the old.
-    const { setHydrationConflictResolver } = await import('../client/triage-sync.ts')
+    const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     setHydrationConflictResolver(null)
     triageSync.closeSession()
     clearTriageState()
@@ -3948,7 +3948,7 @@ describe('triage-sync client', () => {
 // produced — just driven from outside the active session so the
 // arriving chain looks like another peer's edit.
 
-const cryptoMod = await import('../client/sync-crypto.ts')
+const cryptoMod = await import('../client/sync/sync-crypto.ts')
 // Native WebSocket on the client side — same API surface as the
 // browser, which is the production environment the client actually
 // runs against. The `ws` package is kept strictly to the server side

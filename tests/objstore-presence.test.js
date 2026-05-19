@@ -10,9 +10,9 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { after, before, describe, it } from 'node:test'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/objstore.ts'
+import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
 import { deleteFile, listFiles, readFileBytes, saveFileBytes } from '../client/storage.js'
-import { triageSync } from '../client/triage-sync.ts'
+import { triageSync } from '../client/sync/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
 import { bootServer } from './_helpers.js'
 

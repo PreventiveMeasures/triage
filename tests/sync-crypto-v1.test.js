@@ -9,7 +9,7 @@ import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 import { encodeUtf8 } from '../common/utf8.js'
 
-const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync-crypto.ts')
+const { computeRevisionId, buildAad, verifySavePayload } = await import('../client/sync/sync-crypto.ts')
 
 async function sha256b64url(str) {
   const digest = await crypto.subtle.digest('SHA-256', encodeUtf8(str))

@@ -11,7 +11,7 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { retryOnContendedImpl } from '../client/objstore.ts'
+import { retryOnContendedImpl } from '../client/sync/objstore.ts'
 
 // Injected sleep that records the requested durations and resolves
 // immediately. Lets tests assert the backoff schedule.

@@ -31,11 +31,11 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Buffer } from 'node:buffer'
 
-const { deriveSessionKey, deriveSigningKeypair } = await import('../client/sync-crypto.ts')
-const { deriveObjstoreKeys } = await import('../client/objstore-content-crypto.ts')
+const { deriveSessionKey, deriveSigningKeypair } = await import('../client/sync/sync-crypto.ts')
+const { deriveObjstoreKeys } = await import('../client/sync/objstore-content-crypto.ts')
 
-const SYNC_CRYPTO_PATH = fileURLToPath(new URL('../client/sync-crypto.ts', import.meta.url))
-const OBJSTORE_CRYPTO_PATH = fileURLToPath(new URL('../client/objstore-content-crypto.ts', import.meta.url))
+const SYNC_CRYPTO_PATH = fileURLToPath(new URL('../client/sync/sync-crypto.ts', import.meta.url))
+const OBJSTORE_CRYPTO_PATH = fileURLToPath(new URL('../client/sync/objstore-content-crypto.ts', import.meta.url))
 
 // Extract every literal info string the source files declare. The
 // regex matches `'deepview-...'` constants — the literal form used
