@@ -7,7 +7,7 @@
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
 import { renderSidebar } from './view/sidebar.js'
-import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
 import { graph2 } from './view/graph2/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
@@ -222,8 +222,15 @@ async function continueBoot() {
       // bundles list was populated by the `renderSidebar()` above,
       // so we can synchronously check membership; missing entries
       // (deleted in another tab between sessions) silently fall
-      // through to the empty drop-zone state.
-      const integrity = last.slice(2)
+      // through to the empty drop-zone state. A space-delimited
+      // suffix encodes the active sub-tab (terminal / graph /
+      // issues / code / files / reports); an unknown / missing
+      // suffix defaults to the packages tab.
+      const rest = last.slice(2)
+      const spaceIdx = rest.indexOf(' ')
+      const integrity = spaceIdx >= 0 ? rest.slice(0, spaceIdx) : rest
+      const savedTab = spaceIdx >= 0 ? rest.slice(spaceIdx + 1) : ''
+      const tab = BUNDLE_TABS.has(savedTab) ? savedTab : 'packages'
       if ((state.bundles ?? []).some((b) => b.integrity === integrity)) {
         state.currentView = 'bundles'
         state.selectedBundle = integrity
@@ -232,7 +239,7 @@ async function continueBoot() {
         state.bundleSourceFindingIdx = null
         state.bundleCodeSearchQuery = ''
         state.bundleCodeSearchMode = 'files'
-        state.bundleDetailsTab = 'packages'
+        state.bundleDetailsTab = tab
         state.shownTriage = null
         graph2.showAll = true
         render()
