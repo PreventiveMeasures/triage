@@ -22,7 +22,7 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { ensureBundleFindingsIndexed, getPackagesIndex, state } from '#client/index.js'
+import { compareVersionsDesc, ensureBundleFindingsIndexed, getPackagesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
 import { SEVERITIES } from './format.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
@@ -50,36 +50,94 @@ export function renderPackagesView() {
   // count chips; the filter stays unchanged when shownTriage flips
   // so the user can pivot through the buckets without the page
   // collapsing.
+  //
+  // Each entry's `versions` is the array of per-version slices
+  // sorted latest-first (`compareVersionsDesc`), filtered by the
+  // active triage bucket. Multi-version packages render the
+  // latest version's row inline + an expand chevron that reveals
+  // the older versions underneath; single-slot packages collapse
+  // back to the original one-row shape (no chevron).
   const triageCounts = { fixed: 0, invalid: 0, deleted: 0 }
   const filtered = []
   for (const [pkg, bucket] of buckets) {
-    const findings = []
-    const files = new Map()
-    for (const f of bucket.findings) {
-      const t = state.triageState.get(tabKey(f)) ?? null
-      if (t === 'fixed') triageCounts.fixed++
-      else if (t === 'invalid') triageCounts.invalid++
-      else if (t === 'deleted') triageCounts.deleted++
-      if (t !== state.shownTriage) continue
-      findings.push(f)
-      if (!files.has(f.file)) files.set(f.file, [])
-      files.get(f.file).push(f)
+    const versions = []
+    const aggFindings = []
+    const aggFiles = new Map()
+    const aggReports = new Set()
+    for (const [version, sub] of bucket.byVersion) {
+      const findings = []
+      const files = new Map()
+      for (const f of sub.findings) {
+        const t = state.triageState.get(tabKey(f)) ?? null
+        if (t === 'fixed') triageCounts.fixed++
+        else if (t === 'invalid') triageCounts.invalid++
+        else if (t === 'deleted') triageCounts.deleted++
+        if (t !== state.shownTriage) continue
+        findings.push(f)
+        if (!files.has(f.file)) files.set(f.file, [])
+        files.get(f.file).push(f)
+      }
+      if (findings.length === 0) continue
+      versions.push([version, { findings, files, reports: sub.reports }])
+      for (const f of findings) {
+        aggFindings.push(f)
+        if (!aggFiles.has(f.file)) aggFiles.set(f.file, [])
+        aggFiles.get(f.file).push(f)
+      }
+      for (const r of sub.reports) aggReports.add(r)
     }
-    if (findings.length > 0) filtered.push([pkg, { findings, files, reports: bucket.reports }])
+    if (versions.length === 0) continue
+    versions.sort(([va], [vb]) => compareVersionsDesc(va, vb))
+    filtered.push([pkg, {
+      findings: aggFindings,
+      files: aggFiles,
+      reports: aggReports,
+      versions,
+    }])
   }
   // Selection — clear stale picks when the currently-open package
   // dropped out of the filtered set (e.g. the user flipped triage
   // and the row no longer has any findings under the new filter).
   // Mirrors the bundles-view pattern: selectedBundle stays sticky
   // across re-renders unless the entry is gone.
+  //
+  // Version pin: if the currently-selected version slot is gone
+  // (no findings under the active triage filter), but the package
+  // still has other versions, fall back to the latest remaining
+  // version. The user dropping into an empty per-version row
+  // would otherwise see "no findings" with no recourse.
   const selected = state.selectedPackage
   const selectedEntry = selected ? filtered.find(([pkg]) => pkg === selected) ?? null : null
+  let selectedVersionEntry = null
+  if (selectedEntry) {
+    const versionList = selectedEntry[1].versions
+    const pinned = state.selectedPackageVersion
+    if (pinned !== null) {
+      selectedVersionEntry = versionList.find(([v]) => v === pinned) ?? null
+    }
+    if (!selectedVersionEntry && versionList.length === 1) {
+      selectedVersionEntry = versionList[0]
+    }
+  }
+  // Bucket fed into the details panel / Issues slide. When a
+  // specific version is pinned (multi-version package or single-
+  // version package whose lone slot has a known version), the
+  // per-version slice surfaces; otherwise the aggregate row
+  // covers the whole package (unversioned `node_modules/<pkg>/`
+  // installs).
+  const selectedBucket = selectedVersionEntry
+    ? selectedVersionEntry[1]
+    : (selectedEntry ? selectedEntry[1] : null)
   // Slide mode — the Issues view replaces the list + details with
   // a full-width back-button header + the shared per-file grouped
   // issue list. Mirrors the bundles slide pattern (Graph / Issues
   // / Code → renders edge-to-edge instead of the panel).
   if (selectedEntry && state.packageDetailsTab === 'issues') {
-    return renderPackageSlide(selectedEntry[0], selectedEntry[1])
+    return renderPackageSlide(
+      selectedEntry[0],
+      selectedBucket,
+      selectedVersionEntry ? selectedVersionEntry[0] : null,
+    )
   }
   // Apply the user-typed search filter + sort to the visible list
   // (selection lookup above runs against the unfiltered set so
@@ -118,7 +176,7 @@ export function renderPackagesView() {
         ? html`<p style="color:var(--muted)">No packages match "${state.packagesSearchQuery}".</p>`
         : html`<div class=${layoutClass}>
           <ul class="packages-list">
-            ${repeat(visible, ([pkg]) => pkg, ([pkg, bucket]) => renderPackageRow(pkg, bucket, pkg === selected))}
+            ${repeat(buildVisibleRows(visible), keyForVisibleRow, (row) => renderPackageRow(row, selected, state.selectedPackageVersion))}
           </ul>
           ${selectedEntry ? html`<aside class="packages-details" id="packages-details">
             <header class="packages-details-bar">
@@ -126,11 +184,53 @@ export function renderPackagesView() {
               <button type="button" class="packages-details-close" data-deselect-package title="Close details" aria-label="Close details">×</button>
             </header>
             <div class="packages-details-body">
-              ${renderPackageDetails(selectedEntry[0], selectedEntry[1])}
+              ${renderPackageDetails(selectedEntry[0], selectedBucket, selectedVersionEntry ? selectedVersionEntry[0] : null)}
             </div>
           </aside>` : nothing}
         </div>`}
   </div>`
+}
+
+// Flatten the `visible` package list into the row sequence the
+// `<ul>` actually renders. Single-version packages collapse to one
+// row with no chevron. Multi-version packages emit the latest
+// version as the headline row (chevron attached) and, when the
+// package is in `state.expandedPackages`, emit the remaining
+// versions as `kind: 'other'` rows underneath.
+function buildVisibleRows(visible) {
+  const rows = []
+  for (const [pkg, bucket] of visible) {
+    const versions = bucket.versions
+    if (versions.length <= 1) {
+      const [v, sub] = versions[0]
+      rows.push({ kind: 'single', pkg, version: v, bucket: sub, totalVersions: 1 })
+      continue
+    }
+    const [latestV, latestSub] = versions[0]
+    const expanded = state.expandedPackages.has(pkg)
+    rows.push({
+      kind: 'latest',
+      pkg,
+      version: latestV,
+      bucket: latestSub,
+      totalVersions: versions.length,
+      expanded,
+    })
+    if (expanded) {
+      for (let i = 1; i < versions.length; i++) {
+        const [v, sub] = versions[i]
+        rows.push({ kind: 'other', pkg, version: v, bucket: sub, totalVersions: versions.length })
+      }
+    }
+  }
+  return rows
+}
+
+// Stable key for lit's `repeat()` — distinguishes per-version rows
+// so the same package's `latest` and `other` rows don't collide
+// when expansion flips.
+function keyForVisibleRow(row) {
+  return row.version === null ? `${row.kind}:${row.pkg}` : `${row.kind}:${row.pkg}@${row.version}`
 }
 
 // Toolbar at the top-right of the Packages page header — search
@@ -204,10 +304,19 @@ function sortPackages(arr, sortBy) {
 // 'deleted'. Walks the raw OPFS bucket once; the slide uses the
 // counts to decide which tabs to render (non-zero only) and
 // passes the active mode to packageFindingsByFile for the body.
-function packageBucketCounts(rawBucket) {
+//
+// `version` scopes the counts to a single per-version slot when
+// it's non-undefined (null is a valid slot — the "unknown"
+// version for plain `node_modules/<pkg>/` installs); pass
+// `undefined` to count across every version slot the package
+// has.
+function packageBucketCounts(rawBucket, version) {
   const counts = { live: 0, invalid: 0, deleted: 0 }
   if (!rawBucket) return counts
-  for (const findings of rawBucket.files.values()) {
+  const fileSources = version === undefined
+    ? rawBucket.files.values()
+    : (rawBucket.byVersion.get(version)?.files.values() ?? [].values())
+  for (const findings of fileSources) {
     for (const f of findings) {
       const t = state.triageState.get(tabKey(f)) ?? null
       if (t === 'invalid') counts.invalid++
@@ -229,11 +338,18 @@ function packageBucketCounts(rawBucket) {
 // nothing to switch to otherwise. `bucket` carries the
 // page-filtered slice from renderPackagesView; the title bar's
 // `bucket.files`/`bucket.reports` counts come from there.
-function renderPackageSlide(pkg, bucket) {
+//
+// `version` is the per-version slot the slide is scoped to, or
+// null for an aggregate (unversioned package). Forwarded into
+// `packageFindingsByFile` so the body only renders findings from
+// the picked version slot — clicking an older version's row and
+// drilling into Issues should not surface findings from the
+// latest version.
+function renderPackageSlide(pkg, bucket, version) {
   const rawBucket = getPackagesIndex().get(pkg)
-  const counts = packageBucketCounts(rawBucket)
+  const counts = packageBucketCounts(rawBucket, version)
   const mode = state.packageSlideTriage ?? 'live'
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, mode) : new Map()
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, mode, version) : new Map()
   const total = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   const noun = mode === 'live'
     ? (total === 1 ? 'issue' : 'issues')
@@ -241,6 +357,7 @@ function renderPackageSlide(pkg, bucket) {
   const emptyMsg = mode === 'live'
     ? 'No live issues for this package.'
     : `No ${mode} issues for this package.`
+  const titleSuffix = version === null ? '' : ` @ ${version}`
   return html`<div class="packages-view packages-slide-view">
     <header class="bundles-slide-bar">
       <button
@@ -251,7 +368,7 @@ function renderPackageSlide(pkg, bucket) {
         aria-label="Back to packages"
       >← Back</button>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name">${pkg}</div>
+        <div class="bundles-slide-name">${pkg}${titleSuffix}</div>
         <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
       ${packageSlideTriageTabsTemplate(counts)}
@@ -296,32 +413,95 @@ function packageSlideTriageTabsTemplate(counts) {
 // far right opens the same full-width Issues slide the details
 // panel's tab opens — same shape as bundles' `[Code →]` row
 // shortcut, no need to drill in to the details panel first.
-function renderPackageRow(pkg, bucket, isSel) {
+//
+// Row shape branches on `row.kind`:
+//   * `'single'` — package has exactly one detected version
+//     (often null = unknown for plain `node_modules/<pkg>/`
+//     installs). Renders the original single-row chrome; the
+//     version chip surfaces only when it's a known string.
+//   * `'latest'` — package has 2+ detected versions; this is the
+//     headline row pinned to the latest version, with an expand
+//     chevron summarising the older versions.
+//   * `'other'` — older-version sub-row revealed by the
+//     headline's chevron. Indented (`packages-row-other` CSS) so
+//     the parent / child relationship reads visually.
+function renderPackageRow(row, selectedPkg, selectedVer) {
+  const { kind, pkg, version, bucket } = row
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
     if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
   }
   const chips = SEVERITIES.filter((s) => sevCounts[s] > 0)
   const dotColor = pkgColor(pkg)
+  const isSel = pkg === selectedPkg && versionMatchesSelection(row, selectedVer)
+  const classes = {
+    selected: isSel,
+    'packages-row-latest': kind === 'latest',
+    'packages-row-other': kind === 'other',
+  }
+  const versionAttr = version === null ? '' : version
+  const ariaLabel = version === null
+    ? `Open issues for ${pkg}`
+    : `Open issues for ${pkg}@${version}`
   return html`<li
-    class=${isSel ? 'selected' : ''}
+    class=${classMap(classes)}
     data-select-package=${pkg}
+    data-select-package-version=${versionAttr}
   >
     <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
-      <span class="packages-name">${pkg}</span>
+      <span class="packages-name">
+        ${pkg}${version === null ? nothing : html`<span class="packages-version">@${version}</span>`}
+      </span>
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">
       ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
+    ${kind === 'latest' ? renderExpandButton(pkg, row.expanded, row.totalVersions - 1) : nothing}
     <button
       type="button"
       class="packages-row-issues"
       data-package-row-issues=${pkg}
-      aria-label=${`Open issues for ${pkg}`}
+      data-package-row-issues-version=${versionAttr}
+      aria-label=${ariaLabel}
     >Issues →</button>
   </li>`
+}
+
+// Does the rendered row match the selected (pkg, version) pin?
+// Single-row packages match when the package name does — the row
+// has no version pin to compare against. Multi-version rows
+// match only when the version pin lines up too; `latest` rows
+// also match when the pin is null (the selection landed before
+// the user explicitly picked a version slot — pin the headline).
+function versionMatchesSelection(row, selectedVer) {
+  if (row.kind === 'single') return true
+  if (selectedVer === null) return row.kind === 'latest'
+  return row.version === selectedVer
+}
+
+// Expand / collapse chevron pinned to the right of the headline
+// row of a multi-version package. The numeric label ("+3 versions")
+// communicates the count of HIDDEN entries; expanded rows show
+// "Hide" so the affordance reads as a toggle rather than a
+// directional control. The click handler in events.js flips
+// `state.expandedPackages` membership on this package.
+function renderExpandButton(pkg, expanded, otherCount) {
+  const label = expanded
+    ? 'Hide'
+    : `+${otherCount} ${otherCount === 1 ? 'version' : 'versions'}`
+  return html`<button
+    type="button"
+    class=${classMap({ 'packages-row-expand': true, expanded })}
+    data-package-expand=${pkg}
+    aria-expanded=${String(expanded)}
+    aria-label=${expanded ? `Hide older versions of ${pkg}` : `Show older versions of ${pkg}`}
+    title=${expanded ? 'Hide older versions' : `Show older versions (${otherCount})`}
+  >
+    <span class="packages-row-expand-chevron" aria-hidden="true"></span>
+    <span class="packages-row-expand-label">${label}</span>
+  </button>`
 }
 
 // Right-panel details for the open package — tabbed body. Overview
@@ -332,15 +512,17 @@ function renderPackageRow(pkg, bucket, isSel) {
 // finding count there reflects every live (non invalid/deleted)
 // finding for the package, independent of the page's triage
 // selector. `bucket` is the triage-filtered slice from
-// renderPackagesView.
-function renderPackageDetails(pkg, bucket) {
+// renderPackagesView. `version` is the per-version slot when the
+// row is one of a multi-version package (or the single-known-
+// version slot of a `'single'` row); null for the aggregate.
+function renderPackageDetails(pkg, bucket, version) {
   // Issue count for the action-tab label uses the same filter the
   // bundle Issues tab applies (`mode: 'issues'`): strip invalid +
   // deleted, keep everything else. Pulled from the raw OPFS bucket
   // so the count doesn't shrink to 0 when the page's triage
   // selector flips off the live findings.
   const rawBucket = getPackagesIndex().get(pkg)
-  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg) : new Map()
+  const issueFindingsByFile = rawBucket ? packageFindingsByFile(rawBucket, pkg, 'live', version ?? undefined) : new Map()
   const issuesCount = [...issueFindingsByFile.values()].reduce((n, fs) => n + fs.length, 0)
   return html`<div class="bundles-tabs" role="tablist">
     <button
@@ -357,7 +539,7 @@ function renderPackageDetails(pkg, bucket) {
       data-package-tab="issues"
     >Issues (${issuesCount}) →</button>` : nothing}
   </div>
-  ${renderPackageOverview(pkg, bucket)}`
+  ${renderPackageOverview(pkg, bucket, version)}`
 }
 
 // Per-file groupings for a package's Issues tab. Three modes:
@@ -377,9 +559,17 @@ function renderPackageDetails(pkg, bucket) {
 // `node_modules/.pnpm/ws@.../node_modules/ws/lib/x.js`) merge
 // into a single file group instead of rendering as separate
 // rows.
-function packageFindingsByFile(rawBucket, pkg, mode = 'live') {
+//
+// `version` scopes the walk to a single per-version slot when
+// it's non-undefined (null is a valid slot — see
+// `packageBucketCounts`). Without it the function aggregates
+// across every version slot the package has.
+function packageFindingsByFile(rawBucket, pkg, mode = 'live', version) {
   const result = new Map()
-  for (const [file, findings] of rawBucket.files) {
+  const fileSource = version === undefined
+    ? rawBucket.files
+    : (rawBucket.byVersion.get(version)?.files ?? new Map())
+  for (const [file, findings] of fileSource) {
     const filtered = findings.filter((f) => {
       const t = state.triageState.get(tabKey(f)) ?? null
       if (mode === 'invalid') return t === 'invalid'
@@ -397,8 +587,10 @@ function packageFindingsByFile(rawBucket, pkg, mode = 'live') {
 
 // Overview tab body — moved out of renderPackageDetails so the
 // tab dispatch above stays compact. Same content as the previous
-// (pre-tabs) detail body.
-function renderPackageOverview(pkg, bucket) {
+// (pre-tabs) detail body. `version` is the per-version slot the
+// detail panel is scoped to, surfaced as an extra `Version` row in
+// the meta dl when it's a known string.
+function renderPackageOverview(pkg, bucket, version) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {
     if (sevCounts[f.severity] !== undefined) sevCounts[f.severity]++
@@ -424,6 +616,7 @@ function renderPackageOverview(pkg, bucket) {
     : null
   return html`<dl class="packages-detail-meta">
     <dt>Package</dt><dd class="mono">${pkg}</dd>
+    ${version ? html`<dt>Version</dt><dd class="mono">${version}</dd>` : nothing}
     ${repoUrl ? html`<dt>Repository</dt><dd class="mono"><a href=${repoUrl} target="_blank" rel="noopener">${repoSlug}</a></dd>` : nothing}
     <dt>Findings</dt><dd>${bucket.findings.length}</dd>
     <dt>Files</dt><dd>${bucket.files.size}</dd>

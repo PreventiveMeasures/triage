@@ -15,6 +15,8 @@ export {
   subscribeToBundleFindingIndex,
 } from './bundle-finding-index.js'
 
+export { compareVersionsDesc } from './bundle-finding-versions.js'
+
 export {
   bundlesForFileHash,
   dropBundleFromHashIndex,

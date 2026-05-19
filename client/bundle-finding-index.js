@@ -23,6 +23,7 @@
 // open view (Bundles' Issues tab, Packages page) can repaint
 // progressively as findings come in.
 
+import { indexFindingByVersion, packageVersionOf, pruneVersionSlot } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor } from './state.ts'
 import { parseMarkdownFindings } from '../common/parse-md.js'
@@ -65,6 +66,7 @@ function packageOf(file) {
   }
   return null
 }
+
 
 // Extracts the repo "key" the Repositories view buckets under.
 // Prefers the analyzer-stamped `repo.github` (a `user/repo` slug
@@ -265,9 +267,18 @@ function indexFindingByHash(f, key, name) {
 // content hash. Findings outside those dirs (own source) are
 // skipped — the page only aggregates third-party deps. Returns
 // false when the file isn't part of a package.
+//
+// `byVersion` mirrors the top-level bucket shape, keyed by the
+// version pulled out of the file path (`packageVersionOf`). The
+// version is null when the path doesn't expose one (plain
+// `node_modules/<pkg>/...`, no pnpm shim); that null slot acts as
+// the "unknown" sub-bucket so unversioned installs still surface
+// under the package. The Packages view splits the row by version
+// when more than one version slot is populated.
 function indexFindingByPackage(f, key, name) {
   const pkg = packageOf(f.file)
   if (!pkg) return false
+  const version = packageVersionOf(f.file)
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
     // `_keyReports` tracks which reports contributed each key so
@@ -282,21 +293,17 @@ function indexFindingByPackage(f, key, name) {
     // (rare — would mean the analyzer disagreed on which repo
     // owns the package across reports) suppress the link rather
     // than guess. Pruned alongside the rest in `invalidateName`.
-    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), repos: new Set(), _keyReports: new Map() }
+    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), repos: new Set(), _keyReports: new Map(), byVersion: new Map() }
     byPackage.set(pkg, pBucket)
   }
   pBucket.reports.add(name)
-  if (typeof f.repo?.github === 'string' && f.repo.github) {
-    pBucket.repos.add(f.repo.github)
-  }
+  if (typeof f.repo?.github === 'string' && f.repo.github) pBucket.repos.add(f.repo.github)
   let krSet = pBucket._keyReports.get(key)
-  if (!krSet) {
-    krSet = new Set()
-    pBucket._keyReports.set(key, krSet)
-  }
+  if (!krSet) pBucket._keyReports.set(key, krSet = new Set())
   const wasNewReport = !krSet.has(name)
   krSet.add(name)
-  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file })
+  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
+  indexFindingByVersion(pBucket, version, f, key, name)
   // Same shape as `indexFindingByHash` returns when an existing key
   // gains a fresh contributing report: signal the caller so a
   // `notify()` fires and Packages-view subscribers repaint to
@@ -373,7 +380,7 @@ function invalidateName(name) {
     }
     if (bucket.keys.size === 0) byHash.delete(hash)
   }
-  for (const { pkg, key, file } of contrib.pkg) {
+  for (const { pkg, key, file, version } of contrib.pkg) {
     const pBucket = byPackage.get(pkg)
     if (!pBucket) continue
     const krSet = pBucket._keyReports.get(key)
@@ -391,6 +398,13 @@ function invalidateName(name) {
         if (fileList.length === 0) pBucket.files.delete(file)
       }
     }
+    // Mirror prune on the per-version sub-bucket. The contribution
+    // remembered the version this finding landed under, so we
+    // surgically drop the report from that slot without re-scanning
+    // every version. The version helpers live in their own module
+    // (`bundle-finding-versions.js`); `findingDedupeKey` is
+    // threaded in so they don't need to reach back into this file.
+    pruneVersionSlot(pBucket, version, key, file, name, findingDedupeKey)
     // Recompute the public `reports` set: any report still appearing
     // in any _keyReports entry stays. Cheaper to recompute on prune
     // than to maintain a refcount.

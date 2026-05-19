@@ -270,10 +270,27 @@ report.addEventListener('click', (e) => {
   // BEFORE the row-select handlers below because the button
   // sits inside the `<li>`; closest() would otherwise bubble
   // the click up to the row's data-select-* attribute.
+  // Packages list — expand chevron on multi-version row headlines.
+  // Flips `state.expandedPackages` membership for this package so
+  // the older-version sub-rows surface (or hide) on the next
+  // render. Listed before the row-issues / row-select handlers
+  // because the chevron lives inside the `<li>` click target;
+  // bubbling up to the row would otherwise select the latest
+  // version row alongside the expand.
+  const pkgExpand = e.target.closest('[data-package-expand]')
+  if (pkgExpand) {
+    const pkg = pkgExpand.dataset.packageExpand
+    if (state.expandedPackages.has(pkg)) state.expandedPackages.delete(pkg)
+    else state.expandedPackages.add(pkg)
+    render()
+    return
+  }
   const pkgRowIssues = e.target.closest('[data-package-row-issues]')
   if (pkgRowIssues) {
     const pkg = pkgRowIssues.dataset.packageRowIssues
+    const ver = pkgRowIssues.dataset.packageRowIssuesVersion
     state.selectedPackage = pkg
+    state.selectedPackageVersion = ver ? ver : null
     state.packageDetailsTab = 'issues'
     state.packageSlideTriage = null
     // Transient flag — slide-back clears `selectedPackage` too so
@@ -295,12 +312,19 @@ report.addEventListener('click', (e) => {
     return
   }
   // Reset the details panel to the Overview tab so a new pick
-  // doesn't carry the prior selection's tab choice.
+  // doesn't carry the prior selection's tab choice. The version
+  // pin reads off the `data-select-package-version` attribute
+  // (empty string → null, meaning "use the package aggregate" /
+  // "the only version slot" — see versionMatchesSelection in
+  // render-packages.js).
   const selPackage = e.target.closest('[data-select-package]')
   if (selPackage) {
     const pkg = selPackage.dataset.selectPackage
-    if (state.selectedPackage === pkg) return
+    const verRaw = selPackage.dataset.selectPackageVersion ?? ''
+    const ver = verRaw === '' ? null : verRaw
+    if (state.selectedPackage === pkg && state.selectedPackageVersion === ver) return
     state.selectedPackage = pkg
+    state.selectedPackageVersion = ver
     state.packageDetailsTab = 'overview'
     // Drop the slide's triage sub-view so a new pick lands in the
     // default `live` (untriaged + fixed) bucket — carrying a
@@ -314,6 +338,7 @@ report.addEventListener('click', (e) => {
   // Packages list — close-details button on the right panel.
   if (e.target.closest('[data-deselect-package]')) {
     state.selectedPackage = null
+    state.selectedPackageVersion = null
     render()
     return
   }
@@ -344,6 +369,7 @@ report.addEventListener('click', (e) => {
     // state when they back out of the slide.
     if (state.packageSlideTransient) {
       state.selectedPackage = null
+      state.selectedPackageVersion = null
       state.packageSlideTransient = false
     }
     render()

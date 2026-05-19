@@ -25,11 +25,13 @@ export interface State {
   bundleDetails: unknown
   bundleDetailsTab: string
   selectedPackage: string | null
+  selectedPackageVersion: string | null
   packageDetailsTab: 'overview' | 'issues'
   packageSlideTriage: 'invalid' | 'deleted' | null
   packageSlideTransient: boolean
   packagesSearchQuery: string
   packagesSortBy: string
+  expandedPackages: Set<string>
   selectedRepository: string | null
   repositoryDetailsTab: 'overview' | 'issues'
   repositorySlideTriage: 'invalid' | 'deleted' | null
@@ -209,6 +211,14 @@ export const state: State = store<State>({
   // Stale selections (against a package that fell out of the
   // current triage filter) auto-clear at render time.
   selectedPackage: null,
+  // Pinned version inside `selectedPackage` when the row is a
+  // multi-version package — null when no version is pinned (e.g.
+  // the package only has one version slot, or the user picked the
+  // single aggregate row of an unversioned `node_modules/<pkg>/`
+  // install). Reset alongside `selectedPackage`. The Packages view
+  // routes the details panel + Issues slide through this slot when
+  // it's non-null, so per-version rows show only their own slice.
+  selectedPackageVersion: null,
   // Active tab in the package details panel — 'overview' keeps the
   // regular list + details layout (panel content); 'issues' opens
   // the full-width slide (same chrome as the bundle slide), which
@@ -238,6 +248,14 @@ export const state: State = store<State>({
   // 'files-desc', 'reports-desc', 'name-asc'.
   packagesSearchQuery: '',
   packagesSortBy: 'findings-desc',
+  // Package rows whose previous-versions list is expanded. The
+  // Packages view shows ONLY the latest version's row by default
+  // for any package that has more than one detected version; the
+  // expand chevron flips this Set membership for that package so
+  // the older versions surface as sub-rows underneath. Session-only
+  // — re-renders track the flag but it doesn't persist across
+  // reloads.
+  expandedPackages: new Set<string>(),
   // Repositories view — same shape as Packages but bucketed by
   // each finding's repo URL (own-source findings only; deps live
   // in Packages). The two views complement each other.
