@@ -10,17 +10,17 @@
   z-index: 1000;
   width: 30px; height: 30px;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--muted);
+  border: 0; border-radius: 6px;
   box-shadow: var(--shadow-glass);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
-  transition: border-color .12s, color .12s, background .12s;
+  transition: color .12s, background .12s;
   cursor: default;
   user-select: none;
 }
-:host(:hover) { border-color: var(--accent); color: var(--accent); }
+:host(:hover) { color: var(--text); }
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Fullscreen graph: drop the chip chrome so the toggle reads as a
    bare icon over the canvas. The `body.report-fullscreen` class

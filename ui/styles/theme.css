@@ -335,15 +335,15 @@ a { color: var(--accent); text-decoration: none; }
   z-index: 1000;
   width: 30px; height: 30px;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--muted);
+  border: 0; border-radius: 6px;
   box-shadow: var(--shadow-glass);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   align-items: center; justify-content: center;
-  transition: border-color .12s, color .12s, background .12s;
+  transition: color .12s, background .12s;
 
-  &:hover { border-color: var(--accent); color: var(--accent); }
+  &:hover { color: var(--text); }
   & svg { display: block; }
 }
 
