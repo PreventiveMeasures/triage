@@ -776,12 +776,12 @@ function triageSelectorTemplate(triageCounts) {
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, kanbanMode } = flags
   // The findings tab gains a "graph" view-mode option when a
-  // tree-bearing report is loaded (showGraphMode). The kanban mode
-  // (status board) sits between grouped and graph. Switching to
-  // graph replaces the table / list / grouped / kanban body with
+  // tree-bearing report is loaded (showGraphMode). The focus and
+  // kanban modes sit between grouped and graph. Switching to graph
+  // replaces the table / list / grouped / focus / kanban body with
   // the graph2 canvas — see the findings-graph slot in render()
   // below.
-  const viewModes = showGraphMode ? 'table,list,grouped,kanban,graph' : 'table,list,grouped,kanban'
+  const viewModes = showGraphMode ? 'table,list,grouped,focus,kanban,graph' : 'table,list,grouped,focus,kanban'
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
   const srcChip = (value, label) => html`<button
     type="button"
@@ -913,6 +913,16 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
 // item identity survives the trip.
 let pendingTableItems = null
 
+// Last index the focus view rendered at. After a triage action
+// removes the currently-focused finding from view (very common —
+// "fix this" / "invalid" / "delete" all drop it out of the
+// default live-bucket filter), `state.focusGid` no longer matches
+// anything in `filtered`. Re-using the same index lands on the
+// item that shifted up into that slot — i.e. the NEXT untriaged
+// finding — which is the expected forward-motion of a triage
+// session. Resets to 0 when filters / sort produce a fresh list.
+let prevFocusedIdx = 0
+
 // Persistent <finding-table> instance, kept across render() calls so
 // the row list (and its StateElement reactivity) survives the
 // innerHTML reset. We detach this element BEFORE replacing
@@ -939,9 +949,14 @@ function findingCardPlaceholder(g, inGroup = false) {
 // Compact kanban card — tiny colored letter-chip + multi-line
 // title + file:line. The full card (tabs, action buttons, the
 // description body) lives behind a click that opens a centered
-// modal (see kanbanDetailTemplate). The whole card is draggable;
-// `data-kanban-source` lets the drop-zone predicate in events.js
-// tell us apart from any other element with `data-gid`.
+// modal (see kanbanDetailTemplate). The whole card is draggable
+// in the kanban variant; `data-kanban-source` lets the drop-zone
+// predicate in events.js tell us apart from any other element with
+// `data-gid`. The same compact template is reused as the focus
+// view's right-hand "up next" list — the `focus` variant drops
+// drag + adds the `[data-focus-select]` hook the focus click
+// handler picks up, plus an `.active` class on the currently-
+// focused card.
 const SEVERITY_LETTERS = {
   critical:      'C',
   high:          'H',
@@ -951,37 +966,57 @@ const SEVERITY_LETTERS = {
   bug:           'B',
   informational: 'i',
 }
-function kanbanCardTemplate(g) {
+function kanbanCardTemplate(g, opts = {}) {
+  const { variant = 'kanban', active = false } = opts
   const groupSt = groupState(g)
-  const active = activeTabFor(g)
-  const title = firstLine(stripExportMarker(active.description, active.exportName)) || '(untitled finding)'
-  const classes = { 'kanban-card': true, 'has-conflict': groupSt.hasConflict }
+  const activeTab = activeTabFor(g)
+  const title = firstLine(stripExportMarker(activeTab.description, activeTab.exportName)) || '(untitled finding)'
+  const isKanban = variant === 'kanban'
+  const classes = {
+    'kanban-card': true,
+    'has-conflict': groupSt.hasConflict,
+    'focus-side-card': !isKanban,
+    'active': !isKanban && active,
+  }
   if (!groupSt.hasConflict && groupSt.commonColor) classes[`mark-${groupSt.commonColor}`] = true
-  const lineNum = parseInt(active.line, 10)
+  const lineNum = parseInt(activeTab.line, 10)
   const lineSuffix = Number.isFinite(lineNum) ? `:${lineNum}` : ''
-  const letter = SEVERITY_LETTERS[active.severity] ?? '?'
-  return html`<div
-    class=${classMap(classes)}
-    data-gid=${groupKey(g)}
-    data-kanban-source
-    draggable="true"
-    role="button"
-    tabindex="0"
-    aria-label=${`Open details for ${title}`}
-  >
-    <span
-      class=${`kanban-badge sev-${active.severity}`}
-      title=${badgeLabel(active.severity)}
-      aria-label=${badgeLabel(active.severity)}
+  const letter = SEVERITY_LETTERS[activeTab.severity] ?? '?'
+  const inner = html`<span
+      class=${`kanban-badge sev-${activeTab.severity}`}
+      title=${badgeLabel(activeTab.severity)}
+      aria-label=${badgeLabel(activeTab.severity)}
     >${letter}</span>
     <span class="kanban-title">${title}</span>
     <div class="kanban-meta">
-      <span class="kanban-loc">${active.file}${lineSuffix}</span>
-      ${active.confidence === undefined || active.confidence === null
+      <span class="kanban-loc">${activeTab.file}${lineSuffix}</span>
+      ${activeTab.confidence === undefined || activeTab.confidence === null
         ? nothing
-        : html`<span class="kanban-conf" title=${`Confidence ${active.confidence}/10`}>${active.confidence}</span>`}
-    </div>
-  </div>`
+        : html`<span class="kanban-conf" title=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
+    </div>`
+  if (isKanban) {
+    return html`<div
+      class=${classMap(classes)}
+      data-gid=${groupKey(g)}
+      data-kanban-source
+      draggable="true"
+      role="button"
+      tabindex="0"
+      aria-label=${`Open details for ${title}`}
+    >${inner}</div>`
+  }
+  // Focus variant — the click handler in events.js looks for
+  // `.focus-side-card[data-focus-select]` and swaps the centered
+  // finding-card to the clicked gid.
+  return html`<div
+    class=${classMap(classes)}
+    data-gid=${groupKey(g)}
+    data-focus-select
+    role="button"
+    tabindex="0"
+    aria-current=${active ? 'true' : 'false'}
+    aria-label=${`Focus on ${title}`}
+  >${inner}</div>`
 }
 
 // Detail modal — opens on kanban-card click, wrapped in
@@ -1062,6 +1097,63 @@ function findingsBodyTemplate(filtered) {
         </header>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
+    </div>`
+  }
+  if (state.viewMode === 'focus') {
+    // Focus view: one centered <finding-card> in the main pane, with
+    // a vertical "up next" queue of compact kanban-style cards on
+    // the right. The same filter pipeline (state.shownTriage +
+    // toolbar filters) feeds the queue, so the user can narrow what
+    // they're working through with the regular toolbar controls.
+    //
+    // Selection rules:
+    //   - `state.focusGid` matches a group still in the filtered
+    //     list  → that group is focused (the explicit pick path:
+    //     click in the sidebar, J/K navigation, prior-session
+    //     leftover when the user returns to the focus view).
+    //   - Otherwise fall back to the previous render's index
+    //     (clamped to the new list). After a triage on the centered
+    //     finding, the previous index now points to the item that
+    //     shifted up into its slot — keeping the queue moving
+    //     forward instead of teleporting back to position 0.
+    // The fallback is read-only here; events.js / render() don't
+    // write `state.focusGid` back to the auto-picked group's gid,
+    // so the user's last-explicit pick can re-surface if the
+    // filter reverts to a set that still contains it.
+    if (filtered.length === 0) return nothing
+    let focusedIdx = state.focusGid
+      ? filtered.findIndex((g) => groupKey(g) === state.focusGid)
+      : -1
+    if (focusedIdx < 0) {
+      // Stale focusGid (default: never set, OR previously-focused
+      // finding fell out of view via a triage action / filter
+      // tightening). Use the previous render's index, clamped to
+      // the new list — after a triage, the item at the same slot
+      // is the one that took its place, so the user feels "the
+      // queue advanced" rather than "I got teleported to the top".
+      focusedIdx = Math.min(prevFocusedIdx, filtered.length - 1)
+      if (focusedIdx < 0) focusedIdx = 0
+    }
+    prevFocusedIdx = focusedIdx
+    const focused = filtered[focusedIdx]
+    return html`<div class="focus-view">
+      <div class="focus-main">
+        <div class="focus-card-wrapper">
+          ${findingCardPlaceholder(focused)}
+        </div>
+      </div>
+      <aside class="focus-sidebar" aria-label="Up next">
+        <div class="focus-sidebar-header">
+          <span class="label">Up next</span>
+          <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
+        </div>
+        <div class="focus-sidebar-body">
+          ${repeat(filtered, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
+            variant: 'focus',
+            active: groupKey(g) === groupKey(focused),
+          }))}
+        </div>
+      </aside>
     </div>`
   }
   if (state.viewMode === 'kanban') {
@@ -1600,6 +1692,7 @@ function renderImpl() {
   if (tableWithDetails) wrapperClass += ' with-details'
   if (renderGraphInBody) wrapperClass += ' with-graph'
   if (isKanban) wrapperClass += ' with-kanban'
+  if (state.viewMode === 'focus') wrapperClass += ' with-focus'
 
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
@@ -1721,7 +1814,7 @@ function renderImpl() {
     if (graphSlot) {
       const viewModeRow = html`<view-mode-buttons
         mode=${state.viewMode}
-        modes="table,list,grouped,kanban,graph"
+        modes="table,list,grouped,focus,kanban,graph"
       ></view-mode-buttons>`
       litRender(renderGraph2Layout(g2DataForBody.graph, { extraTopRow: viewModeRow }), graphSlot)
       // Populate the right-panel selection slot + the top-packages

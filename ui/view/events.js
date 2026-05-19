@@ -1437,6 +1437,70 @@ document.addEventListener('keydown', (e) => {
   setKanbanPopoverGid(null)
 })
 
+// Focus-view selection. The right-hand "up next" queue renders each
+// upcoming finding as a `<div class="kanban-card focus-side-card"
+// data-focus-select>`; clicking one swaps the centered finding-card
+// to that gid. The handler also scrolls the now-active card into
+// view inside the sidebar so chaining clicks keeps the queue
+// oriented around the cursor.
+function setFocusGid(gid) {
+  if (!gid || state.focusGid === gid) return
+  state.focusGid = gid
+  render()
+  // Post-render: bring the new active card into view in the
+  // sidebar. `block: 'nearest'` minimises movement (a no-op when
+  // the card is already visible); `behavior: 'instant'` skips the
+  // smooth-scroll animation, which would noticeably lag a J/K
+  // run-through. The sidebar is the closest scrollable ancestor,
+  // so only it scrolls — the page stays put.
+  const card = report.querySelector('.focus-side-card.active')
+  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+}
+
+report.addEventListener('click', (e) => {
+  const card = e.target.closest?.('.focus-side-card[data-focus-select]')
+  if (!card) return
+  // Skip when the user is text-selecting (click fires after mouseup
+  // with a non-empty selection range, same gotcha the kanban card
+  // handler dodges).
+  if (window.getSelection?.()?.toString()) return
+  const gid = card.dataset.gid
+  if (gid) setFocusGid(gid)
+})
+
+// Arrow / J / K keyboard navigation through the focus-view queue.
+// Bound to document so the key fires from anywhere in the page,
+// guarded so it only acts when the focus view is the one mounted
+// AND the user isn't typing in a text field (Search, Repo, etc.).
+document.addEventListener('keydown', (e) => {
+  if (state.viewMode !== 'focus' || state.currentView !== 'findings') return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const tag = e.target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return
+  let direction = 0
+  if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') direction = 1
+  else if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') direction = -1
+  else return
+  // Walk the rendered queue rather than re-deriving the filtered
+  // list — the DOM is the single source of truth for the current
+  // ordering (sort + filter) and we already paid for the build.
+  const cards = report.querySelectorAll('.focus-side-card[data-focus-select]')
+  if (cards.length === 0) return
+  let idx = -1
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i].classList.contains('active')) { idx = i; break }
+  }
+  // Clamp at the ends — wrapping would surprise the user mid-
+  // triage (you don't expect Down to teleport you back to the top).
+  const nextIdx = idx < 0
+    ? (direction > 0 ? 0 : cards.length - 1)
+    : Math.min(Math.max(idx + direction, 0), cards.length - 1)
+  if (nextIdx === idx) return
+  e.preventDefault()
+  const nextGid = cards[nextIdx].dataset.gid
+  if (nextGid) setFocusGid(nextGid)
+})
+
 // mark-color fires from `<color-marker>` (composed:true) when one of
 // its dots is clicked. Color applies to the ACTIVE tab only (per
 // spec rule 4); clicking the currently-marked color toggles it off.
@@ -1679,6 +1743,11 @@ report.addEventListener('view-mode-change', (e) => {
   // only renders inside the kanban template, so a stale gid here
   // would leak across view-mode changes when the user returns.
   if (state.viewMode !== 'kanban') state.kanbanPopoverGid = null
+  // Same idea for focus view: a stale focusGid would re-anchor the
+  // queue on whatever the user was looking at last time, even after
+  // filters / sort / loaded report have moved on. Letting it default
+  // back to the first-filtered item is the friendlier behaviour.
+  if (state.viewMode !== 'focus') state.focusGid = null
   render()
 })
 

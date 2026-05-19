@@ -3,9 +3,9 @@ import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, s
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
-const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban'])
+const VALID_VIEW_MODES = new Set(['grouped', 'list', 'table', 'kanban', 'focus'])
 
-export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban'
+export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 export type CurrentView = 'findings' | 'files' | 'bundles'
 export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
 
@@ -66,6 +66,7 @@ export interface State {
   filesSearch: string
   filesSelectedFile: string | null
   kanbanPopoverGid: string | null
+  focusGid: string | null
 }
 
 // Hoisted so the `state` object literal below can call it during its
@@ -403,6 +404,16 @@ export const state: State = store<State>({
   // popover is a transient inspection affordance. Re-clicking the
   // same card (or clicking the backdrop / pressing Esc) clears it.
   kanbanPopoverGid: null,
+  // Focus view: gid of the finding currently displayed in the center
+  // pane (null = no explicit pick yet; render falls back to position
+  // 0 of the filtered list). Session-only — not persisted, since
+  // which finding is "current" only makes sense within an active
+  // triage session. A stale gid (filter or sort changed, finding
+  // triaged out of the visible set) falls back to the previous
+  // render's index in render.js — so triaging the focused finding
+  // advances the queue to the next slot rather than jumping back to
+  // the top.
+  focusGid: null,
 })
 
 // Cross-tab propagation: a sibling tab's `saveRepoUrlFor` writes

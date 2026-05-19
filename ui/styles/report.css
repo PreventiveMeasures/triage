@@ -1442,13 +1442,30 @@
   /* List / grouped — the body slot is the scroller. Table view
      leaves the body slot at default overflow because the layout
      inside fills it via `height: 100%` and the list column
-     scrolls internally (findings.css). */
-  .findings-content > #findings-body-slot:not(:has(> .findings-table-layout)) {
+     scrolls internally (findings.css). Focus view also opts out
+     so the body slot stays a flex column for the focus-view's
+     own per-pane scroll setup (card / code / queue each own
+     their own scroll inside .focus-view). */
+  .findings-content > #findings-body-slot:not(:has(> .findings-table-layout, > .focus-view)) {
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
   }
 }
+
+/* Focus view-mode — the general `.findings-content:not(.with-
+   graph, .with-kanban)` block above already gives us the flex
+   chain. We just override the inherited 1200px max-width so
+   the focus layout (card + optional code pane + sidebar)
+   spreads across the full viewport, turn the body slot into a
+   flex column so `.focus-view`'s own `flex: 1` resolves
+   against bounded height, and drop the toolbar's bottom margin
+   for the same "1rem too large" reason kanban did. */
+.findings-content.with-focus { max-width: none; }
+.findings-content.with-focus #findings-body-slot {
+  display: flex; flex-direction: column;
+}
+.findings-content.with-focus .toolbar { margin-bottom: .5rem; }
 
 /* Fullscreen — graph topbar's ⛶ button toggles
    `body.report-fullscreen`. Hides the chrome and lets the graph2

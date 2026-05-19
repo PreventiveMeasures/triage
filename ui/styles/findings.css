@@ -621,3 +621,125 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   ::view-transition-new(kanban-detail-dim),
   ::view-transition-old(kanban-detail-dim) { animation-duration: .01s; }
 }
+
+/* ── Focus view ─────────────────────────────────────────────────────
+   One finding at a time, full-detail, centered in the main pane,
+   with a vertical "up next" queue of compact kanban-style cards
+   on the right. The board-style flex chain
+   (#report → .findings-content.with-focus → .focus-view) bounds
+   the layout to the viewport so the main pane and the sidebar
+   scroll independently — the toolbar stays pinned. */
+.focus-view {
+  display: grid;
+  /* Cap the queue at 280px so the main pane keeps the lion's share
+     of the viewport for the finding-card; on narrow viewports the
+     queue collapses below via the @media rule near the bottom of
+     this file. */
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: .75rem;
+  flex: 1; min-height: 0;
+}
+
+.focus-main {
+  min-width: 0; min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  display: flex; justify-content: center;
+  padding: .25rem 0;
+
+  &::-webkit-scrollbar { width: 6px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* The finding-card centers inside the main pane but stops at a
+   readable width — long descriptions on a wide monitor would
+   otherwise stretch to the full pane, sacrificing readability for
+   no gain. Mirrors the table-view details panel's max-width
+   (800px) so the focused finding renders the same here as it
+   would in the table+details layout. */
+.focus-card-wrapper {
+  width: 100%;
+  max-width: 800px;
+}
+
+.focus-sidebar {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+}
+
+.focus-sidebar-header {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .5rem;
+  padding: .35rem .55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted);
+
+  & .count {
+    font-weight: 500; font-size: .7rem;
+    color: var(--muted);
+    padding: 0 .35rem; border-radius: 999px;
+    background: rgb(from var(--text) r g b / .08);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.focus-sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .3rem;
+  display: flex; flex-direction: column; gap: .25rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+}
+
+/* `.focus-side-card` reuses `.kanban-card` (badge + clamped title
+   + meta) for visual consistency with the kanban view's untriaged
+   column. The variant tweaks: cursor is `pointer` not `grab` (no
+   drag), and the active card picks up an accent outline + tint
+   to anchor the queue against the centered finding. */
+.kanban-card.focus-side-card {
+  cursor: pointer;
+
+  &:active { cursor: pointer; }
+
+  &.active {
+    background: rgb(from var(--accent) r g b / .14);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  /* When the active card is also color-marked, keep each mark's
+     own background as the dominant tint and rely on the outline
+     alone to signal "this is the current one" — stacking two
+     background tints washed out both. */
+  &.active.mark-red   { background: var(--mark-red-bg); }
+  &.active.mark-blue  { background: var(--mark-blue-bg); }
+  &.active.mark-green { background: var(--mark-green-bg); }
+  &.active.mark-gray  { background: var(--mark-gray-bg); }
+}
+
+/* Narrow viewports: stack the queue under the main pane so the
+   finding-card keeps its full width instead of being squeezed
+   into the leftover gap next to a 280px sidebar. The queue caps
+   its height so the page doesn't grow to fit everything — the
+   focus view still owns the viewport. */
+@media (width <= 900px) {
+  .focus-view {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .focus-sidebar { max-height: 40vh; }
+}
