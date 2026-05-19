@@ -6,19 +6,18 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
-import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, remoteBundleName, remoteCount, triageSync } from '#client/sync.js'
+import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, remoteBundleName, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
-import { computeFindingCountsByFile, computeTransitiveCounts } from './graph/utils.js'
-import { renderTreeView } from './graph/files.js'
+import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings } from './file-counts.js'
+import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
-import { buildGraph } from './graph/data.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
-import { fileHasFindings, packageOf } from './graph/utils.js'
+import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import {
@@ -28,7 +27,7 @@ import {
   refreshBundleGraphTopPkgs,
   renderBundleSourceModal,
   renderBundlesList,
-  setCurrentBundleGraph,
+  setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './sync-upload-dialog.js'
@@ -115,8 +114,15 @@ export function buildGraph2Data() {
       ? allFiles
       : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   }
+  // `prep` is the raw-inputs shape — the lazy `ui/graph.js`
+  // module's `buildGraphFromPrep(prep)` does the actual
+  // `buildGraph(...)` call. Keeps `graph/data.js` out of the
+  // main bundle.
   return {
-    graph: buildGraph(treeData, files, findingCounts, transitiveCounts, severitySets, colorSets, fileFindings),
+    prep: {
+      treeData, files, ownCounts: findingCounts, transitiveCounts,
+      severitySets, colorSets, fileFindings,
+    },
     findingCounts,
   }
 }
@@ -139,7 +145,7 @@ export function refreshGraph2Sidebar() {
   if (!mod) return
   const data = buildGraph2Data()
   if (!data) return
-  mod.refreshSidebar(data.graph, { isBundleContext: state.currentView === 'bundles' })
+  mod.refreshSidebar(data.prep, { isBundleContext: state.currentView === 'bundles' })
 }
 
 export function refreshGraph2TopPkgs() {
@@ -147,7 +153,7 @@ export function refreshGraph2TopPkgs() {
   if (!mod) return
   const data = buildGraph2Data()
   if (!data) return
-  mod.refreshTopPkgs(data.graph)
+  mod.refreshTopPkgs(data.prep)
 }
 
 
@@ -1479,13 +1485,13 @@ function renderImpl() {
       ) {
         const graphSlot = document.querySelector('#bundle-graph-slot')
         if (graphSlot) {
-          const graph = buildBundleGraphData(state.bundleDetails)
-          if (graph) {
-            setCurrentBundleGraph(graph)
+          const prep = buildBundleGraphData(state.bundleDetails)
+          if (prep) {
+            setCurrentBundleGraphPrep(prep)
             // Hide the "All files" toggle when the bundle has no
             // edges to walk (sourcemaps don't carry import info,
             // so the toggle would have nothing to filter against).
-            const hideAllFiles = graph.edges.length === 0
+            const hideAllFiles = !prep.hasEdges
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
             // Pass `state.shownTriage` through as an option (the
             // graph render code doesn't import the client `state`
@@ -1506,7 +1512,7 @@ function renderImpl() {
             // post-load sequence: render the host, await its first
             // shadow update, fire the refresh helpers + wire the
             // canvas interaction.
-            attachGraphLayout(graphSlot, graph, options,
+            attachGraphLayout(graphSlot, prep, options,
               refreshBundleGraphSidebar, refreshBundleGraphTopPkgs)
           }
         }
@@ -1937,7 +1943,7 @@ function renderImpl() {
       // helper runs its own `litRender` into the appropriate
       // shadow-DOM slot, so subsequent clicks diff against a
       // single Lit cache per slot.
-      attachGraphLayout(graphSlot, g2DataForBody.graph, options,
+      attachGraphLayout(graphSlot, g2DataForBody.prep, options,
         refreshGraph2Sidebar, refreshGraph2TopPkgs)
     }
   }

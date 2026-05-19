@@ -82,7 +82,7 @@ function renderPreservingScrollOf(selector) {
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { LAST_FILE_KEY, persistLastBundle, switchToFile } from './ingest.js'
-import { treeAnchor } from './graph/utils.js'
+import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 
 // composedPath-aware variant of Element.closest — needed for clicks

@@ -8,7 +8,7 @@ import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
-import { installDefaultSyncHost, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from '#client/sync.js'
+import { loadSync, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 
 // Publish lit + StateElement on a Symbol-keyed global so the lazy
 // bundles (`ui/terminal.js`, `ui/graph.js`) can read them through
@@ -16,20 +16,10 @@ import { installDefaultSyncHost, onAutoDownloaded, onBundleAutoDownloaded, onCha
 // own entry-point imports. The main view.js bundle already pays for
 // lit via the imports below, so the publish itself costs nothing,
 // and the lazy chunks stop re-importing the lit module specifier at
-// their top level. Done before `installDefaultSyncHost()` (and well
-// before any user-driven `import('./terminal.js')` /
-// `import('./graph.js')`) so the slot is populated by the time a
-// lazy bundle's wrapper module reads it.
+// their top level. Done before any user-driven
+// `import('./terminal.js')` / `import('./graph.js')` so the slot is
+// populated by the time a lazy bundle's wrapper module reads it.
 globalThis[Symbol.for('@rray/frontend')] = { LitElement, html, nothing, render: litRender, unsafeCSS, StateElement }
-
-// Wire the dependency-injection seam for `client/sync/` BEFORE any
-// sync entry point fires. `installDefaultSyncHost` builds a host
-// from the rest of `client/` and installs it. Listener registrations
-// and boot-time secure-storage reads in `client/sync/*` defer to
-// this install; the `triageSync.*` methods are reachable but inert
-// until the host is installed. See `client/sync/host.ts` for the
-// contract.
-installDefaultSyncHost()
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
@@ -228,6 +218,16 @@ async function continueBoot() {
   // storage event doesn't fire phantom workspace-created listeners
   // for entries that were already in storage at boot.
   syncObservedAfterHydrate()
+  // Auto-resume sync if the persisted user-enabled flag is on. The
+  // flag is `'0'` when the user explicitly disabled in a prior
+  // session; any other value (including the unset default) is "on",
+  // matching `triage-sync.ts`'s boot init. Triggers the dynamic
+  // import of `ui/client-sync.js` — see `view/client-sync.js`.
+  // Skipped entirely (no load) when the user opted out, which is
+  // the whole point of the lazy-load split.
+  if (getSecureItem('deepview.sync.userEnabled') !== '0') {
+    loadSync().catch((err) => { console.warn('boot: sync auto-resume failed', err) })
+  }
   await renderSidebar()
   // Share-link hash takes precedence over the last-file restore so
   // the user lands on the freshly-attached workspace, not whatever

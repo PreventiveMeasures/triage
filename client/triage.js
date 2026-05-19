@@ -1,5 +1,4 @@
 import { state } from './state.ts'
-import { triageSync } from './sync/triage-sync.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import {
   VAULT_LOCK,
@@ -11,6 +10,20 @@ import {
   openForTriage,
   sealForTriage,
 } from './passkey-vault.js'
+
+// Tail-of-save notifier. The sync layer registers itself here via
+// `setTriageChangeNotifier(triageSync.notify)` once it's loaded;
+// before then (or when sync is opted out entirely), the slot is a
+// no-op and `saveTriage` just persists locally without fanning out
+// to peers. The reverse-direction inversion mirrors the
+// `SyncHost` injection — sync depends on triage's blob, triage
+// depends on sync's fan-out trigger; the slot lets both compile
+// without a runtime cycle so `client/sync/*` stays code-split-
+// able out of `view.js`'s main bundle.
+let triageChangeNotifier = () => {}
+export function setTriageChangeNotifier(fn) {
+  triageChangeNotifier = typeof fn === 'function' ? fn : () => {}
+}
 
 // Markers + deletions + comments + fix-links survive page reload
 // via `localStorage['deepview.triage']`. Payload shape:
@@ -170,7 +183,7 @@ export function saveTriage() {
         b64 = finalBytes.toBase64()
       } catch (err) {
         console.warn('Failed to save triage:', err)
-        triageSync.notify()
+        triageChangeNotifier()
         return
       }
     }
@@ -230,7 +243,7 @@ export function saveTriage() {
     // non-empty branches now — the previous early `return` in the
     // empty-entries branch (audit round-12 H10a) skipped this and
     // stranded the chain on stale state.
-    triageSync.notify()
+    triageChangeNotifier()
   })
 }
 
