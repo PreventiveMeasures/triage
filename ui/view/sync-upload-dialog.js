@@ -14,7 +14,7 @@
 //     `{ kind, identifier }`.
 
 import { LitElement, html, nothing } from 'lit'
-import { readFileBytes } from '../../client/index.js'
+import { readFileBytes } from '#client/index.js'
 import { putBundleToRemote, putFile } from './objstore-presence.js'
 
 function bundleShortLabel(integrity) {

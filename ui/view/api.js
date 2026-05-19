@@ -1,4 +1,4 @@
-import { saveTriage, state, triageSync } from '../../client/index.js'
+import { saveTriage, state, triageSync } from '#client/index.js'
 import { render } from './render.js'
 import { openTriageExportDialog } from './triage-export-dialog.js'
 

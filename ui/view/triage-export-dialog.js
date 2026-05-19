@@ -13,7 +13,7 @@ import {
   applyTriageImport,
   buildTriageExportGzip,
   parseTriageExportGzip,
-} from '../../client/index.js'
+} from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { render as renderApp } from './render.js'
 

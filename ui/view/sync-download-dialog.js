@@ -16,7 +16,7 @@
 
 import { LitElement, html, nothing } from 'lit'
 import { decodeUtf8 } from '../../common/utf8.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount } from '../../client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount } from '#client/index.js'
 import { fetchBundleFromRemote, fetchFile } from './objstore-presence.js'
 
 function bundleShortLabel(integrity) {
@@ -131,7 +131,7 @@ class SyncDownloadDialog extends LitElement {
     // r3242639406 guard in the old download-dialog).
     if (downloaded.some((d) => d.kind === 'report')) {
       try {
-        const { state } = await import('../../client/index.js')
+        const { state } = await import('#client/index.js')
         if (state.currentWorkspace === this.workspaceId) {
           const { switchToWorkspace } = await import('./ingest.js')
           await switchToWorkspace(this.workspaceId)

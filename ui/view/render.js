@@ -5,7 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
-import { listWorkspaces, state, triageSync } from '../../client/index.js'
+import { listWorkspaces, state, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -605,7 +605,7 @@ async function openUploadFromBadge({ workspaceId, items }) {
   // source of truth for the local label — pull it once and join.
   const bundleItems = items.filter((i) => i.kind === 'bundle')
   if (bundleItems.length > 0) {
-    const { listBundles } = await import('../../client/index.js')
+    const { listBundles } = await import('#client/index.js')
     const meta = await listBundles()
     const labelByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
     for (const item of bundleItems) {

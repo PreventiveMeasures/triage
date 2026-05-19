@@ -16,7 +16,7 @@
 // cached remote set without an await. Enumerating remote files BY
 // name requires `fetchByTag` (decrypt + read embedded name).
 
-import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, computeBundleResourceTag, computeResourceTag, createObjstoreClient, deriveObjstoreKeys, getSharedTransport, gunzipBytes, listBundles, listFiles, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged, readBundle, saveBundle, saveFileBytes, setCount, triageSync } from '../../client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, computeBundleResourceTag, computeResourceTag, createObjstoreClient, deriveObjstoreKeys, getSharedTransport, gunzipBytes, listBundles, listFiles, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged, readBundle, saveBundle, saveFileBytes, setCount, triageSync } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'
 
 const sessions = new Map()

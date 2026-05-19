@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '../../client/index.js'
+import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'

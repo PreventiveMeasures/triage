@@ -1,4 +1,4 @@
-import { state } from '../../client/index.js'
+import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { commonPrefix, stripExportMarker } from './format.js'
 import { ignoredKey, tabKey } from './group.js'

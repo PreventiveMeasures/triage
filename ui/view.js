@@ -5,7 +5,7 @@
 // import sidebar before ingest so the sidebar click delegate exists by
 // the time `addFiles` calls `renderSidebar`.
 import { sidebar } from './view/dom.js'
-import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '../client/index.js'
+import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setRedraw, state, syncObservedAfterHydrate, triageSync } from '#client/index.js'
 import { renderSidebar } from './view/sidebar.js'
 import { LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'

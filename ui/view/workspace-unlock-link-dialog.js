@@ -15,7 +15,7 @@
 // focus-trap + Esc-to-cancel, light-DOM render so global
 // stylesheet rules in sidebar.css apply.
 import { LitElement, html, nothing } from 'lit'
-import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '../../client/index.js'
+import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '#client/index.js'
 import { makeStackedModalError } from './dom.js'
 
 class WorkspaceUnlockLinkDialog extends LitElement {

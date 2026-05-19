@@ -4,7 +4,7 @@ import {
   parseWorkspaceBundleBytes,
   readBundleBytes,
   state,
-} from '../../client/index.js'
+} from '#client/index.js'
 import { render } from './render.js'
 import { resolveTriageConflicts } from './triage-conflict-dialog.js'
 import { openWorkspaceUnlockBundleDialog } from './workspace-unlock-bundle-dialog.js'

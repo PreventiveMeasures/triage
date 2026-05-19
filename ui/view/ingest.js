@@ -1,5 +1,5 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise, triageSync } from '../../client/index.js'
+import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise, triageSync } from '#client/index.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'

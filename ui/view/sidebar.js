@@ -1,7 +1,7 @@
 import { html, render as litRender, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, triageSync } from '../../client/index.js'
+import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state, triageSync } from '#client/index.js'
 import { fileList, sidebar } from './dom.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, switchToFile, switchToWorkspace } from './ingest.js'
