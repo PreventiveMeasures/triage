@@ -60,16 +60,38 @@
      match the bare-text version when no repo URL is set. */
   a, .file-header a, .flat-group-loc .file, .flat-group-loc .file a { color: inherit; }
 
-  /* Print borders. The light-mode #d1d9e0 is barely visible on white
-     paper; the dark-mode #30363d would print near-black if backgrounds
-     are forced. Override --border to a mid-gray that's clearly there
-     without dominating. `--muted` gets a print-appropriate dark gray
-     too — the dark-theme value (#8b949e) prints near-invisible on
-     white, and `body { color: #000 }` doesn't reach into the muted
-     subtree (chip backgrounds, sep dots, repo glyphs). Both `body`
-     and `body.theme-light` listed so this wins under either theme
-     (theme-light has higher specificity than body alone). */
-  body, body.theme-light { --border: #888; --muted: #555; }
+  /* Theme variables — pinned to a single set of print-friendly values
+     so dark/light mode doesn't affect the printed output. The dark
+     defaults are tuned for a dark UI (light --text, saturated --accent
+     etc.) and would print near-invisible or garishly bright on white
+     paper; the light overrides print a touch better but still drift
+     from the dark output. Pinning every theme-light-flipped variable
+     in one place keeps the cascade simple and gives the print sheet a
+     single canonical palette. Both selectors listed so the rule wins
+     under either theme — `body.theme-light` outweighs `body` alone.
+     Severity colors (--critical, --high, etc.) and inline mark
+     palettes live in shadow DOM and are pinned inside the
+     `<finding-card>` print block rather than here.
+
+     `--text: #000` and `--muted: #555` carry through the shadow
+     boundary into finding-card body copy and muted subtrees (chip
+     backgrounds, sep dots, repo glyphs). `--border: #888` is a
+     mid-gray that reads on paper without dominating (the dark-mode
+     #30363d would print near-black, light-mode #d1d9e0 nearly
+     vanishes). `--accent` and `--green` are pinned to their
+     light-theme values, which are tuned for black-on-white legibility;
+     surfaces collapse to plain white so subtle theme-tinted
+     backgrounds (card body, triage menus) don't print as gray boxes. */
+  body, body.theme-light {
+    --bg: #fff;
+    --border: #888;
+    --muted: #555;
+    --text: #000;
+    --accent: #0550ae;
+    --green: #1a7f37;
+    --surface: #fff;
+    --surface-active: #fff;
+  }
 
   /* Page-head: strip the screen pill chrome (chip backgrounds /
      borders / interactive controls) so the title row reads as
@@ -86,7 +108,8 @@
      CTA chip are pure on-screen affordances and get dropped. */
   .page-head .file-chip,
   .page-head .meta-row .tag,
-  .page-head .meta-row .repo-chip {
+  .page-head .meta-row .repo-chip,
+  .page-head .files-toggle-btn {
     background: transparent !important;
     border: 0 !important;
     padding: 0 !important;
