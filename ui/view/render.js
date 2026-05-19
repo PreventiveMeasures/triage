@@ -1188,33 +1188,6 @@ function findingsBodyTemplate(filtered) {
     const atEnd = focusedIdx === filtered.length - 1
     return html`<div class="focus-view">
       <div class=${mainClass}>
-        <!-- Top toolbar: prev / counter / next. Buttons also
-             respond to ArrowLeft / ArrowRight / J / K / H / L
-             in events.js's keydown handler, so a focused user
-             can walk the queue without leaving the keyboard. -->
-        <div class="focus-nav-bar">
-          <button
-            type="button"
-            class="focus-nav-btn"
-            data-focus-nav="prev"
-            ?disabled=${atStart}
-            title="Previous finding (←)"
-            aria-label="Previous finding"
-          ><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M10 3 5 8l5 5"/>
-          </svg></button>
-          <span class="focus-nav-position">${focusedIdx + 1} <span class="focus-nav-position-sep">of</span> ${filtered.length}</span>
-          <button
-            type="button"
-            class="focus-nav-btn"
-            data-focus-nav="next"
-            ?disabled=${atEnd}
-            title="Next finding (→)"
-            aria-label="Next finding"
-          ><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 3 11 8l-5 5"/>
-          </svg></button>
-        </div>
         <div class="focus-pane focus-pane-card">
           <div class="focus-card-wrapper">
             ${findingCardPlaceholder(focused, false, 'focus')}
@@ -1231,9 +1204,38 @@ function findingsBodyTemplate(filtered) {
         </div>` : nothing}
       </div>
       <aside class="focus-sidebar" aria-label="Up next">
+        <!-- Sidebar header carries both the queue's label and the
+             prev / counter / next controls — earlier iterations
+             pinned the nav above the card pane, but the user
+             pointed out that the position counter and "Up next"
+             count duplicated each other, so they're consolidated
+             here. Buttons also respond to ←/→/h/l/j/k via the
+             events.js keydown handler. -->
         <div class="focus-sidebar-header">
           <span class="label">Up next</span>
-          <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
+          <div class="focus-nav">
+            <button
+              type="button"
+              class="focus-nav-btn"
+              data-focus-nav="prev"
+              ?disabled=${atStart}
+              title="Previous finding (←)"
+              aria-label="Previous finding"
+            ><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10 3 5 8l5 5"/>
+            </svg></button>
+            <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
+            <button
+              type="button"
+              class="focus-nav-btn"
+              data-focus-nav="next"
+              ?disabled=${atEnd}
+              title="Next finding (→)"
+              aria-label="Next finding"
+            ><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 3 11 8l-5 5"/>
+            </svg></button>
+          </div>
         </div>
         <div class="focus-sidebar-body">
           ${repeat(filtered, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {

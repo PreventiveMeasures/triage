@@ -1772,52 +1772,85 @@ body.report-fullscreen {
    where X is the primary kind (keyword / string / etc) and Y is
    an optional sub-modifier (we don't differentiate, the kind
    alone gives enough signal). Mirrors the highlight-tier feel of
-   common dark themes (one-dark, dracula). */
+   common dark themes (one-dark, dracula). Shared between the
+   bundle source viewer modal (`.bundle-source-code`) and the
+   focus view's inline Code panel (`.focus-code-source`). */
 .bundle-source-code .token.comment,
 .bundle-source-code .token.prolog,
-.bundle-source-code .token.cdata {
+.bundle-source-code .token.cdata,
+.focus-code-source .token.comment,
+.focus-code-source .token.prolog,
+.focus-code-source .token.cdata {
   color: #6b7c93; font-style: italic;
 }
-.bundle-source-code .token.punctuation { color: var(--muted); }
+.bundle-source-code .token.punctuation,
+.focus-code-source .token.punctuation { color: var(--muted); }
 .bundle-source-code .token.string,
 .bundle-source-code .token.attr-value,
 .bundle-source-code .token.char,
-.bundle-source-code .token.regex {
+.bundle-source-code .token.regex,
+.focus-code-source .token.string,
+.focus-code-source .token.attr-value,
+.focus-code-source .token.char,
+.focus-code-source .token.regex {
   color: #98c379;
 }
 .bundle-source-code .token.number,
 .bundle-source-code .token.boolean,
 .bundle-source-code .token.constant,
-.bundle-source-code .token.symbol {
+.bundle-source-code .token.symbol,
+.focus-code-source .token.number,
+.focus-code-source .token.boolean,
+.focus-code-source .token.constant,
+.focus-code-source .token.symbol {
   color: #d19a66;
 }
 .bundle-source-code .token.keyword,
 .bundle-source-code .token.builtin,
 .bundle-source-code .token.important,
-.bundle-source-code .token.atrule {
+.bundle-source-code .token.atrule,
+.focus-code-source .token.keyword,
+.focus-code-source .token.builtin,
+.focus-code-source .token.important,
+.focus-code-source .token.atrule {
   color: #c678dd;
 }
 .bundle-source-code .token.function,
 .bundle-source-code .token.class-name,
-.bundle-source-code .token.tag {
+.bundle-source-code .token.tag,
+.focus-code-source .token.function,
+.focus-code-source .token.class-name,
+.focus-code-source .token.tag {
   color: #61afef;
 }
 .bundle-source-code .token.operator,
 .bundle-source-code .token.entity,
 .bundle-source-code .token.url,
 .bundle-source-code .token.attr-name,
-.bundle-source-code .token.selector {
+.bundle-source-code .token.selector,
+.focus-code-source .token.operator,
+.focus-code-source .token.entity,
+.focus-code-source .token.url,
+.focus-code-source .token.attr-name,
+.focus-code-source .token.selector {
   color: #56b6c2;
 }
 .bundle-source-code .token.variable,
 .bundle-source-code .token.property,
-.bundle-source-code .token.parameter {
+.bundle-source-code .token.parameter,
+.focus-code-source .token.variable,
+.focus-code-source .token.property,
+.focus-code-source .token.parameter {
   color: #e06c75;
 }
-.bundle-source-code .token.deleted { color: #ef596f; }
-.bundle-source-code .token.inserted { color: #98c379; }
-.bundle-source-code .token.italic { font-style: italic; }
-.bundle-source-code .token.bold { font-weight: bold; }
+.bundle-source-code .token.deleted,
+.focus-code-source .token.deleted { color: #ef596f; }
+.bundle-source-code .token.inserted,
+.focus-code-source .token.inserted { color: #98c379; }
+.bundle-source-code .token.italic,
+.focus-code-source .token.italic { font-style: italic; }
+.bundle-source-code .token.bold,
+.focus-code-source .token.bold { font-weight: bold; }
 
 /* Packages view — cross-report aggregation by package. Page-level
    list of rows; each row is a header (dot + name + count summary)

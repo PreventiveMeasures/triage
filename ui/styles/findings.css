@@ -641,21 +641,17 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   flex: 1; min-height: 0;
 }
 
-/* Main pane layout — by default a single column for the
-   finding-card; gains a second column for the inline Code panel
-   when the focused finding has a bundle-source reference
-   (`.focus-main.with-code`). The nav bar (`.focus-nav-bar`)
-   carries the prev / counter / next controls; in the with-code
-   layout it pins above the CARD column only so the code panel
-   can run the full height. */
+/* Main pane layout — finding-card by default, with the inline
+   Code panel added as a second column when the focused finding
+   has a bundle-source reference (`.focus-main.with-code`). The
+   prev / counter / next nav lives in the sidebar header (see
+   `.focus-nav` below), not in the main pane, so the card +
+   code can each run the full height. */
 .focus-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    'nav'
-    'card';
-  gap: .5rem .75rem;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0 .75rem;
   min-width: 0; min-height: 0;
 }
 .focus-main.with-code {
@@ -663,25 +659,21 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
      horizontal room than the finding-card so wide lines don't
      wrap aggressively. */
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-  grid-template-areas:
-    'nav  code'
-    'card code';
 }
-.focus-pane-card { grid-area: card; }
 
-/* Prev / position / next, pinned above the card column. */
-.focus-nav-bar {
-  grid-area: nav;
-  display: flex; align-items: center; gap: .5rem;
-  padding: .25rem;
+/* Prev / counter / next group inside the sidebar header. The
+   sidebar header is a flex row (`.focus-sidebar-header` below),
+   so this group lives on its right edge next to the queue label
+   and behaves as a single navigation cluster. */
+.focus-nav {
+  display: inline-flex; align-items: center; gap: .25rem;
 }
 .focus-nav-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.6rem; height: 1.6rem;
-  background: var(--surface);
-  backdrop-filter: var(--glass-blur);
+  width: 1.4rem; height: 1.4rem;
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   color: var(--text);
 
   &:hover:not(:disabled) {
@@ -689,17 +681,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
     border-color: var(--accent);
   }
   &:disabled {
-    opacity: .4;
-  }
-}
-.focus-nav-position {
-  font-size: .72rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .02em;
-
-  & .focus-nav-position-sep {
-    margin: 0 .15rem;
+    opacity: .35;
   }
 }
 
@@ -743,7 +725,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
    card so the panel reads as a distinct surface from the
    finding-card. */
 .focus-pane-code {
-  grid-area: code;
   display: flex; flex-direction: column;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: 6px;
@@ -914,15 +895,10 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 }
 
 /* Below a usable two-pane width, fold the Code panel under the
-   finding-card so each pane keeps enough horizontal room to read.
-   The nav bar moves back to its single-column slot at the top. */
+   finding-card so each pane keeps enough horizontal room to read. */
 @media (width <= 1200px) {
   .focus-main.with-code {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas:
-      'nav'
-      'card'
-      'code';
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
