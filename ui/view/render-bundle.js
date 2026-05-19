@@ -40,9 +40,9 @@ import { tabKey } from './group.js'
 import { computeFileHash } from '../../common/finding-id.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts, pkgColor } from './graph/utils.js'
-import { graph2 } from './graph2/state.js'
-import { buildGraph } from './graph2/data.js'
-import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './graph2/render.js'
+import { graph2 } from './graph/state.js'
+import { buildGraph } from './graph/data.js'
+import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './graph/render.js'
 // `render` is the orchestrator over in `render.js`; bundle code
 // calls it back after async source-highlight completes so the
 // next render() pass picks up the cached HTML. Module-level
@@ -81,7 +81,7 @@ function bundleImportsAsMap(details) {
 }
 
 // Synthesise a treeData blob shaped like the analyzer's tree dump,
-// so buildGraph (in graph2/data.js) can chew on it without
+// so buildGraph (in graph/data.js) can chew on it without
 // modification. The shared directory prefix (a common build-output
 // root) is stripped from every file path BEFORE the tree is built
 // so the graph's nodes — and the package buckets the canvas

@@ -9,7 +9,7 @@ import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecur
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
-import { graph2 } from './view/graph2/state.js'
+import { graph2 } from './view/graph/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
 import { installSyncAuthResolver } from './view/sync-auth.js'
 import { runLegacyOriginCheck } from './view/origin-check.js'

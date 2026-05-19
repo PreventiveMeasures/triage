@@ -12,7 +12,7 @@ import { openWorkspaceShareLinkDialog } from './workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './delete-report-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { openBundle } from './bundle-load.js'
-import { graph2 } from './graph2/state.js'
+import { graph2 } from './graph/state.js'
 
 // Distinct package count across every report the OPFS finding
 // index has scanned (NOT just state.reports — Packages aggregates

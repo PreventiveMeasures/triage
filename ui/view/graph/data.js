@@ -1,4 +1,4 @@
-import { packageOf, pkgColor, totalFindings } from '../graph/utils.js'
+import { packageOf, pkgColor, totalFindings } from './utils.js'
 import { SEVERITIES, depsDirName } from '../format.js'
 
 // Top-severity tier for a per-file count map. Walks SEVERITIES

@@ -83,7 +83,7 @@ import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { LAST_FILE_KEY, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './graph/utils.js'
-import { graph2, cleanupGraph2 } from './graph2/state.js'
+import { graph2, cleanupGraph2 } from './graph/state.js'
 
 // composedPath-aware variant of Element.closest — needed for clicks
 // that originate inside a shadow DOM (e.g. `<finding-table>`'s
