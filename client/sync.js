@@ -14,9 +14,10 @@ import { state } from './state.ts'
 import { analyzeContent, setCount } from './counts.js'
 import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
 import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from './storage.js'
-import { saveTriage } from './triage.js'
+import { saveTriage, setTriageChangeNotifier } from './triage.js'
 import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
 import { installSyncHost } from './sync/host.ts'
+import { triageSync } from './sync/triage-sync.ts'
 
 export {
   closeWorkspace,
@@ -76,4 +77,11 @@ const defaultHost = {
 
 export function installDefaultSyncHost() {
   installSyncHost(defaultHost)
+  // Wire triage's tail-of-save notifier so `saveTriage` fans the
+  // change out to peers via `triageSync.notify`. The wrapper looks
+  // up `triageSync.notify` at call time (not at install time) so
+  // tests that stub `triageSync.notify = ...` to intercept the
+  // fan-out still see their stub invoked — a captured `.bind` would
+  // hold the pre-stub method.
+  setTriageChangeNotifier(() => triageSync.notify())
 }
