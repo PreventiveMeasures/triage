@@ -178,33 +178,96 @@ function buildEntry(staticDir: string, name: string): StaticEntry {
   return { type, etag, identity, gzip, br, link }
 }
 
-// Walk every `<link …>` in `html`. For `rel="preload"` /
-// `rel="modulepreload"`, accumulate an RFC 8288 Link-header form and
-// strip the tag (plus its trailing whitespace) from the body. Every
-// other rel value is preserved verbatim. Returns the (possibly
+// Walk every `<link …>` in `html` that isn't inside an HTML comment
+// or inside `<script>` / `<noscript>` raw-text content. For
+// `rel="preload"` / `rel="modulepreload"`, accumulate an RFC 8288
+// Link-header form and strip the tag (plus its trailing whitespace)
+// from the body. Every other rel value, and every `<link>` inside a
+// skipped region, is preserved verbatim. Returns the (possibly
 // modified) HTML and the comma-joined Link header value, or
 // `link: null` if no preload tags were found.
 function extractPreloadLinks(html: string): { html: string, link: string | null } {
   const links: string[] = []
+  // Skip ranges = char offsets inside comments / script bodies /
+  // noscript bodies. The build's `<noscript>` fallback (and any
+  // commented-out preload hint, or a `<link>` mentioned as a JS
+  // string inside `<script>`) MUST NOT get lifted into the response
+  // headers — it'd start fetches the page author explicitly didn't
+  // want, and on a malformed build could leak attacker-influenced
+  // bytes into the header. Heuristic, not a real HTML parser: the
+  // build emits clean, predictable tags; this just keeps the lift
+  // from over-reaching on the kinds of surrounding content the
+  // codebase actually produces.
+  const skip = findSkipRanges(html)
   // `[^>]*` is greedy but stops at `>`, so it spans multi-line tag
   // attribute soup, including newlines inside the attr list. Trailing
-  // `\s*` swallows the line break a stripped tag would otherwise
-  // leave behind so the body collapses cleanly.
+  // `\s*` is part of `match` in both branches — when we strip a
+  // preload tag the line break goes with it (body collapses cleanly);
+  // when we keep a non-preload tag the whitespace is restored via
+  // `return match` (HTML layout preserved).
   const tagRe = /<link\b[^>]*>\s*/giu
-  const stripped = html.replace(tagRe, (match) => {
+  const stripped = html.replace(tagRe, (match, offset: number) => {
+    if (inAnyRange(offset, skip)) return match
     const attrs = parseLinkAttrs(match)
     const rel = (attrs['rel'] ?? '').toLowerCase()
     if (rel !== 'preload' && rel !== 'modulepreload') return match
     const href = attrs['href']
     if (!href) return match
-    let value = `<${normalizeHref(href)}>; rel=${rel}`
-    if (rel === 'preload' && attrs['as']) value += `; as=${attrs['as']}`
+    // Defence in depth against a future template emitting an attr
+    // value that splits the header (`\r\n` injects new headers;
+    // `,`/`;`/`"` confuse the Link parser; `<`/`>` terminate the
+    // URI-Reference early). The build emits clean values today, so
+    // this only fires under a malformed source — and bailing out
+    // (return match) is the safe choice: the tag stays in the body
+    // as an in-HTML preload hint, just no header lift.
+    if (isUnsafeAttr(href) || isUnsafeAttr(attrs['as'] ?? '') || isUnsafeAttr(attrs['type'] ?? '') || isUnsafeAttr(attrs['crossorigin'] ?? '')) return match
+    // Quote every param value uniformly. `rel`/`as`/`crossorigin`
+    // values happen to be valid RFC 7230 tokens today (preload,
+    // style, anonymous, …) and would parse unquoted, but the
+    // asymmetry with `type="…"` reads as accidental and a future
+    // value containing whitespace would silently split the header.
+    let value = `<${normalizeHref(href)}>; rel="${rel}"`
+    if (rel === 'preload' && attrs['as']) value += `; as="${attrs['as']}"`
     if (attrs['type']) value += `; type="${attrs['type']}"`
-    if ('crossorigin' in attrs) value += attrs['crossorigin'] ? `; crossorigin=${attrs['crossorigin']}` : '; crossorigin'
+    // `'crossorigin' in attrs` distinguishes "attribute present" from
+    // "attribute missing"; the boolean form (no `=`) and the valued
+    // form (`crossorigin="anonymous"`) emit differently per RFC 8288.
+    if ('crossorigin' in attrs) value += attrs['crossorigin'] ? `; crossorigin="${attrs['crossorigin']}"` : '; crossorigin'
     links.push(value)
     return ''
   })
   return { html: stripped, link: links.length === 0 ? null : links.join(', ') }
+}
+
+function isUnsafeAttr(s: string): boolean {
+  return /[\r\n",;<>]/u.test(s)
+}
+
+// Find character ranges in `html` whose contents are NOT real HTML
+// content: comment bodies and script / noscript raw-text bodies. A
+// `<link>` whose match offset falls inside any range is preserved
+// verbatim (no header lift). Heuristic: a real HTML parser is
+// overkill here — the build emits clean, well-formed markup; this is
+// defence against the build (or a hand edit) accidentally mentioning
+// `<link rel="preload">` somewhere it isn't meant to fire.
+function findSkipRanges(html: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  const patterns = [
+    /<!--[\s\S]*?-->/gu,
+    /<script\b[^>]*>[\s\S]*?<\/script\s*>/giu,
+    /<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/giu,
+  ]
+  for (const re of patterns) {
+    for (const m of html.matchAll(re)) ranges.push([m.index!, m.index! + m[0].length])
+  }
+  return ranges
+}
+
+function inAnyRange(offset: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  for (const [start, end] of ranges) {
+    if (offset >= start && offset < end) return true
+  }
+  return false
 }
 
 // Minimal HTML attribute parser scoped to a single `<link …>` tag.
