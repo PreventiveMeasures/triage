@@ -30,22 +30,24 @@
 
     /* Inner views that own their own scroll (bundle terminal,
        code viewer, packages slide, kanban board, bundles/packages
-       list + details panels) need #report itself to track #main-
-       content's viewport height — otherwise the flex chain that
-       lands at `.output` / `.kanban-board` / `.bundles-list` /
-       `.bundles-details-body` (overflow: auto) has no bounded
+       list + details panels, findings list) need #report itself
+       to track #main-content's viewport height — otherwise the
+       flex chain that lands at `.output` / `.kanban-board` /
+       `.bundles-list` / `.bundles-details-body` /
+       `#findings-body-slot` (overflow: auto) has no bounded
        parent, that pane grows to its content size instead of its
        allotted space, and the wheel scrolls the whole page rather
        than just the inner pane. Revert to the default flex-shrink
        when those views are mounted; the findings-list overflow
-       concern that motivated `flex-shrink: 0` doesn't apply to
-       those views (their inner pane is fixed-height + internally
-       scrollable). `.bundles-view` / `.packages-view` covers both
-       the regular list view and the slide variant (which carries
-       both classes), so no separate slide-view entries needed. */
+       concern that originally motivated `flex-shrink: 0` is now
+       handled by the findings body slot's own overflow (see the
+       `@media not print` block further down), so unqualified
+       `.findings-content` joins the list. `.bundles-view` /
+       `.packages-view` covers both the regular list view and the
+       slide variant (which carries both classes). */
     &:has(
       .bundles-view, .packages-view,
-      .findings-content.with-kanban
+      .findings-content
     ) { flex-shrink: 1; }
   }
 
@@ -1418,6 +1420,35 @@
    separates it from the board below, so dropping the margin
    here costs nothing visually. */
 .findings-content.with-kanban .toolbar { margin-bottom: .5rem; }
+
+/* Table / list / grouped view-modes: scroll the finding list
+   inside its own container so the page header + toolbar stay
+   pinned while the user pages through findings. Kanban and graph
+   have their own internal-scroll setup (.findings-content.with-
+   kanban / .with-graph above + graph2.css) and skip via :not().
+   List / grouped scroll #findings-body-slot directly; table view
+   scrolls .findings-table-list inside the body slot — see
+   findings.css for the table-side rules. Wrapped in `not print`
+   so paginated output flows naturally without a scroll container
+   clipping content across page breaks. */
+@media not print {
+  .findings-content:not(.with-graph, .with-kanban) {
+    display: flex; flex-direction: column;
+    flex: 1; min-height: 0;
+  }
+  .findings-content:not(.with-graph, .with-kanban) > #findings-body-slot {
+    flex: 1; min-height: 0;
+  }
+  /* List / grouped — the body slot is the scroller. Table view
+     leaves the body slot at default overflow because the layout
+     inside fills it via `height: 100%` and the list column
+     scrolls internally (findings.css). */
+  .findings-content > #findings-body-slot:not(:has(> .findings-table-layout)) {
+    overflow-y: auto; overscroll-behavior: none;
+    -webkit-app-region: no-drag; app-region: no-drag;
+    scrollbar-gutter: stable;
+  }
+}
 
 /* Fullscreen — graph topbar's ⛶ button toggles
    `body.report-fullscreen`. Hides the chrome and lets the graph2
