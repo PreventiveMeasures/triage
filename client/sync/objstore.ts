@@ -67,6 +67,7 @@ import {
   type SocketTransport,
   createSocketTransport,
 } from './socket-transport.ts'
+import { encodeUtf8 } from '../../common/utf8.js'
 
 export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
 
@@ -283,7 +284,6 @@ const REST_RACE_MAX_ATTEMPTS = 4
 const REST_RACE_BACKOFF_MS = 15
 
 async function signSubscribe(privateKey: CryptoKey, workspaceTag: string, connectionNonce: string): Promise<string> {
-  const { encodeUtf8 } = await import('../../common/utf8.js')
   const canonical = encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, '', connectionNonce].join('\n'))
   const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, canonical))
   return sig.toBase64({ alphabet: 'base64url', omitPadding: true })
