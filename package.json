@@ -25,7 +25,8 @@
   },
   "imports": {
     "#client/index.js": "./client/index.js",
-    "#client/sync.js": "./client/sync.js"
+    "#client/sync.js": "./client/sync.js",
+    "#client/sync-host.js": "./client/sync-host.js"
   },
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
