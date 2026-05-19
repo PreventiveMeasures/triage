@@ -421,6 +421,33 @@ describe('bundle-finding-index — analyzer-stamped package.npm overrides path e
     assert.equal(bucket.findings.length, 2)
   })
 
+  it('splits the package into stamped + null slots when reports disagree on version source', async () => {
+    // One report stamps `version: '2.0.0'` against a plain
+    // `node_modules/<pkg>/` path; another report leaves the same
+    // package unstamped on the same plain path (so path extraction
+    // returns null). The two findings land in DIFFERENT version
+    // slots — the Packages view renders them as two rows. This is a
+    // known trade-off (the stamp + path-null combination can't be
+    // reconciled without inventing a merge rule); documenting it as
+    // a regression guard.
+    const tag = `mixed-stamp-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-stamped`, severity: 'high', file: `node_modules/${tag}/a.js`, description: 'd', package: { npm: { name: tag, version: '2.0.0' } } },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: `${tag}-bare`, severity: 'high', file: `node_modules/${tag}/b.js`, description: 'd' },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.ok(bucket.byVersion.get('2.0.0'), 'stamped slot present')
+    assert.ok(bucket.byVersion.get(null), 'unstamped path lands in the null slot')
+    assert.equal(bucket.byVersion.size, 2, 'two distinct version slots')
+  })
+
   it('keeps a stamp-only finding (no file) out of the repository index', async () => {
     // A finding with only a stamp + a non-deps source file should still
     // be classified as "in a package", so the repository index skips it.

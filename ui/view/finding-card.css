@@ -612,6 +612,10 @@
   .finding-code-btn { display: none !important; }
   /* Same — clipboard copy button has no paper meaning. */
   .mark-copy { display: none !important; }
+  /* Drop the on-screen pill chrome from the npm chip — on paper
+     the boxed outline next to the file:line reads inconsistently
+     with the surrounding flat text. */
+  .npm-link { border: 0; padding: 0; }
   :host(.triage-fixed),
   :host(.triage-invalid),
   :host(.triage-deleted),
