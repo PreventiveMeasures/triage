@@ -16,14 +16,30 @@
 // cached remote set without an await. Enumerating remote files BY
 // name requires `fetchByTag` (decrypt + read embedded name).
 
-import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from '../workspaces.js'
-import { analyzeContent, setCount } from '../counts.js'
-import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from '../storage.js'
 import { computeBundleResourceTag, computeResourceTag, deriveObjstoreKeys } from './objstore-content-crypto.ts'
 import { createObjstoreClient } from './objstore.ts'
 import { getSharedTransport } from './sync-transport.ts'
 import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
+import { onSyncHostInstalled } from './host.ts'
+
+// Late-bound host accessors — populated by `onSyncHostInstalled` at
+// the bottom of this file before any of the entry points below
+// (`openWorkspace`, the workspace-listener callbacks, etc.) can fire.
+// Direct references here read cleaner than `syncHost().listWorkspaces()`
+// at every call site, but the actual binding is `syncHost()` once we
+// know the host is installed.
+let listWorkspaces
+let addReportToWorkspace
+let addBundleToWorkspace
+let analyzeContent
+let setCount
+let gunzipBytes
+let listBundles
+let listFiles
+let readBundle
+let saveBundle
+let saveFileBytes
 
 const sessions = new Map()
 const listeners = new Set()
@@ -435,63 +451,77 @@ export function closeWorkspace(workspaceId) {
 // `onDeleted` broadcast race for a freshly-attached identifier
 // would then mis-classify whether the local owner is keeping the
 // tag fresh.
-onReportMembershipChanged((workspaceId) => {
-  // Open the presence session if not already — without this, a drag
-  // into a workspace the user hasn't navigated to never gets its
-  // remote subscription / cache populated, so the badge stays
-  // stale and a follow-up putFile / fetchFile races the lazy open.
-  // `openWorkspace` is idempotent on already-open ids; the act of
-  // dropping signals the workspace now wants this report tracked.
-  if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
-  const entry = sessions.get(workspaceId)
-  if (!entry) return
-  const ws = listWorkspaces().find((w) => w.id === workspaceId)
-  if (!ws) return
-  for (const name of ws.reports ?? []) {
-    if (!entry.fileTags.has(name)) trackFile(workspaceId, name).catch(() => {})
-  }
-})
-onBundleMembershipChanged((workspaceId) => {
-  // Mirror the report-side listener: bundles dragged into a
-  // workspace the user hasn't navigated to also need the workspace
-  // tracked in remote presence so the badge + upload affordances
-  // wire up before the user navigates.
-  if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
-  const entry = sessions.get(workspaceId)
-  if (!entry) return
-  const ws = listWorkspaces().find((w) => w.id === workspaceId)
-  if (!ws) return
-  for (const integrity of ws.bundles ?? []) {
-    if (!entry.bundleTags.has(integrity)) trackBundle(workspaceId, integrity).catch(() => {})
-  }
-})
+onSyncHostInstalled((host) => {
+  listWorkspaces = host.listWorkspaces
+  addReportToWorkspace = host.addReportToWorkspace
+  addBundleToWorkspace = host.addBundleToWorkspace
+  analyzeContent = host.analyzeContent
+  setCount = host.setCount
+  gunzipBytes = host.gunzipBytes
+  listBundles = host.listBundles
+  listFiles = host.listFiles
+  readBundle = host.readBundle
+  saveBundle = host.saveBundle
+  saveFileBytes = host.saveFileBytes
 
-// Workspace teardown — the per-switch caller (`ingest.js`) used to
-// invoke `closeWorkspace` directly on every workspace transition;
-// now sessions stay alive across switches and cleanup is event-
-// driven. Fire on the workspaces-store delete so any presence
-// session bound to a vanished id releases its transport acquire
-// and zeroes its key material. Also drop the persisted tag→name
-// cache — the workspace is gone, the mappings are dead weight.
-onWorkspaceDeleted((workspaceId) => {
-  closeWorkspace(workspaceId)
-  clearPresenceCache(workspaceId)
-})
+  host.onReportMembershipChanged((workspaceId) => {
+    // Open the presence session if not already — without this, a drag
+    // into a workspace the user hasn't navigated to never gets its
+    // remote subscription / cache populated, so the badge stays
+    // stale and a follow-up putFile / fetchFile races the lazy open.
+    // `openWorkspace` is idempotent on already-open ids; the act of
+    // dropping signals the workspace now wants this report tracked.
+    if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
+    const entry = sessions.get(workspaceId)
+    if (!entry) return
+    const ws = listWorkspaces().find((w) => w.id === workspaceId)
+    if (!ws) return
+    for (const name of ws.reports ?? []) {
+      if (!entry.fileTags.has(name)) trackFile(workspaceId, name).catch(() => {})
+    }
+  })
+  host.onBundleMembershipChanged((workspaceId) => {
+    // Mirror the report-side listener: bundles dragged into a
+    // workspace the user hasn't navigated to also need the workspace
+    // tracked in remote presence so the badge + upload affordances
+    // wire up before the user navigates.
+    if (!sessions.has(workspaceId)) openWorkspace(workspaceId)
+    const entry = sessions.get(workspaceId)
+    if (!entry) return
+    const ws = listWorkspaces().find((w) => w.id === workspaceId)
+    if (!ws) return
+    for (const integrity of ws.bundles ?? []) {
+      if (!entry.bundleTags.has(integrity)) trackBundle(workspaceId, integrity).catch(() => {})
+    }
+  })
 
-// Workspace privateKey rotation — the live session's
-// `keys.signingKey` / `keys.contentKey` / `keys.tagKey` are bound to
-// the OLD private key; subsequent objstore ops would sign with stale
-// material and decrypt remote blobs against the wrong contentKey.
-// Tear down and re-open so the next access derives fresh keys
-// against the new private key. Drop the persisted cache too — the
-// cached HMACs were computed under the OLD tagKey, so every entry
-// is garbage under the new one. Mirrors triage-sync's handler at
-// `client/sync/triage-sync.ts:onWorkspacePrivateKeyChanged`.
-onWorkspacePrivateKeyChanged((workspaceId) => {
-  if (!sessions.has(workspaceId)) return
-  closeWorkspace(workspaceId)
-  clearPresenceCache(workspaceId)
-  openWorkspace(workspaceId)
+  // Workspace teardown — the per-switch caller (`ingest.js`) used to
+  // invoke `closeWorkspace` directly on every workspace transition;
+  // now sessions stay alive across switches and cleanup is event-
+  // driven. Fire on the workspaces-store delete so any presence
+  // session bound to a vanished id releases its transport acquire
+  // and zeroes its key material. Also drop the persisted tag→name
+  // cache — the workspace is gone, the mappings are dead weight.
+  host.onWorkspaceDeleted((workspaceId) => {
+    closeWorkspace(workspaceId)
+    clearPresenceCache(workspaceId)
+  })
+
+  // Workspace privateKey rotation — the live session's
+  // `keys.signingKey` / `keys.contentKey` / `keys.tagKey` are bound to
+  // the OLD private key; subsequent objstore ops would sign with stale
+  // material and decrypt remote blobs against the wrong contentKey.
+  // Tear down and re-open so the next access derives fresh keys
+  // against the new private key. Drop the persisted cache too — the
+  // cached HMACs were computed under the OLD tagKey, so every entry
+  // is garbage under the new one. Mirrors triage-sync's handler at
+  // `client/sync/triage-sync.ts:onWorkspacePrivateKeyChanged`.
+  host.onWorkspacePrivateKeyChanged((workspaceId) => {
+    if (!sessions.has(workspaceId)) return
+    closeWorkspace(workspaceId)
+    clearPresenceCache(workspaceId)
+    openWorkspace(workspaceId)
+  })
 })
 
 // Enumerate workspaceIds with a live presence entry — used by

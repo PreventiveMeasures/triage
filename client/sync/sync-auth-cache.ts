@@ -23,7 +23,7 @@
 // non-empty URLs — the boot-time initial set and the off-toggle are
 // not invalidations).
 
-import { getItem as getSecureItem, removeItem as removeSecureItem, setItem as setSecureItem } from '../secure-storage.js'
+import { syncHost } from './host.ts'
 
 const KEY = 'deepview.sync.password'
 
@@ -42,7 +42,7 @@ export function getCachedSyncPassword(): string | null {
 // read through `getCachedSyncPassword` after this, so a single
 // hydrate listener is enough.
 export function loadCachedSyncPasswordFromStorage(): void {
-  const raw = getSecureItem(KEY)
+  const raw = syncHost().getSecureItem(KEY)
   inMemory = typeof raw === 'string' && raw.length > 0 ? raw : null
 }
 
@@ -53,6 +53,7 @@ export function loadCachedSyncPasswordFromStorage(): void {
 // every caller logs and continues — caching is best-effort).
 export async function setCachedSyncPassword(password: string | null): Promise<void> {
   inMemory = password
-  if (password == null) removeSecureItem(KEY)
-  else await setSecureItem(KEY, password)
+  const host = syncHost()
+  if (password == null) host.removeSecureItem(KEY)
+  else await host.setSecureItem(KEY, password)
 }
