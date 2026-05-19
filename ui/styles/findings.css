@@ -104,6 +104,24 @@
      already caps at 2000 px (1200 list + 800 panel). */
 }
 .findings-table-list { min-width: 0; }
+/* Bound the row to the body slot's height (set by the flex chain
+   in report.css's `@media not print` block) so the list column
+   below can cap at `max-height: 100%` and scroll internally —
+   without it the implicit row sizes to the list's content and
+   grows past the viewport. Print mode skips this so paginated
+   output flows over page breaks instead of clipping. */
+@media not print {
+  .findings-table-layout {
+    grid-template-rows: minmax(0, 1fr);
+    height: 100%;
+  }
+  .findings-table-list {
+    max-height: 100%; min-height: 0;
+    overflow-y: auto; overscroll-behavior: none;
+    -webkit-app-region: no-drag; app-region: no-drag;
+    scrollbar-gutter: stable;
+  }
+}
 /* Details panel = its own glass card. Sticky so it follows the
    user as they scroll the list, with a header bar carrying the
    close button (instead of an absolute-positioned button that
