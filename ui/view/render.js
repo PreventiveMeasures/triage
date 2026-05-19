@@ -809,24 +809,6 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
         </select>
       </span>
-      <!-- Analyzer dropdown — visible only when the loaded reports
-           involve more than one distinct analyzer (otherwise there is
-           nothing to choose between). Single-select with an empty
-           default ("All analyzers" = no filter); the 'null' option
-           targets findings whose effective analyzer is absent (no
-           per-finding type on a native dump). Friendly labels for
-           the source-marked imports (DeepSec / Codex Security /
-           Claude Security) come from ANALYZER_LABELS. Shares the
-           sort dropdown's wrapper styling so the two pills line up. -->
-      ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
-        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer">
-          <option value="" ?selected=${state.filterAnalyzer === ''}>All analyzers</option>
-          ${analyzerOptions.map((a) => {
-            const value = a == null ? 'null' : a
-            return html`<option value=${value} ?selected=${state.filterAnalyzer === value}>${analyzerLabel(a)}</option>`
-          })}
-        </select>
-      </span>` : nothing}
       ${showSource ? html`<div class="sep"></div>
         <div class="source-toggle" role="group" aria-label="Source filter">
           ${srcChip('own', 'Sources')}
@@ -863,6 +845,24 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
          needs. -->
     <div class="toolbar-row sev-row">
       ${severityChipsTemplate(counts)}
+      <!-- Analyzer dropdown — visible only when the loaded reports
+           involve more than one distinct analyzer (otherwise there is
+           nothing to choose between). Single-select with an empty
+           default ("All analyzers" = no filter); the 'null' option
+           targets findings whose effective analyzer is absent (no
+           per-finding type on a native dump). Friendly labels for
+           the source-marked imports (DeepSec / Codex Security /
+           Claude Security) come from ANALYZER_LABELS. Shares the
+           sort dropdown's wrapper styling so the two pills line up. -->
+      ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
+        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer">
+          <option value="" ?selected=${state.filterAnalyzer === ''}>All analyzers</option>
+          ${analyzerOptions.map((a) => {
+            const value = a == null ? 'null' : a
+            return html`<option value=${value} ?selected=${state.filterAnalyzer === value}>${analyzerLabel(a)}</option>`
+          })}
+        </select>
+      </span>` : nothing}
       ${triageFilterTemplate(colorCounts)}
       <!-- Search field + result count grouped into a single flex item
            so they wrap as a unit — when the row is too narrow to keep
