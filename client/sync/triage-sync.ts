@@ -1607,6 +1607,44 @@ export function setMaxConsecutiveFailures(n: number): void {
   if (typeof n === 'number' && n >= 1) maxConsecutiveFailures = n
 }
 
+// Per-session reset helpers shared by the setServerUrl / setEnabled /
+// setForcedOff toggles below.
+
+// User-initiated retry (re-enable / un-force-off / server switch):
+// clear a session's sticky `error` so `trySendSave` isn't wedged at its
+// error-gate. The error string carries four classes — a server-reject
+// (e.g. `too-large`), `'workspace no longer exists'`, `'key derivation
+// failed: …'`, `'encrypt/sign failed: …'`. The latter local-fault
+// classes need key derivation re-kicked to actually recover (just
+// clearing the error would leave the session "looks online but silently
+// fails to sync"), so re-kick when no keys are present. Audit M1 +
+// round-5 F1.
+function clearSessionErrorForRetry(session: Session): void {
+  const hadError = session.error != null
+  session.error = null
+  session.consecutiveFailures = 0
+  if (hadError && (!session.key || !session.signingKey)) {
+    kickKeyDerivation(session)
+  }
+}
+
+// Reset a session to its inactive baseline when sync deactivates
+// (disable / force-off / server switch): free the pending slot, drop
+// the subscribe state so a later re-activate re-subscribes, and clear
+// `encrypting` so a stranded in-flight encryption IIFE doesn't make the
+// next `trySendSave` redundantly raise `pendingSave` (audit M2 round-4).
+// NB: `onTransportDisconnected` deliberately does NOT use this — it
+// raises `pendingSave` and leaves `encrypting` to drain (reconnect
+// contract), so it stays inline.
+function deactivateSession(session: Session): void {
+  session.pending = null
+  session.pendingSave = false
+  session.encrypting = false
+  session.subscribed = false
+  session.subscribeAcked = false
+  session.resyncAttempted = false
+}
+
 export const triageSync = {
   setServerUrl(url: string | null | undefined): void {
     const next = (url ?? '').trim()
@@ -1656,45 +1694,13 @@ export const triageSync = {
     // state.* per session so unsynced edits survive the reset and
     // replay onto the new base via the rebase path.
     for (const session of sessions.values()) {
-      session.pending = null
-      session.pendingSave = false
-      // Mark any in-flight encryption as orphaned. The IIFE checks
-      // `sessionIsLive` before mutating session state but doesn't
-      // know about reset-without-close paths; an unreset
-      // `encrypting=true` makes the next `trySendSave` redundantly
-      // raise `pendingSave` even though no encryption is racing.
-      // Audit M2 round-4.
-      session.encrypting = false
-      // Server-URL change is a user-initiated reconfiguration —
-      // equivalent to a `dismissError()` call. Without this, a
-      // session that hit `workspace-save-error: too-large` against
-      // the old server stays wedged in `error` state, and
-      // `trySendSave` bails at its error-gate even when the new
-      // server might accept the same payload. Audit finding M1.
-      //
-      // The error string can carry FOUR classes: server-reject
-      // (M1's motivating case), `'workspace no longer exists'`,
-      // `'key derivation failed: …'`, `'encrypt/sign failed: …'`.
-      // Classes 2–4 are LOCAL faults — clearing the error here
-      // without re-attempting key derivation leaves the session in
-      // the "looks online but silently fails to sync" state that
-      // `dismissError`'s kickKeyDerivation guards against. Mirror
-      // that branch so all four classes are handled symmetrically.
-      // Audit round-5 F1.
-      const hadError = session.error != null
-      session.error = null
-      session.consecutiveFailures = 0
-      session.subscribed = false
-      session.subscribeAcked = false
-      session.resyncAttempted = false
+      deactivateSession(session)
       const restored = next ? loadPersistedSession(session.workspaceId, next) : null
       session.baseRevision = restored?.baseRevision ?? null
       session.baseState = restored?.baseState ?? Object.create(null)
       session.savesSinceKeyframe = restored?.savesSinceKeyframe ?? 0
       session.localState = effectiveLocalState(session.baseState, session.ids)
-      if (hadError && (!session.key || !session.signingKey)) {
-        kickKeyDerivation(session)
-      }
+      clearSessionErrorForRetry(session)
     }
     applyActive()
     emitStatusIfChanged()
@@ -1716,33 +1722,9 @@ export const triageSync = {
       console.warn('Triage sync: could not persist user-enabled:', err)
     })
     if (isActive()) {
-      // Re-enabling sync is equivalent to a user-initiated retry —
-      // clear any sticky `error` from a previous server reject so
-      // `trySendSave` isn't wedged at its error-gate. Audit
-      // finding M1. Local-error classes (key derivation, encrypt
-      // failure) require kickKeyDerivation to actually recover —
-      // see setServerUrl for the four error classes. Round-5 F1.
-      for (const session of sessions.values()) {
-        const hadError = session.error != null
-        session.error = null
-        session.consecutiveFailures = 0
-        if (hadError && (!session.key || !session.signingKey)) {
-          kickKeyDerivation(session)
-        }
-      }
+      for (const session of sessions.values()) clearSessionErrorForRetry(session)
     } else {
-      for (const session of sessions.values()) {
-        session.pending = null
-        session.pendingSave = false
-        // Audit M2 round-4: clear `encrypting` on reset paths so
-        // a stranded in-flight IIFE doesn't make the next
-        // `trySendSave` (when sync is re-enabled) redundantly
-        // raise `pendingSave`.
-        session.encrypting = false
-        session.subscribed = false
-        session.subscribeAcked = false
-        session.resyncAttempted = false
-      }
+      for (const session of sessions.values()) deactivateSession(session)
     }
     applyActive()
     emitStatusIfChanged()
@@ -1760,28 +1742,9 @@ export const triageSync = {
     if (next === forcedOff) return
     forcedOff = next
     if (isActive()) {
-      // Un-force-off is equivalent to a user-initiated retry —
-      // clear any sticky `error` from a previous server reject.
-      // Local-error classes require kickKeyDerivation to recover;
-      // see setServerUrl. Audit findings M1 + round-5 F1.
-      for (const session of sessions.values()) {
-        const hadError = session.error != null
-        session.error = null
-        session.consecutiveFailures = 0
-        if (hadError && (!session.key || !session.signingKey)) {
-          kickKeyDerivation(session)
-        }
-      }
+      for (const session of sessions.values()) clearSessionErrorForRetry(session)
     } else {
-      for (const session of sessions.values()) {
-        session.pending = null
-        session.pendingSave = false
-        // Audit M2 round-4 — see setEnabled.
-        session.encrypting = false
-        session.subscribed = false
-        session.subscribeAcked = false
-        session.resyncAttempted = false
-      }
+      for (const session of sessions.values()) deactivateSession(session)
     }
     applyActive()
     emitStatusIfChanged()
