@@ -18,7 +18,7 @@ import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 // `parseWorkspaceJson` validates the export shape (version 1) and
 // throws on a non-export blob; `applyWorkspaceImport` does the heavy
 // lifting: it writes each report to OPFS, upserts the workspace,
-// merges triage into `state.markers / triageState / comments / fixes`
+// merges triage into `state.triage`
 // (deferring to a caller-supplied `conflictResolver` when local +
 // imported values disagree), and adopts per-report repo URLs that
 // don't already have a local entry.
@@ -252,18 +252,16 @@ export async function buildImportedFindingLookup(reportEntries) {
   return lookup
 }
 
-// Merge the imported triage into state.markers / state.triageState /
-// state.comments / state.fixes. Non-conflicting changes apply
-// immediately. A property-scoped conflict (id+property where both
-// sides have a value and they differ) is queued and handed to
-// `conflictResolver` — when omitted (or when it returns null), the
+// Merge the imported triage into `state.triage`. Non-conflicting
+// changes apply immediately. A property-scoped conflict (id+property
+// where both sides have a value and they differ) is queued and handed
+// to `conflictResolver` — when omitted (or when it returns null), the
 // local side wins on every conflict.
 async function mergeTriage(triage, conflictResolver, findingLookup) {
   // Reject arrays: `typeof [] === 'object'` so the lone-typeof guard
   // would let an array through, and `Object.entries([])` then yields
   // stringified indices that get persisted as bogus finding ids in
-  // `state.markers` / `state.comments` / `state.fixes`. Audit round-14
-  // WI-1.
+  // `state.triage`. Audit round-14 WI-1.
   if (!triage || typeof triage !== 'object' || Array.isArray(triage)) return
   const map = state.triage
   const conflicts = []
