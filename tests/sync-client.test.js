@@ -37,6 +37,7 @@ const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, addReportToWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
 const { hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
+const { patchEntry, isReportIgnored } = await import('../client/triage-entry.ts')
 
 // ─────────── helpers ───────────
 
@@ -57,11 +58,7 @@ function setReports(findings, fileName = 'test.md') {
 }
 
 function clearTriageState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
 }
 
 async function waitFor(predicate, label, timeoutMs = 5_000) {
@@ -124,12 +121,12 @@ describe('triage-sync client', () => {
 
   it('preserves a user edit made between save and ack', async () => {
     const wsId = await startSession(['finding-A', 'finding-B'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     // Simulate the user editing again WHILE the first save is in
     // flight (pending, awaiting ack). saveTriage flips pendingSave
     // because pending is non-null.
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
     await saveTriage()
     // The server acks the first save; the rebase should preserve
     // the second edit. Without the fix, applyToReactiveState
@@ -138,9 +135,9 @@ describe('triage-sync client', () => {
     await waitFor(() => settledAfterAck(wsId), 'ack landed and pending cleared')
     // After the rebase + the follow-up save for finding-B, both
     // edits must still be visible.
-    await waitFor(() => state.markers.get('finding-B') === 'green', 'finding-B preserved')
-    assert.equal(state.markers.get('finding-A'), 'red')
-    assert.equal(state.markers.get('finding-B'), 'green')
+    await waitFor(() => state.triage.get('finding-B')?.color === 'green', 'finding-B preserved')
+    assert.equal(state.triage.get('finding-A')?.color, 'red')
+    assert.equal(state.triage.get('finding-B')?.color, 'green')
     triageSync.closeSession()
     await deleteWorkspace(wsId)
   })
@@ -148,7 +145,7 @@ describe('triage-sync client', () => {
   it('merges a remote change with an in-progress local edit', async () => {
     const wsId = await startSession(['finding-A', 'finding-B'])
     // Local: finding-A = red, sync up.
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first ack')
 
@@ -161,16 +158,16 @@ describe('triage-sync client', () => {
     const seed = persisted.find((w) => w.id === wsId).privateKey
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-B': { color: 'green' } })
 
-    await waitFor(() => state.markers.get('finding-B') === 'green', 'remote change landed')
-    assert.equal(state.markers.get('finding-A'), 'red', 'local edit survived')
-    assert.equal(state.markers.get('finding-B'), 'green')
+    await waitFor(() => state.triage.get('finding-B')?.color === 'green', 'remote change landed')
+    assert.equal(state.triage.get('finding-A')?.color, 'red', 'local edit survived')
+    assert.equal(state.triage.get('finding-B')?.color, 'green')
     triageSync.closeSession()
     await deleteWorkspace(wsId)
   })
 
   it('local-wins on a conflicting id (same finding edited both sides)', async () => {
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -178,7 +175,7 @@ describe('triage-sync client', () => {
     // rapid in-flight UI edit between two ticks of the sync loop.
     // The chain handler's captureOverlay reads state.* directly,
     // so the merge must see this edit even though no save is queued.
-    state.markers.set('finding-A', 'amber')
+    patchEntry(state.triage, 'finding-A', { color: 'amber' })
 
     const beforeRev = triageSync.sessionInfo(wsId).baseRevision
     const { workspaceTag } = triageSync.sessionInfo(wsId)
@@ -196,7 +193,7 @@ describe('triage-sync client', () => {
     // Local edit (amber) wins over the conflicting remote (blue).
     // Without the rebase fix, captureOverlay-equivalent code would
     // collapse to identity and the user would see the remote value.
-    assert.equal(state.markers.get('finding-A'), 'amber')
+    assert.equal(state.triage.get('finding-A')?.color, 'amber')
     triageSync.closeSession()
     await deleteWorkspace(wsId)
   })
@@ -211,13 +208,13 @@ describe('triage-sync client', () => {
     // a `'chain'` context tag.
     const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
     // User locally re-marks to amber WITHOUT saving — this is the
     // "unsynced overlay" the chain-receive code path captures.
-    state.markers.set('finding-A', 'amber')
+    patchEntry(state.triage, 'finding-A', { color: 'amber' })
 
     let resolverCalled = false
     let seenContext = null
@@ -251,7 +248,7 @@ describe('triage-sync client', () => {
         imported: 'blue',
       })
       // "imported" decision applied: local amber → chain's blue.
-      await waitFor(() => state.markers.get('finding-A') === 'blue', 'imported decision landed in state.*')
+      await waitFor(() => state.triage.get('finding-A')?.color === 'blue', 'imported decision landed in state.*')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -266,11 +263,11 @@ describe('triage-sync client', () => {
     // round-1 rebase semantics).
     const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
-    state.markers.set('finding-A', 'amber')
+    patchEntry(state.triage, 'finding-A', { color: 'amber' })
 
     setHydrationConflictResolver((conflicts) => {
       const decisions = {}
@@ -291,7 +288,7 @@ describe('triage-sync client', () => {
       // Local amber stays — overlay-wins merge (the explicit "local"
       // decision matches the default, so applyHydrationDecisions is
       // a no-op for it).
-      assert.equal(state.markers.get('finding-A'), 'amber')
+      assert.equal(state.triage.get('finding-A')?.color, 'amber')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -308,7 +305,7 @@ describe('triage-sync client', () => {
     // top of the new chain value and the peer's change disappeared.
     const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -321,7 +318,7 @@ describe('triage-sync client', () => {
     const persisted = Array.isArray(_persistedRaw) ? _persistedRaw : _persistedRaw.workspaces
     const seed = persisted.find((w) => w.id === wsId).privateKey
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
-    state.markers.delete('finding-A')
+    patchEntry(state.triage, 'finding-A', { color: undefined })
 
     let resolverCalls = 0
     const seenConflicts = []
@@ -343,7 +340,7 @@ describe('triage-sync client', () => {
         imported: 'blue',
       })
       // "imported" decision applied: peer's blue lands in state.*.
-      await waitFor(() => state.markers.get('finding-A') === 'blue', 'imported decision applied')
+      await waitFor(() => state.triage.get('finding-A')?.color === 'blue', 'imported decision applied')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -360,7 +357,7 @@ describe('triage-sync client', () => {
     // empty chain entry and the peer's delete disappeared.
     const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -372,7 +369,7 @@ describe('triage-sync client', () => {
     const seed = persisted.find((w) => w.id === wsId).privateKey
     // Peer pushes an explicit delete (changeset entry = null).
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': null })
-    state.markers.set('finding-A', 'green')
+    patchEntry(state.triage, 'finding-A', { color: 'green' })
 
     let resolverCalls = 0
     const seenConflicts = []
@@ -395,7 +392,7 @@ describe('triage-sync client', () => {
       })
       // "imported" decision applied: empty `c.imported` deletes
       // the local marker, matching the peer's chain delete.
-      await waitFor(() => state.markers.get('finding-A') === undefined, 'imported (empty) deleted local marker')
+      await waitFor(() => state.triage.get('finding-A')?.color === undefined, 'imported (empty) deleted local marker')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -421,7 +418,7 @@ describe('triage-sync client', () => {
     const { setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
     const wsId = await startSession(['finding-A'])
     // Sync up to a known baseline so baseRevision is set.
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const { workspaceTag } = triageSync.sessionInfo(wsId)
@@ -434,7 +431,7 @@ describe('triage-sync client', () => {
     // then come back online.
     triageSync.setEnabled(false)
     await waitFor(() => triageSync.status === 'off', 'sync off')
-    state.markers.set('finding-A', 'amber')
+    patchEntry(state.triage, 'finding-A', { color: 'amber' })
     await pushRemoteChange(serverUrl, workspaceTag, seed, { 'finding-A': { color: 'blue' } })
 
     let resolverCalls = 0
@@ -465,7 +462,7 @@ describe('triage-sync client', () => {
       // would have arrived + been processed by now.
       await new Promise((resolve) => { setTimeout(resolve, 250) })
       assert.equal(resolverCalls, 1, 'resolver fired exactly once despite the redundant stale-base catch-up')
-      assert.equal(state.markers.get('finding-A'), 'amber', 'local value preserved after Keep-current')
+      assert.equal(state.triage.get('finding-A')?.color, 'amber', 'local value preserved after Keep-current')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -475,7 +472,7 @@ describe('triage-sync client', () => {
 
   it('restores baseRevision + baseState across closeSession / openSession', async () => {
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const beforeClose = triageSync.sessionInfo(wsId).baseRevision
@@ -492,7 +489,7 @@ describe('triage-sync client', () => {
       () => triageSync.sessionInfo(wsId)?.baseRevision === beforeClose,
       'baseRevision restored from localStorage',
     )
-    assert.equal(state.markers.get('finding-A'), 'red', 'triage value preserved')
+    assert.equal(state.triage.get('finding-A')?.color, 'red', 'triage value preserved')
     triageSync.closeSession()
     await deleteWorkspace(wsId)
   })
@@ -544,7 +541,7 @@ describe('triage-sync client', () => {
       () => triageSync.sessionInfo(wsId)?.baseRevision === null,
       'baseRevision reset via continuity-break recovery (M1)',
     )
-    assert.equal(state.markers.get('finding-A'), undefined, 'bogus-id revision did not poison state')
+    assert.equal(state.triage.get('finding-A')?.color, undefined, 'bogus-id revision did not poison state')
     // M1 round-4: a content-hash mismatch must NOT advance
     // baseRevision to the relay-claimed id (would let a malicious
     // relay drive our chain cursor). Instead it triggers a
@@ -597,7 +594,7 @@ describe('triage-sync client', () => {
     triageSync.setServerUrl(relay.url)
     await waitFor(() => chainSent, 'fake relay sent the bad-sig chain')
     await new Promise((resolve) => { setTimeout(resolve, 200) })
-    assert.equal(state.markers.get('finding-A'), undefined, 'bad-sig revision did not poison state')
+    assert.equal(state.triage.get('finding-A')?.color, undefined, 'bad-sig revision did not poison state')
     triageSync.closeSession()
     triageSync.setServerUrl('')
     await deleteWorkspace(wsId)
@@ -617,7 +614,7 @@ describe('triage-sync client', () => {
     await upsertWorkspace({ id: wsId, name: wsId, privateKey: seed, reports: ['t.md'] })
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 't.md')
     clearTriageState()
-    state.markers.set('finding-A', 'green')
+    patchEntry(state.triage, 'finding-A', { color: 'green' })
 
     let chainSent = false
     const relay = await startFakeRelay((sock) => {
@@ -656,7 +653,7 @@ describe('triage-sync client', () => {
       'full state-push attempted after re-subscribe also broke',
     )
     // state.* preserved across both break attempts.
-    assert.equal(state.markers.get('finding-A'), 'green', 'user edit survived resync')
+    assert.equal(state.triage.get('finding-A')?.color, 'green', 'user edit survived resync')
     assert.equal(triageSync.sessionInfo(wsId).baseRevision, null)
     triageSync.closeSession()
     triageSync.setServerUrl('')
@@ -722,7 +719,7 @@ describe('triage-sync client', () => {
     // computed id of the second chain's revision (NOT null — that
     // would mean the full reset path ran).
     await waitFor(
-      () => state.markers.get('finding-A') === 'red',
+      () => state.triage.get('finding-A')?.color === 'red',
       'incremental recovery applied the valid chain',
     )
     assert.equal(subscribeCount, 2, 'client re-subscribed exactly once')
@@ -825,13 +822,13 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     // Three saves: the first two bump the counter (1, then 2);
     // the third trips the threshold and goes out as a keyframe.
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first ack')
-    state.markers.set('finding-A', 'green')
+    patchEntry(state.triage, 'finding-A', { color: 'green' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'second ack')
-    state.markers.set('finding-A', 'blue')
+    patchEntry(state.triage, 'finding-A', { color: 'blue' })
     await saveTriage()
     // After the third ack, savesSinceKeyframe should be 0 — i.e.
     // the third save was a keyframe, and the counter reset.
@@ -839,7 +836,7 @@ describe('triage-sync client', () => {
       () => settledAfterAck(wsId) && (triageSync.sessionInfo(wsId).savesSinceKeyframe ?? -1) === 0,
       'third save emitted as a keyframe (counter reset to 0)',
     )
-    assert.equal(state.markers.get('finding-A'), 'blue', 'final state visible after keyframe')
+    assert.equal(state.triage.get('finding-A')?.color, 'blue', 'final state visible after keyframe')
     setKeyframeInterval(100)
     triageSync.closeSession()
     await deleteWorkspace(wsId)
@@ -855,13 +852,13 @@ describe('triage-sync client', () => {
     // the threshold and is emitted as a keyframe.
     setKeyframeInterval(1)
     const wsId = await startSession(['finding-A', 'finding-B'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'rev_A ack')
     // Counter should now be 1 — next save will be promoted to a
     // keyframe (interval = 1). Bake finding-B into state to make
     // the keyframe content distinguishable from rev_A's content.
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
     await saveTriage()
     await waitFor(
       () => (triageSync.sessionInfo(wsId)?.savesSinceKeyframe ?? -1) === 0,
@@ -888,7 +885,7 @@ describe('triage-sync client', () => {
     // applies, replacing the (empty) baseState with the keyframe's
     // full content. state.* now reflects {A: red, B: green}.
     await waitFor(
-      () => state.markers.get('finding-A') === 'red' && state.markers.get('finding-B') === 'green',
+      () => state.triage.get('finding-A')?.color === 'red' && state.triage.get('finding-B')?.color === 'green',
       'reader caught up via keyframe',
     )
     setKeyframeInterval(100)
@@ -917,7 +914,7 @@ describe('triage-sync client', () => {
     // Edit a finding in workspace A's scope. Only A's session
     // should produce a save; B's session.ids doesn't include
     // 'finding-in-A' so B's localState diff is empty.
-    state.markers.set('finding-in-A', 'red')
+    patchEntry(state.triage, 'finding-in-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsA), 'A acked')
     // B never acked anything (no edits in B's scope).
@@ -927,7 +924,7 @@ describe('triage-sync client', () => {
     // unaffected because A's session.ids doesn't include
     // 'finding-in-B'.
     const aBaseAfterFirstSave = triageSync.sessionInfo(wsA).baseRevision
-    state.markers.set('finding-in-B', 'green')
+    patchEntry(state.triage, 'finding-in-B', { color: 'green' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsB), 'B acked')
     assert.equal(triageSync.sessionInfo(wsA).baseRevision, aBaseAfterFirstSave, 'A base unchanged')
@@ -965,7 +962,7 @@ describe('triage-sync client', () => {
     assert.equal(triageSync.sessionInfo(wsA), null, 'A is closed')
     assert.notEqual(triageSync.sessionInfo(wsB), null, 'B is still open')
     // B can still save.
-    state.markers.set('fB', 'amber')
+    patchEntry(state.triage, 'fB', { color: 'amber' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsB), 'B acked after closing A')
 
@@ -1033,7 +1030,7 @@ describe('triage-sync client', () => {
       () => triageSync.sessionInfo(wsB)?.baseRevision != null,
       'B propagated the shared update under its own tag',
     )
-    assert.equal(state.markers.get('shared'), 'red', 'shared finding visible in state.*')
+    assert.equal(state.triage.get('shared')?.color, 'red', 'shared finding visible in state.*')
 
     // Sanity: the two sessions ended up at different baseRevisions
     // (different tags, different chains), confirming the propagation
@@ -1098,16 +1095,16 @@ describe('triage-sync client', () => {
     // Wait for the in-scope id to land in state.markers (cheapest
     // observable for "the chain applied").
     await waitFor(
-      () => state.markers.get('finding-A') === 'red',
+      () => state.triage.get('finding-A')?.color === 'red',
       'in-scope id applied',
     )
 
     // Spec assertion: in-scope A applied; OOS B and C did NOT touch
     // state.markers. (R1 has finding-B but isn't in the workspace, so
     // finding-B is OOS for this session.)
-    assert.equal(state.markers.get('finding-A'), 'red', 'A applied (in scope via R0)')
-    assert.equal(state.markers.get('finding-B'), undefined, 'B not applied (R1 not in workspace)')
-    assert.equal(state.markers.get('finding-C'), undefined, 'C not applied (no report in workspace has it)')
+    assert.equal(state.triage.get('finding-A')?.color, 'red', 'A applied (in scope via R0)')
+    assert.equal(state.triage.get('finding-B')?.color, undefined, 'B not applied (R1 not in workspace)')
+    assert.equal(state.triage.get('finding-C')?.color, undefined, 'C not applied (no report in workspace has it)')
 
     // baseState carries all three — verified via the persisted-session
     // blob, which mirrors session.baseState. This is what guarantees a
@@ -1157,10 +1154,10 @@ describe('triage-sync client', () => {
       'finding-C': { color: 'green' },
     })
     await waitFor(
-      () => state.markers.get('finding-A') === 'red',
+      () => state.triage.get('finding-A')?.color === 'red',
       'A applied (in scope)',
     )
-    assert.equal(state.markers.get('finding-B'), undefined, 'B not yet applied')
+    assert.equal(state.triage.get('finding-B')?.color, undefined, 'B not yet applied')
 
     // Attach R1 to W. The membership listener refreshes session.ids
     // and hydrates state.* from baseState for the newly-in-scope
@@ -1168,9 +1165,9 @@ describe('triage-sync client', () => {
     // not in any of W's reports).
     await setReportWorkspace('R1.md', wsId)
 
-    assert.equal(state.markers.get('finding-A'), 'red', 'A still set')
-    assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from baseState')
-    assert.equal(state.markers.get('finding-C'), undefined, 'C still OOS (no report in W has it)')
+    assert.equal(state.triage.get('finding-A')?.color, 'red', 'A still set')
+    assert.equal(state.triage.get('finding-B')?.color, 'blue', 'B hydrated from baseState')
+    assert.equal(state.triage.get('finding-C')?.color, undefined, 'C still OOS (no report in W has it)')
 
     // baseState still carries all three (hydration reads, doesn't
     // remove). Future keyframes preserve C for fresh subscribers.
@@ -1214,12 +1211,12 @@ describe('triage-sync client', () => {
       'finding-B': { color: 'blue' },
       'finding-C': { color: 'green' },
     })
-    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+    await waitFor(() => state.triage.get('finding-A')?.color === 'red', 'A applied')
 
     await setReportWorkspace('R3.md', wsId)
 
-    assert.equal(state.markers.get('finding-B'), 'blue', 'B hydrated from R3')
-    assert.equal(state.markers.get('finding-C'), undefined, 'C still OOS')
+    assert.equal(state.triage.get('finding-B')?.color, 'blue', 'B hydrated from R3')
+    assert.equal(state.triage.get('finding-C')?.color, undefined, 'C still OOS')
 
     triageSync.closeSession(wsId)
     await deleteWorkspace(wsId)
@@ -1259,9 +1256,9 @@ describe('triage-sync client', () => {
       'finding-A': { color: 'red' },
       'finding-B': { color: 'blue' },
     })
-    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+    await waitFor(() => state.triage.get('finding-A')?.color === 'red', 'A applied')
 
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     let resolverCalled = false
     let seenConflicts = []
@@ -1277,7 +1274,7 @@ describe('triage-sync client', () => {
       // The listener's IIFE is async — wait for the resolver to
       // run AND the resulting saveTriage round-trip to land.
       await waitFor(() => resolverCalled, 'conflict resolver called')
-      await waitFor(() => state.markers.get('finding-B') === 'blue', 'imported decision applied')
+      await waitFor(() => state.triage.get('finding-B')?.color === 'blue', 'imported decision applied')
       assert.equal(seenConflicts.length, 1)
       assert.deepEqual(seenConflicts[0], {
         id: 'finding-B',
@@ -1335,7 +1332,7 @@ describe('triage-sync client', () => {
       },
       'B in baseState',
     )
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     let resolverCalled = false
     setHydrationConflictResolver((conflicts) => {
@@ -1349,7 +1346,7 @@ describe('triage-sync client', () => {
       await waitFor(() => resolverCalled, 'conflict resolver called')
       // Local 'green' stays; chain advances with the local-wins value.
       await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
-      assert.equal(state.markers.get('finding-B'), 'green', 'local kept')
+      assert.equal(state.triage.get('finding-B')?.color, 'green', 'local kept')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -1395,7 +1392,7 @@ describe('triage-sync client', () => {
       },
       'B in baseState',
     )
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     let resolverCalled = false
     setHydrationConflictResolver(() => {
@@ -1406,7 +1403,7 @@ describe('triage-sync client', () => {
       await setReportWorkspace('R1.md', wsId)
       await waitFor(() => resolverCalled, 'resolver invoked')
       await waitFor(() => settledAfterAck(wsId), 'save settled')
-      assert.equal(state.markers.get('finding-B'), 'green', 'local kept on cancel')
+      assert.equal(state.triage.get('finding-B')?.color, 'green', 'local kept on cancel')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -1454,11 +1451,11 @@ describe('triage-sync client', () => {
       },
       'B in baseState',
     )
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     await setReportWorkspace('R1.md', wsId)
     await waitFor(() => settledAfterAck(wsId), 'save settled')
-    assert.equal(state.markers.get('finding-B'), 'green', 'gap-only kept local')
+    assert.equal(state.triage.get('finding-B')?.color, 'green', 'gap-only kept local')
 
     triageSync.closeSession(wsId)
     await deleteWorkspace(wsId)
@@ -1500,12 +1497,12 @@ describe('triage-sync client', () => {
       'finding-A': { color: 'red' },
       'finding-B': { color: 'blue' },
     })
-    await waitFor(() => state.markers.get('finding-A') === 'red', 'A applied')
+    await waitFor(() => state.triage.get('finding-A')?.color === 'red', 'A applied')
 
     // Pre-existing local triage on B (e.g. user set it via the
     // console API while R1 was in a different workspace, or it was
     // restored from the deepview.triage blob at module load).
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
     // Snapshot the pre-attach baseRevision so the wait below pins to
     // "the membership-listener-driven save acked". `settledAfterAck`
     // alone is trivially true at this point — there's no save in
@@ -1522,7 +1519,7 @@ describe('triage-sync client', () => {
 
     // Hydration is gap-only — local 'green' is preserved over the
     // chain's 'blue'.
-    assert.equal(state.markers.get('finding-B'), 'green', 'local value preserved')
+    assert.equal(state.triage.get('finding-B')?.color, 'green', 'local value preserved')
 
     // Wait for the membership-listener-driven save to ACTUALLY
     // advance the chain past `preAttachRev`. `baseRevision` only
@@ -1617,7 +1614,7 @@ describe('triage-sync client', () => {
       () => triageSync.sessionInfo(wsId)?.workspaceTag != null,
       'workspaceTag derived',
     )
-    assert.equal(state.markers.get('unknown-X'), undefined, 'state.* untouched (X out of scope)')
+    assert.equal(state.triage.get('unknown-X')?.color, undefined, 'state.* untouched (X out of scope)')
 
     // Attach R2 mid-session — both state.reports (renderer) and
     // workspace.reports (membership). The onReportMembershipChanged
@@ -1628,8 +1625,8 @@ describe('triage-sync client', () => {
       groups: [[ { id: 'unknown-X', _id: 'unknown-X' } ]],
     })
     await setReportWorkspace('B.md', wsId)
-    assert.equal(state.markers.get('unknown-X'), 'red', 'state.* hydrated for newly-in-scope id')
-    assert.equal(state.triageState.get('unknown-X'), 'fixed', 'triageState hydrated too')
+    assert.equal(state.triage.get('unknown-X')?.color, 'red', 'state.* hydrated for newly-in-scope id')
+    assert.equal(state.triage.get('unknown-X')?.triage, 'fixed', 'triageState hydrated too')
 
     // After hydration, a local edit on a different finding produces
     // a save whose effectiveLocalState carries the full unknown-X
@@ -1639,10 +1636,10 @@ describe('triage-sync client', () => {
     // confirms unknown-X stays set; without hydration, snapshotEntry
     // would return {} and effectiveLocalState would delete it,
     // letting trySendSave emit a wipe.
-    state.markers.set('known', 'green')
+    patchEntry(state.triage, 'known', { color: 'green' })
     await saveTriage()
-    assert.equal(state.markers.get('unknown-X'), 'red', 'unknown-X marker preserved after save')
-    assert.equal(state.triageState.get('unknown-X'), 'fixed', 'unknown-X triage preserved after save')
+    assert.equal(state.triage.get('unknown-X')?.color, 'red', 'unknown-X marker preserved after save')
+    assert.equal(state.triage.get('unknown-X')?.triage, 'fixed', 'unknown-X triage preserved after save')
 
     triageSync.closeSession(wsId)
     await deleteWorkspace(wsId)
@@ -1681,13 +1678,13 @@ describe('triage-sync client', () => {
       'known': { color: 'red' },
     })
     await waitFor(
-      () => state.markers.get('known') === 'red',
+      () => state.triage.get('known')?.color === 'red',
       'remote chain applied',
     )
 
     // ONE local edit on the known id. With keyframeInterval=100
     // (production default) this stays a regular delta save.
-    state.markers.set('known', 'green')
+    patchEntry(state.triage, 'known', { color: 'green' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'delta save acked')
     // Sanity: no keyframe was emitted.
@@ -1778,7 +1775,7 @@ describe('triage-sync client', () => {
       'known': { color: 'red' },
     })
     await waitFor(
-      () => state.markers.get('known') === 'red',
+      () => state.triage.get('known')?.color === 'red',
       'remote chain applied',
     )
 
@@ -1787,10 +1784,10 @@ describe('triage-sync client', () => {
     // the keyframe — but with `keyframeInterval = 2`, the second
     // edit IS the keyframe-promoted one because the chain we just
     // applied bumped the counter to 1.
-    state.markers.set('known', 'green')
+    patchEntry(state.triage, 'known', { color: 'green' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'second ack')
-    state.markers.set('known', 'blue')
+    patchEntry(state.triage, 'known', { color: 'blue' })
     await saveTriage()
     await waitFor(
       () => (triageSync.sessionInfo(wsId)?.savesSinceKeyframe ?? -1) === 0,
@@ -1863,7 +1860,7 @@ describe('triage-sync client', () => {
     await waitFor(statusOnline, 'online')
 
     // Initial sanity: edit a known finding, save, ack.
-    state.markers.set('in-A', 'red')
+    patchEntry(state.triage, 'in-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first ack')
 
@@ -1882,7 +1879,7 @@ describe('triage-sync client', () => {
     // effectiveLocalState → save's changeset would be empty →
     // the edit never reaches the server.
     const beforeRev = triageSync.sessionInfo(wsId).baseRevision
-    state.markers.set('in-B', 'green')
+    patchEntry(state.triage, 'in-B', { color: 'green' })
     await saveTriage()
     await waitFor(
       () => triageSync.sessionInfo(wsId).baseRevision !== beforeRev,
@@ -1984,7 +1981,7 @@ describe('triage-sync client', () => {
     await waitFor(() => chainSent, 'relay sent the chain')
     // Give the message handler a chance to run.
     await new Promise((resolve) => { setTimeout(resolve, 100) })
-    assert.equal(state.markers.get('finding-X'), undefined, 'closed-session chain did not pollute state.*')
+    assert.equal(state.triage.get('finding-X')?.color, undefined, 'closed-session chain did not pollute state.*')
 
     triageSync.setServerUrl('')
     await deleteWorkspace(wsId)
@@ -2214,12 +2211,12 @@ describe('triage-sync client', () => {
     // changeset went out empty, and triage transitions were
     // silently never synced.
     const wsId = await startSession(['finding-A'])
-    state.triageState.set('finding-A', 'fixed')
+    patchEntry(state.triage, 'finding-A', { triage: 'fixed' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'fixed acked')
     const baseAfterFixed = triageSync.sessionInfo(wsId).baseRevision
 
-    state.triageState.set('finding-A', 'invalid')
+    patchEntry(state.triage, 'finding-A', { triage: 'invalid' })
     await saveTriage()
     await waitFor(
       () => triageSync.sessionInfo(wsId).baseRevision !== baseAfterFixed,
@@ -2266,7 +2263,7 @@ describe('triage-sync client', () => {
 
   it('deleteWorkspace tears down the live session and drops persisted base', async () => {
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -2303,7 +2300,7 @@ describe('triage-sync client', () => {
     // (chain ids were content-addressed under the old tag and are
     // useless to the new identity), and reopens.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack under old key')
     const oldTag = triageSync.sessionInfo(wsId).workspaceTag
@@ -2369,7 +2366,7 @@ describe('triage-sync client', () => {
     // local tab itself had called deleteWorkspace.
     const { propagateWorkspaceChangesFromStorage } = await import('../client/workspaces.js')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     assert.notEqual(triageSync.sessionInfo(wsId), null, 'session live before sibling delete')
@@ -2401,7 +2398,7 @@ describe('triage-sync client', () => {
     // the old session and re-opens under the new identity.
     const { propagateWorkspaceChangesFromStorage } = await import('../client/workspaces.js')
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack under old key')
     const oldTag = triageSync.sessionInfo(wsId).workspaceTag
@@ -2515,7 +2512,7 @@ describe('triage-sync client', () => {
       },
       'B in baseState',
     )
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     let dialogResolve = null
     let resolverArgs = null
@@ -2531,7 +2528,7 @@ describe('triage-sync client', () => {
       // While the dialog is open, user re-edits state.markers.
       // (Imagine the user clicked through to that finding's row
       // and used the toolbar to set yet another color.)
-      state.markers.set('finding-B', 'cyan')
+      patchEntry(state.triage, 'finding-B', { color: 'cyan' })
 
       // Now the user picks "Apply imported" in the dialog.
       const decisions = {}
@@ -2542,7 +2539,7 @@ describe('triage-sync client', () => {
       // 'cyan' (not 'green' that was c.local) and skips the
       // overwrite. User's mid-dialog edit survives.
       await waitFor(() => settledAfterAck(wsId), 'follow-up save acked')
-      assert.equal(state.markers.get('finding-B'), 'cyan', 'mid-dialog edit preserved')
+      assert.equal(state.triage.get('finding-B')?.color, 'cyan', 'mid-dialog edit preserved')
     } finally {
       setHydrationConflictResolver(null)
     }
@@ -2558,7 +2555,7 @@ describe('triage-sync client', () => {
     // the same bundle would needlessly drop the chain and force a
     // resubscribe round-trip.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const oldTag = triageSync.sessionInfo(wsId).workspaceTag
@@ -2757,7 +2754,7 @@ describe('triage-sync client', () => {
     triageSync.setServerUrl(relay.url)
     await waitFor(
       () => triageSync.sessionInfo(wsId)?.baseRevision === null
-        && state.markers.get('finding-A') === undefined,
+        && state.triage.get('finding-A')?.color === undefined,
       'continuity-break full reset; good rev discarded with the bogus chain',
     )
 
@@ -2837,7 +2834,7 @@ describe('triage-sync client', () => {
     // Audit L3 round-3: snapshotEntry emits `triage` (new) only,
     // never `deleted: true`. Pin via a save round-trip + reader.
     const wsId = await startSession(['finding-A'])
-    state.triageState.set('finding-A', 'deleted')
+    patchEntry(state.triage, 'finding-A', { triage: 'deleted' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'save acked')
 
@@ -2908,7 +2905,7 @@ describe('triage-sync client', () => {
     })
 
     // Wait for state.* to land + all three sessions to settle.
-    await waitFor(() => state.markers.get('shared') === 'red', 'shared visible')
+    await waitFor(() => state.triage.get('shared')?.color === 'red', 'shared visible')
     for (const id of ids) {
       await waitFor(() => settledAfterAck(id), `${id} settled`)
     }
@@ -2936,13 +2933,13 @@ describe('triage-sync client', () => {
     const server2 = await bootServer()
     try {
       const wsId = await startSession(['finding-X'])
-      state.markers.set('finding-X', 'red')
+      patchEntry(state.triage, 'finding-X', { color: 'red' })
       await saveTriage()
       await waitFor(() => settledAfterAck(wsId), 'baseline ack on server1')
 
       // Trigger a fresh save and IMMEDIATELY swap servers — don't
       // await saveTriage so the encrypt is racing with setServerUrl.
-      state.markers.set('finding-X', 'green')
+      patchEntry(state.triage, 'finding-X', { color: 'green' })
       const saveP = saveTriage()
       triageSync.setServerUrl(server2.serverUrl)
 
@@ -2954,10 +2951,10 @@ describe('triage-sync client', () => {
       await waitFor(() => triageSync.status === 'online', 'reconnected to server2')
 
       // Self-recovery: a subsequent edit must land on server2 cleanly.
-      state.markers.set('finding-X', 'blue')
+      patchEntry(state.triage, 'finding-X', { color: 'blue' })
       await saveTriage()
       await waitFor(() => settledAfterAck(wsId), 'follow-up save acked on server2')
-      assert.equal(state.markers.get('finding-X'), 'blue')
+      assert.equal(state.triage.get('finding-X')?.color, 'blue')
 
       triageSync.closeSession(wsId)
       await deleteWorkspace(wsId)
@@ -2977,7 +2974,7 @@ describe('triage-sync client', () => {
     // is the canonical cross-tab propagation channel.
     const { reloadTriageFromStorage } = await import('../client/triage.js')
     const wsId = await startSession(['shared-finding'])
-    state.markers.set('shared-finding', 'red')
+    patchEntry(state.triage, 'shared-finding', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const baselineRev = triageSync.sessionInfo(wsId).baseRevision
@@ -2986,7 +2983,7 @@ describe('triage-sync client', () => {
     // Simulate a sibling tab persisting different state. Build the
     // blob the way saveTriage would (gzipped, base64) by routing
     // through saveTriage on a swapped state, then restore state.
-    state.markers.set('shared-finding', 'green')
+    patchEntry(state.triage, 'shared-finding', { color: 'green' })
     await saveTriage()
     // saveTriage above bumped baseRevision via its own round-trip;
     // capture the new baseline.
@@ -2997,9 +2994,9 @@ describe('triage-sync client', () => {
     // having drifted, then call reloadTriageFromStorage as if a
     // storage event fired. Reload should overwrite state.* with the
     // persisted (green) value WITHOUT firing an outbound save.
-    state.markers.set('shared-finding', 'cyan')
+    patchEntry(state.triage, 'shared-finding', { color: 'cyan' })
     await reloadTriageFromStorage()
-    assert.equal(state.markers.get('shared-finding'), 'green', 'reload picked up persisted value')
+    assert.equal(state.triage.get('shared-finding')?.color, 'green', 'reload picked up persisted value')
 
     // Give a couple of ticks for any speculative save to land.
     await new Promise((resolve) => { setTimeout(resolve, 100) })
@@ -3077,7 +3074,7 @@ describe('triage-sync client', () => {
     // state.markers['shared'] has SOME value (red or blue depending
     // on which broadcast landed last); both chains carry the same
     // final value (last-write-wins under cross-session propagation).
-    const finalColor = state.markers.get('shared')
+    const finalColor = state.triage.get('shared')?.color
     assert.ok(finalColor === 'red' || finalColor === 'blue', 'shared converged to one of the two values')
     // Both sessions advanced — propagation actually ran on both
     // sides, didn't dead-lock waiting for each other.
@@ -3136,7 +3133,7 @@ describe('triage-sync client', () => {
     // steady-state assertion below is the strongest black-box pin
     // available without one.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     // Steady-state pre-condition: encrypting cleared by the
@@ -3152,7 +3149,7 @@ describe('triage-sync client', () => {
     await waitFor(statusOnline, 'reconnected after toggle')
     assert.equal(triageSync.sessionInfo(wsId).encrypting, false, 'setEnabled(true) leaves encrypting=false')
     // A fresh save after re-enable still completes cleanly.
-    state.markers.set('finding-A', 'green')
+    patchEntry(state.triage, 'finding-A', { color: 'green' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'follow-up ack after toggle')
     triageSync.closeSession(wsId)
@@ -3189,7 +3186,7 @@ describe('triage-sync client', () => {
     //      the same id applies triage but SKIPS ignoredReports
     //      (apply-side mutex — same as the load/import paths).
     const wsId = await startSession(['shared-finding'])
-    state.markers.set('shared-finding', 'red')
+    patchEntry(state.triage, 'shared-finding', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -3203,7 +3200,7 @@ describe('triage-sync client', () => {
       'shared-finding': { color: 'red', ignoredReports: ['somereport.md'] },
     })
     await waitFor(
-      () => state.ignoredIds.has('somereport.md\0shared-finding'),
+      () => isReportIgnored(state.triage, 'shared-finding', 'somereport.md'),
       'ignoredReports from chain landed in state.ignoredIds',
     )
 
@@ -3214,11 +3211,11 @@ describe('triage-sync client', () => {
       'shared-finding': { triage: 'fixed', ignoredReports: ['x.md'] },
     })
     await waitFor(
-      () => state.triageState.get('shared-finding') === 'fixed',
+      () => state.triage.get('shared-finding')?.triage === 'fixed',
       'triage from chain applied',
     )
     assert.equal(
-      state.ignoredIds.has('x.md\0shared-finding'),
+      isReportIgnored(state.triage, 'shared-finding', 'x.md'),
       false,
       'ignoredReports skipped due to apply-side mutex',
     )
@@ -3226,7 +3223,7 @@ describe('triage-sync client', () => {
     // dropped because the second chain entry's wire view sets
     // triage and the apply path clears local ignoredIds for the id.
     assert.equal(
-      state.ignoredIds.has('somereport.md\0shared-finding'),
+      isReportIgnored(state.triage, 'shared-finding', 'somereport.md'),
       false,
       'pre-existing ignoredReports cleared (mutex preserves triage)',
     )
@@ -3299,7 +3296,7 @@ describe('triage-sync client', () => {
     // pushing more peer chains than the interval and inspecting.
     setKeyframeInterval(3)
     const wsId = await startSession(['shared-finding'])
-    state.markers.set('shared-finding', 'red')
+    patchEntry(state.triage, 'shared-finding', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
 
@@ -3396,7 +3393,7 @@ describe('triage-sync client', () => {
     // observable steady-state value; it does ensure the lock-RMW
     // is initiated earlier in the apply sequence.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'baseline ack')
     const baselineRev = triageSync.sessionInfo(wsId).baseRevision
@@ -3678,7 +3675,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     clearTriageState()
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 'A.md')
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: [] })
     triageSync.setServerUrl(serverUrl)
@@ -3710,7 +3707,7 @@ describe('triage-sync client', () => {
     // Workspace claims TWO reports, but only A is currently loaded
     // (mirrors single-file view of A in a multi-report workspace).
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 'A.md')
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     const wsId = `ws-${Math.random().toString(36).slice(2, 10)}`
     await upsertWorkspace({ id: wsId, name: wsId, privateKey: randomBase64(), reports: ['A.md', 'B.md'] })
     triageSync.openSession(wsId)
@@ -3723,7 +3720,7 @@ describe('triage-sync client', () => {
     // User edits a finding in B while B is unloaded. With session.ids
     // stuck on A's ids, this triage IS captured in state.markers but
     // not propagated by any subsequent save.
-    state.markers.set('finding-B', 'green')
+    patchEntry(state.triage, 'finding-B', { color: 'green' })
 
     // Simulate `switchToFile('B.md')`: ingest repopulates
     // state.reports with B (+ A, if multi-file — here we model the
@@ -3761,7 +3758,7 @@ describe('triage-sync client', () => {
     // the session struct AND issued a fresh `workspace-subscribe` on
     // every click of the workspace title.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first ack')
     const infoBefore = triageSync.sessionInfo(wsId)
@@ -3796,7 +3793,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     clearTriageState()
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 'shared.md')
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     const wsA = `ws-${Math.random().toString(36).slice(2, 8)}`
     const wsB = `ws-${Math.random().toString(36).slice(2, 8)}`
     await upsertWorkspace({ id: wsA, name: wsA, privateKey: randomBase64(), reports: [] })
@@ -3829,7 +3826,7 @@ describe('triage-sync client', () => {
     // listener (the workspaces-store dedups). Asserted here so a
     // regression in the dedup would visibly bump baseRevision.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first save ack')
     const baseRevisionBefore = triageSync.sessionInfo(wsId).baseRevision
@@ -3860,7 +3857,7 @@ describe('triage-sync client', () => {
     // on `changesetEmpty` before encrypting — out-of-scope ids stay
     // as baseState had them, so no revision lands on the wire.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'attached state acked')
     const baseRevisionAttached = triageSync.sessionInfo(wsId).baseRevision
@@ -3888,7 +3885,7 @@ describe('triage-sync client', () => {
     triageSync.closeSession()
     clearTriageState()
     setReports([{ id: 'finding-A', _id: 'finding-A' }], 'offline.md')
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     triageSync.setServerUrl('')  // sync offline
 
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
@@ -3919,7 +3916,7 @@ describe('triage-sync client', () => {
     // bump the chain. Otherwise click-spam on the workspace title
     // would generate fresh revisions for no reason.
     const wsId = await startSession(['finding-A'])
-    state.markers.set('finding-A', 'red')
+    patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'first save ack')
     const baseRevisionBefore = triageSync.sessionInfo(wsId).baseRevision
