@@ -555,11 +555,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       <button
         type="button"
         class="bundles-tab bundles-tab-action"
-        data-bundle-tab="treemap"
-      >Treemap →</button>
-      <button
-        type="button"
-        class="bundles-tab bundles-tab-action"
         data-bundle-tab="graph"
       >Graph →</button>
       ${issueTotal > 0 ? html`<button
