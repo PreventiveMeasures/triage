@@ -263,25 +263,30 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
     let results: unknown[][]
     try {
       results = await sql.transaction([
-        // Dup-id check.
-        sql(REVISION_EXISTS_SQL, [tag, id]),
-        // Current head id (NULL when the chain is empty).
-        sql(HEAD_FOR_SQL, [tag]),
         // Gated INSERT (shared `$N` builder, Postgres null-safe equality
-        // `IS NOT DISTINCT FROM`). `seq` is computed via the same MAX(seq)
-        // subquery as the head-check's snapshot. The WHERE clause
-        // re-asserts both gates so the INSERT is a no-op when either
-        // fails. RETURNING seq lets us discriminate inserted vs
-        // not-inserted by row count.
-        //
-        // The null-safe equality matches `base = NULL` on the first
-        // revision against the empty-chain head (also NULL). Plain `=`
-        // would always be NULL → false → first revision would never
-        // insert.
+        // `IS NOT DISTINCT FROM`). `seq` is `COALESCE(MAX(seq),0)+1`; the
+        // WHERE re-asserts both gates (no dup AND head IS base) so the
+        // INSERT is a no-op when either fails, and a non-empty
+        // `RETURNING seq` means "inserted". The null-safe equality
+        // matches `base = NULL` on the first revision against the
+        // empty-chain head (also NULL); plain `=` would be NULL → false
+        // and the first revision would never insert.
         sql(
           GATED_INSERT_SQL_PG,
           [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
         ),
+        // Discrimination reads, run AFTER the INSERT so they reflect
+        // post-INSERT state. With no advisory lock serialising the
+        // transaction, running these BEFORE the INSERT (READ COMMITTED
+        // takes a fresh snapshot per statement) could miss a duplicate or
+        // head-advance that landed concurrently and misclassify a no-op
+        // INSERT — e.g. report `stale-base` for what is actually a
+        // duplicate retransmit. Read after the INSERT, a no-op's cause is
+        // stable: our id present ⇒ duplicate, else the head moved ⇒
+        // stale-base. (The INSERT itself is still authoritative — its own
+        // single-statement snapshot is what prevents a chain fork.)
+        sql(REVISION_EXISTS_SQL, [tag, id]),
+        sql(HEAD_FOR_SQL, [tag]),
       ])
     } catch (err) {
       // A unique-violation reaches here when a cross-replica racer (or
@@ -300,9 +305,9 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
       const headRows = await sql(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
       return { kind: 'stale-base', head: headRows[0]?.id ?? null }
     }
-    const dupRows = results[0] as Array<unknown>
-    const headRows = results[1] as Array<{ id: string }>
-    const insertRows = results[2] as Array<unknown>
+    const insertRows = results[0] as Array<unknown>
+    const dupRows = results[1] as Array<unknown>
+    const headRows = results[2] as Array<{ id: string }>
     if (insertRows.length > 0) return { kind: 'inserted' }
     if (dupRows.length > 0) return { kind: 'duplicate' }
     return { kind: 'stale-base', head: headRows[0]?.id ?? null }

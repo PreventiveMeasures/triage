@@ -1287,7 +1287,10 @@ describe('triage-sync server: busy NACK at MAX_INFLIGHT_PER_SOCKET cap', () => {
         const r = await c.recv((m) =>
           m.type === 'workspace-save-ack' || m.type === 'workspace-save-error', 1_000,
         ).catch(() => null)
-        if (!r) break
+        // A single recv gap (slow CI / scheduling) must NOT end the
+        // drain — keep looping until the overall deadline or until all N
+        // responses arrive, so we never miss the lone ack.
+        if (!r) continue
         if (r.type === 'workspace-save-ack') acks.push(r)
         else errs.push(r)
       }
