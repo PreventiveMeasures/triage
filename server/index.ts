@@ -72,9 +72,7 @@
 // and would not reject the attaching socket.
 
 import { type WebSocket, WebSocketServer } from 'ws'
-import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
-import { fileURLToPath } from 'node:url'
 import { decodeUtf8 } from '../common/utf8.js'
 import { errMsg, errStack, randomId } from './util.ts'
 import { Peer } from './peer.ts'
@@ -82,13 +80,12 @@ import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
 import { createHub } from './hub.ts'
 import { type AuthenticateMsg, createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
+import { WS_UPGRADE_PATH, createHttpServer } from './http.ts'
 import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import type { SaveMsg, SubscribeMsg } from './sign.ts'
-import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
-import { loadStatic } from './static.ts'
 import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
@@ -287,139 +284,12 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
   ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
 
-// `/api/*` is reserved for backend traffic so a fronting nginx
-// (or similar) can route `/api/*` → this process and `/*` → the
-// static UI bundle with a single location block.
-const WS_UPGRADE_PATH = '/api/sync'
-function isUpgradePath(url: string | undefined): boolean {
-  if (typeof url !== 'string') return false
-  // Strip `?…` so clients can carry build / debug tags. Exact
-  // match otherwise — `/api/sync/` (trailing slash) doesn't pass.
-  return url.split('?', 1)[0] === WS_UPGRADE_PATH
-}
-
-const NOT_FOUND_BODY = JSON.stringify({ error: 'not-found' })
-
-// Static-file plane (see `./static.ts`). The directory is the
-// `build.js build` output sibling to this file; the loader handles
-// directory enumeration, pre-compression, and ETag derivation. The
-// returned handler is plugged into the HTTP request handler below
-// after the `/api/objstore/...` REST branch.
-const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)))
-
-const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
-  if (matchRoute(req.url) != null) {
-    // Shutdown gate. The WS plane gates new messages on
-    // `shuttingDown` at line 906, but REST handlers go through a
-    // separate path and must mirror that gate. Without this, a
-    // REST PUT arriving on an existing keep-alive socket AFTER
-    // SIGTERM but BEFORE `httpServer.close()` finishes draining
-    // could land in `withCommitLock`, acquire a lease, and finish
-    // its `finally { release() }` AFTER the shutdown's
-    // `heldLeaseCount` snapshot — leaving an orphan row in the
-    // commit_lock table that pins the key until TTL expiry. The
-    // 503 + `shutting-down` reason tells the client to retry
-    // against a different replica (the load balancer should have
-    // already drained this one). Transport audit + multi-replica
-    // shutdown ordering review.
-    if (shuttingDown) {
-      res.writeHead(503, { 'content-type': 'application/json', 'connection': 'close' })
-      res.end(JSON.stringify({ error: 'shutting-down' }))
-      return
-    }
-    // Same-origin gate. Token IS the auth on REST, but a hostile
-    // origin that holds a valid token (e.g. via XSS that read a
-    // freshly-minted one) would PUT with its own Origin header — we
-    // catch that here. Same-origin XHR/fetch may omit Origin; that
-    // path is allowed (see `isOriginAllowed`). Transport audit
-    // `server/objstore/rest.ts:103`.
-    if (!isOriginAllowed(req)) {
-      res.writeHead(403, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: 'origin-denied' }))
-      return
-    }
-    // PUT idle-body timeout — a slow-loris client trickling bytes
-    // within the declared Content-Length holds the staging fd + an
-    // inFlightSids slot indefinitely. `req.setTimeout` fires on
-    // inactivity (no bytes received within the window) and emits
-    // `'timeout'`; we destroy the request, which aborts the body
-    // pipeline. Transport audit `server/objstore/rest.ts:218`.
-    if (req.method === 'PUT') {
-      req.setTimeout(REST_PUT_IDLE_TIMEOUT_MS, () => {
-        if (DEBUG) console.warn(`REST PUT idle ${REST_PUT_IDLE_TIMEOUT_MS}ms → abort`)
-        try { req.destroy(new Error('idle-timeout')) } catch {}
-      })
-    }
-    // Track so SIGTERM mid-upload/download awaits handleRest before
-    // handle.close(). `httpServer.close()` waits for active requests
-    // too, but the WS plane's track() pattern is the canonical drain.
-    //
-    // Outer `.catch` is the unhandled-rejection guard for a stray
-    // throw OUTSIDE handleRest's internal PUT/GET try/catch blocks —
-    // e.g. a `deny()` write to an already-destroyed response, or a
-    // future code path the inner catches don't cover. Node 20+
-    // defaults `--unhandled-rejections=throw`, which would crash the
-    // server. Same pattern as the WS message handler's IIFE catch
-    // above. Logs and ensures the response is terminated so the TCP
-    // socket doesn't dangle.
-    const p = handleRest(objstoreRestDeps, req, res).catch((err) => {
-      console.warn('REST handler error:', errStack(err))
-      if (res.headersSent) { try { res.destroy() } catch {} }
-      else { try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'internal' })) } catch {} }
-    })
-    track(p)
-    return
-  }
-  if (handleStatic(req, res)) return
-  // `Connection: close` so an HTTP/1.1 keep-alive client doesn't
-  // hold the socket open expecting more requests on a server that
-  // only serves a small REST surface — same reason `socket.end(...)`
-  // below sends FIN immediately after the upgrade-rejection body.
-  res.writeHead(404, { 'content-type': 'application/json', 'connection': 'close' })
-  res.end(NOT_FOUND_BODY)
-})
 // 4 MiB cap leaves headroom above MAX_CIPHERTEXT_LEN (2 MiB) for
 // the JSON envelope + base64 overhead. `ws` defaults to 100 MiB
 // which any unauthenticated peer could spam — every connection
 // accepts and JSON.parses up to that before the signature-fail drops
 // the frame.
 const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
-httpServer.on('upgrade', (req, socket, head) => {
-  // RFC 6455: the WS upgrade IS an HTTP request; reject with a
-  // normal HTTP response so a misconfigured client sees the JSON
-  // body instead of ECONNRESET. `socket.end(body)` flushes before
-  // sending FIN — `socket.write(...) + socket.destroy()` can
-  // truncate the body when destroy() doesn't wait for the write
-  // buffer to drain.
-  if (!isUpgradePath(req.url)) {
-    socket.end(
-      'HTTP/1.1 404 Not Found\r\n' +
-      'Content-Type: application/json\r\n' +
-      `Content-Length: ${Buffer.byteLength(NOT_FOUND_BODY)}\r\n` +
-      'Connection: close\r\n\r\n' +
-      NOT_FOUND_BODY,
-    )
-    return
-  }
-  // Same-origin gate. The WS upgrade IS a cross-origin-reachable
-  // surface in the browser; without this any page in any tab can
-  // open a session to a 127.0.0.1 relay and probe handler shape /
-  // burn signature-verify CPU. Browser WS handshakes always carry
-  // Origin (RFC 6455), so a foreign tab is caught here; non-
-  // browser clients (test suite, admin CLI) omit Origin and are
-  // allowed (network is their trust boundary).
-  if (!isOriginAllowed(req)) {
-    socket.end(
-      'HTTP/1.1 403 Forbidden\r\n' +
-      'Content-Type: application/json\r\n' +
-      'Content-Length: 26\r\n' +
-      'Connection: close\r\n\r\n' +
-      '{"error":"origin-denied"}\n',
-    )
-    return
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => { wss.emit('connection', ws, req) })
-})
 
 // In-flight async message handlers. `shutdown` awaits this set
 // before closing the DB so a SIGINT mid-save can't resume against
@@ -441,6 +311,16 @@ let shuttingDown = false
 // shouldn't leave the launcher seeing a clean exit code) but
 // can never DE-escalate. Audit round-13.
 let pendingExitCode = 0
+
+// HTTP plane: REST byte-transfer routing + the WS upgrade gate (see
+// ./http.ts). Built after the lifecycle state above because the REST
+// shutdown gate reads `shuttingDown` and the request drain uses
+// `track`. The WS connection handler is wired on `wss` below.
+const httpServer = createHttpServer({
+  wss, restDeps: objstoreRestDeps, isOriginAllowed,
+  isShuttingDown: () => shuttingDown, track,
+  restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
+})
 
 wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
