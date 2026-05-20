@@ -201,24 +201,25 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     // "kick deferred sends" signal. `unauthorized.auth-failed` is
     // purely an auth-flow signal — no consumer claims it.
     if (msg.type === 'authenticated') {
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(true)
-      }
+      settleAuthResponse(true)
       dispatchMessage(msg)
       return
     }
     if (msg.type === 'unauthorized' && msg['kind'] === 'auth-failed') {
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(false)
-      }
+      settleAuthResponse(false)
       return
     }
 
     dispatchMessage(msg)
+  }
+
+  // Resolve a pending `attemptAuthenticate` promise exactly once and
+  // clear the slot. No-op if nothing is waiting.
+  function settleAuthResponse(ok: boolean): void {
+    if (!authResponseResolver) return
+    const r = authResponseResolver
+    authResponseResolver = null
+    r(ok)
   }
 
   function send(msg: object): boolean {
@@ -301,11 +302,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     socket = null
     connectionNonce = null
     cachedPasswordTriedOnThisSocket = false
-    if (authResponseResolver) {
-      const r = authResponseResolver
-      authResponseResolver = null
-      r(false)
-    }
+    settleAuthResponse(false)
     stopHeartbeat()
     notifyDisconnected(reason)
     try { stale.close() } catch {}
@@ -341,11 +338,7 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       socket = null
       connectionNonce = null
       cachedPasswordTriedOnThisSocket = false
-      if (authResponseResolver) {
-        const r = authResponseResolver
-        authResponseResolver = null
-        r(false)
-      }
+      settleAuthResponse(false)
       stopHeartbeat()
       notifyDisconnected('socket closed')
       if (!transportClosed && acquireCount > 0) scheduleReconnect()

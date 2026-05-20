@@ -848,22 +848,22 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
     if (openTimeout) clearTimeout(openTimeout)
 
-    async function put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
-      const resourceTag = await computeResourceTag(full.tagKey, opts.fileName)
-      const ciphertext = encryptObjstorePayload(full.contentKey, opts.fileName, opts.content, workspaceTag, resourceTag)
-      // `retryOnContended` re-runs the PUT (re-mints token + re-
-      // uploads bytes) on transient lock-contention from the server.
-      // The signed put-begin is single-use per stagingId — a fresh
-      // begin mints a fresh stagingId, so this is NOT a token replay.
+    // PUT `ciphertext` under `resourceTag` with optimistic concurrency,
+    // mapping the raw server result into a PutResult. `retryOnContended`
+    // re-runs the PUT (re-mints token + re-uploads bytes) on transient
+    // lock-contention; the signed put-begin is single-use per stagingId —
+    // a fresh begin mints a fresh stagingId, so this is NOT a token
+    // replay. Shared by `put` (reports) and `putBundle`.
+    async function rawPutAndMap(resourceTag: string, ciphertext: Uint8Array, prevVersion: number | null): Promise<PutResult> {
       const raw = await retryOnContendedImpl(() =>
-        _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion: opts.prevVersion }))
+        _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion }))
       if (raw.ok) {
         // `prevVersion: null` is the server's "must not exist"
         // precondition — its success means the row was created
         // fresh, possibly atop a deleted prior incarnation we
         // never saw the broadcast for. Re-seed the watermark from
         // this incarnation's v1.
-        if (opts.prevVersion == null) full.seenVersions.delete(resourceTag)
+        if (prevVersion == null) full.seenVersions.delete(resourceTag)
         noteVersion(full, resourceTag, raw.meta.version)
         return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
       }
@@ -872,6 +872,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
       if (raw.current) noteVersion(full, resourceTag, raw.current.version)
       return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+    }
+
+    async function put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+      const resourceTag = await computeResourceTag(full.tagKey, opts.fileName)
+      const ciphertext = encryptObjstorePayload(full.contentKey, opts.fileName, opts.content, workspaceTag, resourceTag)
+      return await rawPutAndMap(resourceTag, ciphertext, opts.prevVersion)
     }
 
     async function fetch(fileName: string): Promise<FetchResult | null> {
@@ -913,8 +919,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       throw new Error('objstore: fetchByTag — decrypted name does not derive back to the requested resourceTag under either the report or bundle tag scheme (relay or workspace member produced a non-round-trippable tag-name pair)')
     }
 
-    async function deleteByName(fileName: string, prevVersion: number | null): Promise<DeleteResult> {
-      const resourceTag = await computeResourceTag(full.tagKey, fileName)
+    // DELETE `resourceTag` with optimistic concurrency, mapping the raw
+    // server result into a DeleteResult. Shared by `deleteByName`
+    // (reports) and `deleteBundle`.
+    async function rawDeleteAndMap(resourceTag: string, prevVersion: number | null): Promise<DeleteResult> {
       const raw = await retryOnContendedImpl(() => _rawDelete(full, resourceTag, prevVersion))
       if (raw.ok) {
         // Delete drops the server-side row; the next PUT under this
@@ -928,6 +936,11 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
     }
 
+    async function deleteByName(fileName: string, prevVersion: number | null): Promise<DeleteResult> {
+      const resourceTag = await computeResourceTag(full.tagKey, fileName)
+      return await rawDeleteAndMap(resourceTag, prevVersion)
+    }
+
     async function list(): Promise<Listing[]> {
       const entries = await _rawList(full)
       for (const m of entries) noteVersion(full, m.resourceTag, m.version)
@@ -938,18 +951,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const resourceTag = await computeBundleResourceTag(full.tagKey, opts.integrity)
       const wrapped = wrapBundleContent(opts.name, opts.content)
       const ciphertext = encryptObjstorePayload(full.contentKey, opts.integrity, wrapped, workspaceTag, resourceTag)
-      const raw = await retryOnContendedImpl(() =>
-        _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion: opts.prevVersion }))
-      if (raw.ok) {
-        if (opts.prevVersion == null) full.seenVersions.delete(resourceTag)
-        noteVersion(full, resourceTag, raw.meta.version)
-        return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
-      }
-      if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
-      if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
-      if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
-      return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+      return await rawPutAndMap(resourceTag, ciphertext, opts.prevVersion)
     }
 
     async function fetchBundle(integrity: string): Promise<FetchBundleResult | null> {
@@ -968,15 +970,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
     async function deleteBundle(integrity: string, prevVersion: number | null): Promise<DeleteResult> {
       const resourceTag = await computeBundleResourceTag(full.tagKey, integrity)
-      const raw = await retryOnContendedImpl(() => _rawDelete(full, resourceTag, prevVersion))
-      if (raw.ok) {
-        full.seenVersions.delete(resourceTag)
-        return raw
-      }
-      if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
-      if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
-      return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+      return await rawDeleteAndMap(resourceTag, prevVersion)
     }
 
     return {

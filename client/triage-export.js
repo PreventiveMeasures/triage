@@ -1,7 +1,7 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
 import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import { REPO_URLS_KEY, state } from './state.ts'
-import { saveTriage } from './triage.js'
+import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
 
 // Pure-logic side of the global triage backup. The DOM-touching
 // layer (file picker, anchor-click download, dialog) lives in
@@ -16,46 +16,13 @@ import { saveTriage } from './triage.js'
 // repo URL map.
 
 const EXPORT_VERSION = 1
-const SESSION_ID_RE = /^\d+$/u
 
 // Build the export payload object. Reads from in-memory `state.*`
 // for triage (mirroring `saveTriage`'s session-id filter) and
 // from localStorage for repo URLs (the latter is the source of
 // truth — `state.repoUrl` only holds the active report's URL).
 export function buildTriageExportPayload() {
-  const entries = {}
-  for (const [k, color] of state.markers) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], color }
-  }
-  for (const [k, triage] of state.triageState) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], triage }
-  }
-  // Per-report ignore: same id-keyed `ignoredReports: [name, …]`
-  // shape used by `saveTriage` and the workspace export, so a
-  // round-trip preserves the existing on-disk structure.
-  const ignoredByid = new Map()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
-    if (SESSION_ID_RE.test(id)) continue
-    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-    ignoredByid.get(id).push(reportName)
-  }
-  for (const [id, ignoredIn] of ignoredByid) {
-    if (ignoredIn.length === 0) continue
-    entries[id] = { ...entries[id], ignoredReports: ignoredIn }
-  }
-  for (const [k, comment] of state.comments) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (comment) entries[k] = { ...entries[k], comment }
-  }
-  for (const [k, fix] of state.fixes) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (fix) entries[k] = { ...entries[k], fix }
-  }
+  const entries = buildPersistedTriageEntries()
 
   let repoUrls = {}
   try { repoUrls = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch {}

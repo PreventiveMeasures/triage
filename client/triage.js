@@ -91,11 +91,12 @@ async function decompressBrotli(bytes) {
 const TRIAGE_LOCK = 'deepview.triage.save'
 let saveGen = 0
 
-export function saveTriage() {
-  const gen = ++saveGen
-  // Build entries synchronously so the M3 round-5 pending-key
-  // write reflects the user's mutation BEFORE any await (a crash
-  // during the compress await still recovers).
+// Re-group the in-memory triage state (markers, triage state,
+// per-report ignores, comments, fixes) into the persisted id-keyed
+// entry map, dropping session-scoped numeric ids. Shared by
+// `saveTriage` (the at-rest blob) and `buildTriageExportPayload`
+// (the backup export) so the two can't drift.
+export function buildPersistedTriageEntries() {
   const entries = {}
   for (const [k, color] of state.markers) {
     if (SESSION_ID_RE.test(k)) continue
@@ -131,6 +132,15 @@ export function saveTriage() {
     if (SESSION_ID_RE.test(k)) continue
     if (fix) entries[k] = { ...entries[k], fix }
   }
+  return entries
+}
+
+export function saveTriage() {
+  const gen = ++saveGen
+  // Build entries synchronously so the M3 round-5 pending-key
+  // write reflects the user's mutation BEFORE any await (a crash
+  // during the compress await still recovers).
+  const entries = buildPersistedTriageEntries()
   const isEmpty = Object.keys(entries).length === 0
   const json = isEmpty ? null : JSON.stringify(entries)
   // Synchronous M3 round-5 belt-and-suspenders: pending key holds
