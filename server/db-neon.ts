@@ -390,16 +390,17 @@ const CHAIN_FROM_SQL = `SELECT base, id, keyframe, nonce, ciphertext, signature
   FROM workspace_revision WHERE workspace_tag = $1 AND seq >= $2 ORDER BY seq ASC`
 
 export async function openNeonDb(connectionString: string): Promise<Handle> {
-  // Dynamic import so the dep is only required when the Neon path
-  // is selected. A missing peer dep surfaces here with a clear
-  // module-not-found, not at the SQLite-deployment's startup.
-  // `@ts-ignore` rather than `@ts-expect-error`: when the peer dep
-  // IS installed (e.g. an operator runs `pnpm add @neondatabase/
-  // serverless`), the import resolves and tsc sees a real type —
-  // `@ts-expect-error` would flip to a `TS2578: unused directive`
-  // error and break the operator's `tsc --noEmit`.
-  // @ts-ignore optional peer dep: '@neondatabase/serverless'
-  const mod = (await import('@neondatabase/serverless')) as { neon: (url: string) => NeonSql }
+  // Dynamic import so the dep is only required when the Neon path is
+  // selected — a SQLite-only deployment never evaluates this. We go
+  // through the local `./neon-driver.ts` re-export wrapper rather than
+  // the bare specifier so tests can swap the real driver for an
+  // in-process Postgres (PGlite) via `mock.module`: that hook can only
+  // intercept a specifier it can RESOLVE, and the optional peer dep
+  // isn't installed in a SQLite-only checkout. The wrapper path always
+  // resolves — see `server/neon-driver.ts`. Cast through `unknown`
+  // because the wrapper's `export *` re-exports a `@ts-ignore`'d
+  // (possibly-absent) module, so tsc can't see `neon`'s type here.
+  const mod = (await import('./neon-driver.ts')) as unknown as { neon: (url: string) => NeonSql }
   const sql: NeonSql = mod.neon(connectionString)
   // Boot-time durability gate — refuses to open against an endpoint
   // configured `synchronous_commit = off` (skips primary WAL fsync,
