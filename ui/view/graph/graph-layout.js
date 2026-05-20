@@ -29,7 +29,7 @@
 // delegate in events.js. The delegate walks `e.composedPath()`
 // instead of relying on `e.target` (which gets retargeted to the
 // host element when an event crosses the shadow boundary).
-import { LitElement, html, unsafeCSS } from 'lit'
+import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import graph2CSS from './graph2.css'
 import treeCountChipCSS from '../../styles/tree-count-chip.css'
 import toolbarCSS from '../../styles/toolbar.css'

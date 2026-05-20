@@ -19,4 +19,4 @@
 const slot = globalThis[Symbol.for('@rray/frontend')]
 if (!slot) throw new Error('@rray/frontend global not installed; view.js must run before lazy bundles import this wrapper')
 
-export const { LitElement, html, nothing, unsafeCSS, render, StateElement } = slot
+export const { LitElement, html, nothing, unsafeCSS, render, StateElement, classMap, repeat, styleMap } = slot

@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit'
+import { html, nothing } from './frontend-global.js'
 
 // Severity ranking — higher = more severe. The ladder splits into
 // two stacks: vulnerabilities on top (critical → low) and bug-class

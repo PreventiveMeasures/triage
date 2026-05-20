@@ -1,7 +1,4 @@
-import { html } from 'lit'
-import { classMap } from 'lit/directives/class-map.js'
-import { repeat } from 'lit/directives/repeat.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { classMap, html, repeat, styleMap } from '../frontend-global.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
