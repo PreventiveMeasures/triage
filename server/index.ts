@@ -82,6 +82,7 @@ import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { debugTag, errMsg, errStack, randomId } from './util.ts'
+import { Peer } from './peer.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -299,16 +300,14 @@ const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 // purpose. Way above any realistic legitimate value (default 64) but
 // cheap to enforce. Adversarial-audit foot-gun guard.
 const MAX_INFLIGHT_PER_SOCKET = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
-const socketInflight = new WeakMap<WebSocket, number>()
 
-// Per-socket liveness tracker for the server-driven heartbeat
-// (see `heartbeatTimer` below). The connection handler seeds an
-// entry `true` and re-arms it on each `pong`; the periodic sweep
-// terminates any socket whose value is `false` (didn't pong since
-// the last tick) and pings everyone else. WeakMap so a closed
-// socket's entry GCs alongside the WebSocket — no manual cleanup
-// in the close handler.
-const socketAlive = new WeakMap<WebSocket, boolean>()
+// Per-connection state registry. One `Peer` per accepted socket holds
+// the challenge nonce, auth flag, heartbeat liveness, in-flight count,
+// and subscribed tags (see ./peer.ts) — replacing what were five
+// parallel per-socket WeakMaps. The connection handler holds the Peer
+// in a closure for the hot paths; cross-function call sites resolve it
+// via `peers.get(socket)`.
+const peers = new WeakMap<WebSocket, Peer>()
 
 // REST PUT idle-body timeout. A slow-loris client trickling bytes
 // within the declared Content-Length holds the staging fd and an
@@ -329,9 +328,8 @@ const REST_PUT_IDLE_TIMEOUT_MS = 30_000
 // Origin headers through (legitimate non-browser callers), so a
 // hostile CLI can stack arbitrarily many idle sockets without it.
 // Kernel TCP keepalive is hours by default; without this interval
-// each abandoned socket pins its `wss.clients` Set entry,
-// `socketChallenge` / `socketAuthorized` / `socketTags` WeakMap
-// entries, and an FD until the kernel reclaims it. Two ticks max
+// each abandoned socket pins its `wss.clients` Set entry, its `Peer`
+// state, and an FD until the kernel reclaims it. Two ticks max
 // from silence to termination, so the longest a dead socket
 // survives is ~2 × HEARTBEAT_INTERVAL_MS.
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -515,34 +513,21 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
   process.exit(1)
 }
 
-// Per-connection challenge nonce (round-9 H2). Issued in a
-// `challenge` frame the moment the socket opens; the client signs
-// it into every subsequent `workspace-subscribe`. Bound to the
-// socket via WeakMap so a reconnecting client gets a fresh nonce
-// and a captured subscribe frame can't be replayed from a
-// different connection (the canonical bytes the captured signature
-// covered include the OLD nonce; the attacker's new connection
-// has a NEW nonce; the canonical bytes differ; signature verify
-// fails). 16 bytes (128 bits) is enough for collision-free
-// uniqueness; base64url so the wire stays JSON-text.
-const socketChallenge = new WeakMap<WebSocket, string>()
-function newChallenge(): string {
-  return randomId()
-}
-
 // Per-connection authorization flag for the password-gated "first
-// action in a workspace" path. Once a connection completes the
-// `authenticate { password }` handshake, every subsequent action on
-// that socket bypasses the gate — the access-control surface is the
-// per-message Ed25519 signature (the seed-holder is the authorised
-// writer), and once a workspace EXISTS on the server the gate is
-// off for that workspace regardless of which connection touches it.
-// The gate only protects against an unauthenticated client creating
-// a brand-new workspace on the server. WeakMap so a closed socket
-// drops its flag immediately via the close handler's delete.
-const socketAuthorized = new WeakMap<WebSocket, boolean>()
+// action in a workspace" path (`Peer.authorized`). Once a connection
+// completes the `authenticate { password }` handshake, every
+// subsequent action on that socket bypasses the gate — the
+// access-control surface is the per-message Ed25519 signature (the
+// seed-holder is the authorised writer), and once a workspace EXISTS
+// on the server the gate is off for that workspace regardless of
+// which connection touches it. The gate only protects against an
+// unauthenticated client creating a brand-new workspace on the server.
 function isAuthorized(socket: WebSocket): boolean {
-  return socketAuthorized.get(socket) === true
+  return peers.get(socket)?.authorized === true
+}
+function markAuthorized(socket: WebSocket): void {
+  const peer = peers.get(socket)
+  if (peer) peer.authorized = true
 }
 // `CONFIGURED_PASSWORD_HMAC == null` → no gate; everyone is
 // effectively authorised and every first action proceeds without an
@@ -576,10 +561,9 @@ async function workspaceExists(tag: string): Promise<boolean> {
   return (c?.c ?? 0) > 0
 }
 
-// workspaceTag → Set<WebSocket>
+// workspaceTag → Set<WebSocket>. The per-socket reverse index lives on
+// `Peer.tags` (see ./peer.ts) and is read by `unsubscribeAll` on close.
 const subscribers = new Map<string, Set<WebSocket>>()
-// WebSocket → Set<workspaceTag> — for cleanup on disconnect
-const socketTags = new WeakMap<WebSocket, Set<string>>()
 
 function subscribe(socket: WebSocket, tag: string): void {
   let set = subscribers.get(tag)
@@ -588,16 +572,11 @@ function subscribe(socket: WebSocket, tag: string): void {
     subscribers.set(tag, set)
   }
   set.add(socket)
-  let tags = socketTags.get(socket)
-  if (!tags) {
-    tags = new Set()
-    socketTags.set(socket, tags)
-  }
-  tags.add(tag)
+  peers.get(socket)?.tags.add(tag)
 }
 
 function unsubscribeAll(socket: WebSocket): void {
-  const tags = socketTags.get(socket)
+  const tags = peers.get(socket)?.tags
   if (!tags) return
   for (const tag of tags) {
     const set = subscribers.get(tag)
@@ -739,7 +718,7 @@ const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' 
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
-  send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
+  send, broadcast, getNonce: (socket) => peers.get(socket)?.challenge, debug: DEBUG,
   // Auth gate for the FIRST objstore-put-begin against a workspace
   // that doesn't yet exist on the server. Mirrors handleSave's gate
   // below; handlers.ts calls this AFTER sig verify so the
@@ -806,7 +785,7 @@ function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
   // and replay it on reconnect even when the server happens to be
   // un-gated today — the wire shape stays consistent.
   if (CONFIGURED_PASSWORD_HMAC == null) {
-    socketAuthorized.set(socket, true)
+    markAuthorized(socket)
     send(socket, { type: 'authenticated' })
     return
   }
@@ -815,7 +794,7 @@ function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
     sendUnauthorized(socket, { kind: 'auth-failed' })
     return
   }
-  socketAuthorized.set(socket, true)
+  markAuthorized(socket)
   if (DEBUG) console.log('authenticate: success')
   send(socket, { type: 'authenticated' })
 }
@@ -982,7 +961,7 @@ async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<vo
   // captured subscribe frame. A subscribe arriving before we sent
   // the challenge (impossible from the legitimate client) has no
   // nonce to verify against — drop. Audit round-9 H2.
-  const nonce = socketChallenge.get(socket)
+  const nonce = peers.get(socket)?.challenge
   if (typeof nonce !== 'string') return
   const ok = await verifySubscribeSig(msg, nonce)
   if (!ok) {
@@ -1178,23 +1157,22 @@ let pendingExitCode = 0
 
 wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
-  // Seed the heartbeat tracker `true`. The periodic sweep flips it
-  // to `false` after each `ping()`; the `pong` listener flips it
-  // back. A socket the sweep observes still `false` on the next
-  // tick gets terminated — that's the only thing closing FDs for
-  // an idle non-browser client.
-  socketAlive.set(socket, true)
-  socket.on('pong', () => { socketAlive.set(socket, true) })
-  // Issue a per-connection challenge nonce BEFORE the client can
-  // send anything that needs it. The client signs this nonce into
-  // every `workspace-subscribe` (see canonicalSubscribe in
-  // server/sign.ts); a captured subscribe frame can't be replayed
-  // from a different connection because that connection's nonce
-  // is different and the signature won't verify against the new
-  // canonical bytes. Audit round-9 H2.
-  const nonce = newChallenge()
-  socketChallenge.set(socket, nonce)
-  send(socket, { type: 'challenge', nonce })
+  // One Peer holds this connection's state (challenge / authorized /
+  // alive / inflight / tags). Created before any client frame can
+  // arrive (`socket.on('message')` is wired below). The heartbeat
+  // sweep flips `alive` false after each `ping()`; the `pong` listener
+  // flips it back, and a socket still false on the next sweep is
+  // terminated — the only thing closing FDs for an idle peer.
+  const peer = new Peer(randomId())
+  peers.set(socket, peer)
+  socket.on('pong', () => { peer.alive = true })
+  // Issue the per-connection challenge nonce BEFORE the client can
+  // send anything that needs it. The client signs it into every
+  // `workspace-subscribe` (see canonicalSubscribe in server/sign.ts);
+  // a captured subscribe frame can't be replayed from a different
+  // connection because that connection's nonce differs and the
+  // signature won't verify against the new canonical bytes. Round-9 H2.
+  send(socket, { type: 'challenge', nonce: peer.challenge })
   // Per-socket handlers are DELIBERATELY NOT serialized (vs the
   // client-side `messageQueue = messageQueue.then(...)` Promise
   // chain inside `client/triage-sync.ts:onTransportMessage`).
@@ -1258,9 +1236,8 @@ wss.on('connection', (socket: WebSocket, req) => {
       handleAuthenticate(socket, parsed as AuthenticateMsg)
       return
     }
-    const inflightForSocket = socketInflight.get(socket) ?? 0
-    if (inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
-      if (DEBUG) console.warn(`drop message: socket inflight ${inflightForSocket} >= ${MAX_INFLIGHT_PER_SOCKET}`)
+    if (peer.inflight >= MAX_INFLIGHT_PER_SOCKET) {
+      if (DEBUG) console.warn(`drop message: socket inflight ${peer.inflight} >= ${MAX_INFLIGHT_PER_SOCKET}`)
       // For workspace-save specifically, send a typed NACK so the
       // client's `pending` slot clears IMMEDIATELY instead of
       // hanging until the next heartbeat (~15–30s). Reason `busy`
@@ -1298,7 +1275,7 @@ wss.on('connection', (socket: WebSocket, req) => {
       }
       return
     }
-    socketInflight.set(socket, inflightForSocket + 1)
+    peer.inflight += 1
     const handler = (async () => {
       try {
         if (parsed.type === 'workspace-save') await handleSave(socket, parsed as SaveMsg)
@@ -1321,23 +1298,19 @@ wss.on('connection', (socket: WebSocket, req) => {
         const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
         console.warn(`Handler error (type=${typeStr}):`, errStack(err))
       } finally {
-        const n = (socketInflight.get(socket) ?? 1) - 1
-        if (n <= 0) socketInflight.delete(socket)
-        else socketInflight.set(socket, n)
+        peer.inflight -= 1
       }
     })()
     track(handler)
   })
   socket.on('close', () => {
-    unsubscribeAll(socket)
-    // WeakMap entries clear via GC once the socket is unreachable,
-    // but `wss.clients` (and the `ws` library's internals) hold the
-    // socket strongly until well after `close` — explicit delete on
-    // BOTH WeakMaps keeps the nonce + tag-set out of memory
+    // `unsubscribeAll` reads `peer.tags` (peer still registered), then
+    // we drop the Peer. The Peer's state would GC once the socket is
+    // unreachable, but `wss.clients` / `ws` internals hold the socket
+    // strongly well past `close`, so the explicit delete frees it
     // immediately. Audit round-10 + round-13.
-    socketChallenge.delete(socket)
-    socketTags.delete(socket)
-    socketAuthorized.delete(socket)
+    unsubscribeAll(socket)
+    peers.delete(socket)
   })
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness
@@ -1361,11 +1334,12 @@ wss.on('connection', (socket: WebSocket, req) => {
 // after `wss.close` resolved.
 const heartbeatTimer = setInterval(() => {
   for (const ws of wss.clients) {
-    if (socketAlive.get(ws) === false) {
+    const peer = peers.get(ws)
+    if (peer?.alive === false) {
       try { ws.terminate() } catch {}
       continue
     }
-    socketAlive.set(ws, false)
+    if (peer) peer.alive = false
     try { ws.ping() } catch {}
   }
 }, HEARTBEAT_INTERVAL_MS)
