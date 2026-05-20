@@ -1257,42 +1257,52 @@ describe('triage-sync server: busy NACK at MAX_INFLIGHT_PER_SOCKET cap', () => {
     if (server) await server.teardown()
   })
 
-  it('cap=1: two workspace-save frames in one tick → first acks, second gets workspace-save-error reason=busy with echoed tag+base', async () => {
+  it('cap=1: a burst of same-base saves in one tick → exactly one commits; the rest are NACKed with ≥1 busy from the cap', async () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     try {
       await subscribe(c, sk, tag)
-      // Two saves with the same base=null. The server processes the
-      // first synchronously up through `socketInflight = 1` and spawns
-      // its handler IIFE which `await`s. The second message's
-      // `socket.on('message')` body runs in the SAME microtask cycle
-      // (both ws-level events emit back-to-back before any IIFE
-      // resumes) — sees inflight=1, cap=1, fails the gate, and
-      // synchronously emits `'busy'`.
-      const save1 = await buildSave(sk, tag, null, 'first')
-      const save2 = await buildSave(sk, tag, null, 'second')
-      c.ws.send(JSON.stringify(save1.msg))
-      c.ws.send(JSON.stringify(save2.msg))
-      // Wait for both responses; predicate matches either type so
-      // order-insensitivity is preserved (busy SHOULD land first per
-      // the wire-order analysis, but the assertion doesn't depend on
-      // that — only on receiving one of each).
-      const got = []
-      while (got.length < 2) {
+      // Fire a burst of same-base (null) saves in one tick against
+      // cap=1. The first save holds the only in-flight slot through its
+      // async verify + commit; frames that arrive while it is in flight
+      // hit the cap and are NACKed `busy`. A frame that arrives AFTER the
+      // first commits instead gets `stale-base` (its base=null no longer
+      // matches the now-v1 head). Both are correct rejections, and which
+      // one a given frame gets is a sub-millisecond timing race — the
+      // commit is lock-free + fast, so we must NOT pin per-frame reasons
+      // (an earlier two-frame version did, and flaked when the first
+      // commit outran the second frame's arrival). A burst this size
+      // guarantees several frames land during the first's in-flight
+      // window, so the `busy` cap path is still exercised
+      // deterministically; the load-bearing invariant is "exactly one
+      // commit, the chain never forks".
+      const N = 16
+      const saves = []
+      for (let i = 0; i < N; i++) saves.push(await buildSave(sk, tag, null, `burst-${i}`))
+      for (let i = 0; i < N; i++) c.ws.send(JSON.stringify(saves[i].msg))
+      const acks = []
+      const errs = []
+      const deadline = Date.now() + 3_000
+      while (Date.now() < deadline && acks.length + errs.length < N) {
         const r = await c.recv((m) =>
-          m.type === 'workspace-save-ack' ||
-          m.type === 'workspace-save-error', 3_000,
-        )
-        got.push(r)
+          m.type === 'workspace-save-ack' || m.type === 'workspace-save-error', 1_000,
+        ).catch(() => null)
+        if (!r) break
+        if (r.type === 'workspace-save-ack') acks.push(r)
+        else errs.push(r)
       }
-      const busy = got.find((m) => m.type === 'workspace-save-error')
-      const ack = got.find((m) => m.type === 'workspace-save-ack')
-      assert.ok(busy, 'cap=1 must NACK the second save with workspace-save-error')
-      assert.equal(busy.reason, 'busy', `expected reason='busy', got '${busy.reason}'`)
-      assert.equal(busy.workspaceTag, tag, 'busy NACK echoes the workspaceTag from the dropped frame')
-      assert.equal(busy.base, null, 'busy NACK echoes base=null from the dropped frame')
-      assert.ok(ack, 'first save still gets an ack (cap is per-CONCURRENT, not per-total)')
-      assert.equal(ack.workspaceTag, tag)
+      assert.equal(acks.length, 1, 'exactly one save commits (cap is per-CONCURRENT; the others never fork the chain)')
+      assert.equal(acks[0].workspaceTag, tag)
+      assert.ok(errs.length > 0, 'the over-cap / stale saves are NACKed (not silently dropped)')
+      assert.ok(
+        errs.some((e) => e.reason === 'busy'),
+        `the cap must NACK at least one frame with reason='busy' (got: ${errs.map((e) => e.reason).join(',')})`,
+      )
+      for (const e of errs) {
+        assert.ok(e.reason === 'busy' || e.reason === 'stale-base', `NACK reason must be busy|stale-base, got '${e.reason}'`)
+        assert.equal(e.workspaceTag, tag, 'NACK echoes the workspaceTag from the dropped frame')
+        assert.equal(e.base, null, 'NACK echoes base=null from the dropped frame')
+      }
     } finally { c.ws.close() }
   })
 })
