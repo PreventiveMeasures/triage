@@ -344,7 +344,7 @@ export function refreshBundleGraphTopPkgs() {
 export function setCurrentBundleGraphPrep(prep) {
   _currentBundlePrep = prep
 }
-function bundlePkgOf(path) {
+export function bundlePkgOf(path) {
   // Bundle paths land under either `node_modules/<pkg>/...` or
   // `dependencies/<pkg>/...`. pnpm wraps each install in
   // `node_modules/.pnpm/<name>@<version>/node_modules/<name>/...` —
@@ -1287,6 +1287,13 @@ function renderBundleSlide(entry) {
         >Terminal</button>
         <button
           type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
+          data-bundle-tab="treemap"
+          aria-selected=${String(tab === 'treemap')}
+          role="tab"
+        >Treemap</button>
+        <button
+          type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
           data-bundle-tab="graph"
           aria-selected=${String(tab === 'graph')}
@@ -1312,6 +1319,7 @@ function renderBundleSlide(entry) {
       ${choose(tab, [
         ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
         ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+        ['treemap', () => html`<bundle-treemap .details=${state.bundleDetails}></bundle-treemap>`],
         ['code', () => renderBundleCodeView(state.bundleDetails)],
         ['issues', () => renderBundleIssuesList(state.bundleDetails)],
       ])}
@@ -1533,7 +1541,7 @@ export function renderBundlesList(bundles) {
   // sub-tab's content edge to edge. The other tabs (no bundle
   // open, or Packages / Files) render the regular list + details.
   const inSlide = selectedEntry
-    && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
+    && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'treemap' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
   // Source modal mounts at the global overlay slot via render.js;
   // no need to inline it here.
   if (inSlide) return renderBundleSlide(selectedEntry)

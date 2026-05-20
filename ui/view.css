@@ -7,6 +7,7 @@
 @import './styles/sidebar-chrome.css';
 @import './styles/drop-zone.css';
 @import './styles/report.css';
+@import './styles/bundle-treemap.css';
 @import './styles/toolbar.css';
 @import './styles/findings.css';
 @import './styles/graph-files.css';

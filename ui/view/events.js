@@ -451,7 +451,7 @@ report.addEventListener('click', (e) => {
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
+    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'treemap' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
