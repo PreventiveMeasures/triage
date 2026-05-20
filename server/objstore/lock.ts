@@ -1,10 +1,12 @@
-// Per-key async mutex. Used to serialise commit / delete / abort
-// operations against the same (workspaceTag, resourceTag) so that
-// the runtime FS work between two sync DB phases (precondition
-// check, then write) can't be interleaved with a competing
-// operation's identical pair — `await stat(…)` / `await rename(…)`
-// would otherwise let a second handler land its precondition check
-// against the same prev_version, both rename, both upsert, race.
+// Per-key async mutex. Serialises a multi-step commit (precondition
+// check → MAX(seq) → INSERT) against the same key so two competing
+// commits can't interleave their check/write phases across an `await`.
+//
+// Used by the triage-sync revision chain (server/db.ts's per-tag
+// write-lock). The objstore plane no longer uses it: content-addressed
+// blobs + the version compare-and-set made per-resource serialisation
+// unnecessary there, so its only consumer is now the revision chain.
+// (The module still lives under objstore/ for historical reasons.)
 //
 // Lock entries garbage-collect when no holder / waiter remains, so
 // the Map size is bounded by concurrent in-flight operations rather
