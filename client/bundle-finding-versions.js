@@ -42,6 +42,64 @@ export function packageVersionOf(f) {
   return version || null
 }
 
+// Shared bucket primitives. The package, repo, and per-version buckets
+// all carry the same `{ keys, findings, files, reports, _keyReports }`
+// shape: `keys`/`findings`/`files` are the public index, `_keyReports`
+// maps each dedupe key to the set of reports that contributed it (so a
+// prune can drop a key precisely), and `reports` is the recomputed
+// union. Centralised here so the index module and this one share one
+// implementation. (The byHash bucket has a different shape and is not
+// covered.)
+export function newBucket() {
+  return { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
+}
+
+// Add finding `f` (dedupe `key`, from report `name`) to `bucket`.
+// Returns `wasNewReport` — whether `name` is a freshly contributing
+// report for `key` — so callers can fire a repaint even when the key
+// itself already existed. The finding / file lists only grow on a
+// genuinely new key. Audit round-12 M-A.
+export function addFindingToBucket(bucket, key, name, f) {
+  bucket.reports.add(name)
+  let krSet = bucket._keyReports.get(key)
+  if (!krSet) bucket._keyReports.set(key, krSet = new Set())
+  const wasNewReport = !krSet.has(name)
+  krSet.add(name)
+  if (bucket.keys.has(key)) return wasNewReport
+  bucket.keys.add(key)
+  bucket.findings.push(f)
+  if (!bucket.files.has(f.file)) bucket.files.set(f.file, [])
+  bucket.files.get(f.file).push(f)
+  return wasNewReport
+}
+
+// Remove dedupe `key` (contributed from `file`) from `bucket`'s public
+// index — `_keyReports`, `keys`, `findings`, and the per-file list.
+// `keyOf` resolves a finding back to its dedupe key. The caller decides
+// whether the bucket is now empty and recomputes `reports`.
+export function dropKeyFromBucket(bucket, key, file, keyOf) {
+  bucket._keyReports.delete(key)
+  bucket.keys.delete(key)
+  const idx = bucket.findings.findIndex((f) => keyOf(f) === key)
+  if (idx >= 0) bucket.findings.splice(idx, 1)
+  const fileList = bucket.files.get(file)
+  if (!fileList) return
+  const fi = fileList.findIndex((f) => keyOf(f) === key)
+  if (fi >= 0) fileList.splice(fi, 1)
+  if (fileList.length === 0) bucket.files.delete(file)
+}
+
+// Recompute a bucket's public `reports` set as the union of every
+// surviving `_keyReports` entry. Cheaper to recompute on prune than to
+// maintain a refcount.
+export function recomputeBucketReports(bucket) {
+  const stillContributing = new Set()
+  for (const set of bucket._keyReports.values()) {
+    for (const r of set) stillContributing.add(r)
+  }
+  bucket.reports = stillContributing
+}
+
 // Per-version sub-bucket update — independent dedup so the same
 // finding observed against two different installations (pnpm picked
 // v1 in one report, v2 in another) surfaces under each version
@@ -52,21 +110,10 @@ export function packageVersionOf(f) {
 export function indexFindingByVersion(pBucket, version, f, key, name) {
   let vBucket = pBucket.byVersion.get(version)
   if (!vBucket) {
-    vBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
+    vBucket = newBucket()
     pBucket.byVersion.set(version, vBucket)
   }
-  vBucket.reports.add(name)
-  let vKrSet = vBucket._keyReports.get(key)
-  if (!vKrSet) {
-    vKrSet = new Set()
-    vBucket._keyReports.set(key, vKrSet)
-  }
-  vKrSet.add(name)
-  if (vBucket.keys.has(key)) return
-  vBucket.keys.add(key)
-  vBucket.findings.push(f)
-  if (!vBucket.files.has(f.file)) vBucket.files.set(f.file, [])
-  vBucket.files.get(f.file).push(f)
+  addFindingToBucket(vBucket, key, name, f)
 }
 
 // Drop one `(version, key, file, report)` slice from a package's
@@ -83,29 +130,13 @@ export function pruneVersionSlot(pBucket, version, key, file, name, keyOf) {
   const vKrSet = vBucket._keyReports.get(key)
   if (vKrSet) {
     vKrSet.delete(name)
-    if (vKrSet.size === 0) dropVersionKey(vBucket, key, file, keyOf)
+    if (vKrSet.size === 0) dropKeyFromBucket(vBucket, key, file, keyOf)
   }
   if (vBucket._keyReports.size === 0) {
     pBucket.byVersion.delete(version)
     return
   }
-  const stillContributing = new Set()
-  for (const set of vBucket._keyReports.values()) {
-    for (const r of set) stillContributing.add(r)
-  }
-  vBucket.reports = stillContributing
-}
-
-function dropVersionKey(vBucket, key, file, keyOf) {
-  vBucket._keyReports.delete(key)
-  vBucket.keys.delete(key)
-  const idx = vBucket.findings.findIndex((f) => keyOf(f) === key)
-  if (idx >= 0) vBucket.findings.splice(idx, 1)
-  const fileList = vBucket.files.get(file)
-  if (!fileList) return
-  const fi = fileList.findIndex((f) => keyOf(f) === key)
-  if (fi >= 0) fileList.splice(fi, 1)
-  if (fileList.length === 0) vBucket.files.delete(file)
+  recomputeBucketReports(vBucket)
 }
 
 // Semver-ish descending comparator — `1.10.0` ranks above `1.2.0`

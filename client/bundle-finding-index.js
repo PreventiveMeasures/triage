@@ -23,7 +23,7 @@
 // open view (Bundles' Issues tab, Packages page) can repaint
 // progressively as findings come in.
 
-import { indexFindingByVersion, packageVersionOf, pruneVersionSlot } from './bundle-finding-versions.js'
+import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
@@ -279,43 +279,26 @@ function indexFindingByPackage(f, key, name) {
   const version = packageVersionOf(f)
   let pBucket = byPackage.get(pkg)
   if (!pBucket) {
-    // `_keyReports` tracks which reports contributed each key so
-    // `invalidateName` can prune precisely. `reports` (Set) is the
-    // public summary; we keep both forms because callers iterate
-    // `reports` directly. Audit round-8 H1.
-    //
     // `repos` is the Set of every analyzer-stamped `f.repo.github`
-    // value seen across the package's findings. The Packages
-    // overview surfaces it as an upstream link when the set
-    // collapses to a single non-conflicting entry; multiple entries
-    // (rare — would mean the analyzer disagreed on which repo
-    // owns the package across reports) suppress the link rather
-    // than guess. Pruned alongside the rest in `invalidateName`.
-    pBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), repos: new Set(), _keyReports: new Map(), byVersion: new Map() }
+    // value seen across the package's findings. The Packages overview
+    // surfaces it as an upstream link when the set collapses to a
+    // single non-conflicting entry; multiple entries (rare — the
+    // analyzer disagreed on which repo owns the package) suppress the
+    // link rather than guess. `byVersion` holds the per-version
+    // sub-buckets. Both ride alongside the standard bucket shape and
+    // are pruned in `invalidateName`. Audit round-8 H1.
+    pBucket = { ...newBucket(), repos: new Set(), byVersion: new Map() }
     byPackage.set(pkg, pBucket)
   }
-  pBucket.reports.add(name)
   if (typeof f.repo?.github === 'string' && f.repo.github) pBucket.repos.add(f.repo.github)
-  let krSet = pBucket._keyReports.get(key)
-  if (!krSet) pBucket._keyReports.set(key, krSet = new Set())
-  const wasNewReport = !krSet.has(name)
-  krSet.add(name)
-  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
   indexFindingByVersion(pBucket, version, f, key, name)
-  // Same shape as `indexFindingByHash` returns when an existing key
-  // gains a fresh contributing report: signal the caller so a
-  // `notify()` fires and Packages-view subscribers repaint to
-  // reflect the new chip. Without this, re-importing the same
-  // dedupe key from a new report (common for markdown findings
-  // without `fileHash`) silently drops the per-finding report
-  // attribution from the UI until the next unrelated index walk.
-  // Audit round-12 M-A.
-  if (pBucket.keys.has(key)) return wasNewReport
-  pBucket.keys.add(key)
-  pBucket.findings.push(f)
-  if (!pBucket.files.has(f.file)) pBucket.files.set(f.file, [])
-  pBucket.files.get(f.file).push(f)
-  return true
+  // `addFindingToBucket` returns wasNewReport so a `notify()` fires and
+  // Packages-view subscribers repaint when an existing key gains a
+  // fresh contributing report (common for markdown findings without a
+  // `fileHash`), not only when the key itself is new. Audit round-12 M-A.
+  const wasNewReport = addFindingToBucket(pBucket, key, name, f)
+  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
+  return wasNewReport
 }
 
 // Repository-keyed bucket update. Mirror of indexFindingByPackage
@@ -330,27 +313,15 @@ function indexFindingByRepo(f, key, name, reportFallback) {
   if (!repo) return false
   let rBucket = byRepo.get(repo)
   if (!rBucket) {
-    rBucket = { keys: new Set(), findings: [], files: new Map(), reports: new Set(), _keyReports: new Map() }
+    rBucket = newBucket()
     byRepo.set(repo, rBucket)
   }
-  rBucket.reports.add(name)
-  let krSet = rBucket._keyReports.get(key)
-  if (!krSet) {
-    krSet = new Set()
-    rBucket._keyReports.set(key, krSet)
-  }
-  const wasNewReport = !krSet.has(name)
-  krSet.add(name)
+  // Mirror of indexFindingByPackage — a new contributing report against
+  // an existing key still warrants a Repositories-view repaint, so
+  // surface wasNewReport. Audit round-12 M-A.
+  const wasNewReport = addFindingToBucket(rBucket, key, name, f)
   if (wasNewReport) rememberContribution(name, 'repo', { repo, key, file: f.file })
-  // Mirror of indexFindingByPackage's wasNewReport return — a new
-  // contributing report against an existing key still warrants a
-  // Repositories-view repaint. Audit round-12 M-A.
-  if (rBucket.keys.has(key)) return wasNewReport
-  rBucket.keys.add(key)
-  rBucket.findings.push(f)
-  if (!rBucket.files.has(f.file)) rBucket.files.set(f.file, [])
-  rBucket.files.get(f.file).push(f)
-  return true
+  return wasNewReport
 }
 
 // Drop everything `name` contributed to byHash / byPackage / byRepo
@@ -384,18 +355,7 @@ function invalidateName(name) {
     const krSet = pBucket._keyReports.get(key)
     if (!krSet) continue
     if (krSet.delete(name)) dirty = true
-    if (krSet.size === 0) {
-      pBucket._keyReports.delete(key)
-      pBucket.keys.delete(key)
-      const idx = pBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
-      if (idx >= 0) pBucket.findings.splice(idx, 1)
-      const fileList = pBucket.files.get(file)
-      if (fileList) {
-        const fi = fileList.findIndex((f) => findingDedupeKey(f) === key)
-        if (fi >= 0) fileList.splice(fi, 1)
-        if (fileList.length === 0) pBucket.files.delete(file)
-      }
-    }
+    if (krSet.size === 0) dropKeyFromBucket(pBucket, key, file, findingDedupeKey)
     // Mirror prune on the per-version sub-bucket. The contribution
     // remembered the version this finding landed under, so we
     // surgically drop the report from that slot without re-scanning
@@ -403,18 +363,8 @@ function invalidateName(name) {
     // (`bundle-finding-versions.js`); `findingDedupeKey` is
     // threaded in so they don't need to reach back into this file.
     pruneVersionSlot(pBucket, version, key, file, name, findingDedupeKey)
-    // Recompute the public `reports` set: any report still appearing
-    // in any _keyReports entry stays. Cheaper to recompute on prune
-    // than to maintain a refcount.
-    if (pBucket._keyReports.size === 0) {
-      byPackage.delete(pkg)
-    } else {
-      const stillContributing = new Set()
-      for (const set of pBucket._keyReports.values()) {
-        for (const r of set) stillContributing.add(r)
-      }
-      pBucket.reports = stillContributing
-    }
+    if (pBucket._keyReports.size === 0) byPackage.delete(pkg)
+    else recomputeBucketReports(pBucket)
   }
   // Same shape for the repository index — own-source findings only,
   // keyed by repo URL. See the package path above for the rationale.
@@ -424,27 +374,9 @@ function invalidateName(name) {
     const krSet = rBucket._keyReports.get(key)
     if (!krSet) continue
     if (krSet.delete(name)) dirty = true
-    if (krSet.size === 0) {
-      rBucket._keyReports.delete(key)
-      rBucket.keys.delete(key)
-      const idx = rBucket.findings.findIndex((f) => findingDedupeKey(f) === key)
-      if (idx >= 0) rBucket.findings.splice(idx, 1)
-      const fileList = rBucket.files.get(file)
-      if (fileList) {
-        const fi = fileList.findIndex((f) => findingDedupeKey(f) === key)
-        if (fi >= 0) fileList.splice(fi, 1)
-        if (fileList.length === 0) rBucket.files.delete(file)
-      }
-    }
-    if (rBucket._keyReports.size === 0) {
-      byRepo.delete(repo)
-    } else {
-      const stillContributing = new Set()
-      for (const set of rBucket._keyReports.values()) {
-        for (const r of set) stillContributing.add(r)
-      }
-      rBucket.reports = stillContributing
-    }
+    if (krSet.size === 0) dropKeyFromBucket(rBucket, key, file, findingDedupeKey)
+    if (rBucket._keyReports.size === 0) byRepo.delete(repo)
+    else recomputeBucketReports(rBucket)
   }
   return dirty
 }
