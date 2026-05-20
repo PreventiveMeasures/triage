@@ -88,6 +88,7 @@
         "client/workspaces.js",
         "server/index.ts",
         "server/sync-handlers.ts",
+        "server/ws-server.ts",
         "server/objstore/store.ts",
         "server/objstore/store-neon.ts"
       ],
