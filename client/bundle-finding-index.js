@@ -26,8 +26,7 @@
 import { indexFindingByVersion, packageVersionOf, pruneVersionSlot } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor } from './state.ts'
-import { parseMarkdownFindings } from '../common/parse-md.js'
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { flattenFindings, parseReport } from '../common/report-findings.js'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -210,13 +209,9 @@ function extractFindings(data) {
   if (!list) return []
   const inheritMeta = !data?.source
   const out = []
-  for (const entry of list) {
-    const members = Array.isArray(entry) ? entry : [entry]
-    for (const f of members) {
-      if (!f) continue
-      if (inheritMeta) inheritReportMeta(f, data)
-      out.push(f)
-    }
+  for (const f of flattenFindings(list)) {
+    if (inheritMeta) inheritReportMeta(f, data)
+    out.push(f)
   }
   return out
 }
@@ -468,13 +463,7 @@ async function indexOne(name) {
     // markdown-format report (Claude / DeepSec) would silently
     // skip the index because `JSON.parse` throws on them, so
     // they'd never surface in Packages or Repositories.
-    let data
-    try {
-      data = JSON.parse(content)
-    } catch {
-      data = parseDeepsecFindings(content)
-        ?? parseMarkdownFindings(content)
-    }
+    const data = parseReport(content)
     if (!data) return false
     const findings = extractFindings(data)
     if (findings.length === 0) return false

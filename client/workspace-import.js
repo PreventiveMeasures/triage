@@ -4,9 +4,7 @@ import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
-import { deriveFindingId } from '../common/finding-id.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 import { gunzipToText } from '../common/gzip.js'
 import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
@@ -73,8 +71,6 @@ const MAX_BUNDLE_BLOB_NAME_LEN = 512
 // while bounding the worst-case decode-time memory at ~6.4 GiB raw
 // across the whole blob set.
 const MAX_BUNDLE_BLOBS_PER_EXPORT = 64
-
-function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
 // Single source of truth for export-shape validation. Returns `null`
 // when the payload is acceptable, or a specific error string when it
@@ -243,19 +239,10 @@ export async function buildImportedFindingLookup(reportEntries) {
   const lookup = new Map()
   for (const r of reportEntries ?? []) {
     if (typeof r?.content !== 'string') continue
-    let data
-    try {
-      data = JSON.parse(r.content)
-    } catch {
-      data = parseDeepsecFindings(r.content) ?? parseMarkdownFindings(r.content)
-    }
+    const data = parseReport(r.content)
     if (!data?.findings) continue
-    const all = data.findings.flatMap(toGroup)
-    const idLess = all.filter((f) => !f.id)
-    if (idLess.length > 0) {
-      const computed = await Promise.all(idLess.map(deriveFindingId))
-      idLess.forEach((f, i) => { if (computed[i]) f.id = computed[i] })
-    }
+    const all = flattenFindings(data.findings)
+    await backfillFindingIds(all)
     for (const f of all) {
       if (!f.id || lookup.has(f.id)) continue
       lookup.set(f.id, {

@@ -20,20 +20,17 @@
 import { state } from './state.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
-import { deriveFindingId } from '../common/finding-id.js'
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 import { splitIgnoredKey } from '../common/ignored-key.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
-// the union of finding ids reachable from those reports. Mirrors
-// the id-extraction shape in ingestReport: native JSON via
-// JSON.parse (falling through to parseDeepsecFindings /
-// parseMarkdownFindings for analyzer-foreign formats); finding-
-// or-dedup-group entries flattened to member findings; findings
-// without an exporter-stamped `id` get one derived via
-// `deriveFindingId` (same fingerprint the analyzer would compute,
-// so triage stamped during a previous session keeps matching).
+// the union of finding ids reachable from those reports. Uses the
+// shared report-findings helpers: `parseReport` (native JSON, with a
+// DeepSec / markdown fallback), `flattenFindings` (dedup-group entries
+// → member findings), and `backfillFindingIds` (findings without an
+// exporter-stamped `id` get one derived from the same fingerprint the
+// analyzer would compute, so triage stamped during a previous session
+// keeps matching).
 //
 // A `readFile` failure is propagated rather than swallowed —
 // `pruneOrphanTriage` keys its destructive decision on this set,
@@ -67,33 +64,11 @@ async function collectReachableIds(names) {
       throw new Error(`Failed to read ${name}: ${err.message}`, { cause: err })
     }
     if (content == null) continue
-    let data
-    try { data = JSON.parse(content) }
-    catch {
-      data = parseDeepsecFindings(content) ?? parseMarkdownFindings(content)
-    }
+    const data = parseReport(content)
     if (!data?.findings) continue
-    const findings = []
-    for (const entry of data.findings) {
-      if (Array.isArray(entry)) findings.push(...entry)
-      else findings.push(entry)
-    }
-    const idLess = []
-    for (const f of findings) {
-      if (f?.id) ids.add(f.id)
-      else if (f) idLess.push(f)
-    }
-    // Batched hash via Promise.all — sequential awaits would
-    // serialize hundreds of crypto.subtle.digest calls for no
-    // reason. `deriveFindingId` resolves to null when the host
-    // doesn't expose crypto.subtle (rare `file://` setup); we
-    // skip those — without a derived id they couldn't have
-    // round-tripped a triage entry across the previous reload
-    // anyway.
-    if (idLess.length > 0) {
-      const derived = await Promise.all(idLess.map(deriveFindingId))
-      for (const id of derived) if (id) ids.add(id)
-    }
+    const findings = flattenFindings(data.findings)
+    await backfillFindingIds(findings)
+    for (const f of findings) if (f.id) ids.add(f.id)
   }
   return ids
 }
