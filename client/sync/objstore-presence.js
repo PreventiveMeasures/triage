@@ -21,6 +21,7 @@ import { createObjstoreClient } from './objstore.ts'
 import { getSharedTransport } from './sync-transport.ts'
 import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
+import { computeSha512Integrity } from '../../common/integrity.js'
 import { onSyncHostInstalled } from './host.ts'
 
 // Late-bound host accessors — populated by `onSyncHostInstalled` at
@@ -974,8 +975,7 @@ async function maybeAutoDownloadBundle(entry, tag, integrity, name, bytes) {
   // Re-hash check. AAD-bound name binding catches a tag-name swap;
   // the re-hash is the SOLE defense against a workspace member
   // PUTting bytes that don't actually hash to the claimed integrity.
-  const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
-  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const computed = await computeSha512Integrity(bytes)
   if (entry.disposed || !entry.remoteTags.has(tag)) return
   if (computed !== integrity) {
     console.warn(`auto-download: bundle integrity mismatch (claimed ${integrity}, got ${computed}) — refusing to save`)
@@ -1004,6 +1004,28 @@ async function maybeAutoDownloadBundle(entry, tag, integrity, name, bytes) {
   }
 }
 
+// Block until a cached session entry finishes connecting, then assert
+// it actually has a live session. Shared readiness gate for the
+// put / delete / fetch wrappers below. (The discovery walkers above
+// await `entry.ready` too but degrade to an empty result instead of
+// throwing, so they deliberately don't use this.)
+async function requireConnectedSession(entry) {
+  if (entry.ready && !entry.session) await entry.ready
+  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+}
+
+// Optimistic-concurrency retry: run `op(null)` (the unconditional /
+// "must not exist" precondition), and on a version conflict run it
+// once more with the server's reported current version. All four
+// put / delete wrappers share this exact shape.
+async function retryOnConflict(op) {
+  let result = await op(null)
+  if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
+    result = await op(result.currentVersion)
+  }
+  return result
+}
+
 // Fetch the plaintext content for a single remote report. Reuses
 // the workspace's open objstore session so the call piggybacks on
 // the existing signed connection rather than minting a one-shot
@@ -1012,8 +1034,7 @@ async function maybeAutoDownloadBundle(entry, tag, integrity, name, bytes) {
 export async function fetchFile(workspaceId, fileName) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
-  if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  await requireConnectedSession(entry)
   return entry.session.fetch(fileName)
 }
 
@@ -1032,8 +1053,7 @@ export async function fetchFile(workspaceId, fileName) {
 export async function putFile(workspaceId, fileName, content) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
-  if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  await requireConnectedSession(entry)
   // Optimistic first-upload precondition. The objstore session
   // tracks version monotonically internally (`seenVersions` —
   // populated by every put/fetch/list/broadcast), so on a
@@ -1042,11 +1062,7 @@ export async function putFile(workspaceId, fileName, content) {
   // issued an extra `list()` per upload to compute prevVersion;
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
-  let result = await entry.session.put({ fileName, content, prevVersion: null })
-  if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
-    result = await entry.session.put({ fileName, content, prevVersion: result.currentVersion })
-  }
-  return result
+  return await retryOnConflict((prevVersion) => entry.session.put({ fileName, content, prevVersion }))
 }
 
 // Delete `fileName`'s remote copy. The objstore `delete` is gated
@@ -1089,8 +1105,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
   try {
     const entry = sessions.get(workspaceId)
     if (!entry) throw new Error(`Workspace ${workspaceId} could not be opened — not in listWorkspaces()?`)
-    if (entry.ready && !entry.session) await entry.ready
-    if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+    await requireConnectedSession(entry)
     if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
     // Pre-compute the tag so we can drop it from the local cache
     // post-delete even if `fileTags` doesn't have an entry yet (a
@@ -1102,10 +1117,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
       entry.fileTags.set(fileName, await computeResourceTag(entry.keys.tagKey, fileName))
     }
     const tag = entry.fileTags.get(fileName)
-    let result = await entry.session.delete(fileName, null)
-    if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
-      result = await entry.session.delete(fileName, result.currentVersion)
-    }
+    const result = await retryOnConflict((prevVersion) => entry.session.delete(fileName, prevVersion))
     if (result.ok) {
       // Drop the tag locally — the server's `objstore-deleted`
       // broadcast now includes the originator (PR symmetric-broadcast)
@@ -1137,8 +1149,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
 export async function putBundleToRemote(workspaceId, integrity) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
-  if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  await requireConnectedSession(entry)
   const content = await readBundle(integrity)
   // Pull the user-friendly name from the local bundle metadata so the
   // peer downloading this bundle sees the original sidebar label
@@ -1149,11 +1160,7 @@ export async function putBundleToRemote(workspaceId, integrity) {
   const meta = await listBundles()
   const found = meta.find((b) => b.integrity === integrity)
   const name = found?.name ?? `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 8)}`
-  let result = await entry.session.putBundle({ integrity, name, content, prevVersion: null })
-  if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
-    result = await entry.session.putBundle({ integrity, name, content, prevVersion: result.currentVersion })
-  }
-  return result
+  return await retryOnConflict((prevVersion) => entry.session.putBundle({ integrity, name, content, prevVersion }))
 }
 
 // Download a bundle from the workspace's remote objstore, save it to
@@ -1173,8 +1180,7 @@ export async function putBundleToRemote(workspaceId, integrity) {
 export async function fetchBundleFromRemote(workspaceId, integrity) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
-  if (entry.ready && !entry.session) await entry.ready
-  if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+  await requireConnectedSession(entry)
   const result = await entry.session.fetchBundle(integrity)
   if (!result) return { ok: false, reason: 'not-found' }
   // Verify integrity hash on download. This is the ONLY defense
@@ -1190,8 +1196,7 @@ export async function fetchBundleFromRemote(workspaceId, integrity) {
   // them under whatever they ACTUALLY hash to — leaving the
   // workspace's `bundles` list pointing at a sha512 that never
   // landed locally.
-  const hashBuf = await crypto.subtle.digest('SHA-512', result.content)
-  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const computed = await computeSha512Integrity(result.content)
   if (computed !== integrity) {
     return { ok: false, reason: 'integrity-mismatch' }
   }
@@ -1236,17 +1241,13 @@ export async function deleteBundleFromRemote(workspaceId, integrity) {
   try {
     const entry = sessions.get(workspaceId)
     if (!entry) throw new Error(`Workspace ${workspaceId} could not be opened — not in listWorkspaces()?`)
-    if (entry.ready && !entry.session) await entry.ready
-    if (!entry.session) throw new Error(`Objstore session is not connected${formatEntryErr(entry.err)}`)
+    await requireConnectedSession(entry)
     if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
     if (!entry.bundleTags.has(integrity)) {
       entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
     }
     const tag = entry.bundleTags.get(integrity)
-    let result = await entry.session.deleteBundle(integrity, null)
-    if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
-      result = await entry.session.deleteBundle(integrity, result.currentVersion)
-    }
+    const result = await retryOnConflict((prevVersion) => entry.session.deleteBundle(integrity, prevVersion))
     if (result.ok) {
       entry.remoteTags.delete(tag)
       entry.remoteBundleByTag.delete(tag)

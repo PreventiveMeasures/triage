@@ -19,6 +19,7 @@ import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
+import { makeIgnoredKey } from '../common/ignored-key.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -122,7 +123,7 @@ async function run() {
     for (const key of state.ignoredIds) {
       if (!key.startsWith(oldPrefix)) continue
       state.ignoredIds.delete(key)
-      renamedKeys.push(`${target}\0${key.slice(oldPrefix.length)}`)
+      renamedKeys.push(makeIgnoredKey(target, key.slice(oldPrefix.length)))
     }
     for (const k of renamedKeys) state.ignoredIds.add(k)
     if (renamedKeys.length > 0) await saveTriage()

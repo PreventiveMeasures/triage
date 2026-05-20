@@ -1,5 +1,6 @@
 import { state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import {
   VAULT_LOCK,
   getEnvelopeAadForTriage,
@@ -90,11 +91,12 @@ async function decompressBrotli(bytes) {
 const TRIAGE_LOCK = 'deepview.triage.save'
 let saveGen = 0
 
-export function saveTriage() {
-  const gen = ++saveGen
-  // Build entries synchronously so the M3 round-5 pending-key
-  // write reflects the user's mutation BEFORE any await (a crash
-  // during the compress await still recovers).
+// Re-group the in-memory triage state (markers, triage state,
+// per-report ignores, comments, fixes) into the persisted id-keyed
+// entry map, dropping session-scoped numeric ids. Shared by
+// `saveTriage` (the at-rest blob) and `buildTriageExportPayload`
+// (the backup export) so the two can't drift.
+export function buildPersistedTriageEntries() {
   const entries = {}
   for (const [k, color] of state.markers) {
     if (SESSION_ID_RE.test(k)) continue
@@ -111,10 +113,9 @@ export function saveTriage() {
   // omitted so a clean entry doesn't leave a trace.
   const ignoredByid = new Map()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (SESSION_ID_RE.test(id)) continue
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
     ignoredByid.get(id).push(reportName)
@@ -131,6 +132,15 @@ export function saveTriage() {
     if (SESSION_ID_RE.test(k)) continue
     if (fix) entries[k] = { ...entries[k], fix }
   }
+  return entries
+}
+
+export function saveTriage() {
+  const gen = ++saveGen
+  // Build entries synchronously so the M3 round-5 pending-key
+  // write reflects the user's mutation BEFORE any await (a crash
+  // during the compress await still recovers).
+  const entries = buildPersistedTriageEntries()
   const isEmpty = Object.keys(entries).length === 0
   const json = isEmpty ? null : JSON.stringify(entries)
   // Synchronous M3 round-5 belt-and-suspenders: pending key holds
@@ -351,10 +361,9 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // triage means the apply path skips re-adding ignoredReports,
     // so the local state must mirror that resolution.
     for (const key of [...state.ignoredIds]) {
-      const sep = key.indexOf('\0')
-      if (sep < 0) continue
-      const reportName = key.slice(0, sep)
-      const id = key.slice(sep + 1)
+      const parts = splitIgnoredKey(key)
+      if (!parts) continue
+      const { reportName, id } = parts
       if (SESSION_ID_RE.test(id)) continue
       // Local pending-write protection (round-9 M3) — see above.
       if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
@@ -392,7 +401,7 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // state.
     if (!triageWasSet && v && Array.isArray(v.ignoredReports)) {
       for (const r of v.ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${k}`)
+        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, k))
       }
     }
     if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)

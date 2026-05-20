@@ -23,6 +23,7 @@ import { listFiles, readFile } from './storage.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
+import { splitIgnoredKey } from '../common/ignored-key.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
 // the union of finding ids reachable from those reports. Mirrors
@@ -119,9 +120,9 @@ function collectPersistedTriageIds() {
     if (!SESSION_ID_RE.test(k)) ids.add(k)
   }
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { id } = parts
     if (!SESSION_ID_RE.test(id)) ids.add(id)
   }
   return ids
@@ -252,10 +253,9 @@ export async function pruneOrphanTriage() {
     changed = true
   }
   for (const key of snapIgnoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (SESSION_ID_RE.test(id)) continue
     if (reachable.has(id) && nameSet.has(reportName)) continue
     if (!state.ignoredIds.has(key)) continue

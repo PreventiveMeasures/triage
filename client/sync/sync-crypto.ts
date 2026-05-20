@@ -1,5 +1,6 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { decodeUtf8, encodeUtf8 } from '../../common/utf8.js'
+import { gunzipBytes, gzipBytes } from '../../common/gzip.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
 // changesets travel encrypted through the relay server. The server
@@ -82,13 +83,10 @@ function detectWebCryptoChaCha(): Promise<boolean> {
   return webCryptoChaChaCheck
 }
 
-// Derive a 32-byte content-encryption key from the workspace's
-// private key (32 random bytes, base64-encoded in the workspace
-// record). HKDF-SHA-256 with empty salt + the domain-separating
-// info string — same private key + same info = same key, so two
-// clients on the same workspace agree without a key-exchange
-// step.
-export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8Array<ArrayBuffer>> {
+// Shared HKDF-SHA-256 expand: a workspace's base64 private key → 32
+// raw bytes under a caller-supplied domain-separating `info`. Backs
+// both the content-key and the signing-seed derivations below.
+async function deriveHkdfBits32(privateKeyBase64: string, info: string): Promise<Uint8Array<ArrayBuffer>> {
   const secret = Uint8Array.fromBase64(privateKeyBase64)
   if (secret.length !== 32) {
     throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
@@ -112,12 +110,22 @@ export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8A
       // `tests/sync-crypto-info-uniqueness.test.js`. See
       // https://soatok.blog/2021/11/17/understanding-hkdf/ §3.
       salt: new Uint8Array(),
-      info: encodeUtf8(KEY_INFO),
+      info: encodeUtf8(info),
     },
     baseKey,
     256,
   )
   return new Uint8Array(bits)
+}
+
+// Derive a 32-byte content-encryption key from the workspace's
+// private key (32 random bytes, base64-encoded in the workspace
+// record). HKDF-SHA-256 with empty salt + the domain-separating
+// info string — same private key + same info = same key, so two
+// clients on the same workspace agree without a key-exchange
+// step.
+export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8Array<ArrayBuffer>> {
+  return await deriveHkdfBits32(privateKeyBase64, KEY_INFO)
 }
 
 // Derive an Ed25519 signing keypair deterministically from the
@@ -134,36 +142,13 @@ export async function deriveSessionKey(privateKeyBase64: string): Promise<Uint8A
 // uses it as the workspace's server-facing identifier (the
 // "workspaceTag" field is the public key).
 export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId: string): Promise<SigningKeypair> {
-  const secret = Uint8Array.fromBase64(privateKeyBase64)
-  if (secret.length !== 32) {
-    throw new Error(`workspace private key must be 32 bytes (got ${secret.length})`)
-  }
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    secret,
-    'HKDF',
-    false,
-    ['deriveBits'],
-  )
-  const seedBits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      // Empty salt rationale: see deriveSessionKey above. The info
-      // string carries the workspaceId suffix so two distinct
-      // workspaces sharing the same private key (impossible under
-      // CSPRNG generation, but defense-in-depth) would still derive
-      // different signing keys. The `|${workspaceId}` portion is
-      // load-bearing — dropping it would collide signing keys with
-      // any other workspace and is pinned by the info-uniqueness
-      // regression test.
-      salt: new Uint8Array(),
-      info: encodeUtf8(`${SIGN_INFO}|${workspaceId}`),
-    },
-    baseKey,
-    256,
-  )
-  const seed = new Uint8Array(seedBits)
+  // The info string carries the workspaceId suffix so two distinct
+  // workspaces sharing the same private key (impossible under CSPRNG
+  // generation, but defense-in-depth) would still derive different
+  // signing keys. The `|${workspaceId}` portion is load-bearing —
+  // dropping it would collide signing keys with any other workspace
+  // and is pinned by the info-uniqueness regression test.
+  const seed = await deriveHkdfBits32(privateKeyBase64, `${SIGN_INFO}|${workspaceId}`)
   // PKCS8-wrap the raw seed so WebCrypto will import it; the same
   // envelope feeds both the public-key probe and the signing key.
   const pkcs8 = new Uint8Array(ED25519_PKCS8_HEADER.length + 32)
@@ -250,10 +235,16 @@ function canonicalSavePayload(
   ].join('\n'))
 }
 
-export async function signSavePayload(privateKey: CryptoKey, payload: SavePayload): Promise<string> {
-  const message = canonicalSavePayload(payload)
+// Ed25519 sign over canonical bytes → base64url-no-padding (the wire
+// shape the server's verify path expects). Shared by the save and
+// subscribe signers below.
+async function signEd25519(privateKey: CryptoKey, message: Uint8Array<ArrayBuffer>): Promise<string> {
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
   return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
+}
+
+export async function signSavePayload(privateKey: CryptoKey, payload: SavePayload): Promise<string> {
+  return await signEd25519(privateKey, canonicalSavePayload(payload))
 }
 
 // Content-addressed revision id — SHA-256 of the same canonical
@@ -296,9 +287,7 @@ export async function signSubscribePayload(
   fromBase: string | number | null | undefined,
   connectionNonce: string,
 ): Promise<string> {
-  const message = canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce)
-  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message)
-  return new Uint8Array(sig).toBase64({ alphabet: 'base64url', omitPadding: true })
+  return await signEd25519(privateKey, canonicalSubscribePayload(publicKeyB64, fromBase, connectionNonce))
 }
 
 export async function verifySavePayload(
@@ -428,25 +417,9 @@ function nextPow2AtLeast(n: number, floor: number): number {
   return 2 ** (32 - Math.clz32(n - 1))
 }
 
-async function gzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-  const cs = new CompressionStream('gzip')
-  const writer = cs.writable.getWriter()
-  writer.write(bytes)
-  writer.close()
-  return new Uint8Array(await new Response(cs.readable).arrayBuffer())
-}
-
-async function gunzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-  const ds = new DecompressionStream('gzip')
-  const writer = ds.writable.getWriter()
-  writer.write(bytes)
-  writer.close()
-  return new Uint8Array(await new Response(ds.readable).arrayBuffer())
-}
-
 async function frameAndPad(value: unknown): Promise<Uint8Array<ArrayBuffer>> {
   const json = encodeUtf8(JSON.stringify(value))
-  const compressed = await gzip(json)
+  const compressed = await gzipBytes(json)
   // 4-byte length prefix + bucketing to next pow2 (capped at 2^30
   // so the result fits a Uint32 length passed to `new Uint8Array`).
   if (compressed.length > 0x3FFFFFFC) throw new Error('payload too large')
@@ -463,7 +436,7 @@ async function unframeAndUngzip(plaintext: Uint8Array<ArrayBuffer>): Promise<unk
   const len = view.getUint32(0, false)
   if (len + 4 > plaintext.length) throw new Error('length prefix exceeds buffer')
   const compressed = plaintext.subarray(4, 4 + len) as Uint8Array<ArrayBuffer>
-  const json = await gunzip(compressed)
+  const json = await gunzipBytes(compressed)
   return JSON.parse(decodeUtf8(json))
 }
 

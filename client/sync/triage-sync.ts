@@ -1,6 +1,7 @@
 import type { State } from '../state.ts'
 import { type SyncHostWorkspace, type TriageBucket, onSyncHostInstalled } from './host.ts'
 import { RECOVERABLE_SAVE_ERROR_REASONS } from '../../common/save-error-reason.ts'
+import { makeIgnoredKey, splitIgnoredKey } from '../../common/ignored-key.js'
 
 // Late-bound host accessors. Populated by the `onSyncHostInstalled`
 // hook at the bottom of this file before any entry point fires; until
@@ -528,10 +529,9 @@ function snapshotEntry(id: string, ignoredByid: Map<string, string[]> | null = n
 function ignoredReportsForId(id: string): string[] {
   const out: string[] = []
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    if (key.slice(sep + 1) !== id) continue
-    out.push(key.slice(0, sep))
+    const parts = splitIgnoredKey(key)
+    if (!parts || parts.id !== id) continue
+    out.push(parts.reportName)
   }
   return out
 }
@@ -542,13 +542,13 @@ function ignoredReportsForId(id: string): string[] {
 function bucketIgnoredByid(idsScope: Set<string> | null = null): Map<string, string[]> {
   const map = new Map<string, string[]>()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (idsScope && !idsScope.has(id)) continue
     const list = map.get(id)
-    if (list) list.push(key.slice(0, sep))
-    else map.set(id, [key.slice(0, sep)])
+    if (list) list.push(reportName)
+    else map.set(id, [reportName])
   }
   return map
 }
@@ -666,12 +666,11 @@ function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<stri
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
     let alreadyHasAny = false
     for (const key of state.ignoredIds) {
-      const sep = key.indexOf('\0')
-      if (sep >= 0 && key.slice(sep + 1) === id) { alreadyHasAny = true; break }
+      if (splitIgnoredKey(key)?.id === id) { alreadyHasAny = true; break }
     }
     if (alreadyHasAny) continue
     for (const r of entry.ignoredReports) {
-      if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+      if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
     }
   }
   return conflicts
@@ -693,8 +692,7 @@ function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<stri
 // fresh local edits made during the dialog window. Audit M-2.
 function dropIgnoredEntriesFor(id: string): void {
   for (const k of [...state.ignoredIds]) {
-    const sep = k.indexOf('\0')
-    if (sep >= 0 && k.slice(sep + 1) === id) state.ignoredIds.delete(k)
+    if (splitIgnoredKey(k)?.id === id) state.ignoredIds.delete(k)
   }
 }
 
@@ -1332,9 +1330,9 @@ function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | It
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
   const existingIgnoredByid = new Map<string, string[]>()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { id } = parts
     if (!idsSet.has(id)) continue
     const list = existingIgnoredByid.get(id)
     if (list) list.push(key)
@@ -1369,7 +1367,7 @@ function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | It
     const triageWasSet = entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted' || entry.deleted
     if (!triageWasSet && Array.isArray(entry.ignoredReports)) {
       for (const r of entry.ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
       }
     }
     if (entry.comment) state.comments.set(id, entry.comment)

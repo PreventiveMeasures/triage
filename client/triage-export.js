@@ -1,6 +1,7 @@
-import { encodeUtf8 } from '../common/utf8.js'
+import { gunzipToText, gzipText } from '../common/gzip.js'
+import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import { REPO_URLS_KEY, state } from './state.ts'
-import { saveTriage } from './triage.js'
+import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
 
 // Pure-logic side of the global triage backup. The DOM-touching
 // layer (file picker, anchor-click download, dialog) lives in
@@ -15,47 +16,13 @@ import { saveTriage } from './triage.js'
 // repo URL map.
 
 const EXPORT_VERSION = 1
-const SESSION_ID_RE = /^\d+$/u
 
 // Build the export payload object. Reads from in-memory `state.*`
 // for triage (mirroring `saveTriage`'s session-id filter) and
 // from localStorage for repo URLs (the latter is the source of
 // truth — `state.repoUrl` only holds the active report's URL).
 export function buildTriageExportPayload() {
-  const entries = {}
-  for (const [k, color] of state.markers) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], color }
-  }
-  for (const [k, triage] of state.triageState) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], triage }
-  }
-  // Per-report ignore: same id-keyed `ignoredReports: [name, …]`
-  // shape used by `saveTriage` and the workspace export, so a
-  // round-trip preserves the existing on-disk structure.
-  const ignoredByid = new Map()
-  for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
-    if (SESSION_ID_RE.test(id)) continue
-    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-    ignoredByid.get(id).push(reportName)
-  }
-  for (const [id, ignoredIn] of ignoredByid) {
-    if (ignoredIn.length === 0) continue
-    entries[id] = { ...entries[id], ignoredReports: ignoredIn }
-  }
-  for (const [k, comment] of state.comments) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (comment) entries[k] = { ...entries[k], comment }
-  }
-  for (const [k, fix] of state.fixes) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (fix) entries[k] = { ...entries[k], fix }
-  }
+  const entries = buildPersistedTriageEntries()
 
   let repoUrls = {}
   try { repoUrls = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch {}
@@ -66,16 +33,6 @@ export function buildTriageExportPayload() {
     triage: entries,
     repoUrls,
   }
-}
-
-async function gzipText(text) {
-  const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
-  return await new Response(stream).blob()
-}
-
-async function gunzipBlob(blob) {
-  const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'))
-  return await new Response(stream).text()
 }
 
 // Filename uses an ISO-like timestamp so multiple exports sort
@@ -89,14 +46,14 @@ function timestampFilename() {
 
 export async function buildTriageExportGzip() {
   const payload = buildTriageExportPayload()
-  const blob = await gzipText(JSON.stringify(payload))
+  const blob = new Blob([await gzipText(JSON.stringify(payload))])
   return { blob, filename: timestampFilename() }
 }
 
 export async function parseTriageExportGzip(file) {
   let text
   try {
-    text = await gunzipBlob(file)
+    text = await gunzipToText(new Uint8Array(await file.arrayBuffer()))
   } catch (err) {
     throw new Error(`Failed to gunzip: ${err.message}`, { cause: err })
   }
@@ -167,9 +124,9 @@ export async function applyTriageImport(payload, mode) {
       if (!SESSION_ID_RE.test(k)) state.fixes.delete(k)
     }
     for (const key of [...state.ignoredIds]) {
-      const sep = key.indexOf('\0')
-      if (sep < 0) continue
-      const id = key.slice(sep + 1)
+      const parts = splitIgnoredKey(key)
+      if (!parts) continue
+      const { id } = parts
       if (!SESSION_ID_RE.test(id)) state.ignoredIds.delete(key)
     }
   }
@@ -203,7 +160,7 @@ export async function applyTriageImport(payload, mode) {
     if (Array.isArray(v.ignoredReports) && !state.triageState.has(id)) {
       for (const r of v.ignoredReports) {
         if (typeof r !== 'string') continue
-        const key = `${r}\0${id}`
+        const key = makeIgnoredKey(r, id)
         if (keepCurrent && state.ignoredIds.has(key)) continue
         state.ignoredIds.add(key)
       }
