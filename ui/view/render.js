@@ -85,7 +85,7 @@ export function buildGraph2Data() {
     for (const f of g) {
       if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
       severitySets.get(f.file).add(f.severity)
-      const color = state.markers.get(tabKey(f)) ?? 'none'
+      const color = state.triage.get(tabKey(f))?.color ?? 'none'
       if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
       colorSets.get(f.file).add(color)
       if (!fileFindings.has(f.file)) fileFindings.set(f.file, [])
@@ -1610,7 +1610,7 @@ function renderImpl() {
   for (const g of allGroups) {
     const sevs = new Set(g.map((f) => f.severity))
     for (const s of sevs) counts[s] = (counts[s] || 0) + 1
-    const cols = new Set(g.map((f) => state.markers.get(tabKey(f)) ?? 'none'))
+    const cols = new Set(g.map((f) => state.triage.get(tabKey(f))?.color ?? 'none'))
     for (const c of cols) colorCounts[c] = (colorCounts[c] || 0) + 1
   }
 

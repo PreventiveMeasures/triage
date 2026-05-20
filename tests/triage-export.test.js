@@ -19,13 +19,10 @@ const {
   buildTriageExportPayload,
   parseTriageExportGzip,
 } = await import('../client/triage-export.js')
+const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
 function clearState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
   globalThis.localStorage.clear()
 }
 
@@ -36,10 +33,10 @@ describe('buildTriageExportPayload', () => {
   beforeEach(clearState)
 
   it('skips session-id (numeric) keys in every map', () => {
-    state.markers.set('123', 'red')           // numeric → skip
-    state.markers.set(FINDING_A, 'green')      // uuid → keep
-    state.triageState.set('456', 'fixed')
-    state.triageState.set(FINDING_A, 'invalid')
+    patchEntry(state.triage, '123', { color: 'red' })           // numeric → skip
+    patchEntry(state.triage, FINDING_A, { color: 'green' })      // uuid → keep
+    patchEntry(state.triage, '456', { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { triage: 'invalid' })
     const payload = buildTriageExportPayload()
     assert.equal(payload.triage['123'], undefined)
     assert.equal(payload.triage['456'], undefined)
@@ -48,8 +45,8 @@ describe('buildTriageExportPayload', () => {
   })
 
   it('groups ignoredReports per id', () => {
-    state.ignoredIds.add(`r1.json\0${FINDING_A}`)
-    state.ignoredIds.add(`r2.json\0${FINDING_A}`)
+    setReportIgnored(state.triage, FINDING_A, 'r1.json', true)
+    setReportIgnored(state.triage, FINDING_A, 'r2.json', true)
     const payload = buildTriageExportPayload()
     assert.deepEqual(payload.triage[FINDING_A].ignoredReports.toSorted(), ['r1.json', 'r2.json'].toSorted())
   })
@@ -95,29 +92,28 @@ describe('applyTriageImport: shape validation (audit round-14 TE-1)', () => {
   })
 
   it('throws on a non-object payload BEFORE mutating state', async () => {
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await assert.rejects(applyTriageImport(null, 'replace'), /Invalid payload: not an object/u)
-    assert.equal(state.markers.get(FINDING_A), 'red', 'state untouched on null payload')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'state untouched on null payload')
   })
 
   it('throws on missing `triage` BEFORE mutating state in replace mode', async () => {
-    // Pre-fix `replace` mode would clear state.markers / state.triageState
-    // / state.comments / state.fixes / state.ignoredIds first, then
+    // Pre-fix `replace` mode would clear state.triage first, then
     // crash on `Object.entries(undefined)`. Half-applied import in
     // memory; the persisted blob diverges. Now the shape check runs
     // before any mutation.
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_B, 'fixed')
-    state.comments.set(FINDING_A, 'note')
-    state.fixes.set(FINDING_A, 'patch')
-    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { comment: 'note' })
+    patchEntry(state.triage, FINDING_A, { fix: 'patch' })
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
     await assert.rejects(applyTriageImport({ repoUrls: {} }, 'replace'), /missing or non-object `triage`/u)
     // Every map untouched.
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.triageState.get(FINDING_B), 'fixed')
-    assert.equal(state.comments.get(FINDING_A), 'note')
-    assert.equal(state.fixes.get(FINDING_A), 'patch')
-    assert.equal(state.ignoredIds.has(`r.json\0${FINDING_A}`), true)
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_B)?.triage, 'fixed')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'note')
+    assert.equal(state.triage.get(FINDING_A)?.fix, 'patch')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'r.json'), true)
   })
 
   it('rejects an array `triage` (typeof [] === "object" loophole)', async () => {
@@ -136,15 +132,15 @@ describe('applyTriageImport: shape validation (audit round-14 TE-1)', () => {
   })
 
   it('a well-formed payload still applies as before', async () => {
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await applyTriageImport({
       version: 1,
       triage: { [FINDING_B]: { color: 'green' } },
       repoUrls: { 'r.json': 'https://example.test' },
     }, 'prefer-imported')
     // FINDING_A pre-existing, FINDING_B newly imported.
-    assert.equal(state.markers.get(FINDING_A), 'red', 'pre-existing mark survives in prefer-imported merge')
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'pre-existing mark survives in prefer-imported merge')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
     assert.equal(JSON.parse(globalThis.localStorage.getItem(REPO_URLS_KEY))['r.json'], 'https://example.test')
   })
 })

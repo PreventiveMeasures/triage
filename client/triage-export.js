@@ -1,5 +1,5 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
-import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
+import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { REPO_URLS_KEY, state } from './state.ts'
 import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
 
@@ -109,25 +109,11 @@ export async function applyTriageImport(payload, mode) {
     throw new Error('Invalid payload: missing or non-object `repoUrls`')
   }
   const imported = payload.triage
+  const map = state.triage
 
   if (mode === 'replace') {
-    for (const k of [...state.markers.keys()]) {
-      if (!SESSION_ID_RE.test(k)) state.markers.delete(k)
-    }
-    for (const k of [...state.triageState.keys()]) {
-      if (!SESSION_ID_RE.test(k)) state.triageState.delete(k)
-    }
-    for (const k of [...state.comments.keys()]) {
-      if (!SESSION_ID_RE.test(k)) state.comments.delete(k)
-    }
-    for (const k of [...state.fixes.keys()]) {
-      if (!SESSION_ID_RE.test(k)) state.fixes.delete(k)
-    }
-    for (const key of [...state.ignoredIds]) {
-      const parts = splitIgnoredKey(key)
-      if (!parts) continue
-      const { id } = parts
-      if (!SESSION_ID_RE.test(id)) state.ignoredIds.delete(key)
+    for (const id of [...map.keys()]) {
+      if (!SESSION_ID_RE.test(id)) map.delete(id)
     }
   }
 
@@ -137,32 +123,29 @@ export async function applyTriageImport(payload, mode) {
     if (SESSION_ID_RE.test(id)) continue
     if (!v || typeof v !== 'object') continue
 
-    if (typeof v.color === 'string' && v.color && (!keepCurrent || !state.markers.has(id))) {
-      state.markers.set(id, v.color)
+    if (typeof v.color === 'string' && v.color && (!keepCurrent || !map.get(id)?.color)) {
+      patchEntry(map, id, { color: v.color })
     }
-    // Triage state — preferred form is `triage:`; legacy `deleted: true`
+    // Triage bucket — preferred form is `triage:`; legacy `deleted: true`
     // entries map to 'deleted', matching the load path in triage.js.
-    let triageVal = null
-    if (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted') triageVal = v.triage
-    else if (v.deleted) triageVal = 'deleted'
-    if (triageVal && (!keepCurrent || !state.triageState.has(id))) {
-      state.triageState.set(id, triageVal)
+    const triageVal = bucketOf(v)
+    if (triageVal && (!keepCurrent || !bucketOf(map.get(id)))) {
+      patchEntry(map, id, { triage: triageVal })
     }
-    if (typeof v.comment === 'string' && v.comment && (!keepCurrent || !state.comments.has(id))) {
-      state.comments.set(id, v.comment)
+    if (typeof v.comment === 'string' && v.comment && (!keepCurrent || !map.get(id)?.comment)) {
+      patchEntry(map, id, { comment: v.comment })
     }
-    if (typeof v.fix === 'string' && v.fix && (!keepCurrent || !state.fixes.has(id))) {
-      state.fixes.set(id, v.fix)
+    if (typeof v.fix === 'string' && v.fix && (!keepCurrent || !map.get(id)?.fix)) {
+      patchEntry(map, id, { fix: v.fix })
     }
     // Per-report ignore: mutex with triage state. Skip the
     // ignoredReports merge when this id ended up with a triage
     // state (same rule the cross-tab apply path enforces).
-    if (Array.isArray(v.ignoredReports) && !state.triageState.has(id)) {
+    if (Array.isArray(v.ignoredReports) && !bucketOf(map.get(id))) {
       for (const r of v.ignoredReports) {
         if (typeof r !== 'string') continue
-        const key = makeIgnoredKey(r, id)
-        if (keepCurrent && state.ignoredIds.has(key)) continue
-        state.ignoredIds.add(key)
+        if (keepCurrent && isReportIgnored(map, id, r)) continue
+        setReportIgnored(map, id, r, true)
       }
     }
   }

@@ -1,4 +1,4 @@
-import { saveTriage, state } from '#client/index.js'
+import { patchEntry, saveTriage, state } from '#client/index.js'
 import { triageSync } from './client-sync.js'
 import { render } from './render.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
@@ -19,25 +19,32 @@ import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
 // markdown id) and persist; numeric strings are session-only and
 // don't round-trip.
 
+// Project the single triage map back into the per-field Maps the
+// façade has always exposed, so external callers see no change.
+function projectField(field) {
+  const m = new Map()
+  for (const [id, e] of state.triage) {
+    if (e[field]) m.set(id, e[field])
+  }
+  return m
+}
+
 const triage = {
-  get markers() { return new Map(state.markers) },
-  get triageState() { return new Map(state.triageState) },
-  get comments() { return new Map(state.comments) },
-  get fixes() { return new Map(state.fixes) },
+  get markers() { return projectField('color') },
+  get triageState() { return projectField('triage') },
+  get comments() { return projectField('comment') },
+  get fixes() { return projectField('fix') },
 
   // Bundle every triage field for one finding into a single object,
   // omitting absent properties — matches the persisted shape so a
   // round-trip via JSON is straightforward.
   get(id) {
+    const e = state.triage.get(id)
     const out = {}
-    const color = state.markers.get(id)
-    if (color !== undefined) out.color = color
-    const triageVal = state.triageState.get(id)
-    if (triageVal) out.triage = triageVal
-    const comment = state.comments.get(id)
-    if (comment) out.comment = comment
-    const fix = state.fixes.get(id)
-    if (fix) out.fix = fix
+    if (e?.color) out.color = e.color
+    if (e?.triage) out.triage = e.triage
+    if (e?.comment) out.comment = e.comment
+    if (e?.fix) out.fix = e.fix
     return out
   },
 
@@ -49,18 +56,18 @@ const triage = {
     let changed = false
     if (color !== undefined) {
       if (color === null || color === '') {
-        if (state.markers.delete(id)) changed = true
-      } else if (state.markers.get(id) !== color) {
-        state.markers.set(id, color)
+        if (patchEntry(state.triage, id, { color: undefined })) changed = true
+      } else if (state.triage.get(id)?.color !== color) {
+        patchEntry(state.triage, id, { color })
         changed = true
       }
     }
     if (triageVal !== undefined) {
       if (triageVal === null || triageVal === '' || triageVal === false) {
-        if (state.triageState.delete(id)) changed = true
+        if (patchEntry(state.triage, id, { triage: undefined })) changed = true
       } else if (triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted') {
-        if (state.triageState.get(id) !== triageVal) {
-          state.triageState.set(id, triageVal)
+        if (state.triage.get(id)?.triage !== triageVal) {
+          patchEntry(state.triage, id, { triage: triageVal })
           changed = true
         }
       } else {
@@ -78,22 +85,22 @@ const triage = {
     if (comment !== undefined) {
       const text = comment ? String(comment) : ''
       if (text) {
-        if (state.comments.get(id) !== text) {
-          state.comments.set(id, text)
+        if (state.triage.get(id)?.comment !== text) {
+          patchEntry(state.triage, id, { comment: text })
           changed = true
         }
-      } else if (state.comments.delete(id)) {
+      } else if (patchEntry(state.triage, id, { comment: undefined })) {
         changed = true
       }
     }
     if (fix !== undefined) {
       const text = fix ? String(fix) : ''
       if (text) {
-        if (state.fixes.get(id) !== text) {
-          state.fixes.set(id, text)
+        if (state.triage.get(id)?.fix !== text) {
+          patchEntry(state.triage, id, { fix: text })
           changed = true
         }
-      } else if (state.fixes.delete(id)) {
+      } else if (patchEntry(state.triage, id, { fix: undefined })) {
         changed = true
       }
     }

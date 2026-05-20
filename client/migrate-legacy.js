@@ -19,7 +19,7 @@ import { listWorkspaces, setReportWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
-import { makeIgnoredKey } from '../common/ignored-key.js'
+import { setReportIgnored } from './triage-entry.ts'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
 // → ingest.js → sidebar.js. The constant is also exported from
@@ -114,19 +114,19 @@ async function run() {
       saveRepoUrlFor(target, repoUrl)
     }
 
-    // Per-report ignore is also filename-keyed: state.ignoredIds
-    // entries shape `${reportName}\0${id}`. Without rewriting these
-    // (and re-persisting via saveTriage), ignored findings reappear
-    // in the renamed report. Audit round-12 M-D.
-    const oldPrefix = `${name}\0`
-    const renamedKeys = []
-    for (const key of state.ignoredIds) {
-      if (!key.startsWith(oldPrefix)) continue
-      state.ignoredIds.delete(key)
-      renamedKeys.push(makeIgnoredKey(target, key.slice(oldPrefix.length)))
+    // Per-report ignore is also filename-keyed: each triage entry
+    // carries an `ignoredReports: [reportName, ...]` list. Without
+    // rewriting `name` → `target` across those lists (and re-persisting
+    // via saveTriage), ignored findings reappear in the renamed report.
+    // Audit round-12 M-D.
+    let renamedIgnores = false
+    for (const [id, entry] of [...state.triage]) {
+      if (!entry.ignoredReports?.includes(name)) continue
+      setReportIgnored(state.triage, id, name, false)
+      setReportIgnored(state.triage, id, target, true)
+      renamedIgnores = true
     }
-    for (const k of renamedKeys) state.ignoredIds.add(k)
-    if (renamedKeys.length > 0) await saveTriage()
+    if (renamedIgnores) await saveTriage()
 
     // Last-viewed-file pointer — update so the next reload restores
     // the renamed entry rather than failing to find it. Goes through

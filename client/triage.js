@@ -1,6 +1,6 @@
 import { state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
-import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
+import { bucketOf, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
 import {
   VAULT_LOCK,
   getEnvelopeAadForTriage,
@@ -91,46 +91,21 @@ async function decompressBrotli(bytes) {
 const TRIAGE_LOCK = 'deepview.triage.save'
 let saveGen = 0
 
-// Re-group the in-memory triage state (markers, triage state,
-// per-report ignores, comments, fixes) into the persisted id-keyed
-// entry map, dropping session-scoped numeric ids. Shared by
-// `saveTriage` (the at-rest blob) and `buildTriageExportPayload`
-// (the backup export) so the two can't drift.
+// Project the in-memory triage map into the persisted id-keyed entry
+// map, dropping session-scoped numeric ids. `normalizeEntry` migrates
+// the legacy `deleted` form, prunes empty fields, and returns a fresh
+// entry (its own `ignoredReports` array), so the persisted blob never
+// aliases live state. Shared by `saveTriage` (the at-rest blob) and
+// `buildTriageExportPayload` (the backup export) so the two can't
+// drift. Per-report ignore persists as `ignoredReports: ['nameA',
+// 'nameB', ...]` on the entry — the explicit-list form of the old
+// `${reportName}\0${id}` Set.
 export function buildPersistedTriageEntries() {
   const entries = {}
-  for (const [k, color] of state.markers) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], color }
-  }
-  for (const [k, triage] of state.triageState) {
-    if (SESSION_ID_RE.test(k)) continue
-    entries[k] = { ...entries[k], triage }
-  }
-  // Per-report ignore is persisted as `ignoredReports: ['nameA',
-  // 'nameB', ...]` per id-keyed entry. Group the in-memory Set
-  // (`${reportName}\0${id}`) back by id, drop session-scoped
-  // numeric ids, and stamp the report list. Empty arrays are
-  // omitted so a clean entry doesn't leave a trace.
-  const ignoredByid = new Map()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
+  for (const [id, entry] of state.triage) {
     if (SESSION_ID_RE.test(id)) continue
-    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-    ignoredByid.get(id).push(reportName)
-  }
-  for (const [id, ignoredIn] of ignoredByid) {
-    if (ignoredIn.length === 0) continue
-    entries[id] = { ...entries[id], ignoredReports: ignoredIn }
-  }
-  for (const [k, comment] of state.comments) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (comment) entries[k] = { ...entries[k], comment }
-  }
-  for (const [k, fix] of state.fixes) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (fix) entries[k] = { ...entries[k], fix }
+    const persisted = normalizeEntry(entry)
+    if (persisted) entries[id] = persisted
   }
   return entries
 }
@@ -304,21 +279,22 @@ async function readTriageBlob() {
 // mode so the active tab's session-scoped triage doesn't get
 // nuked by a sibling's persistence write.
 function applyTriageEntries(entries, { replace = false } = {}) {
+  const map = state.triage
   if (replace) {
     // Round-9 M3: when this tab is mid-saveTriage (its own pending
     // key is set with newer-than-blob local edits), the cross-tab
     // replace MUST NOT wipe ids the local edits have changed.
     // Without this guard, the sequence
-    //   T1: local state.markers.set(X, 'red'); saveTriage starts;
+    //   T1: local triage edit on X; saveTriage starts;
     //       TRIAGE_PENDING_KEY written synchronously; compress
     //       awaits.
     //   T2: sibling's storage event fires; reload runs; sibling's
     //       blob doesn't contain X; replace mode deletes X from
-    //       state.markers.
+    //       state.triage.
     //   T3: local saveTriage's compress completes; writes
     //       TRIAGE_KEY (still containing X via the pre-compress
     //       snapshot); clears pending.
-    // ends with TRIAGE_KEY persistently containing X but state.*
+    // ends with TRIAGE_KEY persistently containing X but state.triage
     // not — the next render shows X missing until the next reload.
     // Read the pending key once and treat its ids as protected
     // local edits the sibling hasn't seen.
@@ -328,84 +304,77 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       try { pendingEntries = JSON.parse(pendingRaw) } catch {}
     }
     const pendingHas = (k) => pendingEntries != null && k in pendingEntries
-    for (const k of [...state.markers.keys()]) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (pendingHas(k) && pendingEntries[k]?.color) continue
-      if (!entries || !(k in entries) || !entries[k]?.color) state.markers.delete(k)
-    }
-    for (const k of [...state.triageState.keys()]) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (pendingHas(k) && (pendingEntries[k]?.triage || pendingEntries[k]?.deleted)) continue
-      const v = entries?.[k]
-      const next = (v?.triage === 'fixed' || v?.triage === 'invalid' || v?.triage === 'deleted')
-        ? v.triage
-        : (v?.deleted ? 'deleted' : null)
-      if (!next) state.triageState.delete(k)
-    }
-    for (const k of [...state.comments.keys()]) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (pendingHas(k) && pendingEntries[k]?.comment) continue
-      if (!entries || !(k in entries) || typeof entries[k]?.comment !== 'string' || !entries[k].comment) state.comments.delete(k)
-    }
-    for (const k of [...state.fixes.keys()]) {
-      if (SESSION_ID_RE.test(k)) continue
-      if (pendingHas(k) && pendingEntries[k]?.fix) continue
-      if (!entries || !(k in entries) || typeof entries[k]?.fix !== 'string' || !entries[k].fix) state.fixes.delete(k)
-    }
-    // Per-report ignore: keys are `${reportName}\0${id}`. Drop
-    // entries whose id is non-session AND whose (id, reportName)
-    // pair isn't reflected in the new blob's `ignoredReports`
-    // list. Session-only ids are left alone, same as the other
-    // collections. If the blob's entry carries a triage state,
-    // drop every local ignored entry for that id — mutex with
-    // triage means the apply path skips re-adding ignoredReports,
-    // so the local state must mirror that resolution.
-    for (const key of [...state.ignoredIds]) {
-      const parts = splitIgnoredKey(key)
-      if (!parts) continue
-      const { reportName, id } = parts
+    // Clear each per-finding field the new blob no longer carries,
+    // unless this tab's pending snapshot still holds it. Session-only
+    // numeric ids are never in the blob and are left untouched.
+    for (const id of [...map.keys()]) {
       if (SESSION_ID_RE.test(id)) continue
-      // Local pending-write protection (round-9 M3) — see above.
-      if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
-        && pendingEntries[id].ignoredReports.includes(reportName)) continue
       const v = entries?.[id]
-      const triageWasSet = v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted' || v.deleted)
-      if (triageWasSet) {
-        state.ignoredIds.delete(key)
-        continue
+      const noBlob = !entries || !(id in entries)
+      if (!(pendingHas(id) && pendingEntries[id]?.color) && (noBlob || !v?.color)) {
+        patchEntry(map, id, { color: undefined })
       }
-      const blobReports = v?.ignoredReports
-      if (!Array.isArray(blobReports) || !blobReports.includes(reportName)) {
-        state.ignoredIds.delete(key)
+      if (!(pendingHas(id) && (pendingEntries[id]?.triage || pendingEntries[id]?.deleted)) && !bucketOf(v)) {
+        patchEntry(map, id, { triage: undefined })
+      }
+      if (!(pendingHas(id) && pendingEntries[id]?.comment) && (noBlob || typeof v?.comment !== 'string' || !v.comment)) {
+        patchEntry(map, id, { comment: undefined })
+      }
+      if (!(pendingHas(id) && pendingEntries[id]?.fix) && (noBlob || typeof v?.fix !== 'string' || !v.fix)) {
+        patchEntry(map, id, { fix: undefined })
+      }
+    }
+    // Per-report ignore. Drop a report from an id's `ignoredReports`
+    // when the new blob no longer lists it. Session-only ids are left
+    // alone, same as the fields above. If the blob's entry carries a
+    // triage state, drop every ignored report for that id — mutex with
+    // triage means the apply path skips re-adding ignoredReports, so
+    // the local state must mirror that resolution.
+    for (const id of [...map.keys()]) {
+      if (SESSION_ID_RE.test(id)) continue
+      const reports = map.get(id)?.ignoredReports
+      if (!reports || reports.length === 0) continue
+      const v = entries?.[id]
+      const triageWasSet = !!bucketOf(v)
+      for (const reportName of [...reports]) {
+        // Local pending-write protection (round-9 M3) — see above.
+        if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
+          && pendingEntries[id].ignoredReports.includes(reportName)) continue
+        if (triageWasSet) { setReportIgnored(map, id, reportName, false); continue }
+        const blobReports = v?.ignoredReports
+        if (!Array.isArray(blobReports) || !blobReports.includes(reportName)) {
+          setReportIgnored(map, id, reportName, false)
+        }
       }
     }
   }
   if (!entries) return
-  for (const [k, v] of Object.entries(entries)) {
-    if (v && v.color) state.markers.set(k, v.color)
-    // Triage state — preferred form is `triage: 'fixed'|'invalid'|'deleted'`.
-    // Legacy entries that only carry `deleted: true` migrate to 'deleted'.
-    const triageWasSet = v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted' || v.deleted)
-    if (v && (v.triage === 'fixed' || v.triage === 'invalid' || v.triage === 'deleted')) {
-      state.triageState.set(k, v.triage)
-    } else if (v && v.deleted) {
-      state.triageState.set(k, 'deleted')
-    }
+  for (const [id, v] of Object.entries(entries)) {
+    // Triage bucket — preferred form `triage: 'fixed'|'invalid'|'deleted'`;
+    // legacy `deleted: true` migrates to 'deleted' via bucketOf.
+    const bucket = bucketOf(v)
+    const patch = {}
+    if (v && v.color) patch.color = v.color
+    if (bucket) patch.triage = bucket
+    if (v && typeof v.comment === 'string' && v.comment) patch.comment = v.comment
+    if (v && typeof v.fix === 'string' && v.fix) patch.fix = v.fix
+    if (Object.keys(patch).length > 0) patchEntry(map, id, patch)
     // Mutual exclusion with triage: triage and per-report ignore
     // can't coexist on a tab. Skip importing `ignoredReports` when
     // the same entry carries a triage state — mirrors the
-    // applyToReactiveState rule in triage-sync.js so a corrupt
-    // blob (legitimately impossible from the action handlers, but
-    // possible from a sibling tab running an older version, or
-    // pre-mutex-fix data) can't land this tab in the forbidden
-    // state.
-    if (!triageWasSet && v && Array.isArray(v.ignoredReports)) {
+    // applyToReactiveState rule in triage-state-projection.ts so a
+    // corrupt blob (legitimately impossible from the action handlers,
+    // but possible from a sibling tab running an older version, or
+    // pre-mutex-fix data) can't land this tab in the forbidden state.
+    // Additive: unions with whatever ignoredReports already survived.
+    if (!bucket && v && Array.isArray(v.ignoredReports)) {
+      const set = new Set(map.get(id)?.ignoredReports ?? [])
+      let added = false
       for (const r of v.ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, k))
+        if (typeof r === 'string' && !set.has(r)) { set.add(r); added = true }
       }
+      if (added) patchEntry(map, id, { ignoredReports: [...set] })
     }
-    if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)
-    if (v && typeof v.fix === 'string' && v.fix) state.fixes.set(k, v.fix)
   }
 }
 

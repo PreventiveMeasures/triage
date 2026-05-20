@@ -71,11 +71,7 @@ export interface State {
   repoEditing: boolean
   sortBy: string
   viewMode: ViewMode
-  markers: Map<string, string>
-  comments: Map<string, string>
-  fixes: Map<string, string>
-  triageState: Map<string, TriageBucket>
-  ignoredIds: Set<string>
+  triage: Map<string, TriageEntry>
   shownTriage: TriageBucket | null
   nextFindingId: number
   activeTabByGroup: Map<string, string>
@@ -352,41 +348,22 @@ export const state: State = store<State>({
   // to localStorage so the choice survives reloads (events.js
   // writes on click).
   viewMode: readSavedViewMode() ?? 'table',
-  // Per-finding manual annotations. Keyed by `tabKey(f)` =
-  // `f.id ?? String(f._id)`: the export's derived uuid when available
-  // (persists across reloads via localStorage), else a session-local
-  // numeric id (session-only). uuid-shaped keys round-trip through a
-  // single `deepview.triage` localStorage entry; numeric-_id keys do
-  // not. Both PER-TAB (per individual finding even within a dedup
-  // group). Group-level rollup is computed on demand in groupState().
-  markers: new Map<string, string>(),
-  // Per-finding free-text annotation, keyed the same way as markers
-  // (uuid `f.id` when present, else session `String(f._id)`). Round-
-  // trips alongside color / deleted in the `deepview.triage` blob —
-  // see triage.js. Empty / cleared comments are removed from the map
-  // so saveTriage doesn't persist a stale `comment: ""`.
-  comments: new Map<string, string>(),
-  // Per-finding "fix" reference — typically a PR URL, but anything
-  // string-shaped works (commit hash, ticket link, etc.). Same key
-  // and persistence rules as `comments`; rendered as a clickable
-  // link in the tab body when present.
-  fixes: new Map<string, string>(),
-  // Triage state per finding — one of 'fixed' / 'invalid' / 'deleted'
-  // (mutually exclusive). Findings without an entry are "active"
-  // (the default live view). Setting any state for a tab clears the
-  // others in the same slot. Persists alongside markers / comments
-  // / fixes in the deepview.triage blob (see triage.js); loaded
-  // entries with the legacy `deleted: true` shape are migrated to
-  // 'deleted' on load.
-  triageState: new Map<string, TriageBucket>(),
-  // Per-report ignore set — keyed by `${reportName}\0${tabKey}` so
-  // ignoring a finding in report A doesn't ignore the same finding
-  // when it shows up in report B. Mutually exclusive with the
-  // triage state (setting any state clears the ignore on the same
-  // tab; setting ignore clears the triage). Lives next to triage
-  // in the deepview.triage blob, persisted as `ignoredReports:
-  // ['nameA', 'nameB']` on each id-keyed entry — see triage.js.
-  ignoredIds: new Set<string>(),
+  // Per-finding triage annotations — color, triage bucket, comment,
+  // fix reference, and per-report ignore — bundled into one TriageEntry
+  // per finding. Keyed by `tabKey(f)` = `f.id ?? String(f._id)`: the
+  // export's derived uuid when available (persists across reloads via
+  // the single `deepview.triage` localStorage blob), else a session-
+  // local numeric id (session-only). PER-TAB (per individual finding
+  // even within a dedup group); group-level rollup is computed on
+  // demand in groupState(). Writes go through `client/triage-entry.ts`
+  // (immutable whole-entry replace) so observer-util re-renders the
+  // readers of a finding when its entry changes; emptied entries are
+  // dropped from the map. `ignoredReports` lists the report names in
+  // which the finding is ignored — ignoring it in report A doesn't
+  // ignore the same finding in report B; mutually exclusive with the
+  // triage bucket at the action layer. Loaded entries with the legacy
+  // `deleted: true` shape are migrated to `triage: 'deleted'` on load.
+  triage: new Map<string, TriageEntry>(),
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
   // only. Replaces the prior boolean showDeleted; the toolbar's

@@ -37,9 +37,9 @@ export type SyncHostAnalyzeResult =
 export type { TriageBucket, TriageEntry }
 
 export interface SyncHost {
-  // Mutable app state — sync reads/writes triage maps live. Identity-
+  // Mutable app state — sync reads/writes the triage map live. Identity-
   // sensitive: the implementation passes the same object the rest of
-  // the app holds, so `host.state.markers.set(...)` is observable
+  // the app holds, so `host.state.triage.set(...)` is observable
   // everywhere.
   readonly state: State
 

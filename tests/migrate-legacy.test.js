@@ -20,6 +20,7 @@ const { saveFile, listFiles, readFile } = await import('../client/storage.js')
 const { setCount, getCount, getKind } = await import('../client/counts.js')
 const { upsertWorkspace, listWorkspaces, deleteWorkspace } = await import('../client/workspaces.js')
 const { saveRepoUrlFor, loadRepoUrlFor, state } = await import('../client/state.ts')
+const { setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
 const LAST_FILE_KEY = 'deepview.lastFile'
 
@@ -188,35 +189,36 @@ describe('migrateLegacyFilenames', () => {
   })
 
   it('rewrites state.ignoredIds keys for the renamed report (audit round-12 M-D)', async () => {
-    // Per-report ignore is stored as `${reportName}\0${id}` in
-    // state.ignoredIds (and the persisted deepview.triage blob's
-    // `ignoredReports` arrays). Pre-fix the migration carried the
-    // count cache + repo URL + last-file pointer but missed
-    // ignoredIds — ignored findings reappeared in the renamed
-    // report. Now the rename loop rewrites matching prefixes and
+    // Per-report ignore is stored as a `reportName` entry in each
+    // triage entry's `ignoredReports` array on `state.triage` (and the
+    // persisted deepview.triage blob's `ignoredReports` arrays). Pre-fix
+    // the migration carried the count cache + repo URL + last-file
+    // pointer but missed the per-report ignores — ignored findings
+    // reappeared in the renamed report. Now the rename loop rewrites
+    // matching report names (legacy → target) across those lists and
     // re-persists via saveTriage.
     const legacy = uniqueLegacyName('ig')
     const target = legacy.replace(/\.deepseek$/u, '.md')
     await saveFile(legacy, '# DeepSec\n\n## HIGH (1)\n\n### F\n')
 
-    // Seed two ignoredIds keys for the legacy name + one unrelated
-    // key that should survive untouched.
-    state.ignoredIds.add(`${legacy}\0finding-a`)
-    state.ignoredIds.add(`${legacy}\0finding-b`)
-    state.ignoredIds.add(`unrelated.json\0finding-c`)
+    // Seed two per-report ignores for the legacy name + one unrelated
+    // ignore that should survive untouched.
+    setReportIgnored(state.triage, 'finding-a', legacy, true)
+    setReportIgnored(state.triage, 'finding-b', legacy, true)
+    setReportIgnored(state.triage, 'finding-c', 'unrelated.json', true)
 
     await freshMigrate()
 
-    assert.equal(state.ignoredIds.has(`${legacy}\0finding-a`), false, 'legacy-prefixed key removed')
-    assert.equal(state.ignoredIds.has(`${legacy}\0finding-b`), false, 'legacy-prefixed key removed')
-    assert.equal(state.ignoredIds.has(`${target}\0finding-a`), true, 'target-prefixed key added')
-    assert.equal(state.ignoredIds.has(`${target}\0finding-b`), true, 'target-prefixed key added')
-    assert.equal(state.ignoredIds.has(`unrelated.json\0finding-c`), true, 'unrelated keys untouched')
+    assert.equal(isReportIgnored(state.triage, 'finding-a', legacy), false, 'legacy-prefixed key removed')
+    assert.equal(isReportIgnored(state.triage, 'finding-b', legacy), false, 'legacy-prefixed key removed')
+    assert.equal(isReportIgnored(state.triage, 'finding-a', target), true, 'target-prefixed key added')
+    assert.equal(isReportIgnored(state.triage, 'finding-b', target), true, 'target-prefixed key added')
+    assert.equal(isReportIgnored(state.triage, 'finding-c', 'unrelated.json'), true, 'unrelated keys untouched')
 
     // Cleanup
-    state.ignoredIds.delete(`${target}\0finding-a`)
-    state.ignoredIds.delete(`${target}\0finding-b`)
-    state.ignoredIds.delete(`unrelated.json\0finding-c`)
+    setReportIgnored(state.triage, 'finding-a', target, false)
+    setReportIgnored(state.triage, 'finding-b', target, false)
+    setReportIgnored(state.triage, 'finding-c', 'unrelated.json', false)
   })
 
   it('skips workspace membership rewrite on collision (audit round-12 M-E)', async () => {

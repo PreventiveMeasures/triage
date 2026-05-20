@@ -40,7 +40,7 @@ export function matchesFilters(f) {
   // ticking only that chip.
   if (state.filterSeverities.size > 0 && !state.filterSeverities.has(f.severity)) return false
   if (state.filterColors.size > 0) {
-    const col = state.markers.get(tabKey(f)) ?? 'none'
+    const col = state.triage.get(tabKey(f))?.color ?? 'none'
     if (!state.filterColors.has(col)) return false
   }
   // Source filter — empty OR full (both 'own' and 'modules' set) =
@@ -96,7 +96,7 @@ export function matchesFilters(f) {
     // field so a substring like "pull" doesn't pull in every
     // finding whose user added a github PR fix link.
     if (inc.startsWith('https://') && inc.length > 'https://'.length) {
-      const fix = (state.fixes.get(tabKey(f)) ?? '').toLowerCase()
+      const fix = (state.triage.get(tabKey(f))?.fix ?? '').toLowerCase()
       if (fix.includes(inc)) return true
     }
     return false

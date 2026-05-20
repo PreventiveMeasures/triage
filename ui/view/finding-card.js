@@ -16,7 +16,7 @@
 //
 // Reactivity: extends StateElement, which wraps render() in an
 // observer-util reaction. Reads of state inside the helpers
-// (state.markers, state.deletedIds, state.activeTabByGroup,
+// (state.triage, state.activeTabByGroup,
 // state.showDeleted) get auto-tracked, so a mutation that
 // invalidates the card triggers a targeted re-render. The
 // classList stamping happens inside render() so its
@@ -63,7 +63,7 @@ class FindingCard extends StateElement {
   render() {
     if (!this.group) return html``
     // Stamp host attributes/classes inside render() so the state
-    // reads (state.showDeleted via findingCardClasses, state.markers
+    // reads (state.showDeleted via findingCardClasses, state.triage
     // / state.deletedIds via findingCardInnerHTML) join StateElement's
     // tracked set and trigger a re-render on mutation.
     this.dataset.gid = findingCardGid(this.group)

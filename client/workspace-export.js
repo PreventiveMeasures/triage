@@ -1,8 +1,8 @@
 import { loadRepoUrlFor, state } from './state.ts'
+import { normalizeEntry } from './triage-entry.ts'
 import { listBundles, readBundle, readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
 import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
-import { splitIgnoredKey } from '../common/ignored-key.js'
 import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
 
@@ -122,49 +122,23 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   }
 
   // Triage filter — only keep entries whose id appears in this
-  // workspace's reports. A single id may carry color, triage,
-  // comment, and/or fix; merge into one entry per id.
-  const triage = {}
-  for (const [id, color] of state.markers) {
-    if (!claimedIds.has(id)) continue
-    triage[id] = { ...triage[id], color }
-  }
-  for (const [id, triageVal] of state.triageState) {
-    if (!claimedIds.has(id)) continue
-    triage[id] = { ...triage[id], triage: triageVal }
-  }
-  // Per-report ignore — group by id and stamp `ignoredReports`
-  // on the entry. Same shape triage.js / triage-sync.js use.
+  // workspace's reports, and normalize each into the clean wire shape
+  // (migrate legacy `deleted`, prune empties).
   //
-  // Filter `reportName` against the workspace's reports too: the
-  // same content-derived id can carry ignore entries from reports
+  // Per-report ignore is filtered against the workspace's reports too:
+  // the same content-derived id can carry ignore entries from reports
   // OUTSIDE this workspace (when the user opens multiple workspaces
   // referencing shared findings). Without the filter, those foreign
   // report names leak into the export's `ignoredReports` array,
   // breaking the "clean self-contained slice" guarantee. Audit
   // round-13 W-Export-1.
   const workspaceReportSet = new Set(workspace.reports ?? [])
-  const ignoredByid = new Map()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
+  const triage = {}
+  for (const [id, entry] of state.triage) {
     if (!claimedIds.has(id)) continue
-    if (!workspaceReportSet.has(reportName)) continue
-    if (!ignoredByid.has(id)) ignoredByid.set(id, [])
-    ignoredByid.get(id).push(reportName)
-  }
-  for (const [id, reportNames] of ignoredByid) {
-    if (reportNames.length === 0) continue
-    triage[id] = { ...triage[id], ignoredReports: reportNames }
-  }
-  for (const [id, comment] of state.comments) {
-    if (!claimedIds.has(id)) continue
-    if (comment) triage[id] = { ...triage[id], comment }
-  }
-  for (const [id, fix] of state.fixes) {
-    if (!claimedIds.has(id)) continue
-    if (fix) triage[id] = { ...triage[id], fix }
+    const scopedIgnored = (entry.ignoredReports ?? []).filter((r) => workspaceReportSet.has(r))
+    const out = normalizeEntry({ ...entry, ignoredReports: scopedIgnored })
+    if (out) triage[id] = out
   }
 
   // Per-report repo URLs — each report carries its own user-typed URL

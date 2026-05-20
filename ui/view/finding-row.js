@@ -11,7 +11,7 @@
 // render-finding.js as an HTML string and injected via unsafeHTML.
 //
 // Reactivity: extends StateElement, which wraps render() in an
-// observer-util reaction. Reads of `state.markers`, `state.deletedIds`,
+// observer-util reaction. Reads of `state.triage`,
 // `state.activeTabByGroup`, `state.showDeleted` performed during
 // render — via the helpers in render-finding.js + group.js — are
 // auto-tracked, and a mutation that invalidates the row triggers a

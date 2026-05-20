@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, state } from '#client/index.js'
 import { commitUrl, fileUrl, formatRunMeta, isHttpUrl, stripExportMarker } from './format.js'
-import { activeTabFor, groupKey, groupState, ignoredKey, sortTabs, tabKey } from './group.js'
+import { activeTabFor, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
@@ -150,9 +150,10 @@ function reportChipTemplate(group) {
 // other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = null) {
   const reportChip = reportChipTemplate(group)
-  const activeColor = state.markers.get(activeKey) ?? null
-  const activeComment = state.comments.get(activeKey) ?? ''
-  const activeFix = state.fixes.get(activeKey) ?? ''
+  const activeEntry = state.triage.get(activeKey)
+  const activeColor = activeEntry?.color ?? null
+  const activeComment = activeEntry?.comment ?? ''
+  const activeFix = activeEntry?.fix ?? ''
   const commentTitle = activeComment ? `Edit comment: ${activeComment}` : 'Add comment'
   const fixTitle = activeFix ? `Edit fix link: ${activeFix}` : 'Add fix link (PR URL, etc.)'
   const isFocus = context === 'focus'
@@ -245,8 +246,8 @@ function triageMenuTemplate(group, title, context = null) {
   // non-conflict groups, the rollup's commonTriage already folds
   // both axes, so we read it directly.
   const current = groupSt.hasConflict
-    ? (state.triageState.get(activeKey)
-       ?? (state.ignoredIds.has(ignoredKey(activeTab)) ? 'ignored' : null))
+    ? (state.triage.get(activeKey)?.triage
+       ?? (isIgnored(activeTab) ? 'ignored' : null))
     : groupSt.commonTriage
   const STATE_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
   const ACTION_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
@@ -312,9 +313,10 @@ function triageMenuTemplate(group, title, context = null) {
 // visible from the group header.
 function tabTemplate(f, isActive) {
   const key = tabKey(f)
-  const color = state.markers.get(key)
-  const triage = state.triageState.get(key)
-  const ignored = state.ignoredIds.has(ignoredKey(f))
+  const entry = state.triage.get(key)
+  const color = entry?.color
+  const triage = entry?.triage
+  const ignored = isIgnored(f)
   const classes = ['tab']
   if (isActive) classes.push('active')
   if (color) classes.push(`tab-mark-${color}`)
@@ -387,8 +389,9 @@ function npmChipTemplate(npm) {
 // suppressed for single-tab groups via the default args.
 function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const key = tabKey(f)
-  const comment = state.comments.get(key) ?? ''
-  const fix = state.fixes.get(key) ?? ''
+  const entry = state.triage.get(key)
+  const comment = entry?.comment ?? ''
+  const fix = entry?.fix ?? ''
   // Location is rendered as `file:line` (linkified when we have a
   // repo URL). Standalone cards (the table view's detail panel) need
   // the file here because there's no surrounding header above; list /

@@ -1,4 +1,4 @@
-import { state } from '#client/index.js'
+import { isReportIgnored, state } from '#client/index.js'
 import { SEVERITY_ORDER } from './format.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
@@ -10,19 +10,18 @@ export function tabKey(f) { return f.id ?? String(f._id) }
 export function groupKey(group) { return tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
-// Per-report ignore key — combines the source report's filename
-// with the tab's id so an ignore in report A doesn't propagate to
-// the same finding's appearance in report B. The reportName comes
-// from `f._reportName`, stamped at ingest (and on bundle index
-// entries). Findings without a report (synthetic / single-file
-// loads) fall back to an empty prefix; ignoring still works, but
-// the persistence path can't separate them by report.
-export function ignoredKey(f) {
-  const r = f?._reportName ?? ''
-  return `${r}\0${tabKey(f)}`
+// Per-report ignore is keyed by the source report's filename so an
+// ignore in report A doesn't propagate to the same finding's
+// appearance in report B. The reportName comes from `f._reportName`,
+// stamped at ingest (and on bundle index entries). Findings without a
+// report (synthetic / single-file loads) fall back to an empty name;
+// ignoring still works, but the persistence path can't separate them
+// by report.
+export function findingReport(f) {
+  return f?._reportName ?? ''
 }
 export function isIgnored(f) {
-  return state.ignoredIds.has(ignoredKey(f))
+  return isReportIgnored(state.triage, tabKey(f), findingReport(f))
 }
 
 // Tab sort order within a group: colored tabs first (drawing attention
@@ -32,8 +31,8 @@ export function isIgnored(f) {
 // sorting (file/severity/confidence dropdowns).
 export function sortTabs(group) {
   return [...group].toSorted((a, b) => {
-    const aColored = state.markers.has(tabKey(a)) ? 1 : 0
-    const bColored = state.markers.has(tabKey(b)) ? 1 : 0
+    const aColored = state.triage.get(tabKey(a))?.color ? 1 : 0
+    const bColored = state.triage.get(tabKey(b))?.color ? 1 : 0
     if (aColored !== bColored) return bColored - aColored
     const aSev = SEVERITY_ORDER[a.severity] || 0
     const bSev = SEVERITY_ORDER[b.severity] || 0
@@ -91,9 +90,9 @@ export function groupState(group) {
   const annotated = group
     .map((f) => {
       const k = tabKey(f)
-      const triage = state.triageState.get(k)
-      const bucket = triage ?? (state.ignoredIds.has(ignoredKey(f)) ? 'ignored' : undefined)
-      return { color: state.markers.get(k), bucket }
+      const entry = state.triage.get(k)
+      const bucket = entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+      return { color: entry?.color, bucket }
     })
     .filter((t) => t.color !== undefined || t.bucket !== undefined)
   const colors = new Set(annotated.map((t) => t.color).filter((c) => c !== undefined))

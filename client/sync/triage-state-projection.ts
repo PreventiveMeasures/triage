@@ -1,87 +1,33 @@
 // State projection + application split out of triage-sync.ts. Bridges
-// the live reactive `state.*` (markers / triage / comments / fixes /
-// ignoredIds) and the sync triage representation, in both directions:
-//   * read side — `effectiveLocalState` snapshots state.* into the full
-//     id→entry map the next save represents;
+// the live reactive `state.triage` map (one TriageEntry per finding-id)
+// and the sync triage representation, in both directions:
+//   * read side — `effectiveLocalState` overlays the live entries onto
+//     the full id→entry map the next save represents;
 //   * write side — `hydrateStateFromBaseState` / `applyHydrationDecisions`
 //     / `applyToReactiveState` apply an incoming baseState / changeset
-//     (and the user's conflict choices) back into state.*.
+//     (and the user's conflict choices) back into `state.triage`.
 // `state` is reached through `syncHost().state` (the host's identity-
 // shared object — the same reference the rest of the app holds), so
 // reads and writes here hit live app state. No sync module state
-// (sessions, transport, timers) is touched.
+// (sessions, transport, timers) is touched. Every write goes through
+// `triage-entry.ts`'s immutable whole-entry replace, preserving the
+// observer-util per-id re-render behavior the UI depends on.
 
-import { type TriageBucket, type TriageEntry, syncHost } from './host.ts'
-import { makeIgnoredKey, splitIgnoredKey } from '../../common/ignored-key.js'
+import { syncHost } from './host.ts'
+import { bucketOf, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
 import type { Conflict, ConflictProperty, TriageStateMap } from './triage-changeset.ts'
 
-// Collect every per-report ignore key matching `id`, returned as
-// the wire-shaped `[reportName, ...]` array. One-off callers
-// (snapshotEntry without a pre-built index) pay O(|state.ignoredIds|)
-// per call. Loop callers that snapshot many ids (effectiveLocalState)
-// build a per-id bucket once via `bucketIgnoredByid` and pass it
-// in via `ignoredByid` to drop the per-call cost to O(1) — closes
-// the symmetric L1 round-4 perf gap that round-3 fixed for the
-// apply side.
-function snapshotEntry(id: string, ignoredByid: Map<string, string[]> | null = null): TriageEntry {
-  const state = syncHost().state
-  const entry: TriageEntry = {}
-  const color = state.markers.get(id)
-  if (color !== undefined) entry.color = color
-  const triage = state.triageState.get(id)
-  if (triage) entry.triage = triage
-  const ignoredReports = ignoredByid == null
-    ? ignoredReportsForId(id)
-    : (ignoredByid.get(id) ?? [])
-  if (ignoredReports.length > 0) entry.ignoredReports = ignoredReports
-  const comment = state.comments.get(id)
-  if (comment) entry.comment = comment
-  const fix = state.fixes.get(id)
-  if (fix) entry.fix = fix
-  return entry
-}
-
-function ignoredReportsForId(id: string): string[] {
-  const state = syncHost().state
-  const out: string[] = []
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts || parts.id !== id) continue
-    out.push(parts.reportName)
-  }
-  return out
-}
-
-// Pre-bucket `state.ignoredIds` by id, optionally filtered to a set
-// of ids of interest. Used by `effectiveLocalState` (and any future
-// many-id snapshotter) so per-id `ignoredReports` lookup is O(1).
-function bucketIgnoredByid(idsScope: Set<string> | null = null): Map<string, string[]> {
-  const state = syncHost().state
-  const map = new Map<string, string[]>()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
-    if (idsScope && !idsScope.has(id)) continue
-    const list = map.get(id)
-    if (list) list.push(reportName)
-    else map.set(id, [reportName])
-  }
-  return map
-}
-
 // The session's "effective" local state — what the next save
-// represents as the workspace's full triage. Starts from
-// `baseState` (= the chain we've applied so far, including
-// entries for finding-ids belonging to reports the user doesn't
-// have loaded — a peer triaged them), then overlays the live
-// state.* values for ids the workspace DOES know about. Without
-// preserving the unknown-id half, the next save's changeset
-// against `baseState` would emit `<unknown>: null` (delete),
-// destroying the triage on the server for clients that DO have
-// that report. Mirrors the keyframe-emit case as well: the full
-// state we sign and ship under `compute({}, localState)` must
-// carry every id we've ever seen in the chain, not just the ones
+// represents as the workspace's full triage. Starts from `baseState`
+// (= the chain we've applied so far, including entries for finding-ids
+// belonging to reports the user doesn't have loaded — a peer triaged
+// them), then overlays the live `state.triage` entries for ids the
+// workspace DOES know about. Without preserving the unknown-id half,
+// the next save's changeset against `baseState` would emit
+// `<unknown>: null` (delete), destroying the triage on the server for
+// clients that DO have that report. Mirrors the keyframe-emit case as
+// well: the full state we sign and ship under `compute({}, localState)`
+// must carry every id we've ever seen in the chain, not just the ones
 // in our current session.ids scope.
 export function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> | Iterable<string>): TriageStateMap {
   // `Object.create(null)` so a `__proto__` own key on the incoming
@@ -92,89 +38,85 @@ export function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> 
   // → computeChangeset's `target[id]` lookups → emitted changesets.
   // Audit round-12 H6.
   const out: TriageStateMap = Object.assign(Object.create(null), baseState)
+  const state = syncHost().state
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
-  const ignoredByid = bucketIgnoredByid(idsSet)
   for (const id of idsSet) {
-    const entry = snapshotEntry(id, ignoredByid)
-    if (Object.keys(entry).length > 0) out[id] = entry
+    // `normalizeEntry` returns a fresh entry (own `ignoredReports`
+    // array) so the snapshot never aliases live state, and prunes an
+    // empty entry to `undefined` → the id is deleted from the overlay
+    // (it carries no triage to ship).
+    const entry = normalizeEntry(state.triage.get(id))
+    if (entry) out[id] = entry
     else delete out[id]
   }
   return out
 }
 
-// Gap-only hydration: for each id in `ids`, fill missing state.*
-// fields from `baseState[id]`. Existing state.* values are NEVER
-// overwritten (local-wins on conflict), so a finding the user
-// already triaged in another open workspace (state.* is global,
-// chains are per-workspace) keeps its local value.
+// Gap-only hydration: for each id in `ids`, fill missing `state.triage`
+// fields from `baseState[id]`. Existing local values are NEVER
+// overwritten (local-wins on conflict), so a finding the user already
+// triaged in another open workspace (state.triage is global, chains are
+// per-workspace) keeps its local value.
 //
-// Used when ids enter session scope (a report attached mid-session
-// — see `onReportMembershipChanged` listener at module init). Without
-// this, the next `effectiveLocalState` would call `snapshotEntry`
-// on each newly-in-scope id, get an empty entry (state.* not
-// populated for OOS ids), and emit a delete that wipes the chain's
-// view for that id. The `ignoredReports` mutex with triage is
-// honored — skipped when the entry already carries any triage
-// state, mirroring `applyToReactiveState`'s rule.
+// Used when ids enter session scope (a report attached mid-session —
+// see `onReportMembershipChanged` listener at module init). Without
+// this, the next `effectiveLocalState` would snapshot each newly-in-
+// scope id, get an empty entry (state.triage not populated for OOS
+// ids), and emit a delete that wipes the chain's view for that id. The
+// `ignoredReports` mutex with triage is honored — skipped when the
+// entry already carries any triage state, mirroring
+// `applyToReactiveState`'s rule.
+//
+// `cur` is captured ONCE up front: hydration only adds missing fields,
+// so each property's pre-hydration local value is the conflict
+// baseline regardless of the order the gap-fills run.
 export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<string>): Conflict[] {
   const state = syncHost().state
   const conflicts: Conflict[] = []
   for (const id of ids) {
     const entry = baseState[id]
     if (!entry || typeof entry !== 'object') continue
+    const cur = state.triage.get(id)
 
     if (entry.color) {
-      const local = state.markers.get(id)
-      if (local === undefined) state.markers.set(id, entry.color)
+      const local = cur?.color
+      if (local === undefined) patchEntry(state.triage, id, { color: entry.color })
       else if (local !== entry.color) conflicts.push({ id, property: 'color', local, imported: entry.color })
     }
 
-    let triageNext: TriageBucket | null = null
-    if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') triageNext = entry.triage
-    else if (entry.deleted) triageNext = 'deleted'
+    const triageNext = bucketOf(entry)
     if (triageNext) {
-      const local = state.triageState.get(id)
-      if (local === undefined) state.triageState.set(id, triageNext)
+      const local = bucketOf(cur)
+      if (local === undefined) patchEntry(state.triage, id, { triage: triageNext })
       else if (local !== triageNext) conflicts.push({ id, property: 'triage', local, imported: triageNext })
     }
 
     if (entry.comment) {
-      const local = state.comments.get(id)
-      if (local === undefined) state.comments.set(id, entry.comment)
+      const local = cur?.comment
+      if (local === undefined) patchEntry(state.triage, id, { comment: entry.comment })
       else if (local !== entry.comment) conflicts.push({ id, property: 'comment', local, imported: entry.comment })
     }
 
     if (entry.fix) {
-      const local = state.fixes.get(id)
-      if (local === undefined) state.fixes.set(id, entry.fix)
+      const local = cur?.fix
+      if (local === undefined) patchEntry(state.triage, id, { fix: entry.fix })
       else if (local !== entry.fix) conflicts.push({ id, property: 'fix', local, imported: entry.fix })
     }
 
-    // Per-report ignore: skipped when triage is set (mutex), and
-    // when state.ignoredIds already has any entry for this id
-    // (local-wins on conflict, same shape as the field-by-field
-    // checks above). No conflict path for ignoredReports — the
-    // mutex makes a "user picks ignored over triage" resolution
-    // require dropping triage too, which the dialog doesn't model.
-    const triageEffectivelySet = triageNext || state.triageState.has(id)
+    // Per-report ignore: skipped when triage is set (mutex), and when
+    // the id already carries any ignoredReports (local-wins on
+    // conflict, same shape as the field-by-field checks above). No
+    // conflict path for ignoredReports — the mutex makes a "user picks
+    // ignored over triage" resolution require dropping triage too,
+    // which the dialog doesn't model.
+    const triageEffectivelySet = triageNext != null || bucketOf(cur) != null
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
-    let alreadyHasAny = false
-    for (const key of state.ignoredIds) {
-      if (splitIgnoredKey(key)?.id === id) { alreadyHasAny = true; break }
-    }
-    if (alreadyHasAny) continue
+    if ((cur?.ignoredReports?.length ?? 0) > 0) continue
     for (const r of entry.ignoredReports) {
-      if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
+      if (typeof r === 'string') setReportIgnored(state.triage, id, r, true)
     }
   }
   return conflicts
-}
-
-function dropIgnoredEntriesFor(id: string): void {
-  const state = syncHost().state
-  for (const k of [...state.ignoredIds]) {
-    if (splitIgnoredKey(k)?.id === id) state.ignoredIds.delete(k)
-  }
 }
 
 // Apply the user's per-conflict decisions returned by the hydration
@@ -182,12 +124,12 @@ function dropIgnoredEntriesFor(id: string): void {
 // with `'local'` / `'imported'`. Triage's 'imported' branch also clears
 // the per-report ignored entries for the id (mutex).
 //
-// The resolver dialog is async (user time) so state.* may have changed
-// while it was open — a chain that landed via `applyChainToBase` or a
-// saveTriage from an action handler. Re-read each property's current
-// local value at apply-time and SKIP any 'imported' decision whose
-// `local` no longer matches: the user (or another peer's chain) has
-// effectively voted "local" again. Without this guard the dialog's
+// The resolver dialog is async (user time) so state.triage may have
+// changed while it was open — a chain that landed via `applyChainToBase`
+// or a saveTriage from an action handler. Re-read each property's
+// current local value at apply-time and SKIP any 'imported' decision
+// whose `local` no longer matches: the user (or another peer's chain)
+// has effectively voted "local" again. Without this guard the dialog's
 // `imported` choice would silently overwrite fresh local edits made
 // during the dialog window. Audit M-2.
 export function applyHydrationDecisions(
@@ -200,86 +142,45 @@ export function applyHydrationDecisions(
     if (decisions[key] !== 'imported') continue
     if (currentLocalValue(c.id, c.property) !== c.local) continue
     if (c.property === 'color') {
-      if (c.imported) state.markers.set(c.id, c.imported)
-      else state.markers.delete(c.id)
+      patchEntry(state.triage, c.id, { color: c.imported })
     } else if (c.property === 'comment') {
-      if (c.imported) state.comments.set(c.id, c.imported)
-      else state.comments.delete(c.id)
+      patchEntry(state.triage, c.id, { comment: c.imported })
     } else if (c.property === 'fix') {
-      if (c.imported) state.fixes.set(c.id, c.imported)
-      else state.fixes.delete(c.id)
+      patchEntry(state.triage, c.id, { fix: c.imported })
     } else if (c.property === 'triage') {
       if (c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted') {
-        state.triageState.set(c.id, c.imported)
-        dropIgnoredEntriesFor(c.id)
+        // Mutex — clear the id's per-report ignore alongside the bucket.
+        patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
       } else {
-        state.triageState.delete(c.id)
+        patchEntry(state.triage, c.id, { triage: undefined })
       }
     }
   }
 }
 
 function currentLocalValue(id: string, property: ConflictProperty): string {
-  const state = syncHost().state
-  if (property === 'color') return state.markers.get(id) ?? ''
-  if (property === 'triage') return state.triageState.get(id) ?? ''
-  if (property === 'comment') return state.comments.get(id) ?? ''
-  if (property === 'fix') return state.fixes.get(id) ?? ''
+  const entry = syncHost().state.triage.get(id)
+  if (property === 'color') return entry?.color ?? ''
+  if (property === 'triage') return bucketOf(entry) ?? ''
+  if (property === 'comment') return entry?.comment ?? ''
+  if (property === 'fix') return entry?.fix ?? ''
   return ''
 }
 
-// Per-report ignore is rebuilt scoped to `ids`. The naive form —
-// a `[...state.ignoredIds]` scan inside the per-id loop — is
-// O(|state.ignoredIds| · |ids|); pre-bucket once per call so the
-// total cost is O(|state.ignoredIds| + |ids|). Audit M5 round-3.
+// Replace each in-scope id's live entry with `targetState`'s entry
+// (deleting it when empty). Mutual exclusion with triage: if the wire
+// entry carries a triage state we drop its ignoredReports — the action-
+// level invariant says triage and ignore can't coexist on a tab, and a
+// stale chain that carries both resolves in favor of triage (matches
+// the action handler, which clears ignore when setting triage). Out-of-
+// scope ids are untouched. `setEntry` normalizes the rest (legacy
+// `deleted` → bucket, prune empty fields, fresh arrays).
 export function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | Iterable<string>): void {
   const state = syncHost().state
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
-  const existingIgnoredByid = new Map<string, string[]>()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { id } = parts
-    if (!idsSet.has(id)) continue
-    const list = existingIgnoredByid.get(id)
-    if (list) list.push(key)
-    else existingIgnoredByid.set(id, [key])
-  }
   for (const id of idsSet) {
-    const entry: TriageEntry = targetState[id] ?? {}
-    if (entry.color) state.markers.set(id, entry.color)
-    else state.markers.delete(id)
-    // Triage state — preferred form `triage: 'fixed'|'invalid'|'deleted'`.
-    // Legacy `deleted: true` from older peers maps to 'deleted'.
-    if (entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted') {
-      state.triageState.set(id, entry.triage)
-    } else if (entry.deleted) {
-      state.triageState.set(id, 'deleted')
-    } else {
-      state.triageState.delete(id)
-    }
-    // Per-report ignore replaces the local set for this id with
-    // whatever the wire entry carries. Drop existing keys for the
-    // id first so a remote that cleared all reports for an id
-    // resets us; then re-add from the entry. Mutual exclusion
-    // with triage: if the wire entry carries a triage state we
-    // skip its ignoredReports — the action-level invariant says
-    // triage and ignore can't coexist on a tab, and a stale chain
-    // that carries both should resolve in favor of triage (matches
-    // the action handler, which clears ignore when setting triage).
-    const oldKeys = existingIgnoredByid.get(id)
-    if (oldKeys) {
-      for (const k of oldKeys) state.ignoredIds.delete(k)
-    }
-    const triageWasSet = entry.triage === 'fixed' || entry.triage === 'invalid' || entry.triage === 'deleted' || entry.deleted
-    if (!triageWasSet && Array.isArray(entry.ignoredReports)) {
-      for (const r of entry.ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
-      }
-    }
-    if (entry.comment) state.comments.set(id, entry.comment)
-    else state.comments.delete(id)
-    if (entry.fix) state.fixes.set(id, entry.fix)
-    else state.fixes.delete(id)
+    const entry = targetState[id]
+    const ignoredReports = bucketOf(entry) ? undefined : entry?.ignoredReports
+    setEntry(state.triage, id, { ...entry, ignoredReports })
   }
 }
