@@ -25,6 +25,7 @@ import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './dialogs/leave-workspace-dialog.js'
 import { openWorkspaceShareLinkDialog } from './dialogs/workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './dialogs/delete-report-dialog.js'
+import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { openBundle } from './bundle-load.js'
 import { graph2 } from './graph/state.js'
@@ -895,13 +896,39 @@ function renderSyncStatus(status) {
   btn.hidden = false
   const s = status ?? triageSync.status
   btn.dataset.status = s
+  // `persistenceDegraded` is orthogonal to the connection status — the
+  // socket can be online while local writes are paused (a future-version
+  // sessions blob, quota-exceeded, or a locked vault). Surface it as an
+  // amber ring (visible even when collapsed) + a label suffix + a
+  // tooltip. The off→on edge also raises a one-shot dialog; see the
+  // onPersistenceDegraded subscription below.
+  const degraded = triageSync.persistenceDegraded
+  btn.toggleAttribute('data-degraded', degraded)
+  btn.title = degraded
+    ? 'Changes aren’t being saved in this browser and won’t survive a reload (another tab may be on a different version, or storage is full).'
+    : ''
   const label = btn.querySelector('.sync-label')
-  if (label) label.textContent = SYNC_LABELS[s] ?? ''
+  if (label) label.textContent = (SYNC_LABELS[s] ?? '') + (degraded ? ' · not saving' : '')
 }
 // `renderSyncStatus` no-ops until the shadow DOM exists (`root` is
 // null pre-mount), so the subscription is safe to register at module
 // load; the initial paint happens in `mount()`.
 triageSync.onStatusChange(renderSyncStatus)
+// Reflect the persistence-degraded latch on the same badge, and raise a
+// one-shot explanatory dialog on each clean→degraded edge. The latch
+// fires once on subscribe with the current state and then on every
+// transition; the `degradedDialogOpen` guard keeps at most one dialog
+// up at a time (re-degrading after a dismiss/recovery re-notifies). The
+// client-sync passthrough defers this until the lazy sync chunk loads,
+// so the first fire lands after mount.
+let degradedDialogOpen = false
+triageSync.onPersistenceDegraded((degraded) => {
+  renderSyncStatus()
+  if (degraded && !degradedDialogOpen) {
+    degradedDialogOpen = true
+    openPersistenceDegradedDialog().finally(() => { degradedDialogOpen = false })
+  }
+})
 
 // Double-click a workspace row → inline rename. Replaces the label
 // span with an <input> on the fly; Enter or blur commits, Escape
