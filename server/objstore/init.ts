@@ -11,6 +11,7 @@ import { reapOrphans } from './reaper.ts'
 import { type ObjstoreHandlers, createObjstoreHandlers } from './handlers.ts'
 import { type ObjstoreRestDeps } from './rest.ts'
 import { type TokenSecret, newTokenSecret } from './tokens.ts'
+import { errStack } from '../util.ts'
 
 export type ObjstoreInitDeps = {
   // Pre-opened storage handle, sharing the SQLite connection with
@@ -76,7 +77,7 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
     // promise resolve so callers (startupReap awaiter + setInterval)
     // don't have to handle rejection.
     const p = reapOrphans(handle).catch((err) => {
-      console.warn('objstore reaper error:', (err as Error)?.stack ?? err)
+      console.warn('objstore reaper error:', errStack(err))
     }).finally(() => { if (inFlight === p) inFlight = null })
     inFlight = p
     return p

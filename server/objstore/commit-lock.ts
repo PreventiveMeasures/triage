@@ -42,8 +42,8 @@
 // any single-replica race that would surface as a "fail to
 // acquire" against ourselves.
 
-import { randomBytes } from 'node:crypto'
 import type { Handle } from './store.ts'
+import { errMsg, randomId } from '../util.ts'
 
 // Per-process holder id, minted once at module load. Identifies
 // THIS process across the cluster; the release predicate uses it
@@ -57,14 +57,14 @@ import type { Handle } from './store.ts'
 // otherwise the reaper would silently steal an in-flight REST
 // PUT's lock on the same process, defeating the cross-replica
 // serialization the lock exists for.
-const PROCESS_HOLDER_ID = randomBytes(16).toString('base64url')
+const PROCESS_HOLDER_ID = randomId()
 
 // Tests that simulate multiple replicas in one Node process need
 // distinguishable holder ids — pass via the optional `holderId`
 // parameter on the helpers below. Production code omits the
 // parameter and uses the per-process id.
 export function newHolderId(): string {
-  return randomBytes(16).toString('base64url')
+  return randomId()
 }
 
 // Default lease TTL. Tuned for the typical Vercel Function
@@ -266,7 +266,7 @@ export async function releaseAllForThisProcess(handle: Handle): Promise<void> {
   catch (err) {
     // Fall back to per-key best-effort releases — at least drop
     // any we can before the DB closes.
-    console.warn(`commit-lock shutdown bulk release failed: ${(err as Error)?.message ?? err}`)
+    console.warn(`commit-lock shutdown bulk release failed: ${errMsg(err)}`)
     for (const packed of snapshot) {
       const [tag, res] = unpackHeld(packed)
       try { await handle.releaseCommitLock.run(tag, res, PROCESS_HOLDER_ID) } catch {}

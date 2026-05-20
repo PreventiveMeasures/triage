@@ -20,12 +20,12 @@
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
 import { type BlobBackend } from './blob.ts'
 import { openFsBlobBackend } from './blob-fs.ts'
 import { stagingFilePath } from './fs.ts'
 import { KeyedAsyncLock } from './lock.ts'
 import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from '../db-stmt.ts'
+import { errMsg, randomId } from '../util.ts'
 
 // Default 1h, comfortably over a 50 MiB upload on a slow line. The
 // reaper walks the staging table on this cadence; rows older than
@@ -311,7 +311,7 @@ export function isValidContentHash(s: unknown): s is string {
 export function isValidSignature(s: unknown): s is string {
   return typeof s === 'string' && SIG_RE.test(s)
 }
-// `randomBytes(16).toString('base64url')` produces exactly this
+// `randomId()` (16 random bytes → base64url) produces exactly this
 // shape (22 chars, base64url alphabet, no padding). Validated on
 // the reaper-side path constructions so a tampered or migrated
 // row whose `staging_id` somehow contains separators / `..` can't
@@ -325,6 +325,21 @@ function rowFromDb(r: DbRow): ObjectRow {
   return {
     resourceTag: r.resource_tag, version: r.version, contentHash: r.content_hash,
     contentLength: r.content_length, signature: r.signature, putAt: r.put_at,
+  }
+}
+
+// The live-row fields every objstore wire frame carries (list result,
+// fetch token, PUT broadcast). `putAt` is a server-only debug column
+// the wire never includes. One projection so the three emit sites
+// (handlers.ts handleList / handleFetch, rest.ts PUT broadcast) can't
+// drift on the shape.
+export type ObjectMetaWire = {
+  resourceTag: string; version: number; contentHash: string; contentLength: number; signature: string
+}
+export function objectMetaWire(row: ObjectRow): ObjectMetaWire {
+  return {
+    resourceTag: row.resourceTag, version: row.version, contentHash: row.contentHash,
+    contentLength: row.contentLength, signature: row.signature,
   }
 }
 
@@ -556,7 +571,7 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
       return { ok: false, reason: 'workspace-full' }
     }
   }
-  const stagingId = randomBytes(16).toString('base64url')
+  const stagingId = randomId()
   await handle.blob.ensureWorkspace(input.workspaceTag)
   await handle.insertStaging.run(
     input.workspaceTag,
@@ -734,7 +749,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
       }
     }
   } catch (err) {
-    console.warn(`commitPut upsertLive failed: ${(err as Error)?.message ?? err}`)
+    console.warn(`commitPut upsertLive failed: ${errMsg(err)}`)
     // Caller's `if (!r.ok) abortPut` cleans the staging side.
     // The just-promoted live blob is now stranded (no row); the
     // reaper's reapCommittedForTag pass will unlink it on the

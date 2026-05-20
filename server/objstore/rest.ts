@@ -37,10 +37,12 @@ import {
   isValidStagingId,
   isValidTag,
   lockKey,
+  objectMetaWire,
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
 import { CommitLockContendedError, withCommitLock } from './commit-lock.ts'
 import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
+import { errStack } from '../util.ts'
 
 // Server-side fault codes that should surface as 500 `io-error`
 // rather than 400 `aborted`. `pipeline(req, ws)` rejects with the
@@ -143,7 +145,7 @@ export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, r
       // Outer catch is the forensic safety net — handleRestPut has
       // its own internal pipeline catch. Log `.stack` so a post-
       // mortem has the throw site.
-      if (deps.debug) console.warn('objstore PUT error:', (err as Error)?.stack ?? err)
+      if (deps.debug) console.warn('objstore PUT error:', errStack(err))
       if (res.headersSent) res.destroy()
       else deny(res, 500, 'internal')
     }
@@ -152,7 +154,7 @@ export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, r
   if (req.method === 'GET' && payload.op === 'get') {
     try { await handleRestGet(deps, res, route, payload) }
     catch (err: unknown) {
-      if (deps.debug) console.warn('objstore GET error:', (err as Error)?.stack ?? err)
+      if (deps.debug) console.warn('objstore GET error:', errStack(err))
       if (res.headersSent) res.destroy()
       else deny(res, 500, 'internal')
     }
@@ -394,11 +396,7 @@ async function handleRestPutLocked(
   deps.broadcast(route.tag, {
     type: 'objstore-put',
     workspaceTag: route.tag,
-    resourceTag: route.resourceTag,
-    version: result.row.version,
-    contentHash: result.row.contentHash,
-    contentLength: result.row.contentLength,
-    signature: result.row.signature,
+    ...objectMetaWire(result.row),
   }, null)
   if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${result.row.version}`)
 }

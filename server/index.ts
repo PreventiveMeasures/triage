@@ -81,7 +81,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
-import { debugTag } from './debug.ts'
+import { debugTag, errMsg, errStack, randomId } from './util.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -177,11 +177,11 @@ function loadConfig(path: string): ServerConfig {
   let raw: string
   try { raw = readFileSync(path, 'utf8') } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
-    console.error(`Failed to read ${path}:`, (err as Error)?.message ?? err); process.exit(1)
+    console.error(`Failed to read ${path}:`, errMsg(err)); process.exit(1)
   }
   try { return JSON.parse(raw) as ServerConfig }
   catch (err) {
-    console.error(`Failed to parse ${path} as JSON:`, (err as Error)?.message ?? err); process.exit(1)
+    console.error(`Failed to parse ${path} as JSON:`, errMsg(err)); process.exit(1)
   }
 }
 const SERVER_CONFIG = loadConfig(CONFIG_PATH)
@@ -527,7 +527,7 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
 // uniqueness; base64url so the wire stays JSON-text.
 const socketChallenge = new WeakMap<WebSocket, string>()
 function newChallenge(): string {
-  return randomBytes(16).toString('base64url')
+  return randomId()
 }
 
 // Per-connection authorization flag for the password-gated "first
@@ -1097,7 +1097,7 @@ const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     // above. Logs and ensures the response is terminated so the TCP
     // socket doesn't dangle.
     const p = handleRest(objstoreRestDeps, req, res).catch((err) => {
-      console.warn('REST handler error:', (err as Error)?.stack ?? err)
+      console.warn('REST handler error:', errStack(err))
       if (res.headersSent) { try { res.destroy() } catch {} }
       else { try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'internal' })) } catch {} }
     })
@@ -1293,7 +1293,7 @@ wss.on('connection', (socket: WebSocket, req) => {
         try {
           sendSaveError(socket, tagField, baseField, 'busy')
         } catch (err) {
-          console.warn('Handler error (type=workspace-save):', (err as Error)?.stack ?? err)
+          console.warn('Handler error (type=workspace-save):', errStack(err))
         }
       }
       return
@@ -1319,7 +1319,7 @@ wss.on('connection', (socket: WebSocket, req) => {
         // path, and prefer `.stack` over `.message` so the post-
         // mortem has the throw site.
         const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
-        console.warn(`Handler error (type=${typeStr}):`, (err as Error)?.stack ?? err)
+        console.warn(`Handler error (type=${typeStr}):`, errStack(err))
       } finally {
         const n = (socketInflight.get(socket) ?? 1) - 1
         if (n <= 0) socketInflight.delete(socket)
@@ -1345,7 +1345,7 @@ wss.on('connection', (socket: WebSocket, req) => {
   // violations). The previous `() => {}` left every per-connection
   // failure invisible. `close` fires after `error` and runs the
   // unsubscribe cleanup, so logging here doesn't risk leaking.
-  socket.on('error', (err: Error) => { console.warn('Socket error:', err?.message ?? err) })
+  socket.on('error', (err: Error) => { console.warn('Socket error:', errMsg(err)) })
 })
 
 // Periodic heartbeat sweep. Two-tick liveness window: a socket
@@ -1393,7 +1393,7 @@ httpServer.on('listening', () => {
 // the launcher sees a confusing crash rather than the bind
 // failure. Audit round-9 M2.
 httpServer.on('error', (err: Error) => {
-  console.error('Server error:', err?.stack ?? err)
+  console.error('Server error:', errStack(err))
   fireShutdown(1)
 })
 wss.on('error', (err: Error) => {
@@ -1404,7 +1404,7 @@ wss.on('error', (err: Error) => {
   // `pendingExitCode` from 0 → 1; without `fireShutdown`, a pre-
   // shutdown `wss.error` would log + drop and the launcher would
   // never know to treat the process as failed.
-  console.error('WS server error:', err?.stack ?? err)
+  console.error('WS server error:', errStack(err))
   fireShutdown(1)
 })
 
@@ -1413,7 +1413,7 @@ wss.on('error', (err: Error) => {
 // non-zero exit the launcher relies on.
 function fireShutdown(code: number): void {
   shutdown(code).catch((err) => {
-    console.warn('shutdown error:', (err as Error)?.stack ?? err)
+    console.warn('shutdown error:', errStack(err))
     process.exit(code === 0 ? 1 : code)
   })
 }
@@ -1510,7 +1510,7 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   if (heldBefore > 0) {
     if (DEBUG) console.log(`releasing ${heldBefore} commit-lock lease(s) held by this process`)
     try { await releaseAllForThisProcess(objstoreHandle) }
-    catch (err) { console.warn('commit-lock shutdown release error:', (err as Error)?.message ?? err) }
+    catch (err) { console.warn('commit-lock shutdown release error:', errMsg(err)) }
   }
   // objstoreHandle has no `close()`:
   //  - SQLite: it shares the workspace_revision handle's
@@ -1519,7 +1519,7 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   //    returns a stateless HTTP callable, and the SQLite-only
   //    `DatabaseSync` is the only thing that ever needs explicit
   //    shutdown. `handle.close()` below is itself a no-op on Neon.
-  try { await handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
+  try { await handle.close() } catch (err) { console.warn('DB close error:', errMsg(err)) }
   // Read `pendingExitCode` (not the parameter) so a re-entrant
   // `shutdown(1)` that landed during the drain wins over the
   // original `shutdown(0)`. See round-13 escalation note.
@@ -1537,11 +1537,11 @@ process.on('SIGTERM', () => fireShutdown(0))
 // so the launcher records a non-zero exit and the same teardown path
 // runs as on a SIGTERM. Audit round-11 observability.
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', (reason as Error)?.stack ?? reason)
+  console.error('Unhandled rejection:', errStack(reason))
   fireShutdown(1)
 })
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err?.stack ?? err)
+  console.error('Uncaught exception:', errStack(err))
   fireShutdown(1)
 })
 

@@ -27,6 +27,7 @@ import {
   isValidTag,
   listLive,
   lockKey,
+  objectMetaWire,
 } from './store.ts'
 import { CommitLockContendedError, withCommitLock } from './commit-lock.ts'
 import {
@@ -40,7 +41,7 @@ import {
   verifyObjstorePutSig,
 } from './sign.ts'
 import { type TokenSecret, mintGetToken, mintPutToken } from './tokens.ts'
-import { debugTag } from '../debug.ts'
+import { debugTag } from '../util.ts'
 
 export type ObjstoreDeps = {
   handle: Handle
@@ -61,6 +62,27 @@ function urlPathFor(tag: string, resourceTag: string): string {
   return `/api/objstore/${tag}/${resourceTag}`
 }
 
+// Shared gate every objstore handler runs after its message-specific
+// field checks: fetch the socket's challenge nonce, verify the signed
+// message against it, then re-confirm the socket is still OPEN — the
+// close handler may have fired during the verify await, and attaching
+// to / replying on a closed socket is the half-handshake leak case
+// (PR #4 review F4). Returns true when the caller may proceed.
+// Centralising the post-await readyState recheck keeps that
+// easy-to-forget invariant in one auditable place.
+async function verified<M extends { workspaceTag?: unknown }>(
+  deps: ObjstoreDeps, socket: WebSocket, msg: M, label: string,
+  verify: (m: M, nonce: string) => Promise<boolean>,
+): Promise<boolean> {
+  const nonce = deps.getNonce(socket)
+  if (typeof nonce !== 'string') return false
+  if (!await verify(msg, nonce)) {
+    if (deps.debug) console.warn(`reject objstore-${label}: bad sig`, debugTag(msg.workspaceTag as string))
+    return false
+  }
+  return socket.readyState === socket.OPEN
+}
+
 async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstorePutBeginMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidTag(msg.resourceTag)) return
   if (!isValidContentHash(msg.contentHash)) return
@@ -78,13 +100,7 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // hash + Ed25519 round-trip on a guaranteed-fail input. Input-
   // validation audit `server/objstore/handlers.ts:76`.
   if (msg.prevVersion != null && (typeof msg.prevVersion !== 'number' || !Number.isSafeInteger(msg.prevVersion))) return
-  const nonce = deps.getNonce(socket)
-  if (typeof nonce !== 'string') return
-  if (!await verifyObjstorePutSig(msg, nonce)) {
-    if (deps.debug) console.warn('reject objstore-put-begin: bad sig', debugTag(msg.workspaceTag))
-    return
-  }
-  if (socket.readyState !== socket.OPEN) return
+  if (!await verified(deps, socket, msg, 'put-begin', verifyObjstorePutSig)) return
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   // Auth gate for the FIRST action against a never-before-seen
@@ -140,17 +156,7 @@ function conflictReply(action: 'put' | 'delete', tag: string, resourceTag: strin
 async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreDeleteMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidTag(msg.resourceTag) || !isValidSignature(msg.signature)) return
   if (msg.prevVersion != null && (typeof msg.prevVersion !== 'number' || !Number.isSafeInteger(msg.prevVersion))) return
-  const nonce = deps.getNonce(socket)
-  if (typeof nonce !== 'string') return
-  if (!await verifyObjstoreDeleteSig(msg, nonce)) {
-    if (deps.debug) console.warn('reject objstore-delete: bad sig', debugTag(msg.workspaceTag))
-    return
-  }
-  // Symmetric with handlePutBegin / handleList / handleFetch — a
-  // socket that closed mid-verify is the half-handshake leak case;
-  // dropping the delete here keeps the protocol's "ack on this same
-  // socket" contract from racing the close handler. PR #4 review F4.
-  if (socket.readyState !== socket.OPEN) return
+  if (!await verified(deps, socket, msg, 'delete', verifyObjstoreDeleteSig)) return
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   const prev = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
@@ -191,33 +197,18 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
 
 async function handleList(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreListMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidSignature(msg.signature)) return
-  const nonce = deps.getNonce(socket)
-  if (typeof nonce !== 'string') return
-  if (!await verifyObjstoreListSig(msg, nonce)) {
-    if (deps.debug) console.warn('reject objstore-list: bad sig', debugTag(msg.workspaceTag))
-    return
-  }
-  if (socket.readyState !== socket.OPEN) return
+  if (!await verified(deps, socket, msg, 'list', verifyObjstoreListSig)) return
   const rows = await listLive(deps.handle, msg.workspaceTag)
   deps.send(socket, {
     type: 'objstore-list-result',
     workspaceTag: msg.workspaceTag,
-    resources: rows.map((r) => ({
-      resourceTag: r.resourceTag, version: r.version, contentHash: r.contentHash,
-      contentLength: r.contentLength, signature: r.signature,
-    })),
+    resources: rows.map(objectMetaWire),
   })
 }
 
 async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreFetchMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidTag(msg.resourceTag) || !isValidSignature(msg.signature)) return
-  const nonce = deps.getNonce(socket)
-  if (typeof nonce !== 'string') return
-  if (!await verifyObjstoreFetchSig(msg, nonce)) {
-    if (deps.debug) console.warn('reject objstore-fetch: bad sig', debugTag(msg.workspaceTag))
-    return
-  }
-  if (socket.readyState !== socket.OPEN) return
+  if (!await verified(deps, socket, msg, 'fetch', verifyObjstoreFetchSig)) return
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   // Direct (workspace_tag, resource_tag) lookup — `listLive(...).find()`
@@ -231,11 +222,8 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
   const { token, exp } = mintGetToken(deps.secret, tag, resourceTag, row.version)
   deps.send(socket, {
     type: 'objstore-fetch-token',
-    workspaceTag: tag, resourceTag,
-    version: row.version,
-    contentHash: row.contentHash,
-    contentLength: row.contentLength,
-    signature: row.signature,
+    workspaceTag: tag,
+    ...objectMetaWire(row),
     urlPath: urlPathFor(tag, resourceTag),
     token, expiresAt: exp,
   })
