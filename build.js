@@ -1,33 +1,36 @@
-// esbuild driver. We can't use the bare CLI because Lit components
-// want to import their own `.css` files as text strings (so the bytes
-// end up inside shadow DOM via unsafeCSS), while the top-level
-// `ui/*.css` entries still need to bundle as actual stylesheets. A
-// single `--loader:.css=...` flag can't express both, and esbuild
-// doesn't yet support `with { type: 'text' }` or bundled
-// `import source` for .css. The plugin below routes JS-imported `.css`
-// through the `text` loader and leaves entry-point CSS alone.
+// esbuild (JS) + lightningcss (CSS) driver. esbuild bundles the JS
+// entries and copies the static assets; lightningcss owns all CSS —
+// it bundles the top-level `ui/*.css` entries (resolving `@import`s)
+// and minifies the per-component stylesheets that Lit components
+// import as text strings (so the bytes end up inside shadow DOM via
+// unsafeCSS). esbuild can't express both CSS behaviors with one
+// `--loader:.css=...` flag, so JS-imported `.css` is routed through
+// the `text` loader (minified via lightningcss) while entry-point
+// CSS is bundled by lightningcss directly.
 import * as esbuild from 'esbuild'
-import { readFile } from 'node:fs/promises'
+import { bundle as lightningBundle, transform as lightningTransform } from 'lightningcss'
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
 import { resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minifyHTMLLiterals } from 'minify-html-literals'
 
 // `minify` is set in prod builds. esbuild's top-level `minify` flag
-// doesn't reach text-loaded contents, so we run a one-shot
-// `esbuild.transform` with `loader: 'css'` on each shadow-DOM
-// stylesheet here. That collapses whitespace, drops comments, and
-// shortens hex colors before the bytes get baked into the JS bundle
-// as a string literal — meaningful since some component sheets are
-// several KB. Dev (serve) skips it: minified CSS is harder to
-// inspect via the devtools, and the bundle size doesn't matter when
-// it's served from memory on localhost.
+// doesn't reach text-loaded contents, so we run each shadow-DOM
+// stylesheet through lightningcss here. That collapses whitespace,
+// drops comments, and shortens hex colors before the bytes get
+// baked into the JS bundle as a string literal — meaningful since
+// some component sheets are several KB. Dev (serve) skips it:
+// minified CSS is harder to inspect via the devtools, and the
+// bundle size doesn't matter when it's served from memory on
+// localhost.
 const litCssAsText = ({ minify } = {}) => ({
   name: 'lit-css-as-text',
   setup(build) {
     build.onResolve({ filter: /\.css$/ }, (args) => {
-      // Entry points have no importer; fall through to the default
-      // css loader. We only redirect imports originating from JS.
+      // Entry points have no importer; leave those to the
+      // lightningcss entry handler. We only redirect imports
+      // originating from JS.
       if (!args.importer || !args.importer.endsWith('.js')) return null
       return {
         path: resolvePath(dirname(args.importer), args.path),
@@ -35,12 +38,37 @@ const litCssAsText = ({ minify } = {}) => ({
       }
     })
     build.onLoad({ filter: /.*/, namespace: 'lit-css' }, async (args) => {
-      let contents = await readFile(args.path, 'utf8')
-      if (minify) {
-        const result = await esbuild.transform(contents, { loader: 'css', minify: true })
-        contents = result.code
-      }
+      const raw = await readFile(args.path)
+      const contents = minify
+        ? lightningTransform({ filename: args.path, code: raw, minify: true }).code.toString('utf8')
+        : raw.toString('utf8')
       return { contents, loader: 'text' }
+    })
+  },
+})
+
+// Bundle a top-level entry CSS file (e.g. ui/view.css) with
+// lightningcss: resolve its `@import`s into a single self-contained
+// stylesheet and (in prod) minify it. esbuild's css loader used to
+// do this; lightningcss does it faster and minifies more
+// aggressively (shorthand merging, dead-rule removal, etc.).
+const lightningCssEntry = ({ minify } = {}) => ({
+  name: 'lightning-css-entry',
+  setup(build) {
+    build.onResolve({ filter: /\.css$/ }, (args) => {
+      // Only claim true entry points. JS-imported `.css` (handled by
+      // lit-css-as-text) and `@import`s reach here too, but those
+      // carry an importer / a non-entry kind, so we pass them through.
+      if (args.kind !== 'entry-point') return null
+      return { path: resolvePath(args.path), namespace: 'lightning-entry' }
+    })
+    build.onLoad({ filter: /.*/, namespace: 'lightning-entry' }, (args) => {
+      // lightningcss inlines every `@import`, so the bytes esbuild
+      // gets back have no further imports/urls to resolve — it just
+      // emits them as the `.css` output (write to disk in build mode,
+      // serve from memory in serve mode).
+      const { code } = lightningBundle({ filename: args.path, minify: Boolean(minify) })
+      return { contents: code, loader: 'css', resolveDir: dirname(args.path) }
     })
   },
 })
@@ -74,12 +102,27 @@ const minifyLitTemplates = {
   },
 }
 
+// Bundle every top-level `ui/*.css` with lightningcss and write the
+// self-contained, minified result to `outdir`. Kept out of esbuild's
+// entryPoints so lightningcss — not esbuild's css loader — has the
+// final say on the emitted bytes.
+async function writeBundledCss(outdir) {
+  await mkdir(outdir, { recursive: true })
+  const cssFiles = (await readdir('ui')).filter((f) => f.endsWith('.css'))
+  await Promise.all(
+    cssFiles.map(async (f) => {
+      const { code } = lightningBundle({ filename: `ui/${f}`, minify: true })
+      await writeFile(`${outdir}/${f}`, code)
+    })
+  )
+}
+
 const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
   await esbuild.build({
     bundle: true,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true })],
-    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
+    entryPoints: ['ui/*.js', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
     loader: { '.html': 'copy', '.svg': 'copy', '.webmanifest': 'copy' },
     outdir: 'out',
     minify: true,
@@ -93,6 +136,7 @@ if (mode === 'build') {
     // expected on the page side too.
     format: 'esm',
   })
+  await writeBundledCss('out')
 } else if (mode === 'serve') {
   // Mirror the previous `--servedir=ui --outdir=ui` setup: esbuild
   // builds js/css in memory and serves them overlaid on the static
@@ -102,7 +146,7 @@ if (mode === 'build') {
   // would try to write over the source.
   const ctx = await esbuild.context({
     bundle: true,
-    plugins: [litCssAsText()],
+    plugins: [lightningCssEntry(), litCssAsText()],
     entryPoints: ['ui/*.js', 'ui/*.css'],
     outdir: 'ui',
     // The CLI's --serve flag implies both write:false and tolerating
