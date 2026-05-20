@@ -86,14 +86,19 @@
         "client/passkey-vault.js",
         "client/passkey-crypto.ts",
         "client/workspaces.js",
-        "server/index.ts",
-        "server/sync-handlers.ts",
-        "server/ws-server.ts",
-        "server/objstore/store.ts",
-        "server/objstore/store-neon.ts"
+        "server/objstore/store.ts"
       ],
       "rules": {
         "max-lines": "off",
+        "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
+        "server/sync-handlers.ts",
+        "server/ws-server.ts"
+      ],
+      "rules": {
         "max-lines-per-function": "off"
       }
     },
