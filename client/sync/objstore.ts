@@ -110,7 +110,6 @@ export type PutResult =
   | { ok: true; meta: { version: number; contentLength: number } }
   | { ok: false; reason: 'conflict'; currentVersion: number | null }
   | { ok: false; reason: 'workspace-full' }
-  | { ok: false; reason: 'contended' }
   // Operator-side first-action gate fired: this is the FIRST signed
   // action against a workspace tag that doesn't yet exist on the
   // server, and the connection hasn't authenticated. Caller surfaces
@@ -124,7 +123,6 @@ export type DeleteResult =
   | { ok: true; deletedVersion: number }
   | { ok: false; reason: 'conflict'; currentVersion: number | null }
   | { ok: false; reason: 'not-found' }
-  | { ok: false; reason: 'contended' }
 
 // `fetch(fileName)` returns plaintext content + version. `fileName`
 // is omitted from the result because the caller already knows it
@@ -594,15 +592,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       body: opts.bytes as Uint8Array<ArrayBuffer>,
     })
     if (!res.ok) {
-      // 503 + `{ error: 'contended' }`: server's commit-lock held
-      // by another in-flight op (server waited 2s before surfacing).
-      // Typed retryable so the caller can back off rather than die.
-      if (res.status === 503) {
-        let body: { error?: unknown } = {}
-        try { body = await res.json() as { error?: unknown } } catch {}
-        if (body.error === 'contended') return { ok: false, reason: 'contended' }
-        // Other 503s fall through to the generic-error throw.
-      }
       if (res.status === 409 || res.status === 410) {
         // 409 carries `currentVersion` for the retry loop; 410
         // (`gone`, staging row reaped) doesn't have a live version.
@@ -739,11 +728,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       return { ok: false, reason: 'conflict', current }
     }
     if (reply['reason'] === 'not-found') return { ok: false, reason: 'not-found' }
-    // `contended` — the server's commit-lock for this key was held
-    // by another in-flight commit/delete; surface as a typed
-    // retryable result so the caller can back off and retry rather
-    // than crash. Mirror of REST PUT 503 `contended`.
-    if (reply['reason'] === 'contended') return { ok: false, reason: 'contended' }
     throw new Error(`objstore: delete-error reason='${String(reply['reason'])}'`)
   }
 
@@ -849,14 +833,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (openTimeout) clearTimeout(openTimeout)
 
     // PUT `ciphertext` under `resourceTag` with optimistic concurrency,
-    // mapping the raw server result into a PutResult. `retryOnContended`
-    // re-runs the PUT (re-mints token + re-uploads bytes) on transient
-    // lock-contention; the signed put-begin is single-use per stagingId —
-    // a fresh begin mints a fresh stagingId, so this is NOT a token
-    // replay. Shared by `put` (reports) and `putBundle`.
+    // mapping the raw server result into a PutResult. Shared by `put`
+    // (reports) and `putBundle`.
     async function rawPutAndMap(resourceTag: string, ciphertext: Uint8Array, prevVersion: number | null): Promise<PutResult> {
-      const raw = await retryOnContendedImpl(() =>
-        _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion }))
+      const raw = await _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion })
       if (raw.ok) {
         // `prevVersion: null` is the server's "must not exist"
         // precondition — its success means the row was created
@@ -868,7 +848,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
-      if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
       if (raw.current) noteVersion(full, resourceTag, raw.current.version)
       return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
@@ -923,7 +902,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // server result into a DeleteResult. Shared by `deleteByName`
     // (reports) and `deleteBundle`.
     async function rawDeleteAndMap(resourceTag: string, prevVersion: number | null): Promise<DeleteResult> {
-      const raw = await retryOnContendedImpl(() => _rawDelete(full, resourceTag, prevVersion))
+      const raw = await _rawDelete(full, resourceTag, prevVersion)
       if (raw.ok) {
         // Delete drops the server-side row; the next PUT under this
         // tag starts a new incarnation at v1.
@@ -931,7 +910,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         return raw
       }
       if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
-      if (raw.reason === 'contended') return { ok: false, reason: 'contended' }
       if (raw.current) noteVersion(full, resourceTag, raw.current.version)
       return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
     }
@@ -1086,14 +1064,12 @@ type RawPutResult =
   | { ok: true; meta: { version: number; contentHash: string; contentLength: number } }
   | { ok: false; reason: 'conflict'; current: { version: number } | null }
   | { ok: false; reason: 'workspace-full' }
-  | { ok: false; reason: 'contended' }
   | { ok: false; reason: 'unauthorized' }
 
 type RawDeleteResult =
   | { ok: true; deletedVersion: number }
   | { ok: false; reason: 'conflict'; current: { version: number } | null }
   | { ok: false; reason: 'not-found' }
-  | { ok: false; reason: 'contended' }
 
 // Read the live row's version out of a REST PUT 409 `conflict` body.
 // Returns `null` for malformed bodies, missing fields, or non-safe
@@ -1108,50 +1084,6 @@ async function parseRestConflictVersion(res: Response): Promise<{ version: numbe
     }
   } catch {}
   return null
-}
-
-// Bounded retry for server-side `contended` (REST PUT 503 + body
-// `error: 'contended'`, or WS DELETE error reason 'contended').
-// The server already waited up to 2s polling the commit-lock
-// before surfacing — by the time we see `contended` the peer
-// holder is genuinely busy, so a short jittered backoff before
-// re-issuing the request gives the holder time to finish.
-//
-// Cap at 3 retries with exponential-ish jittered backoff
-// (100–200, 200–400, 400–800 ms). At the 4th attempt the typed
-// `contended` propagates to the caller — at that point the
-// holder has had ~1.4 s of additional client-side grace, on top
-// of the server's 2 s wait per attempt (each `_rawPut` /
-// `_rawDelete` re-issues a fresh WS request which the server
-// will again wait 2 s on). Total worst-case time before the
-// caller sees `contended`: ~10 s. Acceptable as a backstop;
-// typical contention clears in <100 ms.
-//
-// Exported (rather than closure-private) so the unit test in
-// `tests/client-objstore-contended.test.js` can pin the contract
-// directly with a synthetic op — testing it via real fetch/WS
-// would require spinning up a contention scenario end-to-end.
-export async function retryOnContendedImpl<T>(
-  op: () => Promise<T>,
-  // Test seam: injectable sleep so the test doesn't actually wait
-  // 700 ms across 3 retries. Production omits and uses real
-  // setTimeout.
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) }),
-): Promise<T> {
-  let r = await op()
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    if (!isContendedResult(r)) return r
-    const base = 100 * (2 ** (attempt - 1))
-    const jitter = Math.floor(Math.random() * base)
-    await sleep(base + jitter)
-    r = await op()
-  }
-  return r
-}
-function isContendedResult(r: unknown): boolean {
-  if (typeof r !== 'object' || r === null) return false
-  const o = r as { ok?: unknown; reason?: unknown }
-  return o.ok === false && o.reason === 'contended'
 }
 
 // Wire-shape guard. The objstore broadcast / list / fetch-token
