@@ -24,7 +24,7 @@ import { describe, it } from 'node:test'
 
 import { chainFrom, commitRevision, headFor, revisionExists } from '../server/db.ts'
 import { assertDurableSyncCommit, openNeonDb } from '../server/db-neon.ts'
-import { freshNeonDb } from './_neon-pglite.js'
+import { failNextCommit, freshNeonDb } from './_neon-pglite.js'
 
 let idCounter = 0
 function rev(over = {}) {
@@ -488,6 +488,99 @@ describe('commitRevision — concurrency under the per-workspace_tag advisory lo
           expectedBase = snapshot[i].id
         }
       }
+    } finally { await cleanup() }
+  })
+})
+
+describe('commitRevision — unique-violation recovery + error handling (Neon)', () => {
+  // `tryCommitNeon` wraps the gated INSERT in a pipelined transaction
+  // and, on a unique-violation, refetches to decide inserted vs
+  // stale-base — the cross-replica race the advisory lock can't stop (a
+  // sibling bypassing it with a direct INSERT: admin migration, repair
+  // script, future code path). PGlite is single-connection so the race
+  // can't happen naturally; `failNextCommit` stages the conflict the
+  // recovery is built for. Mirrors the SQLite multi-process tests, which
+  // inject via `insertRevision.run` — a path `tryCommitNeon` doesn't use.
+
+  it('unique-violation with a sibling at our seq (different id) → stale-base', async () => {
+    const { handle, cleanup } = await freshNeonDb()
+    try {
+      failNextCommit({
+        before: async (pg) => {
+          await pg.query(
+            `INSERT INTO workspace_revision
+               (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            ['tag-A', 1, 'sibling-id', null, 0, 'n', 'c', 's', Date.now()],
+          )
+        },
+        error: Object.assign(
+          new Error('duplicate key value violates unique constraint "workspace_revision_pkey"'),
+          { code: '23505' },
+        ),
+      })
+      const result = await commitRevision(handle, rev({ id: 'our-id' }))
+      assert.equal(result.kind, 'stale-base')
+      assert.equal(result.head, 'sibling-id')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['sibling-id'], 'only the sibling row is in the chain')
+    } finally { await cleanup() }
+  })
+
+  it('unique-violation where our id already landed → inserted (row is in the chain; broadcast)', async () => {
+    // We can't distinguish "our INSERT succeeded but the driver wrapped
+    // the ack as a unique-violation" from "a sibling committed our id
+    // first". Either way the row IS in the chain, so `inserted` (not
+    // `duplicate`) is the defensive choice — peers dedup by
+    // content-addressed id, so a re-broadcast is harmless.
+    const { handle, cleanup } = await freshNeonDb()
+    try {
+      failNextCommit({
+        before: async (pg) => {
+          await pg.query(
+            `INSERT INTO workspace_revision
+               (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            ['tag-A', 1, 'our-id', null, 0, 'n', 'c', 's', Date.now()],
+          )
+        },
+        error: Object.assign(
+          new Error('duplicate key value violates unique constraint "workspace_revision_workspace_tag_id_key"'),
+          { code: '23505' },
+        ),
+      })
+      const result = await commitRevision(handle, rev({ id: 'our-id' }))
+      assert.equal(result.kind, 'inserted')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['our-id'])
+    } finally { await cleanup() }
+  })
+
+  it('non-unique driver errors are NOT caught — they rethrow as rejections', async () => {
+    // The catch is narrow: only unique-violations become recovery
+    // outcomes. Network / connection errors must surface as real
+    // failures so the operator sees them.
+    const { handle, cleanup } = await freshNeonDb()
+    try {
+      failNextCommit({ error: new Error('connection refused') })
+      await assert.rejects(() => commitRevision(handle, rev({ id: 'x' })), /connection refused/u)
+      assert.deepEqual(await chainFrom(handle, 'tag-A', null), [], 'nothing inserted on a hard failure')
+    } finally { await cleanup() }
+  })
+
+  it('a failed commit does not wedge the workspace — the next commit succeeds', async () => {
+    // Neon analogue of the SQLite "thrown error releases the lock" test:
+    // the per-tag `pg_advisory_xact_lock` is transaction-scoped, so an
+    // aborted commit auto-releases it and a subsequent commit on the
+    // same workspace acquires cleanly.
+    const { handle, cleanup } = await freshNeonDb()
+    try {
+      failNextCommit({ error: new Error('synthetic failure') })
+      await assert.rejects(() => commitRevision(handle, rev({ id: 'r1' })), /synthetic failure/u)
+      const next = await commitRevision(handle, rev({ id: 'r2' }))
+      assert.equal(next.kind, 'inserted')
+      const chain = await chainFrom(handle, 'tag-A', null)
+      assert.deepEqual(chain.map((r) => r.id), ['r2'])
     } finally { await cleanup() }
   })
 })

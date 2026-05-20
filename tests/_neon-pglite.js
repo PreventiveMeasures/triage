@@ -32,6 +32,16 @@ import { openNeonDb } from '../server/db-neon.ts'
 let sharedPg = null
 let counter = 0
 
+// One-shot fault injection for `tryCommitNeon`'s unique-violation
+// recovery path. PGlite is single-connection, so a real cross-replica
+// race (a sibling bypassing the advisory lock with a direct INSERT)
+// can't be reproduced naturally; `failNextCommit` stages it instead.
+// The next pipelined commit transaction runs an optional `before(pg)`
+// (e.g. land the sibling row) and then throws `error`. The standalone
+// refetch queries inside the catch still hit real PGlite, so the
+// recovery reads true post-conflict state. Consumed once, then cleared.
+let pendingFault = null
+
 function sharedInstance() {
   if (!sharedPg) sharedPg = new PGlite()
   return sharedPg
@@ -61,12 +71,19 @@ function makeNeonSql(pg) {
     // eslint-disable-next-line unicorn/no-thenable
     then: (resolve, reject) => pg.query(text, params).then((r) => r.rows).then(resolve, reject),
   })
-  sql.transaction = (queries) =>
-    pg.transaction(async (tx) => {
+  sql.transaction = async (queries) => {
+    if (pendingFault) {
+      const fault = pendingFault
+      pendingFault = null
+      if (fault.before) await fault.before(pg)
+      throw fault.error
+    }
+    return pg.transaction(async (tx) => {
       const out = []
       for (const q of queries) out.push((await tx.query(q.text, q.params)).rows)
       return out
     })
+  }
   return sql
 }
 
@@ -86,6 +103,7 @@ mock.module('../server/neon-driver.ts', {
 // tests. `handle.close()` is a no-op on the Neon backend (stateless
 // HTTP); the shared PGlite is closed once, after all tests.
 export async function freshNeonDb() {
+  pendingFault = null
   const pg = sharedInstance()
   await pg.exec('DROP TABLE IF EXISTS workspace_revision')
   const connectionString = `pglite://test-${++counter}`
@@ -96,6 +114,12 @@ export async function freshNeonDb() {
     connectionString,
     cleanup: async () => { await handle.close() },
   }
+}
+
+// Stage a one-shot fault for the next pipelined commit transaction. See
+// `pendingFault`. `fault` is `{ before?: (pg) => Promise<void>, error }`.
+export function failNextCommit(fault) {
+  pendingFault = fault
 }
 
 after(async () => {
