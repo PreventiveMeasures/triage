@@ -34,6 +34,7 @@ import {
   MAX_CONTENT_LENGTH,
   abortPut,
   commitPut,
+  getLive,
   isValidStagingId,
   isValidTag,
   objectMetaWire,
@@ -69,7 +70,30 @@ export type ObjstoreRestDeps = {
 // version compare-and-set on the live row (see commitPut in store.ts).
 // Exactly one racer wins the CAS; the loser gets a 409 `conflict` and
 // rebases. This holds within a single process and across replicas —
-// there is no in-process mutex on the objstore plane.
+// there is no in-process mutex serialising commits. (The PUT *body*
+// does take a per-process single-writer reservation — `inFlightSids`
+// below — but that only rejects a duplicate upload of one staging
+// slot; it never makes distinct commits wait.)
+
+// Per-process single-writer guard for the REST PUT body. A put-token is
+// a REUSABLE bearer capability (tokens.ts) valid for its whole TTL, so a
+// client replaying it on overlapping PUTs — a retry that doesn't cancel
+// the in-flight request, a proxy re-issuing the PUT, a double-submit —
+// would otherwise have two requests stream into the SAME staging file
+// (same sid). On the FS backend `createWriteStream(…, { flags: 'w' })`
+// truncates, so the two writers clobber each other's bytes/size and BOTH
+// can fail (size-mismatch 400 + promote-race 500) with neither
+// committing. `inFlightSids` admits exactly ONE in-flight upload per
+// staging id; a concurrent same-token PUT is rejected (409) before it
+// can open a second writer. The slot is held only across the body +
+// commit and released in a `finally` (and bounded by the REST idle-body
+// timeout in server/http.ts so a slow-loris can't pin it). It is NOT a
+// commit lock — commits stay lock-free on the version-CAS above. It's
+// per-process: the Vercel multi-replica path leans on `allowOverwrite:
+// true` + the commit CAS + content-addressing for cross-replica
+// correctness (a duplicate that lands on another replica can't clobber a
+// shared local file and still loses the CAS), not on this set.
+const inFlightSids = new Set<string>()
 
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
 // alphabet, case-sensitive. The `?…` query is permitted but ignored
@@ -229,26 +253,44 @@ async function handleRestPutBody(
   if (!await deps.handle.selectStaging.get(route.tag, route.resourceTag, payload.sid)) {
     deny(res, 410, 'gone'); return
   }
-  // Stream the upload + commit, no lock. The commit's version-CAS
-  // arbitrates concurrent commits; the staging row is kept fresh for
-  // the reaper by its `begun_at` (+ the after-body refresh), not by a
-  // mutex. See the rationale in handleRestPut above.
-  const result = await runUploadAndCommit(deps, route, payload, declared, req, res)
-  if (result.handled) return
-  if (!result.commit.ok) { denyCommitFailure(res, result.commit); return }
-  const row = result.commit.row
-  res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({
-    version: row.version,
-    contentHash: row.contentHash,
-    contentLength: row.contentLength,
-  }))
-  deps.broadcast(route.tag, {
-    type: 'objstore-put',
-    workspaceTag: route.tag,
-    ...objectMetaWire(row),
-  }, null)
-  if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
+  // Single-writer guard (see `inFlightSids`): reject a concurrent PUT
+  // replaying this same token before it can open a second writer on the
+  // shared staging file. `has` + `add` run with no `await` between them,
+  // so they're atomic on Node's single thread — exactly one concurrent
+  // PUT passes. The 409 echoes the live version like a commit-time
+  // conflict so the client rebases / re-handshakes.
+  if (inFlightSids.has(payload.sid)) {
+    denyConflict(res, (await getLive(deps.handle, route.tag, route.resourceTag))?.version ?? null)
+    return
+  }
+  inFlightSids.add(payload.sid)
+  try {
+    // Stream the upload + commit, no lock. The commit's version-CAS
+    // arbitrates concurrent commits; the staging row is kept fresh for
+    // the reaper by its `begun_at` (+ the after-body refresh), not by a
+    // mutex. See the rationale in handleRestPut above.
+    const result = await runUploadAndCommit(deps, route, payload, declared, req, res)
+    if (result.handled) return
+    if (!result.commit.ok) { denyCommitFailure(res, result.commit); return }
+    const row = result.commit.row
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      version: row.version,
+      contentHash: row.contentHash,
+      contentLength: row.contentLength,
+    }))
+    deps.broadcast(route.tag, {
+      type: 'objstore-put',
+      workspaceTag: route.tag,
+      ...objectMetaWire(row),
+    }, null)
+    if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
+  } finally {
+    // Release the slot on every exit (success, commit failure, pipeline
+    // error, idle-timeout abort) so a later legitimate retry isn't
+    // wrongly rejected.
+    inFlightSids.delete(payload.sid)
+  }
 }
 
 // The body of a PUT: stream the upload into the staging slot, verify
