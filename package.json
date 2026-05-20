@@ -41,7 +41,6 @@
   "devDependencies": {
     "@exodus/stasis": "^1.0.0-alpha.1",
     "@noble/ciphers": "^2.2.0",
-    "@noble/curves": "^2.2.0",
     "@preventive/terminal": "^1.2.1",
     "@rray/frontend": "^1.0.0",
     "@stylistic/stylelint-plugin": "^5.1.0",
