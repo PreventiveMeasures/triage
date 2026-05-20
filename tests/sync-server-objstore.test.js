@@ -956,25 +956,22 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
   })
 
   it('concurrent PUTs with the same put-token — exactly one commits, the other loses without corrupting the blob', async () => {
-    // Two requests with the same token race the same staging slot.
-    // With the per-resource lock removed, they no longer serialise:
-    // exactly one wins the version-CAS and replies 200; the other
-    // loses with whichever code matches how far it got before the
-    // winner consumed the shared staging slot — all three are correct:
-    //   409 conflict — the loser reached the version-CAS (or the
-    //     early-out live-version check) and lost there. This is the
-    //     primary documented loss path (rest.ts:178, store.ts:154).
-    //   410 gone — the winner's commit deleted the shared staging row
-    //     before the loser's staging lookup (store.ts:547).
-    //   500 io-error — on the FS backend the winner's promote renamed
-    //     the staging file away before the loser's stat/promote
-    //     (store.ts:567/607).
-    // The SAFETY property — which this test exists to pin —
-    // is that the committed blob is never corrupted: both PUTs carry
-    // the SAME signed contentHash (so the same bytes), the live blob
-    // is content-addressed at that hash, and the loser can only ever
-    // (idempotently) rewrite the identical bytes. We verify the final
-    // blob reads back byte-for-byte.
+    // Two requests with the same token race the same staging slot. The
+    // REST single-writer guard (`inFlightSids`, rest.ts) admits exactly
+    // one writer: that PUT reserves the sid, streams the body, and
+    // commits → 200. The other finds the sid in flight and is rejected
+    // up front, before it can open a second writer on the shared file —
+    // so the loss is deterministic:
+    //   409 conflict — the sid is still in flight (winner mid-upload);
+    //     the reject echoes the live version like a commit-time conflict.
+    //   410 gone — the winner already finished and the staging row is
+    //     gone, so the loser bails at the precheck (or at commit).
+    // Crucially the loser never streams or promotes, so the old clobber
+    // outcomes (size-mismatch 400 / promote-race 500, with BOTH failing
+    // under load) can no longer happen. The SAFETY property this test
+    // pins: the committed blob is never corrupted — both PUTs carry the
+    // SAME signed contentHash, the live blob is content-addressed at
+    // that hash, and we verify it reads back byte-for-byte.
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
@@ -1000,12 +997,59 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const statuses = [r1.status, r2.status].toSorted()
     assert.equal(statuses[0], 200, 'exactly one PUT commits (200)')
     assert.ok(
-      statuses[1] === 409 || statuses[1] === 410 || statuses[1] === 500,
-      `the other loses with 409, 410, or 500, got ${statuses[1]}`,
+      statuses[1] === 409 || statuses[1] === 410,
+      `the other is rejected by the in-flight guard with 409 or 410, got ${statuses[1]}`,
     )
     // The committed blob is intact — fetch it back and compare bytes.
     const fetched = await fetchBlob(c, sk, tag, 'r-concurrent-replay', httpOrigin)
     assert.ok(fetched.body, `resource is live + readable after the race (got ${JSON.stringify({ notFound: fetched.notFound, httpStatus: fetched.httpStatus })})`)
+    assert.equal(Buffer.compare(fetched.body, payload), 0, 'committed blob bytes are uncorrupted')
+    c.ws.close()
+  })
+
+  it('many concurrent PUTs replaying ONE token — in-flight guard admits exactly one writer; all losers 409/410, never 400/500', async () => {
+    // Stronger fan-out version of the pair test above: a client that
+    // replays one issued put-token across N overlapping requests (e.g.
+    // an over-eager retry layer firing several attempts without
+    // cancelling the in-flight ones). The single-writer guard
+    // (`inFlightSids`) must admit exactly ONE of them; every other
+    // request is rejected before opening a writer, so none can clobber
+    // the shared staging file. Pre-guard, concurrent writers truncating
+    // the same file could leave ZERO winners (size-mismatch 400 +
+    // promote-race 500); this test pins that exactly one wins and the
+    // losses are the deterministic rejections (409 in-flight / 410
+    // gone), never 400/500.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    await subscribeWS(c, sk, tag)
+    const payload = Buffer.from('one-token-many-puts', 'utf8')
+    const fields = {
+      workspaceTag: tag, resourceTag: 'r-inflight-fanout', prevVersion: null,
+      expectedLength: payload.byteLength,
+      contentHash: syntheticHash(),
+    }
+    const signature = await signPut(sk, fields, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'objstore-put-begin', ...fields, signature }))
+    const tok = await c.recv((m) => m.type === 'objstore-put-token')
+    const opts = {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${tok.token}`, 'content-type': 'application/octet-stream' },
+      body: payload,
+    }
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => fetch(httpOrigin + tok.urlPath, opts)),
+    )
+    const statuses = results.map((r) => r.status)
+    const wins = statuses.filter((s) => s === 200)
+    const losses = statuses.filter((s) => s !== 200)
+    assert.equal(wins.length, 1, `exactly one PUT commits; got statuses ${JSON.stringify(statuses)}`)
+    assert.ok(
+      losses.every((s) => s === 409 || s === 410),
+      `every loser is rejected by the in-flight guard (409/410), never 400/500; got ${JSON.stringify(statuses)}`,
+    )
+    // The single committed blob is intact and readable.
+    const fetched = await fetchBlob(c, sk, tag, 'r-inflight-fanout', httpOrigin)
+    assert.ok(fetched.body, `resource is live + readable (got ${JSON.stringify({ notFound: fetched.notFound, httpStatus: fetched.httpStatus })})`)
     assert.equal(Buffer.compare(fetched.body, payload), 0, 'committed blob bytes are uncorrupted')
     c.ws.close()
   })

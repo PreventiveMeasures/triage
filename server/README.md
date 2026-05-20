@@ -439,7 +439,9 @@ PUT  /api/objstore/{workspaceTag}/{resourceTag}
     400 { error: "aborted" }                       — pipe failure mid-body (client drop, overrun)
     401 { error: "unauthorized" }                  — missing / bad / expired token
     405 { error: "method-not-allowed" }            — token op ≠ method (put-token used as GET, etc.)
-    409 { error: "conflict" }                      — prev_version raced (peer commit / delete landed)
+    409 { error: "conflict" }                      — prev_version raced (peer commit / delete landed),
+                                                     OR a concurrent PUT replaying this same token is
+                                                     already in flight (single-writer `inFlightSids` guard)
     410 { error: "gone" }                          — staging row dropped (TTL, abort, racing commit)
     411 { error: "length-required" }               — missing / non-integer / > 100 MiB Content-Length
     500 { error: "io-error" }                      — fsync / rename / parent-fsync / stat failure
