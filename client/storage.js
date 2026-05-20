@@ -853,6 +853,17 @@ async function rawReadAndWrite(name, transform) {
   bumpWriteGen(name)
 }
 
+// Build the per-entry reseal transform for an encryption migration:
+// on encrypt (`seal` given) a plaintext entry is sealed under `aad`
+// and an already-enveloped one is skipped; on decrypt (`open` given),
+// the inverse. Returning null means "already in the target state — no
+// write". Shared by the reports and bundles sweeps below.
+function migrationTransform(crypto, aad) {
+  return crypto.seal
+    ? (bytes) => (hasEnvelopeMagic(bytes) ? null : crypto.seal(bytes, aad))
+    : (bytes) => (hasEnvelopeMagic(bytes) ? crypto.open(bytes, aad) : null)
+}
+
 // CONTRACT: must be called from inside an EXCLUSIVE VAULT_LOCK
 // acquisition (i.e. from the migration callback passed to
 // `enableEncryption` / `disableEncryption`). The helper itself
@@ -869,37 +880,19 @@ async function rawReadAndWrite(name, transform) {
 // between `listFiles` and the read) is swallowed so a concurrent
 // delete doesn't abort the whole sweep; every other error
 // propagates and aborts.
-export async function migrateOpfsFilesEncrypt({ seal }) {
+async function migrateOpfsFiles(crypto) {
   const names = await listFiles()
   for (const name of names) {
     try {
-      await rawReadAndWrite(name, (bytes) => {
-        if (hasEnvelopeMagic(bytes)) return null  // already enveloped
-        return seal(bytes, getEnvelopeAadForOpfs(name))
-      })
+      await rawReadAndWrite(name, migrationTransform(crypto, getEnvelopeAadForOpfs(name)))
     } catch (err) {
       if (err instanceof DOMException && err.name === 'NotFoundError') continue
       throw err
     }
   }
 }
-
-// Same VAULT_LOCK exclusive-hold precondition as
-// `migrateOpfsFilesEncrypt`.
-export async function migrateOpfsFilesDecrypt({ open }) {
-  const names = await listFiles()
-  for (const name of names) {
-    try {
-      await rawReadAndWrite(name, (bytes) => {
-        if (hasEnvelopeMagic(bytes)) return open(bytes, getEnvelopeAadForOpfs(name))
-        return null  // already plaintext
-      })
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'NotFoundError') continue
-      throw err
-    }
-  }
-}
+export const migrateOpfsFilesEncrypt = ({ seal }) => migrateOpfsFiles({ seal })
+export const migrateOpfsFilesDecrypt = ({ open }) => migrateOpfsFiles({ open })
 
 // Migration for the bundles directory — parallel to the reports
 // migration above. The bundle bytes are sealed under
@@ -957,46 +950,29 @@ async function rawReadAndWriteBundle(dir, opfsKey, transform) {
   await writeOpfsFile(writeFh, next)
 }
 
-export async function migrateOpfsBundlesEncrypt({ seal }) {
-  const { dir, keys } = await listBundleStorageKeys()
-  if (!dir) return
-  for (const k of keys) {
-    const slot = bundleAadSlotForOpfsKey(k)
-    // null = filename outside the expected shape (`sha512-...` or
-    // `_meta.json`). Skip rather than seal under a misderived AAD —
-    // a stray file dropped here by a future code path or by user
-    // tooling shouldn't be silently re-encrypted under a slot we
-    // can't reverse on read.
-    if (slot === null) continue
-    try {
-      await rawReadAndWriteBundle(dir, k, (bytes) => {
-        if (hasEnvelopeMagic(bytes)) return null  // already enveloped
-        return seal(bytes, getEnvelopeAadForBundle(slot))
-      })
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'NotFoundError') continue
-      throw err
-    }
-  }
-}
-
-export async function migrateOpfsBundlesDecrypt({ open }) {
+// Bundles sweep — parallel to migrateOpfsFiles, but keyed by the
+// on-disk OPFS key reversed to its AAD slot via bundleAadSlotForOpfsKey.
+// A key outside the expected `sha512-...` / `_meta.json` shape returns
+// a null slot and is skipped rather than resealed under a misderived
+// AAD (a stray file dropped here shouldn't be silently re-encrypted
+// under a slot we can't reverse on read). Same EXCLUSIVE VAULT_LOCK
+// contract as migrateOpfsFiles.
+async function migrateOpfsBundles(crypto) {
   const { dir, keys } = await listBundleStorageKeys()
   if (!dir) return
   for (const k of keys) {
     const slot = bundleAadSlotForOpfsKey(k)
     if (slot === null) continue
     try {
-      await rawReadAndWriteBundle(dir, k, (bytes) => {
-        if (hasEnvelopeMagic(bytes)) return open(bytes, getEnvelopeAadForBundle(slot))
-        return null  // already plaintext
-      })
+      await rawReadAndWriteBundle(dir, k, migrationTransform(crypto, getEnvelopeAadForBundle(slot)))
     } catch (err) {
       if (err instanceof DOMException && err.name === 'NotFoundError') continue
       throw err
     }
   }
 }
+export const migrateOpfsBundlesEncrypt = ({ seal }) => migrateOpfsBundles({ seal })
+export const migrateOpfsBundlesDecrypt = ({ open }) => migrateOpfsBundles({ open })
 
 // Vault state change handler — wipe the per-name read cache so the
 // next read of an encrypted file goes back to OPFS / LS and the
