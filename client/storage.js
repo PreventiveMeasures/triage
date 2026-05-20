@@ -75,6 +75,31 @@ async function peelOpfsEnvelope(bytes, name) {
   return await openForOpfs(bytes, name)
 }
 
+// Seal `bytes` for at-rest storage under the vault session key, with a
+// mid-save consistency guard. Throws (after `onAbort`) when the vault is
+// enabled-but-locked — nothing plaintext lands while encryption is on —
+// and throws (after `onAbort`) when the session key changed between the
+// pre-seal snapshot and the post-seal: the half-applied bytes are
+// inconsistent with the live vault state, so the caller must retry under
+// the new key. `label` names the entry in the error message; `onAbort`
+// lets the reports path bump writeGen (invalidating any in-flight read)
+// before the throw — the bundle path, which has no read cache, passes
+// none. Returns the bytes to write: sealed when the vault is unlocked,
+// unchanged when encryption is off.
+async function sealForStorage(bytes, sealFn, slot, label, onAbort = () => {}) {
+  if (isEncryptionEnabled() && !getSessionKey()) {
+    onAbort()
+    throw new Error(`storage: vault locked, cannot save ${label}`)
+  }
+  const sealedWithKey = getSessionKey()
+  const out = sealedWithKey ? await sealFn(bytes, slot) : bytes
+  if (getSessionKey() !== sealedWithKey) {
+    onAbort()
+    throw new Error(`storage: vault state changed mid-save for ${label}; retry`)
+  }
+  return out
+}
+
 function getOpfsDir() {
   return openOpfsDir(OPFS_DIR, { create: true, warnOnce: true })
 }
@@ -261,21 +286,7 @@ export async function saveFile(name, content) {
     // "everything written while encryption is on is encrypted"
     // invariant. Caller surfaces via the same "vault locked"
     // path that switchToFile already handles (unlock + retry).
-    if (isEncryptionEnabled() && !getSessionKey()) {
-      bumpWriteGen(name)
-      throw new Error(`storage: vault locked, cannot save "${name}"`)
-    }
-    const sealedWithKey = getSessionKey()
-    if (sealedWithKey) bytes = await sealForOpfs(bytes, name)
-    if (getSessionKey() !== sealedWithKey) {
-      // Vault flipped between key capture and seal completion.
-      // Don't write — the bytes are inconsistent with the current
-      // vault state. Caller should re-issue a save; the bumpWriteGen
-      // we already did invalidates any in-flight readFile's cached
-      // result. Surface as a rejection so the caller can retry.
-      bumpWriteGen(name)
-      throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
-    }
+    bytes = await sealForStorage(bytes, sealForOpfs, name, `"${name}"`, () => bumpWriteGen(name))
     const fh = await dir.getFileHandle(name, { create: true })
     const writable = await fh.createWritable()
     try {
@@ -318,16 +329,7 @@ export async function saveFile(name, content) {
   let lsBytes = encodeUtf8(content)
   lsBytes = await gzipBytes(lsBytes)
   // Same locked-vault rejection as the OPFS branch above.
-  if (isEncryptionEnabled() && !getSessionKey()) {
-    bumpWriteGen(name)
-    throw new Error(`storage: vault locked, cannot save "${name}"`)
-  }
-  const lsSealedWithKey = getSessionKey()
-  if (lsSealedWithKey) lsBytes = await sealForOpfs(lsBytes, name)
-  if (getSessionKey() !== lsSealedWithKey) {
-    bumpWriteGen(name)
-    throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
-  }
+  lsBytes = await sealForStorage(lsBytes, sealForOpfs, name, `"${name}"`, () => bumpWriteGen(name))
   const stored = lsBytes.toBase64()
   try {
     localStorage.setItem(LS_REPORT_PREFIX + name, stored)
@@ -463,16 +465,7 @@ export async function saveFileBytes(name, bytes) {
     // Refuse the write when the vault is enabled-but-locked (same
     // invariant as saveFile — no plaintext bytes land while
     // encryption is supposed to be on).
-    if (isEncryptionEnabled() && !getSessionKey()) {
-      bumpWriteGen(name)
-      throw new Error(`storage: vault locked, cannot save "${name}"`)
-    }
-    const sealedWithKey = getSessionKey()
-    const onDisk = sealedWithKey ? await sealForOpfs(bytes, name) : bytes
-    if (getSessionKey() !== sealedWithKey) {
-      bumpWriteGen(name)
-      throw new Error(`storage: vault state changed mid-save for "${name}"; retry`)
-    }
+    const onDisk = await sealForStorage(bytes, sealForOpfs, name, `"${name}"`, () => bumpWriteGen(name))
     const dir = await getOpfsDir()
     if (dir) {
       const fh = await dir.getFileHandle(name, { create: true })
@@ -621,14 +614,7 @@ async function readBundleMeta(dir) {
 
 async function writeBundleMeta(dir, meta) {
   let bytes = encodeUtf8(JSON.stringify(meta))
-  if (isEncryptionEnabled() && !getSessionKey()) {
-    throw new Error('storage: vault locked, cannot save bundle metadata')
-  }
-  const sealedWithKey = getSessionKey()
-  if (sealedWithKey) bytes = await sealForBundle(bytes, BUNDLE_META_SLOT)
-  if (getSessionKey() !== sealedWithKey) {
-    throw new Error('storage: vault state changed mid-save for bundle metadata; retry')
-  }
+  bytes = await sealForStorage(bytes, sealForBundle, BUNDLE_META_SLOT, 'bundle metadata')
   try { await dir.removeEntry(BUNDLE_META_FILE) } catch {}
   const fh = await dir.getFileHandle(BUNDLE_META_FILE, { create: true })
   await writeOpfsFile(fh, bytes)
@@ -714,17 +700,7 @@ export async function saveBundle(name, content) {
     // Refuse writes when the vault is enabled-but-locked. Same
     // invariant as saveFile / saveTriage: nothing lands plaintext
     // on disk under an enabled vault.
-    if (isEncryptionEnabled() && !getSessionKey()) {
-      throw new Error(`storage: vault locked, cannot save bundle "${name}"`)
-    }
-    // Capture sessionKey BEFORE the async seal so a sibling-tab
-    // disable can't slip in between key-capture and write —
-    // mirrors saveFile's vault-state-consistency check.
-    const sealedWithKey = getSessionKey()
-    if (sealedWithKey) storeBytes = await sealForBundle(storeBytes, integrity)
-    if (getSessionKey() !== sealedWithKey) {
-      throw new Error(`storage: vault state changed mid-save for bundle "${name}"; retry`)
-    }
+    storeBytes = await sealForStorage(storeBytes, sealForBundle, integrity, `bundle "${name}"`)
     try { await dir.removeEntry(opfsKey) } catch {}
     const fh = await dir.getFileHandle(opfsKey, { create: true })
     await writeOpfsFile(fh, storeBytes)
