@@ -9,6 +9,24 @@ export type ViewMode = 'table' | 'list' | 'grouped' | 'kanban' | 'focus'
 export type CurrentView = 'findings' | 'files' | 'bundles'
 export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
 
+// One finding's triage annotations, keyed by `tabKey(f)` in
+// `state.triage`. Unset fields are absent (not empty): the helpers in
+// `triage-entry.ts` prune emptied fields and drop the id entirely when
+// nothing remains, so iteration / persistence / GC only ever see
+// meaningful ids. `ignoredReports` lists the report names in which the
+// finding is per-report ignored — the explicit-list replacement for the
+// old `${reportName}\0${id}` composite Set key. `deleted` is the legacy
+// persisted/wire form, migrated to `triage: 'deleted'` on load and never
+// written back in-memory.
+export type TriageEntry = {
+  color?: string
+  triage?: TriageBucket
+  comment?: string
+  fix?: string
+  ignoredReports?: string[]
+  deleted?: boolean
+}
+
 // Deepview state schema. Fields with ad-hoc / nested shapes (parsed
 // bundle metadata, ingested findings) stay `unknown` for now — they
 // can be tightened as their consumers convert to TypeScript. The

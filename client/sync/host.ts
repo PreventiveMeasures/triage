@@ -10,7 +10,7 @@
 // reads) via `onSyncHostInstalled(cb)` so they don't reach for the
 // host while it's still unset.
 
-import type { State, TriageBucket } from '../state.ts'
+import type { State, TriageBucket, TriageEntry } from '../state.ts'
 
 // Structural views of the parent-module types `client/sync/` actually
 // reads. Workspaces and bundles are JS-typed at source — we copy the
@@ -34,7 +34,7 @@ export type SyncHostAnalyzeResult =
   | { recognized: true, count: number, source?: string }
   | { recognized: false, count: number }
 
-export type { TriageBucket }
+export type { TriageBucket, TriageEntry }
 
 export interface SyncHost {
   // Mutable app state — sync reads/writes triage maps live. Identity-

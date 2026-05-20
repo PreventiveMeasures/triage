@@ -11,9 +11,9 @@
 // reads and writes here hit live app state. No sync module state
 // (sessions, transport, timers) is touched.
 
-import { type TriageBucket, syncHost } from './host.ts'
+import { type TriageBucket, type TriageEntry, syncHost } from './host.ts'
 import { makeIgnoredKey, splitIgnoredKey } from '../../common/ignored-key.js'
-import type { Conflict, ConflictProperty, TriageEntry, TriageStateMap } from './triage-changeset.ts'
+import type { Conflict, ConflictProperty, TriageStateMap } from './triage-changeset.ts'
 
 // Collect every per-report ignore key matching `id`, returned as
 // the wire-shaped `[reportName, ...]` array. One-off callers
