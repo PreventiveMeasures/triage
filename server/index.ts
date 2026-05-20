@@ -74,13 +74,14 @@
 import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { debugTag, errMsg, errStack, randomId } from './util.ts'
 import { Peer } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
+import { createHub } from './hub.ts'
+import { type AuthenticateMsg, createAuth } from './auth.ts'
 import { MAX_CIPHERTEXT_LEN, MAX_FIELD_LEN, validCiphertextShape, validNonce, validTagSigBase } from './validation.ts'
 import { loadConfig } from './config.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
@@ -130,26 +131,6 @@ const {
 // Apply the validated commit-lock lease to the lock module. The setter
 // threads it via opts.leaseMs to withCommitLock at every call site.
 setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
-
-// Password gate (the only auth method today). The configured password
-// is parsed/validated in ./config.ts; here we derive its HMAC under a
-// per-process random key:
-//   * PASSWORD_HMAC_KEY — 32 random bytes, static for the process
-//     lifetime, never persisted, never leaves this module;
-//   * CONFIGURED_PASSWORD_HMAC = HMAC(key, configured), computed once
-//     so the raw password isn't retained past boot;
-//   * each `authenticate` HMACs the submitted password and compares
-//     with `timingSafeEqual`.
-// Fixed 32-byte digests let `timingSafeEqual` run without a
-// length-equal precondition (no length leak); any residual timing
-// variance reveals only HMAC bytes useless without the per-process
-// key. `null` is the "no gate" sentinel every other check reads
-// (configured password absent / empty).
-const PASSWORD_HMAC_KEY: Uint8Array<ArrayBuffer> = new Uint8Array(randomBytes(32))
-const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null =
-  CONFIG_PASSWORD == null || CONFIG_PASSWORD === ''
-    ? null
-    : new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(CONFIG_PASSWORD, 'utf8').digest())
 
 // Same-origin gate for the WS upgrade and REST data plane (see
 // ./origin.ts). `TRUST_PROXY_ENV` (from config) also feeds the
@@ -267,41 +248,6 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
   process.exit(1)
 }
 
-// Per-connection authorization flag for the password-gated "first
-// action in a workspace" path (`Peer.authorized`). Once a connection
-// completes the `authenticate { password }` handshake, every
-// subsequent action on that socket bypasses the gate — the
-// access-control surface is the per-message Ed25519 signature (the
-// seed-holder is the authorised writer), and once a workspace EXISTS
-// on the server the gate is off for that workspace regardless of
-// which connection touches it. The gate only protects against an
-// unauthenticated client creating a brand-new workspace on the server.
-function isAuthorized(socket: WebSocket): boolean {
-  return peers.get(socket)?.authorized === true
-}
-function markAuthorized(socket: WebSocket): void {
-  const peer = peers.get(socket)
-  if (peer) peer.authorized = true
-}
-// `CONFIGURED_PASSWORD_HMAC == null` → no gate; everyone is
-// effectively authorised and every first action proceeds without an
-// `authenticate` handshake. Otherwise the per-socket flag is the
-// live state.
-function requiresAuth(socket: WebSocket): boolean {
-  if (CONFIGURED_PASSWORD_HMAC == null) return false
-  return !isAuthorized(socket)
-}
-// HMAC-based constant-time password compare. Both sides are passed
-// through `HMAC(PASSWORD_HMAC_KEY, …)` so the inputs to
-// `timingSafeEqual` are always 32-byte fixed-length digests — no
-// length-equal precondition, no length leak, and any residual
-// timing variance in the comparator reveals only HMAC bytes that
-// are useless without the per-process key.
-function passwordMatches(submitted: string): boolean {
-  if (CONFIGURED_PASSWORD_HMAC == null) return false
-  const submittedHmac = new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(submitted, 'utf8').digest())
-  return timingSafeEqual(submittedHmac, CONFIGURED_PASSWORD_HMAC)
-}
 // "Workspace exists on the server" gate. The auth requirement only
 // kicks in for the FIRST action against a never-before-seen tag —
 // once any row lands (triage revision or objstore object), the
@@ -315,34 +261,16 @@ async function workspaceExists(tag: string): Promise<boolean> {
   return (c?.c ?? 0) > 0
 }
 
-// workspaceTag → Set<WebSocket>. The per-socket reverse index lives on
-// `Peer.tags` (see ./peer.ts) and is read by `unsubscribeAll` on close.
-const subscribers = new Map<string, Set<WebSocket>>()
+// WS fan-out hub: subscriber registry + backpressure-aware send /
+// broadcast (see ./hub.ts). Destructure into the existing names so the
+// handlers / dispatcher / objstore wiring below read unchanged.
+const hub = createHub({ peers, maxBufferedBytes: MAX_BUFFERED_BYTES, debug: DEBUG })
+const { send, broadcast, subscribe, unsubscribeAll } = hub
 
-function subscribe(socket: WebSocket, tag: string): void {
-  let set = subscribers.get(tag)
-  if (!set) {
-    set = new Set()
-    subscribers.set(tag, set)
-  }
-  set.add(socket)
-  peers.get(socket)?.tags.add(tag)
-}
-
-function unsubscribeAll(socket: WebSocket): void {
-  const tags = peers.get(socket)?.tags
-  if (!tags) return
-  for (const tag of tags) {
-    const set = subscribers.get(tag)
-    if (!set) continue
-    set.delete(socket)
-    if (set.size === 0) subscribers.delete(tag)
-  }
-}
-
-function send(socket: WebSocket, msg: object): void {
-  sendRaw(socket, JSON.stringify(msg))
-}
+// Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
+// handshake. Destructure into the existing names for the wiring below.
+const auth = createAuth({ peers, password: CONFIG_PASSWORD, send, debug: DEBUG })
+const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
 
 // Typed wrapper for the three `workspace-save-error` emit sites
 // (too-large at handleSave, stale-base after the catch-up, busy
@@ -372,30 +300,6 @@ function sendSaveError(
   send(socket, { type: 'workspace-save-error', workspaceTag, base, reason })
 }
 
-// Lower-level send for when the JSON payload is already serialised
-// (e.g. broadcast fan-out — stringify once, send N times).
-function sendRaw(socket: WebSocket, payload: string): void {
-  if (socket.readyState !== socket.OPEN) return
-  // Backpressure cap. `socket.bufferedAmount` is the count of bytes
-  // queued in the `ws` send pipeline that haven't drained to the
-  // kernel yet — a slow / blackholed peer accumulates them
-  // unboundedly during fan-out broadcasts. Drop above the cap and
-  // terminate the socket so the heartbeat doesn't keep it alive on
-  // ping/pong while every broadcast piles up. Transport audit
-  // `server/index.ts:225`.
-  if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
-    if (DEBUG) console.warn(`drop broadcast: socket buffered ${socket.bufferedAmount}B > cap`)
-    try { socket.terminate() } catch {}
-    return
-  }
-  // Wrap send() in try/catch — readyState can transition from OPEN
-  // to CLOSING between the check above and the send() call (TOCTOU
-  // window in `ws`'s event loop). Without this, a socket dying
-  // mid-broadcast would throw and abort the broadcast loop, skipping
-  // every subscriber after the dead one. Audit M4.
-  try { socket.send(payload) } catch {}
-}
-
 // Normalise `keyframe` on outbound chain entries to a strict boolean.
 // SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
 // raw rows; the wire contract (and the canonical signing payload)
@@ -406,31 +310,6 @@ function sendRaw(socket: WebSocket, payload: string): void {
 // strict-compares. Convert once on the send side.
 function chainForWire(revisions: RevisionRow[]): WireRevision[] {
   return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 }))
-}
-
-// `except: null` is the REST-originated path — byte transfer
-// landed via HTTP, not via a particular WS socket; broadcast hits
-// every subscriber. WS-originated broadcasts pass the originator's
-// socket so the sender doesn't see its own message echoed back.
-function broadcast(tag: string, msg: object, except: WebSocket | null): void {
-  const set = subscribers.get(tag)
-  if (!set) return
-  // Stringify ONCE outside the fan-out loop. For a workspace-state
-  // catch-up with a multi-MB ciphertext × N subscribers, per-recipient
-  // JSON.stringify would dominate CPU; this is the cheap win.
-  const payload = JSON.stringify(msg)
-  // Snapshot before iterating — `send`'s try/catch swallows
-  // socket.send errors, but a socket transitioning to CLOSED
-  // mid-broadcast triggers `unsubscribeAll` from the 'close'
-  // handler, which mutates `set` while we're walking it. Set
-  // iteration is well-defined under same-key delete today; the
-  // snapshot keeps a future refactor (e.g. switching to a
-  // different collection or an async send) from silently
-  // skipping subscribers. Audit M4 round-3.
-  for (const s of [...set]) {
-    if (s === except) continue
-    sendRaw(s, payload)
-  }
 }
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
@@ -450,71 +329,6 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
   // behaviour, fine for single-replica).
   ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
-
-// Top-level `unauthorized` frame (Server → Client). Sent when:
-//   * A `workspace-save` for a NEW workspace tag arrives on a socket
-//     that hasn't authenticated yet (handleSave below) — `kind:
-//     'gated'`, with `workspaceTag` + `base` so the client can clear
-//     the matching pending save and prompt the user for the password.
-//   * An `objstore-put-begin` hits the same gate (handlers.ts) —
-//     `kind: 'gated'`, with `workspaceTag` + `resourceTag` for the
-//     in-flight putBegin caller.
-//   * The client's `authenticate { password }` was rejected by
-//     `handleAuthenticate` (wrong password) — `kind: 'auth-failed'`,
-//     no other context fields.
-// The explicit `kind` discriminator is the wire-protocol contract:
-// callers MUST switch on it rather than infer from the presence /
-// absence of other fields. A future server change adding context
-// to either branch can't silently misroute under this contract,
-// whereas a field-presence inference would. The client's wire-side
-// dispatcher (client/triage-sync.ts handleMessage) and the objstore
-// client's put-begin recv predicate both pin on `kind`.
-type UnauthorizedContext =
-  | { kind: 'gated'; workspaceTag: string; base: string | null }       // workspace-save gated
-  | { kind: 'gated'; workspaceTag: string; resourceTag: string }       // objstore-put-begin gated
-  | { kind: 'auth-failed' }                                             // authenticate-failed
-function sendUnauthorized(socket: WebSocket, ctx: UnauthorizedContext): void {
-  send(socket, { type: 'unauthorized', ...ctx })
-}
-
-// `authenticate { password }` handler. Constant-time password
-// compare; success flips the per-socket flag and emits
-// `authenticated` (the client's signal to retry any queued
-// pendingSave / pendingSubscribe). Failure emits
-// `unauthorized { kind: 'auth-failed' }` so the client knows its
-// retry loop should ask for a different password rather than treat
-// the message as a new action-gating signal (`kind: 'gated'`).
-//
-// Pre-shape gate: password must be a non-empty string, length-
-// capped so a peer can't make us HMAC megabytes per frame. This
-// handler is fast-inlined OUTSIDE the per-socket MAX_INFLIGHT
-// cap (see the dispatcher's ping/authenticate special-case below),
-// so without the cap a frame-spamming peer would dominate the
-// event loop on `createHmac().update(p)`. 4096 bytes is far above
-// any conceivable real password and well below the WS frame
-// `maxPayload` of 4 MiB.
-const MAX_AUTH_PASSWORD_LEN = 4096
-type AuthenticateMsg = { password?: unknown }
-function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
-  if (typeof msg.password !== 'string' || msg.password.length === 0 || msg.password.length > MAX_AUTH_PASSWORD_LEN) return
-  // No-config short-circuit: if the server isn't gating, treat any
-  // authenticate as success. This lets a client cache its password
-  // and replay it on reconnect even when the server happens to be
-  // un-gated today — the wire shape stays consistent.
-  if (CONFIGURED_PASSWORD_HMAC == null) {
-    markAuthorized(socket)
-    send(socket, { type: 'authenticated' })
-    return
-  }
-  if (!passwordMatches(msg.password)) {
-    if (DEBUG) console.warn('authenticate: wrong password')
-    sendUnauthorized(socket, { kind: 'auth-failed' })
-    return
-  }
-  markAuthorized(socket)
-  if (DEBUG) console.log('authenticate: success')
-  send(socket, { type: 'authenticated' })
-}
 
 async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
   // `base` is `string | null`; null is the keyframe-root marker.
