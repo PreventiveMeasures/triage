@@ -1015,13 +1015,15 @@ async function requireConnectedSession(entry) {
 }
 
 // Optimistic-concurrency retry: run `op(null)` (the unconditional /
-// "must not exist" precondition), and on a version conflict run it
-// once more with the server's reported current version. All four
+// "must not exist" precondition), and on a conflict run it once more
+// rebased onto the server's reported current `{ version, incarnation }`.
+// Rebasing onto the full token (not just the version) is what keeps the
+// retry from re-overwriting a freshly-recreated incarnation. All four
 // put / delete wrappers share this exact shape.
 async function retryOnConflict(op) {
   let result = await op(null)
-  if (!result.ok && result.reason === 'conflict' && typeof result.currentVersion === 'number') {
-    result = await op(result.currentVersion)
+  if (!result.ok && result.reason === 'conflict' && result.current) {
+    result = await op(result.current)
   }
   return result
 }
@@ -1062,7 +1064,7 @@ export async function putFile(workspaceId, fileName, content) {
   // issued an extra `list()` per upload to compute prevVersion;
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
-  return await retryOnConflict((prevVersion) => entry.session.put({ fileName, content, prevVersion }))
+  return await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
 }
 
 // Delete `fileName`'s remote copy. The objstore `delete` is gated
@@ -1117,7 +1119,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
       entry.fileTags.set(fileName, await computeResourceTag(entry.keys.tagKey, fileName))
     }
     const tag = entry.fileTags.get(fileName)
-    const result = await retryOnConflict((prevVersion) => entry.session.delete(fileName, prevVersion))
+    const result = await retryOnConflict((prev) => entry.session.delete(fileName, prev))
     if (result.ok) {
       // Drop the tag locally — the server's `objstore-deleted`
       // broadcast now includes the originator (PR symmetric-broadcast)
@@ -1160,7 +1162,7 @@ export async function putBundleToRemote(workspaceId, integrity) {
   const meta = await listBundles()
   const found = meta.find((b) => b.integrity === integrity)
   const name = found?.name ?? `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 8)}`
-  return await retryOnConflict((prevVersion) => entry.session.putBundle({ integrity, name, content, prevVersion }))
+  return await retryOnConflict((prev) => entry.session.putBundle({ integrity, name, content, prev }))
 }
 
 // Download a bundle from the workspace's remote objstore, save it to
@@ -1247,7 +1249,7 @@ export async function deleteBundleFromRemote(workspaceId, integrity) {
       entry.bundleTags.set(integrity, await computeBundleResourceTag(entry.keys.tagKey, integrity))
     }
     const tag = entry.bundleTags.get(integrity)
-    const result = await retryOnConflict((prevVersion) => entry.session.deleteBundle(integrity, prevVersion))
+    const result = await retryOnConflict((prev) => entry.session.deleteBundle(integrity, prev))
     if (result.ok) {
       entry.remoteTags.delete(tag)
       entry.remoteBundleByTag.delete(tag)

@@ -52,6 +52,7 @@ const SCHEMA_PG = [
      workspace_tag  TEXT    NOT NULL,
      resource_tag   TEXT    NOT NULL,
      version        BIGINT  NOT NULL CHECK (version >= 0),
+     incarnation    TEXT    NOT NULL,
      content_hash   TEXT    NOT NULL,
      content_length BIGINT  NOT NULL CHECK (content_length >= 0),
      signature      TEXT    NOT NULL,
@@ -59,11 +60,12 @@ const SCHEMA_PG = [
      PRIMARY KEY (workspace_tag, resource_tag)
    )`,
   `CREATE TABLE IF NOT EXISTS workspace_object_staging (
-     workspace_tag   TEXT    NOT NULL,
-     resource_tag    TEXT    NOT NULL,
-     staging_id      TEXT    NOT NULL,
-     prev_version    BIGINT  CHECK (prev_version IS NULL OR prev_version >= 0),
-     expected_length BIGINT  NOT NULL CHECK (expected_length >= 0),
+     workspace_tag    TEXT    NOT NULL,
+     resource_tag     TEXT    NOT NULL,
+     staging_id       TEXT    NOT NULL,
+     prev_version     BIGINT  CHECK (prev_version IS NULL OR prev_version >= 0),
+     prev_incarnation TEXT,
+     expected_length  BIGINT  NOT NULL CHECK (expected_length >= 0),
      content_hash    TEXT    NOT NULL,
      signature       TEXT    NOT NULL,
      begun_at        BIGINT  NOT NULL,
@@ -78,7 +80,7 @@ const SCHEMA_PG = [
 // the two planes can't drift on the coercion / range-check rules.
 
 type LiveDbRow = {
-  resource_tag: string; version: number; content_hash: string; content_length: number
+  resource_tag: string; version: number; incarnation: string; content_hash: string; content_length: number
   signature: string; put_at: number
 }
 
@@ -86,6 +88,7 @@ function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
   return {
     resource_tag: String(r['resource_tag']),
     version: num(r['version']),
+    incarnation: String(r['incarnation']),
     content_hash: String(r['content_hash']),
     content_length: num(r['content_length']),
     signature: String(r['signature']),
@@ -97,15 +100,16 @@ function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
 // within the max-lines-per-function budget. Each closes over the
 // Neon `sql` callable.
 
-function buildInsertStaging(sql: NeonSql): RunStmt<[string, string, string, number | null, number, string, string, number]> {
+function buildInsertStaging(sql: NeonSql): RunStmt<[string, string, string, number | null, string | null, number, string, string, number]> {
   return runStmt(sql, `INSERT INTO workspace_object_staging
-         (workspace_tag, resource_tag, staging_id, prev_version,
+         (workspace_tag, resource_tag, staging_id, prev_version, prev_incarnation,
           expected_length, content_hash, signature, begun_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`)
 }
 
 type StagingRow = {
   prev_version: number | null
+  prev_incarnation: string | null
   expected_length: number
   content_hash: string
   signature: string
@@ -115,7 +119,7 @@ type StagingRow = {
 function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], StagingRow> {
   return { get: async (tag, resourceTag, stagingId) => {
     const rows = await sql(
-      `SELECT prev_version, expected_length, content_hash, signature, begun_at
+      `SELECT prev_version, prev_incarnation, expected_length, content_hash, signature, begun_at
        FROM workspace_object_staging
        WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`,
       [tag, resourceTag, stagingId],
@@ -124,6 +128,7 @@ function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], Sta
     if (!r) return undefined
     return {
       prev_version: numOrNull(r['prev_version']),
+      prev_incarnation: r['prev_incarnation'] == null ? null : String(r['prev_incarnation']),
       expected_length: num(r['expected_length']),
       content_hash: String(r['content_hash']),
       signature: String(r['signature']),
@@ -168,7 +173,7 @@ function buildDeleteStagingIfStale(sql: NeonSql): GetStmt<[string, string, strin
 function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
   return { all: async (tag) => {
     const rows = await sql(
-      `SELECT resource_tag, version, content_hash, content_length,
+      `SELECT resource_tag, version, incarnation, content_hash, content_length,
               signature, put_at
        FROM workspace_object
        WHERE workspace_tag = $1
@@ -182,7 +187,7 @@ function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
 function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> {
   return { get: async (tag, resourceTag) => {
     const rows = await sql(
-      `SELECT resource_tag, version, content_hash, content_length,
+      `SELECT resource_tag, version, incarnation, content_hash, content_length,
               signature, put_at
        FROM workspace_object
        WHERE workspace_tag = $1 AND resource_tag = $2`,
@@ -198,16 +203,16 @@ function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> 
 // insert won; a racing first-write that landed first makes this a
 // no-op (empty result) → caller maps to conflict. Bind order:
 // (tag, res, hash, len, sig, put_at); version is the literal 1.
-function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string, number, string, number], { ok: number }> {
-  return { get: async (tag, resourceTag, contentHash, contentLength, signature, putAt) => {
+function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string, string, number, string, number], { ok: number }> {
+  return { get: async (tag, resourceTag, incarnation, contentHash, contentLength, signature, putAt) => {
     const rows = await sql(
       `INSERT INTO workspace_object
-         (workspace_tag, resource_tag, version, content_hash, content_length,
+         (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
           signature, put_at)
-       VALUES ($1, $2, 1, $3, $4, $5, $6)
+       VALUES ($1, $2, 1, $3, $4, $5, $6, $7)
        ON CONFLICT (workspace_tag, resource_tag) DO NOTHING
        RETURNING 1 AS ok`,
-      [tag, resourceTag, contentHash, contentLength, signature, putAt],
+      [tag, resourceTag, incarnation, contentHash, contentLength, signature, putAt],
     ) as Array<{ ok: number | string }>
     const r = rows[0]
     return r ? { ok: num(r.ok) } : undefined
@@ -220,8 +225,8 @@ function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string,
 // of N racing re-uploads against the same base version wins; the
 // losers get an empty result → conflict + rebase. Bind order:
 // (tag, res, nextVersion, hash, len, sig, put_at, expectedVersion).
-function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, number], { ok: number }> {
-  return { get: async (tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion) => {
+function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, number, string], { ok: number }> {
+  return { get: async (tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion, expectedIncarnation) => {
     const rows = await sql(
       `UPDATE workspace_object
        SET version        = $3,
@@ -229,9 +234,9 @@ function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, stri
            content_length = $5,
            signature      = $6,
            put_at         = $7
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $8
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $8 AND incarnation = $9
        RETURNING 1 AS ok`,
-      [tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion],
+      [tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion, expectedIncarnation],
     ) as Array<{ ok: number | string }>
     const r = rows[0]
     return r ? { ok: num(r.ok) } : undefined
@@ -242,13 +247,13 @@ function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, stri
 // the precondition (mirrors buildUpdateLiveCAS). RETURNING a row iff we
 // removed it; deleteObject treats 0 rows as a lost race → conflict /
 // not-found, never a lost update.
-function buildDeleteLiveCAS(sql: NeonSql): GetStmt<[string, string, number], { ok: number }> {
-  return { get: async (tag, resourceTag, expectedVersion) => {
+function buildDeleteLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string], { ok: number }> {
+  return { get: async (tag, resourceTag, expectedVersion, expectedIncarnation) => {
     const rows = await sql(
       `DELETE FROM workspace_object
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $3
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $3 AND incarnation = $4
        RETURNING 1 AS ok`,
-      [tag, resourceTag, expectedVersion],
+      [tag, resourceTag, expectedVersion, expectedIncarnation],
     ) as Array<{ ok: number | string }>
     const r = rows[0]
     return r ? { ok: num(r.ok) } : undefined

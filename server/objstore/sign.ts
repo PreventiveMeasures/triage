@@ -5,6 +5,7 @@
 
 import { encodeUtf8 } from '../../common/utf8.js'
 import { verifyEd25519 } from '../sign.ts'
+import { isValidIncarnation } from './store.ts'
 
 const OBJSTORE_PUT_DOMAIN = 'deepview-objstore.v1.put'
 const OBJSTORE_DELETE_DOMAIN = 'deepview-objstore.v1.delete'
@@ -18,6 +19,7 @@ export type ObjstorePutBeginMsg = {
   workspaceTag?: unknown
   resourceTag?: unknown
   prevVersion?: unknown
+  prevIncarnation?: unknown
   expectedLength?: unknown
   contentHash?: unknown
   signature?: unknown
@@ -27,6 +29,7 @@ export type ObjstoreDeleteMsg = {
   workspaceTag?: unknown
   resourceTag?: unknown
   prevVersion?: unknown
+  prevIncarnation?: unknown
   signature?: unknown
 }
 
@@ -42,6 +45,14 @@ export type ObjstoreFetchMsg = {
 }
 
 function intOrEmpty(v: unknown): string {
+  return v == null ? '' : String(v)
+}
+
+// `prevIncarnation` → '' when null, the base64url id otherwise. The
+// client mirror (`incOrEmpty`) passes the string through verbatim;
+// `String(v)` here is a no-op on the validated string and matches it
+// byte-for-byte.
+function strOrEmpty(v: unknown): string {
   return v == null ? '' : String(v)
 }
 
@@ -63,6 +74,7 @@ function canonicalObjstorePut(msg: ObjstorePutBeginMsg, connectionNonce: string)
     msg.workspaceTag as string,
     msg.resourceTag as string,
     intOrEmpty(msg.prevVersion),
+    strOrEmpty(msg.prevIncarnation),
     msg.contentHash as string,
     String(msg.expectedLength),
     connectionNonce,
@@ -75,6 +87,7 @@ function canonicalObjstoreDelete(msg: ObjstoreDeleteMsg, connectionNonce: string
     msg.workspaceTag as string,
     msg.resourceTag as string,
     intOrEmpty(msg.prevVersion),
+    strOrEmpty(msg.prevIncarnation),
     connectionNonce,
   ].join('\n'))
 }
@@ -132,10 +145,22 @@ async function verifyObjstoreSig(
   return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
 
+// prevIncarnation must travel as an inseparable pair with prevVersion:
+// a numeric prevVersion carries a valid base64url incarnation id; a
+// null prevVersion carries null. Reject the mixed combos (a half-pair)
+// so a forged or stale precondition can't slip a version match past the
+// CAS without the matching incarnation. The shape gate mirrors the
+// staging-id check — a malformed id can't reach the CAS predicate.
+function validPrevPair(prevVersion: unknown, prevIncarnation: unknown): boolean {
+  if (prevVersion == null) return prevIncarnation == null
+  return isValidIncarnation(prevIncarnation)
+}
+
 export function verifyObjstorePutSig(msg: ObjstorePutBeginMsg, connectionNonce: unknown): Promise<boolean> {
   if (typeof msg.resourceTag !== 'string') return Promise.resolve(false)
   if (typeof msg.contentHash !== 'string') return Promise.resolve(false)
   if (!isSafeIntOrNull(msg.prevVersion)) return Promise.resolve(false)
+  if (!validPrevPair(msg.prevVersion, msg.prevIncarnation)) return Promise.resolve(false)
   if (!isSafeNonNegativeInt(msg.expectedLength)) return Promise.resolve(false)
   return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstorePut(msg, nonce))
 }
@@ -143,6 +168,7 @@ export function verifyObjstorePutSig(msg: ObjstorePutBeginMsg, connectionNonce: 
 export function verifyObjstoreDeleteSig(msg: ObjstoreDeleteMsg, connectionNonce: unknown): Promise<boolean> {
   if (typeof msg.resourceTag !== 'string') return Promise.resolve(false)
   if (!isSafeIntOrNull(msg.prevVersion)) return Promise.resolve(false)
+  if (!validPrevPair(msg.prevVersion, msg.prevIncarnation)) return Promise.resolve(false)
   return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreDelete(msg, nonce))
 }
 

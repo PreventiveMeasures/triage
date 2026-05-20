@@ -10,7 +10,7 @@
 // Format: `${b64url(payloadJson)}.${b64url(hmac)}`
 //   payload:
 //     PUT  → { op: 'put', tag, res, sid, len, exp }
-//     GET  → { op: 'get', tag, res, ver, exp }
+//     GET  → { op: 'get', tag, res, ver, inc, exp }
 // HMAC: HMAC-SHA-256 over the base64url-encoded payload, with a
 // 32-byte secret minted at server start. Restart invalidates every
 // outstanding token (fine — TTL is short, clients re-handshake).
@@ -40,6 +40,11 @@ export type GetTokenPayload = {
   tag: string
   res: string
   ver: number
+  // Incarnation the live row carried when the token was minted. The
+  // REST GET re-checks it so a token issued for one incarnation can't
+  // serve a recreated incarnation that happens to share the version
+  // number.
+  inc: string
   exp: number
 }
 
@@ -128,6 +133,7 @@ function isValidPayload(v: unknown): v is TokenPayload {
     return typeof o['ver'] === 'number'
       && Number.isSafeInteger(o['ver'])
       && o['ver'] >= 0
+      && typeof o['inc'] === 'string'
   }
   return false
 }
@@ -145,11 +151,11 @@ export function mintPutToken(
 
 export function mintGetToken(
   secret: TokenSecret,
-  tag: string, res: string, ver: number,
+  tag: string, res: string, ver: number, inc: string,
   ttlMs: number = DEFAULT_TOKEN_TTL_MS,
 ): { token: string; exp: number } {
   const exp = Date.now() + ttlMs
-  return { token: signToken(secret, { op: 'get', tag, res, ver, exp }), exp }
+  return { token: signToken(secret, { op: 'get', tag, res, ver, inc, exp }), exp }
 }
 
 // `Authorization: Bearer <token>` extractor. Returns the token
