@@ -41,6 +41,7 @@ import './view/repo-chip.js'
 import './view/severity-chips.js'
 import './view/triage-filter.js'
 import './view/view-mode-buttons.js'
+import './view/bundle-treemap.js'
 import './view/api.js'
 // Eager import — registers / unregisters the brotli SW based on
 // whether DecompressionStream('br') works natively. The module's

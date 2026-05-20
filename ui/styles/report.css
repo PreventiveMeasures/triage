@@ -445,14 +445,14 @@
   scrollbar-gutter: stable;
 }
 
-/* Treemap slide — two-level slice-and-dice size map. The plot is a
-   vertical flex stack of package rows (height ∝ package bytes); each
-   row is a horizontal strip of file cells (width ∝ file bytes).
-   flex-basis:0 + min-width/height:0 leave `flex-grow` as the sole
-   size driver, so a cell's area tracks its share of the bundle. Each
-   row's text color is set inline (luminance-picked against the
-   package hue) so labels stay legible over any palette entry. */
-.bundles-slide-body > .bundle-treemap {
+/* Treemap slide — a squarified treemap of the bundle's source files
+   over their PATH hierarchy (layout computed in view/bundle-treemap.js,
+   which measures the plot and positions every node absolutely). These
+   rules are mostly paint: directories are faint bordered containers
+   with a name strip; leaves (files) and depth-capped aggregates are
+   filled with the package hue, their text color set inline for
+   contrast. */
+.bundles-slide-body > bundle-treemap {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -488,81 +488,65 @@
   & .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
 .bundle-treemap-plot {
+  position: relative;
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px;
   overflow: hidden;
 }
-.bundle-treemap-row {
-  position: relative;
-  flex-basis: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-  gap: 2px;
+.bundle-treemap-node {
+  position: absolute;
+  box-sizing: border-box;
   overflow: hidden;
-}
-/* Cell = a file (button, opens the source viewer) or the merged
-   tail (div). Bottom-aligned label so it never collides with the
-   row's top-left package tag. */
-.bundle-treemap-cell {
-  flex-basis: 0;
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 2px 4px;
-  border: 0;
   border-radius: 2px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  text-align: left;
-  color: inherit;
-  cursor: pointer;
-  transition: filter .1s ease;
-
-  &:hover { filter: brightness(1.12); }
-  &:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
 }
-.bundle-treemap-cell-other {
-  cursor: default;
-  opacity: .55;
+/* Directory container — faint fill + border so its children read as
+   nested inside it; the name sits in the reserved top strip. */
+.bundle-treemap-dir {
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid rgb(from var(--text) r g b / .14);
 }
-.bundle-treemap-cell-label {
+.bundle-treemap-dirname {
+  display: block;
+  padding: 0 4px;
+  line-height: 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .66rem;
-  line-height: 1.25;
+  font-size: .62rem;
+  font-weight: 600;
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
 }
-/* Package name pinned to the row's top-left, out of flow so it
-   doesn't eat any of the proportional width. Theme-colored chip so
-   it reads regardless of the row's fill hue. */
-.bundle-treemap-row-tag {
-  position: absolute;
-  top: 0;
-  left: 0;
-  max-width: 65%;
-  padding: 0 4px;
-  font-size: .62rem;
-  font-weight: 600;
-  letter-spacing: .02em;
-  color: var(--text);
-  background: rgb(from var(--surface) r g b / .72);
-  border-bottom-right-radius: 3px;
+/* Leaf = a file (button) or a depth-capped directory aggregate (div),
+   both filled with the package hue and bordered for separation. */
+.bundle-treemap-leaf {
+  margin: 0;
+  padding: 1px 3px;
+  border: 1px solid rgb(0 0 0 / .18);
+  display: flex;
+  align-items: flex-start;
+  text-align: left;
+}
+.bundle-treemap-file { cursor: pointer; transition: filter .1s ease; }
+.bundle-treemap-file:hover { filter: brightness(1.14); }
+.bundle-treemap-file:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; z-index: 2; }
+.bundle-treemap-agg { cursor: default; font-style: italic; }
+.bundle-treemap-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .64rem;
+  line-height: 1.2;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   pointer-events: none;
 }
 .bundle-treemap-empty {
-  margin: auto;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 2rem;
   color: var(--muted);
   font-size: .85rem;
