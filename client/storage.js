@@ -28,12 +28,17 @@ const OPFS_BUNDLES_DIR = 'deepview-bundles'
 const LS_REPORT_PREFIX = 'deepview.report:'
 
 let opfsWarned = false
-async function getOpfsDir() {
+// Open an OPFS directory handle, or null when OPFS is unavailable.
+// `warnOnce` surfaces a one-time console breadcrumb (used by the reports
+// dir — the layer users notice when quota differs; the bundles dir stays
+// quiet). `create: false` probes for the directory without materialising
+// it.
+async function openOpfsDir(name, { create, warnOnce = false } = {}) {
   try {
     const root = await navigator.storage.getDirectory()
-    return await root.getDirectoryHandle(OPFS_DIR, { create: true })
+    return await root.getDirectoryHandle(name, { create })
   } catch (err) {
-    if (!opfsWarned) {
+    if (warnOnce && !opfsWarned) {
       opfsWarned = true
       // file:// and older browsers reject OPFS. We fall back to gzipped
       // localStorage automatically; surface this once so a user wondering
@@ -42,6 +47,36 @@ async function getOpfsDir() {
     }
     return null
   }
+}
+
+// Write `bytes` to an OPFS file handle, aborting the writable on any
+// mid-flight failure so it releases the handle immediately rather than
+// waiting for GC (closes the window where a concurrent createWritable
+// for the same name races the collection).
+async function writeOpfsFile(fh, bytes) {
+  const writable = await fh.createWritable()
+  try {
+    await writable.write(bytes)
+    await writable.close()
+  } catch (err) {
+    try { await writable.abort(err) } catch {}
+    throw err
+  }
+}
+
+// Peel a passkey envelope off report `bytes` when present (decrypt via
+// openForOpfs), throwing on a locked vault rather than returning garbled
+// bytes. Returns `bytes` unchanged when there's no envelope.
+async function peelOpfsEnvelope(bytes, name) {
+  if (!hasEnvelopeMagic(bytes)) return bytes
+  if (!getSessionKey()) {
+    throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
+  }
+  return await openForOpfs(bytes, name)
+}
+
+function getOpfsDir() {
+  return openOpfsDir(OPFS_DIR, { create: true, warnOnce: true })
 }
 
 // `gunzipBytes` is re-exported (the UI + sync-host consume it). The
@@ -329,12 +364,7 @@ export async function readFile(name) {
       // magic check. A locked-but-enveloped file surfaces a clean
       // error here rather than a confusing "gunzip failed" or
       // garbled JSON later.
-      if (hasEnvelopeMagic(bytes)) {
-        if (!getSessionKey()) {
-          throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
-        }
-        bytes = await openForOpfs(bytes, name)
-      }
+      bytes = await peelOpfsEnvelope(bytes, name)
       // Gzipped payload (saveFile compresses since v…) — decompress
       // and return the JSON text. Stale uncompressed entries from
       // before the on-disk-gzip flip fall through to the legacy
@@ -364,12 +394,7 @@ export async function readFile(name) {
     const stored = localStorage.getItem(LS_REPORT_PREFIX + name)
     if (stored === null) throw new Error(`File not found: ${name}`)
     let lsBytes = Uint8Array.fromBase64(stored)
-    if (hasEnvelopeMagic(lsBytes)) {
-      if (!getSessionKey()) {
-        throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
-      }
-      lsBytes = await openForOpfs(lsBytes, name)
-    }
+    lsBytes = await peelOpfsEnvelope(lsBytes, name)
     const plain = await gunzipBytes(lsBytes)
     return decodeUtf8(plain)
   })()
@@ -405,12 +430,7 @@ export async function readFileBytes(name) {
     if (stored === null) throw new Error(`File not found: ${name}`)
     bytes = Uint8Array.fromBase64(stored)
   }
-  if (hasEnvelopeMagic(bytes)) {
-    if (!getSessionKey()) {
-      throw new Error(`storage: vault locked, cannot decrypt "${name}"`)
-    }
-    bytes = await openForOpfs(bytes, name)
-  }
+  bytes = await peelOpfsEnvelope(bytes, name)
   return bytes
 }
 
@@ -533,11 +553,8 @@ export async function deleteFile(name) {
 // rarely makes sense, and this is a non-essential side feature.
 const BUNDLE_META_FILE = '_meta.json'
 
-async function getOpfsBundlesDir() {
-  try {
-    const root = await navigator.storage.getDirectory()
-    return await root.getDirectoryHandle(OPFS_BUNDLES_DIR, { create: true })
-  } catch { return null }
+function getOpfsBundlesDir() {
+  return openOpfsDir(OPFS_BUNDLES_DIR, { create: true })
 }
 
 // SRI uses standard base64 (with `/` and `+`); OPFS rejects `/` in
@@ -614,14 +631,7 @@ async function writeBundleMeta(dir, meta) {
   }
   try { await dir.removeEntry(BUNDLE_META_FILE) } catch {}
   const fh = await dir.getFileHandle(BUNDLE_META_FILE, { create: true })
-  const w = await fh.createWritable()
-  try {
-    await w.write(bytes)
-    await w.close()
-  } catch (err) {
-    try { await w.abort(err) } catch {}
-    throw err
-  }
+  await writeOpfsFile(fh, bytes)
 }
 
 // `_meta.json` is read-modify-written by `saveBundle` and
@@ -662,10 +672,10 @@ export async function hasAnyBundles() {
   // user who has no bundles shouldn't have a `deepview-bundles/`
   // OPFS directory materialised by the act of asking. Using the
   // shared `getOpfsBundlesDir` would create one silently.
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return false
+  const dir = await openOpfsDir(OPFS_BUNDLES_DIR, { create: false })
+  if (!dir) return false
   try {
-    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return false
-    const root = await navigator.storage.getDirectory()
-    const dir = await root.getDirectoryHandle(OPFS_BUNDLES_DIR, { create: false })
     for await (const _ of dir.entries()) return true
   } catch {}
   return false
@@ -717,14 +727,7 @@ export async function saveBundle(name, content) {
     }
     try { await dir.removeEntry(opfsKey) } catch {}
     const fh = await dir.getFileHandle(opfsKey, { create: true })
-    const w = await fh.createWritable()
-    try {
-      await w.write(storeBytes)
-      await w.close()
-    } catch (err) {
-      try { await w.abort(err) } catch {}
-      throw err
-    }
+    await writeOpfsFile(fh, storeBytes)
     // RMW the metadata under the same-origin Web Lock so a concurrent
     // saveBundle / deleteBundle can't clobber the entry we just
     // persisted. Audit round-12 H7.
@@ -834,18 +837,7 @@ async function rawReadAndWrite(name, transform) {
     inFlight.delete(name)
     bumpWriteGen(name)
     const writeFh = await dir.getFileHandle(name, { create: true })
-    const writable = await writeFh.createWritable()
-    // Mirror saveFile / saveFileBytes — abort the writable on any
-    // failure so a half-flushed migration write doesn't leak a file
-    // handle (impl-defined; some browsers leave partial bytes
-    // visible to the next read until GC).
-    try {
-      await writable.write(next)
-      await writable.close()
-    } catch (err) {
-      try { await writable.abort(err) } catch {}
-      throw err
-    }
+    await writeOpfsFile(writeFh, next)
     bumpWriteGen(name)
     return
   }
@@ -962,14 +954,7 @@ async function rawReadAndWriteBundle(dir, opfsKey, transform) {
   const next = await transform(bytes)
   if (next === null) return
   const writeFh = await dir.getFileHandle(opfsKey, { create: true })
-  const writable = await writeFh.createWritable()
-  try {
-    await writable.write(next)
-    await writable.close()
-  } catch (err) {
-    try { await writable.abort(err) } catch {}
-    throw err
-  }
+  await writeOpfsFile(writeFh, next)
 }
 
 export async function migrateOpfsBundlesEncrypt({ seal }) {
