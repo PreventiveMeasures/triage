@@ -1,0 +1,87 @@
+/* Light-DOM sidebar chrome that can't live inside the `<app-sidebar>`
+   shadow root, because the elements themselves are outside it:
+
+   1. `.sidebar-header-wco` — the body-level duplicate of the brand
+      header (sibling of `<app-sidebar>` in index.html). In
+      window-controls-overlay PWA mode it positions itself over the
+      sidebar column so the OS window controls land on the brand
+      strip, while the real (in-shadow) header dims with the page
+      behind modals. It needs the brand typography here since the
+      in-shadow `.sidebar-header .brand` rule can't reach it.
+
+   2. `#sidebar-tooltip` — the instant hover tooltip for truncated
+      file names. A single element appended to `<body>` (so it
+      escapes the sidebar's `overflow: hidden`) and repositioned per
+      hover; sidebar.js owns its show/hide. */
+
+/* ── WCO duplicate header (brand only) ─────────────────────────── */
+.sidebar-header-wco {
+  display: none;
+  align-items: center;
+  gap: .5rem;
+  padding: .5rem .75rem .4rem;
+
+  & .brand {
+    flex: 1; display: flex; align-items: baseline; gap: .4rem;
+    font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
+    white-space: nowrap; overflow: hidden;
+  }
+  & .brand-tag {
+    font-size: .65rem; font-weight: 500;
+    color: var(--muted); text-transform: lowercase;
+    letter-spacing: .02em;
+  }
+}
+
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  /* In WCO mode the body-level duplicate paints the brand above all
+     page-level backdrops; the in-shadow header hides ONLY its brand
+     (see sidebar.css's WCO block) so the flex layout next to the
+     lock stays intact. Position: fixed + high z-index puts this copy
+     above the page backdrops; pointer-events: none lets clicks fall
+     through to the in-shadow lock underneath. The OS handles drag at
+     the compositor level via theme.css's body app-region. */
+  .sidebar-header-wco {
+    display: flex;
+    position: fixed;
+    top: 0; left: 0;
+    width: 260px;
+    z-index: 250;
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+  /* Sidebar hides via `.empty` when there's nothing to show — no
+     point pinning a drag strip above an empty column. Collapsed
+     sidebar shrinks to 32px; match it so the strip stays glued to
+     the column. The class lands on the `<app-sidebar>` host. */
+  body:has(app-sidebar.empty) .sidebar-header-wco { display: none; }
+  body:has(app-sidebar.collapsed) .sidebar-header-wco { width: 32px; }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
+
+/* ── Truncated-name hover tooltip (appended to <body>) ─────────── */
+#sidebar-tooltip {
+  position: fixed;
+  background: rgb(28 28 28 / .95);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: .75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  pointer-events: none;
+  white-space: pre;
+  z-index: 200;
+  box-shadow: var(--shadow-glass);
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity .08s;
+
+  &.visible { opacity: 1; }
+}
+
+body.theme-light #sidebar-tooltip {
+  background: rgb(246 248 250 / .96);
+}

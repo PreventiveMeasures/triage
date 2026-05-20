@@ -20,7 +20,7 @@
      but having the rule on the light-DOM host too is a no-cost
      belt-and-suspenders against shadow-CSS @media-print edge cases. */
   graph-layout { display: none !important; }
-  #drop-zone, #sidebar { display: none !important; }
+  #drop-zone, app-sidebar { display: none !important; }
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
 
