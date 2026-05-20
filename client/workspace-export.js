@@ -1,9 +1,7 @@
 import { loadRepoUrlFor, state } from './state.ts'
 import { listBundles, readBundle, readFile } from './storage.js'
 import { setReportWorkspace } from './workspaces.js'
-import { deriveFindingId } from '../common/finding-id.js'
-import { parseMarkdownFindings } from '../common/parse-md.js'
-import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 import { splitIgnoredKey } from '../common/ignored-key.js'
 import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
@@ -23,29 +21,17 @@ import { encryptBundle } from './workspace-bundle-crypto.js'
 
 const EXPORT_VERSION = 1
 
-function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
-
 async function reportFindingIds(content) {
   const ids = new Set()
-  let data
-  try {
-    data = JSON.parse(content)
-  } catch {
-    data = parseDeepsecFindings(content) ?? parseMarkdownFindings(content)
-  }
+  const data = parseReport(content)
   // `findings` must be an array — a malformed report (object,
-  // string, number) would throw `flatMap is not a function` and
-  // abort the whole export. Skip gracefully so one bad report
-  // doesn't strand the rest. Audit round-13 W-Export-2.
+  // string, number) would otherwise abort the whole export. Skip
+  // gracefully so one bad report doesn't strand the rest. Audit
+  // round-13 W-Export-2.
   if (!Array.isArray(data?.findings)) return ids
-  const all = data.findings.flatMap(toGroup)
-  for (const f of all) {
-    if (f.id) ids.add(f.id)
-  }
-  const idLess = all.filter((f) => !f.id)
-  if (idLess.length === 0) return ids
-  const derived = await Promise.all(idLess.map(deriveFindingId))
-  for (const id of derived) if (id) ids.add(id)
+  const all = flattenFindings(data.findings)
+  await backfillFindingIds(all)
+  for (const f of all) if (f.id) ids.add(f.id)
   return ids
 }
 
