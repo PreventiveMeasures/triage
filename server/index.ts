@@ -75,16 +75,14 @@ import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { debugTag, errMsg, errStack, randomId } from './util.ts'
 import { Peer } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
 import { MAX_CIPHERTEXT_LEN, MAX_FIELD_LEN, validCiphertextShape, validNonce, validTagSigBase } from './validation.ts'
+import { loadConfig } from './config.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -117,112 +115,45 @@ type WireRevision = {
   signature: string
 }
 
-// Parse + range-validate an integer env var, exiting with a clear
-// up-front message on a malformed value — a NaN from `Number("abc")`
-// otherwise surfaces as a confusing crash deep inside `node:net`
-// (`WebSocketServer({ port: NaN })`) or a 0-ms `setInterval` loop. An
-// absent var falls back to `def` (assumed in-range). One shape for
-// every integer env var below so they validate + fail identically;
-// `hint` appends operator guidance (range meaning, default) to the
-// error line.
-function intEnv(name: string, def: number, min: number, max: number, hint = ''): number {
-  const raw = env[name]
-  const n = raw == null ? def : Number(raw)
-  if (!Number.isSafeInteger(n) || n < min || n > max) {
-    console.error(`Invalid ${name}: ${raw} — must be an integer in [${min}, ${max}].${hint ? ` ${hint}` : ''}`)
-    process.exit(1)
-  }
-  return n
-}
+// All external inputs (env vars + optional config.json) are parsed
+// and validated in ./config.ts. Destructure into the existing
+// uppercase names so the rest of this module reads unchanged.
+const config = loadConfig()
+const {
+  port: PORT, host: HOST, dbPath: DB_PATH, objstoreDir: OBJSTORE_DIR,
+  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS, leaseMs: OBJSTORE_COMMIT_LOCK_LEASE_MS,
+  maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, debug: DEBUG,
+  neonUrl: NEON_URL, blobToken: BLOB_TOKEN, tokenSecret: TOKEN_SECRET,
+  password: CONFIG_PASSWORD, trustProxyEnv: TRUST_PROXY_ENV,
+} = config
 
-// 0 = OS-assigned ephemeral port (the test harness boots with PORT=0).
-const PORT = intEnv('PORT', 8765, 0, 65535)
-const HOST = env['HOST'] ?? '127.0.0.1'
-// `fileURLToPath` decodes percent-escapes and handles non-ASCII path
-// segments correctly (the older `new URL(...).pathname` form left
-// `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
-const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data/data.db', import.meta.url))
-// `path.join` so a Windows DB_PATH (`C:\srv\foo\data.db` → dirname
-// returns backslash-separated) doesn't get a mixed-separator child
-// (`C:\srv\foo/objstore`). Cosmetic on POSIX, real bug on win32.
-const OBJSTORE_DIR = env['OBJSTORE_DIR'] ?? join(dirname(DB_PATH), 'objstore')
-// No practical upper bound beyond the safe-integer range.
-const OBJSTORE_REAP_INTERVAL_MS = intEnv('OBJSTORE_REAP_INTERVAL_MS', 10 * 60 * 1000, 1, Number.MAX_SAFE_INTEGER)
-// Distributed commit-lock lease duration. The default (5 min) is
-// tuned for Vercel Functions' Pro Max execution cap; self-hosted
-// long-running processes with multi-MB uploads on slow links may
-// bump this. A crashed-held lease without graceful release pins
-// the key for at most this long. Setter passes via opts.leaseMs
-// to withCommitLock at every call site.
-// Range-clamped: too short → the lock effectively doesn't exist
-// (every concurrent caller steals instantly). Too long → a SIGKILL/
-// OOM-crashed holder pins the key for hours/days waiting on TTL
-// expiry. 1 second–1 hour is the operationally-sensible band.
-const LEASE_MS_MIN = 1000
-const LEASE_MS_MAX = 60 * 60 * 1000
-const OBJSTORE_COMMIT_LOCK_LEASE_MS = intEnv(
-  'OBJSTORE_COMMIT_LOCK_LEASE_MS', 5 * 60 * 1000, LEASE_MS_MIN, LEASE_MS_MAX,
-  '(1s..1h). Default is 300000 (5 min).',
-)
+// Apply the validated commit-lock lease to the lock module. The setter
+// threads it via opts.leaseMs to withCommitLock at every call site.
 setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
-const DEBUG = env['DEBUG'] === '1'
 
-// Optional operator-side config file. Read once at boot; absence is
-// silently fine (preserves the no-auth default — fresh installs and
-// existing deployments without config.json keep working as before).
-// Parse errors fail loud at startup so a typo doesn't silently fall
-// back to "no auth required". `config.example.json` ships with the
-// repo as the documented shape; the real `config.json` is git-
-// ignored so operators can store secrets locally.
-const CONFIG_PATH = env['CONFIG_PATH'] ?? fileURLToPath(new URL('./config.json', import.meta.url))
-type ServerConfig = { password?: string | null }
-function loadConfig(path: string): ServerConfig {
-  let raw: string
-  try { raw = readFileSync(path, 'utf8') } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
-    console.error(`Failed to read ${path}:`, errMsg(err)); process.exit(1)
-  }
-  try { return JSON.parse(raw) as ServerConfig }
-  catch (err) {
-    console.error(`Failed to parse ${path} as JSON:`, errMsg(err)); process.exit(1)
-  }
-}
-const SERVER_CONFIG = loadConfig(CONFIG_PATH)
-// Password is the only auth method today. A non-empty string in
-// config gates first-action (workspace creation) on the wire-level
-// `authenticate { password }` handshake; null / undefined / empty
-// disables the gate (the no-config default — first action is
-// allowed without an authenticate handshake).
-//
-// Comparison is HMAC-SHA-256 under a per-process random key:
-//   * at boot, generate `PASSWORD_HMAC_KEY` (32 random bytes,
-//     static for the process lifetime, never persisted, never
-//     leaves this module);
-//   * compute `CONFIGURED_PASSWORD_HMAC = HMAC(key, configured)`
-//     once at boot and discard the raw configured-password bytes
-//     so a heap snapshot post-boot doesn't expose the plaintext;
-//   * on each `authenticate`, compute the same HMAC over the
-//     submitted password and compare with `timingSafeEqual`.
-// HMAC outputs are fixed at 32 bytes so `timingSafeEqual` runs
-// without a length-equal precondition (no length leak), and even
-// a hypothetical timing leak only exposes HMAC bytes — useless to
-// an attacker without the per-process key. A `null`
-// `CONFIGURED_PASSWORD_HMAC` is the "no gate" sentinel that every
-// other check reads.
+// Password gate (the only auth method today). The configured password
+// is parsed/validated in ./config.ts; here we derive its HMAC under a
+// per-process random key:
+//   * PASSWORD_HMAC_KEY — 32 random bytes, static for the process
+//     lifetime, never persisted, never leaves this module;
+//   * CONFIGURED_PASSWORD_HMAC = HMAC(key, configured), computed once
+//     so the raw password isn't retained past boot;
+//   * each `authenticate` HMACs the submitted password and compares
+//     with `timingSafeEqual`.
+// Fixed 32-byte digests let `timingSafeEqual` run without a
+// length-equal precondition (no length leak); any residual timing
+// variance reveals only HMAC bytes useless without the per-process
+// key. `null` is the "no gate" sentinel every other check reads
+// (configured password absent / empty).
 const PASSWORD_HMAC_KEY: Uint8Array<ArrayBuffer> = new Uint8Array(randomBytes(32))
-const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null = (() => {
-  const p = SERVER_CONFIG.password
-  if (p == null || p === '') return null
-  if (typeof p !== 'string') {
-    console.error(`Invalid ${CONFIG_PATH}: "password" must be a string or null`); process.exit(1)
-  }
-  return new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(p, 'utf8').digest())
-})()
+const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null =
+  CONFIG_PASSWORD == null || CONFIG_PASSWORD === ''
+    ? null
+    : new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(CONFIG_PASSWORD, 'utf8').digest())
 
 // Same-origin gate for the WS upgrade and REST data plane (see
-// ./origin.ts for the full rationale). `TRUST_PROXY_ENV` is kept
-// around for the boot-time misconfiguration fail-fast below.
-const TRUST_PROXY_ENV = env['TRUST_PROXY']
+// ./origin.ts). `TRUST_PROXY_ENV` (from config) also feeds the
+// boot-time misconfiguration fail-fast below.
 const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUST_PROXY_ENV)
 
 // Per-socket buffered-bytes cap. `socket.send` returns synchronously
@@ -234,20 +165,12 @@ const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUS
 // cap; the heartbeat will eventually close a peer that never
 // drains. Transport audit `server/index.ts:225`.
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
-// Per-socket in-flight async-handler cap. Each inbound text frame
-// spawns a `track(handler)` IIFE; an authorised peer who keeps
-// firing valid frames can grow this set without bound, growing the
-// SIGTERM drain time. Drop frames once the cap is hit. Transport
+// Per-socket in-flight async-handler cap (MAX_INFLIGHT_PER_SOCKET,
+// env-validated in config). Each inbound text frame spawns a
+// `track(handler)` IIFE; an authorised peer firing valid frames could
+// otherwise grow the set without bound, stretching SIGTERM drain time.
+// Saves dropped at the cap surface as a typed `busy` NACK. Transport
 // audit `server/index.ts:590`.
-//
-// Env-configurable via `MAX_INFLIGHT_PER_SOCKET` for tests that
-// want to deterministically exercise the cap (`busy` NACK
-// regression) without needing 65 signed sends. Default 64.
-// Upper bound 65_536 — the cap bounds memory under hostile load; a
-// deployer passing `MAX_SAFE_INTEGER` would silently defeat the
-// purpose. Way above any realistic legitimate value (default 64) but
-// cheap to enforce. Adversarial-audit foot-gun guard.
-const MAX_INFLIGHT_PER_SOCKET = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
 
 // Per-connection state registry. One `Peer` per accepted socket holds
 // the challenge nonce, auth flag, heartbeat liveness, in-flight count,
@@ -282,79 +205,8 @@ const REST_PUT_IDLE_TIMEOUT_MS = 30_000
 // survives is ~2 × HEARTBEAT_INTERVAL_MS.
 const HEARTBEAT_INTERVAL_MS = 30_000
 
-if (argv.includes('--help') || argv.includes('-h')) {
-  console.log(`Usage: node server/index.ts
-Environment:
-  PORT                       listen port (default 8765)
-  HOST                       bind host (default 127.0.0.1)
-  DB_PATH                    sqlite file (default: server/data/data.db);
-                             ignored when DATABASE_URL is set
-  DATABASE_URL               Neon Postgres connection string; if set,
-                             selects the Neon backend instead of
-                             SQLite. Requires the optional peer dep
-                             @neondatabase/serverless. The Neon
-                             pairing additionally requires
-                             BLOB_READ_WRITE_TOKEN (Vercel Blob
-                             Private Storage) for the byte plane —
-                             local-FS bytes cannot back a multi-
-                             replica DB plane.
-  BLOB_READ_WRITE_TOKEN      Vercel Blob R/W token (private store).
-                             Required when DATABASE_URL is set;
-                             ignored otherwise. Requires the optional
-                             peer dep @vercel/blob.
-  OBJSTORE_TOKEN_SECRET      Base64 (32 bytes) HMAC secret for REST
-                             bearer tokens. REQUIRED when DATABASE_URL
-                             is set (multi-replica deployments: a
-                             token minted on one replica's WS plane
-                             must validate on another replica's REST
-                             plane). Optional under SQLite (a fresh
-                             per-process secret is minted at boot).
-                             Generate one with:
-                               node -e 'console.log(crypto.randomBytes(32).toString("base64"))'
-  OBJSTORE_DIR               object store root (default: ./objstore
-                             next to DB_PATH). Used by the local-FS
-                             byte plane only; ignored when
-                             DATABASE_URL + BLOB_READ_WRITE_TOKEN
-                             are set (bytes live in Vercel Blob).
-  OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
-  OBJSTORE_COMMIT_LOCK_LEASE_MS
-                             distributed commit-lock lease duration
-                             (default 300000 = 5 min). A crashed-held
-                             lease pins (workspace_tag, resource_tag)
-                             for at most this long. Bump for self-
-                             hosted deployments where uploads can
-                             legitimately exceed 5 min (e.g. 100 MiB
-                             on a 100 KB/s link).
-  TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
-                             Host / X-Forwarded-Proto when computing
-                             the same-origin gate's expected origin.
-                             Default: ON when HOST is a loopback
-                             (127.0.0.1, ::1, localhost) — the typical
-                             "behind nginx on same host" deployment.
-                             OFF for public binds (HOST=0.0.0.0 etc.)
-                             where a bare X-Forwarded-* would
-                             otherwise let an attacker page bypass
-                             the gate.
-  MAX_INFLIGHT_PER_SOCKET    per-socket in-flight async-handler
-                             cap; saves dropped past this fire a
-                             typed 'busy' workspace-save-error
-                             NACK. Default 64. Lower for tests
-                             that need to deterministically
-                             exercise the cap.
-  CONFIG_PATH                operator config JSON path (default:
-                             server/config.json). Currently the
-                             only field is { "password": "..." }
-                             which gates first-action creation of
-                             a new workspace on the
-                             authenticate { password } handshake.
-                             Missing file / null password →
-                             no gating (default).
-  DEBUG=1                    log every message`)
-  process.exit(0)
-}
-
 // Backend selection. Both planes (workspace_revision DB + the
-// v1.objstore byte store) are picked from env at boot. Two supported
+// v1.objstore byte store) are picked from config at boot. Two supported
 // pairings:
 //   1. DATABASE_URL set → Neon (workspace_revision + objstore
 //      tables) + Vercel Blob Private Storage (bytes). Requires
@@ -370,52 +222,6 @@ Environment:
 // keeps its `SqliteHandle` narrowing — `sqliteHandle.db` is typed
 // as a non-optional `DatabaseSync` and `openObjstore` accepts it
 // without a non-null assertion.
-const NEON_URL = env['DATABASE_URL'] ?? null
-const BLOB_TOKEN = env['BLOB_READ_WRITE_TOKEN'] ?? null
-const TOKEN_SECRET_B64 = env['OBJSTORE_TOKEN_SECRET'] ?? null
-// Decode + length-check the HMAC secret upfront so a misconfigured
-// secret fails at boot, not at the first token verification. 32
-// bytes matches `newTokenSecret()` and HMAC-SHA-256's block/output
-// size.
-//
-// `Buffer.from(s, 'base64')` does NOT throw on invalid input — it
-// silently strips non-alphabet characters, so a typo like `+→-`
-// (base64url char in a base64 string) decodes to a DIFFERENT secret
-// without warning. Detect this by re-encoding and comparing — a
-// faithful round-trip should match the input (modulo `=` padding).
-let TOKEN_SECRET: Uint8Array<ArrayBuffer> | null = null
-if (TOKEN_SECRET_B64) {
-  // Trim surrounding whitespace — a copy-pasted env value often
-  // ends in `\n` and Buffer.from(..., 'base64') would silently
-  // strip it, then the typo-detector below would fail with a
-  // misleading "non-base64 characters" message. The trim happens
-  // here so the round-trip comparison sees the same bytes the
-  // decoder saw.
-  const trimmed = TOKEN_SECRET_B64.trim()
-  if (trimmed.length === 0) {
-    console.error('OBJSTORE_TOKEN_SECRET is empty after trimming whitespace')
-    process.exit(1)
-  }
-  const decoded = Buffer.from(trimmed, 'base64')
-  const reencoded = decoded.toString('base64')
-  // Strip trailing `=` padding for the comparison — operators may
-  // omit it. Anything else differing means a silent strip happened
-  // (e.g. a base64url '-' or '_' in a standard base64 secret).
-  const norm = (s: string): string => s.replace(/=+$/u, '')
-  if (norm(reencoded) !== norm(trimmed)) {
-    console.error('OBJSTORE_TOKEN_SECRET contains non-base64 characters (likely a typo, e.g. base64url chars in a base64 secret).')
-    console.error('Regenerate with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
-    process.exit(1)
-  }
-  if (decoded.byteLength !== 32) {
-    console.error(`OBJSTORE_TOKEN_SECRET must decode to 32 bytes (got ${decoded.byteLength})`)
-    process.exit(1)
-  }
-  // `new Uint8Array(decoded)` copies into a fresh ArrayBuffer so the
-  // type matches `TokenSecret = Uint8Array<ArrayBuffer>` (Buffer is
-  // backed by SharedArrayBuffer in some Node configs).
-  TOKEN_SECRET = new Uint8Array(decoded)
-}
 let handle: Handle
 let objstoreHandle: ObjstoreHandle
 let objstoreBanner: string
