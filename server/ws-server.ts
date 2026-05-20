@@ -86,7 +86,8 @@ export function installWsServer(deps: WsServerDeps): { heartbeatTimer: ReturnTyp
       // Without this gate a message arriving between `wss.close()`
       // resolving and the `inFlight` snapshot would spawn a handler
       // that's NOT in the snapshot, then resume against the just-
-      // closed DB and throw inside `insertRevision`. Audit round-9.
+      // closed DB and throw inside the commit's gated INSERT. Audit
+      // round-9.
       if (isShuttingDown()) return
       // Wire protocol is JSON over text frames. A binary frame is
       // either a buggy client or someone probing — drop without

@@ -13,11 +13,12 @@
 //     the STRICT-table guard — all `node:sqlite` / on-disk-file
 //     concerns. The Neon analogues (DDL bootstrap, durability gate,
 //     `keyframe` CHECK constraint) are covered below instead.
-//   • the white-box lock tests that monkey-patch `handle.headSeq.get`
-//     / `handle.insertRevision.run`. `tryCommitNeon` serialises via a
-//     `pg_advisory_xact_lock` inside one pipelined transaction and does
-//     not route the commit through those statement objects, so the
-//     SQLite in-process-lock probes don't apply to this backend.
+//   • the white-box lock tests that monkey-patch the SQLite handle's
+//     `gatedInsert.get` statement. `tryCommitNeon` serialises via a
+//     `pg_advisory_xact_lock` inside one pipelined transaction and folds
+//     its gated INSERT into that transaction (no standalone statement
+//     object), so the SQLite in-process-lock probes don't apply to this
+//     backend — the Neon analogues stage faults via `failNextCommit`.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -500,7 +501,7 @@ describe('commitRevision — unique-violation recovery + error handling (Neon)',
   // script, future code path). PGlite is single-connection so the race
   // can't happen naturally; `failNextCommit` stages the conflict the
   // recovery is built for. Mirrors the SQLite multi-process tests, which
-  // inject via `insertRevision.run` — a path `tryCommitNeon` doesn't use.
+  // inject by making the SQLite handle's gated-INSERT statement throw.
 
   it('unique-violation with a sibling at our seq (different id) → stale-base', async () => {
     const { handle, cleanup } = await freshNeonDb()

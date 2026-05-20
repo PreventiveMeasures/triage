@@ -572,20 +572,21 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
 
   it('lock body executes serially: critical sections do not overlap', async () => {
     // Direct check that the lock is doing what the contract claims —
-    // monkey-patch one of the DB awaits inside commitRevision's
-    // critical section to count concurrent entries, with an
-    // artificial setImmediate yield so a hypothetical non-serialised
+    // monkey-patch the gated-INSERT await inside commitRevision's
+    // critical section (the one statement every committed save runs
+    // under the lock) to count concurrent entries, with an artificial
+    // setImmediate yield so a hypothetical non-serialised
     // implementation would have ample opportunity to interleave.
     const { handle, cleanup } = freshDb()
     try {
       let inside = 0
       let maxInside = 0
-      const originalGet = handle.headSeq.get.bind(handle.headSeq)
-      handle.headSeq.get = async (tag) => {
+      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
+      handle.gatedInsert.get = async (...args) => {
         inside += 1
         if (inside > maxInside) maxInside = inside
         await new Promise((resolve) => { setImmediate(resolve) })
-        const result = await originalGet(tag)
+        const result = await originalGet(...args)
         inside -= 1
         return result
       }
@@ -604,15 +605,15 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
 
   it('a thrown error inside commitRevision releases the lock for the next commit', async () => {
     // KeyedAsyncLock's `finally` releases on throw. Plumb a failure
-    // through `insertRevision.run` once, then verify the next call
+    // through the gated INSERT once, then verify the next call
     // on the same workspace acquires cleanly and inserts.
     const { handle, cleanup } = freshDb()
     try {
-      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
       let injected = false
-      handle.insertRevision.run = (...args) => {
+      handle.gatedInsert.get = (...args) => {
         if (!injected) { injected = true; return Promise.reject(new Error('synthetic failure')) }
-        return originalRun(...args)
+        return originalGet(...args)
       }
       await assert.rejects(
         () => commitRevision(handle, rev({ id: 'r1' })),
@@ -638,6 +639,20 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     )
   })
 
+  // Insert a sibling row directly via the raw DatabaseSync, bypassing
+  // the gated commit, to simulate a sibling Node process attached to
+  // the same SQLite file landing a row our in-process lock can't see.
+  // The gated INSERT computes `seq` itself, so the white-box recovery
+  // tests below stage the conflict by writing a row here and then
+  // making the gated INSERT throw the unique-violation it would hit.
+  function seedSibling(handle, { id, seq = 1, base = null }) {
+    handle.db.prepare(`
+      INSERT INTO workspace_revision
+        (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+      VALUES (?, ?, ?, ?, 0, 'n', 'c', 's', ?)
+    `).run('tag-A', seq, id, base, Date.now())
+  }
+
   it('multi-process PK violation on INSERT: caught, refetched → stale-base', async () => {
     // Cross-process race: our in-process lock can't serialise
     // against a sibling Node process attached to the same DB. The
@@ -647,14 +662,14 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     // gets a workspace-state catch-up instead of a silent failure.
     const { handle, cleanup } = freshDb()
     try {
-      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
       let injected = false
-      handle.insertRevision.run = async (...args) => {
-        if (injected) return originalRun(...args)
+      handle.gatedInsert.get = (...args) => {
+        if (injected) return originalGet(...args)
         injected = true
-        // Simulate a sibling row landing first — same seq, different
+        // Simulate a sibling row landing first — at our seq, different
         // id — then throw the PK violation our INSERT would hit.
-        await originalRun(args[0], args[1], 'sibling-id', null, 0, args[5], args[6], args[7], args[8])
+        seedSibling(handle, { id: 'sibling-id' })
         throw new Error('UNIQUE constraint failed: workspace_revision.workspace_tag, workspace_revision.seq')
       }
       const result = await commitRevision(handle, rev({ id: 'our-id' }))
@@ -678,13 +693,15 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     // when our INSERT was the one that landed.
     const { handle, cleanup } = freshDb()
     try {
-      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
       let injected = false
-      handle.insertRevision.run = async (...args) => {
-        if (injected) return originalRun(...args)
+      handle.gatedInsert.get = (...args) => {
+        if (injected) return originalGet(...args)
         injected = true
-        const [tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt] = args
-        await originalRun(tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt)
+        // A sibling lands OUR id first, then our INSERT throws the
+        // UNIQUE(workspace_tag, id) violation. Recovery finds the row
+        // present → inserted.
+        seedSibling(handle, { id: 'our-id' })
         throw new Error('UNIQUE constraint failed: workspace_revision.workspace_tag, workspace_revision.id')
       }
       const result = await commitRevision(handle, rev({ id: 'our-id' }))
@@ -700,12 +717,12 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     // `isUniqueViolation` matches either shape — pin both paths.
     const { handle, cleanup } = freshDb()
     try {
-      const originalRun = handle.insertRevision.run.bind(handle.insertRevision)
+      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
       let injected = false
-      handle.insertRevision.run = async (...args) => {
-        if (injected) return originalRun(...args)
+      handle.gatedInsert.get = (...args) => {
+        if (injected) return originalGet(...args)
         injected = true
-        await originalRun(args[0], args[1], 'pg-sibling', null, 0, args[5], args[6], args[7], args[8])
+        seedSibling(handle, { id: 'pg-sibling' })
         const err = new Error('duplicate key value violates unique constraint "workspace_revision_pkey"')
         err.code = '23505'
         throw err
@@ -722,7 +739,7 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     // errors must surface as real failures so the operator sees them.
     const { handle, cleanup } = freshDb()
     try {
-      handle.insertRevision.run = () => Promise.reject(new Error('connection refused'))
+      handle.gatedInsert.get = () => Promise.reject(new Error('connection refused'))
       await assert.rejects(
         () => commitRevision(handle, rev({ id: 'x' })),
         /connection refused/u,

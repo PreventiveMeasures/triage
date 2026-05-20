@@ -35,8 +35,8 @@ export type Lifecycle = {
 export function createLifecycle(): Lifecycle {
   // In-flight async message handlers. `shutdown` awaits this set before
   // closing the DB so a SIGINT mid-save can't resume against a closed
-  // handle (which would throw inside `insertRevision` after the client
-  // believed its save was committed).
+  // handle (which would throw inside the commit's gated INSERT after
+  // the client believed its save was committed).
   const inFlight = new Set<Promise<unknown>>()
   function track(promise: Promise<unknown>): void {
     inFlight.add(promise)
@@ -116,7 +116,7 @@ export function createLifecycle(): Lifecycle {
       await new Promise<void>((resolve) => { wss.close(() => resolve()) })
       clearTimeout(terminateTimer)
       // Drain in-flight handlers so a save that's mid-pipeline finishes
-      // its insertRevision before the DB closes. `handleSave` splits its
+      // its commit before the DB closes. `handleSave` splits its
       // canonical/id/dup-precheck/verify/commit work across awaits, so
       // the window spans several yield points. `Promise.allSettled` so a
       // single handler rejection doesn't abort the drain.

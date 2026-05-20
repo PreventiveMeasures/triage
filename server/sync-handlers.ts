@@ -100,10 +100,12 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     //      hashed from — provably tied
     //   5. ciphertext size policy (post-sig so the explicit error only
     //      reaches a legit signer)
-    //   6. commitRevision — re-checks dup + base + inserts, all under
-    //      one per-workspace_tag lock. The previously-separate dup
-    //      recheck, headFor, base-match, insertRevision calls all
-    //      collapse here. Without the lock, two concurrent saves with
+    //   6. commitRevision — re-checks dup + base + inserts via a single
+    //      gated INSERT (dup gate + head-equals-base gate + the
+    //      server-assigned seq folded into one statement) under one
+    //      per-workspace_tag lock. The previously-separate dup recheck,
+    //      headFor, base-match and insert all collapse into that one
+    //      statement. Without the lock, two concurrent saves with
     //      the same `base` and different ids would both pass an
     //      out-of-lock base check, both insert, and FORK THE CHAIN
     //      (two rows with the same base — UNIQUE is on id, not base);

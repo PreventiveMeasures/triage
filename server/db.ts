@@ -42,7 +42,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { KeyedAsyncLock } from './objstore/lock.ts'
-import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from './db-stmt.ts'
+import { type AllStmt, type GetStmt, wrapAll, wrapGet } from './db-stmt.ts'
+import {
+  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_SQLITE, HEAD_FOR_SQL,
+  LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, toSqlitePlaceholders,
+} from './db-revision-sql.ts'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS workspace_revision (
@@ -124,17 +128,27 @@ export type CommitResult =
 // while only one of their `MAX(seq)` reads observes the other's
 // INSERT — different seq, same base, no PK conflict → silent chain
 // fork.
+//
+// `gatedInsert` is SQLite-only (like `db`): it backs
+// `commitRevisionViaWriteLock`'s single gated INSERT (the
+// dup-gate + head-equals-base-gate + server-assigned seq folded into
+// one statement, mirroring the Neon path's gated INSERT). The Neon
+// backend leaves it unset — its gated INSERT lives inside the
+// pipelined `sql.transaction([...])`, not a standalone statement
+// object. Kept on the Handle (rather than a module-private closure)
+// so the SQLite white-box tests can wrap `.get` to inject a
+// unique-violation / non-unique failure into the locked commit, the
+// same recovery paths the Neon suite stages via `failNextCommit`.
 export type Handle = {
   db?: DatabaseSync
   headFor: GetStmt<[string], { id: string }>
-  headSeq: GetStmt<[string], { s: number | null }>
   seqOfId: GetStmt<[string, string], { seq: number }>
   lastKeyframeSeq: GetStmt<[string], { s: number | null }>
   chainAll: AllStmt<[string], RevisionRow>
   chainAfterSeq: AllStmt<[string, number], RevisionRow>
   chainFromSeq: AllStmt<[string, number], RevisionRow>
   revisionExists: GetStmt<[string, string], unknown>
-  insertRevision: RunStmt<[string, number, string, string | null, number, string, string, string, number]>
+  gatedInsert?: GetStmt<[string, string, string | null, number, string, string, string, number], { seq: number }>
   tryCommit: (input: RevisionInsert) => Promise<CommitResult>
   close: () => Promise<void>
 }
@@ -220,51 +234,31 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
   if (!columns.some((c) => c.name === 'keyframe')) {
     db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
   }
+  // Prepare a chain SELECT (shared `$N` source → `?N`) and map each row
+  // through the shared `mapRevisionRow` — same `AllStmt<…, RevisionRow>`
+  // contract the Neon backend exposes, so consumers see identical rows.
+  // Reuses `wrapAll` (the sync-throw→rejection wrapper) for the raw rows
+  // and layers the row mapper on top.
+  const chainStmt = <P extends unknown[]>(query: string): AllStmt<P, RevisionRow> => {
+    const raw = wrapAll<P, Record<string, unknown>>(db.prepare(toSqlitePlaceholders(query)))
+    return { all: async (...args: P) => (await raw.all(...args)).map(mapRevisionRow) }
+  }
   const handle: SqliteHandle = {
     db,
-    headFor: wrapGet<[string], { id: string }>(db.prepare(`
-      SELECT id FROM workspace_revision
-      WHERE workspace_tag = ?
-      ORDER BY seq DESC LIMIT 1
-    `)),
-    headSeq: wrapGet<[string], { s: number | null }>(db.prepare(`
-      SELECT MAX(seq) AS s FROM workspace_revision WHERE workspace_tag = ?
-    `)),
-    seqOfId: wrapGet<[string, string], { seq: number }>(db.prepare(`
-      SELECT seq FROM workspace_revision
-      WHERE workspace_tag = ? AND id = ?
-    `)),
-    lastKeyframeSeq: wrapGet<[string], { s: number | null }>(db.prepare(`
-      SELECT MAX(seq) AS s FROM workspace_revision
-      WHERE workspace_tag = ? AND keyframe = 1
-    `)),
-    chainAll: wrapAll<[string], RevisionRow>(db.prepare(`
-      SELECT base, id, keyframe, nonce, ciphertext, signature
-      FROM workspace_revision
-      WHERE workspace_tag = ?
-      ORDER BY seq ASC
-    `)),
-    chainAfterSeq: wrapAll<[string, number], RevisionRow>(db.prepare(`
-      SELECT base, id, keyframe, nonce, ciphertext, signature
-      FROM workspace_revision
-      WHERE workspace_tag = ? AND seq > ?
-      ORDER BY seq ASC
-    `)),
-    chainFromSeq: wrapAll<[string, number], RevisionRow>(db.prepare(`
-      SELECT base, id, keyframe, nonce, ciphertext, signature
-      FROM workspace_revision
-      WHERE workspace_tag = ? AND seq >= ?
-      ORDER BY seq ASC
-    `)),
-    revisionExists: wrapGet<[string, string], unknown>(db.prepare(`
-      SELECT 1 FROM workspace_revision
-      WHERE workspace_tag = ? AND id = ?
-    `)),
-    insertRevision: wrapRun<[string, number, string, string | null, number, string, string, string, number]>(db.prepare(`
-      INSERT INTO workspace_revision
-        (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)),
+    headFor: wrapGet<[string], { id: string }>(db.prepare(toSqlitePlaceholders(HEAD_FOR_SQL))),
+    seqOfId: wrapGet<[string, string], { seq: number }>(db.prepare(toSqlitePlaceholders(SEQ_OF_ID_SQL))),
+    lastKeyframeSeq: wrapGet<[string], { s: number | null }>(db.prepare(toSqlitePlaceholders(LAST_KEYFRAME_SEQ_SQL))),
+    chainAll: chainStmt<[string]>(CHAIN_ALL_SQL),
+    chainAfterSeq: chainStmt<[string, number]>(CHAIN_AFTER_SQL),
+    chainFromSeq: chainStmt<[string, number]>(CHAIN_FROM_SQL),
+    revisionExists: wrapGet<[string, string], unknown>(db.prepare(toSqlitePlaceholders(REVISION_EXISTS_SQL))),
+    // SQLite null-safe equality is `IS`; the numbered `?N` form (with
+    // reuse) maps `$1`/`$2`/`$3` to repeated positional binds. `RETURNING
+    // seq` works in node:sqlite (see objstore's `insertLiveIfAbsent`).
+    gatedInsert: wrapGet<
+      [string, string, string | null, number, string, string, string, number],
+      { seq: number }
+    >(db.prepare(GATED_INSERT_SQL_SQLITE)),
     tryCommit: (input) => commitRevisionViaWriteLock(handle, input),
     // Match the wrap{Get,All,Run} contract: async-wrapped so a sync
     // throw from `db.close()` (already closed, locked transaction, …)
@@ -375,70 +369,89 @@ export function commitRevision(handle: Handle, input: RevisionInsert): Promise<C
   return handle.tryCommit(input)
 }
 
-// SQLite-style atomic commit: dup-id check, base-equality check,
-// MAX(seq) computation, and INSERT all run inside one
-// `writeLock.run(tag, …)` block. Within one process the lock closes
-// both concurrency hazards:
+// SQLite-style atomic commit. The whole post-signature critical
+// section runs inside one `writeLock.run(tag, …)` block; under that
+// lock it fires the SAME single gated INSERT the Neon path uses —
+// `INSERT … SELECT COALESCE(MAX(seq),0)+1 … WHERE NOT EXISTS(dup) AND
+// head IS base RETURNING seq` (SQLite's `IS` is the null-safe equality;
+// Neon uses `IS NOT DISTINCT FROM`). This is provably equivalent to the
+// previous read-then-insert under the same lock:
 //
-//   • Concurrent saves with the same `base` and DIFFERENT id would
-//     both pass an out-of-lock base-match check, both insert, and
-//     fork the chain (two rows with the same `base`). The schema
-//     allows it — UNIQUE is on (workspace_tag, id), not on `base`.
-//   • Concurrent retransmits with the same id would both pass an
-//     out-of-lock dup recheck, both reach INSERT, and the second
-//     would throw on UNIQUE — the originator never sees an ack.
+//   • The lock still serialises commits per-tag within the process, so
+//     the gate's view of the table is stable for the statement's
+//     duration — exactly the invariant the old explicit re-checks
+//     relied on.
+//   • The WHERE re-asserts BOTH old checks: `NOT EXISTS(dup-id)` is the
+//     old `revisionExists` dup recheck; `head IS $3` is the old
+//     base-equality check (NULL-safe so the FIRST revision —
+//     base = NULL against an empty-chain head, also NULL — matches and
+//     inserts, same as the old `baseNorm == null ? head == null : …`).
+//   • `seq = COALESCE(MAX(seq),0)+1` is the old `(headSeq ?? 0) + 1`.
+//   • A non-empty `RETURNING seq` ⇔ both gates passed ⇔ the old code
+//     would have inserted → `inserted`. An empty result means a gate
+//     failed; we then re-read to discriminate `duplicate` (the dup gate
+//     failed) from `stale-base` (the base gate failed), the same two
+//     outcomes the old explicit checks produced.
 //
-// ACROSS processes / connections the in-process lock can't
-// serialise. The Neon path's `tryCommitNeon` uses an advisory lock
-// for that case; the SQLite path doesn't support multi-process
-// deployments (single SQLite file, single Node process). The PK /
-// UNIQUE catch below is the residual backstop against the unlikely
-// SQLite-multi-connection scenario (e.g. a test fixture opening
-// two `openDb` handles to the same file). The refetch reads from
-// whatever is committed in the DB at refetch time — possibly
-// advanced past the immediate winner by a third connection — and
-// that's intentional: the recovery is read-after-write-failure
-// with no isolation-level assumption, and any committed head we
-// see is a valid stale-base target. Returns the standard
-// `duplicate` / `stale-base` outcome; the caller's WS handler
-// renders these as ack-only / `workspace-state` catch-up. No
-// silent failure, no chain fork.
+// Concurrency hazards the lock closes (unchanged from before):
+//   • Two saves with the same `base` and DIFFERENT id would both pass
+//     an out-of-lock base check and fork the chain (UNIQUE is on id,
+//     not base). Serialised, the second sees the first's head and the
+//     base gate fails → `stale-base`.
+//   • Two retransmits with the same id: serialised, the second's dup
+//     gate fails → `duplicate`.
+//
+// ACROSS processes / connections the in-process lock can't serialise
+// (the Neon path's advisory lock handles that case; SQLite supports
+// only single-process deployments). The unique-violation catch below
+// is the residual backstop against the unlikely SQLite-multi-connection
+// scenario (e.g. a test fixture opening two `openDb` handles to the same
+// file): a sibling landing our computed seq / id makes the gated INSERT
+// throw a PK / UNIQUE violation, which we refetch through `inserted` /
+// `stale-base` — read-after-write-failure with no isolation-level
+// assumption, any committed head we see being a valid stale-base
+// target. No silent failure, no chain fork.
 export function commitRevisionViaWriteLock(
   handle: Handle,
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
 ): Promise<CommitResult> {
   const lock = writeLocks.get(handle)
-  // The WeakMap is populated by `openDbInner` only (the Neon
-  // backend doesn't use an in-process lock — see `db-neon.ts`);
-  // the only way to hit this is to construct a `Handle` literal by
-  // hand (e.g. a test mock). Surface as a rejection rather than a
-  // sync throw so the function's Promise-returning contract holds
-  // for every caller — an unawaited write would otherwise leak an
-  // uncaught exception.
-  if (!lock) return Promise.reject(new Error('commitRevisionViaWriteLock: handle not opened via openDb'))
+  // The WeakMap + `gatedInsert` are populated by `openDbInner` only
+  // (the Neon backend uses no in-process lock and folds its gated
+  // INSERT into a transaction — see `db-neon.ts`); the only way to
+  // hit this is to construct a `Handle` literal by hand (e.g. a test
+  // mock). Surface as a rejection rather than a sync throw so the
+  // function's Promise-returning contract holds for every caller — an
+  // unawaited write would otherwise leak an uncaught exception.
+  const gatedInsert = handle.gatedInsert
+  if (!lock || !gatedInsert) {
+    return Promise.reject(new Error('commitRevisionViaWriteLock: handle not opened via openDb'))
+  }
   return lock.run(tag, async () => {
-    if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
-    const headRow = await handle.headFor.get(tag)
-    const head = headRow?.id ?? null
+    // Strict-boolean coercion via `=== true`. The canonical signed by
+    // the client uses `keyframe === true ? '1' : ''` — anything
+    // truthy-but-not-strictly-true (e.g. `1`, `"true"`, `{}`) would
+    // canonicalize to `''` (non-keyframe) on the verifier side but
+    // would round-trip to `1` here via the looser ternary, diverging
+    // signed bytes from stored bytes. TS narrows `keyframe` to
+    // `boolean` upstream; the strict comparison is defense-in-depth
+    // against a future caller that loosens the field type or a direct
+    // invocation from a non-typed context. Input-validation audit.
+    const keyframeCol = keyframe === true ? 1 : 0
     const baseNorm = base ?? null
-    const matches = baseNorm == null ? head == null : baseNorm === head
-    if (!matches) return { kind: 'stale-base', head }
-    const seqRow = await handle.headSeq.get(tag)
-    const seq = (seqRow?.s ?? 0) + 1
     try {
-      // Strict-boolean coercion via `=== true`. The canonical signed
-      // by the client uses `keyframe === true ? '1' : ''` — anything
-      // truthy-but-not-strictly-true (e.g. `1`, `"true"`, `{}`) would
-      // canonicalize to `''` (non-keyframe) on the verifier side but
-      // would round-trip to `1` here via the looser ternary, diverging
-      // signed bytes from stored bytes. TS narrows `keyframe` to
-      // `boolean` upstream; the strict comparison is defense-in-depth
-      // against a future caller that loosens the field type or a
-      // direct invocation from a non-typed context. Input-validation
-      // audit `server/db.ts:389`.
-      const keyframeCol = keyframe === true ? 1 : 0
-      await handle.insertRevision.run(tag, seq, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
-      return { kind: 'inserted' }
+      // Gated INSERT: inserts (and RETURNs the assigned seq) only when
+      // there is no dup id AND the current head equals the proposed
+      // base. A returned row ⇔ inserted.
+      const inserted = await gatedInsert.get(tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
+      if (inserted) return { kind: 'inserted' }
+      // No insert → a gate failed. Re-assert the dup gate first (a
+      // retransmit landed) before falling back to the base gate
+      // (head advanced past our base) — same precedence as the old
+      // dup-then-base check order.
+      if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
+      const headRow = await handle.headFor.get(tag)
+      return { kind: 'stale-base', head: headRow?.id ?? null }
     } catch (err) {
       // Only convert unique-violations; rethrow other driver errors
       // (network, connection-closed, …) so they surface as real
