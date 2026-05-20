@@ -1,23 +1,31 @@
-// Orphan reaper for the v1.objstore byte plane. Two passes:
-//   1. Stranded committed blobs. Walk every workspace's live-blob
-//      listing, cross-check against the live table. Blobs with no
-//      row → unlink. Covers the "DELETE crashed between row-drop
-//      and unlink" gap and the "commit crashed mid-promotion" dual-
-//      blob case.
+// Orphan reaper / GC for the v1.objstore byte plane. Two passes:
+//   1. Unreferenced live blobs. Live blobs are content-addressed
+//      (`${tag}/${contentHash}.bin`). For each workspace, build the
+//      set of content hashes the live table references, list the live
+//      blobs, and GC any blob whose hash is in NO live row AND whose
+//      age (now − last-modified) is past the grace window. The grace
+//      window (one `STAGING_TTL_MS_DEFAULT`) is what makes the
+//      reaper-vs-commit race safe without a lock: a just-promoted but
+//      not-yet-referenced blob (commit between promote and CAS) is
+//      younger than the grace, so it's never reaped out from under an
+//      in-flight commit. Covers the "DELETE dropped the row" case
+//      (the blob is now unreferenced) and the "commit crashed
+//      mid-promotion" case (a stranded, unreferenced blob).
 //   2. Stale staging. Rows in workspace_object_staging older than
-//      `stagingTtlMs` → unlink + drop row. Staging blobs with no
+//      `stagingTtlMs` → drop row + unlink blob. Staging blobs with no
 //      row → unlink (catches a row drop that crashed before the
 //      blob delete).
 //
 // Backend-agnostic: every storage operation goes through
 // `handle.blob.*`. The FS backend (blob-fs.ts) implements list/
 // unlink against the local filesystem; the Vercel backend (blob-
-// vercel.ts) against the SDK's list / del. The reaper's race-
-// handling discipline — re-check live row / staging row under the
-// per-resource lock before unlinking — is identical for both.
+// vercel.ts) against the SDK's list / del. There is no distributed
+// commit lock: content-addressing + the age grace window remove the
+// need for it. The reaper re-reads the live reference set under the
+// per-resource lock just before unlinking so it never races a
+// just-landed commit on the same key within a process.
 
-import { type Handle, STAGING_TTL_MS_DEFAULT, isValidStagingId, isValidTag, lockKey } from './store.ts'
-import { tryAcquireCommitLock } from './commit-lock.ts'
+import { type Handle, STAGING_TTL_MS_DEFAULT, isValidContentHash, isValidStagingId, isValidTag, lockKey } from './store.ts'
 
 type StagingRow = {
   workspace_tag: string
@@ -26,57 +34,62 @@ type StagingRow = {
   begun_at: number
 }
 
-// Unlink a committed blob IFF the live table has no row for it,
-// under the cross-replica DB commit lock + the in-process per-
-// resource lock. Shared by both passes that delete orphaned live
-// blobs (reapCommittedForTag's per-tag sweep and reapOrphans'
+// GC one workspace's live blobs against the set of hashes the live
+// table references. A blob is unlinked IFF: its hash parses as a valid
+// content hash (defense against operator-seeded / foreign files), it's
+// older than the grace window (measured from the listing's
+// last-modified time), AND — re-read immediately before the unlink —
+// no live row references it. Shared by both GC passes
+// (reapUnreferencedForTag's per-tag sweep and reapOrphans'
 // whole-workspace straggler sweep).
 //
-// Try-acquire the DB commit lock first (cross-replica gate). If
-// contended, another replica is mid-commit on this same key — skip
-// and let it land; we'll re-scan on the next sweep. This closes the
-// multi-replica race where replica A's reaper would delete the live
-// blob that replica B is about to commit but whose `upsertLive`
-// hasn't landed yet. Without the DB lock, replica A's in-process
-// lock is uncontested (B's lock is on a different process) and we'd
-// unlink the in-flight commit's bytes. The `selectLiveOne` recheck
-// inside the lock catches a commit that raced past the caller's
-// listing and landed a fresh row + blob — that blob IS the fresh
-// commit's live blob, so skip. PR #4 review.
-async function unlinkLiveIfOrphaned(handle: Handle, tag: string, resourceTag: string): Promise<void> {
-  const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
-  if (!acquired.ok) return
-  try {
-    await handle.lock.run(lockKey(tag, resourceTag), async () => {
-      if (await handle.selectLiveOne.get(tag, resourceTag)) return
-      await handle.blob.unlinkLive(tag, resourceTag)
-    })
-  } finally { await acquired.lock.release() }
+// Two layers of race protection, in lieu of the old distributed lock:
+//   - Age grace window. A blob a freshly-promoted-but-not-yet-CAS'd
+//     commit just wrote is younger than the grace, so it survives this
+//     sweep entirely (its listing mtime is recent). This is the
+//     primary guard for the commit's promote→CAS window.
+//   - Live-set re-read just before unlink. A commit whose CAS landed
+//     after our initial per-tag snapshot but before this unlink is
+//     caught here — its row now references the hash, so we skip. The
+//     hash may be shared across resources via content dedup, so the
+//     test is "no live row references this hash", not "this resource".
+// No in-process lock is taken: it would key on the content hash, but
+// the commit path locks on the resourceTag, so a hash-keyed lock can't
+// serialise against an in-flight commit — the grace window + re-read
+// are the actual safety net. The single-flight reaper (one sweep at a
+// time, see init.ts) means no second reaper races this either.
+async function gcBlobIfUnreferenced(
+  handle: Handle, tag: string, hash: string, modifiedMs: number, now: number, grace: number,
+): Promise<void> {
+  if (!isValidContentHash(hash)) return
+  if (now - modifiedMs < grace) return
+  const refs = await liveHashSet(handle, tag)
+  if (refs.has(hash)) return
+  await handle.blob.unlinkLive(tag, hash)
 }
 
-// Sweep one workspace's live-blob listing against the live-row set.
-// Anything with no row → unlink. The live snapshot we read up front
-// can race a concurrent commit (delete drops the row → put-begin →
-// commit lands a fresh row + blob between our snapshot and the
-// unlink); `unlinkLiveIfOrphaned` re-checks under the per-resource
-// lock so we never unlink a blob the live row points at.
-async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
+// The set of content hashes referenced by the workspace's live rows.
+async function liveHashSet(handle: Handle, tag: string): Promise<Set<string>> {
+  const rows = await handle.selectLive.all(tag)
+  return new Set(rows.map((r) => r.content_hash))
+}
+
+// Sweep one workspace's live-blob listing against the referenced-hash
+// set. Anything unreferenced AND past the grace window → GC. The
+// snapshot we read up front can race a concurrent commit; the
+// per-resource-lock recheck inside `gcBlobIfUnreferenced` (plus the
+// grace window) ensures we never unlink a blob a live row names.
+async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, grace: number): Promise<void> {
   if (!isValidTag(tag)) return
-  const entries = await handle.blob.listLiveResourceTags(tag)
-  if (entries.length === 0) return
-  const liveRows = await handle.selectLive.all(tag)
-  const live = new Set(liveRows.map((r) => r.resource_tag))
-  for (const resourceTag of entries) {
-    // Refuse to act on a foreign / malformed name — defense against
-    // an operator-seeded blob, an SDK return shape regression, or a
-    // future migration that introduces an unsanitised input. The
-    // production write paths only ever produce base64url-shaped
-    // resource tags.
-    if (!isValidTag(resourceTag)) continue
-    // Known-live in our snapshot → skip the lock + recheck entirely;
-    // only blobs the live table doesn't list need the orphan check.
-    if (live.has(resourceTag)) continue
-    await unlinkLiveIfOrphaned(handle, tag, resourceTag)
+  const blobs = await handle.blob.listLiveBlobs(tag)
+  if (blobs.length === 0) return
+  const referenced = await liveHashSet(handle, tag)
+  for (const { hash, modifiedMs } of blobs) {
+    if (!isValidContentHash(hash)) continue
+    // Referenced in our snapshot → skip the lock + recheck entirely;
+    // only unreferenced blobs need the grace + recheck path.
+    if (referenced.has(hash)) continue
+    await gcBlobIfUnreferenced(handle, tag, hash, modifiedMs, now, grace)
   }
 }
 
@@ -148,7 +161,7 @@ async function reapOrphanedStagingFiles(handle: Handle, tag: string): Promise<vo
   const entries = await handle.blob.listStagingIds(tag)
   if (entries.length === 0) return
   for (const stagingId of entries) {
-    // Same on-disk-foreign-file guard as reapCommittedForTag.
+    // Same on-disk-foreign-file guard as reapUnreferencedForTag.
     if (!isValidStagingId(stagingId)) continue
     if (await handle.selectStagingByWsSid.get(tag, stagingId)) continue
     await handle.blob.unlinkStaging(tag, stagingId)
@@ -157,25 +170,26 @@ async function reapOrphanedStagingFiles(handle: Handle, tag: string): Promise<vo
 
 export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING_TTL_MS_DEFAULT): Promise<void> {
   const now = Date.now()
-  // Pass 1: tags the live table knows about — cross-check committed
-  // blobs against live rows.
+  // The GC grace window reuses the staging TTL: a live blob is only
+  // eligible for unlink once it's unreferenced AND older than this.
+  const grace = stagingTtlMs
+  // Pass 1: tags the live table knows about — GC unreferenced live
+  // blobs (past the grace window) against the referenced-hash set.
   const liveTagsRows = await handle.listLiveTags.all()
   const liveTags = liveTagsRows.map((r) => r.workspace_tag)
-  for (const tag of liveTags) await reapCommittedForTag(handle, tag)
-  // Whole-workspace deletes leave residue (dirs / blob-prefixes)
-  // that the live table doesn't list. Walk the backend's top-level
-  // workspace listing to find them; the same per-resource lock +
-  // re-check protects against racing put-begin → commit on a tag
-  // not in our `liveTags` snapshot.
+  for (const tag of liveTags) await reapUnreferencedForTag(handle, tag, now, grace)
+  // Whole-workspace deletes leave residue (dirs / blob-prefixes) the
+  // live table no longer lists. Walk the backend's top-level workspace
+  // listing to find them; for each straggler tag, GC its unreferenced
+  // blobs the same way (the referenced-hash set for a fully-deleted
+  // workspace is empty, so every past-grace blob is collected, while
+  // the grace window + live-set re-read still protect a racing
+  // put-begin → commit on a tag not in our `liveTags` snapshot).
   const topLevel = await handle.blob.listWorkspaceTags()
   const liveSet = new Set(liveTags)
   for (const tag of topLevel) {
     if (liveSet.has(tag) || !isValidTag(tag)) continue
-    const stragglers = await handle.blob.listLiveResourceTags(tag)
-    for (const resourceTag of stragglers) {
-      if (!isValidTag(resourceTag)) continue
-      await unlinkLiveIfOrphaned(handle, tag, resourceTag)
-    }
+    await reapUnreferencedForTag(handle, tag, now, grace)
   }
   // Pass 2: stale staging rows + orphan staging blobs. The orphan
   // sweep does per-blob row lookups (no caller-side snapshot), so a

@@ -4,12 +4,13 @@
 // against either FS or Vercel Blob (./blob-vercel.ts).
 //
 // Layout under `dir` (passed to `openFsBlobBackend`):
-//   ${dir}/${workspaceTag}/${resourceTag}.bin             — live
-//   ${dir}/${workspaceTag}/.staging/${stagingId}.bin      — staging
+//   ${dir}/${workspaceTag}/${contentHash}.bin            — live
+//   ${dir}/${workspaceTag}/.staging/${stagingId}.bin     — staging
 //
-// The same shape the previous monolithic implementation used; tests
-// that import `liveFilePath` / `stagingFilePath` from ./fs.ts still
-// compute the right paths.
+// Live blobs are content-addressed (the filename is the content hash,
+// not the resourceTag) so a hash names exactly one immutable byte-
+// string; tests that import `liveFilePath` / `stagingFilePath` from
+// ./fs.ts compute the right paths.
 
 import { createWriteStream } from 'node:fs'
 import { open, readdir, stat } from 'node:fs/promises'
@@ -32,6 +33,40 @@ async function safeReaddir(dir: string): Promise<string[]> {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'ENOENT') return []
     throw err
+  }
+}
+
+// Open the content-addressed live blob for reading. ENOENT → the row
+// references a hash whose blob is gone right now (racing delete/GC, or a
+// stranded row) → `unavailable` (503). `fh.createReadStream()` (not the
+// raw-fd form) binds the stream lifecycle to the FileHandle so the fd
+// closes exactly once; the inode is pinned, so even if the path is
+// unlinked/overwritten after open the stream reads the captured
+// snapshot. The stat is wrapped so a throw between open and close
+// doesn't leak the fd (PR #4 review H8).
+async function fsOpenLiveReader(dir: string, tag: string, contentHash: string): Promise<OpenLiveResult> {
+  const path = liveFilePath(dir, tag, contentHash)
+  let fh
+  try { fh = await open(path, 'r') } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { ok: false, reason: 'unavailable' }
+    throw err
+  }
+  let size: number
+  try { size = (await fh.stat()).size } catch {
+    await fh.close().catch(() => {})
+    return { ok: false, reason: 'unavailable' }
+  }
+  const stream = fh.createReadStream()
+  let closed = false
+  return {
+    ok: true,
+    reader: {
+      stream,
+      size,
+      // Guard double-close (caller close + stream-end auto-close).
+      // eslint-disable-next-line require-await
+      close: async () => { if (closed) return; closed = true; stream.destroy() },
+    },
   }
 }
 
@@ -77,82 +112,41 @@ export function openFsBlobBackend(dir: string): BlobBackend {
       }
     },
 
-    promoteStagingToLive: (tag, stagingId, resourceTag) =>
+    promoteStagingToLive: (tag, stagingId, contentHash) =>
       durableRenameStagedToLive(
         stagingFilePath(dir, tag, stagingId),
-        liveFilePath(dir, tag, resourceTag),
+        liveFilePath(dir, tag, contentHash),
       ),
 
-    openLiveReader: async (tag, resourceTag): Promise<OpenLiveResult> => {
-      const path = liveFilePath(dir, tag, resourceTag)
-      let fh
-      // `open(path, 'r')` failing with ENOENT means the live file is
-      // gone (could be a stranded row + missing file the reaper will
-      // reconcile, or a racing delete that landed between the DB
-      // row check and this open). Either way the REST GET surface
-      // is 'unavailable' (503) — the row says it exists but the
-      // bytes aren't there right now.
-      try { fh = await open(path, 'r') } catch (err: unknown) {
-        const code = (err as NodeJS.ErrnoException)?.code
-        if (code === 'ENOENT') return { ok: false, reason: 'unavailable' }
-        throw err
-      }
-      // Wrap stat in its own try/catch so a throw between open and
-      // close doesn't leak the fd to GC. Same pattern as the
-      // original openLiveUnderLock in rest.ts (PR #4 review H8).
-      let size: number
-      try { size = (await fh.stat()).size } catch {
-        await fh.close().catch(() => {})
-        return { ok: false, reason: 'unavailable' }
-      }
-      // `fh.createReadStream()` (not `fs.createReadStream(path, { fd })`)
-      // — the FileHandle's own method binds the stream lifecycle to
-      // the FileHandle, so the underlying fd is closed exactly once.
-      // Using the raw-fd form double-closes (stream's autoClose +
-      // FileHandle's finalizer) and the second close trips an
-      // uncaughtException with EBADF, taking the whole process
-      // down. The inode is pinned by the fh; even if the path is
-      // unlinked or overwritten after this point, the stream reads
-      // the snapshot the open captured.
-      const stream = fh.createReadStream()
-      let closed = false
-      return {
-        ok: true,
-        reader: {
-          stream,
-          size,
-          // Caller error before/after pipe — destroy the stream to
-          // release the fh (FileHandle's createReadStream auto-
-          // closes the fh on end/error). Guard with `closed` so
-          // double-close from caller + auto-close from stream end
-          // is a no-op rather than throwing.
-          // eslint-disable-next-line require-await
-          close: async () => {
-            if (closed) return
-            closed = true
-            stream.destroy()
-          },
-        },
-      }
-    },
+    openLiveReader: (tag, contentHash) => fsOpenLiveReader(dir, tag, contentHash),
 
     unlinkStaging: (tag, stagingId) => unlinkIfExists(stagingFilePath(dir, tag, stagingId)),
-    unlinkLive: (tag, resourceTag) => unlinkIfExists(liveFilePath(dir, tag, resourceTag)),
+    unlinkLive: (tag, contentHash) => unlinkIfExists(liveFilePath(dir, tag, contentHash)),
 
     listWorkspaceTags: () => safeReaddir(dir),
 
-    // Live resources are top-level `.bin` files under
-    // `${dir}/${tag}/`. The `.staging` subdirectory is excluded —
-    // it's the staging-id namespace, returned by listStagingIds.
-    // Filtering by `.bin` suffix tolerates operator-seeded foreign
-    // files (PR #4 review H2: reaper refuses to unlink anything we
-    // didn't write).
-    listLiveResourceTags: async (tag) => {
+    // Live blobs are top-level `.bin` files under `${dir}/${tag}/`,
+    // named by their content hash. The `.staging` subdirectory is
+    // excluded — it's the staging-id namespace, returned by
+    // listStagingIds. Filtering by `.bin` suffix tolerates operator-
+    // seeded foreign files (PR #4 review H2: reaper refuses to unlink
+    // anything we didn't write). Each entry carries its `mtimeMs` so
+    // the reaper's GC grace window can skip blobs younger than the
+    // grace (a just-promoted blob whose live row hasn't been read
+    // into the GC's reference set yet). A blob that vanishes between
+    // readdir and stat (a racing reaper/abort) is dropped from the
+    // result — it's already gone, nothing to GC.
+    listLiveBlobs: async (tag) => {
       const entries = await safeReaddir(join(dir, tag))
-      const out: string[] = []
+      const out: Array<{ hash: string; modifiedMs: number }> = []
       for (const name of entries) {
         if (name === '.staging' || !name.endsWith('.bin')) continue
-        out.push(name.slice(0, -4))
+        let modifiedMs: number
+        try { modifiedMs = (await stat(join(dir, tag, name))).mtimeMs } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') continue
+          throw err
+        }
+        out.push({ hash: name.slice(0, -4), modifiedMs })
       }
       return out
     },

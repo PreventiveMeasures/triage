@@ -5,10 +5,11 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
 
 import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, lockKey, openObjstore } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
@@ -32,13 +33,31 @@ function b64u32() { return 'a'.repeat(43) }
 // 64-byte b64url, 86 chars no padding (SIG_RE)
 function b64u64() { return 'a'.repeat(86) }
 
+// Deterministic, valid (43-char base64url) content hash from a seed.
+// Live blobs are content-addressed (`${tag}/${contentHash}.bin`), so
+// keying the test payloads' hashes off the resourceTag gives each
+// resource its own blob — mirroring the old per-resourceTag on-disk
+// layout so existing coverage carries straight over. A test that wants
+// a NEW address for new bytes (re-upload) passes a distinct seed.
+function chash(seed) { return createHash('sha256').update(String(seed)).digest('base64url') }
+
+// Backdate a live blob's mtime so the reaper's GC grace window (default
+// = STAGING_TTL_MS_DEFAULT) treats it as collectible. Mirrors how the
+// staging-TTL tests backdate `begun_at`; avoids depending on a grace=0
+// edge case (fs mtime can round a just-written file slightly ahead).
+function ageBlob(filePath, msAgo = 2 * 60 * 60 * 1000) {
+  const t = (Date.now() - msAgo) / 1000
+  utimesSync(filePath, t, t)
+}
+
 function fakeBegin(over = {}) {
+  const resourceTag = over.resourceTag ?? 'resource-tag-1'
   return {
     workspaceTag: 'workspace-tag-1',
-    resourceTag: 'resource-tag-1',
+    resourceTag,
     prevVersion: null,
     expectedLength: 16,
-    contentHash: b64u32(),
+    contentHash: chash(resourceTag),
     signature: b64u64(),
     ...over,
   }
@@ -76,8 +95,8 @@ describe('beginPut → commitPut happy path', () => {
       assert.equal(commit.ok, true)
       assert.equal(commit.row.version, 1)
       assert.equal(commit.row.contentLength, 16)
-      // Live file exists at the canonical path; staging file gone.
-      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      // Live file exists at the content-addressed path; staging gone.
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       assert.equal(statSync(live).size, 16)
       assert.equal(existsSync(begin.filePath), false)
       // listLive sees the row.
@@ -88,14 +107,16 @@ describe('beginPut → commitPut happy path', () => {
     } finally { cleanup() }
   })
 
-  it('a second PUT with prevVersion=1 bumps version to 2 and overwrites the file', async () => {
+  it('a second PUT with prevVersion=1 bumps version to 2 and lands new bytes at a new content-addressed path', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const begin1 = await beginPut(handle, fakeBegin({ expectedLength: 8 }))
       writeStaging(begin1.filePath, Buffer.alloc(8))
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin1.stagingId })
-      // Second PUT with the right prevVersion succeeds.
-      const begin2 = await beginPut(handle, fakeBegin({ prevVersion: 1, expectedLength: 24 }))
+      const v1blob = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
+      // Second PUT: new bytes ⇒ new content hash ⇒ new blob address.
+      const h2 = chash('resource-tag-1@v2')
+      const begin2 = await beginPut(handle, fakeBegin({ prevVersion: 1, expectedLength: 24, contentHash: h2 }))
       assert.equal(begin2.ok, true)
       writeStaging(begin2.filePath, Buffer.alloc(24))
       const commit2 = await commitPut(handle, {
@@ -103,8 +124,12 @@ describe('beginPut → commitPut happy path', () => {
       })
       assert.equal(commit2.ok, true)
       assert.equal(commit2.row.version, 2)
-      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
-      assert.equal(statSync(live).size, 24)
+      assert.equal(commit2.row.contentHash, h2)
+      // v2 bytes live at the NEW address; v1's immutable blob is left
+      // untouched (now unreferenced — the reaper GCs it once past the
+      // grace window; see the reapOrphans suite).
+      assert.equal(statSync(liveFilePath(objDir, 'workspace-tag-1', h2)).size, 24)
+      assert.equal(statSync(v1blob).size, 8)
     } finally { cleanup() }
   })
 })
@@ -213,7 +238,7 @@ describe('truncation invariant (M1) — a partial upload never becomes live', ()
       assert.equal(c1.reason, 'size-mismatch')
       // Critical invariant: no live row, no live file.
       assert.equal(await getLive(handle, 'workspace-tag-1', 'foo'), null)
-      assert.equal(existsSync(liveFilePath(objDir, 'workspace-tag-1', 'foo')), false)
+      assert.equal(existsSync(liveFilePath(objDir, 'workspace-tag-1', chash('foo'))), false)
       // Cleanup the failed attempt (production path: REST handler calls
       // abortPut on the size-mismatch return; we replicate that here).
       await abortPut(handle, 'workspace-tag-1', 'foo', b1.stagingId)
@@ -231,7 +256,7 @@ describe('truncation invariant (M1) — a partial upload never becomes live', ()
       assert.equal(c2.row.contentLength, 100)
       // Live file exists and contains the RETRY's bytes — not the
       // truncated original's bytes.
-      const liveContent = readFileSync(liveFilePath(objDir, 'workspace-tag-1', 'foo'))
+      const liveContent = readFileSync(liveFilePath(objDir, 'workspace-tag-1', chash('foo')))
       assert.equal(liveContent.length, 100)
       assert.equal(Buffer.compare(liveContent, retryBytes), 0)
     } finally { cleanup() }
@@ -339,20 +364,26 @@ describe('abortPut — cleanup', () => {
 })
 
 describe('deleteObject', () => {
-  it('drops the row + file when prevVersion matches', async () => {
+  it('drops the row when prevVersion matches; the unreferenced blob is left for the reaper GC', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
       assert.equal(c.ok, true)
-      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       assert.equal(existsSync(live), true)
       const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1)
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 1)
-      assert.equal(existsSync(live), false)
+      // Row gone immediately. The blob is NOT unlinked inline — content
+      // dedup means another resource may share these exact bytes — so
+      // the reaper GCs it once unreferenced AND past the grace window.
       assert.equal(await getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
+      assert.equal(existsSync(live), true)
+      ageBlob(live)
+      await reapOrphans(handle)
+      assert.equal(existsSync(live), false)
     } finally { cleanup() }
   })
 
@@ -380,18 +411,24 @@ describe('deleteObject', () => {
 })
 
 describe('reapOrphans', () => {
-  it('unlinks committed-name files whose row was dropped', async () => {
+  it('GCs an unreferenced live blob (row dropped) only once past the grace window', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Manufacture a stranded committed file: PUT + commit, then
-      // simulate a delete that crashed pre-unlink by dropping the
-      // row directly.
+      // Manufacture a stranded committed blob: PUT + commit, then
+      // simulate a delete/crash by dropping the row directly.
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
       handle.db.prepare(`DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?`).run('workspace-tag-1', 'resource-tag-1') // direct row drop
-      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       assert.equal(existsSync(live), true)
+      // A just-written blob is within the grace window — a default
+      // sweep leaves it. This is exactly what protects a freshly-
+      // promoted, not-yet-CAS'd blob from a concurrent reaper.
+      await reapOrphans(handle)
+      assert.equal(existsSync(live), true, 'grace window protects a recent blob')
+      // Past the grace window, still unreferenced → GC'd.
+      ageBlob(live)
       await reapOrphans(handle)
       assert.equal(existsSync(live), false)
     } finally { cleanup() }
@@ -506,46 +543,35 @@ describe('reapOrphans', () => {
     } finally { cleanup() }
   })
 
-  it('skips unlinking a freshly-committed file when a commit lands mid-sweep (lock + recheck)', async () => {
-    // Audit finding: the reaper used to read the live-row set then
-    // unlink across an await boundary. A concurrent delete →
-    // put-begin → commit could land a fresh row + file between the
-    // snapshot and the unlink, and the reaper would unlink the
-    // freshly-committed live file. The fix: re-check `selectLiveOne`
-    // inside the per-resource lock before each unlink.
+  it('never GCs a blob whose hash a live row still references (even past the grace window)', async () => {
+    // Content-addressing + the live-reference-set check replace the old
+    // commit-lock + reaper recheck. The GC unlinks a live blob ONLY
+    // when NO live row references its content hash; a committed blob —
+    // even aged past the grace window, even swept with grace 0 — stays
+    // because its row names its hash. (The grace window is the separate
+    // guard for a just-promoted, not-yet-CAS'd blob; see the prior
+    // test.) A commit landing mid-sweep produces a young blob the grace
+    // window covers, and `gcBlobIfUnreferenced` re-reads the reference
+    // set immediately before each unlink, so a row that lands during a
+    // sweep is still seen.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Drop a stranded `.bin` file (no row yet) — the shape the
-      // reaper would normally unlink.
-      const live = liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1')
-      mkdirSync(path.dirname(live), { recursive: true })
-      writeFileSync(live, Buffer.from('would-be-committed'))
-      // Pre-acquire the per-resource lock to model an in-flight
-      // commit holding it. Reaper will queue behind us.
-      let release
-      const acquired = handle.lock.run(lockKey('workspace-tag-1', 'resource-tag-1'), () => new Promise((r) => { release = r }))
-      // Kick the sweep — reaper observes no live row, queues on the
-      // lock for the unlink-step.
-      const sweep = reapOrphans(handle)
-      // Yield so the reaper progresses to the lock.run() call.
-      await new Promise((r) => { setImmediate(r) })
-      // Simulate the commit landing its row while we still hold the
-      // lock — the upsertLive insert is exactly what commitPut does
-      // atomically inside the same lock.
-      handle.db.prepare(`
-        INSERT INTO workspace_object
-          (workspace_tag, resource_tag, version, content_hash, content_length,
-           signature, put_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('workspace-tag-1', 'resource-tag-1', 1, b64u32(), 18, b64u64(), Date.now())
-      release()
-      await acquired
-      await sweep
-      // The file MUST still exist — reaper's re-check saw the row
-      // and skipped the unlink.
-      assert.equal(existsSync(live), true, 'reaper must not unlink a file whose row landed mid-sweep')
-      const row = handle.db.prepare(`SELECT 1 FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?`).get('workspace-tag-1', 'resource-tag-1')
-      assert.ok(row, 'live row still present')
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 18 }))
+      writeStaging(b.filePath, Buffer.alloc(18))
+      const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      assert.equal(c.ok, true)
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
+      assert.equal(existsSync(live), true)
+      // Age it past the grace window AND sweep with grace 0, so neither
+      // age nor the grace window is what protects it — only the live
+      // row's reference to its content hash.
+      ageBlob(live)
+      await reapOrphans(handle, 0)
+      assert.equal(existsSync(live), true, 'a referenced blob is never collected')
+      assert.ok(
+        handle.db.prepare(`SELECT 1 FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?`).get('workspace-tag-1', 'resource-tag-1'),
+        'live row still present',
+      )
     } finally { cleanup() }
   })
 
@@ -641,7 +667,7 @@ describe('readFileSync end-to-end', () => {
       writeStaging(b.filePath, payload)
       const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
       assert.equal(c.ok, true)
-      const stored = readFileSync(liveFilePath(objDir, 'workspace-tag-1', 'resource-tag-1'))
+      const stored = readFileSync(liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1')))
       assert.deepEqual(stored, payload)
     } finally { cleanup() }
   })
@@ -810,7 +836,7 @@ describe('KeyedAsyncLock', () => {
 })
 
 describe('directory layout', () => {
-  it('places committed files under ${OBJSTORE_DIR}/${tag}/${resourceTag}.bin', async () => {
+  it('places committed files under ${OBJSTORE_DIR}/${tag}/${contentHash}.bin', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
@@ -818,7 +844,9 @@ describe('directory layout', () => {
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
       const tagDir = path.join(objDir, 'workspace-tag-1')
       const entries = readdirSync(tagDir).filter((n) => n.endsWith('.bin'))
-      assert.deepEqual(entries, ['resource-tag-1.bin'])
+      // Live blobs are content-addressed: the filename is the content
+      // hash, not the resourceTag.
+      assert.deepEqual(entries, [`${chash('resource-tag-1')}.bin`])
     } finally { cleanup() }
   })
 

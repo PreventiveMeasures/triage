@@ -72,20 +72,6 @@ const SCHEMA_PG = [
    )`,
   `CREATE INDEX IF NOT EXISTS workspace_object_staging_begun_at_idx
      ON workspace_object_staging (begun_at)`,
-  // Distributed commit mutex — see store.ts SCHEMA for rationale.
-  // `expires_at` is set from `(EXTRACT(EPOCH FROM NOW())*1000)::BIGINT
-  // + lease_ms` and the steal predicate also compares against the DB
-  // server's NOW() — NEVER the caller's Date.now(). This anchoring
-  // closes the clock-skew theft scenario where a replica with a
-  // fast wall clock would read a peer's fresh lease as expired and
-  // steal it, causing concurrent commitPut → silent data corruption.
-  `CREATE TABLE IF NOT EXISTS workspace_object_commit_lock (
-     workspace_tag  TEXT   NOT NULL,
-     resource_tag   TEXT   NOT NULL,
-     holder         TEXT   NOT NULL,
-     expires_at     BIGINT NOT NULL,
-     PRIMARY KEY (workspace_tag, resource_tag)
-   )`,
 ]
 
 // `num` / `numOrNull` (safe-integer BIGINT coercion) are shared with
@@ -189,51 +175,48 @@ function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> 
   } }
 }
 
-function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string, number, string, number]> {
-  return runStmt(sql, `INSERT INTO workspace_object
-         (workspace_tag, resource_tag, version, content_hash, content_length,
-          signature, put_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-         version        = EXCLUDED.version,
-         content_hash   = EXCLUDED.content_hash,
-         content_length = EXCLUDED.content_length,
-         signature      = EXCLUDED.signature,
-         put_at         = EXCLUDED.put_at`)
-}
-
-// Conditional upsert that gates on the commit-lock still being
-// held by `holder` with a fresh `expires_at`. Same single-
-// statement atomicity as the SQLite version (the WHERE EXISTS
-// evaluates against the same snapshot as the INSERT). Returns
-// `{ committed: 1 }` on success, undefined when the lease was
-// stolen / expired during the long upload phase. Both `expires_at`
-// and the time comparison anchor to the DB SERVER's NOW(), not
-// the caller's clock — clock-skew between replicas can't cause
-// the gate to incorrectly pass.
-function buildUpsertLiveIfHeld(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, string], { committed: number }> {
-  return { get: async (tag, resourceTag, version, contentHash, contentLength, signature, putAt, holder) => {
+// First-write CAS: insert the live row at version 1 IF ABSENT.
+// `ON CONFLICT … DO NOTHING RETURNING 1` returns a row only when our
+// insert won; a racing first-write that landed first makes this a
+// no-op (empty result) → caller maps to conflict. Bind order:
+// (tag, res, hash, len, sig, put_at); version is the literal 1.
+function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string, number, string, number], { ok: number }> {
+  return { get: async (tag, resourceTag, contentHash, contentLength, signature, putAt) => {
     const rows = await sql(
       `INSERT INTO workspace_object
          (workspace_tag, resource_tag, version, content_hash, content_length,
           signature, put_at)
-       SELECT $1, $2, $3, $4, $5, $6, $7
-       WHERE EXISTS (
-         SELECT 1 FROM workspace_object_commit_lock
-         WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $8
-           AND expires_at > (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
-       )
-       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-         version        = EXCLUDED.version,
-         content_hash   = EXCLUDED.content_hash,
-         content_length = EXCLUDED.content_length,
-         signature      = EXCLUDED.signature,
-         put_at         = EXCLUDED.put_at
-       RETURNING 1 AS committed`,
-      [tag, resourceTag, version, contentHash, contentLength, signature, putAt, holder],
-    ) as Array<{ committed: number | string }>
+       VALUES ($1, $2, 1, $3, $4, $5, $6)
+       ON CONFLICT (workspace_tag, resource_tag) DO NOTHING
+       RETURNING 1 AS ok`,
+      [tag, resourceTag, contentHash, contentLength, signature, putAt],
+    ) as Array<{ ok: number | string }>
     const r = rows[0]
-    return r ? { committed: num(r.committed) } : undefined
+    return r ? { ok: num(r.ok) } : undefined
+  } }
+}
+
+// Re-upload CAS: bump the row to `$3` (next version) only when the
+// live version still equals `$8` (the precondition the caller read).
+// `RETURNING 1` comes back only when the WHERE matched — exactly one
+// of N racing re-uploads against the same base version wins; the
+// losers get an empty result → conflict + rebase. Bind order:
+// (tag, res, nextVersion, hash, len, sig, put_at, expectedVersion).
+function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, number], { ok: number }> {
+  return { get: async (tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion) => {
+    const rows = await sql(
+      `UPDATE workspace_object
+       SET version        = $3,
+           content_hash   = $4,
+           content_length = $5,
+           signature      = $6,
+           put_at         = $7
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $8
+       RETURNING 1 AS ok`,
+      [tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion],
+    ) as Array<{ ok: number | string }>
+    const r = rows[0]
+    return r ? { ok: num(r.ok) } : undefined
   } }
 }
 
@@ -282,66 +265,6 @@ function buildCountLive(sql: NeonSql): GetStmt<[string], { c: number }> {
   } }
 }
 
-// Distributed mutex on (workspace_tag, resource_tag). Same
-// INSERT-or-take-expired semantics as the SQLite path:
-//   - No row → INSERT, RETURNING acquired=1.
-//   - Row held by another but expired (expires_at <= server now) →
-//     UPDATE steals the lease, RETURNING acquired=1.
-//   - Row held (by us or by another) and not expired → no row
-//     returned, caller treats as not-acquired. Same-holder refresh
-//     is intentionally NOT supported here (mirror the SQLite path);
-//     letting same-holder transparently re-acquire would defeat
-//     cross-replica serialization in single-process deployments
-//     where reaper + REST PUT share PROCESS_HOLDER_ID.
-//
-// CRITICAL: all time comparisons use Postgres's `NOW()` (server
-// clock), NOT the caller's `Date.now()`. Multi-replica deployments
-// with NTP-disagreement of even seconds would otherwise let a
-// clock-ahead replica read a fresh peer-held lease as expired and
-// steal it → concurrent commitPut → the exact data corruption the
-// lock prevents. The DB has one authoritative clock; we anchor
-// everything to it. Bind order matches the SQLite path:
-// (tag, res, holder, lease_ms, lease_ms).
-function buildTryAcquireCommitLock(sql: NeonSql): GetStmt<[string, string, string, number, number], { acquired: number }> {
-  return { get: async (tag, resourceTag, holder, leaseMsInsert, leaseMsUpdate) => {
-    const rows = await sql(
-      `INSERT INTO workspace_object_commit_lock
-         (workspace_tag, resource_tag, holder, expires_at)
-       VALUES ($1, $2, $3, (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT + $4)
-       ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-         holder     = EXCLUDED.holder,
-         expires_at = (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT + $5
-       WHERE workspace_object_commit_lock.expires_at <= (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
-       RETURNING 1 AS acquired`,
-      [tag, resourceTag, holder, leaseMsInsert, leaseMsUpdate],
-    ) as Array<{ acquired: number | string }>
-    const r = rows[0]
-    return r ? { acquired: num(r.acquired) } : undefined
-  } }
-}
-
-function buildReleaseCommitLock(sql: NeonSql): RunStmt<[string, string, string]> {
-  return runStmt(sql, `DELETE FROM workspace_object_commit_lock
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3`)
-}
-
-function buildReleaseAllCommitLocksFor(sql: NeonSql): RunStmt<[string]> {
-  return runStmt(sql, `DELETE FROM workspace_object_commit_lock WHERE holder = $1`)
-}
-
-function buildVerifyCommitLockHeld(sql: NeonSql): GetStmt<[string, string, string], { held: number }> {
-  return { get: async (tag, resourceTag, holder) => {
-    const rows = await sql(
-      `SELECT 1 AS held FROM workspace_object_commit_lock
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3
-         AND expires_at > (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT`,
-      [tag, resourceTag, holder],
-    ) as Array<{ held: number | string }>
-    const r = rows[0]
-    return r ? { held: num(r.held) } : undefined
-  } }
-}
-
 export async function openNeonObjstore(connectionString: string, blob: BlobBackend): Promise<Handle> {
   // Same dynamic-import pattern as db-neon.ts — routed through the
   // local `../neon-driver.ts` re-export wrapper so the peer dep stays
@@ -379,15 +302,11 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
     deleteStaging: buildDeleteStaging(sql),
     selectLive: buildSelectLive(sql),
     selectLiveOne: buildSelectLiveOne(sql),
-    upsertLive: buildUpsertLive(sql),
-    upsertLiveIfHeld: buildUpsertLiveIfHeld(sql),
+    insertLiveIfAbsent: buildInsertLiveIfAbsent(sql),
+    updateLiveCAS: buildUpdateLiveCAS(sql),
     deleteLive: buildDeleteLive(sql),
     listAllStaging: buildListAllStaging(sql),
     listLiveTags: buildListLiveTags(sql),
     countLive: buildCountLive(sql),
-    tryAcquireCommitLock: buildTryAcquireCommitLock(sql),
-    releaseCommitLock: buildReleaseCommitLock(sql),
-    releaseAllCommitLocksFor: buildReleaseAllCommitLocksFor(sql),
-    verifyCommitLockHeld: buildVerifyCommitLockHeld(sql),
   }
 }

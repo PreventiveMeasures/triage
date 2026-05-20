@@ -18,7 +18,6 @@ export type Config = {
   dbPath: string
   objstoreDir: string
   reapIntervalMs: number
-  leaseMs: number
   maxInflightPerSocket: number
   debug: boolean
   neonUrl: string | null
@@ -79,14 +78,6 @@ Environment:
                              DATABASE_URL + BLOB_READ_WRITE_TOKEN
                              are set (bytes live in Vercel Blob).
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
-  OBJSTORE_COMMIT_LOCK_LEASE_MS
-                             distributed commit-lock lease duration
-                             (default 300000 = 5 min). A crashed-held
-                             lease pins (workspace_tag, resource_tag)
-                             for at most this long. Bump for self-
-                             hosted deployments where uploads can
-                             legitimately exceed 5 min (e.g. 100 MiB
-                             on a 100 KB/s link).
   TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
                              Host / X-Forwarded-Proto when computing
                              the same-origin gate's expected origin.
@@ -172,12 +163,6 @@ export function loadConfig(): Config {
   const objstoreDir = env['OBJSTORE_DIR'] ?? join(dirname(dbPath), 'objstore')
   // No practical upper bound beyond the safe-integer range.
   const reapIntervalMs = intEnv('OBJSTORE_REAP_INTERVAL_MS', 10 * 60 * 1000, 1, Number.MAX_SAFE_INTEGER)
-  // Range-clamped 1s..1h: too short → the lock effectively doesn't
-  // exist; too long → a SIGKILL/OOM-crashed holder pins keys for hours.
-  const leaseMs = intEnv(
-    'OBJSTORE_COMMIT_LOCK_LEASE_MS', 5 * 60 * 1000, 1000, 60 * 60 * 1000,
-    '(1s..1h). Default is 300000 (5 min).',
-  )
   const debug = env['DEBUG'] === '1'
 
   const configPath = env['CONFIG_PATH'] ?? fileURLToPath(new URL('./config.json', import.meta.url))
@@ -204,7 +189,7 @@ export function loadConfig(): Config {
   const tokenSecret = tokenSecretB64 ? decodeTokenSecret(tokenSecretB64) : null
 
   return {
-    port, host, dbPath, objstoreDir, reapIntervalMs, leaseMs, maxInflightPerSocket,
+    port, host, dbPath, objstoreDir, reapIntervalMs, maxInflightPerSocket,
     debug, neonUrl, blobToken, tokenSecret, password,
     trustProxyEnv: env['TRUST_PROXY'],
   }

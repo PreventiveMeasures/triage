@@ -40,7 +40,6 @@ import {
   objectMetaWire,
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
-import { CommitLockContendedError, withCommitLock } from './commit-lock.ts'
 import { type TokenSecret, extractBearer, verifyToken } from './tokens.ts'
 import { errStack } from '../util.ts'
 
@@ -65,16 +64,15 @@ export type ObjstoreRestDeps = {
   debug: boolean
 }
 
-// Concurrent replay protection: rejected via the DB-backed
-// distributed commit lock taken at PUT start
-// (`server/objstore/commit-lock.ts`). Previously a per-process
-// `Set<string>` of in-flight stagingIds, which broke under multi-
-// replica deployments — two replicas processing the same put-token
-// would each pass their own in-process set. The lock is keyed by
-// (workspace_tag, resource_tag) so it ALSO serializes the upload
-// itself against concurrent commits / deletes / reaper unlinks on
-// the same key, which the prior in-process lock could only do
-// within a single replica.
+// Concurrent commits no longer need a distributed lock: the live
+// blob is content-addressed (`${tag}/${contentHash}.bin`) so two
+// racing commits write to DIFFERENT immutable addresses, and the
+// commit itself is an atomic version compare-and-set on the live row
+// (see commitPut in store.ts). Exactly one racer wins the CAS; the
+// loser gets a 409 `conflict` and rebases. The upload + commit run
+// under the in-process `KeyedAsyncLock` (cheap, reduces same-process
+// churn against concurrent ops on the same key); cross-replica
+// correctness rests on the CAS, not on any lock.
 
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
 // alphabet, case-sensitive. The `?…` query is permitted but ignored
@@ -180,40 +178,16 @@ async function handleRestPut(
     deny(res, 411, 'length-required'); return
   }
   if (declared !== payload.len) { deny(res, 400, 'length-mismatch'); return }
-  // Distributed commit-lock acquired at PUT start, held across the
-  // entire upload + commit critical section. Cross-replica
-  // serialization against concurrent put / delete / reaper-unlink
-  // on the same (tag, resourceTag). Lock is TTL-leased (5 min by
-  // default, tunable via OBJSTORE_COMMIT_LOCK_LEASE_MS) so a
-  // crashed PUT doesn't permanently pin the key — expires for the
-  // next attempt. Contention returns 503 + reason='contended' so
-  // clients can distinguish a transient lock contention
-  // (retryable) from an expired-staging 410 (re-begin required).
-  // The server already waited up to 2s on the lock inside
-  // tryAcquireCommitLockWithWait, so reaching CommitLockContended
-  // here means the holder is genuinely busy.
-  try {
-    // Pass `lock.holder` into `handleRestPutLocked` → `commitPut`
-    // so the live-row write goes through the atomic
-    // `upsertLiveIfHeld` SQL — guards against a stolen-mid-upload
-    // lease overwriting the live row with bytes from a racing
-    // replica's commit. See `commit-lock.ts:CommitLock.holder`.
-    await withCommitLock(deps.handle, route.tag, route.resourceTag, (lock) =>
-      handleRestPutLocked(deps, req, res, route, payload, declared, lock.holder))
-  } catch (err) {
-    if (err instanceof CommitLockContendedError) {
-      // Don't write a response body if headers were already
-      // committed by handleRestPutLocked (shouldn't be — the
-      // contended path means the inner fn never ran — but
-      // defensive).
-      if (!res.headersSent) {
-        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
-        res.end(JSON.stringify({ error: 'contended' }))
-      }
-      return
-    }
-    throw err
-  }
+  // Upload + commit run under the in-process per-resource lock. There
+  // is no distributed lock: the live blob is content-addressed and the
+  // commit is an atomic version-CAS (see commitPut), so a concurrent
+  // commit on another replica can't desync metadata vs bytes — it just
+  // races the CAS, and the loser surfaces a 409 `conflict`. The
+  // in-process lock keeps a SINGLE replica's concurrent ops on the same
+  // key from interleaving their begun_at refresh + commit, and the
+  // long upload body itself runs inside it so the reaper's per-resource
+  // freshness re-check sees the in-flight PUT as fresh.
+  await handleRestPutLocked(deps, req, res, route, payload, declared)
 }
 
 // Map a `commitPut` failure to its wire response. Extracted from
@@ -228,16 +202,6 @@ function denyCommitFailure(res: ServerResponse, result: Exclude<CommitPutResult,
     return
   }
   if (result.reason === 'no-staging') { deny(res, 410, 'gone'); return }
-  // `lock-lost` — our lease expired (or was stolen) during the
-  // upload phase; the conditional `upsertLiveIfHeld` correctly
-  // skipped the write. Surface as the same 503 'contended' the
-  // server uses for inbound-lock contention so the client's typed
-  // `contended` result handles both shapes identically.
-  if (result.reason === 'lock-lost') {
-    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
-    res.end(JSON.stringify({ error: 'contended' }))
-    return
-  }
   // `io-error` = FS/disk fault (EACCES/ENOSPC/EIO/racing abort);
   // server-side, not client-fixable. `size-mismatch` is the
   // remaining client-data fault — wire-rename to the documented
@@ -260,7 +224,6 @@ async function handleRestPutLocked(
   route: RouteMatch,
   payload: { sid: string; len: number },
   declared: number,
-  commitLockHolder: string,
 ): Promise<void> {
   // Cheap staging-row precheck — bail before accepting up to
   // MAX_CONTENT_LENGTH bytes for a replayed / expired token. The
@@ -269,8 +232,49 @@ async function handleRestPutLocked(
   if (!await deps.handle.selectStaging.get(route.tag, route.resourceTag, payload.sid)) {
     deny(res, 410, 'gone'); return
   }
-  const key = lockKey(route.tag, route.resourceTag)
-  const abortLocked = () => deps.handle.lock.run(key, () => abortPut(deps.handle, route.tag, route.resourceTag, payload.sid))
+  // The entire upload + commit runs under ONE in-process per-resource
+  // lock acquisition (acquired in handleRestPut). The upload body is
+  // inside the lock so the reaper's per-resource freshness re-check
+  // (which takes the same lock) can't delete this staging row out from
+  // under an in-flight PUT, and so a same-process concurrent commit /
+  // delete on the same key serialises behind us. `abortPut` runs
+  // directly here (no nested lock.run — KeyedAsyncLock is not
+  // re-entrant; we already hold the key).
+  const result = await deps.handle.lock.run(lockKey(route.tag, route.resourceTag), () =>
+    runUploadAndCommit(deps, route, payload, declared, req, res))
+  if (result.handled) return
+  if (!result.commit.ok) { denyCommitFailure(res, result.commit); return }
+  const row = result.commit.row
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({
+    version: row.version,
+    contentHash: row.contentHash,
+    contentLength: row.contentLength,
+  }))
+  deps.broadcast(route.tag, {
+    type: 'objstore-put',
+    workspaceTag: route.tag,
+    ...objectMetaWire(row),
+  }, null)
+  if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
+}
+
+// The lock-held body of a PUT: stream the upload into the staging
+// slot, verify size, refresh the staging row's begun_at, and commit.
+// Runs entirely under the per-resource in-process lock the caller
+// holds. Returns `{ handled: true }` when it already wrote the
+// (error) response itself; `{ handled: false, commit }` when it
+// reached commitPut (caller maps the result to the success / failure
+// response OUTSIDE the lock so the broadcast + body write don't
+// extend the critical section).
+async function runUploadAndCommit(
+  deps: ObjstoreRestDeps,
+  route: RouteMatch,
+  payload: { sid: string; len: number },
+  declared: number,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<{ handled: true } | { handled: false; commit: CommitPutResult }> {
   // Open the backend's staging writer. For the FS backend this is a
   // `createWriteStream` to the canonical staging path; for the
   // Vercel backend it's a PassThrough whose other end feeds the
@@ -308,12 +312,12 @@ async function handleRestPutLocked(
   } catch (err) {
     // Await writer.abort() so a Vercel-backed upload's in-flight
     // HTTP request has time to settle (rejected with
-    // BlobRequestAbortedError) BEFORE abortLocked → unlinkStaging
-    // runs. Otherwise a late-arriving upload chunk recreates the
-    // staging blob after we've cleaned it. FS backend's abort is
-    // an immediate microtask — no real wait.
+    // BlobRequestAbortedError) BEFORE abortPut → unlinkStaging runs.
+    // Otherwise a late-arriving upload chunk recreates the staging
+    // blob after we've cleaned it. FS backend's abort is an immediate
+    // microtask — no real wait.
     await writer.abort(err)
-    await abortLocked()
+    await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
     // Branch on `err.code` so a write-side fault (ENOSPC / EACCES /
     // EIO …) surfaces as a 5xx per the README contract, separate
     // from a client-side abort / overrun which stays 400. PR #4
@@ -331,9 +335,12 @@ async function handleRestPutLocked(
     // `code` is missing (non-errno throw), log a placeholder so the
     // count is still visible at DEBUG=1.
     if (deps.debug) console.warn('objstore PUT aborted mid-body:', code ?? '<no-code>')
-    return
+    return { handled: true }
   }
-  if (received !== declared) { await abortLocked(); deny(res, 400, 'length-mismatch'); return }
+  if (received !== declared) {
+    await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
+    deny(res, 400, 'length-mismatch'); return { handled: true }
+  }
   // Belt-and-braces: confirm storage-side size (catches a writer
   // that silently absorbed less, e.g. ENOSPC near the end on FS,
   // or a partial multipart upload that the SDK didn't propagate as
@@ -343,62 +350,37 @@ async function handleRestPutLocked(
   // the README contract.
   let onDisk: number | null
   try { onDisk = await deps.handle.blob.statStaging(route.tag, payload.sid) } catch {
-    await abortLocked(); deny(res, 500, 'io-error'); return
+    await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
+    deny(res, 500, 'io-error'); return { handled: true }
   }
-  if (onDisk == null) { await abortLocked(); deny(res, 500, 'io-error'); return }
-  if (onDisk !== payload.len) { await abortLocked(); deny(res, 400, 'length-mismatch'); return }
-  // Commit ladder: refresh `begun_at` AND commitPut under ONE lock.
-  // Refreshing outside the lock leaves a window where the reaper's
-  // freshness re-check inside its own per-resource lock can win on
-  // a SELECT that races our (yet-to-run) UPDATE — reaper deletes
-  // the row + file, we then commit and get `no-staging` → 410 to a
-  // client that just streamed up to 100 MiB. PR #4 review H4
-  // originally added the refresh; subsequent audit (round-12) moved
-  // it inside this lock to close the race. Acquire here:
-  const result = await deps.handle.lock.run(key, async () => {
-    // Step 1 (lock-protected): refresh begun_at so the reaper's
-    // next freshness check inside its own lock-block sees us as
-    // fresh — bounded by the lock against other readers. Mostly
-    // belt-and-braces now that the DB commit lock already excludes
-    // the reaper from this key (see commit-lock.ts), but keep it
-    // so a future caller running outside the commit-lock (e.g.
-    // future test fixture / direct-DB tooling) still extends the
-    // staging-row TTL across the upload.
-    await deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
-    // Step 2 (still under the lock): commit. Precondition recheck
-    // + durable rename + DB write are serialised against concurrent
-    // commits / deletes / begins on the same (tag, resourceTag).
-    // Thread the post-upload `onDisk` size as `observedSize` so
-    // commitPut skips its own redundant statStaging round-trip
-    // (one fewer Vercel HEAD per PUT). Safe because the staging
-    // blob cannot have been resized between the stat at line 299
-    // and here — the DB commit lock + this in-process lock both
-    // exclude every writer of this stagingId.
-    const r = await commitPut(deps.handle, {
-      workspaceTag: route.tag, resourceTag: route.resourceTag, stagingId: payload.sid,
-      observedSize: onDisk,
-      // Threading the holder enables the `upsertLiveIfHeld` SQL
-      // gate. A long upload whose lease silently expired mid-
-      // flight (a peer replica's reaper or commit may have stolen)
-      // hits `lock-lost` here instead of blindly overwriting.
-      holder: commitLockHolder,
-    })
-    if (!r.ok) await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
-    return r
+  if (onDisk == null) {
+    await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
+    deny(res, 500, 'io-error'); return { handled: true }
+  }
+  if (onDisk !== payload.len) {
+    await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
+    deny(res, 400, 'length-mismatch'); return { handled: true }
+  }
+  // Refresh begun_at so the reaper's next freshness check (inside its
+  // own per-resource lock-block) sees this staging row as fresh —
+  // bounded by the lock we hold against the reaper's competing read.
+  // The whole PUT runs under this lock, so a long upload's row can't
+  // be reaped mid-flight; the refresh additionally re-extends the TTL
+  // from upload-done.
+  await deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
+  // Commit: precondition recheck + content-addressed promote + version
+  // CAS, serialised against same-process concurrent commits / deletes /
+  // begins on this key. Thread the post-upload `onDisk` size as
+  // `observedSize` so commitPut skips its own redundant statStaging
+  // round-trip (one fewer Vercel HEAD per PUT) — safe because the
+  // staging blob cannot have been resized between the stat above and
+  // here while we hold the per-resource lock.
+  const commit = await commitPut(deps.handle, {
+    workspaceTag: route.tag, resourceTag: route.resourceTag, stagingId: payload.sid,
+    observedSize: onDisk,
   })
-  if (!result.ok) { denyCommitFailure(res, result); return }
-  res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({
-    version: result.row.version,
-    contentHash: result.row.contentHash,
-    contentLength: result.row.contentLength,
-  }))
-  deps.broadcast(route.tag, {
-    type: 'objstore-put',
-    workspaceTag: route.tag,
-    ...objectMetaWire(result.row),
-  }, null)
-  if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${result.row.version}`)
+  if (!commit.ok) await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
+  return { handled: false, commit }
 }
 
 type GetOpened =
@@ -409,19 +391,19 @@ type GetOpened =
 function openLiveUnderLock(
   deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number },
 ): Promise<GetOpened> {
-  // Validate row version + open the reader inside the lock so a
-  // concurrent commit's promote or delete's unlink can't slip
-  // between the row check and the open. For the FS backend the
-  // open returns a pinned fd (inode stays alive even if the path
-  // is later unlinked / overwritten); for the Vercel backend the
-  // SDK's `get` returns a stream backed by a fetch reader that
-  // streams the bytes the token was issued for. Either way the
-  // snapshot stays consistent for the duration of the response.
+  // Validate row version + open the reader (by the row's content hash —
+  // the live blob is content-addressed) inside the lock so a concurrent
+  // commit's promote or the reaper's GC unlink can't slip between the
+  // row check and the open. For the FS backend the open returns a
+  // pinned fd (inode stays alive even if the path is later unlinked);
+  // for the Vercel backend the SDK's `get` returns a stream backed by a
+  // fetch reader that streams the bytes the row's hash names. Either way
+  // the snapshot stays consistent for the duration of the response.
   return deps.handle.lock.run<GetOpened>(lockKey(route.tag, route.resourceTag), async (): Promise<GetOpened> => {
     const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
     if (!live || live.version !== payload.ver) return { reason: 'not-found' }
     let opened
-    try { opened = await deps.handle.blob.openLiveReader(route.tag, route.resourceTag) }
+    try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
     catch { return { reason: 'unavailable' } }
     if (!opened.ok) return { reason: opened.reason }
     // Size mismatch between the live row and the on-storage bytes

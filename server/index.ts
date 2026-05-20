@@ -88,7 +88,6 @@ import { initObjstore } from './objstore/init.ts'
 import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
-import { heldLeaseCount, releaseAllForThisProcess, setDefaultLeaseMs } from './objstore/commit-lock.ts'
 
 // All external inputs (env vars + optional config.json) are parsed
 // and validated in ./config.ts. Destructure into the existing
@@ -96,15 +95,11 @@ import { heldLeaseCount, releaseAllForThisProcess, setDefaultLeaseMs } from './o
 const config = loadConfig()
 const {
   port: PORT, host: HOST, dbPath: DB_PATH, objstoreDir: OBJSTORE_DIR,
-  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS, leaseMs: OBJSTORE_COMMIT_LOCK_LEASE_MS,
+  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
   maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, debug: DEBUG,
   neonUrl: NEON_URL, blobToken: BLOB_TOKEN, tokenSecret: TOKEN_SECRET,
   password: CONFIG_PASSWORD, trustProxyEnv: TRUST_PROXY_ENV,
 } = config
-
-// Apply the validated commit-lock lease to the lock module. The setter
-// threads it via opts.leaseMs to withCommitLock at every call site.
-setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
 
 // Same-origin gate for the WS upgrade and REST data plane (see
 // ./origin.ts). `TRUST_PROXY_ENV` (from config) also feeds the
@@ -324,18 +319,8 @@ httpServer.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
-// App-specific shutdown steps (run after the in-flight drain), wired
+// App-specific shutdown step (run after the in-flight drain), wired
 // into the lifecycle teardown below.
-const releaseLeases = async (): Promise<void> => {
-  // Release any commit-lock leases this process still holds — a rolling
-  // restart otherwise pins every held key for the full lease TTL.
-  const heldBefore = heldLeaseCount()
-  if (heldBefore > 0) {
-    if (DEBUG) console.log(`releasing ${heldBefore} commit-lock lease(s) held by this process`)
-    try { await releaseAllForThisProcess(objstoreHandle) }
-    catch (err) { console.warn('commit-lock shutdown release error:', errMsg(err)) }
-  }
-}
 const closeDb = async (): Promise<void> => {
   // objstoreHandle has no close(): SQLite shares this DatabaseSync and
   // Neon has no persistent connection; `handle.close()` covers both.
@@ -346,7 +331,7 @@ const closeDb = async (): Promise<void> => {
 // and the heartbeat timer all exist.
 installLifecycle({
   httpServer, wss, heartbeatTimer, stopReaper,
-  releaseLeases, closeDb,
+  closeDb,
 })
 
 // Bind only after the startup orphan sweep finishes — otherwise a

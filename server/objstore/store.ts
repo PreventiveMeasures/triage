@@ -11,12 +11,18 @@
 //                              can be reaped (see ./reaper.ts).
 // Bytes live OUTSIDE sqlite at
 //   ${OBJSTORE_DIR}/${workspaceTag}/[.staging/]${id}.bin
-// keeping the WAL out of the multi-MB bundle path. Commit/delete
-// order is asymmetric so a crash at the worst moment leaves at
-// most a STRANDED FILE (reaper-cleaned), never a row pointing at
-// nothing:
-//   PUT commit:  fsync(staging) → rename → fsync(parent) → DB write
-//   DELETE:      DB write → unlink (best-effort; ENOENT ok)
+// keeping the WAL out of the multi-MB bundle path. Live blobs are
+// CONTENT-ADDRESSED (`${tag}/${contentHash}.bin`): the hash names
+// exactly one immutable byte-string, so two racing commits write to
+// DIFFERENT addresses and the live row's `content_hash` literally
+// names its blob file (a metadata-vs-bytes desync is impossible).
+// Commit is therefore a plain version compare-and-set on the row —
+// no distributed lock. Commit/delete order is asymmetric so a crash
+// at the worst moment leaves at most a STRANDED FILE (reaper-cleaned,
+// once unreferenced AND past the GC grace window), never a row
+// pointing at nothing:
+//   PUT commit:  fsync(staging) → rename → fsync(parent) → DB CAS
+//   DELETE:      DB row drop (the reaper GCs the unreferenced blob)
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
@@ -58,25 +64,6 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS workspace_object_staging_begun_at_idx
     ON workspace_object_staging (begun_at);
-
-  -- Distributed commit mutex. Acquired before any mutate op on a
-  -- (workspace_tag, resource_tag) — REST PUT (covers upload + commit),
-  -- deleteObject, and the reaper's unlinkLive sweep. Cross-replica
-  -- serialization the in-process KeyedAsyncLock can't provide once
-  -- multiple replicas share the same Neon DB + Vercel Blob store.
-  --
-  -- TTL-based (expires_at) so a crashed holder doesn't permanently
-  -- pin the key — the next attempt can steal an expired lease.
-  -- The holder column is a per-process random id minted at boot,
-  -- used for the release predicate (only the holder can drop their
-  -- own lease).
-  CREATE TABLE IF NOT EXISTS workspace_object_commit_lock (
-    workspace_tag  TEXT    NOT NULL,
-    resource_tag   TEXT    NOT NULL,
-    holder         TEXT    NOT NULL,
-    expires_at     INTEGER NOT NULL,
-    PRIMARY KEY (workspace_tag, resource_tag)
-  ) STRICT;
 `
 
 // One LIVE row, exactly the shape `objstore-list-result` carries on
@@ -135,22 +122,11 @@ export type CommitPutInput = {
   // commitPut directly without the REST layer should omit this
   // and let commitPut stat for itself.
   observedSize?: number
-  // Optional: the commit-lock holder id this PUT is operating
-  // under. When provided, commitPut routes the live-row write
-  // through `upsertLiveIfHeld` which atomically gates the write
-  // on the lock STILL being held (server-side clock check). A
-  // long upload whose lease silently expired mid-flight — the
-  // typical multi-replica failure mode — gets `lock-lost` here
-  // instead of blindly overwriting the live row whose bytes a
-  // racing replica may have already promoted. Tests that drive
-  // commitPut without holding the lock omit this and fall
-  // through to the unconditional `upsertLive`.
-  holder?: string
 }
 
 export type CommitPutResult =
   | { ok: true; row: ObjectRow }
-  | { ok: false; reason: 'no-staging' | 'size-mismatch' | 'io-error' | 'conflict' | 'lock-lost'; conflict?: ObjectRow }
+  | { ok: false; reason: 'no-staging' | 'size-mismatch' | 'io-error' | 'conflict'; conflict?: ObjectRow }
 
 export type DeleteResult =
   | { ok: true; deletedVersion: number }
@@ -173,6 +149,14 @@ type DbRow = {
 // into the handle means everyone (handlers, REST, reaper) pulls
 // the same lock instance from the same place — no separate
 // plumbing per call site.
+//
+// There is no distributed commit lock: content-addressed live blobs
+// make the metadata-vs-bytes desync impossible, so commit is a plain
+// version compare-and-set (`insertLiveIfAbsent` / `updateLiveCAS`).
+// The in-process `KeyedAsyncLock` is still bundled here — it's cheap
+// and reduces churn against concurrent ops on the same key within a
+// single process — but cross-replica correctness rests on the CAS,
+// not on any lock.
 export type Handle = {
   // SQLite-only: the underlying `DatabaseSync`. Unset on the Neon
   // backend (see ./store-neon.ts). Test-only fixture SQL routes
@@ -203,18 +187,25 @@ export type Handle = {
   deleteStaging: RunStmt<[string, string, string]>
   selectLive: AllStmt<[string], DbRow>
   selectLiveOne: GetStmt<[string, string], DbRow>
-  upsertLive: RunStmt<[string, string, number, string, number, string, number]>
-  // Atomic "upsert IFF we still hold the commit-lock". Same shape
-  // as `upsertLive` plus a holder param; the SQL anchors the
-  // freshness check to the DB SERVER's clock so a long upload
-  // whose lease silently expired mid-flight (because another
-  // replica stole or because of clock drift) cannot blindly
-  // overwrite the live row. Returns `{ committed: 1 }` on success;
-  // returns undefined when the lock was lost (caller maps to
-  // 'lock-lost' → 503 contended on the wire). Bound to the
-  // commitPut critical section's `holder` parameter; no other
-  // caller should use this — it's the production write path.
-  upsertLiveIfHeld: GetStmt<[string, string, number, string, number, string, number, string], { committed: number }>
+  // Version-CAS commit primitives. Exactly one of the two runs per
+  // commit, picked by whether the staging row had a `prev_version`:
+  //
+  // `insertLiveIfAbsent(tag, res, contentHash, contentLength,
+  //   signature, putAt)` — the prev_version == null (first-write)
+  //   path. Inserts the row at version 1 IF ABSENT
+  //   (`ON CONFLICT (tag,res) DO NOTHING RETURNING 1`). Returns
+  //   `{ ok: 1 }` if we won the insert; undefined if a racer already
+  //   created the row (caller → conflict + re-read).
+  //
+  // `updateLiveCAS(tag, res, nextVersion, contentHash, contentLength,
+  //   signature, putAt, expectedVersion)` — the re-upload path
+  //   (prev_version == v). Bumps the row to `nextVersion`
+  //   `WHERE tag AND resource AND version = expectedVersion
+  //   RETURNING 1`. Returns `{ ok: 1 }` if our CAS matched the live
+  //   version; undefined if a racer bumped it first (caller →
+  //   conflict + re-read). Exactly one racer wins; the loser rebases.
+  insertLiveIfAbsent: GetStmt<[string, string, string, number, string, number], { ok: number }>
+  updateLiveCAS: GetStmt<[string, string, number, string, number, string, number, number], { ok: number }>
   deleteLive: RunStmt<[string, string]>
   // `[staleBefore]` — only rows whose `begun_at < staleBefore` are
   // returned. The reaper passes `Date.now() - stagingTtlMs` so the
@@ -224,39 +215,6 @@ export type Handle = {
   listAllStaging: AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
   listLiveTags: AllStmt<[], { workspace_tag: string }>
   countLive: GetStmt<[string], { c: number }>
-  // Distributed commit-lock primitives. Both `tryAcquire` and
-  // `release` operate on the `workspace_object_commit_lock` table.
-  //
-  // `tryAcquireCommitLock(workspace_tag, resource_tag, holder, lease_ms, lease_ms)`
-  //   → row `{ acquired: number }` (1 = acquired, undefined = held
-  //     by another live holder or by us, not-yet-expired). The
-  //     `lease_ms` argument is passed TWICE because the prepared
-  //     SQL references it in both the INSERT and the conflict-
-  //     UPDATE branches; SQLite does not let `?N` rebind by
-  //     position across the two arms.
-  //
-  // `releaseCommitLock(workspace_tag, resource_tag, holder)` → no-op
-  // when the row doesn't exist or holder doesn't match (idempotent).
-  //
-  // `releaseAllCommitLocksFor(holder)` → DELETE every lease this
-  // process holds. Called at graceful shutdown so a rolling restart
-  // doesn't pin keys for the full lease TTL until natural expiry.
-  tryAcquireCommitLock: GetStmt<[string, string, string, number, number], { acquired: number }>
-  releaseCommitLock: RunStmt<[string, string, string]>
-  releaseAllCommitLocksFor: RunStmt<[string]>
-  // Read-side companion to `tryAcquireCommitLock`. Returns
-  // `{ held: 1 }` if (workspace_tag, resource_tag) is held by
-  // `holder` AND `expires_at > server-now`; undefined otherwise.
-  // Single round-trip, anchored to DB server clock — used by
-  // commitPut as a PRE-promote gate so a long upload whose lease
-  // was stolen mid-flight doesn't reach `promoteStagingToLive`
-  // and overwrite the live blob with bytes the lock-stealer
-  // already promoted. The post-promote `upsertLiveIfHeld` gate
-  // is belt-and-braces for the (microsecond) verify→promote
-  // window; together they shrink the metadata-vs-bytes desync
-  // surface from "milliseconds of HTTP copy" to "one DB
-  // round-trip".
-  verifyCommitLockHeld: GetStmt<[string, string, string], { held: number }>
 }
 
 // Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
@@ -361,7 +319,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
   // server/db.ts: `CREATE TABLE IF NOT EXISTS … STRICT` doesn't
   // upgrade an existing non-STRICT table, and dropping strict type
   // affinity opens an operator-attack path. PR #4 review F3.
-  for (const name of ['workspace_object', 'workspace_object_staging', 'workspace_object_commit_lock']) {
+  for (const name of ['workspace_object', 'workspace_object_staging']) {
     const meta = db.prepare(`SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?`).get(name) as { strict: number } | undefined
     if (meta && meta.strict !== 1) throw new Error(`${name} is non-STRICT — migrate before booting`)
   }
@@ -417,52 +375,37 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
       FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
     `)),
-    upsertLive: wrapRun(db.prepare(`
+    // First-write CAS: insert the live row at version 1 IF ABSENT.
+    // `ON CONFLICT … DO NOTHING RETURNING 1` returns a row only when
+    // OUR insert won — a racing first-write commit that landed first
+    // (same prev_version == null precondition) makes this a no-op and
+    // RETURNING comes back empty → caller maps to conflict. Bind
+    // order: (tag, res, hash, len, sig, put_at); version is the
+    // literal 1.
+    insertLiveIfAbsent: wrapGet(db.prepare(`
       INSERT INTO workspace_object
         (workspace_tag, resource_tag, version, content_hash, content_length,
          signature, put_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-        version        = excluded.version,
-        content_hash   = excluded.content_hash,
-        content_length = excluded.content_length,
-        signature      = excluded.signature,
-        put_at         = excluded.put_at
+      VALUES (?, ?, 1, ?, ?, ?, ?)
+      ON CONFLICT (workspace_tag, resource_tag) DO NOTHING
+      RETURNING 1 AS ok
     `)),
-    // Atomic "upsert IFF the commit-lock is still held by `?8`".
-    // INSERT-SELECT-WHERE-EXISTS gates the write on a fresh
-    // `WHERE holder = ?8 AND expires_at > <server now>` against
-    // the lock table. If the lease expired (or was stolen), the
-    // SELECT returns no row → no INSERT → no ON-CONFLICT UPDATE
-    // → RETURNING returns nothing → caller maps to 'lock-lost'.
-    //
-    // Same DB-server-clock anchoring as `tryAcquireCommitLock`
-    // (julianday-ms math) so a clock-skewed REST replica can't
-    // overwrite based on local time. Single-statement atomicity:
-    // the WHERE EXISTS evaluates against the same snapshot as the
-    // INSERT/UPDATE, no race window between check and write.
-    //
-    // Bind order: (tag, res, version, hash, len, sig, put_at,
-    // holder). Param 8 used twice (the SELECT-WHERE and the
-    // EXISTS subquery share the same `?8`) so the WHERE EXISTS
-    // doesn't need its own copy.
-    upsertLiveIfHeld: wrapGet(db.prepare(`
-      INSERT INTO workspace_object
-        (workspace_tag, resource_tag, version, content_hash, content_length,
-         signature, put_at)
-      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
-      WHERE EXISTS (
-        SELECT 1 FROM workspace_object_commit_lock
-        WHERE workspace_tag = ?1 AND resource_tag = ?2 AND holder = ?8
-          AND expires_at > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
-      )
-      ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-        version        = excluded.version,
-        content_hash   = excluded.content_hash,
-        content_length = excluded.content_length,
-        signature      = excluded.signature,
-        put_at         = excluded.put_at
-      RETURNING 1 AS committed
+    // Re-upload CAS: bump the row to `?3` (next version) only when the
+    // live version still equals `?8` (the version we read as our
+    // precondition). `RETURNING 1` comes back only when the WHERE
+    // matched — exactly one of N racing re-uploads against the same
+    // base version wins; the losers get an empty result → conflict +
+    // rebase. Bind order: (tag, res, nextVersion, hash, len, sig,
+    // put_at, expectedVersion).
+    updateLiveCAS: wrapGet(db.prepare(`
+      UPDATE workspace_object
+      SET version        = ?3,
+          content_hash   = ?4,
+          content_length = ?5,
+          signature      = ?6,
+          put_at         = ?7
+      WHERE workspace_tag = ?1 AND resource_tag = ?2 AND version = ?8
+      RETURNING 1 AS ok
     `)),
     deleteLive: wrapRun(db.prepare(`
       DELETE FROM workspace_object
@@ -478,58 +421,6 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     `)),
     countLive: wrapGet(db.prepare(`
       SELECT COUNT(*) AS c FROM workspace_object WHERE workspace_tag = ?
-    `)),
-    // INSERT-or-take-expired pattern. Single round-trip:
-    //   - Row absent → INSERT, RETURNING acquired=1.
-    //   - Row present, held by another but expired → UPDATE (steal
-    //     lease), RETURNING acquired=1.
-    //   - Row present, held by another OR by us-not-yet-expired →
-    //     no row returned (`acquired` undefined at the caller →
-    //     treated as not-acquired). A same-holder re-acquire is
-    //     INTENTIONALLY NOT supported here — to refresh, call
-    //     refreshCommitLock explicitly. Letting the same holder
-    //     transparently re-acquire would let a same-process reaper
-    //     and REST PUT both pass the gate (both use PROCESS_HOLDER_ID
-    //     by default), defeating the cross-replica serialization.
-    //
-    // CRITICAL: all time comparisons use the DB server's clock
-    // (`julianday('now')`), NOT the caller's `Date.now()`. With
-    // multi-replica deployments, two callers can disagree on what
-    // "now" is by several seconds (NTP slew, virtualization stall).
-    // Computing the lease expiry AND the steal predicate against
-    // the same DB clock prevents replica B from reading replica A's
-    // fresh lease as expired when B's clock is ahead. Mirror this
-    // discipline in store-neon.ts.
-    //
-    // Bind order: (tag, res, holder, lease_ms_for_insert,
-    // lease_ms_for_update_on_steal).
-    tryAcquireCommitLock: wrapGet(db.prepare(`
-      INSERT INTO workspace_object_commit_lock
-        (workspace_tag, resource_tag, holder, expires_at)
-      VALUES (?, ?, ?, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) + ?)
-      ON CONFLICT (workspace_tag, resource_tag) DO UPDATE SET
-        holder     = excluded.holder,
-        expires_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) + ?
-      WHERE workspace_object_commit_lock.expires_at <= CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
-      RETURNING 1 AS acquired
-    `)),
-    releaseCommitLock: wrapRun(db.prepare(`
-      DELETE FROM workspace_object_commit_lock
-      WHERE workspace_tag = ? AND resource_tag = ? AND holder = ?
-    `)),
-    releaseAllCommitLocksFor: wrapRun(db.prepare(`
-      DELETE FROM workspace_object_commit_lock WHERE holder = ?
-    `)),
-    // Server-clock-anchored "do we still hold this lease?" probe.
-    // RETURNING `1 AS held` for the row-found case; SQLite's
-    // `pragma_table_list`-style read here only returns when the
-    // WHERE matches, so caller treats undefined as "lock lost".
-    // Same `julianday` math as `tryAcquireCommitLock` keeps the
-    // comparison on the DB server's clock.
-    verifyCommitLockHeld: wrapGet(db.prepare(`
-      SELECT 1 AS held FROM workspace_object_commit_lock
-      WHERE workspace_tag = ? AND resource_tag = ? AND holder = ?
-        AND expires_at > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
     `)),
   }
 }
@@ -588,15 +479,22 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
     : { ok: true, stagingId, filePath: stagingFilePath(handle.dir, input.workspaceTag, stagingId) }
 }
 
-// Re-checks prev_version (a concurrent commit/delete may have raced
-// past us between begin and commit), validates the on-disk staged
-// size, runs the durable rename. The upsertLive + deleteStaging
-// pair runs under the per-resource lock the caller already holds —
-// concurrency atomicity, not crash atomicity. A crash between
-// upsertLive and deleteStaging leaves the staging row alongside the
-// new live row; the reaper's stale-staging sweep cleans the orphan
-// row + (already-renamed-away) staging file on its next pass,
-// matching the README's "stranded state, reaper-cleaned, never
+// Validates the on-disk staged size, promotes the staging blob to its
+// content-addressed live path, then commits via an atomic version
+// compare-and-set on the live row: a first-write inserts at version 1
+// IF ABSENT; a re-upload bumps the version IFF it still matches the
+// precondition we read. Exactly one of N racing commits wins the CAS;
+// the losers get `conflict` (with the current live row) and rebase.
+// Because the live blob is content-addressed, a losing racer's promote
+// only ever (idempotently) re-writes the SAME bytes the winner's row
+// names — there is no metadata-vs-bytes desync to guard against, so no
+// distributed lock is needed. The in-process `KeyedAsyncLock` the
+// caller holds gives concurrency atomicity within a single process; the
+// CAS gives it across replicas. A crash between the promote and the CAS
+// leaves the staging blob/row intact alongside (at most) a stranded,
+// unreferenced live blob — the reaper's stale-staging sweep cleans the
+// row, and the GC reaps the unreferenced live blob once it's past the
+// grace window, matching the "stranded state, reaper-cleaned, never
 // row-pointing-at-nothing" crash-safety contract.
 export async function commitPut(handle: Handle, input: CommitPutInput): Promise<CommitPutResult> {
   const staging = await handle.selectStaging.get(input.workspaceTag, input.resourceTag, input.stagingId)
@@ -634,6 +532,11 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // resourceTag) lock, this guarantees the live blob's bytes are
   // always a complete signed payload.
   if (stagedSize !== staging.expected_length) return { ok: false, reason: 'size-mismatch' }
+  // Cheap early-out conflict check: a concurrent commit / delete may
+  // have raced past us between begin and now. The authoritative test
+  // is the CAS below (it's atomic against concurrent writers); this
+  // read just lets us skip the promote when we already know we've
+  // lost, and gives us the current row for the conflict result.
   const live = await getLive(handle, input.workspaceTag, input.resourceTag)
   const liveVersion = live?.version ?? null
   if (liveVersion !== staging.prev_version) {
@@ -641,78 +544,47 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     // through abortPut to clean up consistently.
     return { ok: false, reason: 'conflict', ...(live ? { conflict: live } : {}) }
   }
-  // PRE-promote lock verify (production write paths only). The
-  // post-promote `upsertLiveIfHeld` gate alone can't prevent the
-  // bytes-vs-metadata desync window: between `getLive` and
-  // `promoteStagingToLive`, a competing replica B that stole an
-  // expired lease can race-commit AND release, leaving live row
-  // at B_meta. Our subsequent promote would then overwrite the
-  // live blob with A_bytes; `upsertLiveIfHeld` would correctly
-  // refuse our upsert (lock not held by A anymore), but the live
-  // blob is already corrupted (row=B_meta, blob=A_bytes). Adding
-  // this verify just before the promote shrinks the corruption
-  // window from "promote + upsert duration" (HTTP copy time +
-  // round-trip) to "verify + promote duration" (one DB round-trip).
-  // It can't close to zero — verify and promote can't be made
-  // atomic across DB and blob-store boundaries — but the residual
-  // is ~30-80ms on Neon vs hundreds of ms before.
-  if (input.holder !== undefined) {
-    const stillHeld = await handle.verifyCommitLockHeld.get(
-      input.workspaceTag, input.resourceTag, input.holder,
-    )
-    if (!stillHeld) return { ok: false, reason: 'lock-lost' }
-  }
+  // Promote to the CONTENT-ADDRESSED live path `${tag}/${hash}.bin`.
   // `promoteStagingToLive` returns false on any backend error (FS:
   // EACCES / ENOSPC / EIO / a racing abort that already unlinked
   // the staging file; Vercel: copy failure). 'io-error' is mapped
   // to HTTP 500 by the REST layer — it's a server-side fault, not
-  // a client-fixable one. PR #4 review.
-  if (!await handle.blob.promoteStagingToLive(input.workspaceTag, input.stagingId, input.resourceTag)) {
+  // a client-fixable one. Because the destination is the content
+  // hash, a racing commit promoting the same bytes (or a different
+  // resource committing identical content) lands at the SAME path —
+  // an idempotent re-write of identical bytes, never a clobber.
+  if (!await handle.blob.promoteStagingToLive(input.workspaceTag, input.stagingId, staging.content_hash)) {
     return { ok: false, reason: 'io-error' }
   }
   const nextVersion = (liveVersion ?? 0) + 1
   const putAt = Date.now()
-  // upsertLive in try/catch so a Neon transient (5xx, network
-  // hiccup, connection-pool exhaustion) doesn't bypass the
-  // abortPut ladder by throwing out of commitPut. Without this
-  // guard, a thrown rejection skips the REST layer's
-  // `if (!r.ok) abortPut` branch and bubbles to handleRest's
-  // outer catch — the live blob is already promoted, but the
-  // staging blob (and the staging row) stay, AND the just-
-  // promoted live blob has no live row pointing at it. Reaper
-  // eventually cleans it up but the client sees a 500 while
-  // bytes are durably stored at the wrong key.
-  //
-  // Conditional branch on `holder`: production (REST PUT) passes
-  // its commit-lock holder id and routes through `upsertLiveIfHeld`
-  // which atomically gates the write on the lock STILL being held
-  // (server-side clock check). The window the lock guards is the
-  // body upload — for long uploads, the lease can expire mid-
-  // flight; another replica may steal and run its own commitPut.
-  // Without the gate, our upsertLive would blindly overwrite the
-  // other replica's live row with OUR metadata, while the live
-  // blob holds whichever `promoteStagingToLive` landed last —
-  // silent metadata-vs-bytes desync. Returning `lock-lost` here
-  // lets the REST layer surface 503 'contended' so the client
-  // can retry (the bytes WE uploaded are still in our staging
-  // slot; abortPut cleans them up — a retry will re-upload).
-  //
-  // Test paths that drive commitPut without holding the lock
-  // (the legacy unit tests) omit `holder` and fall through to
-  // the unconditional `upsertLive` — same semantics as before.
+  // Version-CAS in try/catch so a Neon transient (5xx, network
+  // hiccup, connection-pool exhaustion) doesn't bypass the abortPut
+  // ladder by throwing out of commitPut. Without this guard, a thrown
+  // rejection skips the REST layer's `if (!r.ok) abortPut` branch and
+  // bubbles to handleRest's outer catch — the live blob is already
+  // promoted, the staging blob + row stay, and the client sees a 500.
+  // The reaper reconciles (stale-staging sweep + unreferenced-blob
+  // GC) but the surface is a 500 the caller can retry.
+  let won: { ok: number } | undefined
   try {
-    if (input.holder === undefined) {
-      await handle.upsertLive.run(
+    if (staging.prev_version == null) {
+      // First write: insert at version 1 IF ABSENT. A racing
+      // first-write that landed first occupies the slot → our insert
+      // is a no-op → empty RETURNING → conflict.
+      won = await handle.insertLiveIfAbsent.get(
         input.workspaceTag,
         input.resourceTag,
-        nextVersion,
         staging.content_hash,
         staging.expected_length,
         staging.signature,
         putAt,
       )
     } else {
-      const committed = await handle.upsertLiveIfHeld.get(
+      // Re-upload: bump version IFF the live version still equals our
+      // precondition. Exactly one of N racers against the same base
+      // version wins; the losers' CAS matches no row → conflict.
+      won = await handle.updateLiveCAS.get(
         input.workspaceTag,
         input.resourceTag,
         nextVersion,
@@ -720,51 +592,32 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
         staging.expected_length,
         staging.signature,
         putAt,
-        input.holder,
+        staging.prev_version,
       )
-      if (!committed) {
-        // Lease was lost between `verifyCommitLockHeld` and here
-        // (the pre-promote check narrows but doesn't close this
-        // window — one DB round-trip's worth). Three possible
-        // states for the live blob + row:
-        //   (a) Row absent, blob = A_bytes from our promote →
-        //       reaper-cleanable. Fetch returns 404.
-        //   (b) Row = B_meta (stealing replica committed AFTER
-        //       our verify but BEFORE our upsert), blob =
-        //       whichever promote landed last. If A's promote
-        //       landed last: row=B_meta, blob=A_bytes — TRUE
-        //       desync; client fetch fails AEAD verification or
-        //       content-length check. Recoverable only by the
-        //       next successful PUT on this resourceTag (the
-        //       client's `retryOnContended` issues exactly such
-        //       a retry, which goes through conflict → rebase →
-        //       fresh PUT and self-heals).
-        //   (c) Row = B_meta, blob = B_bytes (B's promote landed
-        //       last) — consistent, A's promote was overwritten.
-        // Case (b) is the residual race the pre-verify shrinks
-        // from "hundreds of ms" to "tens of ms" (one DB
-        // round-trip). Acceptable given the narrow window and
-        // the client-side retry path.
-        return { ok: false, reason: 'lock-lost' }
-      }
     }
   } catch (err) {
-    console.warn('commitPut upsertLive failed:', errMsg(err))
-    // Caller's `if (!r.ok) abortPut` cleans the staging side.
-    // The just-promoted live blob is now stranded (no row); the
-    // reaper's reapCommittedForTag pass will unlink it on the
-    // next sweep.
+    console.warn('commitPut version-CAS failed:', errMsg(err))
+    // Caller's `if (!r.ok) abortPut` cleans the staging side. The
+    // just-promoted live blob is unreferenced; the reaper's GC unlinks
+    // it once it's past the grace window.
     return { ok: false, reason: 'io-error' }
   }
-  // Staging cleanup AFTER upsertLive so a crash between
-  // promoteStagingToLive and upsertLive leaves the staging blob
-  // intact and the live row absent — a state the reaper can
-  // reconcile by deleting the orphaned live blob (no row), and a
-  // retry can re-commit from the still-present staging. The
-  // alternative ordering (cleanup before DB write) leaves a window
-  // where the new live blob exists but the live row doesn't, so
-  // the reaper would delete the live blob the in-flight commit
-  // just wrote.
+  if (!won) {
+    // A racer won the CAS between our pre-check `getLive` and the
+    // write. Re-read the live row so the caller can surface the
+    // current version in the conflict (the client rebases off it).
+    // Our promoted blob is content-addressed: if the racer committed
+    // the SAME content its row already names our bytes; if different
+    // content, our bytes are simply an unreferenced blob the GC reaps.
+    // Either way there is no desync — just a conflict to rebase.
+    const current = await getLive(handle, input.workspaceTag, input.resourceTag)
+    return { ok: false, reason: 'conflict', ...(current ? { conflict: current } : {}) }
+  }
+  // Staging cleanup AFTER the CAS so a crash between the promote and
+  // the CAS leaves the staging blob intact and the live row at its
+  // prior value — a state a retry can re-commit from. The alternative
+  // ordering (cleanup before the DB write) would drop the staging
+  // bytes a failed/retried commit still needs.
   //
   // FS backend: unlinkStaging is a no-op here because `rename`
   // already removed the source file; the tolerant ENOENT path
@@ -797,6 +650,14 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 // existed; treat as success so retried DELETEs are idempotent. The
 // `deletedVersion = 0` sentinel tells the broadcast path to skip.
 // Callers serialise per-resource via KeyedAsyncLock.
+//
+// On success we ONLY drop the live row — we do NOT unlink the live
+// blob. With content-addressing the blob at `${tag}/${hash}.bin` may
+// still be referenced by another resource (or a not-yet-cleaned older
+// version) that committed byte-identical content, so unlinking here
+// could pull bytes out from under a live row that names the same hash.
+// The reaper's GC unlinks the blob once no live row references its
+// hash AND it's past the grace window.
 export async function deleteObject(
   handle: Handle, tag: string, resourceTag: string, prevVersion: number | null,
 ): Promise<DeleteResult> {
@@ -807,6 +668,5 @@ export async function deleteObject(
   }
   if (live.version !== prevVersion) return { ok: false, reason: 'conflict', conflict: live }
   await handle.deleteLive.run(tag, resourceTag)
-  await handle.blob.unlinkLive(tag, resourceTag)
   return { ok: true, deletedVersion: live.version }
 }

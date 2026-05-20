@@ -4,17 +4,19 @@
 // stall unrelated requests (WS heartbeats, other workspaces).
 //
 // `liveFilePath` / `stagingFilePath` are the canonical layout —
-// the reaper derives the same shape. The base64url alphabet for
-// tag / resourceTag / stagingId means no `..` traversal is
-// reachable; validators in store.ts gate inputs at the wire
+// the reaper derives the same shape. The live blob is CONTENT-
+// ADDRESSED: its filename is the content hash, not the resourceTag,
+// so a hash names exactly one immutable byte-string. The base64url
+// alphabet for tag / contentHash / stagingId means no `..` traversal
+// is reachable; validators in store.ts gate inputs at the wire
 // boundary.
 
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { errMsg } from '../util.ts'
 
-export function liveFilePath(dir: string, tag: string, resourceTag: string): string {
-  return join(dir, tag, `${resourceTag}.bin`)
+export function liveFilePath(dir: string, tag: string, contentHash: string): string {
+  return join(dir, tag, `${contentHash}.bin`)
 }
 
 export function stagingFilePath(dir: string, tag: string, stagingId: string): string {
