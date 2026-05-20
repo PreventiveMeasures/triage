@@ -493,8 +493,13 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire, ad
     // diff for nothing. Common case (W-4): user drags a row back onto
     // its current workspace.
     if (currentOwnerId === (workspaceId ?? null)) return false
+    // Resolve the target workspace once. W-5: an unknown `workspaceId`
+    // must bail BEFORE the detach loop — otherwise a bad target id
+    // would strip the identifier from its current owner and attach it
+    // to nothing (orphaned).
+    let target = null
     if (workspaceId != null) {
-      const target = list.find((w) => w.id === workspaceId)
+      target = list.find((w) => w.id === workspaceId) ?? null
       if (!target) return false
     }
     const aff = new Set()
@@ -508,14 +513,11 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire, ad
         }
       }
     }
-    if (workspaceId) {
-      const target = list.find((w) => w.id === workspaceId)
-      if (target) {
-        if (!Array.isArray(target[field])) target[field] = []
-        if (!target[field].includes(identifier)) {
-          target[field].push(identifier)
-          aff.add(target.id)
-        }
+    if (target) {
+      if (!Array.isArray(target[field])) target[field] = []
+      if (!target[field].includes(identifier)) {
+        target[field].push(identifier)
+        aff.add(target.id)
       }
     }
     // Additive-mode W-4 fix: the early `currentOwnerId === workspaceId`
@@ -543,6 +545,21 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire, ad
   }
 }
 
+// Membership mutators come in report/bundle pairs that differ only by
+// the workspace list they touch (`reports` vs `bundles`) and which
+// listener they fire. `membershipApi` binds those two so the three
+// operation shapes (move / additive add / scoped remove) are written
+// once instead of duplicated per identifier kind.
+function membershipApi(field, fire) {
+  return {
+    move: (identifier, workspaceId) => setWorkspaceMembership({ identifier, workspaceId, field, fire }),
+    add: (identifier, workspaceId) => setWorkspaceMembership({ identifier, workspaceId, field, fire, additive: true }),
+    remove: (identifier, workspaceId) => setWorkspaceMembership({ identifier, field, fire, from: workspaceId }),
+  }
+}
+const reportMembership = membershipApi('reports', fireReportMembershipChanged)
+const bundleMembership = membershipApi('bundles', fireBundleMembershipChanged)
+
 // Move a report to `workspaceId` (or detach it back to the unfiled
 // list when `workspaceId` is null). The prior assignment, if any,
 // is dropped first — used by drag-into-workspace where the UX is
@@ -554,7 +571,7 @@ async function setWorkspaceMembership({ identifier, workspaceId, field, fire, ad
 // list actually changed (so an attach + detach pair notifies both
 // the old owner and the new one); a no-op call (filename already at
 // its destination) fires nothing.
-export const setReportWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, workspaceId, field: 'reports', fire: fireReportMembershipChanged })
+export const setReportWorkspace = reportMembership.move
 
 // Additive twin of `setReportWorkspace`: grow `workspaceId.reports`
 // with `filename` without detaching from any OTHER workspace that
@@ -562,7 +579,7 @@ export const setReportWorkspace = (filename, workspaceId) => setWorkspaceMembers
 // peer-uploaded matching fileName converges into our membership
 // row without stealing the file from another workspace that has
 // its own (independent) claim.
-export const addReportToWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, workspaceId, field: 'reports', fire: fireReportMembershipChanged, additive: true })
+export const addReportToWorkspace = reportMembership.add
 
 // Scoped detach: remove `filename` from `workspaceId.reports` only,
 // leaving every other workspace's claim on the same identifier
@@ -572,20 +589,20 @@ export const addReportToWorkspace = (filename, workspaceId) => setWorkspaceMembe
 // dragged report disappear from sibling workspaces that legitimately
 // also list it. No-op when `workspaceId` doesn't list the file or
 // doesn't exist.
-export const removeReportFromWorkspace = (filename, workspaceId) => setWorkspaceMembership({ identifier: filename, field: 'reports', fire: fireReportMembershipChanged, from: workspaceId })
+export const removeReportFromWorkspace = reportMembership.remove
 
 // `bundles` twin of setReportWorkspace — same contract, scoped to
 // the workspace's `bundles` list (sha512-integrity strings). Bundle
 // bytes live in OPFS and aren't transmitted by the workspace sync
 // protocol; this just moves the membership pointer (which IS synced
 // cross-tab via the storage-event propagation, same as reports).
-export const setBundleWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, workspaceId, field: 'bundles', fire: fireBundleMembershipChanged })
+export const setBundleWorkspace = bundleMembership.move
 
 // `bundles` twin of `addReportToWorkspace` — additive add.
-export const addBundleToWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, workspaceId, field: 'bundles', fire: fireBundleMembershipChanged, additive: true })
+export const addBundleToWorkspace = bundleMembership.add
 
 // `bundles` twin of `removeReportFromWorkspace` — scoped detach.
-export const removeBundleFromWorkspace = (integrity, workspaceId) => setWorkspaceMembership({ identifier: integrity, field: 'bundles', fire: fireBundleMembershipChanged, from: workspaceId })
+export const removeBundleFromWorkspace = bundleMembership.remove
 
 // Cross-tab propagation: a sibling tab's `deleteWorkspace` /
 // `upsertWorkspace` (key rotation, re-import) / `setReportWorkspace`
