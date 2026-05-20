@@ -87,6 +87,7 @@
         "client/passkey-crypto.ts",
         "client/workspaces.js",
         "server/index.ts",
+        "server/sync-handlers.ts",
         "server/objstore/store.ts",
         "server/objstore/store-neon.ts"
       ],
