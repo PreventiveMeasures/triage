@@ -7,6 +7,8 @@ import { firstDescriptionLine } from './finding-lookup.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
+import { gunzipToText } from '../common/gzip.js'
+import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 
 // Pure-logic side of workspace import. The DOM-touching layer (unlock
@@ -163,11 +165,6 @@ export function isWorkspaceExport(data) {
   return validateExportShape(data) === null
 }
 
-async function gunzipBytesToText(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-  return await new Response(stream).text()
-}
-
 // UI import reads once up front so the magic-byte sniff and the
 // eventual parse share one buffer (re-reading would re-stream the
 // disk on every unlock-dialog retry).
@@ -189,7 +186,7 @@ export async function parseWorkspaceBundleBytes(bytes, password) {
     }
     const plaintext = await decryptBundle(bytes, password)
     try {
-      return parseWorkspaceJson(await gunzipBytesToText(plaintext))
+      return parseWorkspaceJson(await gunzipToText(plaintext))
     } catch (err) {
       // Keep `cause` for debugging (DevTools / console) while the
       // surfaced message stays generic — the oracle defense is at
@@ -199,7 +196,7 @@ export async function parseWorkspaceBundleBytes(bytes, password) {
   }
   let text
   try {
-    text = await gunzipBytesToText(bytes)
+    text = await gunzipToText(bytes)
   } catch (err) {
     throw new Error(`gzip decompression failed: ${err.message}`, { cause: err })
   }
@@ -338,7 +335,7 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
     if (!state.triageState.has(id)) {
       for (const r of ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${id}`)
+        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
       }
     }
   }
@@ -389,8 +386,7 @@ function currentLocalValue(id, property) {
 
 function dropIgnoredFor(id) {
   for (const k of [...state.ignoredIds]) {
-    const sep = k.indexOf('\0')
-    if (sep >= 0 && k.slice(sep + 1) === id) state.ignoredIds.delete(k)
+    if (splitIgnoredKey(k)?.id === id) state.ignoredIds.delete(k)
   }
 }
 

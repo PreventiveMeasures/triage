@@ -1,4 +1,6 @@
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { gunzipBytes, gzipBytes } from '../common/gzip.js'
+import { computeSha512Integrity } from '../common/integrity.js'
 import {
   VAULT_LOCK,
   getEnvelopeAadForBundle,
@@ -42,18 +44,11 @@ async function getOpfsDir() {
   }
 }
 
-// Binary gzip — bytes in, bytes out. Used by the bundles layer so
-// .map sourcemaps (text JSON, highly compressible) cost less in OPFS;
-// readBundle auto-detects via the gzip magic bytes (1f 8b) so the
-// flag doesn't need to live in metadata.
-async function gzipBytes(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
-}
-export async function gunzipBytes(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
-}
+// `gunzipBytes` is re-exported (the UI + sync-host consume it). The
+// bundles layer gzips .map sourcemaps (text JSON, highly compressible)
+// so they cost less in OPFS; readBundle auto-detects via the gzip
+// magic bytes (1f 8b) so the flag doesn't need to live in metadata.
+export { gunzipBytes }
 
 // Storage layer: try OPFS first (real files, large quota), fall back to
 // gzipped localStorage when OPFS is unavailable. Each function probes
@@ -695,8 +690,7 @@ export async function saveBundle(name, content) {
   const bytes = content instanceof Uint8Array
     ? content
     : new TextEncoder().encode(content)
-  const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
-  const integrity = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const integrity = await computeSha512Integrity(bytes)
   const opfsKey = integrityToOpfsKey(integrity)
   let storeBytes = name.toLowerCase().endsWith('.map')
     ? await gzipBytes(bytes)

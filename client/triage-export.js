@@ -1,4 +1,5 @@
-import { encodeUtf8 } from '../common/utf8.js'
+import { gunzipToText, gzipText } from '../common/gzip.js'
+import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import { REPO_URLS_KEY, state } from './state.ts'
 import { saveTriage } from './triage.js'
 
@@ -36,10 +37,9 @@ export function buildTriageExportPayload() {
   // round-trip preserves the existing on-disk structure.
   const ignoredByid = new Map()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (SESSION_ID_RE.test(id)) continue
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
     ignoredByid.get(id).push(reportName)
@@ -68,16 +68,6 @@ export function buildTriageExportPayload() {
   }
 }
 
-async function gzipText(text) {
-  const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
-  return await new Response(stream).blob()
-}
-
-async function gunzipBlob(blob) {
-  const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'))
-  return await new Response(stream).text()
-}
-
 // Filename uses an ISO-like timestamp so multiple exports sort
 // chronologically in the user's downloads folder. Colons / dots
 // are illegal on Windows; replaced with hyphens. Seconds-precision
@@ -89,14 +79,14 @@ function timestampFilename() {
 
 export async function buildTriageExportGzip() {
   const payload = buildTriageExportPayload()
-  const blob = await gzipText(JSON.stringify(payload))
+  const blob = new Blob([await gzipText(JSON.stringify(payload))])
   return { blob, filename: timestampFilename() }
 }
 
 export async function parseTriageExportGzip(file) {
   let text
   try {
-    text = await gunzipBlob(file)
+    text = await gunzipToText(new Uint8Array(await file.arrayBuffer()))
   } catch (err) {
     throw new Error(`Failed to gunzip: ${err.message}`, { cause: err })
   }
@@ -167,9 +157,9 @@ export async function applyTriageImport(payload, mode) {
       if (!SESSION_ID_RE.test(k)) state.fixes.delete(k)
     }
     for (const key of [...state.ignoredIds]) {
-      const sep = key.indexOf('\0')
-      if (sep < 0) continue
-      const id = key.slice(sep + 1)
+      const parts = splitIgnoredKey(key)
+      if (!parts) continue
+      const { id } = parts
       if (!SESSION_ID_RE.test(id)) state.ignoredIds.delete(key)
     }
   }
@@ -203,7 +193,7 @@ export async function applyTriageImport(payload, mode) {
     if (Array.isArray(v.ignoredReports) && !state.triageState.has(id)) {
       for (const r of v.ignoredReports) {
         if (typeof r !== 'string') continue
-        const key = `${r}\0${id}`
+        const key = makeIgnoredKey(r, id)
         if (keepCurrent && state.ignoredIds.has(key)) continue
         state.ignoredIds.add(key)
       }

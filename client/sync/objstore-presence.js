@@ -21,6 +21,7 @@ import { createObjstoreClient } from './objstore.ts'
 import { getSharedTransport } from './sync-transport.ts'
 import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
+import { computeSha512Integrity } from '../../common/integrity.js'
 import { onSyncHostInstalled } from './host.ts'
 
 // Late-bound host accessors — populated by `onSyncHostInstalled` at
@@ -974,8 +975,7 @@ async function maybeAutoDownloadBundle(entry, tag, integrity, name, bytes) {
   // Re-hash check. AAD-bound name binding catches a tag-name swap;
   // the re-hash is the SOLE defense against a workspace member
   // PUTting bytes that don't actually hash to the claimed integrity.
-  const hashBuf = await crypto.subtle.digest('SHA-512', bytes)
-  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const computed = await computeSha512Integrity(bytes)
   if (entry.disposed || !entry.remoteTags.has(tag)) return
   if (computed !== integrity) {
     console.warn(`auto-download: bundle integrity mismatch (claimed ${integrity}, got ${computed}) — refusing to save`)
@@ -1190,8 +1190,7 @@ export async function fetchBundleFromRemote(workspaceId, integrity) {
   // them under whatever they ACTUALLY hash to — leaving the
   // workspace's `bundles` list pointing at a sha512 that never
   // landed locally.
-  const hashBuf = await crypto.subtle.digest('SHA-512', result.content)
-  const computed = `sha512-${new Uint8Array(hashBuf).toBase64()}`
+  const computed = await computeSha512Integrity(result.content)
   if (computed !== integrity) {
     return { ok: false, reason: 'integrity-mismatch' }
   }

@@ -1,5 +1,6 @@
 import { state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
 import {
   VAULT_LOCK,
   getEnvelopeAadForTriage,
@@ -111,10 +112,9 @@ export function saveTriage() {
   // omitted so a clean entry doesn't leave a trace.
   const ignoredByid = new Map()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (SESSION_ID_RE.test(id)) continue
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
     ignoredByid.get(id).push(reportName)
@@ -351,10 +351,9 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // triage means the apply path skips re-adding ignoredReports,
     // so the local state must mirror that resolution.
     for (const key of [...state.ignoredIds]) {
-      const sep = key.indexOf('\0')
-      if (sep < 0) continue
-      const reportName = key.slice(0, sep)
-      const id = key.slice(sep + 1)
+      const parts = splitIgnoredKey(key)
+      if (!parts) continue
+      const { reportName, id } = parts
       if (SESSION_ID_RE.test(id)) continue
       // Local pending-write protection (round-9 M3) — see above.
       if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
@@ -392,7 +391,7 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // state.
     if (!triageWasSet && v && Array.isArray(v.ignoredReports)) {
       for (const r of v.ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(`${r}\0${k}`)
+        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, k))
       }
     }
     if (v && typeof v.comment === 'string' && v.comment) state.comments.set(k, v.comment)

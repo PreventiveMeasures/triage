@@ -4,7 +4,8 @@ import { setReportWorkspace } from './workspaces.js'
 import { deriveFindingId } from '../common/finding-id.js'
 import { parseMarkdownFindings } from '../common/parse-md.js'
 import { parseDeepsecFindings } from '../common/parse-deepsec.js'
-import { encodeUtf8 } from '../common/utf8.js'
+import { splitIgnoredKey } from '../common/ignored-key.js'
+import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
 
 // Pure-logic side of workspace export. The DOM-touching layer
@@ -159,10 +160,9 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   const workspaceReportSet = new Set(workspace.reports ?? [])
   const ignoredByid = new Map()
   for (const key of state.ignoredIds) {
-    const sep = key.indexOf('\0')
-    if (sep < 0) continue
-    const reportName = key.slice(0, sep)
-    const id = key.slice(sep + 1)
+    const parts = splitIgnoredKey(key)
+    if (!parts) continue
+    const { reportName, id } = parts
     if (!claimedIds.has(id)) continue
     if (!workspaceReportSet.has(reportName)) continue
     if (!ignoredByid.has(id)) ignoredByid.set(id, [])
@@ -233,16 +233,11 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   return payload
 }
 
-async function gzip(text) {
-  const stream = new Blob([encodeUtf8(text)]).stream().pipeThrough(new CompressionStream('gzip'))
-  return await new Response(stream).blob()
-}
-
 // Returns `{ blob, filename }` ready for the UI download wrapper.
 // Filename uses the workspace name sanitized to a portable charset.
 export async function buildWorkspaceExportGzip(workspace, { includeBundleBytes = false } = {}) {
   const payload = await buildWorkspaceExportPayload(workspace, { includeBundleBytes })
-  const blob = await gzip(JSON.stringify(payload))
+  const blob = new Blob([await gzipText(JSON.stringify(payload))])
   return { blob, filename: `${safeFilename(workspace.name)}.deepview-workspace.json.gz` }
 }
 
