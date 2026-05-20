@@ -196,6 +196,7 @@ function fakeBegin(over = {}) {
     workspaceTag: 'ws-1',
     resourceTag,
     prevVersion: null,
+    prevIncarnation: null,
     expectedLength: 16,
     contentHash: chash(resourceTag),
     signature: b64u64(),
@@ -309,12 +310,12 @@ describe('vercel blob backend — error & race surfaces', () => {
     try {
       const begin = await beginPut(handle, fakeBegin())
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
-      await commitPut(handle, {
+      const commit = await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
       })
       const live = liveName('ws-1', 'res-1')
       assert.equal(blobs.has(live), true)
-      const del = await deleteObject(handle, 'ws-1', 'res-1', 1)
+      const del = await deleteObject(handle, 'ws-1', 'res-1', 1, commit.row.incarnation)
       assert.equal(del.ok, true)
       assert.equal(del.deletedVersion, 1)
       // deleteObject only drops the row — the blob (possibly shared via
