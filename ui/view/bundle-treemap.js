@@ -227,20 +227,27 @@ class BundleTreemap extends LitElement {
       const size = typeof content === 'string' ? enc.encode(content).byteLength : 0
       if (size <= 0) continue
       const parts = stripped[i].split('/')
+      // Walk/create a directory node per segment but the last. A source
+      // path that is both a file and a prefix-dir of another ("x" and
+      // "x/a.js") can't coexist in one tree; bail on the colliding entry
+      // rather than descending into a file leaf (no `.children`) or
+      // clobbering an already-built subtree.
       let node = root
+      let blocked = false
       for (let d = 0; d < parts.length - 1; d++) {
         let child = node.children.get(parts[d])
+        if (child && child.isFile) { blocked = true; break }
         if (!child) {
           child = { name: parts[d], children: new Map(), value: 0, isFile: false }
           node.children.set(parts[d], child)
         }
         node = child
       }
+      if (blocked) continue
       const base = parts.at(-1)
       let leaf = node.children.get(base)
-      // Defend against a path that is both a dir and a file across two
-      // entries: keep the file leaf, fold the size in.
-      if (!leaf || !leaf.isFile) {
+      if (leaf && !leaf.isFile) continue
+      if (!leaf) {
         leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i] }
         node.children.set(base, leaf)
       }
