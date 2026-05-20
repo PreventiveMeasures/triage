@@ -41,7 +41,10 @@ import { openPasskeyUnlockDialog } from './passkey-unlock-dialog.js'
 const LOCKED_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V5.5a3 3 0 0 1 6 0V8"/></svg>`
 const UNLOCKED_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V5a3 3 0 0 1 6 -0.5"/></svg>`
 
-const button = document.querySelector('#encryption-toggle')
+// Set by `initEncryptionToggle(el)` once the sidebar component has
+// rendered the `#encryption-toggle` button into its shadow DOM.
+// Before that the module's functions no-op on the null button.
+let button = null
 
 function render() {
   if (!button) return
@@ -129,7 +132,15 @@ async function handleEnable() {
   await openPasskeySetupDialog()
 }
 
-if (button) {
+// Called by the sidebar component from its `firstUpdated` with the
+// `#encryption-toggle` button it just rendered into shadow DOM. The
+// button used to be static light-DOM markup `document.querySelector`-ed
+// at module load; now that the sidebar is a shadow-DOM component the
+// wiring is deferred until the host hands us the live element.
+// Idempotent on a repeat call with the same element.
+export function initEncryptionToggle(el) {
+  if (!el || el === button) return
+  button = el
   // Re-entrancy guard. Without this, a user clicking the icon
   // during an in-flight handle* (e.g. clicking again during the
   // disable migration's busy window — `fireVaultStateChange` is

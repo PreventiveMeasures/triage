@@ -1515,7 +1515,7 @@
    panel naturally takes the full available space minus #report's
    .5rem padding. */
 body.report-fullscreen {
-  & #sidebar { display: none; }
+  & app-sidebar { display: none; }
   & #report header.page-head { display: none; }
   & #report { max-width: none; padding: .5rem; }
 }

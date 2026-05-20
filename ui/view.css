@@ -2,7 +2,9 @@
    `print.css` is last so its `!important` palette overrides anything
    above on paper. */
 @import './styles/theme.css';
-@import './styles/sidebar.css';
+@import './styles/file-icon.css';
+@import './styles/dialogs.css';
+@import './styles/sidebar-chrome.css';
 @import './styles/drop-zone.css';
 @import './styles/report.css';
 @import './styles/toolbar.css';

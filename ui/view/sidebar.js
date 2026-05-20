@@ -1,10 +1,23 @@
-import { html, render as litRender, nothing } from 'lit'
+import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state } from '#client/index.js'
 import { deleteFromRemote as deleteRemote, isInRemote, loadSync, triageSync } from './client-sync.js'
-import { fileList, sidebar } from './dom.js'
+import sidebarCSS from './sidebar.css'
+import fileIconCSS from '../styles/file-icon.css'
+import { initEncryptionToggle } from './encryption-toggle.js'
 import { render } from './render.js'
+
+// Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
+// custom-element host (light DOM — `.classList` collapse/empty
+// toggles live here). `root` is its shadow root, the scope for all
+// event delegates + `querySelector` lookups; events fired inside it
+// reach delegates attached to it with `e.target` un-retargeted, so
+// the `e.target.closest(...)` matching below works unchanged.
+// `fileList` is the `#file-list` <ul> inside the shadow.
+let hostEl = null
+let root = null
+let fileList = null
 import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -164,7 +177,7 @@ function workspaceHeaderTemplate(count) {
 // to) and gets `.active` when its view is the current one — mirrors the
 // `.current` highlight a file row picks up while its file is loaded.
 function renderViewButton(id, count, viewName) {
-  const btn = document.querySelector(id)
+  const btn = root?.querySelector(id)
   if (!btn) return
   btn.hidden = count === 0
   btn.classList.toggle('active', state.currentView === viewName)
@@ -339,12 +352,18 @@ export async function renderSidebar() {
   // the OPFS scan. Updated on every sidebar render — drops, deletes,
   // and switchToFile all refresh through here.
   state.bundles = bundleNames
+  // Pre-mount calls (boot ordering: view.js's `renderSidebar()`
+  // can fire before the `<app-sidebar>` element's first shadow
+  // render) still need the `state.bundles` side-effect above, but
+  // there's no shadow DOM to paint into yet. Bail before the DOM
+  // work — `firstUpdated` re-invokes `renderSidebar()` once mounted.
+  if (!root) return
   // The sidebar always shows now — Workspaces is a first-class feature
   // and its "+" button must be reachable on first launch (before any
   // report or workspace exists). The drop zone still owns the welcome
   // copy in main; the sidebar just exposes the create-workspace
   // affordance alongside.
-  sidebar.classList.remove('empty')
+  hostEl.classList.remove('empty')
 
   // Reports already claimed by a workspace render INSIDE that workspace
   // and are dropped from the default buckets. Stale entries (a workspace
@@ -474,7 +493,7 @@ export async function renderSidebar() {
   renderViewButton('#show-packages-btn', countLoadedPackages(), 'packages')
   renderViewButton('#show-repositories-btn', countLoadedRepositories(), 'repositories')
 
-  const deleteBtn = document.querySelector('#delete-current')
+  const deleteBtn = root.querySelector('#delete-current')
   if (deleteBtn) deleteBtn.disabled = !state.currentFile
 
   // Sync button visibility tracks workspace state (non-empty
@@ -506,7 +525,7 @@ onVaultStateChange(() => { renderSidebar() })
 // match because a workspace header is itself a `<li>` that contains
 // no `data-file` — but the add button still bubbles to the same
 // listener.
-sidebar.addEventListener('click', async (e) => {
+async function onSidebarClick(e) {
   // Per-bundle row in the expanded Bundles section — selects that
   // bundle and switches to the bundles view. Mirrors the
   // data-select-bundle handler in events.js (per-row setup must
@@ -742,10 +761,10 @@ sidebar.addEventListener('click', async (e) => {
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
-    sidebar.classList.toggle('collapsed')
-    try { localStorage.setItem('deepview.sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0') } catch {}
+    hostEl.classList.toggle('collapsed')
+    try { localStorage.setItem('deepview.sidebarCollapsed', hostEl.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
-})
+}
 
 // Instant tooltip for truncated sidebar names. A single shared element
 // is appended to <body> and repositioned on each hover, replacing the
@@ -775,7 +794,7 @@ function _hideSidebarTip() {
   _tipTarget = null
 }
 
-fileList.addEventListener('mouseover', (e) => {
+function onFileListMouseover(e) {
   const el = e.target.closest('[data-tooltip]')
   if (el === _tipTarget) return
   _hideSidebarTip()
@@ -783,20 +802,17 @@ fileList.addEventListener('mouseover', (e) => {
   const label = el.querySelector('.file-label')
   if (label && label.scrollWidth <= label.clientWidth) return
   _tipTimer = setTimeout(() => { _showSidebarTip(el) }, 100)
-})
+}
 
-fileList.addEventListener('mouseout', (e) => {
+function onFileListMouseout(e) {
   if (!_tipTarget && !_tipTimer) return
   if (_tipTarget && _tipTarget.contains(e.relatedTarget)) return
   _hideSidebarTip()
-})
+}
 
-const searchInput = document.querySelector('#sidebar-search-input')
-if (searchInput) {
-  searchInput.addEventListener('input', (e) => {
-    searchQuery = e.target.value.trim().toLowerCase()
-    renderSidebar()
-  })
+function onSearchInput(e) {
+  searchQuery = e.target.value.trim().toLowerCase()
+  renderSidebar()
 }
 
 // Sync-status button at the bottom of the sidebar. Reflects the
@@ -841,7 +857,7 @@ function syncButtonVisible() {
 }
 
 function renderSyncStatus(status) {
-  const btn = document.querySelector('#sync-status')
+  const btn = root?.querySelector('#sync-status')
   if (!btn) return
   const visible = syncButtonVisible()
   // Single trigger for the lazy `client-sync.js` chunk: sync is
@@ -882,7 +898,9 @@ function renderSyncStatus(status) {
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
-renderSyncStatus(triageSync.status)
+// `renderSyncStatus` no-ops until the shadow DOM exists (`root` is
+// null pre-mount), so the subscription is safe to register at module
+// load; the initial paint happens in `mount()`.
 triageSync.onStatusChange(renderSyncStatus)
 
 // Double-click a workspace row → inline rename. Replaces the label
@@ -891,7 +909,7 @@ triageSync.onStatusChange(renderSyncStatus)
 // targets) stay live but a re-render after commit/revert paints
 // fresh chrome anyway. Imperative DOM swap rather than a state flag
 // because the edit is a one-off, scoped to a single row.
-sidebar.addEventListener('dblclick', (e) => {
+function onSidebarDblclick(e) {
   const wsRow = e.target.closest('.file-item.workspace-item')
   if (!wsRow) return
   const labelSpan = wsRow.querySelector('.file-label')
@@ -925,7 +943,7 @@ sidebar.addEventListener('dblclick', (e) => {
   // open the workspace).
   input.addEventListener('click', (ev) => ev.stopPropagation())
   input.addEventListener('dblclick', (ev) => ev.stopPropagation())
-})
+}
 
 // Intra-sidebar drag-and-drop — move reports AND bundles between
 // workspaces and the unfiled list. The whole sidebar is a drop zone:
@@ -944,7 +962,7 @@ sidebar.addEventListener('dblclick', (e) => {
 // document-level drop handler in ingest.js still handles OS files
 // (its `e.dataTransfer.files` check no-ops on internal drags).
 function clearDragOver() {
-  for (const el of sidebar.querySelectorAll('.drag-over')) el.classList.remove('drag-over')
+  for (const el of root.querySelectorAll('.drag-over')) el.classList.remove('drag-over')
 }
 
 // Did this drag carry one of OUR mime types? Used by every drag
@@ -956,7 +974,7 @@ function dragHasOurPayload(e) {
     || e.dataTransfer.types.includes(BUNDLE_DT)
 }
 
-sidebar.addEventListener('dragstart', (e) => {
+function onSidebarDragstart(e) {
   // Bundle rows match BOTH `.file-item[data-file]` (no — they don't
   // carry data-file) and `.file-item[data-bundle-integrity]`, so the
   // bundle branch goes first. Reports carry data-file; bundles carry
@@ -1003,19 +1021,19 @@ sidebar.addEventListener('dragstart', (e) => {
   fileEl.classList.add('dragging')
   isDraggingReport = true
   renderSidebar()
-})
+}
 
-sidebar.addEventListener('dragend', () => {
-  for (const el of sidebar.querySelectorAll('.dragging')) el.classList.remove('dragging')
+function onSidebarDragend() {
+  for (const el of root.querySelectorAll('.dragging')) el.classList.remove('dragging')
   clearDragOver()
   if (isDraggingReport || isDraggingBundle) {
     isDraggingReport = false
     isDraggingBundle = false
     renderSidebar()
   }
-})
+}
 
-sidebar.addEventListener('dragover', (e) => {
+function onSidebarDragover(e) {
   if (!dragHasOurPayload(e)) return
   e.preventDefault()
   // If the cursor is over a workspace that already owns the dragged
@@ -1026,7 +1044,7 @@ sidebar.addEventListener('dragover', (e) => {
   // (already-unfiled → header) lights up against an operation that
   // won't move anything.
   const wsTarget = e.target.closest('[data-workspace-id]')
-  const sourceWsId = sidebar.querySelector('.dragging')?.closest('[data-workspace-id]')?.dataset.workspaceId ?? null
+  const sourceWsId = root.querySelector('.dragging')?.closest('[data-workspace-id]')?.dataset.workspaceId ?? null
   const sameWorkspaceDrop = wsTarget && sourceWsId && wsTarget.dataset.workspaceId === sourceWsId
   const alreadyUnfiledDrop = !wsTarget && !sourceWsId
   const isSelfDrop = sameWorkspaceDrop || alreadyUnfiledDrop
@@ -1040,7 +1058,7 @@ sidebar.addEventListener('dragover', (e) => {
     // skip a same-workspace drop visually conflates source and
     // target during the drag.
     const wsId = wsTarget.dataset.workspaceId
-    for (const el of sidebar.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]`)) {
+    for (const el of root.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]`)) {
       if (el.classList.contains('dragging')) continue
       el.classList.add('drag-over')
     }
@@ -1051,19 +1069,22 @@ sidebar.addEventListener('dragover', (e) => {
     // header isn't rendered (no unfiled bucket exists).
     const isBundle = e.dataTransfer.types.includes(BUNDLE_DT)
     const selector = isBundle ? '[data-default-bundles]' : '[data-default-reports]'
-    const indicator = sidebar.querySelector(selector)
+    const indicator = root.querySelector(selector)
     if (indicator) indicator.classList.add('drag-over')
   }
-})
+}
 
-sidebar.addEventListener('dragleave', (e) => {
-  // Only clear if we've left the sidebar entirely — internal moves
-  // between target / non-target elements re-trigger dragover and
-  // re-paint the highlight.
-  if (!sidebar.contains(e.relatedTarget)) clearDragOver()
-})
+function onSidebarDragleave(e) {
+  // Only clear if we've left the shadow tree entirely — internal
+  // moves between target / non-target elements re-trigger dragover
+  // and re-paint the highlight. `e.relatedTarget` retargets to the
+  // host when the pointer leaves the component, so `root.contains`
+  // (shadow-root scope) is false then; between shadow children it's
+  // a real shadow node and stays true.
+  if (!root.contains(e.relatedTarget)) clearDragOver()
+}
 
-sidebar.addEventListener('drop', async (e) => {
+async function onSidebarDrop(e) {
   if (!dragHasOurPayload(e)) return
   e.preventDefault()
   e.stopPropagation()
@@ -1122,4 +1143,103 @@ sidebar.addEventListener('drop', async (e) => {
   if (targetId) await addReportToWorkspace(filename, targetId)
   if (sourceWsId && sourceWsId !== targetId) await removeReportFromWorkspace(filename, sourceWsId)
   renderSidebar()
-})
+}
+
+// Wire the event delegates onto the shadow root + the search input,
+// hand the encryption-toggle button to its module, then paint. All
+// delegates sit on the shadow root (or the in-shadow `#file-list`),
+// so an event fired inside the tree reaches them with `e.target`
+// un-retargeted — `e.target.closest(...)` matches shadow elements
+// directly, exactly as it did against the light-DOM `#sidebar`.
+function mount(host) {
+  hostEl = host
+  root = host.renderRoot
+  fileList = root.querySelector('#file-list')
+  initEncryptionToggle(root.querySelector('#encryption-toggle'))
+  root.addEventListener('click', onSidebarClick)
+  root.addEventListener('dblclick', onSidebarDblclick)
+  root.addEventListener('dragstart', onSidebarDragstart)
+  root.addEventListener('dragend', onSidebarDragend)
+  root.addEventListener('dragover', onSidebarDragover)
+  root.addEventListener('dragleave', onSidebarDragleave)
+  root.addEventListener('drop', onSidebarDrop)
+  fileList.addEventListener('mouseover', onFileListMouseover)
+  fileList.addEventListener('mouseout', onFileListMouseout)
+  root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
+  renderSyncStatus(triageSync.status)
+  renderSidebar()
+}
+
+// `<app-sidebar>` — the report / workspace / bundle picker. Shadow
+// DOM so its ~1500-line stylesheet (view/sidebar.css) is scoped to
+// the component instead of riding the global cascade. The shell
+// (header / search / list / actions) is static, so `render()` runs
+// once and the dynamic `#file-list` is populated imperatively by
+// `renderSidebar()` (no `${}` inside the `<ul>`, so re-renders — if
+// any — never wipe the imperatively-rendered rows).
+class AppSidebar extends LitElement {
+  // `file-icon.css` (the brand-sticker fills) is dual-context — the
+  // main content renders the same `.file-icon.brand-*` SVGs in light
+  // DOM (page header, finding cards, packages/repos/bundle views, via
+  // view.css's global @import), and the sidebar's file rows render
+  // them in here. Inlining it into the shadow styles keeps the rows'
+  // icons coloured without the global rule being able to reach in.
+  static styles = [unsafeCSS(fileIconCSS), unsafeCSS(sidebarCSS)]
+
+  render() {
+    return html`
+      <div class="sidebar-header">
+        <h2 class="brand">
+          <span class="brand-name">DeepView</span>
+          <span class="brand-tag">dev</span>
+        </h2>
+        <button id="encryption-toggle" type="button" hidden></button>
+        <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <path d="M2 4h12v1.5H2zM2 7.25h12v1.5H2zM2 10.5h12V12H2z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="sidebar-search">
+        <svg class="sidebar-search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <circle cx="6.5" cy="6.5" r="4.5"/>
+          <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
+        </svg>
+        <input id="sidebar-search-input" type="search" placeholder="Search reports..." autocomplete="off">
+        <button id="show-packages-btn" type="button" class="sidebar-view-btn" data-action="show-packages" hidden title="Show packages" aria-label="Show packages">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 6h12v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6Z"/>
+            <path d="M2 6l1.6-3.3A1.3 1.3 0 0 1 4.8 2h6.4a1.3 1.3 0 0 1 1.2.7L14 6"/>
+            <path d="M8 2v4"/>
+          </svg>
+          <span class="view-btn-count"></span>
+        </button>
+        <button id="show-repositories-btn" type="button" class="sidebar-view-btn" data-action="show-repositories" hidden title="Show repositories" aria-label="Show repositories">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="4" x2="4" y1="2.5" y2="10"/>
+            <circle cx="12" cy="4" r="2"/>
+            <circle cx="4" cy="12" r="2"/>
+            <path d="M12 6a6 6 0 0 1-6 6"/>
+          </svg>
+          <span class="view-btn-count"></span>
+        </button>
+      </div>
+      <ul id="file-list"></ul>
+      <div class="sidebar-actions">
+        <button id="delete-current" type="button" class="danger">
+          <svg class="trash-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M5 4l.7 9h4.6L11 4"/></svg>
+          <span>Delete current</span>
+        </button>
+        <button id="sync-status" type="button" data-status="off">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span class="sync-label">Sync off</span>
+        </button>
+      </div>
+    `
+  }
+
+  firstUpdated() {
+    mount(this)
+  }
+}
+customElements.define('app-sidebar', AppSidebar)
