@@ -11,10 +11,10 @@
 // `openFixLinkDialog(...)` returns a Promise that resolves to the
 // trimmed new value, or null on cancel (= no change).
 import { html, nothing, unsafeCSS } from 'lit'
-import { isHttpUrl } from './format.js'
+import { isHttpUrl } from '../format.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import severityCSS from '../styles/dialog-severity.css'
-import fixLinkCSS from '../styles/dialog-fix-link.css'
+import severityCSS from './dialog-severity.css'
+import fixLinkCSS from './dialog-fix-link.css'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing

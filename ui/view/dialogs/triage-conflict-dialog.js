@@ -16,11 +16,11 @@
 // (focus-trap + Esc-to-cancel), with the severity-badge + conflict
 // layers added on top.
 import { html, nothing, unsafeCSS } from 'lit'
-import { isHttpUrl } from './format.js'
-import { makeStackedModalError } from './dom.js'
+import { isHttpUrl } from '../format.js'
+import { makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
-import severityCSS from '../styles/dialog-severity.css'
-import conflictCSS from '../styles/dialog-conflict.css'
+import severityCSS from './dialog-severity.css'
+import conflictCSS from './dialog-conflict.css'
 
 // Swatch reads its hue from the global `--marker-*` custom
 // properties (see theme.css); the matching `.conflict-color-dot`

@@ -16,7 +16,7 @@
 // still always available for an explicit later enable.
 
 import { isEncryptionEnabled, isPasskeyEnvironmentSupported } from '#client/index.js'
-import { openPasskeySetupDialog } from './passkey-setup-dialog.js'
+import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
 
 const PROMPTED_KEY = 'deepview.passkey.firstImportPrompted'
 

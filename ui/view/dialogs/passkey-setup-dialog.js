@@ -20,7 +20,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt, migrateSecureStorageToEncrypted, migrateTriageToEncrypted, onVaultStateChange, wipeAllVaultData } from '#client/index.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import shareCSS from '../styles/dialog-share.css'
+import shareCSS from './dialog-share.css'
 
 class PasskeySetupDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]

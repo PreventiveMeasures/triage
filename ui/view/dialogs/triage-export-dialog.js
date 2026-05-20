@@ -13,10 +13,10 @@ import {
   buildTriageExportGzip,
   parseTriageExportGzip,
 } from '#client/index.js'
-import { downloadBlob } from './dom.js'
-import { render as renderApp } from './render.js'
+import { downloadBlob } from '../dom.js'
+import { render as renderApp } from '../render.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import triageExportCSS from '../styles/dialog-triage-export.css'
+import triageExportCSS from './dialog-triage-export.css'
 
 class TriageExportDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(triageExportCSS)]

@@ -5,8 +5,8 @@ import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './g
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
-import { openCommentDialog } from './comment-dialog.js'
-import { openFixLinkDialog } from './fix-link-dialog.js'
+import { openCommentDialog } from './dialogs/comment-dialog.js'
+import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
 
 // Subscribe once to the bundle-finding index. Any time another

@@ -1,4 +1,4 @@
-import { openWorkspaceExportDialog } from './workspace-export-dialog.js'
+import { openWorkspaceExportDialog } from './dialogs/workspace-export-dialog.js'
 
 // Thin DOM wrapper — the dialog collects the password (or explicit
 // opt-out) and triggers the download itself.

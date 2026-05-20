@@ -1,7 +1,7 @@
 import { saveTriage, state } from '#client/index.js'
 import { triageSync } from './client-sync.js'
 import { render } from './render.js'
-import { openTriageExportDialog } from './triage-export-dialog.js'
+import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups

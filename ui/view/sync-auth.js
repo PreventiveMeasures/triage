@@ -11,7 +11,7 @@
 // (the user can re-edit, or pick "retry" once they remember the
 // password).
 import { setAuthenticationResolver } from './client-sync.js'
-import { openSyncAuthDialog } from './sync-auth-dialog.js'
+import { openSyncAuthDialog } from './dialogs/sync-auth-dialog.js'
 
 export function installSyncAuthResolver() {
   setAuthenticationResolver(async ({ retry }) => {

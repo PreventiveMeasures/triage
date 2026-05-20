@@ -4,7 +4,7 @@
 // that workspace triage is synchronized over an E2E-encrypted
 // channel by default — unattached reports stay local.
 //
-// Extends `AppDialog` (view/app-dialog.js): shadow DOM, with the
+// Extends `AppDialog` (./app-dialog.js): shadow DOM, with the
 // shared dialog frame + `.nwd-*` chrome inherited via `static
 // styles`, and the showModal / focus / resolve plumbing inherited
 // too. Public `openNewWorkspaceDialog()` returns a Promise that
