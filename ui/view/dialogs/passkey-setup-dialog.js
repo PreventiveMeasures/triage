@@ -394,7 +394,7 @@ class PasskeySetupDialog extends AppDialog {
 
   render() {
     return html`<dialog @close=${this._onClose} @cancel=${this._onDialogCancel}>
-      <header class="nwd-head">
+      <header>
         <h3>${
           this._success ? 'Encryption enabled'
           : this._orphan ? 'Previous passkey setup detected'

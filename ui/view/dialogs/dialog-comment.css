@@ -10,9 +10,7 @@
 /* Roomier frame than the base 480px for the textarea. */
 dialog { max-width: 640px; width: min(94vw, 640px); }
 
-header h3 {
-  margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
-}
+header h3 { margin: 0 0 .4rem; }  /* tighter than base; font/weight inherited */
 .finding {
   display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap;

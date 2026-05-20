@@ -2,26 +2,24 @@
    resolver (workspace import + report-attach hydration). Composed
    into the dialog's shadow `static styles` on top of dialog-base.css
    (frame + reset + WCO) and dialog-severity.css (the `.conflict-sev`
-   chip). Only the wider frame + the `.conflict-*` inner chrome live
-   here. Flattened from the `.workspace-conflict-dialog { … }` block
-   in styles/dialogs.css. */
+   chip — that one class is shared, so it keeps its name). Everything
+   else is local to this shadow, so the body uses short, unprefixed
+   class names and addresses the header by type. */
 
 /* Wide frame — the conflict cards carry three columns. */
 dialog { max-width: 720px; width: min(94vw, 720px); }
 
-.conflict-head h3 {
-  margin: 0 0 .25rem; font-size: 1rem; font-weight: 600;
-}
-.conflict-head p {
+header h3 { margin: 0 0 .25rem; }  /* tighter than base; font/weight inherited */
+header p {
   margin: 0 0 .75rem; color: var(--muted); font-size: .82rem;
 }
-.conflict-bulk {
+.bulk {
   display: flex; gap: .4rem; margin-bottom: .7rem;
   padding-bottom: .7rem;
   border-bottom: 1px solid var(--border);
 }
-.conflict-bulk button,
-.conflict-actions button {
+.bulk button,
+.actions button {
   background: transparent; border: 1px solid var(--border);
   color: var(--text); border-radius: 5px;
   padding: .3rem .8rem;
@@ -32,7 +30,7 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
   &.primary:hover { filter: brightness(1.08); }
 }
 
-.conflict-list {
+.list {
   list-style: none; margin: 0; padding: 0;
   max-height: 60vh; overflow-y: auto; overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
@@ -42,52 +40,52 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
 /* One card per finding id. Header row carries the severity badge,
    file:line, and a truncated id chip; description preview sits
    below; per-property decision rows fill the rest. */
-.conflict-card {
+.card {
   border: 1px solid var(--border); border-radius: 6px;
   padding: .55rem .7rem .6rem;
   background: rgb(from var(--text) r g b / .02);
 }
-.conflict-card-head {
+.card-head {
   display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap;
   margin-bottom: .35rem;
 }
-.conflict-loc {
+.loc {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76rem; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0; flex: 1;
 }
-.conflict-id {
+.id {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .68rem; color: var(--muted);
   padding: 1px .3rem;
   background: rgb(from var(--text) r g b / .05);
   border-radius: 3px;
 }
-.conflict-desc {
+.desc {
   font-size: .78rem; color: var(--muted);
   margin-bottom: .55rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.conflict-rows { display: flex; flex-direction: column; gap: .35rem; }
+.rows { display: flex; flex-direction: column; gap: .35rem; }
 
 /* One row per property (color, comment) inside a card. Three
    columns: property label, "current" choice, "imported" choice.
    Each choice is a clickable label wrapping its radio so the
    whole side is a hit target. */
-.conflict-row {
+.row {
   display: grid;
   grid-template-columns: 5rem 1fr 1fr;
   align-items: stretch; gap: .4rem;
 }
-.conflict-row-label {
+.row-label {
   color: var(--muted); font-size: .72rem;
   text-transform: uppercase; letter-spacing: .08em;
   align-self: center;
 }
-.conflict-choice {
+.choice {
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;
   border: 1px solid var(--border); border-radius: 5px;
@@ -98,23 +96,23 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
     background: rgb(from var(--accent) r g b / .07);
   }
 }
-.conflict-choice input[type='radio'] {
+.choice input[type='radio'] {
   position: absolute;
   opacity: 0; pointer-events: none;
 }
-.conflict-choice-label {
+.choice-label {
   font-size: .68rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: .08em;
 }
-.conflict-choice:has(input:checked) .conflict-choice-label {
+.choice:has(input:checked) .choice-label {
   color: var(--accent);
 }
-.conflict-choice-value { font-size: .82rem; min-width: 0; }
+.choice-value { font-size: .82rem; min-width: 0; }
 
-.conflict-color {
+.color {
   display: inline-flex; align-items: center; gap: .35rem;
 }
-.conflict-color-dot {
+.color-dot {
   width: 12px; height: 12px; border-radius: 50%;
   box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
   flex-shrink: 0;
@@ -126,10 +124,10 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
   &.marker-green { background: var(--marker-green); }
   &.marker-gray  { background: var(--marker-gray); }
 }
-.conflict-color-name {
+.color-name {
   text-transform: capitalize;
 }
-.conflict-comment-text {
+.comment-text {
   display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden;
@@ -139,7 +137,7 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
 
   & em { color: var(--muted); font-style: italic; }
 }
-.conflict-fix-text {
+.fix-text {
   display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
@@ -149,7 +147,7 @@ dialog { max-width: 720px; width: min(94vw, 720px); }
   & a:hover { text-decoration: underline; }
 }
 
-.conflict-actions {
+.actions {
   display: flex; justify-content: flex-end; gap: .4rem;
   margin-top: .8rem;
   padding-top: .7rem;

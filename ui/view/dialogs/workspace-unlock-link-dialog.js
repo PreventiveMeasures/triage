@@ -273,7 +273,7 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
       ? 'Attach shared workspace'
       : (this._existingById ? 'Workspace already attached' : 'Name the workspace')
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>${heading}</h3>
       </header>
       ${this._stage === 'password' ? this._passwordStage() : this._nameStage()}

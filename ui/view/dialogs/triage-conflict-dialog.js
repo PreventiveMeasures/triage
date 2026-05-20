@@ -24,7 +24,7 @@ import conflictCSS from './dialog-conflict.css'
 import { severityBadge } from './shared.js'
 
 // Swatch reads its hue from the global `--marker-*` custom
-// properties (see theme.css); the matching `.conflict-color-dot`
+// properties (see theme.css); the matching `.color-dot`
 // rules in dialog-conflict.css map a `marker-{red,blue,green,gray}`
 // modifier class to the right `var(--marker-…)` background.
 // One source for the four marker colors — change theme.css and
@@ -37,28 +37,28 @@ function colorSwatchTemplate(color) {
   // so the dialog can show both sides side-by-side without an
   // empty / undefined-named swatch.
   if (!color) return html`<em>none</em>`
-  return html`<span class="conflict-color">
-    <span class=${`conflict-color-dot marker-${color}`}></span>
-    <span class="conflict-color-name">${color}</span>
+  return html`<span class="color">
+    <span class=${`color-dot marker-${color}`}></span>
+    <span class="color-name">${color}</span>
   </span>`
 }
 
 function commentBlockTemplate(text) {
-  return html`<span class="conflict-comment-text">${text || html`<em>empty</em>`}</span>`
+  return html`<span class="comment-text">${text || html`<em>empty</em>`}</span>`
 }
 
 function fixBlockTemplate(text) {
-  if (!text) return html`<span class="conflict-comment-text"><em>empty</em></span>`
+  if (!text) return html`<span class="comment-text"><em>empty</em></span>`
   // Only http(s) values get a clickable link — plain-text fix
   // references ("internal ticket #42") render as text inside the
-  // same `.conflict-fix-text` span so the layout stays put.
-  if (!isHttpUrl(text)) return html`<span class="conflict-fix-text">${text}</span>`
-  return html`<span class="conflict-fix-text"><a href=${text} target="_blank" rel="noopener noreferrer">${text}</a></span>`
+  // same `.fix-text` span so the layout stays put.
+  if (!isHttpUrl(text)) return html`<span class="fix-text">${text}</span>`
+  return html`<span class="fix-text"><a href=${text} target="_blank" rel="noopener noreferrer">${text}</a></span>`
 }
 
 function triageBadgeTemplate(value) {
   if (!value) return html`<em>none</em>`
-  return html`<span class=${`conflict-triage triage-${value}`}>${value}</span>`
+  return html`<span class=${`triage triage-${value}`}>${value}</span>`
 }
 
 function valueTemplate(property, value) {
@@ -74,13 +74,13 @@ function findingHeaderTemplate(meta, id) {
     ? (meta.line ? `${meta.file}:${meta.line}` : meta.file)
     : ''
   return html`
-    <div class="conflict-card-head">
+    <div class="card-head">
       ${severityBadge(meta?.severity)}
-      ${loc ? html`<span class="conflict-loc" title=${loc}>${loc}</span>` : nothing}
-      <code class="conflict-id" title=${id}>${id.slice(0, 8)}…</code>
+      ${loc ? html`<span class="loc" title=${loc}>${loc}</span>` : nothing}
+      <code class="id" title=${id}>${id.slice(0, 8)}…</code>
     </div>
     ${meta?.description
-      ? html`<div class="conflict-desc" title=${meta.description}>${meta.description}</div>`
+      ? html`<div class="desc" title=${meta.description}>${meta.description}</div>`
       : nothing}
   `
 }
@@ -178,33 +178,33 @@ class TriageConflictDialog extends AppDialog {
       @click=${this._onClick}
       @close=${this._onClose}
     >
-      <header class="conflict-head">
+      <header>
         <h3>${lbl.title}</h3>
         <p>${findingsLabel} ${lbl.intro} ${summary}.${lbl.trailingNote ? ` ${lbl.trailingNote}` : ''}</p>
-        <div class="conflict-bulk">
+        <div class="bulk">
           <button type="button" data-bulk="local">Keep all current</button>
           <button type="button" data-bulk="imported">${lbl.importedSideLabel} (all)</button>
         </div>
       </header>
-      <ul class="conflict-list">
+      <ul class="list">
         ${[...byId.entries()].map(([id, items]) => html`
-          <li class="conflict-card" data-id=${id}>
+          <li class="card" data-id=${id}>
             ${findingHeaderTemplate(this.findingLookup.get(id), id)}
-            <div class="conflict-rows">
+            <div class="rows">
               ${items.map((c) => {
                 const key = `${c.id}:${c.property}`
                 const radioName = `conflict-${key}`
-                return html`<div class="conflict-row" data-key=${key}>
-                  <span class="conflict-row-label">${PROP_LABEL[c.property] ?? c.property}</span>
-                  <label class="conflict-choice">
+                return html`<div class="row" data-key=${key}>
+                  <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
+                  <label class="choice">
                     <input type="radio" name=${radioName} value="local" checked>
-                    <span class="conflict-choice-label">Keep current</span>
-                    <span class="conflict-choice-value">${valueTemplate(c.property, c.local)}</span>
+                    <span class="choice-label">Keep current</span>
+                    <span class="choice-value">${valueTemplate(c.property, c.local)}</span>
                   </label>
-                  <label class="conflict-choice">
+                  <label class="choice">
                     <input type="radio" name=${radioName} value="imported">
-                    <span class="conflict-choice-label">${lbl.importedSideLabel}</span>
-                    <span class="conflict-choice-value">${valueTemplate(c.property, c.imported)}</span>
+                    <span class="choice-label">${lbl.importedSideLabel}</span>
+                    <span class="choice-value">${valueTemplate(c.property, c.imported)}</span>
                   </label>
                 </div>`
               })}
@@ -212,7 +212,7 @@ class TriageConflictDialog extends AppDialog {
           </li>
         `)}
       </ul>
-      <footer class="conflict-actions">
+      <footer class="actions">
         <button type="button" data-action="cancel">Cancel</button>
         <button type="button" data-action="apply" class="primary">${lbl.applyButton}</button>
       </footer>

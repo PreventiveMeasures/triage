@@ -81,7 +81,7 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
 
   render() {
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>Unlock encrypted workspace</h3>
       </header>
       <p class="nwd-note">

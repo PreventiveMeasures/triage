@@ -151,7 +151,7 @@ class SyncDownloadDialog extends AppDialog {
       ? (singular ? 'Downloading…' : `Downloading ${count} ${kindLabel}…`)
       : (singular ? 'Download' : `Download ${count}`)
     return html`<dialog @close=${this._onClose}>
-      <header class="lwd-head"><h3>Download from remote</h3></header>
+      <header><h3>Download from remote</h3></header>
       <p class="lwd-body">${intro}</p>
       ${list}
       ${this._errorsSection()}

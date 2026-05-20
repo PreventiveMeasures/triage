@@ -48,7 +48,7 @@ class NewWorkspaceDialog extends AppDialog {
   render() {
     const canCreate = (this._value ?? '').trim().length > 0
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>New workspace</h3>
       </header>
       <input

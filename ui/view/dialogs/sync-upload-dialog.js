@@ -109,7 +109,7 @@ class SyncUploadDialog extends AppDialog {
       ? (singular ? 'Uploading…' : `Uploading ${count} ${kindLabel}…`)
       : (singular ? 'Upload' : `Upload ${count}`)
     return html`<dialog @close=${this._onClose}>
-      <header class="lwd-head"><h3>Upload to remote</h3></header>
+      <header><h3>Upload to remote</h3></header>
       <p class="lwd-body">${intro}</p>
       ${list}
       ${this._errorsSection()}
