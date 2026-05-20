@@ -13,19 +13,26 @@
 // shape the lock-free design targets (more faithful than the SQLite
 // two-connections-to-one-file simulation).
 //
-// NOT ported: the reaper sweeps, FS directory-layout assertions, and the
-// pure-unit token / input-shape tests — none are metadata-backend-
-// specific. The Neon Handle leaves `dir` unset, so staging/live paths
-// are computed from the returned `objDir` (live = content-addressed).
+// The reapOrphans suite covers the reaper's Neon SQL — listLiveTags,
+// listAllStaging, the atomic deleteStagingIfStale (the "F1" race),
+// refreshStagingBegunAt, selectStagingByWsSid — plus the
+// content-addressed unreferenced-blob GC. NOT ported: FS directory-layout
+// assertions and the pure-unit token / input-shape tests (not
+// metadata-backend-specific). The Neon Handle leaves `dir` unset, so
+// staging/live paths are computed from the returned `objDir` (live =
+// content-addressed). Test fixtures that backdate begun_at / drop rows go
+// through the raw `pg` the helper exposes (the SQLite suite uses
+// handle.db, which the Neon Handle doesn't have).
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
 import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
+import { reapOrphans } from '../server/objstore/reaper.ts'
 import { freshNeonObjstore, twoNeonReplicas } from './_neon-pglite.js'
 
 function b64u64() { return 'a'.repeat(86) }
@@ -50,6 +57,28 @@ function fakeBegin(over = {}) {
 function writeStaging(filePath, bytes) {
   const fd = openSync(filePath, 'a')
   try { writeSync(fd, bytes) } finally { closeSync(fd) }
+}
+
+const TWO_HOURS = 2 * 60 * 60 * 1000
+
+// Backdate a blob's mtime so the reaper's GC grace window (one staging
+// TTL) treats it as collectible — mirrors how the staging-TTL tests
+// backdate begun_at, and avoids a grace=0 edge case (fs mtime can round
+// a just-written file slightly ahead of Date.now()).
+function ageBlob(filePath, msAgo = TWO_HOURS) {
+  const t = (Date.now() - msAgo) / 1000
+  utimesSync(filePath, t, t)
+}
+
+// Backdate a staging row's begun_at via the raw pg (the Neon Handle has
+// no `db`); mirrors the SQLite suite's direct UPDATE.
+async function backdateStaging(pg, stagingId, ms = TWO_HOURS) {
+  await pg.query(`UPDATE workspace_object_staging SET begun_at = $1 WHERE staging_id = $2`, [Date.now() - ms, stagingId])
+}
+
+async function stagingRowExists(pg, stagingId) {
+  const { rows } = await pg.query(`SELECT 1 FROM workspace_object_staging WHERE staging_id = $1`, [stagingId])
+  return rows.length > 0
 }
 
 // Seed N live rows directly — faster than N begin/commit cycles when a
@@ -381,6 +410,128 @@ describe('commit version-CAS — cross-replica races (two Handles, one PGlite) (
         assert.equal(live, null, 'delete won → row gone')
         assert.equal(commit.reason, 'conflict')
       }
+    } finally { await cleanup() }
+  })
+})
+
+describe('reapOrphans — stale-staging + unreferenced-blob GC (Neon)', () => {
+  it('GCs an unreferenced live blob (row dropped) only once past the grace window', async () => {
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
+      writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b.stagingId), Buffer.alloc(4))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      // Simulate a delete/crash by dropping the live row directly.
+      await pg.query(`DELETE FROM workspace_object WHERE workspace_tag = $1 AND resource_tag = $2`, ['workspace-tag-1', 'resource-tag-1'])
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
+      assert.equal(existsSync(live), true)
+      // A just-written blob is within the grace window — left alone (this
+      // is what protects a freshly-promoted, not-yet-CAS'd blob).
+      await reapOrphans(handle)
+      assert.equal(existsSync(live), true, 'grace window protects a recent blob')
+      // Past the grace window, still unreferenced → GC'd.
+      ageBlob(live)
+      await reapOrphans(handle)
+      assert.equal(existsSync(live), false)
+    } finally { await cleanup() }
+  })
+
+  it('never GCs a blob whose hash a live row still references (even past the grace window)', async () => {
+    const { handle, objDir, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin({ expectedLength: 18 }))
+      writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b.stagingId), Buffer.alloc(18))
+      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
+      // Age past the grace AND sweep with grace 0 — only the live row's
+      // reference to the content hash can protect it now.
+      ageBlob(live)
+      await reapOrphans(handle, 0)
+      assert.equal(existsSync(live), true, 'a referenced blob is never collected')
+      assert.equal((await listLive(handle, 'workspace-tag-1')).length, 1, 'live row still present')
+    } finally { await cleanup() }
+  })
+
+  it('drops staging rows older than the TTL and unlinks their files', async () => {
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      await backdateStaging(pg, b.stagingId)
+      await reapOrphans(handle)
+      assert.equal(existsSync(staged), false)
+      assert.equal(await stagingRowExists(pg, b.stagingId), false, 'stale row deleted')
+    } finally { await cleanup() }
+  })
+
+  it('conditional delete spares a stale row whose begun_at was refreshed fresh (F1)', async () => {
+    // The lock-free F1 guard: a slow PUT that finished its body calls
+    // refreshStagingBegunAt (bumping begun_at to ~now), so the reaper's
+    // atomic `deleteStagingIfStale` (begun_at < staleBefore) no longer
+    // matches and the row survives for the commit.
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      await backdateStaging(pg, b.stagingId) // past TTL — stale without a refresh
+      // Exercise the Neon refreshStagingBegunAt statement directly.
+      await handle.refreshStagingBegunAt.run(Date.now(), 'workspace-tag-1', 'resource-tag-1', b.stagingId)
+      await reapOrphans(handle)
+      assert.equal(existsSync(staged), true, 'refreshed-fresh row must survive the conditional delete')
+      assert.equal(await stagingRowExists(pg, b.stagingId), true)
+    } finally { await cleanup() }
+  })
+
+  it('conditional delete drops a genuinely-stale, un-refreshed row and unlinks its blob (F1)', async () => {
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      await backdateStaging(pg, b.stagingId) // stale and never refreshed
+      await reapOrphans(handle)
+      assert.equal(existsSync(staged), false, 'genuinely-stale staging blob unlinked')
+      assert.equal(await stagingRowExists(pg, b.stagingId), false, 'genuinely-stale row deleted')
+    } finally { await cleanup() }
+  })
+
+  it('preserves staging rows newer than the TTL', async () => {
+    const { handle, objDir, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      await reapOrphans(handle) // immediate sweep → no-op
+      assert.equal(existsSync(staged), true)
+    } finally { await cleanup() }
+  })
+
+  it('sweeps orphan staging files whose row is gone', async () => {
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      // Drop the row but leave the file (commit dropped row, crashed pre-unlink).
+      await pg.query(`DELETE FROM workspace_object_staging WHERE staging_id = $1`, [b.stagingId])
+      await reapOrphans(handle)
+      assert.equal(existsSync(staged), false)
+    } finally { await cleanup() }
+  })
+
+  it('preserves a freshly-begun staging file when it races the orphan-file sweep (per-file row lookup)', async () => {
+    const { handle, objDir, pg, cleanup } = await freshNeonObjstore()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      const staged = stagingFilePath(objDir, 'workspace-tag-1', b.stagingId)
+      writeStaging(staged, Buffer.alloc(16))
+      // The orphan-file sweep does a per-(ws, sid) row lookup before
+      // unlinking; the live staging row pins the file.
+      await reapOrphans(handle)
+      assert.equal(existsSync(staged), true, 'reaper must not unlink the file of a live staging row')
+      assert.equal(await stagingRowExists(pg, b.stagingId), true)
     } finally { await cleanup() }
   })
 })
