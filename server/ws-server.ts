@@ -71,9 +71,13 @@ export function installWsServer(deps: WsServerDeps): { heartbeatTimer: ReturnTyp
     // chain inside `client/triage-sync.ts:onTransportMessage`).
     // Each inbound frame spawns its own tracked async IIFE; two
     // frames from the same socket can interleave across `await`
-    // boundaries inside the handlers. Per-resource correctness is
-    // preserved by the `KeyedAsyncLock` (held by `commitRevision` /
-    // `commitPut` / `beginPut` / `deleteObject`) and by post-await
+    // boundaries inside the handlers. Per-resource correctness needs
+    // no in-process lock: `commitRevision` resolves concurrent saves
+    // via its single gated INSERT (one snapshot + the
+    // `UNIQUE(workspace_tag, seq)` PK — see `server/db.ts`), and the
+    // objstore handlers (`commitPut` / `beginPut` / `deleteObject`)
+    // via the version compare-and-set + content-addressing (see
+    // `server/objstore/store.ts`), backed by post-await
     // `readyState === OPEN` rechecks in every objstore handler. The
     // unbounded fan-out is capped by `maxInflightPerSocket` (see
     // also the `'busy'` NACK at the cap below). Concurrent dispatch

@@ -436,20 +436,21 @@ describe('commitRevision', () => {
   })
 })
 
-describe('commitRevision — concurrency under the per-workspace_tag lock', () => {
-  // The async refactor moved every DB op behind an `await`. The lock
-  // is the only thing keeping the dup-recheck / base-check / MAX(seq)
-  // / INSERT quartet atomic against concurrent saves on the same
-  // workspace. These tests exercise the lock contract end-to-end by
-  // firing concurrent `commitRevision` calls via Promise.all and
-  // pinning the post-conditions.
+describe('commitRevision — concurrency via the single gated INSERT (no lock)', () => {
+  // The async refactor moved every DB op behind an `await`, but there
+  // is NO in-process lock: the dup-recheck / base-check / MAX(seq) /
+  // INSERT are folded into ONE synchronous gated INSERT, and the
+  // `UNIQUE(workspace_tag, seq)` PK backstops any racer. These tests
+  // PROVE the lockless commit is fork-safe — they fire concurrent
+  // `commitRevision` calls via Promise.all and pin the post-conditions,
+  // and they pass UNCHANGED with the lock removed.
 
   it('two concurrent same-id retransmits: one inserts, one duplicates; chain has one row', async () => {
-    // Pre-fix, the post-sig dup recheck sat OUTSIDE the lock — two
-    // concurrent same-id retransmits could both pass the recheck and
-    // both reach INSERT, with the second throwing on UNIQUE and the
-    // originator never seeing an ack. Lock-protected dup recheck
-    // turns the loser into a clean `duplicate` outcome.
+    // Two concurrent same-id retransmits: the gated INSERT's
+    // `NOT EXISTS(dup-id)` clause (re-asserted on the shared snapshot)
+    // means only one inserts; the loser's empty RETURNING result is
+    // discriminated to a clean `duplicate` outcome (no UNIQUE throw
+    // escaping, the originator always gets an ack-shaped result).
     const { handle, cleanup } = freshDb()
     try {
       const input = rev({ id: 'same-id' })
@@ -464,12 +465,13 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
   })
 
   it('two concurrent same-base different-id saves: one inserts, one stale-base; chain does NOT fork', async () => {
-    // The chain-fork bug the audit found. Without the lock-protected
-    // base check, BOTH saves would have inserted (UNIQUE is on id,
-    // not on base) and the chain would have two distinct rows with
-    // the same base — clients would see a continuity break. With the
-    // fix, the loser's base check (under the lock) sees the new head
-    // and returns stale-base.
+    // The chain-fork hazard. UNIQUE is on id, not base, so a naive
+    // out-of-statement base check would let BOTH saves insert and fork
+    // the chain. The single gated INSERT closes it WITHOUT a lock: the
+    // synchronous statements run one after the other, so the loser's
+    // `head IS base` gate sees the winner's new head and returns
+    // stale-base. This is the core no-fork proof for the lockless
+    // commit — it passes UNCHANGED.
     const { handle, cleanup } = freshDb()
     try {
       const a = rev({ id: 'a-id' })   // base: null
@@ -481,17 +483,18 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
       assert.deepEqual([ra.kind, rb.kind].toSorted(), ['inserted', 'stale-base'])
       const chain = await chainFrom(handle, 'tag-A', null)
       // Critical invariant: ONE row, not two. Pin against a future
-      // regression that scopes the lock too narrowly again.
+      // regression that reintroduces a split-snapshot read.
       assert.equal(chain.length, 1, 'chain MUST NOT fork')
     } finally { await cleanup() }
   })
 
   it('N concurrent same-base saves: exactly one inserts, N-1 return stale-base', async () => {
-    // Scale the same-base race up to stress the lock's FIFO contract
-    // under load. Each subsequent acquirer's base check (under its
-    // own lock-protected critical section) must see the head the
-    // first winner advanced to, so every loser returns stale-base —
-    // not duplicate (different ids) and not inserted (would re-fork).
+    // Scale the same-base race up under load. With no lock, the N
+    // synchronous gated INSERTs still run one at a time; every loser's
+    // `head IS base` gate sees the head the first winner advanced to,
+    // so every loser returns stale-base — not duplicate (different
+    // ids) and not inserted (would re-fork). Pins the lockless commit
+    // at N-way concurrency.
     const { handle, cleanup } = freshDb()
     try {
       const N = 10
@@ -510,10 +513,11 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     } finally { await cleanup() }
   })
 
-  it('different workspaces do not serialise through the same queue (per-key lock)', async () => {
-    // KeyedAsyncLock keys on workspace_tag. Concurrent commits on
-    // distinct tags must run in parallel — otherwise a slow save on
-    // one workspace would head-of-line block every other workspace.
+  it('different workspaces both commit cleanly under concurrency', async () => {
+    // Distinct tags never contend: each gated INSERT scopes its
+    // dup/head/seq subqueries by `workspace_tag`, so concurrent
+    // commits on different workspaces both land. (There is no lock or
+    // queue to head-of-line block one workspace behind another.)
     const { handle, cleanup } = freshDb()
     try {
       const [ra, rb] = await Promise.all([
@@ -527,12 +531,12 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     } finally { await cleanup() }
   })
 
-  it('pipelined saves on the same workspace: r2 with base=r1.id lands in FIFO order, both insert', async () => {
+  it('pipelined saves on the same workspace: r2 with base=r1.id lands, both insert', async () => {
     // Real-world case: a client emits two revisions back-to-back
     // before the first ack arrives. Promise.all kicks both off; the
-    // lock serialises r1 first (it enters the queue first), advances
-    // the head; r2's base check then matches against the freshly
-    // landed head. Both succeed.
+    // synchronous gated INSERTs run in submission order, so r1 lands
+    // and advances the head, then r2's `head IS base` gate matches the
+    // freshly landed head. Both succeed.
     const { handle, cleanup } = freshDb()
     try {
       const [r1, r2] = await Promise.all([
@@ -570,81 +574,29 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
     } finally { await cleanup() }
   })
 
-  it('lock body executes serially: critical sections do not overlap', async () => {
-    // Direct check that the lock is doing what the contract claims —
-    // monkey-patch the gated-INSERT await inside commitRevision's
-    // critical section (the one statement every committed save runs
-    // under the lock) to count concurrent entries, with an artificial
-    // setImmediate yield so a hypothetical non-serialised
-    // implementation would have ample opportunity to interleave.
-    const { handle, cleanup } = freshDb()
-    try {
-      let inside = 0
-      let maxInside = 0
-      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
-      handle.gatedInsert.get = async (...args) => {
-        inside += 1
-        if (inside > maxInside) maxInside = inside
-        await new Promise((resolve) => { setImmediate(resolve) })
-        const result = await originalGet(...args)
-        inside -= 1
-        return result
-      }
-      const N = 5
-      // Pipeline the saves so each one's base matches the prior winner —
-      // this means every save lands as 'inserted' (not stale-base),
-      // and we get N distinct lock acquisitions to observe overlap on.
-      // FIFO ordering of the lock guarantees the chain is r-0 → r-1 → …
-      const inputs = Array.from({ length: N }, (_, i) =>
-        rev({ id: `r-${i}`, base: i === 0 ? null : `r-${i - 1}` }))
-      const results = await Promise.all(inputs.map((r) => commitRevision(handle, r)))
-      for (const r of results) assert.equal(r.kind, 'inserted')
-      assert.equal(maxInside, 1, 'lock body MUST execute serially')
-    } finally { await cleanup() }
-  })
-
-  it('a thrown error inside commitRevision releases the lock for the next commit', async () => {
-    // KeyedAsyncLock's `finally` releases on throw. Plumb a failure
-    // through the gated INSERT once, then verify the next call
-    // on the same workspace acquires cleanly and inserts.
-    const { handle, cleanup } = freshDb()
-    try {
-      const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
-      let injected = false
-      handle.gatedInsert.get = (...args) => {
-        if (!injected) { injected = true; return Promise.reject(new Error('synthetic failure')) }
-        return originalGet(...args)
-      }
-      await assert.rejects(
-        () => commitRevision(handle, rev({ id: 'r1' })),
-        /synthetic failure/u,
-      )
-      // The lock must have released. A subsequent commit on the same
-      // workspace acquires cleanly.
-      const next = await commitRevision(handle, rev({ id: 'r2' }))
-      assert.equal(next.kind, 'inserted')
-      const chain = await chainFrom(handle, 'tag-A', null)
-      assert.deepEqual(chain.map((r) => r.id), ['r2'])
-    } finally { await cleanup() }
-  })
-
-  it('throws when invoked on a Handle not created by openDb (no lock found)', async () => {
-    // The lock is stored in a module-private WeakMap keyed by
-    // Handle. A hand-constructed Handle literal has no lock entry,
-    // so commitRevision fails loud rather than silently bypassing
-    // serialisation.
+  it('rejects when invoked on a Handle whose gatedInsert is missing (not created by openDb)', async () => {
+    // `commitRevisionSqlite` keys its bad-handle guard on the missing
+    // `gatedInsert` statement (populated only by openDbInner). A handle
+    // wired to the SQLite commit primitive but lacking `gatedInsert`
+    // (a hand-built Handle, or a Neon handle mis-routed here) fails
+    // loud rather than silently bypassing the commit. Wire `tryCommit`
+    // to the real primitive so the dispatcher reaches it; the guard
+    // then trips on the absent statement.
+    const { commitRevisionSqlite } = await import('../server/db.ts')
+    const handle = { tryCommit: (input) => commitRevisionSqlite(handle, input) }
     await assert.rejects(
-      () => commitRevision({}, rev({ id: 'x' })),
+      () => commitRevision(handle, rev({ id: 'x' })),
       /handle not opened via openDb/u,
     )
   })
 
   // Insert a sibling row directly via the raw DatabaseSync, bypassing
-  // the gated commit, to simulate a sibling Node process attached to
-  // the same SQLite file landing a row our in-process lock can't see.
-  // The gated INSERT computes `seq` itself, so the white-box recovery
-  // tests below stage the conflict by writing a row here and then
-  // making the gated INSERT throw the unique-violation it would hit.
+  // the gated commit, to simulate a sibling Node process / second
+  // connection attached to the same SQLite file landing a row our
+  // single-connection commit can't observe. The gated INSERT computes
+  // `seq` itself, so the white-box recovery tests below stage the
+  // conflict by writing a row here and then making the gated INSERT
+  // throw the unique-violation it would hit.
   function seedSibling(handle, { id, seq = 1, base = null }) {
     handle.db.prepare(`
       INSERT INTO workspace_revision
@@ -654,12 +606,14 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
   }
 
   it('multi-process PK violation on INSERT: caught, refetched → stale-base', async () => {
-    // Cross-process race: our in-process lock can't serialise
-    // against a sibling Node process attached to the same DB. The
-    // sibling lands a row at OUR computed seq; our INSERT throws a
-    // unique-violation. The catch in commitRevision refetches and
-    // returns the standard `stale-base` outcome so the originator
-    // gets a workspace-state catch-up instead of a silent failure.
+    // Cross-connection race: a sibling Node process / second connection
+    // attached to the same DB lands a row our single connection can't
+    // observe, at OUR computed seq; our INSERT throws a unique-
+    // violation. The catch in commitRevision refetches and returns the
+    // standard `stale-base` outcome so the originator gets a workspace-
+    // state catch-up instead of a silent failure. (This PK backstop is
+    // what makes the lockless commit safe even in the unsupported
+    // multi-connection shape.)
     const { handle, cleanup } = freshDb()
     try {
       const originalGet = handle.gatedInsert.get.bind(handle.gatedInsert)
@@ -748,8 +702,8 @@ describe('commitRevision — concurrency under the per-workspace_tag lock', () =
   })
 
   it('chainFrom is safe to call alongside concurrent commits — no torn reads, no inserts seen mid-write', async () => {
-    // chainFrom does NOT acquire the writeLock (reads do not need
-    // serialisation against writes). It may return a snapshot from
+    // chainFrom takes no lock (there is none) and needs none — reads
+    // don't serialise against writes. It may return a snapshot from
     // before or after a concurrent commit, but never a torn snapshot.
     // Stress-check by interleaving N commits with N chain reads and
     // asserting every observed chain is a valid prefix of the final

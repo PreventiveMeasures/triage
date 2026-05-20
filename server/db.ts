@@ -30,18 +30,33 @@
 // off a sync `node:sqlite` call.
 //
 // Because operations are now async, two handlers can interleave
-// across an `await`. `commitRevision` (below) collapses the entire
-// post-signature critical section — dup recheck, base-equality
-// check, MAX(seq) + INSERT — into a single `KeyedAsyncLock.run` per
-// workspace_tag. The lock instance is module-private (stored in
-// `writeLocks`, a `WeakMap<Handle, …>`), so only this module's
-// `commitRevision` can serialise against itself; no caller can
-// accidentally over- or under-serialise the wrong region.
+// across an `await`. `commitRevision` (below) does NOT take an
+// in-process lock — it folds the dup recheck, base-equality check,
+// MAX(seq) and INSERT into ONE gated INSERT statement
+// (`commitRevisionSqlite` below):
+//   INSERT … SELECT COALESCE(MAX(seq),0)+1 … WHERE NOT EXISTS(dup)
+//     AND head IS base RETURNING seq
+// `node:sqlite` is synchronous, so that single statement runs to
+// completion without yielding the event loop — no concurrent commit
+// can interleave mid-statement, and the head-check + MAX(seq) read
+// from ONE consistent snapshot. That single-snapshot property is
+// what makes a per-tag lock redundant: the lock formerly existed
+// only to stop a chain fork where a racer read `head` from one
+// snapshot but `MAX(seq)` from a LATER one (after a sibling
+// committed) and inserted (seq=N+2, base=X) alongside the winner's
+// (seq=N+1, base=X) — same base, different seq, no PK conflict. With
+// both reads inside one statement that interleaving is impossible:
+// a racer's snapshot is either before the winner's commit (→ same
+// seq=N+1 → the UNIQUE(workspace_tag, seq) PK rejects the second →
+// recovery → stale-base) or after it (→ head ≠ base → no insert →
+// stale-base). Exactly one commits; the loser gets stale-base.
+// SQLite also serialises writers internally, and the PK backstops
+// the unsupported multi-connection case. See `commitRevisionSqlite`
+// for the full fork-safety argument.
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { KeyedAsyncLock } from './objstore/lock.ts'
 import { type AllStmt, type GetStmt, wrapAll, wrapGet } from './db-stmt.ts'
 import {
   CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_SQLITE, HEAD_FOR_SQL,
@@ -106,10 +121,6 @@ export type CommitResult =
 
 // Bag of pre-prepared statements + the underlying connection.
 // Held for the process lifetime; `close()` runs from `shutdown()`.
-// The per-(workspace_tag) write lock is kept OFF this type and
-// stored in a module-private WeakMap — only `commitRevision` here
-// touches it, so no caller can accidentally acquire a lock for the
-// wrong scope.
 //
 // `db` is the raw `DatabaseSync` and is SQLite-only. The Neon
 // backend (`./db-neon.ts`) constructs a Handle with `db` unset.
@@ -119,26 +130,26 @@ export type CommitResult =
 // catch at the `if (DATABASE_URL)` switch in `server/index.ts`.
 //
 // `tryCommit` is the backend-specific atomic-commit primitive that
-// `commitRevision` dispatches through. SQLite uses an in-process
-// per-tag `KeyedAsyncLock`; Neon wraps the four checks + INSERT in
-// a pipelined transaction whose first statement is
-// `pg_advisory_xact_lock` — the only way to serialise commits per-
-// tag across multiple replicas connected to the same Neon database.
-// Without that lock, two replicas can both pass the head-check
-// while only one of their `MAX(seq)` reads observes the other's
-// INSERT — different seq, same base, no PK conflict → silent chain
-// fork.
+// `commitRevision` dispatches through. SQLite runs one synchronous
+// gated INSERT (no in-process lock — `node:sqlite` doesn't yield
+// mid-statement, so the head-check + MAX(seq) read one snapshot;
+// see `commitRevisionSqlite`). Neon wraps the dup-check + head-check
+// + gated INSERT in a pipelined transaction; it relies on Postgres'
+// READ-COMMITTED single-statement snapshot (the gated INSERT's
+// head-check and MAX(seq) read one snapshot) plus the
+// `UNIQUE(workspace_tag, seq)` PK to keep cross-replica racers from
+// forking the chain — see `db-neon.ts`'s `tryCommitNeon`.
 //
 // `gatedInsert` is SQLite-only (like `db`): it backs
-// `commitRevisionViaWriteLock`'s single gated INSERT (the
-// dup-gate + head-equals-base-gate + server-assigned seq folded into
-// one statement, mirroring the Neon path's gated INSERT). The Neon
+// `commitRevisionSqlite`'s single gated INSERT (the dup-gate +
+// head-equals-base-gate + server-assigned seq folded into one
+// statement, mirroring the Neon path's gated INSERT). The Neon
 // backend leaves it unset — its gated INSERT lives inside the
 // pipelined `sql.transaction([...])`, not a standalone statement
 // object. Kept on the Handle (rather than a module-private closure)
 // so the SQLite white-box tests can wrap `.get` to inject a
-// unique-violation / non-unique failure into the locked commit, the
-// same recovery paths the Neon suite stages via `failNextCommit`.
+// unique-violation / non-unique failure into the commit, the same
+// recovery paths the Neon suite stages via `failNextCommit`.
 export type Handle = {
   db?: DatabaseSync
   headFor: GetStmt<[string], { id: string }>
@@ -162,13 +173,6 @@ export type Handle = {
 // a Neon Handle into a SQLite-coupled call site is a compile-time
 // error. Mirrors the same pattern in `server/objstore/store.ts`.
 export type SqliteHandle = Handle & { db: DatabaseSync }
-
-// Module-private per-handle write lock. `commitRevision` is the
-// sole caller; exposing it on the Handle would invite a future
-// caller to grab it for an unrelated operation and either over- or
-// under-serialise the wrong critical section. WeakMap so a closed
-// handle's lock is GC'd alongside it without a manual delete.
-const writeLocks = new WeakMap<Handle, KeyedAsyncLock<string>>()
 
 export function openDb(path: string): SqliteHandle {
   mkdirSync(dirname(path), { recursive: true })
@@ -259,7 +263,7 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
       [string, string, string | null, number, string, string, string, number],
       { seq: number }
     >(db.prepare(GATED_INSERT_SQL_SQLITE)),
-    tryCommit: (input) => commitRevisionViaWriteLock(handle, input),
+    tryCommit: (input) => commitRevisionSqlite(handle, input),
     // Match the wrap{Get,All,Run} contract: async-wrapped so a sync
     // throw from `db.close()` (already closed, locked transaction, …)
     // surfaces as a Promise rejection rather than escaping the
@@ -267,7 +271,6 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     // eslint-disable-next-line require-await
     close: async () => { db.close() },
   }
-  writeLocks.set(handle, new KeyedAsyncLock<string>())
   return handle
 }
 
@@ -341,20 +344,21 @@ export function isUniqueViolation(err: unknown): boolean {
 // Atomic commit of a single revision. Backends dispatch through
 // `handle.tryCommit` (set up at openDb / openNeonDb time):
 //
-//   • SQLite uses `commitRevisionViaWriteLock` (below) — a per-tag
-//     `KeyedAsyncLock` serialises the four checks + INSERT against
-//     concurrent saves in the same process. Single-process is the
-//     only supported SQLite deployment shape.
-//   • Neon wraps the same four checks + INSERT in a pipelined
-//     transaction whose first statement is
-//     `pg_advisory_xact_lock` — the advisory lock is database-wide,
-//     so it serialises commits per-tag ACROSS replicas. The in-
-//     process per-tag lock alone can't do this; without the
-//     advisory lock, replica B's `MAX(seq)` read can land between
-//     replica A's head-check and INSERT (both see the same head;
-//     B sees A's just-committed seq) so B computes a different seq
-//     and INSERTs against the same `base` — different seq, same
-//     base, no PK conflict → silent chain fork. See `db-neon.ts`'s
+//   • SQLite uses `commitRevisionSqlite` (below) — ONE synchronous
+//     gated INSERT, no in-process lock. `node:sqlite` doesn't yield
+//     mid-statement, so the head-check and MAX(seq) read from one
+//     snapshot; a racer is forced onto either the same seq (PK
+//     rejects → recovery → stale-base) or a stale head (no insert →
+//     stale-base). Single-process is the only supported SQLite
+//     deployment shape; the PK backstops the multi-connection case.
+//   • Neon wraps the dup-check + head-check + gated INSERT in a
+//     pipelined transaction. No commit-time advisory lock: the
+//     gated INSERT's head-check and MAX(seq) read one Postgres
+//     READ-COMMITTED statement snapshot, and the
+//     `UNIQUE(workspace_tag, seq)` PK rejects a racer that computed
+//     the same seq — so a cross-replica racer either collides on the
+//     PK (→ recovery → stale-base) or sees the advanced head (→ no
+//     insert → stale-base), never a silent fork. See `db-neon.ts`'s
 //     `tryCommitNeon` for the per-statement rationale.
 export function commitRevision(handle: Handle, input: RevisionInsert): Promise<CommitResult> {
   // A hand-rolled Handle literal (e.g. a test mock) won't carry a
@@ -369,117 +373,126 @@ export function commitRevision(handle: Handle, input: RevisionInsert): Promise<C
   return handle.tryCommit(input)
 }
 
-// SQLite-style atomic commit. The whole post-signature critical
-// section runs inside one `writeLock.run(tag, …)` block; under that
-// lock it fires the SAME single gated INSERT the Neon path uses —
+// SQLite-style atomic commit. NO in-process lock — it fires the SAME
+// single gated INSERT the Neon path uses —
 // `INSERT … SELECT COALESCE(MAX(seq),0)+1 … WHERE NOT EXISTS(dup) AND
 // head IS base RETURNING seq` (SQLite's `IS` is the null-safe equality;
-// Neon uses `IS NOT DISTINCT FROM`). This is provably equivalent to the
-// previous read-then-insert under the same lock:
+// Neon uses `IS NOT DISTINCT FROM`) — then discriminates the outcome.
 //
-//   • The lock still serialises commits per-tag within the process, so
-//     the gate's view of the table is stable for the statement's
-//     duration — exactly the invariant the old explicit re-checks
-//     relied on.
-//   • The WHERE re-asserts BOTH old checks: `NOT EXISTS(dup-id)` is the
-//     old `revisionExists` dup recheck; `head IS $3` is the old
-//     base-equality check (NULL-safe so the FIRST revision —
-//     base = NULL against an empty-chain head, also NULL — matches and
-//     inserts, same as the old `baseNorm == null ? head == null : …`).
-//   • `seq = COALESCE(MAX(seq),0)+1` is the old `(headSeq ?? 0) + 1`.
-//   • A non-empty `RETURNING seq` ⇔ both gates passed ⇔ the old code
-//     would have inserted → `inserted`. An empty result means a gate
-//     failed; we then re-read to discriminate `duplicate` (the dup gate
-//     failed) from `stale-base` (the base gate failed), the same two
-//     outcomes the old explicit checks produced.
+// Why the lock is gone (the fork-safety argument):
+//   • `node:sqlite` is SYNCHRONOUS: the gated INSERT runs to completion
+//     in one turn without yielding the event loop, so no concurrent
+//     `commitRevision` can interleave in the middle of it. The
+//     head-check `(SELECT id … ORDER BY seq DESC LIMIT 1)` and the
+//     `COALESCE(MAX(seq),0)+1` seq computation therefore read from ONE
+//     consistent snapshot of the table.
+//   • The lock formerly existed ONLY to stop a chain fork in which a
+//     racer read `head=X` from one snapshot but `MAX(seq)=N+1` from a
+//     LATER one (after a sibling committed (seq=N+1, base=X)), then
+//     inserted (seq=N+2, base=X) — same base, different seq, no PK
+//     conflict. With head-check and MAX(seq) in ONE statement that
+//     split snapshot can't happen: a racer's snapshot is either BEFORE
+//     the winner's commit (→ it computes the same seq=N+1 → the
+//     `UNIQUE(workspace_tag, seq)` PK rejects the second INSERT →
+//     recovery → `stale-base`) or AFTER it (→ head ≠ base → the WHERE
+//     gate fails → no insert → `stale-base`). Exactly one commits.
+//   • The WHERE re-asserts BOTH checks: `NOT EXISTS(dup-id)` is the dup
+//     recheck; `head IS $3` is the base-equality check (NULL-safe so
+//     the FIRST revision — base = NULL against an empty-chain head,
+//     also NULL — matches and inserts).
+//   • A non-empty `RETURNING seq` ⇔ both gates passed → `inserted`. An
+//     empty result means a gate failed; we re-read to discriminate
+//     `duplicate` (dup gate) from `stale-base` (base gate).
 //
-// Concurrency hazards the lock closes (unchanged from before):
-//   • Two saves with the same `base` and DIFFERENT id would both pass
-//     an out-of-lock base check and fork the chain (UNIQUE is on id,
-//     not base). Serialised, the second sees the first's head and the
+// Concurrency hazards closed WITHOUT the lock:
+//   • Two saves with the same `base` and DIFFERENT id never both insert
+//     (UNIQUE is on id, not base): the synchronous gated INSERTs run
+//     one after the other, so the second sees the first's head and the
 //     base gate fails → `stale-base`.
-//   • Two retransmits with the same id: serialised, the second's dup
-//     gate fails → `duplicate`.
+//   • Two retransmits with the same id: the second's dup gate fails →
+//     `duplicate`.
+// These are PROVEN green, unchanged, by the no-fork concurrency tests
+// in `tests/server-db.test.js` (two/N concurrent same-base, mixed,
+// chainFrom-during-commits) which now pass with no lock present.
 //
-// ACROSS processes / connections the in-process lock can't serialise
-// (the Neon path's advisory lock handles that case; SQLite supports
-// only single-process deployments). The unique-violation catch below
-// is the residual backstop against the unlikely SQLite-multi-connection
-// scenario (e.g. a test fixture opening two `openDb` handles to the same
+// SQLite serialises writers internally even ACROSS connections, but a
+// multi-connection deployment is unsupported regardless. The
+// unique-violation catch below is the residual backstop for that
+// scenario (e.g. a test fixture opening two `openDb` handles to one
 // file): a sibling landing our computed seq / id makes the gated INSERT
 // throw a PK / UNIQUE violation, which we refetch through `inserted` /
 // `stale-base` — read-after-write-failure with no isolation-level
 // assumption, any committed head we see being a valid stale-base
 // target. No silent failure, no chain fork.
-export function commitRevisionViaWriteLock(
+export async function commitRevisionSqlite(
   handle: Handle,
   { tag, id, base, keyframe, nonce, ciphertext, signature }: RevisionInsert,
 ): Promise<CommitResult> {
-  const lock = writeLocks.get(handle)
-  // The WeakMap + `gatedInsert` are populated by `openDbInner` only
-  // (the Neon backend uses no in-process lock and folds its gated
-  // INSERT into a transaction — see `db-neon.ts`); the only way to
-  // hit this is to construct a `Handle` literal by hand (e.g. a test
-  // mock). Surface as a rejection rather than a sync throw so the
-  // function's Promise-returning contract holds for every caller — an
-  // unawaited write would otherwise leak an uncaught exception.
+  // `gatedInsert` is populated by `openDbInner` only (the Neon backend
+  // folds its gated INSERT into a transaction and leaves this unset —
+  // see `db-neon.ts`); the only way to reach a missing one here is to
+  // construct a `Handle` literal by hand (e.g. a test mock) or to route
+  // a Neon-backed Handle into this SQLite primitive. Throwing inside
+  // this `async` function surfaces as a Promise REJECTION (not a sync
+  // throw), so the function's Promise-returning contract holds for
+  // every caller — an unawaited write would otherwise leak an uncaught
+  // exception.
   const gatedInsert = handle.gatedInsert
-  if (!lock || !gatedInsert) {
-    return Promise.reject(new Error('commitRevisionViaWriteLock: handle not opened via openDb'))
+  if (!gatedInsert) {
+    throw new Error('commitRevisionSqlite: handle not opened via openDb')
   }
-  return lock.run(tag, async () => {
-    // Strict-boolean coercion via `=== true`. The canonical signed by
-    // the client uses `keyframe === true ? '1' : ''` — anything
-    // truthy-but-not-strictly-true (e.g. `1`, `"true"`, `{}`) would
-    // canonicalize to `''` (non-keyframe) on the verifier side but
-    // would round-trip to `1` here via the looser ternary, diverging
-    // signed bytes from stored bytes. TS narrows `keyframe` to
-    // `boolean` upstream; the strict comparison is defense-in-depth
-    // against a future caller that loosens the field type or a direct
-    // invocation from a non-typed context. Input-validation audit.
-    const keyframeCol = keyframe === true ? 1 : 0
-    const baseNorm = base ?? null
-    try {
-      // Gated INSERT: inserts (and RETURNs the assigned seq) only when
-      // there is no dup id AND the current head equals the proposed
-      // base. A returned row ⇔ inserted.
-      const inserted = await gatedInsert.get(tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
-      if (inserted) return { kind: 'inserted' }
-      // No insert → a gate failed. Re-assert the dup gate first (a
-      // retransmit landed) before falling back to the base gate
-      // (head advanced past our base) — same precedence as the old
-      // dup-then-base check order.
-      if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
-      const headRow = await handle.headFor.get(tag)
-      return { kind: 'stale-base', head: headRow?.id ?? null }
-    } catch (err) {
-      // Only convert unique-violations; rethrow other driver errors
-      // (network, connection-closed, …) so they surface as real
-      // failures rather than masking as a stale-base catch-up.
-      if (!isUniqueViolation(err)) throw err
-      // The PK / UNIQUE was the only thing standing between us and
-      // a chain fork. Refetch and route through one of two outcomes:
-      //
-      //   • The row IS in the chain — return `inserted`. We can't
-      //     distinguish "we successfully INSERTed but the driver's
-      //     retry layer wrapped the response as a unique-violation"
-      //     from "a sibling process committed our id first". In the
-      //     first case the row IS our save and peers MUST receive
-      //     the broadcast; in the second it's still safe to
-      //     broadcast because clients dedup by content-addressed
-      //     `id` (and the id collision implies the canonical bytes
-      //     are byte-identical, so a peer can't tell the difference
-      //     anyway). Treating recovery-exists as `inserted` is the
-      //     defensive choice — broadcast on possibly-ours rather
-      //     than silently drop the broadcast on definitely-ours.
-      //
-      //   • The row is NOT in the chain — head advanced past our
-      //     computed seq via a sibling commit with a different id.
-      //     `stale-base` so the caller renders a `workspace-state`
-      //     catch-up.
-      if (await handle.revisionExists.get(tag, id)) return { kind: 'inserted' }
-      const newHeadRow = await handle.headFor.get(tag)
-      return { kind: 'stale-base', head: newHeadRow?.id ?? null }
-    }
-  })
+  // Strict-boolean coercion via `=== true`. The canonical signed by
+  // the client uses `keyframe === true ? '1' : ''` — anything
+  // truthy-but-not-strictly-true (e.g. `1`, `"true"`, `{}`) would
+  // canonicalize to `''` (non-keyframe) on the verifier side but
+  // would round-trip to `1` here via the looser ternary, diverging
+  // signed bytes from stored bytes. TS narrows `keyframe` to
+  // `boolean` upstream; the strict comparison is defense-in-depth
+  // against a future caller that loosens the field type or a direct
+  // invocation from a non-typed context. Input-validation audit.
+  const keyframeCol = keyframe === true ? 1 : 0
+  const baseNorm = base ?? null
+  try {
+    // Gated INSERT: inserts (and RETURNs the assigned seq) only when
+    // there is no dup id AND the current head equals the proposed
+    // base. A returned row ⇔ inserted. `node:sqlite` runs this whole
+    // statement synchronously, so the head-check and MAX(seq) it
+    // contains read one snapshot — no concurrent commit interleaves.
+    const inserted = await gatedInsert.get(tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, Date.now())
+    if (inserted) return { kind: 'inserted' }
+    // No insert → a gate failed. Re-assert the dup gate first (a
+    // retransmit landed) before falling back to the base gate
+    // (head advanced past our base) — same dup-then-base precedence.
+    if (await handle.revisionExists.get(tag, id)) return { kind: 'duplicate' }
+    const headRow = await handle.headFor.get(tag)
+    return { kind: 'stale-base', head: headRow?.id ?? null }
+  } catch (err) {
+    // Only convert unique-violations; rethrow other driver errors
+    // (network, connection-closed, …) so they surface as real
+    // failures rather than masking as a stale-base catch-up.
+    if (!isUniqueViolation(err)) throw err
+    // The PK / UNIQUE was the only thing standing between us and
+    // a chain fork. Refetch and route through one of two outcomes:
+    //
+    //   • The row IS in the chain — return `inserted`. We can't
+    //     distinguish "we successfully INSERTed but the driver's
+    //     retry layer wrapped the response as a unique-violation"
+    //     from "a sibling process committed our id first". In the
+    //     first case the row IS our save and peers MUST receive
+    //     the broadcast; in the second it's still safe to
+    //     broadcast because clients dedup by content-addressed
+    //     `id` (and the id collision implies the canonical bytes
+    //     are byte-identical, so a peer can't tell the difference
+    //     anyway). Treating recovery-exists as `inserted` is the
+    //     defensive choice — broadcast on possibly-ours rather
+    //     than silently drop the broadcast on definitely-ours.
+    //
+    //   • The row is NOT in the chain — head advanced past our
+    //     computed seq via a sibling commit with a different id.
+    //     `stale-base` so the caller renders a `workspace-state`
+    //     catch-up.
+    if (await handle.revisionExists.get(tag, id)) return { kind: 'inserted' }
+    const newHeadRow = await handle.headFor.get(tag)
+    return { kind: 'stale-base', head: newHeadRow?.id ?? null }
+  }
 }

@@ -14,14 +14,20 @@
 // callable function. We use the function-call form
 // `sql(text, params)`. `tryCommitNeon` (below) folds the dup-check
 // + head-check + gated INSERT into a single pipelined
-// `sql.transaction([...])` whose first statement is a
-// `pg_advisory_xact_lock` keyed on `workspace_tag` — that lock is
-// database-wide, so it serialises commits per-tag across replicas
-// (the in-process `KeyedAsyncLock` from `./db.ts` only serialises
-// within one Node process, useless against a sibling replica). DDL
-// bootstrap (below) also uses pipelined transactions so the schema
-// creates either fully or not at all on a transient network
-// failure mid-DDL.
+// `sql.transaction([...])` — NO commit-time advisory lock. The gated
+// INSERT's head-check and `MAX(seq)` run inside one Postgres
+// READ-COMMITTED statement snapshot, and the
+// `UNIQUE(workspace_tag, seq)` PK rejects a cross-replica racer that
+// computed the same seq, so a racer either collides on the PK
+// (→ recovery → stale-base) or sees the advanced head (→ no insert →
+// stale-base) — never a silent fork. See `tryCommitNeon` for the
+// per-statement argument, including the caveat that PGlite
+// (single-connection) can't empirically exercise the cross-replica
+// race — a real-Postgres concurrency test is the way to confirm it.
+// The DDL bootstrap (below) keeps its own advisory lock (it
+// serialises concurrent schema boots, unrelated to commits) and runs
+// as a pipelined transaction so the schema creates either fully or
+// not at all on a transient network failure mid-DDL.
 //
 // Durability: the SQLite path sets `PRAGMA synchronous = FULL` so
 // `workspace-save-ack` is only emitted after the row is fsynced.
@@ -84,21 +90,6 @@ export type NeonSql = NeonSqlCall & {
 // with operator-issued advisory locks.
 const DDL_LOCK_KEY_REVISION = 0x6465_7670 // 'depv'
 const DDL_LOCK_KEY_REVISION_SUB = 0x7273_6e72 // 'rsnr'
-
-// Namespace for the per-(workspace_tag) commit advisory lock taken
-// inside `tryCommitNeon`'s pipelined transaction. Held only for the
-// transaction's lifetime (`_xact_lock`), so a long-running commit
-// can't strand it. The namespace partitions these locks from the
-// DDL bootstrap locks above: PG's two-arg `pg_advisory_xact_lock`
-// treats (key1, key2) as the lock identity, and the first int4
-// differing (`cmrt` vs `depv`) guarantees no collision between
-// per-tag commits and DDL boots — without this partition a boot-
-// time DDL holder could stall every commit, or vice versa.
-// `0x636d_7274` is just the ASCII bytes c/m/r/t packed into an int4
-// — mnemonic for "commit revision tag", same convention as the DDL
-// keys above. Any value would work; matching the existing namespace
-// style keeps `git grep` for the four-letter tag finding all sites.
-const COMMIT_LOCK_NAMESPACE = 0x636d_7274 // 'cmrt'
 
 // Durability levels that satisfy the ack-implies-durable contract.
 // `local` fsyncs the primary's WAL before returning — matches what
@@ -226,33 +217,44 @@ function buildRevisionExists(sql: NeonSql): GetStmt<[string, string], unknown> {
 
 // Atomic commit of a single revision (Neon backend). Wraps the
 // dup-check, head-check and gated INSERT in one pipelined
-// transaction whose first statement is a transaction-scoped
-// advisory lock keyed on `workspace_tag`. The lock is database-
-// wide, so it serialises commits per-tag across replicas — the
-// only safe primitive for the multi-replica deployment shape this
-// backend supports.
+// transaction — NO commit-time advisory lock. Cross-replica
+// fork-safety rests on two Postgres guarantees:
 //
-// Why the lock is required: without it, replica A reads head=X,
-// computes seq=N+1, INSERTs and COMMITs. Replica B (started a
-// moment earlier) reads head=X (from its own snapshot taken before
-// A's commit), reads MAX(seq)=N+1 (from a fresh statement-snapshot
-// AFTER A's commit), computes seq=N+2 with base=X, and INSERTs.
-// Both rows now exist: (seq=N+1, base=X), (seq=N+2, base=X) —
-// same base, different seq, no PK conflict. The chain has forked
-// silently. The README's claim that "the DB schema's PRIMARY KEY
-// is the multi-process backstop" only holds when the racing seqs
-// collide; the interleaved-MAX(seq) read defeats it. The advisory
-// lock closes that window by making the four statements run
-// strictly serially per tag — only one commit holds the lock at a
-// time, and the COMMIT auto-releases.
+//   • Single-statement snapshot (READ COMMITTED, the default): the
+//     gated INSERT's head-check `(SELECT id … ORDER BY seq DESC
+//     LIMIT 1)` and its `COALESCE(MAX(seq),0)+1` seq computation
+//     evaluate against ONE snapshot taken at the start of that
+//     statement. A racer can't read `head` from one snapshot and
+//     `MAX(seq)` from a later one within the same INSERT.
+//   • The `UNIQUE(workspace_tag, seq)` PK.
 //
-// The gated INSERT-SELECT-WHERE fires only when there's no
-// duplicate id AND the current head matches the proposed base.
-// Under the advisory lock these checks are stable for the
-// statement's duration, so `RETURNING seq` rows.length === 1
-// implies a successful insert. Empty rows mean one of the gates
-// failed; we then look at the dup-check / head-check results to
-// decide between `duplicate` and `stale-base`.
+// Walk the only race that mattered: replica A commits (seq=N+1,
+// base=X). Replica B's gated INSERT runs concurrently. Either B's
+// statement snapshot is BEFORE A's commit — B sees head=X AND
+// MAX(seq)=N, computes seq=N+1, and its INSERT collides with A's row
+// on the PK (recovery → `stale-base`) — or B's snapshot is AFTER A's
+// commit — B sees head=A's-id ≠ X, the `head IS NOT DISTINCT FROM
+// base` gate fails, and B inserts nothing (→ `stale-base`). The
+// forked (seq=N+2, base=X) outcome the old advisory lock guarded
+// against required head and MAX(seq) from DIFFERENT snapshots, which
+// a single statement does not permit. Exactly one replica commits;
+// the loser gets `stale-base`. So the per-tag advisory lock was
+// belt-and-suspenders and is removed.
+//
+// CAVEAT (honesty): this cross-replica argument has NOT been
+// empirically exercised. The PGlite test backend is single-
+// connection, so it can't reproduce two replicas racing on one
+// database — it only confirms the commit-outcome + recovery logic.
+// Before relying on the lockless commit under genuine multi-replica
+// load, add a real-Postgres concurrency test (two pooled
+// connections racing same-base commits) to confirm the snapshot + PK
+// argument holds against the actual server.
+//
+// The gated INSERT-SELECT-WHERE fires only when there's no duplicate
+// id AND the current head matches the proposed base, so `RETURNING
+// seq` rows.length === 1 implies a successful insert. Empty rows mean
+// one of the gates failed; we then look at the dup-check / head-check
+// results to decide between `duplicate` and `stale-base`.
 function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitResult> {
   return async ({ tag, id, base, keyframe, nonce, ciphertext, signature }) => {
     const baseNorm = base ?? null
@@ -261,56 +263,51 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
     let results: unknown[][]
     try {
       results = await sql.transaction([
-        // Per-tag advisory lock. `hashtext` returns an int4; combined
-        // with the int4 namespace, the pair uniquely identifies this
-        // tag's lock. False collisions across distinct tags (birthday-
-        // bound at ~65k tags by int4 width) merely cause those two
-        // tags' commits to serialise — correctness is unaffected,
-        // throughput on the colliding pair degrades to the slower of
-        // the two flows. Acceptable for a small-collision-rate space.
-        sql(`SELECT pg_advisory_xact_lock($1, hashtext($2))`, [COMMIT_LOCK_NAMESPACE, tag]),
-        // Dup-id check.
-        sql(REVISION_EXISTS_SQL, [tag, id]),
-        // Current head id (NULL when the chain is empty).
-        sql(HEAD_FOR_SQL, [tag]),
         // Gated INSERT (shared `$N` builder, Postgres null-safe equality
-        // `IS NOT DISTINCT FROM`). `seq` is computed via the same MAX(seq)
-        // subquery as the head-check's snapshot. The WHERE clause
-        // re-asserts both gates so the INSERT is a no-op when either
-        // fails. RETURNING seq lets us discriminate inserted vs
-        // not-inserted by row count.
-        //
-        // The null-safe equality matches `base = NULL` on the first
-        // revision against the empty-chain head (also NULL). Plain `=`
-        // would always be NULL → false → first revision would never
-        // insert.
+        // `IS NOT DISTINCT FROM`). `seq` is `COALESCE(MAX(seq),0)+1`; the
+        // WHERE re-asserts both gates (no dup AND head IS base) so the
+        // INSERT is a no-op when either fails, and a non-empty
+        // `RETURNING seq` means "inserted". The null-safe equality
+        // matches `base = NULL` on the first revision against the
+        // empty-chain head (also NULL); plain `=` would be NULL → false
+        // and the first revision would never insert.
         sql(
           GATED_INSERT_SQL_PG,
           [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
         ),
+        // Discrimination reads, run AFTER the INSERT so they reflect
+        // post-INSERT state. With no advisory lock serialising the
+        // transaction, running these BEFORE the INSERT (READ COMMITTED
+        // takes a fresh snapshot per statement) could miss a duplicate or
+        // head-advance that landed concurrently and misclassify a no-op
+        // INSERT — e.g. report `stale-base` for what is actually a
+        // duplicate retransmit. Read after the INSERT, a no-op's cause is
+        // stable: our id present ⇒ duplicate, else the head moved ⇒
+        // stale-base. (The INSERT itself is still authoritative — its own
+        // single-statement snapshot is what prevents a chain fork.)
+        sql(REVISION_EXISTS_SQL, [tag, id]),
+        sql(HEAD_FOR_SQL, [tag]),
       ])
     } catch (err) {
-      // The advisory lock makes a unique-violation unreachable from
-      // our gated INSERT during normal operation — concurrent
-      // `tryCommitNeon` callers serialise on the lock, and the
-      // WHERE clause gates against the only race that could still
-      // collide. A direct INSERT bypassing the lock (admin migration,
-      // manual repair script, future code path) can still race us
-      // through the (workspace_tag, seq) PK or the (workspace_tag, id)
-      // UNIQUE. Mirror the SQLite path's recovery — refetch and
-      // route the outcome through `inserted` / `stale-base` — so the
-      // originator gets a workspace-state catch-up instead of a raw
-      // driver rejection escaping to `handleSave`'s IIFE. Other
-      // errors (network, syntax, type mismatch) rethrow.
+      // A unique-violation reaches here when a cross-replica racer (or
+      // a direct INSERT from an admin migration / repair script / future
+      // code path) landed our computed (workspace_tag, seq) or our
+      // (workspace_tag, id) first — the PK / UNIQUE the snapshot
+      // argument above relies on doing its job. Mirror the SQLite
+      // path's recovery — refetch and route the outcome through
+      // `inserted` / `stale-base` — so the originator gets a
+      // workspace-state catch-up instead of a raw driver rejection
+      // escaping to `handleSave`'s IIFE. Other errors (network, syntax,
+      // type mismatch) rethrow.
       if (!isUniqueViolation(err)) throw err
       const dupRows = await sql(REVISION_EXISTS_SQL, [tag, id]) as Array<unknown>
       if (dupRows.length > 0) return { kind: 'inserted' }
       const headRows = await sql(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
       return { kind: 'stale-base', head: headRows[0]?.id ?? null }
     }
+    const insertRows = results[0] as Array<unknown>
     const dupRows = results[1] as Array<unknown>
     const headRows = results[2] as Array<{ id: string }>
-    const insertRows = results[3] as Array<unknown>
     if (insertRows.length > 0) return { kind: 'inserted' }
     if (dupRows.length > 0) return { kind: 'duplicate' }
     return { kind: 'stale-base', head: headRows[0]?.id ?? null }
@@ -365,11 +362,10 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
     // across backends.
     close: async () => {},
   }
-  // No in-process write lock: `tryCommitNeon` uses
-  // `pg_advisory_xact_lock` for cross-replica serialisation, and an
-  // in-process lock on top would be redundant (same-process callers
-  // still serialise on the advisory lock — at the cost of one extra
-  // Postgres backend held briefly per concurrent caller, which the
-  // typical "one pending save per session" pattern doesn't hit).
+  // No commit-time lock of any kind: `tryCommitNeon`'s single gated
+  // INSERT relies on the Postgres single-statement snapshot + the
+  // `UNIQUE(workspace_tag, seq)` PK for cross-replica fork-safety
+  // (see `tryCommitNeon`), so neither an in-process lock nor a
+  // per-tag advisory lock is needed.
   return handle
 }

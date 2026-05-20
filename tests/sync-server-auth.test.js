@@ -345,10 +345,11 @@ describe('triage-sync server: first-action password gate (password configured)',
   })
 
   it('concurrent unauthenticated saves on a fresh tag both block (no commit slips through)', async () => {
-    // Documented race: `workspaceExists` reads outside the per-tag
-    // write lock, so under concurrent saves a second unauthenticated
-    // socket COULD see workspace=exists if an authenticated peer
-    // committed in between. The mixed-auth race is acceptable
+    // Documented race: `workspaceExists` reads at a different moment
+    // than the commit (a TOCTOU, no lock spanning the two), so under
+    // concurrent saves a second unauthenticated socket COULD see
+    // workspace=exists if an authenticated peer committed in between.
+    // The mixed-auth race is acceptable
     // (worst case: two concurrent writes both authorising). But two
     // simultaneously UNAUTHENTICATED saves against the same fresh
     // tag must both be blocked — neither has any way to advance the

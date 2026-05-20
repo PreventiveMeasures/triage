@@ -13,11 +13,10 @@
 //     the STRICT-table guard — all `node:sqlite` / on-disk-file
 //     concerns. The Neon analogues (DDL bootstrap, durability gate,
 //     `keyframe` CHECK constraint) are covered below instead.
-//   • the white-box lock tests that monkey-patch the SQLite handle's
-//     `gatedInsert.get` statement. `tryCommitNeon` serialises via a
-//     `pg_advisory_xact_lock` inside one pipelined transaction and folds
-//     its gated INSERT into that transaction (no standalone statement
-//     object), so the SQLite in-process-lock probes don't apply to this
+//   • the white-box tests that monkey-patch the SQLite handle's
+//     `gatedInsert.get` statement. `tryCommitNeon` folds its gated
+//     INSERT into one pipelined transaction (no standalone statement
+//     object to wrap), so those SQLite probes don't apply to this
 //     backend — the Neon analogues stage faults via `failNextCommit`.
 
 import assert from 'node:assert/strict'
@@ -367,12 +366,17 @@ describe('commitRevision (Neon)', () => {
   })
 })
 
-describe('commitRevision — concurrency under the per-workspace_tag advisory lock (Neon)', () => {
+describe('commitRevision — concurrency via the single gated INSERT (Neon, no lock)', () => {
   // `tryCommitNeon` folds the dup-check / head-check / gated INSERT into
-  // one pipelined transaction whose first statement is a per-tag
-  // `pg_advisory_xact_lock`. PGlite is single-connection so transactions
-  // serialise FIFO; these tests pin the SAME observable outcomes the
-  // SQLite in-process lock produces, so the two backends stay in step.
+  // one pipelined transaction with NO commit-time advisory lock —
+  // cross-replica fork-safety rests on the Postgres single-statement
+  // snapshot + the `UNIQUE(workspace_tag, seq)` PK (see `tryCommitNeon`).
+  // PGlite is single-connection so transactions serialise FIFO; these
+  // tests pin the SAME observable outcomes the SQLite backend produces,
+  // so the two backends stay in step. NOTE: single-connection PGlite
+  // CANNOT reproduce a genuine cross-replica race — these confirm
+  // commit-outcome parity, not the cross-replica snapshot+PK argument
+  // (which needs a real-Postgres concurrency test; see `tryCommitNeon`).
 
   it('two concurrent same-id retransmits: one inserts, one duplicates; chain has one row', async () => {
     const { handle, cleanup } = await freshNeonDb()
@@ -419,7 +423,7 @@ describe('commitRevision — concurrency under the per-workspace_tag advisory lo
     } finally { await cleanup() }
   })
 
-  it('different workspaces both commit cleanly (per-tag advisory key)', async () => {
+  it('different workspaces both commit cleanly (per-tag scoped subqueries)', async () => {
     const { handle, cleanup } = await freshNeonDb()
     try {
       const [ra, rb] = await Promise.all([
@@ -496,12 +500,14 @@ describe('commitRevision — concurrency under the per-workspace_tag advisory lo
 describe('commitRevision — unique-violation recovery + error handling (Neon)', () => {
   // `tryCommitNeon` wraps the gated INSERT in a pipelined transaction
   // and, on a unique-violation, refetches to decide inserted vs
-  // stale-base — the cross-replica race the advisory lock can't stop (a
-  // sibling bypassing it with a direct INSERT: admin migration, repair
-  // script, future code path). PGlite is single-connection so the race
-  // can't happen naturally; `failNextCommit` stages the conflict the
-  // recovery is built for. Mirrors the SQLite multi-process tests, which
-  // inject by making the SQLite handle's gated-INSERT statement throw.
+  // stale-base — the recovery that catches a cross-replica racer (or a
+  // direct INSERT from an admin migration / repair script / future code
+  // path) landing our seq or id first. This PK / UNIQUE backstop is what
+  // makes the lockless commit fork-safe across replicas. PGlite is
+  // single-connection so the race can't happen naturally; `failNextCommit`
+  // stages the conflict the recovery is built for. Mirrors the SQLite
+  // multi-process tests, which inject by making the SQLite handle's
+  // gated-INSERT statement throw.
 
   it('unique-violation with a sibling at our seq (different id) → stale-base', async () => {
     const { handle, cleanup } = await freshNeonDb()
@@ -570,10 +576,10 @@ describe('commitRevision — unique-violation recovery + error handling (Neon)',
   })
 
   it('a failed commit does not wedge the workspace — the next commit succeeds', async () => {
-    // Neon analogue of the SQLite "thrown error releases the lock" test:
-    // the per-tag `pg_advisory_xact_lock` is transaction-scoped, so an
-    // aborted commit auto-releases it and a subsequent commit on the
-    // same workspace acquires cleanly.
+    // Neon analogue of the SQLite "failed commit doesn't wedge" test:
+    // an aborted pipelined transaction rolls back cleanly (and holds no
+    // commit-time lock to strand), so a subsequent commit on the same
+    // workspace proceeds normally.
     const { handle, cleanup } = await freshNeonDb()
     try {
       failNextCommit({ error: new Error('synthetic failure') })

@@ -53,25 +53,40 @@ deployment doesn't install it.
 > `OBJSTORE_DIR` is local to one process — a `PUT` on replica A
 > + `GET` on replica B would 503, and the reaper on replica A
 > cannot see replica B's files. The DB layer itself is
-> multi-process safe (the per-`workspace_tag` write lock that
-> serialises `commitRevision` is in-process, but the DB schema's
-> `PRIMARY KEY (workspace_tag, seq)` is the multi-process backstop
-> — a sibling process losing the race gets a clean `stale-base`
-> outcome via the catch in `commitRevision`, not a silent
-> failure). Full multi-process / multi-replica support arrives
-> when a shared object-storage backend (S3 or similar) lands for
-> the byte plane.
+> multi-process safe with NO write lock: `commitRevision` is a
+> single gated INSERT (`INSERT … SELECT COALESCE(MAX(seq),0)+1 …
+> WHERE NOT EXISTS(dup) AND head IS[ NOT DISTINCT FROM] base
+> RETURNING seq`) whose head-check and `MAX(seq)` read one
+> statement snapshot, and the `PRIMARY KEY (workspace_tag, seq)`
+> rejects any racer that computed the same seq — so a sibling
+> process / replica losing the race gets a clean `stale-base`
+> outcome (via the catch in `commitRevision`), never a silent
+> chain fork. (The Neon cross-replica leg of this argument is not
+> yet covered by an automated test — see the Neon note below.)
+> Full multi-process / multi-replica support of the BYTE plane
+> arrives when a shared object-storage backend (S3 or similar)
+> lands.
 
-> 📡 **Neon backend latency.** Every `commitRevision` issues 3–5
-> HTTP round-trips to Neon (dup check, base check, MAX(seq),
-> INSERT, plus the recovery `revisionExists` + `headFor` on a
-> unique-violation). At Neon's typical 30–80 ms HTTP RTT that's
-> 100–400 ms per save vs sub-millisecond on SQLite — and saves on
-> the same `workspace_tag` serialise through the in-process write
-> lock, capping per-tag throughput. Acceptable for triage-edit
-> cadence; size for it if you expect bursty writes per workspace.
-> A future optimisation (CTE / single-round-trip insert) could
-> collapse the pre-INSERT reads.
+> 📡 **Neon backend latency.** Every `commitRevision` issues 3
+> HTTP round-trips to Neon for the commit (dup check, head check,
+> and the gated INSERT, pipelined in one `sql.transaction`), plus
+> the recovery `revisionExists` + `headFor` only on a
+> unique-violation. At Neon's typical 30–80 ms HTTP RTT that's
+> ~90–240 ms per save vs sub-millisecond on SQLite. There is no
+> longer a per-`workspace_tag` write lock serialising commits —
+> concurrent saves on one tag are kept fork-safe by the gated
+> INSERT's single-statement snapshot + the `UNIQUE(tag, seq)` PK
+> rather than by serialisation, so per-tag throughput is bounded by
+> Postgres, not by an in-process queue. (The earlier "future
+> optimisation: single-round-trip insert" has landed — the dup /
+> head / seq logic is folded into the one gated INSERT.) Acceptable
+> for triage-edit cadence; size for it if you expect bursty writes.
+> NOTE: the cross-replica fork-safety of the lockless commit rests
+> on Postgres' READ-COMMITTED single-statement snapshot + the
+> `UNIQUE(tag, seq)` PK; the PGlite test backend is single-
+> connection and cannot empirically reproduce a cross-replica race,
+> so confirm this with a real-Postgres concurrency test before
+> relying on multi-replica writes in production.
 
 ## URL layout
 
@@ -256,17 +271,17 @@ read). The gate is for *creating* workspaces, not for *observing*
 their absence.
 
 **Concurrent-creation race (accepted).** `workspaceExists` reads
-outside the per-tag write lock that `commitRevision` later
-acquires. Under concurrent saves on a fresh tag, an unauthenticated
-socket whose `workspaceExists` observes "true" (because an
-authenticated peer's commit landed between this socket's check
-and its commit) skips the gate and commits as the second writer.
-Accepted: the unauthenticated peer still had to produce a valid
-Ed25519 signature (= holds the workspace seed), so the worst case
-is "two concurrent writes both authorising" rather than "stranger
-bypasses auth". Tightening would require moving the gate inside
-`commitRevision`'s lock and is not worth the layer crossing for
-this soft-policy guarantee.
+at a different moment than the commit's gated INSERT (a plain
+TOCTOU — there is no lock spanning the two). Under concurrent saves
+on a fresh tag, an unauthenticated socket whose `workspaceExists`
+observes "true" (because an authenticated peer's commit landed
+between this socket's check and its commit) skips the gate and
+commits as the second writer. Accepted: the unauthenticated peer
+still had to produce a valid Ed25519 signature (= holds the
+workspace seed), so the worst case is "two concurrent writes both
+authorising" rather than "stranger bypasses auth". Tightening would
+require folding the gate into the commit statement itself and is
+not worth the layer crossing for this soft-policy guarantee.
 
 Wire shape:
 
@@ -690,17 +705,39 @@ promise (a power loss between ack and the next WAL checkpoint
 under NORMAL would lose the row even though peers heard "this
 revision committed"). Round-9 M1.
 
-Multi-process deployments (Neon backend) are supported via the
-UNIQUE-violation recovery branch in `commitRevision` (see the
-`catch` block in `server/db.ts`): when two processes' INSERTs race
-on the same `(workspace_tag, seq)` or `(workspace_tag, id)`, the
-loser's unique-violation is caught and re-routed through a
-`revisionExists` + `headFor` refetch — emerging as either
-`inserted` (if the id IS the row we computed) or `stale-base` (if
-a sibling process landed a different id at our seq). Single-
-process SQLite serialises `commitRevision` per-workspace via the
-in-process `KeyedAsyncLock` so the multi-process path is only
-exercised on Neon.
+`commitRevision` takes NO write lock on either backend. Concurrent
+saves on one `workspace_tag` are kept fork-safe by the single gated
+INSERT: its head-check and `COALESCE(MAX(seq),0)+1` read ONE
+statement snapshot (synchronous `node:sqlite` on SQLite; Postgres
+READ-COMMITTED single-statement snapshot on Neon), so a racer is
+forced onto either the same `seq` — rejected by `PRIMARY KEY
+(workspace_tag, seq)` — or a head that no longer matches its base —
+gated out of inserting. Either way exactly one save commits and the
+loser gets `stale-base`.
+
+The UNIQUE-violation recovery branch (see the `catch` block in
+`server/db.ts`) is the backstop for the PK / UNIQUE collision: when
+two connections' INSERTs race on the same `(workspace_tag, seq)` or
+`(workspace_tag, id)`, the loser's unique-violation is caught and
+re-routed through a `revisionExists` + `headFor` refetch — emerging
+as either `inserted` (the id IS the row we computed) or `stale-base`
+(a sibling landed a different id at our seq), never a silent fork.
+
+Coverage is asymmetric, and worth stating plainly:
+
+- **SQLite** lockless-commit fork-safety is fully covered — the
+  no-fork concurrency tests in `tests/server-db.test.js` (two / N
+  concurrent same-base, mixed, chainFrom-during-commits) pass
+  UNCHANGED with no lock present, and `node:sqlite`'s synchronous
+  single-statement execution guarantees the one-snapshot property.
+- **Neon cross-replica** fork-safety rests on the Postgres
+  READ-COMMITTED single-statement-snapshot + `UNIQUE(tag, seq)`
+  argument above. The PGlite test backend is single-connection, so
+  it confirms commit-outcome + recovery parity but CANNOT
+  empirically reproduce two replicas racing on one database. Add a
+  real-Postgres concurrency test (two pooled connections racing
+  same-base commits) to confirm this before relying on multi-replica
+  writes in production.
 
 ## What the server CAN'T do
 

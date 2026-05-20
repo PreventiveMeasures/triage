@@ -1159,11 +1159,11 @@ describe('listLive consistency under concurrent writes', () => {
 
 describe('many concurrent ops settle correctly (no lock to leak)', () => {
   // The objstore plane holds no in-process lock, so there is no lock
-  // map to drain (the KeyedAsyncLock GC contract is pinned directly in
-  // server-objstore.test.js, for the revision-chain plane that still
-  // uses it). What still matters under heavy concurrency is that the
-  // version-CAS produces the right outcomes: independent keys all
-  // land, same-key racers resolve to exactly one winner.
+  // map to drain. (Neither does the revision-chain plane any more — its
+  // commit is a single gated INSERT, no mutex.) What still matters under
+  // heavy concurrency is that the version-CAS produces the right
+  // outcomes: independent keys all land, same-key racers resolve to
+  // exactly one winner.
   it('100 concurrent commits on 100 distinct keys all land at v1', async () => {
     const { handle, cleanup } = freshHandle()
     try {

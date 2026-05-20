@@ -791,68 +791,6 @@ describe('token payload validation', () => {
   })
 })
 
-describe('KeyedAsyncLock', () => {
-  // The objstore plane no longer uses this mutex — its commit/delete
-  // races are resolved by the version-CAS + content-addressing (see
-  // store.ts). But `KeyedAsyncLock` (server/objstore/lock.ts) is still
-  // load-bearing for the revision-chain plane's write-lock in
-  // server/db.ts (`commitRevisionViaWriteLock`). These tests pin the
-  // primitive's contract directly — its tail-chaining + refcount-GC —
-  // because that plane's integration tests can't reliably force the
-  // ordering that would catch a subtle regression here.
-  it('serialises operations on the same key (FIFO of acquire order)', async () => {
-    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
-    const lock = new KeyedAsyncLock()
-    const order = []
-    const a = lock.run('k', async () => {
-      order.push('a-start')
-      await new Promise((r) => { setTimeout(r, 30) })
-      order.push('a-end')
-    })
-    const b = lock.run('k', async () => {
-      order.push('b-start')
-      await new Promise((r) => { setTimeout(r, 5) })
-      order.push('b-end')
-    })
-    await Promise.all([a, b])
-    assert.deepEqual(order, ['a-start', 'a-end', 'b-start', 'b-end'])
-  })
-
-  it('does not block operations on different keys', async () => {
-    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
-    const lock = new KeyedAsyncLock()
-    let releaseA, releaseB
-    const gateA = new Promise((r) => { releaseA = r })
-    const gateB = new Promise((r) => { releaseB = r })
-    const a = lock.run('ka', async () => { await gateA; return 'a' })
-    const b = lock.run('kb', async () => { await gateB; return 'b' })
-    // Resolve B first — if the keys serialised through a single
-    // queue, B would block on A forever and we'd time out.
-    releaseB()
-    assert.equal(await b, 'b')
-    releaseA()
-    assert.equal(await a, 'a')
-  })
-
-  it('GCs the entry after refcount drops to zero', async () => {
-    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
-    const lock = new KeyedAsyncLock()
-    await lock.run('k', async () => {})
-    // Probe internal state to pin the cleanup contract — left
-    // unbounded the Map grows by every distinct key ever seen.
-    assert.equal(lock.size, 0)
-  })
-
-  it('survives an inner fn rejection without poisoning the queue', async () => {
-    const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
-    const lock = new KeyedAsyncLock()
-    await assert.rejects(() => lock.run('k', () => { throw new Error('boom') }), /boom/u)
-    const after = await lock.run('k', () => Promise.resolve(42))
-    assert.equal(after, 42)
-    assert.equal(lock.size, 0, 'failed acquirer must release its slot')
-  })
-})
-
 describe('directory layout', () => {
   it('places committed files under ${OBJSTORE_DIR}/${tag}/${contentHash}.bin', async () => {
     const { handle, objDir, cleanup } = freshHandle()
