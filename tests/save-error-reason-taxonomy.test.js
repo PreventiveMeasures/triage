@@ -55,10 +55,13 @@ const SERVER_INDEX_PATH = fileURLToPath(new URL('../server/index.ts', import.met
 
 describe('workspace-save-error.reason taxonomy', () => {
   it('every server-emitted reason literal is a declared SAVE_ERROR_REASONS member', () => {
-    // Emit sites live in index.ts (the dispatcher's 'busy' NACK) and
-    // sync-handlers.ts ('too-large', 'stale-base'); scan both.
+    // Emit sites live in ws-server.ts (the dispatcher's 'busy' NACK)
+    // and sync-handlers.ts ('too-large', 'stale-base'); index.ts is
+    // scanned too in case a future emit site lands there.
+    const read = (p) => readFileSync(fileURLToPath(new URL(p, import.meta.url)), 'utf8')
     const src = readFileSync(SERVER_INDEX_PATH, 'utf8') + '\n'
-      + readFileSync(fileURLToPath(new URL('../server/sync-handlers.ts', import.meta.url)), 'utf8')
+      + read('../server/sync-handlers.ts') + '\n'
+      + read('../server/ws-server.ts')
     // Match `sendSaveError(..., 'reason')` calls — the typed wrapper
     // narrows at call time, but scraping the literals here keeps a
     // PR that bypasses the wrapper from sneaking past.
