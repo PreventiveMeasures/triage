@@ -160,12 +160,12 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   const prev = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
-  // No lock: deleteObject is a precondition-checked single-row drop.
-  // A concurrent commit races the version-CAS (not a shared blob —
+  // No lock: deleteObject is a precondition-checked version-CAS drop.
+  // A concurrent commit OR delete races that CAS (not a shared blob —
   // the live blob is content-addressed + GC'd by the reaper, never
-  // unlinked here), and two identical concurrent deletes are
-  // idempotent (at worst a duplicate same-version broadcast). See the
-  // deleteObject doc in store.ts.
+  // unlinked here): exactly one op wins, the loser gets conflict /
+  // not-found (and never broadcasts). See the deleteObject doc in
+  // store.ts.
   const result = await deleteObject(deps.handle, tag, resourceTag, prev)
   if (!result.ok) {
     if (result.reason === 'conflict') deps.send(socket, conflictReply('delete', tag, resourceTag, result.conflict ?? null))

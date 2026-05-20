@@ -113,11 +113,10 @@ export type BlobBackend = {
   // `${tag}/${contentHash}.bin`. Returns true on success, false on
   // any I/O error. The caller (commitPut) has already validated size;
   // this method just performs the bytes-side transition. Because the
-  // live address is the content
-  // hash, promoting the same bytes twice (a retry, or a different
-  // resource committing identical content) lands at the SAME path —
-  // an idempotent re-write of identical bytes, never a clobber of
-  // different bytes.
+  // live address is the content hash, promoting the same bytes twice
+  // (a retry, or a different resource committing identical content)
+  // lands at the SAME path — an idempotent re-write of identical bytes,
+  // never a clobber of different bytes.
   //
   // Crash safety: implementations MUST ensure that a crash mid-
   // promotion leaves at most a stranded staging blob (reaper-
