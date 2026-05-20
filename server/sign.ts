@@ -205,8 +205,8 @@ export async function computeRevisionIdFromCanonical(canonical: Uint8Array<Array
 }
 
 // `connectionNonce` is the per-socket challenge the server issued
-// to the originating connection (see `socketChallenge` in
-// server/index.ts). The client signs a canonical that includes the
+// to the originating connection (see `Peer.challenge` in
+// server/peer.ts). The client signs a canonical that includes the
 // nonce; verifying against the SAME nonce here is what blocks
 // cross-connection replay of a captured subscribe frame. Audit
 // round-9 H2.

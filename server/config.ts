@@ -178,9 +178,6 @@ export function loadConfig(): Config {
     'OBJSTORE_COMMIT_LOCK_LEASE_MS', 5 * 60 * 1000, 1000, 60 * 60 * 1000,
     '(1s..1h). Default is 300000 (5 min).',
   )
-  // Upper bound 65_536 — bounds memory under hostile load; a deployer
-  // passing MAX_SAFE_INTEGER would silently defeat the cap.
-  const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
   const debug = env['DEBUG'] === '1'
 
   const configPath = env['CONFIG_PATH'] ?? fileURLToPath(new URL('./config.json', import.meta.url))
@@ -190,6 +187,11 @@ export function loadConfig(): Config {
     console.error(`Invalid ${configPath}: "password" must be a string or null`); process.exit(1)
   }
   const password = rawPassword ?? null
+  // Upper bound 65_536 — bounds memory under hostile load; a deployer
+  // passing MAX_SAFE_INTEGER would silently defeat the cap. Validated
+  // here (after the config.json / password parse) to preserve the
+  // pre-split error-precedence order.
+  const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
 
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(HELP)
