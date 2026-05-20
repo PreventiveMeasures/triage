@@ -69,6 +69,12 @@ dialog {
     background: var(--accent); color: var(--surface); border-color: var(--accent);
     &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
   }
+  /* Destructive action (Clear in the annotation dialogs, Leave /
+     Delete in the list dialogs). */
+  &.danger {
+    color: var(--critical, #f87171); border-color: var(--border);
+    &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
+  }
   &:disabled { opacity: .5; }
 }
 

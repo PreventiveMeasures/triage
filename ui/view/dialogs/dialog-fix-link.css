@@ -66,23 +66,3 @@ dialog { max-width: 560px; width: min(94vw, 560px); }
   margin: .45rem 0 0;
   color: var(--muted); font-size: .74rem;
 }
-
-.fl-actions {
-  display: flex; align-items: center; gap: .4rem;
-  margin-top: .8rem;
-  padding-top: .7rem;
-  border-top: 1px solid var(--border);
-}
-.fl-spacer { flex: 1; }
-.fl-actions button {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
-  padding: .35rem .9rem;
-  font: inherit; font-size: .8rem;
-
-  &:hover { border-color: var(--accent); color: var(--accent); }
-  &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
-  &.primary:hover { filter: brightness(1.08); }
-  &.danger { color: var(--critical, #f87171); border-color: var(--border); }
-  &.danger:hover { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
-}

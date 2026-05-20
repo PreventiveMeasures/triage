@@ -14,12 +14,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import severityCSS from './dialog-severity.css'
 import commentCSS from './dialog-comment.css'
-
-function severityBadgeTemplate(sev) {
-  if (!sev) return nothing
-  const label = sev.replaceAll('_', ' ')
-  return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
-}
+import { severityBadge } from './shared.js'
 
 class CommentDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(commentCSS)]
@@ -88,7 +83,7 @@ class CommentDialog extends AppDialog {
       <header class="cd-head">
         <h3>${hasInitial ? 'Edit comment' : 'Add comment'}</h3>
         <div class="cd-finding">
-          ${severityBadgeTemplate(f.severity)}
+          ${severityBadge(f.severity)}
           ${loc ? html`<span class="cd-loc" title=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description
@@ -103,11 +98,11 @@ class CommentDialog extends AppDialog {
         @input=${this._onInput}
         @keydown=${this._onKeydown}
       ></textarea>
-      <footer class="cd-actions">
+      <footer class="nwd-actions">
         ${hasInitial
           ? html`<button type="button" class="danger" @click=${this._onClear}>Clear</button>`
           : nothing}
-        <span class="cd-spacer"></span>
+        <span class="nwd-spacer"></span>
         <button type="button" @click=${this._onCancel}>Cancel</button>
         <button type="button" class="primary" @click=${this._onSave}>Save</button>
       </footer>

@@ -66,25 +66,3 @@
   & li + li { margin-top: .2rem; }
   & strong { color: var(--text); font-weight: 600; }
 }
-
-.lwd-actions {
-  display: flex; align-items: center; gap: .4rem;
-  margin-top: .8rem;
-  padding-top: .7rem;
-  border-top: 1px solid var(--border);
-}
-.lwd-spacer { flex: 1; }
-.lwd-actions button {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
-  padding: .35rem .9rem;
-  font: inherit; font-size: .8rem;
-
-  &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  &.danger {
-    color: var(--critical, #f87171); border-color: var(--border);
-
-    &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
-  }
-  &:disabled { opacity: .5; }
-}
