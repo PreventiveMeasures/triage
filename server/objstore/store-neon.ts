@@ -343,12 +343,13 @@ function buildVerifyCommitLockHeld(sql: NeonSql): GetStmt<[string, string, strin
 }
 
 export async function openNeonObjstore(connectionString: string, blob: BlobBackend): Promise<Handle> {
-  // Same dynamic-import pattern as db-neon.ts — the peer dep is
-  // only required when the Neon path was selected. `@ts-ignore`
-  // rather than `@ts-expect-error` so an operator who installs the
-  // dep doesn't trip a TS2578 "unused directive" error in tsc.
-  // @ts-ignore optional peer dep: '@neondatabase/serverless'
-  const mod = (await import('@neondatabase/serverless')) as { neon: (url: string) => NeonSql }
+  // Same dynamic-import pattern as db-neon.ts — routed through the
+  // local `../neon-driver.ts` re-export wrapper so the peer dep stays
+  // optional AND tests can mock the driver (a local path is always
+  // resolvable; the bare specifier isn't when the dep is absent). See
+  // `server/neon-driver.ts`. Cast through `unknown` because the
+  // wrapper's `export *` re-exports a `@ts-ignore`'d module.
+  const mod = (await import('../neon-driver.ts')) as unknown as { neon: (url: string) => NeonSql }
   const sql: NeonSql = mod.neon(connectionString)
   // Boot-time durability gate (see db-neon.ts) — `openNeonDb` runs
   // the same assertion when it opens, but `openNeonObjstore` is
