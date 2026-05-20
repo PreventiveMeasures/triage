@@ -29,7 +29,7 @@ import { DatabaseSync } from 'node:sqlite'
 // MUST run before any client module loads — `_polyfills.js` shims
 // `localStorage` / `navigator.locks` and drops broken native
 // `Uint8Array.prototype.toHex` that some Node 24.x builds expose
-// under `--js-base-64`, before @noble/hashes captures
+// under `--js-base-64`, before @noble/ciphers captures
 // `hasHexBuiltin` at first import. Same pattern as sync-client.test.js.
 await import('./_polyfills.js')
 

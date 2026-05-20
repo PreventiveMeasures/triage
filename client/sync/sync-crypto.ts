@@ -1,5 +1,4 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
-import { ed25519 } from '@noble/curves/ed25519.js'
 import { decodeUtf8, encodeUtf8 } from '../../common/utf8.js'
 
 // AEAD layer for triage-sync. Wraps ChaCha20-Poly1305 (RFC 8439) so
@@ -165,18 +164,39 @@ export async function deriveSigningKeypair(privateKeyBase64: string, workspaceId
     256,
   )
   const seed = new Uint8Array(seedBits)
-  // Public key from the seed via @noble/curves — avoids round-
-  // tripping through an extractable WebCrypto JWK export. Audit L1.
-  const publicKey = ed25519.getPublicKey(seed)
-  const publicKeyB64 = publicKey.toBase64({ alphabet: 'base64url', omitPadding: true })
-  // PKCS8 wrap so WebCrypto accepts the raw seed. NON-extractable
-  // (`false`): nothing in the JS realm — including the same module
-  // that imported it — can call exportKey('pkcs8'/'raw', key) to
-  // recover the seed afterwards. The signing key only does what
-  // the `['sign']` usage allows.
+  // PKCS8-wrap the raw seed so WebCrypto will import it; the same
+  // envelope feeds both the public-key probe and the signing key.
   const pkcs8 = new Uint8Array(ED25519_PKCS8_HEADER.length + 32)
   pkcs8.set(ED25519_PKCS8_HEADER, 0)
   pkcs8.set(seed, ED25519_PKCS8_HEADER.length)
+  // Recover the 32-byte public key through WebCrypto rather than
+  // @noble/curves. WebCrypto exposes no seed→public-key derivation,
+  // so import the seed as an EXTRACTABLE key and read the JWK `x`
+  // member — already base64url, unpadded: exactly the wire form.
+  // The JWK also exposes `d` (the seed) as an immutable string we
+  // can't zero, so drop the reference the moment `x` is read, before
+  // the next await, so it's collectable. The key we RETURN is the
+  // separate non-extractable import below, so no extractable handle
+  // to the seed survives this call. This is the JWK round-trip the
+  // old @noble/curves path was added to avoid (audit L1); moving to
+  // WebCrypto trades that transient in-memory copy for dropping the
+  // elliptic-curve dependency.
+  const probe = await crypto.subtle.importKey(
+    'pkcs8',
+    pkcs8,
+    { name: 'Ed25519' },
+    true,
+    ['sign'],
+  )
+  const jwk = await crypto.subtle.exportKey('jwk', probe)
+  const publicKeyB64 = jwk.x
+  delete jwk.d
+  if (publicKeyB64 == null) throw new Error('Ed25519 JWK export returned no public key')
+  const publicKey = Uint8Array.fromBase64(publicKeyB64, { alphabet: 'base64url' })
+  // NON-extractable (`false`): nothing in the JS realm — including
+  // the same module that imported it — can call exportKey('pkcs8'/
+  // 'raw'/'jwk', key) to recover the seed afterwards. The signing
+  // key only does what the `['sign']` usage allows.
   const privateKey = await crypto.subtle.importKey(
     'pkcs8',
     pkcs8,
