@@ -373,8 +373,9 @@ describe('vercel blob backend — listing for the reaper', () => {
       assert.equal(blobs.has(live), true)
       // Simulate a row drop without unlink (deleteObject leaves the
       // blob behind; or a crash mid-delete). The blob is now
-      // stranded/unreferenced.
-      handle.deleteLive.run('ws-1', 'res-1')
+      // stranded/unreferenced. Raw DELETE (not a store API) — this
+      // models an out-of-band/crash drop that bypassed deleteObject.
+      handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', 'res-1')
       // Within the grace window → a default sweep leaves it.
       await reapOrphans(handle)
       assert.equal(blobs.has(live), true, 'grace window protects a recent blob')

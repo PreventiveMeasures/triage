@@ -220,7 +220,6 @@ export type Handle = {
   //   conflict + re-read). Exactly one racer wins; the loser rebases.
   insertLiveIfAbsent: GetStmt<[string, string, string, number, string, number], { ok: number }>
   updateLiveCAS: GetStmt<[string, string, number, string, number, string, number, number], { ok: number }>
-  deleteLive: RunStmt<[string, string]>
   // Version-CAS delete: `deleteLiveCAS(tag, res, expectedVersion)` drops
   // the row only while its version still matches the precondition
   // deleteObject read, returning `{ ok: 1 }` iff it removed a row.
@@ -432,10 +431,6 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
           put_at         = ?7
       WHERE workspace_tag = ?1 AND resource_tag = ?2 AND version = ?8
       RETURNING 1 AS ok
-    `)),
-    deleteLive: wrapRun(db.prepare(`
-      DELETE FROM workspace_object
-      WHERE workspace_tag = ? AND resource_tag = ?
     `)),
     // Version-conditional drop for deleteObject: removes the row only
     // if its version still equals the precondition. RETURNING tells us

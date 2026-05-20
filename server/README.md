@@ -566,23 +566,32 @@ workspace_object_staging (
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
 ) STRICT
 
-${OBJSTORE_DIR}/${workspaceTag}/${resourceTag}.bin           -- live
+${OBJSTORE_DIR}/${workspaceTag}/${contentHash}.bin          -- live (content-addressed)
 ${OBJSTORE_DIR}/${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 ```
 
 Bytes live outside SQLite to keep the WAL out of the multi-MB
-bundle path. Commit/delete order is asymmetric so a power-loss at
-the worst moment leaves at most a stranded file (cleaned by the
-periodic reaper), never a row pointing at a missing file:
+bundle path. Live blobs are content-addressed: the filename is the
+content hash, so a hash names exactly one immutable byte-string and
+the row's `content_hash` literally names its blob — a metadata-vs-
+bytes desync is impossible, and commit is a plain version
+compare-and-set on the row (no lock). Ordering is asymmetric so a
+power-loss at the worst moment leaves at most a stranded,
+unreferenced blob (GC'd by the reaper once past the grace window),
+never a row pointing at missing bytes:
 
-- PUT commit: `fsync(staging) → rename → fsync(parent dir) → DB write`.
-- DELETE: `DB write → unlink (best-effort, ENOENT ok)`.
+- PUT commit: `fsync(staging) → rename → fsync(parent dir) → DB version-CAS`.
+- DELETE: `DB row drop` — the now-unreferenced blob is GC'd by the
+  reaper, not unlinked inline (content dedup may share it across
+  resources).
 
 The reaper runs once at startup (synchronous, before the WS
 listener accepts traffic) and then every
 `OBJSTORE_REAP_INTERVAL_MS`. Stale staging rows expire after
 `STAGING_TTL_MS_DEFAULT` (1h, comfortably over a 50 MiB upload on
-a slow line).
+a slow line); an unreferenced live blob is GC'd once it's older than
+that same window (the grace that keeps a just-promoted blob from
+being collected mid-commit).
 
 ### What the server still CAN'T do
 

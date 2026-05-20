@@ -184,11 +184,11 @@ async function handleRestPut(
   // TTL across the commit. (An upload exceeding the TTL during the
   // body can be reaped mid-flight → commit 410s; documented accepted
   // tradeoff — see commitPut in store.ts.)
-  await handleRestPutLocked(deps, req, res, route, payload, declared)
+  await handleRestPutBody(deps, req, res, route, payload, declared)
 }
 
 // Map a `commitPut` failure to its wire response. Extracted from
-// `handleRestPutLocked` to keep it under the per-function line cap
+// `handleRestPutBody` to keep it under the per-function line cap
 // and to make the wire-mapping ladder its own audit surface — the
 // exhaustiveness `never` guard at the bottom catches a forward-
 // compat hazard where a new `CommitPutResult` reason lands without
@@ -214,7 +214,7 @@ function denyCommitFailure(res: ServerResponse, result: Exclude<CommitPutResult,
   deny(res, 500, 'internal')
 }
 
-async function handleRestPutLocked(
+async function handleRestPutBody(
   deps: ObjstoreRestDeps,
   req: IncomingMessage,
   res: ServerResponse,

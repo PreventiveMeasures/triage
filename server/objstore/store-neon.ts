@@ -238,10 +238,6 @@ function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, stri
   } }
 }
 
-function buildDeleteLive(sql: NeonSql): RunStmt<[string, string]> {
-  return runStmt(sql, `DELETE FROM workspace_object WHERE workspace_tag = $1 AND resource_tag = $2`)
-}
-
 // Version-CAS delete: drop the row only while its version still matches
 // the precondition (mirrors buildUpdateLiveCAS). RETURNING a row iff we
 // removed it; deleteObject treats 0 rows as a lost race → conflict /
@@ -339,7 +335,6 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
     selectLiveOne: buildSelectLiveOne(sql),
     insertLiveIfAbsent: buildInsertLiveIfAbsent(sql),
     updateLiveCAS: buildUpdateLiveCAS(sql),
-    deleteLive: buildDeleteLive(sql),
     deleteLiveCAS: buildDeleteLiveCAS(sql),
     listAllStaging: buildListAllStaging(sql),
     listLiveTags: buildListLiveTags(sql),
