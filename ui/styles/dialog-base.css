@@ -1,0 +1,95 @@
+/* Shared modal-dialog chrome for the `AppDialog` base class
+   (view/app-dialog.js). Inlined into each dialog component's shadow
+   root via inherited `static styles`, so it targets the bare
+   `dialog` element (there's exactly one per dialog shadow) for the
+   frame, plus the `.nwd-*` inner classes the dialog bodies use.
+
+   Mirrors the light-DOM `.new-workspace-dialog` + `.nwd-*` block in
+   styles/dialogs.css — that copy stays until every dialog using the
+   `.new-workspace-dialog` frame class has migrated to <app-dialog>;
+   the two are kept in sync during the rollout. */
+
+/* Shadow trees don't inherit theme.css's global reset. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+dialog {
+  /* Drop the showModal() vertical centering down ~5rem (margin-top
+     + auto bottom margin) so the chrome doesn't punch through the
+     viewport centerline on tall screens. */
+  margin-top: 5rem;
+  margin-inline: auto;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+  padding: 1.1rem 1.25rem 1rem;
+  max-width: 480px; width: min(94vw, 480px);
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+
+  &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
+}
+
+.nwd-head h3 {
+  margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
+}
+.nwd-input {
+  display: block; width: 100%; box-sizing: border-box;
+  padding: .5rem .65rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text);
+  font: inherit; font-size: .88rem;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .18);
+  }
+  &::placeholder { color: var(--muted); }
+}
+.nwd-note {
+  margin: .55rem 0 0;
+  color: var(--muted); font-size: .74rem; line-height: 1.45;
+}
+/* `.nwd-intro` is the above-the-input sibling to `.nwd-note`:
+   body-text size for first-read legibility, plus margin-bottom to
+   break the visual stickiness against the input. */
+.nwd-intro {
+  margin: 0 0 .8rem;
+  color: var(--muted); font-size: .82rem; line-height: 1.5;
+}
+.nwd-actions {
+  display: flex; align-items: center; gap: .4rem;
+  margin-top: .8rem;
+  padding-top: .7rem;
+  border-top: 1px solid var(--border);
+}
+.nwd-spacer { flex: 1; }
+.nwd-actions button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px;
+  padding: .35rem .9rem;
+  font: inherit; font-size: .8rem;
+
+  &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  &.primary {
+    background: var(--accent); color: var(--surface); border-color: var(--accent);
+    &:hover:not(:disabled) { color: var(--surface); filter: brightness(1.08); }
+  }
+  &:disabled { opacity: .5; }
+}
+
+/* WCO PWA mode — theme.css makes the whole <body> a window drag
+   region and opts interactive elements (incl. `dialog`) back out
+   with `app-region: no-drag`. Those light-DOM rules can't reach
+   into the dialog's shadow root, so without this mirror the
+   shadow `<dialog>` stays a drag region and its buttons / input
+   drag the window instead of taking the click. `no-drag` on the
+   `dialog` covers its whole subtree (children inherit the
+   region). */
+/* stylelint-disable media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  dialog {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown */

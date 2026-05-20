@@ -2,18 +2,20 @@
 // for an encrypted bundle drop. Sibling of `<workspace-unlock-link-dialog>`.
 // Owns the wrong-password retry loop: each typed password calls
 // `tryPassword`, and a throw keeps the dialog open.
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { makeStackedModalError } from './dom.js'
+import { AppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class WorkspaceUnlockBundleDialog extends LitElement {
+class WorkspaceUnlockBundleDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     _password: { state: true },
     _busy: { state: true },
     _error: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -25,37 +27,14 @@ class WorkspaceUnlockBundleDialog extends LitElement {
     this._tryPassword = null
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (!dialog) return
-    try {
-      dialog.showModal()
-    } catch (err) {
-      // Another modal is already open. Let the wrapper reject so the
-      // caller can surface a message with file context (addFiles
-      // alerts per-file with the filename in scope).
-      this._signalModalConflict(err)
-      return
-    }
-    const input = this.querySelector('input[type="password"]')
-    if (input) input.focus()
-  }
-
-  _signalModalConflict(err) {
-    if (this._settled) return
-    this._settled = true
-    // `_finish` wipes `_password` too, but at modal-conflict time the
-    // user hasn't typed yet — only the wrapper-set `_tryPassword`
-    // closure (capturing file bytes + decryption call) needs wiping
-    // so the bytes become GC-eligible immediately even if the
-    // wrapper's `el.remove()` is delayed by a slow listener.
-    this._tryPassword = null
-    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
-  }
+  // The base `focusInitial()` default focuses the first input — the
+  // password field. Modal-conflict (another modal already open) is
+  // handled by the base `firstUpdated`, which dispatches
+  // `modal-conflict`; the open() wrapper wipes the wrapper-set
+  // `_tryPassword` closure in that listener.
 
   _finish(result) {
     if (this._settled) return
-    this._settled = true
     // Drop sensitive state on every exit path. `_password` carries
     // the typed secret; `_tryPassword` is the wrapper-set closure
     // that captures the file bytes + would invoke decryptBundle if
@@ -65,9 +44,7 @@ class WorkspaceUnlockBundleDialog extends LitElement {
     // remove element is GC-eligible.
     this._password = ''
     this._tryPassword = null
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
+    super._finish(result)
   }
 
   _onClose = () => this._finish(null)
@@ -103,7 +80,7 @@ class WorkspaceUnlockBundleDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="new-workspace-dialog workspace-unlock-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>Unlock encrypted workspace</h3>
       </header>
@@ -163,6 +140,10 @@ export function openWorkspaceUnlockBundleDialog({ tryPassword } = {}) {
       resolve(e.detail)
     })
     el.addEventListener('modal-conflict', (e) => {
+      // Wipe the wrapper-set `_tryPassword` closure (capturing file
+      // bytes) before detaching — the dialog never opened, so its
+      // own `_finish` wipe didn't run.
+      el._tryPassword = null
       el.remove()
       reject(makeStackedModalError(e.detail?.cause))
     })

@@ -4,11 +4,10 @@
 // single gzipped JSON file, and accepts the same shape back for
 // import with three merge modes.
 //
-// Sibling of `<triage-conflict-dialog>` — same shape (light DOM
-// render, native <dialog> for focus-trap + Esc-to-cancel, public
-// `open*` Promise wrapper that appends + showModal()s). Styles
-// live in sidebar.css next to `.workspace-conflict-dialog`.
-import { LitElement, html, nothing } from 'lit'
+// Sibling of `<triage-conflict-dialog>` — extends `AppDialog` for
+// the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel)
+// plus a public `open*` Promise wrapper.
+import { html, nothing, unsafeCSS } from 'lit'
 import {
   applyTriageImport,
   buildTriageExportGzip,
@@ -16,8 +15,12 @@ import {
 } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { render as renderApp } from './render.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import triageExportCSS from '../styles/dialog-triage-export.css'
 
-class TriageExportDialog extends LitElement {
+class TriageExportDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(triageExportCSS)]
+
   static properties = {
     parsed: { state: true },
     parseError: { state: true },
@@ -25,11 +28,6 @@ class TriageExportDialog extends LitElement {
     busy: { state: true },
     status: { state: true },
   }
-
-  // Light DOM — `.triage-export-dialog` rules live in the global
-  // stylesheet (sidebar.css), same arrangement as the conflict
-  // dialog. Shadow root would hide them.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -42,17 +40,13 @@ class TriageExportDialog extends LitElement {
     this.status = null
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-  }
-
-  _close() {
-    if (this._closed) return
-    this._closed = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('done'))
+  // Focus the primary Download button (the base default would grab
+  // the import file input instead). Base `firstUpdated` (showModal),
+  // `_finish` (close + resolve) and `_onClose` (Esc / backdrop) are
+  // inherited; this dialog resolves with no value — callers just
+  // await the close.
+  focusInitial() {
+    this.renderRoot.querySelector('button.primary')?.focus()
   }
 
   async _onDownload() {
@@ -100,7 +94,7 @@ class TriageExportDialog extends LitElement {
       // Clear parsed so the file picker resets — user can pick
       // another file or close.
       this.parsed = null
-      const input = this.querySelector('input[type="file"]')
+      const input = this.renderRoot.querySelector('input[type="file"]')
       if (input) input.value = ''
     } catch (err) {
       this.status = { kind: 'err', text: `Import failed: ${err.message}` }
@@ -111,7 +105,7 @@ class TriageExportDialog extends LitElement {
 
   render() {
     const p = this.parsed
-    return html`<dialog class="triage-export-dialog" @close=${() => this._close()}>
+    return html`<dialog @close=${this._onClose}>
       <header class="te-head">
         <h3>Triage backup</h3>
         <p>Bundles every triage entry (markers, triage states, comments, fixes, per-report ignores) and all saved repo URLs into a single gzipped JSON file.</p>
@@ -169,7 +163,7 @@ class TriageExportDialog extends LitElement {
         : nothing}
 
       <footer class="te-actions">
-        <button type="button" @click=${() => this._close()}>Close</button>
+        <button type="button" @click=${this._onClose}>Close</button>
       </footer>
     </dialog>`
   }
@@ -182,12 +176,5 @@ customElements.define('triage-export-dialog', TriageExportDialog)
 // doesn't get the import result — the dialog already re-rendered
 // the app and showed a confirmation; nothing more to do here.
 export function openTriageExportDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('triage-export-dialog')
-    el.addEventListener('done', () => {
-      el.remove()
-      resolve()
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('triage-export-dialog')
 }

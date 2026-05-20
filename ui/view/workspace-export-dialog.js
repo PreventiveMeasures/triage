@@ -1,13 +1,17 @@
 // `<workspace-export-dialog>` — pre-download prompt for the per-workspace
 // "Export workspace" affordance. Password + confirm by default; opt-out
 // is an explicit checkbox that disables the password fields, surfaces a
-// warning, and relabels the primary button. Native <dialog> + light DOM
-// for the same chrome the share-link dialogs use.
-import { LitElement, html, nothing } from 'lit'
+// warning, and relabels the primary button. Extends `AppDialog` for
+// the same shared shadow-DOM chrome the share-link dialogs use.
+import { html, nothing, unsafeCSS } from 'lit'
 import { buildWorkspaceExportBundle } from '#client/index.js'
 import { downloadBlob, makeStackedModalError } from './dom.js'
+import { AppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class WorkspaceExportDialog extends LitElement {
+class WorkspaceExportDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     workspace: { attribute: false },
     _password: { state: true },
@@ -18,8 +22,6 @@ class WorkspaceExportDialog extends LitElement {
     _error: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -33,36 +35,14 @@ class WorkspaceExportDialog extends LitElement {
     this._settled = false
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (!dialog) return
-    try {
-      dialog.showModal()
-    } catch (err) {
-      // Another modal is already open. Let the wrapper reject so the
-      // caller surfaces a contextual error (sidebar's `.catch` adds
-      // the workspace name).
-      this._signalModalConflict(err)
-      return
-    }
-    const input = this.querySelector('input[type="password"]')
-    if (input) input.focus()
-  }
-
-  _signalModalConflict(err) {
-    if (this._settled) return
-    this._settled = true
-    // `_finish` wipes user-typed fields too, but at modal-conflict time
-    // those are still constructor defaults — the dialog never opened.
-    // Only the wrapper-set `workspace` reference (carrying `.privateKey`)
-    // needs an explicit wipe so it doesn't sit on the element until GC.
-    this.workspace = null
-    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
-  }
+  // The base `focusInitial()` default focuses the first input — the
+  // password field — so no override is needed. Modal-conflict (another
+  // modal already open) is handled by the base `firstUpdated`, which
+  // dispatches `modal-conflict`; the open() wrapper wipes the
+  // wrapper-set `workspace` reference in that listener.
 
   _finish(result) {
     if (this._settled) return
-    this._settled = true
     // Drop sensitive state on every exit path, not just success.
     // `_password` / `_confirm` carry the typed secret; `workspace`
     // is the wrapper-set reference whose `.privateKey` flows into
@@ -74,9 +54,7 @@ class WorkspaceExportDialog extends LitElement {
     this._password = ''
     this._confirm = ''
     this.workspace = null
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
+    super._finish(result)
   }
 
   _onClose = () => this._finish(null)
@@ -229,7 +207,7 @@ class WorkspaceExportDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="new-workspace-dialog workspace-export-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>Export workspace</h3>
       </header>
@@ -252,6 +230,10 @@ export function openWorkspaceExportDialog({ workspace } = {}) {
       resolve(e.detail)
     })
     el.addEventListener('modal-conflict', (e) => {
+      // Wipe the wrapper-set `workspace` (carrying `.privateKey`)
+      // before detaching — the dialog never opened, so its own
+      // `_finish` wipe didn't run.
+      el.workspace = null
       el.remove()
       reject(makeStackedModalError(e.detail?.cause))
     })

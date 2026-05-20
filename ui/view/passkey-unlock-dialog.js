@@ -5,21 +5,23 @@
 // stored credential, the assertion's PRF output is derived to a
 // session key, and triage / OPFS reads start succeeding.
 //
-// Layout mirrors the setup + share-link dialogs (native <dialog>,
-// light-DOM render, focus-trap). The user can dismiss; the app is
+// Layout mirrors the setup + share-link dialogs (extends `AppDialog`
+// for the shared shadow-DOM <dialog> chrome). The user can dismiss; the app is
 // still usable but encrypted-at-rest data won't load (banner stays
 // up via the vault-state listener wired in view.js).
 
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { unlockEncryption } from '#client/index.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class PasskeyUnlockDialog extends LitElement {
+class PasskeyUnlockDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     _busy: { state: true },
     _error: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -28,31 +30,20 @@ class PasskeyUnlockDialog extends LitElement {
     this._abortController = null
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    // Auto-focus the primary action so Enter unlocks. The
-    // authenticator's own UI takes over once the WebAuthn call
-    // fires, so we don't need any input field here.
-    const button = this.querySelector('button.primary')
-    if (button) button.focus()
-  }
+  // No input field; the base `focusInitial()` default falls through
+  // to `button.primary`, so Enter unlocks without a custom override.
 
   _finish(success) {
     if (this._settled) return
-    this._settled = true
     // Abort any in-flight WebAuthn ceremony so the system prompt
     // disappears when the user cancels via our dialog (Browser /
     // OS prompts otherwise stay up and confuse the user).
     if (this._abortController) {
       try { this._abortController.abort() } catch {}
     }
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: !!success }))
+    super._finish(!!success)
   }
 
-  _onClose = () => this._finish(false)
   _onCancel = () => this._finish(false)
 
   _onUnlock = async () => {
@@ -79,7 +70,7 @@ class PasskeyUnlockDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="new-workspace-dialog workspace-share-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>Unlock your data</h3>
       </header>
@@ -105,12 +96,5 @@ class PasskeyUnlockDialog extends LitElement {
 customElements.define('passkey-unlock-dialog', PasskeyUnlockDialog)
 
 export function openPasskeyUnlockDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('passkey-unlock-dialog')
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('passkey-unlock-dialog')
 }

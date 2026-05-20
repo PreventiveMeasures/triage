@@ -1,0 +1,69 @@
+/* `<comment-dialog>` layer — multi-line editor for the per-finding
+   .mark-comment button. Composed into the dialog's shadow
+   `static styles` on top of dialog-base.css (the `dialog` frame +
+   reset + WCO) and dialog-severity.css (the `.conflict-sev` chip).
+   Only the wider frame + the `.cd-*` inner chrome live here; the
+   border/padding/shadow/backdrop come from the base. Flattened from
+   the `.comment-dialog { … }` block in styles/dialogs.css. */
+
+/* Roomier frame than the base 480px for the textarea. */
+dialog { max-width: 640px; width: min(94vw, 640px); }
+
+.cd-head h3 {
+  margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
+}
+.cd-finding {
+  display: flex; align-items: center; gap: .5rem;
+  flex-wrap: wrap;
+  margin-bottom: .35rem;
+}
+.cd-loc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76rem; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; flex: 1;
+}
+.cd-desc {
+  font-size: .78rem; color: var(--muted);
+  margin: 0 0 .7rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cd-textarea {
+  display: block; width: 100%; box-sizing: border-box;
+  min-height: 9rem; max-height: 50vh; resize: vertical;
+  padding: .55rem .65rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text);
+  font: inherit; font-size: .88rem; line-height: 1.4;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgb(from var(--accent) r g b / .18);
+  }
+  &::placeholder { color: var(--muted); }
+}
+
+.cd-actions {
+  display: flex; align-items: center; gap: .4rem;
+  margin-top: .8rem;
+  padding-top: .7rem;
+  border-top: 1px solid var(--border);
+}
+.cd-spacer { flex: 1; }
+.cd-actions button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px;
+  padding: .35rem .9rem;
+  font: inherit; font-size: .8rem;
+
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+  &.primary:hover { filter: brightness(1.08); }
+  &.danger { color: var(--critical, #f87171); border-color: var(--border); }
+  &.danger:hover { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
+}

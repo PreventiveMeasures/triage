@@ -5,12 +5,15 @@
 // arrow keys, undo, etc.).
 //
 // Same shape as the other deepview dialogs (triage-export-dialog,
-// triage-conflict-dialog): native <dialog> for focus-trap +
-// Esc-to-cancel, light-DOM render so the global stylesheet rules
-// in sidebar.css apply. Public `openCommentDialog(...)` returns a
-// Promise that resolves to the trimmed new value, or null on
-// cancel (= no change).
-import { LitElement, html, nothing } from 'lit'
+// triage-conflict-dialog): extends `AppDialog` for the shared
+// shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel), with the
+// severity-badge + comment layers added on top. Public
+// `openCommentDialog(...)` returns a Promise that resolves to the
+// trimmed new value, or null on cancel (= no change).
+import { html, nothing, unsafeCSS } from 'lit'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import severityCSS from '../styles/dialog-severity.css'
+import commentCSS from '../styles/dialog-comment.css'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing
@@ -18,16 +21,14 @@ function severityBadgeTemplate(sev) {
   return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
 }
 
-class CommentDialog extends LitElement {
+class CommentDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(commentCSS)]
+
   static properties = {
     initial: { attribute: false },
     finding: { attribute: false },
     _value: { state: true },
   }
-
-  // Light DOM — `.comment-dialog` rules live in sidebar.css next
-  // to the other dialogs. A shadow root would hide them.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -36,34 +37,23 @@ class CommentDialog extends LitElement {
     this._value = ''
   }
 
-  // Show the modal once the <dialog> is in the document, then
-  // focus the textarea and place the caret at the end so a
-  // returning user can immediately keep typing without
-  // re-selecting. selectionStart/End assignment is a no-op when
-  // initial is empty.
-  firstUpdated() {
-    this._value = this.initial ?? ''
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const ta = this.querySelector('textarea')
-    if (ta) {
-      ta.focus()
-      const end = ta.value.length
-      try { ta.setSelectionRange(end, end) } catch {}
-    }
+  // Seed the editor from the incoming value before the base
+  // `firstUpdated` shows the modal.
+  beforeOpen() { this._value = this.initial ?? '' }
+
+  // Focus the textarea and place the caret at the end so a returning
+  // user can immediately keep typing without re-selecting.
+  // selectionStart/End assignment is a no-op when initial is empty.
+  focusInitial() {
+    const ta = this.renderRoot.querySelector('textarea')
+    if (!ta) return
+    ta.focus()
+    const end = ta.value.length
+    try { ta.setSelectionRange(end, end) } catch {}
   }
 
-  _finish(result) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
-  }
-
-  // Esc / backdrop close → cancel (= no change). The native
-  // <dialog> fires `close` for both paths.
-  _onClose = () => this._finish(null)
+  // Base `_finish` (close + resolve) and `_onClose` (Esc / backdrop →
+  // resolve null) are inherited unchanged.
 
   _onInput = (e) => { this._value = e.target.value }
 
@@ -94,7 +84,7 @@ class CommentDialog extends LitElement {
     const f = this.finding ?? {}
     const loc = f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
     const hasInitial = (this.initial ?? '').length > 0
-    return html`<dialog class="comment-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="cd-head">
         <h3>${hasInitial ? 'Edit comment' : 'Add comment'}</h3>
         <div class="cd-finding">
@@ -137,14 +127,5 @@ customElements.define('comment-dialog', CommentDialog)
 //     Esc / backdrop, or saved an unchanged value
 // Callers treat null as a no-op (skip persistence + re-render).
 export function openCommentDialog({ initial = '', finding = null } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('comment-dialog')
-    el.initial = initial
-    el.finding = finding
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('comment-dialog', { initial, finding })
 }

@@ -14,11 +14,13 @@
 //                 | { kind: 'bundle', identifier: integrity }>
 //   → Promise<{ downloaded, failed }>
 
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount, state } from '#client/index.js'
 import { fetchBundleFromRemote, fetchFile } from './client-sync.js'
 import { switchToWorkspace } from './ingest.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import listCSS from '../styles/dialog-list.css'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`
@@ -29,7 +31,9 @@ function itemDisplayLabel(item) {
   return item.identifier
 }
 
-class SyncDownloadDialog extends LitElement {
+class SyncDownloadDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
+
   static properties = {
     workspaceId: { type: String },
     items: { type: Array },
@@ -38,8 +42,6 @@ class SyncDownloadDialog extends LitElement {
     _done: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -51,19 +53,11 @@ class SyncDownloadDialog extends LitElement {
     this._settled = false
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const dl = this.querySelector('button[data-role="download"]')
-    if (dl) dl.focus()
-  }
-
-  _finish(result) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
+  // Focus the Download action. The base `_finish` (close + resolve)
+  // is inherited unchanged; `_onClose` / `_onCancel` resolve the
+  // empty-result shape callers expect.
+  focusInitial() {
+    this.renderRoot.querySelector('button[data-role="download"]')?.focus()
   }
 
   _onClose = () => this._finish({ downloaded: [], failed: [] })
@@ -164,7 +158,7 @@ class SyncDownloadDialog extends LitElement {
     const dlLabel = this._running
       ? (singular ? 'Downloading…' : `Downloading ${count} ${kindLabel}…`)
       : (singular ? 'Download' : `Download ${count}`)
-    return html`<dialog class="leave-workspace-dialog sync-download-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="lwd-head"><h3>Download from remote</h3></header>
       <p class="lwd-body">${intro}</p>
       ${list}
@@ -188,14 +182,8 @@ class SyncDownloadDialog extends LitElement {
 customElements.define('sync-download-dialog', SyncDownloadDialog)
 
 export function openSyncDownloadDialog({ workspaceId, items } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('sync-download-dialog')
-    el.workspaceId = workspaceId ?? ''
-    el.items = Array.isArray(items) ? [...items] : []
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
+  return openAppDialog('sync-download-dialog', {
+    workspaceId: workspaceId ?? '',
+    items: Array.isArray(items) ? [...items] : [],
   })
 }

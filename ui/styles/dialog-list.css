@@ -1,0 +1,90 @@
+/* Leave / delete / sync-transfer dialog layer — composed into the
+   shadow `static styles` of the dialogs that put
+   `leave-workspace-dialog` on their frame (leave-workspace,
+   delete-report, sync-download, sync-upload). Sits on top of
+   dialog-base.css; the leave-workspace frame shares the base
+   `dialog` frame values, so only the `.lwd-*` inner chrome is here.
+   Flattened from the nested `.leave-workspace-dialog { … }` block
+   in styles/dialogs.css. */
+
+.lwd-head h3 {
+  margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
+}
+.lwd-body {
+  margin: .2rem 0 .55rem;
+  color: var(--text); font-size: .86rem; line-height: 1.5;
+}
+.lwd-empty {
+  margin: .2rem 0 .55rem;
+  color: var(--muted); font-size: .78rem;
+}
+/* Triage-section informational note (used by both the leave-
+   workspace dialog and the delete-report dialog). */
+.lwd-note {
+  margin: .2rem 0 .65rem;
+  padding: .55rem .7rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: rgb(from var(--text) r g b / .03);
+  color: var(--muted); font-size: .78rem; line-height: 1.45;
+}
+.lwd-choice {
+  margin: .2rem 0 .65rem;
+  padding: .55rem .7rem .6rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: rgb(from var(--text) r g b / .03);
+
+  & legend {
+    padding: 0 .35rem;
+    color: var(--text); font-size: .78rem; font-weight: 500;
+
+    & strong { font-weight: 600; }
+  }
+}
+.lwd-option {
+  display: flex; align-items: flex-start; gap: .5rem;
+  padding: .3rem .15rem;
+
+  & input[type='radio'] {
+    margin: .15rem 0 0;
+    accent-color: var(--accent);
+  }
+  & .lwd-option-text {
+    display: flex; flex-direction: column; gap: .1rem;
+    min-width: 0;
+  }
+  & .lwd-option-title {
+    color: var(--text); font-size: .82rem; line-height: 1.35;
+  }
+  & .lwd-option-hint {
+    color: var(--muted); font-size: .72rem; line-height: 1.4;
+  }
+}
+.lwd-list {
+  margin: 0; padding-left: 1.1rem;
+  color: var(--muted); font-size: .76rem; line-height: 1.5;
+
+  & li + li { margin-top: .2rem; }
+  & strong { color: var(--text); font-weight: 600; }
+}
+
+.lwd-actions {
+  display: flex; align-items: center; gap: .4rem;
+  margin-top: .8rem;
+  padding-top: .7rem;
+  border-top: 1px solid var(--border);
+}
+.lwd-spacer { flex: 1; }
+.lwd-actions button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px;
+  padding: .35rem .9rem;
+  font: inherit; font-size: .8rem;
+
+  &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  &.danger {
+    color: var(--critical, #f87171); border-color: var(--border);
+
+    &:hover:not(:disabled) { border-color: var(--critical, #f87171); color: var(--critical, #f87171); }
+  }
+  &:disabled { opacity: .5; }
+}

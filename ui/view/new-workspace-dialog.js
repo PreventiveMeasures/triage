@@ -1,53 +1,26 @@
-// `<new-workspace-dialog>` — name editor for the sidebar's
-// "+" button. Replaces window.prompt() so the user gets a real
-// input field (with the surrounding deepview chrome) AND an
-// up-front note that workspace triage is synchronized over an
-// E2E-encrypted channel by default — unattached reports stay
-// local.
+// `<new-workspace-dialog>` — name editor for the sidebar's "+"
+// button. Replaces window.prompt() so the user gets a real input
+// field (with the surrounding deepview chrome) AND an up-front note
+// that workspace triage is synchronized over an E2E-encrypted
+// channel by default — unattached reports stay local.
 //
-// Sibling of `<comment-dialog>` / `<fix-link-dialog>`: native
-// <dialog> for focus-trap + Esc-to-cancel, light-DOM render so
-// global stylesheet rules in sidebar.css apply. Public
-// `openNewWorkspaceDialog()` returns a Promise that resolves to
-// the trimmed name, or null on cancel.
-import { LitElement, html } from 'lit'
+// Extends `AppDialog` (view/app-dialog.js): shadow DOM, with the
+// shared dialog frame + `.nwd-*` chrome inherited via `static
+// styles`, and the showModal / focus / resolve plumbing inherited
+// too. Public `openNewWorkspaceDialog()` returns a Promise that
+// resolves to the trimmed name, or null on cancel.
+import { html } from 'lit'
+import { AppDialog, openAppDialog } from './app-dialog.js'
 
-class NewWorkspaceDialog extends LitElement {
+class NewWorkspaceDialog extends AppDialog {
   static properties = {
     _value: { state: true },
   }
-
-  // Light DOM — `.new-workspace-dialog` rules live in sidebar.css.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
     this._value = ''
   }
-
-  // Show the modal once the <dialog> lands in the document, then
-  // focus the name input. No initial value to select — the dialog
-  // always opens for a fresh workspace.
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const input = this.querySelector('input[type="text"]')
-    if (input) input.focus()
-  }
-
-  _finish(result) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
-  }
-
-  // Esc → cancel. The native <dialog> fires `close` on Esc;
-  // backdrop clicks are intentionally NOT a dismiss path (the
-  // user types a name in the input, then commits via Create or
-  // explicitly cancels via the Cancel button / Esc).
-  _onClose = () => this._finish(null)
 
   _onInput = (e) => { this._value = e.target.value }
 
@@ -63,8 +36,8 @@ class NewWorkspaceDialog extends LitElement {
 
   _onCancel = () => this._finish(null)
 
-  // Enter submits — single-line input, no need for Ctrl/Cmd
-  // gate. Esc is handled by the native <dialog> close event.
+  // Enter submits — single-line input, no need for Ctrl/Cmd gate.
+  // Esc is handled by the inherited native <dialog> close → cancel.
   _onKeydown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -74,7 +47,7 @@ class NewWorkspaceDialog extends LitElement {
 
   render() {
     const canCreate = (this._value ?? '').trim().length > 0
-    return html`<dialog class="new-workspace-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>New workspace</h3>
       </header>
@@ -111,12 +84,5 @@ customElements.define('new-workspace-dialog', NewWorkspaceDialog)
 // Public entry point. Resolves with the trimmed name on Create,
 // or null on Cancel / Esc / empty submit.
 export function openNewWorkspaceDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('new-workspace-dialog')
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('new-workspace-dialog')
 }

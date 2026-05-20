@@ -8,11 +8,15 @@
 // Sibling of `<new-workspace-dialog>` / `<leave-workspace-dialog>`:
 // native <dialog> for focus-trap + Esc-to-cancel, light-DOM render
 // so global stylesheet rules in sidebar.css apply.
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { buildShareUrl, encodeShareLink } from '#client/index.js'
 import { makeStackedModalError } from './dom.js'
+import { AppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class WorkspaceShareLinkDialog extends LitElement {
+class WorkspaceShareLinkDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     workspaceId: { type: String },
     initialName: { type: String },
@@ -26,8 +30,6 @@ class WorkspaceShareLinkDialog extends LitElement {
     _copied: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -44,36 +46,14 @@ class WorkspaceShareLinkDialog extends LitElement {
     this._settled = false
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (!dialog) return
-    try {
-      dialog.showModal()
-    } catch (err) {
-      // Another modal is already open. Let the wrapper reject so the
-      // caller can surface a contextual error.
-      this._signalModalConflict(err)
-      return
-    }
-    this._name = this.initialName
-    const input = this.querySelector('input[data-role="name"]')
-    if (input) input.focus()
-  }
+  beforeOpen() { this._name = this.initialName }
 
-  _signalModalConflict(err) {
-    if (this._settled) return
-    this._settled = true
-    // `_finish` wipes user-typed fields too, but at modal-conflict time
-    // those are still empty — the dialog never opened. Only the
-    // wrapper-set raw `privateKeyBase64` (32-byte secret) needs wiping
-    // so it doesn't sit on the element until GC.
-    this.privateKeyBase64 = ''
-    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
+  focusInitial() {
+    this.renderRoot.querySelector('input[data-role="name"]')?.focus()
   }
 
   _finish() {
     if (this._settled) return
-    this._settled = true
     if (this._copiedTimer) {
       clearTimeout(this._copiedTimer)
       this._copiedTimer = null
@@ -92,9 +72,7 @@ class WorkspaceShareLinkDialog extends LitElement {
     this._confirm = ''
     this._url = ''
     this.privateKeyBase64 = ''
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: null }))
+    super._finish(null)
   }
 
   _onClose = () => this._finish()
@@ -285,7 +263,7 @@ class WorkspaceShareLinkDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="new-workspace-dialog workspace-share-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>${this._url ? 'Workspace share link' : 'Share workspace by link'}</h3>
       </header>
@@ -307,6 +285,9 @@ export function openWorkspaceShareLinkDialog({ id, name, privateKeyBase64 } = {}
       resolve()
     })
     el.addEventListener('modal-conflict', (e) => {
+      // Wipe the raw 32-byte key before detaching — the dialog never
+      // opened, so its own `_finish` wipe didn't run.
+      el.privateKeyBase64 = ''
       el.remove()
       reject(makeStackedModalError(e.detail?.cause))
     })

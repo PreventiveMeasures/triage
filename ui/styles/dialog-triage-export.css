@@ -1,0 +1,109 @@
+/* `<triage-export-dialog>` layer — full triage backup / restore
+   dialog (DeepView.export() console command). Composed into the
+   dialog's shadow `static styles` on top of dialog-base.css (frame
+   + reset + WCO). Only the frame width + the `.te-*` inner chrome
+   live here. Flattened from the `.triage-export-dialog { … }` block
+   in styles/dialogs.css. */
+
+dialog { max-width: 560px; width: min(94vw, 560px); }
+
+.te-head h3 {
+  margin: 0 0 .25rem; font-size: 1rem; font-weight: 600;
+}
+.te-head p {
+  margin: 0 0 .9rem; color: var(--muted); font-size: .82rem;
+}
+hr {
+  border: 0; border-top: 1px solid var(--border);
+  margin: .9rem 0;
+}
+.te-section h4 {
+  margin: 0 0 .25rem; font-size: .82rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted);
+}
+.te-section p {
+  margin: 0 0 .55rem; color: var(--muted); font-size: .78rem;
+}
+.te-section button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px;
+  padding: .35rem .9rem;
+  font: inherit; font-size: .8rem;
+
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+  &.primary:hover { filter: brightness(1.08); }
+  &:disabled { opacity: .5; }
+}
+input[type='file'] {
+  display: block;
+  color: var(--text);
+  font: inherit; font-size: .78rem;
+  margin-bottom: .5rem;
+}
+.te-error {
+  margin: .5rem 0;
+  padding: .4rem .6rem;
+  border: 1px solid var(--critical, #f87171);
+  border-radius: 5px;
+  background: rgb(from var(--critical, #f87171) r g b / .07);
+  color: var(--text);
+  font-size: .78rem;
+}
+.te-summary {
+  margin: .5rem 0;
+  font-size: .82rem;
+  & strong { color: var(--text); }
+  & .te-meta {
+    margin-left: .4rem;
+    color: var(--muted); font-size: .74rem;
+  }
+}
+.te-mode {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .55rem .7rem;
+  margin: .55rem 0 .7rem;
+  display: flex; flex-direction: column; gap: .35rem;
+}
+.te-mode legend {
+  padding: 0 .35rem;
+  font-size: .68rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.te-mode label {
+  display: flex; align-items: flex-start; gap: .5rem;
+  font-size: .82rem;
+  & em { color: var(--muted); font-style: normal; font-size: .74rem; }
+}
+.te-status {
+  margin: .8rem 0 0;
+  padding: .4rem .6rem;
+  border-radius: 5px;
+  font-size: .78rem;
+
+  &.te-status-ok {
+    border: 1px solid var(--accent);
+    background: rgb(from var(--accent) r g b / .08);
+    color: var(--text);
+  }
+  &.te-status-err {
+    border: 1px solid var(--critical, #f87171);
+    background: rgb(from var(--critical, #f87171) r g b / .07);
+    color: var(--text);
+  }
+}
+.te-actions {
+  display: flex; justify-content: flex-end; gap: .4rem;
+  margin-top: .8rem;
+  padding-top: .7rem;
+  border-top: 1px solid var(--border);
+}
+.te-actions button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px;
+  padding: .3rem .8rem;
+  font: inherit; font-size: .78rem;
+
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}

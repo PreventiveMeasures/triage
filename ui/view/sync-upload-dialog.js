@@ -13,9 +13,11 @@
 //   → Promise<{ uploaded, failed }> where each entry carries
 //     `{ kind, identifier }`.
 
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { readFileBytes } from '#client/index.js'
 import { putBundleToRemote, putFile } from './client-sync.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import listCSS from '../styles/dialog-list.css'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`
@@ -26,7 +28,9 @@ function itemDisplayLabel(item) {
   return item.identifier
 }
 
-class SyncUploadDialog extends LitElement {
+class SyncUploadDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
+
   static properties = {
     workspaceId: { type: String },
     items: { type: Array },
@@ -35,8 +39,6 @@ class SyncUploadDialog extends LitElement {
     _done: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -48,19 +50,11 @@ class SyncUploadDialog extends LitElement {
     this._settled = false
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const upload = this.querySelector('button[data-role="upload"]')
-    if (upload) upload.focus()
-  }
-
-  _finish(result) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
+  // Focus the Upload action. The base `_finish` (close + resolve) is
+  // inherited unchanged; `_onClose` / `_onCancel` resolve the
+  // empty-result shape callers expect.
+  focusInitial() {
+    this.renderRoot.querySelector('button[data-role="upload"]')?.focus()
   }
 
   _onClose = () => this._finish({ uploaded: [], failed: [] })
@@ -122,7 +116,7 @@ class SyncUploadDialog extends LitElement {
     const uploadLabel = this._uploading
       ? (singular ? 'Uploading…' : `Uploading ${count} ${kindLabel}…`)
       : (singular ? 'Upload' : `Upload ${count}`)
-    return html`<dialog class="leave-workspace-dialog sync-upload-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="lwd-head"><h3>Upload to remote</h3></header>
       <p class="lwd-body">${intro}</p>
       ${list}
@@ -146,14 +140,8 @@ class SyncUploadDialog extends LitElement {
 customElements.define('sync-upload-dialog', SyncUploadDialog)
 
 export function openSyncUploadDialog({ workspaceId, items } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('sync-upload-dialog')
-    el.workspaceId = workspaceId ?? ''
-    el.items = Array.isArray(items) ? [...items] : []
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
+  return openAppDialog('sync-upload-dialog', {
+    workspaceId: workspaceId ?? '',
+    items: Array.isArray(items) ? [...items] : [],
   })
 }
