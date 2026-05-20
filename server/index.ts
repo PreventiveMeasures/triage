@@ -72,7 +72,7 @@
 // and would not reject the attaching socket.
 
 import { type WebSocket, WebSocketServer } from 'ws'
-import { errMsg, errStack } from './util.ts'
+import { errMsg } from './util.ts'
 import type { PeerRegistry } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
 import { createHub } from './hub.ts'
@@ -80,6 +80,7 @@ import { createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
 import { WS_UPGRADE_PATH, createHttpServer } from './http.ts'
 import { installWsServer } from './ws-server.ts'
+import { createLifecycle } from './lifecycle.ts'
 import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
@@ -280,26 +281,11 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
 // the frame.
 const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 
-// In-flight async message handlers. `shutdown` awaits this set
-// before closing the DB so a SIGINT mid-save can't resume against
-// a closed handle (which would throw inside `insertRevision` after
-// the client believed its save was committed).
-const inFlight = new Set<Promise<unknown>>()
-function track(promise: Promise<unknown>): void {
-  inFlight.add(promise)
-  promise.finally(() => inFlight.delete(promise))
-}
-
-// Hoisted above the connection handler so the message-loop's
-// `if (shuttingDown) return` reads from a defined binding even if
-// the closure runs in the same tick the variable is declared.
-let shuttingDown = false
-// Live exit code the in-progress shutdown will pass to
-// `process.exit`. Re-entry can ESCALATE it from 0 → 1 (e.g. a
-// `wss.error` firing during a SIGTERM-driven graceful shutdown
-// shouldn't leave the launcher seeing a clean exit code) but
-// can never DE-escalate. Audit round-13.
-let pendingExitCode = 0
+// Process lifecycle (see ./lifecycle.ts): `track` (in-flight request
+// drain) and `isShuttingDown` (the new-work gate) are consumed by the
+// HTTP + WS planes below; the teardown is `installLifecycle`d once
+// every server object exists.
+const { track, isShuttingDown, install: installLifecycle } = createLifecycle()
 
 // HTTP plane: REST byte-transfer routing + the WS upgrade gate (see
 // ./http.ts). Built after the lifecycle state above because the REST
@@ -307,7 +293,7 @@ let pendingExitCode = 0
 // `track`. The WS connection handler is wired on `wss` below.
 const httpServer = createHttpServer({
   wss, restDeps: objstoreRestDeps, isOriginAllowed,
-  isShuttingDown: () => shuttingDown, track,
+  isShuttingDown, track,
   restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
 })
 
@@ -317,7 +303,7 @@ const httpServer = createHttpServer({
 const { heartbeatTimer } = installWsServer({
   wss, peers, send, unsubscribeAll,
   handleSave, handleSubscribe, handleAuthenticate, sendSaveError, objstore,
-  track, isShuttingDown: () => shuttingDown,
+  track, isShuttingDown,
   maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
   debug: DEBUG,
 })
@@ -338,162 +324,29 @@ httpServer.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
-// Route bind / post-listen failures through `shutdown` so the
-// in-flight handler drain + DB close still run before exit.
-// Without this, `ws` re-emits the error as uncaughtException and
-// the launcher sees a confusing crash rather than the bind
-// failure. Audit round-9 M2.
-httpServer.on('error', (err: Error) => {
-  console.error('Server error:', errStack(err))
-  fireShutdown(1)
-})
-wss.on('error', (err: Error) => {
-  // Symmetric with the http.Server error handler above — route
-  // through `fireShutdown(1)` so the launcher sees a non-zero exit.
-  // The re-entry escalation in `shutdown()` (round-13 audit) takes
-  // a `wss.error` arriving mid-graceful-SIGTERM and bumps
-  // `pendingExitCode` from 0 → 1; without `fireShutdown`, a pre-
-  // shutdown `wss.error` would log + drop and the launcher would
-  // never know to treat the process as failed.
-  console.error('WS server error:', errStack(err))
-  fireShutdown(1)
-})
-
-// `.catch` defends against an unguarded `await` slipping into
-// `shutdown` later: an unhandled rejection here would skip the
-// non-zero exit the launcher relies on.
-function fireShutdown(code: number): void {
-  shutdown(code).catch((err) => {
-    console.warn('shutdown error:', errStack(err))
-    process.exit(code === 0 ? 1 : code)
-  })
-}
-
-async function shutdown(exitCode: number = 0): Promise<void> {
-  // Re-entry: don't restart the teardown, but escalate the pending
-  // exit code if the new caller is non-zero (e.g. a wss.error during
-  // a SIGTERM-driven graceful shutdown). Without this, an error
-  // arriving mid-shutdown would silently exit 0 and the launcher
-  // would record a clean stop.
-  if (shuttingDown) {
-    if (exitCode !== 0 && pendingExitCode === 0) pendingExitCode = exitCode
-    return
-  }
-  shuttingDown = true
-  pendingExitCode = exitCode
-  console.log('Shutting down…')
-  // Stop the heartbeat so a tick can't fire mid-shutdown and ping
-  // a socket the close-loop below already started tearing down.
-  // `unref` already kept it from holding the loop open; this is
-  // the symmetric explicit teardown.
-  clearInterval(heartbeatTimer)
-  // Send a 1001 (going away) close frame to every open socket BEFORE
-  // shutting the listener. Lets clients distinguish a server-initiated
-  // graceful shutdown from a network drop, so they can skip their
-  // reconnect backoff and reconnect on the operator's schedule
-  // instead. Fire-and-forget — `process.exit(0)` below would
-  // force-kill any in-progress flush anyway, and the close frame
-  // gets one tick to drain through the socket buffer before the
-  // following `await wss.close` resolves. The `try/catch` shrugs at
-  // sockets already in CLOSING / CLOSED.
-  for (const socket of wss.clients) {
-    try { socket.close(1001, 'Server shutting down') } catch {}
-  }
-  // Force-terminate any client that doesn't ack the close frame
-  // within a short grace window. `wss.close()` waits for every client
-  // to emit `'close'`, and the `ws` library only TCP-RSTs unresponsive
-  // peers after its own ~30 s `closeTimeout`. A single dead/blackholed
-  // peer would otherwise stretch SIGTERM/SIGINT response by that
-  // full timeout. Audit round-11.
-  const TERMINATE_GRACE_MS = 1_000
-  const terminateTimer = setTimeout(() => {
-    for (const socket of wss.clients) {
-      const rs = socket.readyState
-      if (rs === socket.OPEN || rs === socket.CLOSING) {
-        try { socket.terminate() } catch {}
-      }
-    }
-    // Same grace for HTTP keep-alive sockets that didn't respect the
-    // `Connection: close` hint. Without this, an idle keep-alive
-    // connection can hold `httpServer.close()` until its TCP timeout.
-    try { httpServer.closeAllConnections() } catch {}
-  }, TERMINATE_GRACE_MS)
-  // Don't keep the event loop alive solely for the grace timer —
-  // wss.close resolution already drives shutdown progress.
-  terminateTimer.unref?.()
-  // Stop the periodic reaper AND wait for any in-flight sweep
-  // (incl. the startup sweep) to finish before `handle.close()`
-  // below — otherwise a readdir / unlink would race a closed DB.
-  await stopReaper()
-  // Free idle HTTP keep-alive sockets up front so the close()
-  // below doesn't wait on them. Active in-flight requests still
-  // get to finish; only sockets sitting in keep-alive limbo go.
-  try { httpServer.closeIdleConnections() } catch {}
-  // Close http.Server first to stop accepting new upgrades + HTTP
-  // requests. Guard with `.listening` because `close()` throws
-  // ERR_SERVER_NOT_RUNNING when bind never succeeded (the http
-  // error handler is the path that invoked shutdown in that case).
-  if (httpServer.listening) {
-    await new Promise<void>((resolve) => { httpServer.close(() => resolve()) })
-  }
-  await new Promise<void>((resolve) => { wss.close(() => resolve()) })
-  clearTimeout(terminateTimer)
-  // Drain in-flight handlers so a save that's mid-pipeline finishes
-  // its insertRevision before the DB closes. `handleSave` splits
-  // canonicalSave + computeRevisionIdFromCanonical + revisionExists
-  // + verifyEd25519 + commitRevision across awaits (dup-precheck
-  // interleaved between id-derive and verify), so the in-flight
-  // window spans several yield points. Without this drain, SIGINT
-  // during a save throws into the connection-level catch (silent
-  // log) and the row is lost even though the client may already
-  // have observed an ack from a separate broadcast path.
-  // `Promise.allSettled` so a single handler rejection doesn't
-  // abort the drain.
-  if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-  // Release any commit-lock leases this process still holds. Runs
-  // AFTER the in-flight drain so a PUT that was mid-commit has
-  // already gone through its own finally-release; we mop up only
-  // anything stuck. A rolling restart without this step pins every
-  // held key for the full lease TTL on the new replicas trying to
-  // access them. Tolerant — the DB lease will expire naturally on
-  // failure.
+// App-specific shutdown steps (run after the in-flight drain), wired
+// into the lifecycle teardown below.
+const releaseLeases = async (): Promise<void> => {
+  // Release any commit-lock leases this process still holds — a rolling
+  // restart otherwise pins every held key for the full lease TTL.
   const heldBefore = heldLeaseCount()
   if (heldBefore > 0) {
     if (DEBUG) console.log(`releasing ${heldBefore} commit-lock lease(s) held by this process`)
     try { await releaseAllForThisProcess(objstoreHandle) }
     catch (err) { console.warn('commit-lock shutdown release error:', errMsg(err)) }
   }
-  // objstoreHandle has no `close()`:
-  //  - SQLite: it shares the workspace_revision handle's
-  //    `DatabaseSync`, which `handle.close()` below closes.
-  //  - Neon: there's no persistent connection at all — `neon()`
-  //    returns a stateless HTTP callable, and the SQLite-only
-  //    `DatabaseSync` is the only thing that ever needs explicit
-  //    shutdown. `handle.close()` below is itself a no-op on Neon.
-  try { await handle.close() } catch (err) { console.warn('DB close error:', errMsg(err)) }
-  // Read `pendingExitCode` (not the parameter) so a re-entrant
-  // `shutdown(1)` that landed during the drain wins over the
-  // original `shutdown(0)`. See round-13 escalation note.
-  process.exit(pendingExitCode)
 }
-// Wrap signal handlers so the signal name (passed as the listener's
-// first arg) doesn't bleed into shutdown's `exitCode` parameter.
-process.on('SIGINT', () => fireShutdown(0))
-process.on('SIGTERM', () => fireShutdown(0))
-
-// Process-level catchalls so a stray rejection or uncaught exception
-// doesn't bypass `shutdown()` — Node 20+ defaults exit-on-unhandled-
-// rejection which would skip the in-flight handler drain and the DB
-// close. Log forensically (full stack), route through `fireShutdown(1)`
-// so the launcher records a non-zero exit and the same teardown path
-// runs as on a SIGTERM. Audit round-11 observability.
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', errStack(reason))
-  fireShutdown(1)
-})
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', errStack(err))
-  fireShutdown(1)
+const closeDb = async (): Promise<void> => {
+  // objstoreHandle has no close(): SQLite shares this DatabaseSync and
+  // Neon has no persistent connection; `handle.close()` covers both.
+  try { await handle.close() } catch (err) { console.warn('DB close error:', errMsg(err)) }
+}
+// Wire graceful shutdown + the signal / error / process-catchall
+// handlers (see ./lifecycle.ts). Installed last, once httpServer, wss,
+// and the heartbeat timer all exist.
+installLifecycle({
+  httpServer, wss, heartbeatTimer, stopReaper,
+  releaseLeases, closeDb,
 })
 
 // Bind only after the startup orphan sweep finishes — otherwise a
