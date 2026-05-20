@@ -14,11 +14,14 @@ export function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 // validates exactly this shape.
 export function randomId(): string { return randomBytes(16).toString('base64url') }
 
-// Log-friendly view of an unknown throw. `errMsg` for the common
-// one-line warning, `errStack` where a post-mortem wants the throw
-// site. Both fall back to `String(err)` for a non-Error throw rather
-// than leaking `[object Object]` into a template literal; an Error's
-// `.message` / `.stack` is already a string, so the common path is
-// unchanged.
-export function errMsg(err: unknown): string { return (err as Error)?.message ?? String(err) }
-export function errStack(err: unknown): string { return (err as Error)?.stack ?? String(err) }
+// Log-friendly view of an unknown throw, for use as a `console.*`
+// ARGUMENT (not interpolated into a template literal — see below).
+// `errMsg` for the common one-line warning, `errStack` where a
+// post-mortem wants the throw site. An Error's `.message` / `.stack`
+// is a string; a non-Error throw is returned unchanged so console
+// renders it structurally (util.inspect) instead of coercing it to
+// the useless `[object Object]`. A template-literal caller would
+// coerce the return via `String()` and lose that, so pass these as a
+// separate console argument.
+export function errMsg(err: unknown): unknown { return (err as Error)?.message ?? err }
+export function errStack(err: unknown): unknown { return (err as Error)?.stack ?? err }

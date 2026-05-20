@@ -266,7 +266,7 @@ export async function releaseAllForThisProcess(handle: Handle): Promise<void> {
   catch (err) {
     // Fall back to per-key best-effort releases — at least drop
     // any we can before the DB closes.
-    console.warn(`commit-lock shutdown bulk release failed: ${errMsg(err)}`)
+    console.warn('commit-lock shutdown bulk release failed:', errMsg(err))
     for (const packed of snapshot) {
       const [tag, res] = unpackHeld(packed)
       try { await handle.releaseCommitLock.run(tag, res, PROCESS_HOLDER_ID) } catch {}

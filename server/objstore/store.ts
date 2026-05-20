@@ -749,7 +749,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
       }
     }
   } catch (err) {
-    console.warn(`commitPut upsertLive failed: ${errMsg(err)}`)
+    console.warn('commitPut upsertLive failed:', errMsg(err))
     // Caller's `if (!r.ok) abortPut` cleans the staging side.
     // The just-promoted live blob is now stranded (no row); the
     // reaper's reapCommittedForTag pass will unlink it on the

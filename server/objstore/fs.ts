@@ -60,6 +60,6 @@ export async function unlinkIfExists(filePath: string): Promise<void> {
     // Log the basename only — the full path contains the workspace
     // tag (Ed25519 public key) and shouldn't go to operator logs
     // verbatim. PR #4 review H3.
-    console.warn(`unlink …/${basename(filePath)} failed: ${code ?? errMsg(err)}`)
+    console.warn(`unlink …/${basename(filePath)} failed:`, code ?? errMsg(err))
   }
 }
