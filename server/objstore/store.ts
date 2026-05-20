@@ -506,12 +506,14 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // `io-error` so the REST layer returns 5xx, not 400. PR #4 review.
   //
   // The REST PUT layer already statted post-upload under the
-  // commit lock and threads the result in via `observedSize` —
+  // per-resource lock and threads the result in via `observedSize` —
   // skipping the round-trip saves one Vercel HEAD per PUT. The
-  // staging blob can't have been resized between that stat and
-  // here because the in-process lock + the DB commit lock together
-  // exclude every writer of this stagingId. WS / test paths that
-  // omit `observedSize` fall through to the explicit stat.
+  // staging blob can't have been resized between that stat and here
+  // because the in-process lock (held continuously across the
+  // post-upload stat and this commit) excludes every writer of this
+  // stagingId within the process, and staging ids are random so no
+  // other request targets the same blob. WS / test paths that omit
+  // `observedSize` fall through to the explicit stat.
   if (input.observedSize === undefined) {
     try { stagedSize = await handle.blob.statStaging(input.workspaceTag, input.stagingId) }
     catch { return { ok: false, reason: 'io-error' } }

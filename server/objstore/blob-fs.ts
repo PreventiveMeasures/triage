@@ -77,10 +77,11 @@ export function openFsBlobBackend(dir: string): BlobBackend {
     // eslint-disable-next-line require-await
     openStagingWriter: async (tag, stagingId): Promise<StagingWriter> => {
       const path = stagingFilePath(dir, tag, stagingId)
-      // `flags: 'w'` truncates an existing file. Concurrent replay
-      // protection (the DB commit-lock in rest.ts) prevents two
-      // writers from opening the same staging path; if that gate
-      // is bypassed (test fixture, future refactor), the second
+      // `flags: 'w'` truncates an existing file. Two distinct begins
+      // mint distinct (16-byte random) staging ids, so they never
+      // target the same path; the per-resource KeyedAsyncLock
+      // serialises a same-stagingId replay within a process. If that
+      // gate were bypassed (test fixture, future refactor), the second
       // write would clobber the first.
       const writable = createWriteStream(path, { flags: 'w' })
       return {

@@ -56,8 +56,10 @@ type StagingRow = {
 // No in-process lock is taken: it would key on the content hash, but
 // the commit path locks on the resourceTag, so a hash-keyed lock can't
 // serialise against an in-flight commit — the grace window + re-read
-// are the actual safety net. The single-flight reaper (one sweep at a
-// time, see init.ts) means no second reaper races this either.
+// are the actual safety net. init.ts runs one sweep at a time per
+// process, but a multi-replica deploy genuinely runs reapers
+// concurrently; they stay safe via idempotent unlink + the per-blob
+// grace window + live-set re-read, not via mutual exclusion.
 async function gcBlobIfUnreferenced(
   handle: Handle, tag: string, hash: string, modifiedMs: number, now: number, grace: number,
 ): Promise<void> {

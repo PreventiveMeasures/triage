@@ -22,15 +22,18 @@
 //
 // Crash-safety contract (mirrors blob-fs.ts but via copy+del instead
 // of fsync+rename):
-//   PUT commit:  put(staging) → copy(staging → live) → del(staging)
-//                → DB write
-//   DELETE:      DB write → del(live)  (best-effort; not-found ok)
+//   PUT commit:  put(staging) → copy(staging → live) → DB version-CAS
+//                → del(staging)
+//   DELETE:      DB row drop (the reaper GCs the now-unreferenced blob)
 // A crash mid-`copy` leaves NO live blob (Vercel's copy is atomic
-// per-blob). A crash between `copy` and `del(staging)` leaves a
-// stranded staging blob; the reaper's stale-staging TTL sweep picks
-// it up. A crash between `copy+del` and DB write leaves a live blob
-// whose DB row hasn't been bumped — the reaper's
-// reapCommittedForTag pass sees a live blob with no live row → del.
+// per-blob). A crash between `copy` and the CAS leaves a stranded,
+// unreferenced live blob; a crash after the CAS but before
+// `del(staging)` leaves a stranded staging blob. The reaper reconciles
+// both: `reapUnreferencedForTag` GCs a live blob that no live row
+// references (once past the grace window — content blobs are immutable
+// and may be shared, so GC is keyed on the referenced-hash set, not on
+// any single resource), and the stale-staging TTL sweep drops orphan
+// staging blobs.
 
 import { PassThrough, type Readable } from 'node:stream'
 import { Buffer } from 'node:buffer'
@@ -145,16 +148,20 @@ function stagingBlobPath(tag: string, stagingId: string): string {
 }
 
 // Coerce the SDK's `uploadedAt` (Date | ISO string | epoch-ms number)
-// into epoch-ms for the reaper's grace-window comparison. A missing /
-// unparseable value yields 0 — treated as "ancient", so a blob whose
-// timestamp we can't read is GC-eligible the moment it's unreferenced
-// (the reaper re-reads the live set under the lock just before unlink,
-// so this can't reap an in-flight commit's referenced blob).
+// into epoch-ms for the reaper's grace-window comparison. The real SDK
+// always returns a valid `uploadedAt`; a missing / unparseable value
+// fails CLOSED to "just now" so the grace window still shields the
+// blob from GC. This matters because the grace window is the ONLY guard
+// during a commit's promote→CAS gap: no live row exists yet, so the
+// reaper's live-set re-read can't cover it. Reading an unknown
+// timestamp as "ancient" would let a sweep collect a just-promoted blob
+// out from under an in-flight commit (a metadata→bytes desync). We
+// prefer a (theoretical, real-SDK-unreachable) storage leak over that.
 function uploadedAtMs(uploadedAt: Date | string | number | undefined): number {
-  if (uploadedAt == null) return 0
-  if (typeof uploadedAt === 'number') return Number.isFinite(uploadedAt) ? uploadedAt : 0
+  if (uploadedAt == null) return Date.now()
+  if (typeof uploadedAt === 'number') return Number.isFinite(uploadedAt) ? uploadedAt : Date.now()
   const t = new Date(uploadedAt).getTime()
-  return Number.isFinite(t) ? t : 0
+  return Number.isFinite(t) ? t : Date.now()
 }
 
 // Strip a `.bin` suffix and reject anything else. Same defensive
