@@ -1,7 +1,7 @@
-import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, listBundles, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, isReportIgnored, listBundles, patchEntry, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
-import { activeTabFor, findGroupById, groupState, ignoredKey, tabKey } from './group.js'
+import { activeTabFor, findGroupById, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
@@ -880,27 +880,27 @@ report.addEventListener('click', (e) => {
     const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
     for (const f of targets) {
       const key = tabKey(f)
-      const iKey = ignoredKey(f)
+      const reportName = findingReport(f)
       if (action === 'restore') {
         // Clear both buckets — Restore returns the tab to live.
-        state.triageState.delete(key)
-        state.ignoredIds.delete(iKey)
+        patchEntry(state.triage, key, { triage: undefined })
+        setReportIgnored(state.triage, key, reportName, false)
       } else if (action === 'ignored') {
         // Mutually exclusive with triage. Toggle on re-click.
-        if (state.ignoredIds.has(iKey)) {
-          state.ignoredIds.delete(iKey)
+        if (isReportIgnored(state.triage, key, reportName)) {
+          setReportIgnored(state.triage, key, reportName, false)
         } else {
-          state.ignoredIds.add(iKey)
-          state.triageState.delete(key)
+          patchEntry(state.triage, key, { triage: undefined })
+          setReportIgnored(state.triage, key, reportName, true)
         }
       } else {
         // Triage state — clear any ignore on the same tab. Toggle
         // on re-click of the active state.
-        if (state.triageState.get(key) === action) {
-          state.triageState.delete(key)
+        if (state.triage.get(key)?.triage === action) {
+          patchEntry(state.triage, key, { triage: undefined })
         } else {
-          state.triageState.set(key, action)
-          state.ignoredIds.delete(iKey)
+          patchEntry(state.triage, key, { triage: action })
+          setReportIgnored(state.triage, key, reportName, false)
         }
       }
     }
@@ -925,11 +925,10 @@ report.addEventListener('click', (e) => {
     if (!group) return
     const activeTab = activeTabFor(group)
     const activeKey = tabKey(activeTab)
-    const current = state.comments.get(activeKey) ?? ''
+    const current = state.triage.get(activeKey)?.comment ?? ''
     openCommentDialog({ initial: current, finding: activeTab }).then((next) => {
       if (next === null) return null
-      if (next) state.comments.set(activeKey, next)
-      else state.comments.delete(activeKey)
+      patchEntry(state.triage, activeKey, { comment: next || undefined })
       saveTriage()
       render()
       return null
@@ -1005,11 +1004,10 @@ report.addEventListener('click', (e) => {
     if (!group) return
     const activeTab = activeTabFor(group)
     const activeKey = tabKey(activeTab)
-    const current = state.fixes.get(activeKey) ?? ''
+    const current = state.triage.get(activeKey)?.fix ?? ''
     openFixLinkDialog({ initial: current, finding: activeTab }).then((next) => {
       if (next === null) return null
-      if (next) state.fixes.set(activeKey, next)
-      else state.fixes.delete(activeKey)
+      patchEntry(state.triage, activeKey, { fix: next || undefined })
       saveTriage()
       render()
       return null
@@ -1144,16 +1142,16 @@ function setGroupTriage(group, target) {
   const targets = groupSt.hasConflict ? [activeTabFor(group)] : group
   for (const f of targets) {
     const key = tabKey(f)
-    const iKey = ignoredKey(f)
+    const reportName = findingReport(f)
     if (target === 'untriaged') {
-      state.triageState.delete(key)
-      state.ignoredIds.delete(iKey)
+      patchEntry(state.triage, key, { triage: undefined })
+      setReportIgnored(state.triage, key, reportName, false)
     } else if (target === 'ignored') {
-      state.ignoredIds.add(iKey)
-      state.triageState.delete(key)
+      patchEntry(state.triage, key, { triage: undefined })
+      setReportIgnored(state.triage, key, reportName, true)
     } else {
-      state.triageState.set(key, target)
-      state.ignoredIds.delete(iKey)
+      patchEntry(state.triage, key, { triage: target })
+      setReportIgnored(state.triage, key, reportName, false)
     }
   }
 }
@@ -1562,9 +1560,9 @@ report.addEventListener('mark-color', (e) => {
   const activeKey = tabKey(activeTabFor(group))
   const color = e.detail?.color
   if (!color) return
-  const current = state.markers.get(activeKey)
-  if (current === color) state.markers.delete(activeKey)
-  else state.markers.set(activeKey, color)
+  const current = state.triage.get(activeKey)?.color
+  if (current === color) patchEntry(state.triage, activeKey, { color: undefined })
+  else patchEntry(state.triage, activeKey, { color })
   saveTriage()
   render()
 })

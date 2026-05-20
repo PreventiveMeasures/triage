@@ -103,6 +103,13 @@ export {
   saveTriage,
 } from './triage.js'
 
+export {
+  bucketOf,
+  isReportIgnored,
+  patchEntry,
+  setReportIgnored,
+} from './triage-entry.ts'
+
 export { isEncryptedBundle } from './workspace-bundle-crypto.js'
 
 export { buildWorkspaceExportBundle } from './workspace-export.js'

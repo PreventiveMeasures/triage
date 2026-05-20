@@ -48,16 +48,13 @@ await import('./_polyfills.js')
 const { state } = await import('../client/state.ts')
 const { saveTriage, reloadTriageFromStorage } = await import('../client/triage.js')
 const { triageSync } = await import('../client/sync/triage-sync.ts')
+const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
 
 function clearState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
   globalThis.localStorage.clear()
 }
 
@@ -69,55 +66,54 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // Tab "sibling": adds A=red. We simulate by setting state, calling
     // saveTriage to write the blob, then clearing state to mimic this
     // tab not knowing about it yet.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveTriage()
-    state.markers.clear()
+    state.triage.clear()
 
     // Storage event fires here in production via the sibling's write.
     await reloadTriageFromStorage()
 
-    assert.equal(state.markers.get(FINDING_A), 'red', 'sibling-added marker landed')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'sibling-added marker landed')
   })
 
   it('removes entries the sibling tab cleared', async () => {
     // Tab "this": A=red, B=blue. Sibling tab clears A but keeps B.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'blue')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'blue' })
     await saveTriage()
     // Sibling rewrites the blob (only B). Simulate by mutating state
     // and saving — both tabs see the same blob in the end.
-    state.markers.delete(FINDING_A)
+    patchEntry(state.triage, FINDING_A, { color: undefined })
     await saveTriage()
     // This tab's in-memory map still has A — it hasn't seen the
     // sibling's write yet. Restore that to mimic tab divergence.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
 
     await reloadTriageFromStorage()
 
-    assert.equal(state.markers.get(FINDING_A), undefined, 'sibling-cleared marker removed')
-    assert.equal(state.markers.get(FINDING_B), 'blue', 'unchanged sibling marker preserved')
+    assert.equal(state.triage.get(FINDING_A)?.color, undefined, 'sibling-cleared marker removed')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'blue', 'unchanged sibling marker preserved')
   })
 
   it('propagates triage state, comments, and fixes', async () => {
     // Sibling tab persists a fully-annotated finding.
-    state.markers.set(FINDING_A, 'gray')
-    state.triageState.set(FINDING_A, 'fixed')
-    state.comments.set(FINDING_A, 'verified upstream')
-    state.fixes.set(FINDING_A, 'https://example.test/pr/42')
+    patchEntry(state.triage, FINDING_A, {
+      color: 'gray',
+      triage: 'fixed',
+      comment: 'verified upstream',
+      fix: 'https://example.test/pr/42',
+    })
     await saveTriage()
 
     // This tab knew nothing.
-    state.markers.clear()
-    state.triageState.clear()
-    state.comments.clear()
-    state.fixes.clear()
+    state.triage.clear()
 
     await reloadTriageFromStorage()
 
-    assert.equal(state.markers.get(FINDING_A), 'gray')
-    assert.equal(state.triageState.get(FINDING_A), 'fixed')
-    assert.equal(state.comments.get(FINDING_A), 'verified upstream')
-    assert.equal(state.fixes.get(FINDING_A), 'https://example.test/pr/42')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'gray')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'verified upstream')
+    assert.equal(state.triage.get(FINDING_A)?.fix, 'https://example.test/pr/42')
   })
 
   it('honors triage/ignored mutual-exclusion when the blob carries both', async () => {
@@ -127,20 +123,19 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // same id. Reload must mirror the sync-layer mutex (triage
     // wins, ignoredReports skipped) so a multi-tab race can't
     // land this tab in the forbidden state.
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_A, 'fixed')
-    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    patchEntry(state.triage, FINDING_A, { color: 'red', triage: 'fixed' })
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
     // saveTriage emits both because state has both — it doesn't
     // enforce the invariant, the action handlers do.
     await saveTriage()
     // This tab's local cleared the ignored entry locally before
     // the storage event arrived (e.g. action handler ran).
-    state.ignoredIds.clear()
+    setReportIgnored(state.triage, FINDING_A, 'r.json', false)
 
     await reloadTriageFromStorage()
 
-    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'triage preserved')
-    assert.equal(state.ignoredIds.has(`r.json\0${FINDING_A}`), false, 'ignored skipped because triage wins')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed', 'triage preserved')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'r.json'), false, 'ignored skipped because triage wins')
   })
 
   it('drops local ignored entries when sibling re-asserted triage on the same id', async () => {
@@ -148,27 +143,24 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // the same id and saved (which under the mutex also clears
     // their ignored — but if the sibling's blob still has both
     // for any reason, local should drop its ignored entry too).
-    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
     await saveTriage()
     // Mimic sibling: write a blob with triage AND ignoredReports
     // for the same id (forbidden state — defends against a
     // sibling running an older build).
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_A, 'fixed')
-    // ignoredIds already has r.json\0FINDING_A — leave it so the
+    patchEntry(state.triage, FINDING_A, { color: 'red', triage: 'fixed' })
+    // ignoredReports already has r.json — leave it so the
     // saved blob carries both.
     await saveTriage()
     // Restore "this tab" state to before the sibling acted.
-    state.markers.clear()
-    state.triageState.clear()
-    state.ignoredIds.clear()
-    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    state.triage.clear()
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
 
     await reloadTriageFromStorage()
 
-    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'triage applied')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed', 'triage applied')
     assert.equal(
-      state.ignoredIds.has(`r.json\0${FINDING_A}`),
+      isReportIgnored(state.triage, FINDING_A, 'r.json'),
       false,
       'pre-existing local ignored dropped because blob has triage for this id',
     )
@@ -179,14 +171,14 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // blob. Reload must not nuke them when the blob doesn't carry
     // them, otherwise an unsaved-because-numeric edit would vanish
     // every time a sibling tab persisted anything.
-    state.markers.set('42', 'red')
-    state.markers.set(FINDING_A, 'blue')
+    patchEntry(state.triage, '42', { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { color: 'blue' })
     await saveTriage()
     // saveTriage skipped the numeric id, so blob has only A.
     // Now simulate a sibling change: blob still only has A.
     await reloadTriageFromStorage()
-    assert.equal(state.markers.get('42'), 'red', 'session-only id preserved through reload')
-    assert.equal(state.markers.get(FINDING_A), 'blue')
+    assert.equal(state.triage.get('42')?.color, 'red', 'session-only id preserved through reload')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'blue')
   })
 
   it('forward-compat: a blob with unknown future fields loads cleanly', async () => {
@@ -201,8 +193,7 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // Build a blob the same way saveTriage would, then splice in
     // an extra field per entry plus a top-level field. Re-encode +
     // base64 + write directly to localStorage, then reload.
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_A, 'fixed')
+    patchEntry(state.triage, FINDING_A, { color: 'red', triage: 'fixed' })
     await saveTriage()
     const raw = globalThis.localStorage.getItem('deepview.triage')
     const compressed = Uint8Array.fromBase64(raw)
@@ -218,18 +209,17 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     const recompressed = new Uint8Array(await new Response(recompressedStream).arrayBuffer())
     globalThis.localStorage.setItem('deepview.triage', recompressed.toBase64())
 
-    state.markers.clear()
-    state.triageState.clear()
+    state.triage.clear()
     await reloadTriageFromStorage()
 
     // Known fields loaded; unknown fields silently ignored.
-    assert.equal(state.markers.get(FINDING_A), 'red', 'known marker loads')
-    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'known triage loads')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'known marker loads')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed', 'known triage loads')
     // Top-level keys that aren't valid id-keyed entries don't crash
     // the loader (the reader iterates entries and treats any object
     // value as a per-id record; `__topLevel`'s `whatever` field has
     // no recognized properties, so nothing lands in state.*).
-    assert.equal(state.markers.get('__topLevel'), undefined)
+    assert.equal(state.triage.get('__topLevel')?.color, undefined)
   })
 
   it('crash mid-compress: pending uncompressed snapshot recovers the user edit', async () => {
@@ -244,8 +234,7 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // await never resolves, kicking saveTriage in the background,
     // then verifying the pending key has the data and reload picks
     // it up.
-    state.markers.set(FINDING_A, 'red')
-    state.comments.set(FINDING_A, 'pre-crash note')
+    patchEntry(state.triage, FINDING_A, { color: 'red', comment: 'pre-crash note' })
     const realCompressionStream = globalThis.CompressionStream
     let resolveStuck
     globalThis.CompressionStream = class {
@@ -271,11 +260,10 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
       // Simulate restart: clear in-memory state, then reload from
       // localStorage. readTriageBlob prefers pending → state.*
       // recovers.
-      state.markers.clear()
-      state.comments.clear()
+      state.triage.clear()
       await reloadTriageFromStorage()
-      assert.equal(state.markers.get(FINDING_A), 'red', 'pre-crash marker recovered')
-      assert.equal(state.comments.get(FINDING_A), 'pre-crash note', 'pre-crash comment recovered')
+      assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'pre-crash marker recovered')
+      assert.equal(state.triage.get(FINDING_A)?.comment, 'pre-crash note', 'pre-crash comment recovered')
     } finally {
       globalThis.CompressionStream = realCompressionStream
       // Unblock the stuck stream so the test process can exit
@@ -288,7 +276,7 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // Counterpart to the crash test: in the happy path, after the
     // compressed write lands, the pending key is removed so future
     // reads get the (canonical) compressed view.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveTriage()
     assert.equal(
       globalThis.localStorage.getItem('deepview.triage.pending'),
@@ -311,13 +299,13 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // pending key and treats its ids as protected local edits.
 
     // Step 1: a sibling tab persisted FINDING_B=blue (compressed key).
-    state.markers.set(FINDING_B, 'blue')
+    patchEntry(state.triage, FINDING_B, { color: 'blue' })
     await saveTriage()
 
     // Step 2: locally, the user edited FINDING_A=red. saveTriage
     // started — synchronously wrote the pending key — but compress
     // is still in flight when the sibling's storage event arrives.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     globalThis.localStorage.setItem('deepview.triage.pending', JSON.stringify({
       [FINDING_A]: { color: 'red' },
       [FINDING_B]: { color: 'blue' },
@@ -328,9 +316,9 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // wiped FINDING_A — but the pending-key check protects it.
     await reloadTriageFromStorage()
 
-    assert.equal(state.markers.get(FINDING_A), 'red',
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red',
       'local in-flight edit preserved across cross-tab replace')
-    assert.equal(state.markers.get(FINDING_B), 'blue',
+    assert.equal(state.triage.get(FINDING_B)?.color, 'blue',
       'sibling\'s entry from compressed blob still present')
   })
 
@@ -338,23 +326,23 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // Sanity: when no in-flight saveTriage is pending (no pending
     // key), replace mode behaves as before — sibling's clear of an
     // id that this tab still has in state.* propagates as a delete.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'blue')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'blue' })
     await saveTriage()
     // Sibling clears A. Simulate by deleting + re-saving here.
-    state.markers.delete(FINDING_A)
+    patchEntry(state.triage, FINDING_A, { color: undefined })
     await saveTriage()
     // Restore A locally (mimic divergence) — no pending key, just
     // a stale state.* entry.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     assert.equal(globalThis.localStorage.getItem('deepview.triage.pending'), null,
       'no pending key — clean fast-path')
 
     await reloadTriageFromStorage()
 
-    assert.equal(state.markers.get(FINDING_A), undefined,
+    assert.equal(state.triage.get(FINDING_A)?.color, undefined,
       'sibling\'s clear propagates via replace mode')
-    assert.equal(state.markers.get(FINDING_B), 'blue')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'blue')
   })
 
   it('QuotaExceededError on the compressed key falls back to the pending blob (audit round-7)', async () => {
@@ -369,8 +357,8 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     // outer try/catch swallows the error, the pending key still
     // holds the latest data (so reload-from-storage recovers), and
     // the in-memory state.* is unchanged.
-    state.markers.set(FINDING_A, 'red')
-    state.comments.set(FINDING_A, 'pre-quota note')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { comment: 'pre-quota note' })
 
     const realSetItem = globalThis.localStorage.setItem
     let quotaHits = 0
@@ -418,17 +406,16 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
     )
 
     // In-memory state.* survives — the user's edit isn't dropped.
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.comments.get(FINDING_A), 'pre-quota note')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'pre-quota note')
 
     // And reloadTriageFromStorage recovers via the pending key
     // (preferred over the missing compressed key). Same primitive
     // that the M3 round-5 crash test exercises.
-    state.markers.clear()
-    state.comments.clear()
+    state.triage.clear()
     await reloadTriageFromStorage()
-    assert.equal(state.markers.get(FINDING_A), 'red', 'reload recovered marker via pending key')
-    assert.equal(state.comments.get(FINDING_A), 'pre-quota note', 'reload recovered comment via pending key')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'reload recovered marker via pending key')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'pre-quota note', 'reload recovered comment via pending key')
   })
 })
 
@@ -499,13 +486,13 @@ describe('saveTriage — notify + Web-Lock serialization (audit round-12 H10)', 
     triageSync.notify = () => { calls += 1 }
     try {
       // First save with one marker — non-empty branch.
-      state.markers.set(FINDING_A, 'red')
+      patchEntry(state.triage, FINDING_A, { color: 'red' })
       await saveTriage()
       const afterFirst = calls
       assert.ok(afterFirst > 0, 'non-empty saveTriage notifies')
 
       // Clear the marker — empty-branch path.
-      state.markers.clear()
+      patchEntry(state.triage, FINDING_A, { color: undefined })
       await saveTriage()
       assert.ok(calls > afterFirst, 'EMPTY saveTriage also notifies (was the bug)')
     } finally {
@@ -536,11 +523,11 @@ describe('saveTriage — notify + Web-Lock serialization (audit round-12 H10)', 
     try {
       // First write: marker A=red. Second write (queued before
       // first lock release): marker A=blue.
-      state.markers.set(FINDING_A, 'red')
+      patchEntry(state.triage, FINDING_A, { color: 'red' })
       const p1 = saveTriage()
       // Mutate state synchronously between the two saveTriage
       // entries — the second one runs against post-mutation state.
-      state.markers.set(FINDING_A, 'blue')
+      patchEntry(state.triage, FINDING_A, { color: 'blue' })
       const p2 = saveTriage()
       await Promise.all([p1, p2])
 

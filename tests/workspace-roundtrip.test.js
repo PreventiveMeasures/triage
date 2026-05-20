@@ -33,13 +33,10 @@ const {
 } = await import('../client/workspace-export.js')
 const { isEncryptedBundle } = await import('../client/workspace-bundle-crypto.js')
 const { listWorkspaces } = await import('../client/workspaces.js')
+const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
 function clearState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
   state.reports.length = 0
   state.currentFile = null
   state.currentWorkspace = null
@@ -339,9 +336,9 @@ describe('applyWorkspaceImport: triage migration', () => {
       },
     }))
     await applyWorkspaceImport(data)
-    assert.equal(state.triageState.get(FINDING_A), 'fixed')
-    assert.equal(state.triageState.get(FINDING_B), 'invalid')
-    assert.equal(state.markers.get(FINDING_A), 'red')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
+    assert.equal(state.triage.get(FINDING_B)?.triage, 'invalid')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
   })
 
   it('migrates legacy {deleted: true} → triage: "deleted"', async () => {
@@ -354,8 +351,8 @@ describe('applyWorkspaceImport: triage migration', () => {
       },
     }))
     await applyWorkspaceImport(data)
-    assert.equal(state.triageState.get(FINDING_A), 'deleted', 'legacy deleted should land in triageState as "deleted"')
-    assert.equal(state.markers.get(FINDING_A), 'gray')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'deleted', 'legacy deleted should land in triageState as "deleted"')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'gray')
   })
 
   it('does not call the conflict resolver when there is nothing to merge', async () => {
@@ -371,11 +368,11 @@ describe('applyWorkspaceImport: triage migration', () => {
     }))
     await applyWorkspaceImport(data, { conflictResolver })
     assert.equal(called, false)
-    assert.equal(state.triageState.get(FINDING_A), 'fixed')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
   })
 
   it('queues a triage conflict when local + imported disagree and honors "imported"', async () => {
-    state.triageState.set(FINDING_A, 'fixed')
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
     const seen = []
     const conflictResolver = (conflicts) => {
       for (const c of conflicts) seen.push(c)
@@ -394,7 +391,7 @@ describe('applyWorkspaceImport: triage migration', () => {
     assert.equal(seen[0].property, 'triage')
     assert.equal(seen[0].local, 'fixed')
     assert.equal(seen[0].imported, 'invalid')
-    assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported decision should win')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'invalid', 'imported decision should win')
   })
 
   // Per-property positive coverage: a refactor that broke
@@ -402,9 +399,9 @@ describe('applyWorkspaceImport: triage migration', () => {
   // triage intact would pass the existing "imported wins" test
   // (which only exercises triage). Pin each branch.
   it('applyConflictDecisions writes color/comment/fix when the user picks "imported"', async () => {
-    state.markers.set(FINDING_A, 'green')
-    state.comments.set(FINDING_A, 'local note')
-    state.fixes.set(FINDING_A, 'local fix')
+    patchEntry(state.triage, FINDING_A, { color: 'green' })
+    patchEntry(state.triage, FINDING_A, { comment: 'local note' })
+    patchEntry(state.triage, FINDING_A, { fix: 'local fix' })
     const conflictResolver = (conflicts) => {
       const decisions = {}
       for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
@@ -419,9 +416,9 @@ describe('applyWorkspaceImport: triage migration', () => {
       },
     }))
     await applyWorkspaceImport(data, { conflictResolver })
-    assert.equal(state.markers.get(FINDING_A), 'red', 'imported color should win')
-    assert.equal(state.comments.get(FINDING_A), 'imported note', 'imported comment should win')
-    assert.equal(state.fixes.get(FINDING_A), 'imported fix', 'imported fix should win')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'imported color should win')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'imported note', 'imported comment should win')
+    assert.equal(state.triage.get(FINDING_A)?.fix, 'imported fix', 'imported fix should win')
   })
 
   it('imported decision skipped when state.* changed during the dialog (M-2 stale guard)', async () => {
@@ -431,8 +428,8 @@ describe('applyWorkspaceImport: triage migration', () => {
     // value while the dialog was open. The hydration dialog has
     // had this guard since round-4 M-2; this test pins the
     // symmetric guard for the import path.
-    state.markers.set(FINDING_A, 'green')
-    state.comments.set(FINDING_A, 'note A')
+    patchEntry(state.triage, FINDING_A, { color: 'green' })
+    patchEntry(state.triage, FINDING_A, { comment: 'note A' })
     // Resolver picks 'imported' for both color and comment, but
     // mutates state.* mid-flight to simulate a user edit (or a peer
     // chain landing) while the dialog is open.
@@ -441,8 +438,8 @@ describe('applyWorkspaceImport: triage migration', () => {
       for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
       // Mid-dialog mutation: user types a new comment, peer chain
       // overwrites color.
-      state.comments.set(FINDING_A, 'fresh user edit')
-      state.markers.set(FINDING_A, 'cyan')
+      patchEntry(state.triage, FINDING_A, { comment: 'fresh user edit' })
+      patchEntry(state.triage, FINDING_A, { color: 'cyan' })
       return decisions
     }
     const data = parseWorkspaceJson(JSON.stringify({
@@ -454,8 +451,8 @@ describe('applyWorkspaceImport: triage migration', () => {
     await applyWorkspaceImport(data, { conflictResolver })
     // Both decisions were 'imported' BUT state.* changed mid-dialog.
     // The stale-check skips the writes; mid-dialog edits survive.
-    assert.equal(state.markers.get(FINDING_A), 'cyan', 'mid-dialog color edit preserved')
-    assert.equal(state.comments.get(FINDING_A), 'fresh user edit', 'mid-dialog comment preserved')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'cyan', 'mid-dialog color edit preserved')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'fresh user edit', 'mid-dialog comment preserved')
   })
 
   it('imported triage decision drops pre-existing local ignored entries (mutex)', async () => {
@@ -466,8 +463,8 @@ describe('applyWorkspaceImport: triage migration', () => {
     // triage and per-report ignore coexist on a tab. The mutex
     // applied at every other write/apply path (action handlers,
     // sync apply, load/reload) now also runs here.
-    state.triageState.set(FINDING_A, 'fixed')
-    state.ignoredIds.add(`r.json\0${FINDING_A}`)
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
     const conflictResolver = (conflicts) => {
       const decisions = {}
       for (const c of conflicts) decisions[`${c.id}:${c.property}`] = 'imported'
@@ -480,16 +477,16 @@ describe('applyWorkspaceImport: triage migration', () => {
       triage: { [FINDING_A]: { triage: 'invalid' } },
     }))
     await applyWorkspaceImport(data, { conflictResolver })
-    assert.equal(state.triageState.get(FINDING_A), 'invalid', 'imported triage applied')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'invalid', 'imported triage applied')
     assert.equal(
-      state.ignoredIds.has(`r.json\0${FINDING_A}`),
+      isReportIgnored(state.triage, FINDING_A, 'r.json'),
       false,
       'pre-existing local ignored cleared by mutex',
     )
   })
 
   it('keeps the local value when conflict resolver returns null (cancel)', async () => {
-    state.triageState.set(FINDING_A, 'fixed')
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
     const data = parseWorkspaceJson(JSON.stringify({
       version: 1,
       workspace: { id: 'ws-cancel', name: 'C', privateKey: 'k' },
@@ -497,14 +494,14 @@ describe('applyWorkspaceImport: triage migration', () => {
       triage: { [FINDING_A]: { triage: 'invalid' } },
     }))
     await applyWorkspaceImport(data, { conflictResolver: () => null })
-    assert.equal(state.triageState.get(FINDING_A), 'fixed', 'local should stick when resolver cancels')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed', 'local should stick when resolver cancels')
   })
 
   it('migrates legacy bundles that conflict with a local triage state via the resolver', async () => {
     // Local already has 'fixed' for FINDING_A; the legacy bundle
     // says { deleted: true }. The conflict resolver must see the
     // conflict in the new-shape ('deleted'), not as raw {deleted}.
-    state.triageState.set(FINDING_A, 'fixed')
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
     const seen = []
     const data = parseWorkspaceJson(JSON.stringify({
       version: 1,
@@ -531,11 +528,11 @@ describe('export → import round-trip', () => {
     const { saveFile } = await import('../client/storage.js')
     await saveFile('r.json', reportContent([FINDING_A, FINDING_B]))
 
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_A, 'fixed')
-    state.comments.set(FINDING_A, 'looks good')
-    state.fixes.set(FINDING_A, 'https://example.test/pr/1')
-    state.triageState.set(FINDING_B, 'deleted')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { comment: 'looks good' })
+    patchEntry(state.triage, FINDING_A, { fix: 'https://example.test/pr/1' })
+    patchEntry(state.triage, FINDING_B, { triage: 'deleted' })
 
     const ws = makeWorkspace({ reports: ['r.json'] })
     const payload = await buildWorkspaceExportPayload(ws)
@@ -548,19 +545,16 @@ describe('export → import round-trip', () => {
     assert.equal(payload.triage[FINDING_B].deleted, undefined)
 
     // Wipe local state, then re-import — should reconstruct.
-    state.markers.clear()
-    state.triageState.clear()
-    state.comments.clear()
-    state.fixes.clear()
+    state.triage.clear()
 
     const reparsed = parseWorkspaceJson(JSON.stringify(payload))
     await applyWorkspaceImport(reparsed)
 
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.triageState.get(FINDING_A), 'fixed')
-    assert.equal(state.comments.get(FINDING_A), 'looks good')
-    assert.equal(state.fixes.get(FINDING_A), 'https://example.test/pr/1')
-    assert.equal(state.triageState.get(FINDING_B), 'deleted')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'looks good')
+    assert.equal(state.triage.get(FINDING_A)?.fix, 'https://example.test/pr/1')
+    assert.equal(state.triage.get(FINDING_B)?.triage, 'deleted')
 
     // Workspace was upserted (idempotent — re-importing the same
     // id merges instead of duplicating).
@@ -890,9 +884,9 @@ describe('encrypted bundle export → import round-trip', () => {
   it('round-trips a password-encrypted bundle end-to-end', async () => {
     const { saveFile } = await import('../client/storage.js')
     await saveFile('r.json', reportContent([FINDING_A]))
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_A, 'fixed')
-    state.comments.set(FINDING_A, 'looks good')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { comment: 'looks good' })
 
     const ws = makeWorkspace({ reports: ['r.json'] })
     const password = 'correct horse battery staple'
@@ -901,16 +895,14 @@ describe('encrypted bundle export → import round-trip', () => {
     const bytes = new Uint8Array(await blob.arrayBuffer())
     assert.equal(isEncryptedBundle(bytes), true)
 
-    state.markers.clear()
-    state.triageState.clear()
-    state.comments.clear()
+    state.triage.clear()
 
     const data = await parseWorkspaceBundleBytes(bytes, password)
     await applyWorkspaceImport(data)
 
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.triageState.get(FINDING_A), 'fixed')
-    assert.equal(state.comments.get(FINDING_A), 'looks good')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'looks good')
   })
 
   it('parseWorkspaceBundleBytes rejects encrypted bundles when the password is wrong', async () => {
@@ -1064,8 +1056,8 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     await saveFile(ownReportName, reportContent([FINDING_A]))
     await saveFile(foreignReportName, reportContent([FINDING_A]))
 
-    state.ignoredIds.add(`${ownReportName}\0${FINDING_A}`)
-    state.ignoredIds.add(`${foreignReportName}\0${FINDING_A}`)
+    setReportIgnored(state.triage, FINDING_A, ownReportName, true)
+    setReportIgnored(state.triage, FINDING_A, foreignReportName, true)
 
     const ws = makeWorkspace({ reports: [ownReportName] })
     const payload = await buildWorkspaceExportPayload(ws)
@@ -1089,7 +1081,7 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     // `findings` is an OBJECT, not an array — pre-fix would crash.
     await saveFile(malformedName, JSON.stringify({ findings: { id: 'broken' } }))
 
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     const ws = makeWorkspace({ reports: [malformedName, goodName] })
     const payload = await buildWorkspaceExportPayload(ws)
 
@@ -1112,34 +1104,27 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
       // pre-fix would write it under id="0".
       triage: [{ color: 'red', triage: 'fixed' }],
     }
-    state.markers.clear()
-    state.triageState.clear()
+    state.triage.clear()
     await applyWorkspaceImport(data)
-    assert.equal(state.markers.has('0'), false, 'no entry persisted under stringified array index')
-    assert.equal(state.triageState.has('0'), false, 'no triage persisted under stringified array index')
+    assert.equal(state.triage.get('0')?.color, undefined, 'no entry persisted under stringified array index')
+    assert.equal(state.triage.get('0')?.triage, undefined, 'no triage persisted under stringified array index')
     // The valid finding id from reports[] also shouldn't end up
     // marked — the array path returned early before any merge.
-    assert.equal(state.markers.has(FINDING_A), false, 'valid id untouched: bogus payload skipped entirely')
+    assert.equal(state.triage.get(FINDING_A)?.color, undefined, 'valid id untouched: bogus payload skipped entirely')
   })
 
   it('mergeTriage skips spurious `.set` calls when imported equals local (audit round-14 WI-3)', async () => {
     // Pre-fix `else if (importedColor)` ran whenever an importedColor
     // was present, regardless of whether it equalled localColor —
-    // calling state.markers.set with the SAME value still wakes every
+    // calling state.triage.set with the SAME value still wakes every
     // reactive observer (sidebar / table / triage-sync subscriber).
     // Now the call only fires when the value actually differs.
-    state.markers.set(FINDING_A, 'red')
-    state.comments.set(FINDING_A, 'note')
-    state.fixes.set(FINDING_A, 'patch')
-    let markerSets = 0
-    let commentSets = 0
-    let fixSets = 0
-    const origMarkerSet = state.markers.set.bind(state.markers)
-    const origCommentSet = state.comments.set.bind(state.comments)
-    const origFixSet = state.fixes.set.bind(state.fixes)
-    state.markers.set = function spy(...args) { markerSets += 1; return origMarkerSet(...args) }
-    state.comments.set = function spy(...args) { commentSets += 1; return origCommentSet(...args) }
-    state.fixes.set = function spy(...args) { fixSets += 1; return origFixSet(...args) }
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { comment: 'note' })
+    patchEntry(state.triage, FINDING_A, { fix: 'patch' })
+    let entrySets = 0
+    const origEntrySet = state.triage.set.bind(state.triage)
+    state.triage.set = function spy(...args) { entrySets += 1; return origEntrySet(...args) }
     try {
       const data = {
         version: 1,
@@ -1148,13 +1133,9 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
         triage: { [FINDING_A]: { color: 'red', comment: 'note', fix: 'patch' } },
       }
       await applyWorkspaceImport(data)
-      assert.equal(markerSets, 0, 'no marker.set when imported color === local')
-      assert.equal(commentSets, 0, 'no comment.set when imported comment === local')
-      assert.equal(fixSets, 0, 'no fix.set when imported fix === local')
+      assert.equal(entrySets, 0, 'no triage.set when imported color/comment/fix === local')
     } finally {
-      state.markers.set = origMarkerSet
-      state.comments.set = origCommentSet
-      state.fixes.set = origFixSet
+      state.triage.set = origEntrySet
     }
   })
 

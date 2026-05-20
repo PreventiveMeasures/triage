@@ -18,10 +18,10 @@
 //     whose id isn't in the set. Persists via saveTriage when
 //     anything changed.
 import { state } from './state.ts'
+import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
 import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
-import { splitIgnoredKey } from '../common/ignored-key.js'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
 // the union of finding ids reachable from those reports. Uses the
@@ -82,22 +82,7 @@ async function collectReachableIds(names) {
 // prune decisions.
 function collectPersistedTriageIds() {
   const ids = new Set()
-  for (const k of state.markers.keys()) {
-    if (!SESSION_ID_RE.test(k)) ids.add(k)
-  }
-  for (const k of state.triageState.keys()) {
-    if (!SESSION_ID_RE.test(k)) ids.add(k)
-  }
-  for (const k of state.comments.keys()) {
-    if (!SESSION_ID_RE.test(k)) ids.add(k)
-  }
-  for (const k of state.fixes.keys()) {
-    if (!SESSION_ID_RE.test(k)) ids.add(k)
-  }
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { id } = parts
+  for (const id of state.triage.keys()) {
     if (!SESSION_ID_RE.test(id)) ids.add(id)
   }
   return ids
@@ -185,57 +170,40 @@ export async function analyzeTriageImpact(deletedReportNames) {
 // layer, same as a user-driven triage edit).
 export async function pruneOrphanTriage() {
   // Snapshot synchronously BEFORE the await. See doc-block above.
-  const snapMarkers = new Set(state.markers.keys())
-  const snapTriageState = new Set(state.triageState.keys())
-  const snapComments = new Set(state.comments.keys())
-  const snapFixes = new Set(state.fixes.keys())
-  const snapIgnoredIds = new Set(state.ignoredIds)
+  // `snapIds` pins the per-finding fields; `snapIgnored` pins the
+  // (id, reportName) ignore pairs so the per-report prune below only
+  // touches what THIS pass saw.
+  const snapIds = new Set(state.triage.keys())
+  const snapIgnored = []
+  for (const [id, entry] of state.triage) {
+    if (entry.ignoredReports) {
+      for (const report of entry.ignoredReports) snapIgnored.push({ id, report })
+    }
+  }
   const names = await listFiles()
   const nameSet = new Set(names)
   const reachable = await collectReachableIds(names)
   let changed = false
-  for (const k of snapMarkers) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (reachable.has(k)) continue
-    // `state.markers.has(k)` covers the case where a cross-tab
-    // storage event already deleted the entry between our
-    // snapshot and our mutation — `delete` would be a no-op
-    // either way, but skipping keeps `changed` honest so a
-    // pure-no-op prune doesn't pointlessly persist.
-    if (!state.markers.has(k)) continue
-    state.markers.delete(k)
-    changed = true
-  }
-  for (const k of snapTriageState) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (reachable.has(k)) continue
-    if (!state.triageState.has(k)) continue
-    state.triageState.delete(k)
-    changed = true
-  }
-  for (const k of snapComments) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (reachable.has(k)) continue
-    if (!state.comments.has(k)) continue
-    state.comments.delete(k)
-    changed = true
-  }
-  for (const k of snapFixes) {
-    if (SESSION_ID_RE.test(k)) continue
-    if (reachable.has(k)) continue
-    if (!state.fixes.has(k)) continue
-    state.fixes.delete(k)
-    changed = true
-  }
-  for (const key of snapIgnoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
+  for (const id of snapIds) {
     if (SESSION_ID_RE.test(id)) continue
-    if (reachable.has(id) && nameSet.has(reportName)) continue
-    if (!state.ignoredIds.has(key)) continue
-    state.ignoredIds.delete(key)
-    changed = true
+    if (reachable.has(id)) continue
+    // Re-read so a cross-tab storage event that already dropped the
+    // entry between our snapshot and our mutation is a no-op — and
+    // `patchEntry`'s own value-change gate keeps `changed` honest so
+    // a pure-no-op prune doesn't pointlessly persist. The per-finding
+    // fields go; any ignoredReports for an unreachable id are cleared
+    // by the per-report pass below (reachable.has(id) is false there).
+    const cur = state.triage.get(id)
+    if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix)) continue
+    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined })) {
+      changed = true
+    }
+  }
+  for (const { id, report } of snapIgnored) {
+    if (SESSION_ID_RE.test(id)) continue
+    if (reachable.has(id) && nameSet.has(report)) continue
+    if (!isReportIgnored(state.triage, id, report)) continue
+    if (setReportIgnored(state.triage, id, report, false)) changed = true
   }
   if (!changed) return
   await saveTriage()

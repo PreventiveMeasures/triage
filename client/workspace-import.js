@@ -6,7 +6,7 @@ import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
 import { backfillFindingIds, flattenFindings, parseReport } from '../common/report-findings.js'
 import { gunzipToText } from '../common/gzip.js'
-import { makeIgnoredKey, splitIgnoredKey } from '../common/ignored-key.js'
+import { bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 
 // Pure-logic side of workspace import. The DOM-touching layer (unlock
@@ -18,7 +18,7 @@ import { decryptBundle, isEncryptedBundle } from './workspace-bundle-crypto.js'
 // `parseWorkspaceJson` validates the export shape (version 1) and
 // throws on a non-export blob; `applyWorkspaceImport` does the heavy
 // lifting: it writes each report to OPFS, upserts the workspace,
-// merges triage into `state.markers / triageState / comments / fixes`
+// merges triage into `state.triage`
 // (deferring to a caller-supplied `conflictResolver` when local +
 // imported values disagree), and adopts per-report repo URLs that
 // don't already have a local entry.
@@ -222,11 +222,7 @@ export function parseWorkspaceJson(text) {
 // only carry `deleted: true`, which we treat as 'deleted'. Returns
 // null when the entry has no bucket annotation at all.
 export function readImportedTriageBucket(entry) {
-  if (entry?.triage === 'fixed' || entry?.triage === 'invalid' || entry?.triage === 'deleted') {
-    return entry.triage
-  }
-  if (entry?.deleted) return 'deleted'
-  return null
+  return bucketOf(entry) ?? null
 }
 
 // Build an `id → { severity, file, line, description }` map by
@@ -256,60 +252,60 @@ export async function buildImportedFindingLookup(reportEntries) {
   return lookup
 }
 
-// Merge the imported triage into state.markers / state.triageState /
-// state.comments / state.fixes. Non-conflicting changes apply
-// immediately. A property-scoped conflict (id+property where both
-// sides have a value and they differ) is queued and handed to
-// `conflictResolver` — when omitted (or when it returns null), the
+// Merge the imported triage into `state.triage`. Non-conflicting
+// changes apply immediately. A property-scoped conflict (id+property
+// where both sides have a value and they differ) is queued and handed
+// to `conflictResolver` — when omitted (or when it returns null), the
 // local side wins on every conflict.
 async function mergeTriage(triage, conflictResolver, findingLookup) {
   // Reject arrays: `typeof [] === 'object'` so the lone-typeof guard
   // would let an array through, and `Object.entries([])` then yields
   // stringified indices that get persisted as bogus finding ids in
-  // `state.markers` / `state.comments` / `state.fixes`. Audit round-14
-  // WI-1.
+  // `state.triage`. Audit round-14 WI-1.
   if (!triage || typeof triage !== 'object' || Array.isArray(triage)) return
+  const map = state.triage
   const conflicts = []
   for (const [id, entry] of Object.entries(triage)) {
     if (!entry || typeof entry !== 'object') continue
 
-    // Skip the `.set` calls when the imported value equals the local
-    // one — the reactive observers (sidebar / table re-render, M-2
-    // hydration listeners, triage-sync.js subscribers) all fire on
-    // every Map mutation regardless of whether the value actually
-    // changed. A bundle that re-imports the user's own state would
-    // otherwise spam every listener for every entry. Audit round-14
+    // Skip the writes when the imported value equals the local one —
+    // the reactive observers (sidebar / table re-render, M-2 hydration
+    // listeners, triage-sync.js subscribers) all fire on every entry
+    // mutation. A bundle that re-imports the user's own state would
+    // otherwise spam every listener for every entry. `patchEntry`
+    // itself also no-ops an unchanged value, but the explicit guards
+    // here are needed for conflict detection anyway. Audit round-14
     // WI-3.
-    const localColor = state.markers.get(id)
+    const localColor = map.get(id)?.color
     const importedColor = typeof entry.color === 'string' ? entry.color : undefined
     if (importedColor && localColor && localColor !== importedColor) {
       conflicts.push({ id, property: 'color', local: localColor, imported: importedColor })
     } else if (importedColor && importedColor !== localColor) {
-      state.markers.set(id, importedColor)
+      patchEntry(map, id, { color: importedColor })
     }
 
-    const localComment = state.comments.get(id) ?? ''
+    const localComment = map.get(id)?.comment ?? ''
     const importedComment = typeof entry.comment === 'string' ? entry.comment : ''
     if (importedComment && localComment && localComment !== importedComment) {
       conflicts.push({ id, property: 'comment', local: localComment, imported: importedComment })
     } else if (importedComment && importedComment !== localComment) {
-      state.comments.set(id, importedComment)
+      patchEntry(map, id, { comment: importedComment })
     }
 
-    const localFix = state.fixes.get(id) ?? ''
+    const localFix = map.get(id)?.fix ?? ''
     const importedFix = typeof entry.fix === 'string' ? entry.fix : ''
     if (importedFix && localFix && localFix !== importedFix) {
       conflicts.push({ id, property: 'fix', local: localFix, imported: importedFix })
     } else if (importedFix && importedFix !== localFix) {
-      state.fixes.set(id, importedFix)
+      patchEntry(map, id, { fix: importedFix })
     }
 
     const importedTriage = readImportedTriageBucket(entry)
-    const localTriage = state.triageState.get(id) ?? null
+    const localTriage = bucketOf(map.get(id)) ?? null
     if (importedTriage && localTriage && localTriage !== importedTriage) {
       conflicts.push({ id, property: 'triage', local: localTriage, imported: importedTriage })
     } else if (importedTriage && !localTriage) {
-      state.triageState.set(id, importedTriage)
+      patchEntry(map, id, { triage: importedTriage })
     }
     // Per-report ignore — additive merge. Each (reportName, id) is
     // an independent slot; we union the imported list into local.
@@ -320,9 +316,9 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     // just-imported above), skip the ignored merge so the local
     // state honors the per-tab invariant.
     const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
-    if (!state.triageState.has(id)) {
+    if (!bucketOf(map.get(id))) {
       for (const r of ignoredReports) {
-        if (typeof r === 'string') state.ignoredIds.add(makeIgnoredKey(r, id))
+        if (typeof r === 'string') setReportIgnored(map, id, r, true)
       }
     }
   }
@@ -350,12 +346,12 @@ function applyConflictDecisions(conflicts, decisions) {
     const key = `${c.id}:${c.property}`
     if (decisions[key] !== 'imported') continue
     if (currentLocalValue(c.id, c.property) !== c.local) continue
-    if (c.property === 'color') state.markers.set(c.id, c.imported)
-    else if (c.property === 'comment') state.comments.set(c.id, c.imported)
-    else if (c.property === 'fix') state.fixes.set(c.id, c.imported)
+    if (c.property === 'color') patchEntry(state.triage, c.id, { color: c.imported })
+    else if (c.property === 'comment') patchEntry(state.triage, c.id, { comment: c.imported })
+    else if (c.property === 'fix') patchEntry(state.triage, c.id, { fix: c.imported })
     else if (c.property === 'triage') {
-      state.triageState.set(c.id, c.imported)
-      dropIgnoredFor(c.id)
+      // Clear the per-report ignore on the same id — mutex with triage.
+      patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
     }
   }
 }
@@ -364,17 +360,11 @@ function applyConflictDecisions(conflicts, decisions) {
 // collection time so the M-2 stale-check is meaningful: comment /
 // fix were normalised via `?? ''`, color / triage came back raw.
 function currentLocalValue(id, property) {
-  if (property === 'color') return state.markers.get(id)
-  if (property === 'triage') return state.triageState.get(id) ?? null
-  if (property === 'comment') return state.comments.get(id) ?? ''
-  if (property === 'fix') return state.fixes.get(id) ?? ''
+  if (property === 'color') return state.triage.get(id)?.color
+  if (property === 'triage') return bucketOf(state.triage.get(id)) ?? null
+  if (property === 'comment') return state.triage.get(id)?.comment ?? ''
+  if (property === 'fix') return state.triage.get(id)?.fix ?? ''
   return undefined
-}
-
-function dropIgnoredFor(id) {
-  for (const k of [...state.ignoredIds]) {
-    if (splitIgnoredKey(k)?.id === id) state.ignoredIds.delete(k)
-  }
 }
 
 // Persist any base64-encoded bundle bytes that ride alongside the

@@ -38,6 +38,7 @@ const { triageSync } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')
+const { patchEntry } = await import('../client/triage-entry.ts')
 
 function randomBase64() {
   const bytes = new Uint8Array(32)
@@ -52,11 +53,7 @@ function setReports(findings, fileName = 'races.md') {
 }
 
 function clearTriageState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
 }
 
 async function waitFor(predicate, label, timeoutMs = 5_000) {
@@ -152,7 +149,7 @@ describe('triage-sync client races', () => {
     try {
       // Set a marker in EACH workspace's scope. Each save should
       // surface only on its own workspace's chain.
-      for (let i = 0; i < N; i++) state.markers.set(findings[i], `color-${i}`)
+      for (let i = 0; i < N; i++) patchEntry(state.triage, findings[i], { color: `color-${i}` })
       await saveTriage()
       // All sessions should ack (since each has a scoped edit).
       for (const id of wsIds) await waitFor(() => settledAfterAck(id), `ws ${id} acked`)
@@ -189,13 +186,13 @@ describe('triage-sync client races', () => {
       // the save entirely.
       const promises = []
       for (let i = 0; i < 10; i++) {
-        state.markers.set('finding-rapid', `color-${i}`)
+        patchEntry(state.triage, 'finding-rapid', { color: `color-${i}` })
         promises.push(saveTriage())
       }
       await Promise.all(promises)
       // Wait for the session to settle.
       await waitFor(() => settledAfterAck(wsId), 'session settled')
-      assert.equal(state.markers.get('finding-rapid'), 'color-9', 'final marker is the LAST set value')
+      assert.equal(state.triage.get('finding-rapid')?.color, 'color-9', 'final marker is the LAST set value')
       // workspaceTag is now stable (derived + at least one ack
       // committed). Count actual chain revisions on the server:
       // this is the assertion the test's description promises —
@@ -226,7 +223,7 @@ describe('triage-sync client races', () => {
     // returned from the server should be empty (no newer revisions).
     const wsId = await startSession(['finding-restart'])
     try {
-      state.markers.set('finding-restart', 'red')
+      patchEntry(state.triage, 'finding-restart', { color: 'red' })
       await saveTriage()
       await waitFor(() => settledAfterAck(wsId), 'baseline ack')
       const baseAfterFirstSave = triageSync.sessionInfo(wsId).baseRevision
@@ -247,7 +244,7 @@ describe('triage-sync client races', () => {
         'base survived restart (no newer revisions on the server)',
       )
       // A fresh save after restart still works.
-      state.markers.set('finding-restart', 'green')
+      patchEntry(state.triage, 'finding-restart', { color: 'green' })
       await saveTriage()
       await waitFor(() => triageSync.sessionInfo(wsId).baseRevision !== baseAfterRestart, 'post-restart save advanced base')
       assert.notEqual(triageSync.sessionInfo(wsId).baseRevision, baseAfterRestart)
@@ -277,12 +274,12 @@ describe('triage-sync client races', () => {
     // identity recheck, never reaches persist).
     const wsId = await startSession(['finding-close'])
     try {
-      state.markers.set('finding-close', 'red')
+      patchEntry(state.triage, 'finding-close', { color: 'red' })
       await saveTriage()
       await waitFor(() => settledAfterAck(wsId), 'baseline ack')
       const settledBase = triageSync.sessionInfo(wsId).baseRevision
       // Trigger a save and IMMEDIATELY close the session.
-      state.markers.set('finding-close', 'green')
+      patchEntry(state.triage, 'finding-close', { color: 'green' })
       const savePromise = saveTriage()
       triageSync.closeSession(wsId)
       // saveTriage settles (the underlying op's promise resolves
@@ -348,7 +345,7 @@ describe('triage-sync client races', () => {
     const wsId = await startSession(['finding-rotate'])
     try {
       // Set a marker BEFORE rotation.
-      state.markers.set('finding-rotate', 'edited-before-rotation')
+      patchEntry(state.triage, 'finding-rotate', { color: 'edited-before-rotation' })
       const oldTag = triageSync.sessionInfo(wsId).workspaceTag
       // Rotate the workspace's private key. The session listener
       // tears down + reopens under the new identity.
@@ -360,11 +357,11 @@ describe('triage-sync client races', () => {
       )
       await waitFor(statusOnline, 'new identity online')
       // The marker is still in state.markers (module-level).
-      assert.equal(state.markers.get('finding-rotate'), 'edited-before-rotation')
+      assert.equal(state.triage.get('finding-rotate')?.color, 'edited-before-rotation')
       // The new identity's first save picks it up via the
       // effectiveLocalState diff. Trigger by setting again (no-op
       // diff would skip; setting to a fresh value forces a save).
-      state.markers.set('finding-rotate', 'committed-under-new-identity')
+      patchEntry(state.triage, 'finding-rotate', { color: 'committed-under-new-identity' })
       await saveTriage()
       await waitFor(() => settledAfterAck(wsId), 'committed under new identity')
       // Chain under the NEW workspaceTag has the post-rotation save.
@@ -406,7 +403,7 @@ describe('triage-sync client races', () => {
       // through the client we hit, resyncAttempted should never
       // latch true on a non-malformed chain.
       for (let i = 0; i < 10; i++) {
-        state.markers.set('finding-continuous', `step-${i}`)
+        patchEntry(state.triage, 'finding-continuous', { color: `step-${i}` })
         await saveTriage()
         await waitFor(() => settledAfterAck(wsId), `step ${i} settled`)
       }

@@ -4,7 +4,7 @@
 // over them: diff, apply, equality, and the three-way conflict scan. No
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
-import type { TriageBucket } from './host.ts'
+import type { TriageEntry } from './host.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix'
 
@@ -15,21 +15,9 @@ export type Conflict = {
   imported: string
 }
 
-// One persisted triage value for a single finding-id. The shape on
-// the wire and in baseState matches what `state.markers` /
-// `state.triageState` / `state.comments` / `state.fixes` /
-// `state.ignoredIds` collectively encode for that id.
-export type TriageEntry = {
-  color?: string
-  triage?: TriageBucket
-  comment?: string
-  fix?: string
-  ignoredReports?: string[]
-  // Legacy boolean form — older peers / pre-bucket persisted blobs.
-  // Migrated to `triage: 'deleted'` on apply / load.
-  deleted?: boolean
-}
-
+// `TriageEntry` (the per-finding-id triage value carried on the wire
+// and in baseState) is defined in `../state.ts` — the same shape
+// `state.triage` stores live — and re-exported through `host.ts`.
 export type TriageStateMap = { [id: string]: TriageEntry | undefined }
 export type Changeset = { [id: string]: TriageEntry | null | undefined }
 

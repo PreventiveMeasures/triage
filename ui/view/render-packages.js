@@ -68,7 +68,7 @@ export function renderPackagesView() {
       const findings = []
       const files = new Map()
       for (const f of sub.findings) {
-        const t = state.triageState.get(tabKey(f)) ?? null
+        const t = state.triage.get(tabKey(f))?.triage ?? null
         if (t === 'fixed') triageCounts.fixed++
         else if (t === 'invalid') triageCounts.invalid++
         else if (t === 'deleted') triageCounts.deleted++
@@ -319,7 +319,7 @@ function packageBucketCounts(rawBucket, version) {
     : (rawBucket.byVersion.get(version)?.files.values() ?? [].values())
   for (const findings of fileSources) {
     for (const f of findings) {
-      const t = state.triageState.get(tabKey(f)) ?? null
+      const t = state.triage.get(tabKey(f))?.triage ?? null
       if (t === 'invalid') counts.invalid++
       else if (t === 'deleted') counts.deleted++
       else counts.live++
@@ -582,7 +582,7 @@ function packageFindingsByFile(rawBucket, pkg, mode = 'live', version) {
     : (rawBucket.byVersion.get(version)?.files ?? new Map())
   for (const [file, findings] of fileSource) {
     const filtered = findings.filter((f) => {
-      const t = state.triageState.get(tabKey(f)) ?? null
+      const t = state.triage.get(tabKey(f))?.triage ?? null
       if (mode === 'invalid') return t === 'invalid'
       if (mode === 'deleted') return t === 'deleted'
       return t !== 'invalid' && t !== 'deleted'

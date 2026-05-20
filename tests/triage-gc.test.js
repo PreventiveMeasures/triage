@@ -1,8 +1,8 @@
 // `client/triage-gc.js` — pre-deletion triage impact analysis +
 // orphan-triage GC sweep. Both helpers walk OPFS-stored reports
 // (via `client/storage.js`'s localStorage fallback under the test
-// shim) and intersect them with the in-memory `state.*` triage
-// maps to decide which entries are reachable from a remaining
+// shim) and intersect them with the in-memory `state.triage`
+// triage map to decide which entries are reachable from a remaining
 // report and which would be orphaned.
 //
 // Coverage:
@@ -29,6 +29,7 @@ await import('./_polyfills.js')
 const { state } = await import('../client/state.ts')
 const storage = await import('../client/storage.js')
 const { analyzeTriageImpact, pruneOrphanTriage } = await import('../client/triage-gc.js')
+const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
@@ -41,11 +42,7 @@ const FINDING_D = '00000000-0000-4000-8000-00000000000d'
 // next one's reachable / persisted snapshots and pin everything
 // as "shared" (or hide a real orphan).
 function clearAll() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
   globalThis.localStorage.clear()
 }
 
@@ -75,7 +72,7 @@ describe('analyzeTriageImpact: empty / short-circuit paths', () => {
     // No overlap → no orphans, no shared. The helper should
     // short-circuit AFTER parsing the deleted side, BEFORE
     // parsing the (possibly larger) kept side.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('a.json', [{ id: FINDING_A }])
     await saveReport('b.json', [{ id: FINDING_B }])
     const impact = await analyzeTriageImpact(['b.json'])
@@ -86,9 +83,9 @@ describe('analyzeTriageImpact: empty / short-circuit paths', () => {
     // Pre-uuid / fallback ids never round-trip to localStorage —
     // the analyzer must not count them as "at-risk" triage even
     // when a deleted report happens to carry the same id shape.
-    state.markers.set('42', 'red')
-    state.comments.set('99', 'note')
-    state.ignoredIds.add('a.json\u00000')
+    patchEntry(state.triage, '42', { color: 'red' })
+    patchEntry(state.triage, '99', { comment: 'note' })
+    setReportIgnored(state.triage, '0', 'a.json', true)
     await saveReport('a.json', [{ id: '42' }, { id: '99' }, { id: '0' }])
     const impact = await analyzeTriageImpact(['a.json'])
     assert.deepEqual(impact, { orphanedCount: 0, sharedCount: 0 })
@@ -99,7 +96,7 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
   beforeEach(clearAll)
 
   it('counts an orphan when the deleted report is the only one carrying the id', async () => {
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('a.json', [{ id: FINDING_A }])
     await saveReport('b.json', [{ id: FINDING_B }])
     const impact = await analyzeTriageImpact(['a.json'])
@@ -107,7 +104,7 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
   })
 
   it('counts a shared when another remaining report also carries the id', async () => {
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('a.json', [{ id: FINDING_A }])
     await saveReport('b.json', [{ id: FINDING_A }, { id: FINDING_B }])
     const impact = await analyzeTriageImpact(['a.json'])
@@ -118,9 +115,9 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
     // A is only in the deleted report → orphan.
     // B is in both deleted + kept → shared.
     // C is in the kept-only set → not at risk, must NOT appear in either count.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'green')
-    state.markers.set(FINDING_C, 'blue')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'green' })
+    patchEntry(state.triage, FINDING_C, { color: 'blue' })
     await saveReport('deleted.json', [{ id: FINDING_A }, { id: FINDING_B }])
     await saveReport('kept.json', [{ id: FINDING_B }, { id: FINDING_C }])
     const impact = await analyzeTriageImpact(['deleted.json'])
@@ -131,14 +128,14 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
     // One finding per collection so each contributes a distinct id
     // to the union — the helper has to scan all five maps, not just
     // one. All four ids are orphans (no kept reports).
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_B, 'invalid')
-    state.comments.set(FINDING_C, 'note')
-    state.fixes.set(FINDING_D, 'https://example.test/fix')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { triage: 'invalid' })
+    patchEntry(state.triage, FINDING_C, { comment: 'note' })
+    patchEntry(state.triage, FINDING_D, { fix: 'https://example.test/fix' })
     // ignoredIds is a Set of `${reportName}\0${id}` — verify the id
     // is extracted from the composite key.
     const FINDING_E = '00000000-0000-4000-8000-00000000000e'
-    state.ignoredIds.add(`deleted.json\u0000${FINDING_E}`)
+    setReportIgnored(state.triage, FINDING_E, 'deleted.json', true)
     await saveReport('deleted.json', [
       { id: FINDING_A },
       { id: FINDING_B },
@@ -156,8 +153,8 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
     // walk must reach every MEMBER's id — otherwise a triage entry
     // on a group member would falsely register as orphaned even
     // though the group is alive in the kept report.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'green')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'green' })
     await saveReport('deleted.json', [[{ id: FINDING_A }, { id: FINDING_B }]])
     await saveReport('kept.json', [[{ id: FINDING_A }, { id: FINDING_B }]])
     const impact = await analyzeTriageImpact(['deleted.json'])
@@ -167,7 +164,7 @@ describe('analyzeTriageImpact: orphan vs. shared split', () => {
   it('does not count ids not present in the deleted reports even if persisted', async () => {
     // Persisted triage on FINDING_A is on the KEPT report only.
     // Deleting `deleted.json` doesn't affect it → 0/0.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('deleted.json', [{ id: FINDING_B }])
     await saveReport('kept.json', [{ id: FINDING_A }])
     const impact = await analyzeTriageImpact(['deleted.json'])
@@ -179,34 +176,34 @@ describe('pruneOrphanTriage', () => {
   beforeEach(clearAll)
 
   it('is a no-op when every persisted id is still reachable', async () => {
-    state.markers.set(FINDING_A, 'red')
-    state.comments.set(FINDING_A, 'note')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_A, { comment: 'note' })
     await saveReport('a.json', [{ id: FINDING_A }])
     await pruneOrphanTriage()
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.comments.get(FINDING_A), 'note')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_A)?.comment, 'note')
   })
 
   it('drops orphaned ids across every persisted collection', async () => {
-    state.markers.set(FINDING_A, 'red')           // orphan
-    state.markers.set(FINDING_B, 'green')          // kept (reachable)
-    state.triageState.set(FINDING_A, 'invalid')    // orphan
-    state.triageState.set(FINDING_B, 'fixed')      // kept
-    state.comments.set(FINDING_A, 'note A')        // orphan
-    state.comments.set(FINDING_B, 'note B')        // kept
-    state.fixes.set(FINDING_A, 'https://orphan')   // orphan
-    state.fixes.set(FINDING_B, 'https://kept')     // kept
+    patchEntry(state.triage, FINDING_A, { color: 'red' })           // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })          // kept (reachable)
+    patchEntry(state.triage, FINDING_A, { triage: 'invalid' })    // orphan
+    patchEntry(state.triage, FINDING_B, { triage: 'fixed' })      // kept
+    patchEntry(state.triage, FINDING_A, { comment: 'note A' })        // orphan
+    patchEntry(state.triage, FINDING_B, { comment: 'note B' })        // kept
+    patchEntry(state.triage, FINDING_A, { fix: 'https://orphan' })   // orphan
+    patchEntry(state.triage, FINDING_B, { fix: 'https://kept' })     // kept
     // a.json is gone (not on disk); b.json remains and carries B.
     await saveReport('b.json', [{ id: FINDING_B }])
     await pruneOrphanTriage()
-    assert.equal(state.markers.has(FINDING_A), false, 'orphan marker gone')
-    assert.equal(state.markers.get(FINDING_B), 'green', 'kept marker survives')
-    assert.equal(state.triageState.has(FINDING_A), false, 'orphan triageState gone')
-    assert.equal(state.triageState.get(FINDING_B), 'fixed', 'kept triageState survives')
-    assert.equal(state.comments.has(FINDING_A), false, 'orphan comment gone')
-    assert.equal(state.comments.get(FINDING_B), 'note B', 'kept comment survives')
-    assert.equal(state.fixes.has(FINDING_A), false, 'orphan fix gone')
-    assert.equal(state.fixes.get(FINDING_B), 'https://kept', 'kept fix survives')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true, 'orphan marker gone')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green', 'kept marker survives')
+    assert.equal(state.triage.get(FINDING_A)?.triage === undefined, true, 'orphan triageState gone')
+    assert.equal(state.triage.get(FINDING_B)?.triage, 'fixed', 'kept triageState survives')
+    assert.equal(state.triage.get(FINDING_A)?.comment === undefined, true, 'orphan comment gone')
+    assert.equal(state.triage.get(FINDING_B)?.comment, 'note B', 'kept comment survives')
+    assert.equal(state.triage.get(FINDING_A)?.fix === undefined, true, 'orphan fix gone')
+    assert.equal(state.triage.get(FINDING_B)?.fix, 'https://kept', 'kept fix survives')
   })
 
   it('drops ignoredIds whose report is no longer on disk even when the id is reachable', async () => {
@@ -214,23 +211,23 @@ describe('pruneOrphanTriage', () => {
     // ignore was scoped to a report that no longer exists. The
     // (reportName, id) pair is dead even though the id alone
     // would survive a marker / comment GC pass.
-    state.markers.set(FINDING_A, 'red')
-    state.ignoredIds.add(`gone.json\u0000${FINDING_A}`)
-    state.ignoredIds.add(`kept.json\u0000${FINDING_A}`)
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    setReportIgnored(state.triage, FINDING_A, 'gone.json', true)
+    setReportIgnored(state.triage, FINDING_A, 'kept.json', true)
     await saveReport('kept.json', [{ id: FINDING_A }])
     await pruneOrphanTriage()
-    assert.equal(state.markers.get(FINDING_A), 'red', 'marker survives via kept.json')
-    assert.equal(state.ignoredIds.has(`gone.json\u0000${FINDING_A}`), false, 'ignore for gone report dropped')
-    assert.equal(state.ignoredIds.has(`kept.json\u0000${FINDING_A}`), true, 'ignore for kept report survives')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'marker survives via kept.json')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'gone.json'), false, 'ignore for gone report dropped')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'kept.json'), true, 'ignore for kept report survives')
   })
 
   it('drops ignoredIds whose id is unreachable even when the report is still on disk', async () => {
     // Symmetric to the above: the report file exists, but the
     // ignored id no longer matches any finding in any report.
-    state.ignoredIds.add(`a.json\u0000${FINDING_A}`)
+    setReportIgnored(state.triage, FINDING_A, 'a.json', true)
     await saveReport('a.json', [{ id: FINDING_B }])
     await pruneOrphanTriage()
-    assert.equal(state.ignoredIds.has(`a.json\u0000${FINDING_A}`), false, 'ignore on unreachable id dropped')
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'a.json'), false, 'ignore on unreachable id dropped')
   })
 
   it('leaves session-only numeric ids alone', async () => {
@@ -238,29 +235,25 @@ describe('pruneOrphanTriage', () => {
     // id-less findings; they don't round-trip to localStorage and
     // the GC must not touch them — otherwise a delete + GC during
     // an active session would wipe the live tab's in-flight triage.
-    state.markers.set('42', 'red')
-    state.comments.set('99', 'note')
-    state.ignoredIds.add('a.json\u00000')
+    patchEntry(state.triage, '42', { color: 'red' })
+    patchEntry(state.triage, '99', { comment: 'note' })
+    setReportIgnored(state.triage, '0', 'a.json', true)
     await saveReport('a.json', [{ id: FINDING_A }])
     await pruneOrphanTriage()
-    assert.equal(state.markers.get('42'), 'red')
-    assert.equal(state.comments.get('99'), 'note')
-    assert.equal(state.ignoredIds.has('a.json\u00000'), true)
+    assert.equal(state.triage.get('42')?.color, 'red')
+    assert.equal(state.triage.get('99')?.comment, 'note')
+    assert.equal(isReportIgnored(state.triage, '0', 'a.json'), true)
   })
 
   it('wipes everything when no reports remain on disk', async () => {
-    state.markers.set(FINDING_A, 'red')
-    state.triageState.set(FINDING_B, 'fixed')
-    state.comments.set(FINDING_A, 'note')
-    state.fixes.set(FINDING_B, 'https://fix')
-    state.ignoredIds.add(`a.json\u0000${FINDING_A}`)
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { triage: 'fixed' })
+    patchEntry(state.triage, FINDING_A, { comment: 'note' })
+    patchEntry(state.triage, FINDING_B, { fix: 'https://fix' })
+    setReportIgnored(state.triage, FINDING_A, 'a.json', true)
     // No saveReport — listFiles() returns empty.
     await pruneOrphanTriage()
-    assert.equal(state.markers.size, 0)
-    assert.equal(state.triageState.size, 0)
-    assert.equal(state.comments.size, 0)
-    assert.equal(state.fixes.size, 0)
-    assert.equal(state.ignoredIds.size, 0)
+    assert.equal(state.triage.size, 0)
   })
 })
 
@@ -273,16 +266,16 @@ describe('pruneOrphanTriage: round-1 review #1 (no silent wipe on read error)', 
     // empty reachable set and the prune would wipe every
     // persisted triage entry. Post-fix: the failure propagates
     // and the caller decides whether to surface or retry.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'green')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'green' })
     // Plant a corrupt LS-backed report entry. `readFile`'s
     // gunzipString call will throw on this. listFiles still
     // surfaces it (the prefix scan doesn't validate payload).
     globalThis.localStorage.setItem('deepview.report:corrupt.json', '!!!not-base64!!!')
     await assert.rejects(pruneOrphanTriage(), /Failed to read corrupt.json/u)
     // No state mutation, no saveTriage call.
-    assert.equal(state.markers.get(FINDING_A), 'red', 'markers untouched on read error')
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'markers untouched on read error')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
   })
 
   it('tolerates a "file not found" race (entry vanished between listFiles and readFile)', async () => {
@@ -301,8 +294,8 @@ describe('pruneOrphanTriage: round-1 review #1 (no silent wipe on read error)', 
     // before calling pruneOrphanTriage — pruneOrphanTriage's
     // own listFiles call will pick up the absence + skip via
     // the NotFound branch.
-    state.markers.set(FINDING_A, 'red')              // orphan
-    state.markers.set(FINDING_B, 'green')             // reachable via b.json
+    patchEntry(state.triage, FINDING_A, { color: 'red' })              // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })             // reachable via b.json
     await saveReport('b.json', [{ id: FINDING_B }])
     // Add an entry, enumerate, then delete — this leaves
     // pruneOrphanTriage's listFiles + readFile cycle to
@@ -325,8 +318,8 @@ describe('pruneOrphanTriage: round-1 review #1 (no silent wipe on read error)', 
     // skipped via the NotFound branch; the orphan FINDING_A is
     // GCd against the reachable set built from b.json.
     await pruneOrphanTriage()
-    assert.equal(state.markers.has(FINDING_A), false, 'orphan GCd despite the vanished entry')
-    assert.equal(state.markers.get(FINDING_B), 'green', 'reachable triage survives')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true, 'orphan GCd despite the vanished entry')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green', 'reachable triage survives')
   })
 
   it('treats an LS "File not found:" thrown directly as benign and continues', async () => {
@@ -336,16 +329,16 @@ describe('pruneOrphanTriage: round-1 review #1 (no silent wipe on read error)', 
     // currently passes listFiles() output so this case is
     // rare in practice, but the API guarantee is "I/O errors
     // throw, NotFound is skipped" — pin it.
-    state.markers.set(FINDING_A, 'red')              // orphan
-    state.markers.set(FINDING_B, 'green')             // reachable
+    patchEntry(state.triage, FINDING_A, { color: 'red' })              // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })             // reachable
     await saveReport('b.json', [{ id: FINDING_B }])
     // listFiles will return ['b.json'] only; pruneOrphanTriage's
     // reachable walk only reads b.json. No NotFound is thrown
     // here; this test just sanity-checks the happy path still
     // works after the NotFound-tolerance refactor.
     await pruneOrphanTriage()
-    assert.equal(state.markers.has(FINDING_A), false)
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true)
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
   })
 })
 
@@ -359,7 +352,7 @@ describe('analyzeTriageImpact: round-1 review #1 (propagates read errors)', () =
     // "wipe N orphans" choice that didn't reflect reality.
     // Post-fix: the failure propagates so the sidebar handler
     // can refuse to open the dialog.
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('a.json', [{ id: FINDING_A }])
     // Plant a corrupt OTHER report so the kept-side parse
     // (listFiles returns [a.json, corrupt.json]; the helper
@@ -396,18 +389,18 @@ describe('pruneOrphanTriage: round-1 review #2 (snapshot guards concurrent mutat
     //   3. Awaiting the returned promise lets the prune resume
     //      and run its mutation loops. The post-fix snapshot
     //      excludes FINDING_X, so the loop skips it.
-    state.markers.set(FINDING_A, 'red')          // orphan: no report carries it
+    patchEntry(state.triage, FINDING_A, { color: 'red' })          // orphan: no report carries it
     await saveReport('b.json', [{ id: FINDING_B }])
     const FINDING_X = '00000000-0000-4000-8000-00000000000f'
     const prunePromise = pruneOrphanTriage()
     // Lands between the snapshot (sync prefix of the async fn)
     // and the mutation loop (resumes once the awaits settle).
-    state.markers.set(FINDING_X, 'blue')
+    patchEntry(state.triage, FINDING_X, { color: 'blue' })
     await prunePromise
     // Pre-existing orphan removed (was in snapshot, not reachable).
-    assert.equal(state.markers.has(FINDING_A), false, 'pre-existing orphan still gets GCd')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true, 'pre-existing orphan still gets GCd')
     // Fresh entry added between snapshot and mutation preserved.
-    assert.equal(state.markers.get(FINDING_X), 'blue', 'mid-walk addition survives')
+    assert.equal(state.triage.get(FINDING_X)?.color, 'blue', 'mid-walk addition survives')
   })
 })
 
@@ -431,19 +424,19 @@ describe('round-2 review: deriveFindingId path (id-less findings)', () => {
     const finding = { severity: 'high', description: 'no-eval', fileHash: 'sha512-abc' }
     const derivedId = await deriveFindingId(finding)
     assert.ok(derivedId, 'crypto.subtle is available in test env')
-    state.markers.set(derivedId, 'red')
+    patchEntry(state.triage, derivedId, { color: 'red' })
     await saveReport('a.json', [finding])
     await pruneOrphanTriage()
-    assert.equal(state.markers.get(derivedId), 'red', 'derived-id triage survives')
+    assert.equal(state.triage.get(derivedId)?.color, 'red', 'derived-id triage survives')
   })
 
   it('wipes a derived-id orphan when its source report is deleted', async () => {
     const finding = { severity: 'high', description: 'no-eval', fileHash: 'sha512-only-in-deleted' }
     const derivedId = await deriveFindingId(finding)
-    state.markers.set(derivedId, 'red')
+    patchEntry(state.triage, derivedId, { color: 'red' })
     // No surviving report carries this finding → orphan.
     await pruneOrphanTriage()
-    assert.equal(state.markers.has(derivedId), false, 'derived-id orphan GCd')
+    assert.equal(state.triage.get(derivedId)?.color === undefined, true, 'derived-id orphan GCd')
   })
 
   it('counts a derived-id finding as shared when another report carries the same content', async () => {
@@ -452,7 +445,7 @@ describe('round-2 review: deriveFindingId path (id-less findings)', () => {
     // from the other → shared, not orphan.
     const finding = { severity: 'medium', description: 'unused-import', fileHash: 'sha512-shared' }
     const derivedId = await deriveFindingId(finding)
-    state.markers.set(derivedId, 'green')
+    patchEntry(state.triage, derivedId, { color: 'green' })
     await saveReport('deleted.json', [finding])
     await saveReport('kept.json', [finding])
     const impact = await analyzeTriageImpact(['deleted.json'])
@@ -488,10 +481,10 @@ describe('round-2 review: format fallback (DeepSec markdown)', () => {
     const parsed = parseDeepsecFindings(md)
     assert.ok(parsed && parsed.findings.length === 1, 'parser produced one finding')
     const derivedId = await deriveFindingId(parsed.findings[0])
-    state.markers.set(derivedId, 'red')
+    patchEntry(state.triage, derivedId, { color: 'red' })
     await storage.saveFile('report.md', md)
     await pruneOrphanTriage()
-    assert.equal(state.markers.get(derivedId), 'red',
+    assert.equal(state.triage.get(derivedId)?.color, 'red',
       'triage on a DeepSec-md finding survives the prune')
   })
 })
@@ -506,8 +499,8 @@ describe('round-2 review: concurrent prunes / analyze + prune', () => {
     // guard short-circuits delete-after-delete so neither
     // run flips `changed` for a no-op or crashes on a
     // missing key.
-    state.markers.set(FINDING_A, 'red')          // orphan
-    state.markers.set(FINDING_B, 'green')         // reachable
+    patchEntry(state.triage, FINDING_A, { color: 'red' })          // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })         // reachable
     await saveReport('b.json', [{ id: FINDING_B }])
     const [r1, r2] = await Promise.all([
       pruneOrphanTriage(),
@@ -516,8 +509,8 @@ describe('round-2 review: concurrent prunes / analyze + prune', () => {
     assert.equal(r1, undefined)
     assert.equal(r2, undefined)
     // Orphan is gone; reachable entry survives.
-    assert.equal(state.markers.has(FINDING_A), false)
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true)
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
   })
 
   it('analyze + prune in parallel resolve coherently', async () => {
@@ -525,8 +518,8 @@ describe('round-2 review: concurrent prunes / analyze + prune', () => {
     // collectPersistedTriageIds snapshot is read). Running it
     // alongside a prune must not crash or observe a corrupt
     // mid-mutation state.
-    state.markers.set(FINDING_A, 'red')          // orphan
-    state.markers.set(FINDING_B, 'green')         // reachable
+    patchEntry(state.triage, FINDING_A, { color: 'red' })          // orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })         // reachable
     await saveReport('b.json', [{ id: FINDING_B }])
     const [impact] = await Promise.all([
       analyzeTriageImpact(['b.json']),
@@ -539,8 +532,8 @@ describe('round-2 review: concurrent prunes / analyze + prune', () => {
     // corrupted output.
     assert.equal(typeof impact.orphanedCount, 'number')
     assert.equal(typeof impact.sharedCount, 'number')
-    assert.equal(state.markers.has(FINDING_A), false, 'orphan GCd by the prune')
-    assert.equal(state.markers.get(FINDING_B), 'green', 'reachable triage survives')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true, 'orphan GCd by the prune')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green', 'reachable triage survives')
   })
 })
 
@@ -553,36 +546,36 @@ describe('round-2 review: snapshot guards all collections', () => {
   beforeEach(clearAll)
 
   it('preserves a state.triageState entry added between snapshot and mutation', async () => {
-    state.triageState.set(FINDING_A, 'invalid')   // orphan
+    patchEntry(state.triage, FINDING_A, { triage: 'invalid' })   // orphan
     await saveReport('b.json', [{ id: FINDING_B }])
     const FINDING_X = '00000000-0000-4000-8000-000000000010'
     const promise = pruneOrphanTriage()
-    state.triageState.set(FINDING_X, 'fixed')
+    patchEntry(state.triage, FINDING_X, { triage: 'fixed' })
     await promise
-    assert.equal(state.triageState.has(FINDING_A), false, 'pre-existing orphan GCd')
-    assert.equal(state.triageState.get(FINDING_X), 'fixed', 'mid-walk addition survives')
+    assert.equal(state.triage.get(FINDING_A)?.triage === undefined, true, 'pre-existing orphan GCd')
+    assert.equal(state.triage.get(FINDING_X)?.triage, 'fixed', 'mid-walk addition survives')
   })
 
   it('preserves a state.comments entry added between snapshot and mutation', async () => {
-    state.comments.set(FINDING_A, 'pre-existing note')
+    patchEntry(state.triage, FINDING_A, { comment: 'pre-existing note' })
     await saveReport('b.json', [{ id: FINDING_B }])
     const FINDING_X = '00000000-0000-4000-8000-000000000011'
     const promise = pruneOrphanTriage()
-    state.comments.set(FINDING_X, 'fresh note')
+    patchEntry(state.triage, FINDING_X, { comment: 'fresh note' })
     await promise
-    assert.equal(state.comments.has(FINDING_A), false, 'pre-existing orphan GCd')
-    assert.equal(state.comments.get(FINDING_X), 'fresh note', 'mid-walk addition survives')
+    assert.equal(state.triage.get(FINDING_A)?.comment === undefined, true, 'pre-existing orphan GCd')
+    assert.equal(state.triage.get(FINDING_X)?.comment, 'fresh note', 'mid-walk addition survives')
   })
 
   it('preserves a state.fixes entry added between snapshot and mutation', async () => {
-    state.fixes.set(FINDING_A, 'https://orphan')
+    patchEntry(state.triage, FINDING_A, { fix: 'https://orphan' })
     await saveReport('b.json', [{ id: FINDING_B }])
     const FINDING_X = '00000000-0000-4000-8000-000000000012'
     const promise = pruneOrphanTriage()
-    state.fixes.set(FINDING_X, 'https://fresh')
+    patchEntry(state.triage, FINDING_X, { fix: 'https://fresh' })
     await promise
-    assert.equal(state.fixes.has(FINDING_A), false, 'pre-existing orphan GCd')
-    assert.equal(state.fixes.get(FINDING_X), 'https://fresh', 'mid-walk addition survives')
+    assert.equal(state.triage.get(FINDING_A)?.fix === undefined, true, 'pre-existing orphan GCd')
+    assert.equal(state.triage.get(FINDING_X)?.fix, 'https://fresh', 'mid-walk addition survives')
   })
 
   it('preserves a state.ignoredIds entry added between snapshot and mutation', async () => {
@@ -590,15 +583,15 @@ describe('round-2 review: snapshot guards all collections', () => {
     // Snapshot stores the FULL composite key so a mid-walk
     // addition of a (reportName, id) pair survives even if the
     // id wouldn't otherwise be reachable.
-    state.ignoredIds.add(`gone.json ${FINDING_A}`)
+    setReportIgnored(state.triage, FINDING_A, 'gone.json', true)
     await saveReport('b.json', [{ id: FINDING_B }])
     const FINDING_X = '00000000-0000-4000-8000-000000000013'
     const promise = pruneOrphanTriage()
-    state.ignoredIds.add(`b.json ${FINDING_X}`)
+    setReportIgnored(state.triage, FINDING_X, 'b.json', true)
     await promise
-    assert.equal(state.ignoredIds.has(`gone.json ${FINDING_A}`), false,
+    assert.equal(isReportIgnored(state.triage, FINDING_A, 'gone.json'), false,
       'pre-existing orphan GCd')
-    assert.equal(state.ignoredIds.has(`b.json ${FINDING_X}`), true,
+    assert.equal(isReportIgnored(state.triage, FINDING_X, 'b.json'), true,
       'mid-walk addition survives')
   })
 })
@@ -611,8 +604,8 @@ describe('round-2 review: cross-tab deletion landing mid-prune', () => {
     // already gone (no error, but the `changed = true` flip
     // triggered a pointless saveTriage commit + sync notify).
     // The post-fix `state.markers.has(k)` guard short-circuits.
-    state.markers.set(FINDING_A, 'red')              // would-be orphan
-    state.markers.set(FINDING_B, 'green')             // reachable
+    patchEntry(state.triage, FINDING_A, { color: 'red' })              // would-be orphan
+    patchEntry(state.triage, FINDING_B, { color: 'green' })             // reachable
     await saveReport('b.json', [{ id: FINDING_B }])
     const promise = pruneOrphanTriage()
     // Simulate a sibling-tab apply-replace deleting FINDING_A
@@ -620,10 +613,10 @@ describe('round-2 review: cross-tab deletion landing mid-prune', () => {
     // still contains FINDING_A; the has(k) guard sees it's
     // already gone and skips both the delete and the
     // `changed = true` flip.
-    state.markers.delete(FINDING_A)
+    patchEntry(state.triage, FINDING_A, { color: undefined })
     await promise
-    assert.equal(state.markers.has(FINDING_A), false, 'still gone post-prune')
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color === undefined, true, 'still gone post-prune')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
   })
 })
 
@@ -654,12 +647,12 @@ describe('round-2 review: realistic mixed-fixture workspace leave', () => {
 
   async function setupMixedFixture() {
     const F5 = await deriveFindingId(F5Source)
-    state.markers.set(F1, 'red')
-    state.triageState.set(F2, 'invalid')
-    state.comments.set(F3, 'shared note')
-    state.fixes.set(F4, 'https://kept-only')
-    state.ignoredIds.add(`deleted-1.json ${F5}`)
-    state.markers.set(F6, 'blue')
+    patchEntry(state.triage, F1, { color: 'red' })
+    patchEntry(state.triage, F2, { triage: 'invalid' })
+    patchEntry(state.triage, F3, { comment: 'shared note' })
+    patchEntry(state.triage, F4, { fix: 'https://kept-only' })
+    setReportIgnored(state.triage, F5, 'deleted-1.json', true)
+    patchEntry(state.triage, F6, { color: 'blue' })
     return F5
   }
 
@@ -679,13 +672,13 @@ describe('round-2 review: realistic mixed-fixture workspace leave', () => {
     // Only kept.json survives the user's "delete workspace" action.
     await saveReport('kept.json', [{ id: F3 }, { id: F4 }])
     await pruneOrphanTriage()
-    assert.equal(state.markers.has(F1), false, 'F1 orphan GCd')
-    assert.equal(state.triageState.has(F2), false, 'F2 orphan GCd')
-    assert.equal(state.comments.get(F3), 'shared note', 'F3 shared kept')
-    assert.equal(state.fixes.get(F4), 'https://kept-only', 'F4 unrelated kept')
-    assert.equal(state.ignoredIds.has(`deleted-1.json ${F5}`), false,
+    assert.equal(state.triage.get(F1)?.color === undefined, true, 'F1 orphan GCd')
+    assert.equal(state.triage.get(F2)?.triage === undefined, true, 'F2 orphan GCd')
+    assert.equal(state.triage.get(F3)?.comment, 'shared note', 'F3 shared kept')
+    assert.equal(state.triage.get(F4)?.fix, 'https://kept-only', 'F4 unrelated kept')
+    assert.equal(isReportIgnored(state.triage, F5, 'deleted-1.json'), false,
       'F5 ignored entry GCd (both report gone AND id unreachable)')
-    assert.equal(state.markers.has(F6), false,
+    assert.equal(state.triage.get(F6)?.color === undefined, true,
       'F6 pre-existing orphan also GCd (prune sweeps every unreachable entry)')
   })
 })
@@ -748,19 +741,19 @@ describe('round-2 review #8: listFiles failure propagates', () => {
     // Pre-fix: `try { names = await listFiles() } catch { names = [] }`
     // → empty reachable → wipe everything. Post-fix: the throw
     // propagates so the caller can decide.
-    state.markers.set(FINDING_A, 'red')
-    state.markers.set(FINDING_B, 'green')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
+    patchEntry(state.triage, FINDING_B, { color: 'green' })
     await withFailingLocalStorageLength(async () => {
       await assert.rejects(pruneOrphanTriage(), /simulated OPFS enumeration failure/u)
     })
     // Both markers survive — neither was touched because the
     // walk never reached the mutation phase.
-    assert.equal(state.markers.get(FINDING_A), 'red')
-    assert.equal(state.markers.get(FINDING_B), 'green')
+    assert.equal(state.triage.get(FINDING_A)?.color, 'red')
+    assert.equal(state.triage.get(FINDING_B)?.color, 'green')
   })
 
   it('analyzeTriageImpact throws on a listFiles failure (only when persisted overlaps deleted)', async () => {
-    state.markers.set(FINDING_A, 'red')
+    patchEntry(state.triage, FINDING_A, { color: 'red' })
     await saveReport('a.json', [{ id: FINDING_A }])
     await withFailingLocalStorageLength(async () => {
       // The helper short-circuits after the deleted-side parse

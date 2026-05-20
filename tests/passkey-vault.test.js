@@ -30,19 +30,16 @@ function freshUrl(stem) {
 // `vault.__test__.reset()` + `localStorage.clear()` below.
 //
 // Same logic applies to state.ts: cache-busting it would hand the
-// test a sibling copy whose `state.markers` writes are invisible to
+// test a sibling copy whose `state.triage` writes are invisible to
 // the cached state.ts that triage.js / saveTriage iterate. Sharing
-// the cached instance + clearing the maps between tests keeps both
+// the cached instance + clearing the map between tests keeps both
 // sides looking at the same mutable surface.
 const vault = await import('../client/passkey-vault.js')
 const { state } = await import('../client/state.ts')
+const { patchEntry } = await import('../client/triage-entry.ts')
 
 function clearState() {
-  state.markers.clear()
-  state.triageState.clear()
-  state.comments.clear()
-  state.fixes.clear()
-  state.ignoredIds.clear()
+  state.triage.clear()
 }
 
 function resetVault() {
@@ -508,8 +505,8 @@ describe('passkey-vault — migration helpers integrate with triage', () => {
     // Seed a plaintext triage blob the way `saveTriage` would (deflate
     // + base64), then mutate state.* through the SHARED state.ts so
     // saveTriage's iteration sees the entries.
-    state.markers.set('uuid-001', 'red')
-    state.comments.set('uuid-001', 'check this')
+    patchEntry(state.triage, 'uuid-001', { color: 'red' })
+    patchEntry(state.triage, 'uuid-001', { comment: 'check this' })
     await triage.saveTriage()
     // Vault is still disabled; the saved blob should be a raw
     // (non-enveloped) deflate stream. Pending key is written
@@ -535,8 +532,8 @@ describe('passkey-vault — migration helpers integrate with triage', () => {
     // Read path picks up the new envelope and decrypts via the injected key.
     clearState()
     await triage.reloadTriageFromStorage()
-    assert.equal(state.markers.get('uuid-001'), 'red')
-    assert.equal(state.comments.get('uuid-001'), 'check this')
+    assert.equal(state.triage.get('uuid-001')?.color, 'red')
+    assert.equal(state.triage.get('uuid-001')?.comment, 'check this')
   })
 
   it('triage migrate→decrypt restores plaintext', async () => {
@@ -544,7 +541,7 @@ describe('passkey-vault — migration helpers integrate with triage', () => {
     resetVault()
     clearState()
     const triage = await import(`../client/triage.js${freshUrl('triage2')}`)
-    state.markers.set('uuid-002', 'blue')
+    patchEntry(state.triage, 'uuid-002', { color: 'blue' })
     const key = await injectKey()
     await triage.saveTriage()  // saves enveloped (key is set)
     globalThis.localStorage.removeItem('deepview.triage.pending')
@@ -567,7 +564,7 @@ describe('passkey-vault — migration helpers integrate with triage', () => {
     resetVault()
     clearState()
     const triage = await import(`../client/triage.js${freshUrl('triage3')}`)
-    state.markers.set('uuid-003', 'green')
+    patchEntry(state.triage, 'uuid-003', { color: 'green' })
     await injectKey()
     await triage.saveTriage()
     globalThis.localStorage.removeItem('deepview.triage.pending')
@@ -726,7 +723,7 @@ describe('passkey-vault — shared lock serialises saves vs migration', () => {
     resetVault()
     clearState()
     const triage = await import(`../client/triage.js${freshUrl('triage-lock')}`)
-    state.markers.set('uuid-lock-test', 'red')
+    patchEntry(state.triage, 'uuid-lock-test', { color: 'red' })
     const order = []
     const exclusive = navigator.locks.request('deepview.passkey.v1.write', async () => {
       order.push('exclusive-start')
@@ -775,7 +772,7 @@ describe('passkey-vault — saveTriage empty-entries path (audit round-4)', () =
     clearState()
     const triage = await import(`../client/triage.js${freshUrl('triage-empty')}`)
     await injectKey()  // unlocks the vault with a deterministic key
-    // No state.markers / state.triageState entries — fully empty.
+    // No state.triage entries — fully empty.
     // The save should complete in a bounded number of microtasks.
     // If the bug regresses, this test hangs the event loop and the
     // test framework's timeout fires.

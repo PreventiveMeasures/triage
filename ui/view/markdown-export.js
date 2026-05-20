@@ -1,7 +1,7 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
 import { commonPrefix, stripExportMarker } from './format.js'
-import { ignoredKey, tabKey } from './group.js'
+import { isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
 // produces a single `.md` file from `state.reports`, grouped by
@@ -42,10 +42,11 @@ function locationStr(f) {
 // emitted verbatim — escaping would corrupt the embedded fences.
 function findingToMarkdown(f) {
   const key = tabKey(f)
-  const triage = state.triageState.get(key)
-  const ignored = state.ignoredIds.has(ignoredKey(f))
-  const color = state.markers.get(key)
-  const comment = state.comments.get(key) ?? ''
+  const entry = state.triage.get(key)
+  const triage = entry?.triage
+  const ignored = isIgnored(f)
+  const color = entry?.color
+  const comment = entry?.comment ?? ''
   const description = stripExportMarker(f.description ?? '', f.exportName)
 
   const heading = f.exportName

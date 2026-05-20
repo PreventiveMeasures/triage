@@ -155,7 +155,7 @@ export function countBundleTriageBuckets(details) {
     if (seen.has(hash)) continue
     seen.add(hash)
     for (const f of findingsForFileHash(hash)) {
-      const t = state.triageState.get(tabKey(f))
+      const t = state.triage.get(tabKey(f))?.triage
       if (t && counts[t] !== undefined) counts[t]++
     }
   }
@@ -188,7 +188,7 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
     const found = findingsForFileHash(hash)
     if (found.length === 0) continue
     const filtered = found.filter((f) => {
-      const t = state.triageState.get(tabKey(f)) ?? null
+      const t = state.triage.get(tabKey(f))?.triage ?? null
       if (mode === 'issues') return t !== 'invalid' && t !== 'deleted'
       return t === state.shownTriage
     })
@@ -274,7 +274,7 @@ export function buildBundleGraphData(details) {
     for (const f of findings) {
       counts[f.severity] = (counts[f.severity] || 0) + 1
       sevs.add(f.severity)
-      const color = state.markers.get(tabKey(f)) ?? 'none'
+      const color = state.triage.get(tabKey(f))?.color ?? 'none'
       cols.add(color)
       ff.push({ severity: f.severity, color })
     }
@@ -691,7 +691,7 @@ function renderBundleSourceFindingPanel(findings) {
   // label would conflate live + ignored, which is misleading
   // because the user might have ignored the finding in a report
   // even though the bundle still treats it as active.
-  const triage = state.triageState.get(tabKey(f))
+  const triage = state.triage.get(tabKey(f))?.triage
   const triageLabel = triage === 'fixed' ? 'Fixed' : null
   // Run meta — analyzer / model / effort / exportsMode chained
   // with `·`, same shape the report's tab-body uses (see
@@ -1482,7 +1482,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               // break the lookup. Only used by the bundle path.
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
-              const triage = state.triageState.get(tabKey(finding))
+              const triage = state.triage.get(tabKey(finding))?.triage
               // Show the badge for any persisted triage state. The
               // bundle Issues tab + the package slide's `live` view
               // both filter invalid + deleted out of `findingsByFile`

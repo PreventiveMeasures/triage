@@ -52,9 +52,8 @@ import {
 // --------------
 // `notify()` is the only public mutation hook. It's called at the
 // tail of `saveTriage()` (so every UI / API mutation routes through
-// it) and reads the current `state.markers` / `.triageState` /
-// `.comments` / `.fixes` / `.ignoredIds` for the workspace's id
-// scope to derive `localState`.
+// it) and reads the current `state.triage` entries for the workspace's
+// id scope to derive `localState`.
 //
 // The session keeps two triage state objects (each a plain
 // `{ id: { color?, triage?, comment?, fix?, ignoredReports? } }`
