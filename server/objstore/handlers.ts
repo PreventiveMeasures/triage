@@ -5,10 +5,11 @@
 // against the workspaceTag, then a short-TTL HMAC token bound to
 // the (tag, resource, version-or-stagingId, length) tuple.
 //
-// Operations that mutate (begin / commit / delete) hold a per-
-// resource async mutex (see lock.ts) so two concurrent commits
-// against the same (tag, resourceTag) can't interleave their
-// precondition recheck across the `await` boundary in commitPut.
+// Operations that mutate (begin / commit / delete) take NO in-process
+// lock: commit correctness is the atomic version-CAS in commitPut,
+// begin's prev_version check is advisory, and delete is a precondition-
+// checked single-row drop (see store.ts for the full lock-free
+// rationale).
 //
 // Broadcasts to peers subscribed via `workspace-subscribe` reuse
 // the existing subscriber map: `objstore-deleted` is emitted from
@@ -26,7 +27,6 @@ import {
   isValidSignature,
   isValidTag,
   listLive,
-  lockKey,
   objectMetaWire,
 } from './store.ts'
 import {
@@ -115,15 +115,16 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
     return
   }
   const prevVersion = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
-  // Serialise against concurrent commits / deletes on the same
-  // resource so the prev_version recheck inside beginPut isn't
-  // stale when the staging row lands.
-  const result = await deps.handle.lock.run(lockKey(tag, resourceTag), () => beginPut(deps.handle, {
+  // No lock: beginPut's prev_version check is advisory (a fast-fail so
+  // the client rebases before uploading). The authoritative
+  // precondition is commitPut's version-CAS, which stays correct no
+  // matter what races between this begin and that commit.
+  const result = await beginPut(deps.handle, {
     workspaceTag: tag, resourceTag, prevVersion,
     expectedLength: msg.expectedLength as number,
     contentHash: msg.contentHash as string,
     signature: msg.signature as string,
-  }))
+  })
   if (!result.ok) {
     // `workspace-full` is the per-workspace 100-resource cap; goes
     // out as a typed error so the client can distinguish a quota
@@ -159,14 +160,13 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   const prev = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
-  // Serialise against same-process concurrent commits / deletes on the
-  // same resource via the in-process per-resource lock. No distributed
-  // lock: deleteObject is a precondition-checked row drop, and the live
-  // blob is content-addressed + GC'd by the reaper (never unlinked
-  // here), so a concurrent commit on another replica races the version
-  // CAS, not a shared blob. The lock also preserves the per-resource
-  // fd-lifecycle invariants the openLiveReader path relies on.
-  const result = await deps.handle.lock.run(lockKey(tag, resourceTag), () => deleteObject(deps.handle, tag, resourceTag, prev))
+  // No lock: deleteObject is a precondition-checked version-CAS drop.
+  // A concurrent commit OR delete races that CAS (not a shared blob —
+  // the live blob is content-addressed + GC'd by the reaper, never
+  // unlinked here): exactly one op wins, the loser gets conflict /
+  // not-found (and never broadcasts). See the deleteObject doc in
+  // store.ts.
+  const result = await deleteObject(deps.handle, tag, resourceTag, prev)
   if (!result.ok) {
     if (result.reason === 'conflict') deps.send(socket, conflictReply('delete', tag, resourceTag, result.conflict ?? null))
     else deps.send(socket, { type: 'objstore-delete-error', workspaceTag: tag, resourceTag, reason: result.reason })

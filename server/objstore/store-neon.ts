@@ -23,7 +23,6 @@
 //     than one replica).
 
 import type { BlobBackend } from './blob.ts'
-import { KeyedAsyncLock } from './lock.ts'
 import type { AllStmt, GetStmt, RunStmt } from '../db-stmt.ts'
 import type { Handle } from './store.ts'
 import { type NeonSql, assertDurableSyncCommit, getRowStmt, num, numOrNull, runStmt } from '../db-neon.ts'
@@ -147,6 +146,25 @@ function buildDeleteStaging(sql: NeonSql): RunStmt<[string, string, string]> {
        WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`)
 }
 
+// Atomic conditional stale-row delete for the reaper. Deletes the row
+// IFF its `begun_at < $4`, returning `{ ok: 1 }` only when a row was
+// actually removed (a concurrent `refreshStagingBegunAt` that bumped
+// `begun_at` fresh makes the predicate fail → empty RETURNING →
+// caller skips). Mirrors the SQLite `deleteStagingIfStale` statement.
+// Bind order: (tag, res, sid, staleBefore).
+function buildDeleteStagingIfStale(sql: NeonSql): GetStmt<[string, string, string, number], { ok: number }> {
+  return { get: async (tag, resourceTag, stagingId, staleBefore) => {
+    const rows = await sql(
+      `DELETE FROM workspace_object_staging
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3 AND begun_at < $4
+       RETURNING 1 AS ok`,
+      [tag, resourceTag, stagingId, staleBefore],
+    ) as Array<{ ok: number | string }>
+    const r = rows[0]
+    return r ? { ok: num(r.ok) } : undefined
+  } }
+}
+
 function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
   return { all: async (tag) => {
     const rows = await sql(
@@ -220,8 +238,21 @@ function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, stri
   } }
 }
 
-function buildDeleteLive(sql: NeonSql): RunStmt<[string, string]> {
-  return runStmt(sql, `DELETE FROM workspace_object WHERE workspace_tag = $1 AND resource_tag = $2`)
+// Version-CAS delete: drop the row only while its version still matches
+// the precondition (mirrors buildUpdateLiveCAS). RETURNING a row iff we
+// removed it; deleteObject treats 0 rows as a lost race → conflict /
+// not-found, never a lost update.
+function buildDeleteLiveCAS(sql: NeonSql): GetStmt<[string, string, number], { ok: number }> {
+  return { get: async (tag, resourceTag, expectedVersion) => {
+    const rows = await sql(
+      `DELETE FROM workspace_object
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $3
+       RETURNING 1 AS ok`,
+      [tag, resourceTag, expectedVersion],
+    ) as Array<{ ok: number | string }>
+    const r = rows[0]
+    return r ? { ok: num(r.ok) } : undefined
+  } }
 }
 
 function buildListAllStaging(sql: NeonSql): AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }> {
@@ -294,17 +325,17 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
     // `dir` intentionally unset — the byte plane goes through the
     // `blob` backend, which may not have an on-disk layout at all.
     blob,
-    lock: new KeyedAsyncLock<string>(),
     insertStaging: buildInsertStaging(sql),
     selectStaging: buildSelectStaging(sql),
     selectStagingByWsSid: buildSelectStagingByWsSid(sql),
     refreshStagingBegunAt: buildRefreshStagingBegunAt(sql),
     deleteStaging: buildDeleteStaging(sql),
+    deleteStagingIfStale: buildDeleteStagingIfStale(sql),
     selectLive: buildSelectLive(sql),
     selectLiveOne: buildSelectLiveOne(sql),
     insertLiveIfAbsent: buildInsertLiveIfAbsent(sql),
     updateLiveCAS: buildUpdateLiveCAS(sql),
-    deleteLive: buildDeleteLive(sql),
+    deleteLiveCAS: buildDeleteLiveCAS(sql),
     listAllStaging: buildListAllStaging(sql),
     listLiveTags: buildListLiveTags(sql),
     countLive: buildCountLive(sql),

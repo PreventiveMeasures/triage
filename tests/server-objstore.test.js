@@ -11,7 +11,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 
-import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, lockKey, openObjstore } from '../server/objstore/store.ts'
+import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 
@@ -452,40 +452,56 @@ describe('reapOrphans', () => {
     } finally { cleanup() }
   })
 
-  it('reaper re-checks begun_at inside the lock: refresh landing during a reap-acquire wins (F1)', async () => {
-    // Audit F1: the reaper's TTL check used the pre-lock snapshot. A
-    // REST PUT that finished a slow body, called refreshStagingBegunAt
-    // (outside lock), and queued behind the reaper for the commit
-    // lock would lose: reaper acquires lock first, sees row exists,
-    // unlinks + drops the row → commit gets 410. The fix re-evaluates
-    // the row's `begun_at` against current time INSIDE the lock so a
-    // refresh that landed between snapshot and lock-acquire is
-    // honored.
+  it('conditional delete spares a stale row whose begun_at was refreshed fresh (F1)', async () => {
+    // Audit F1, lockless model: a REST PUT that finished a slow body
+    // calls refreshStagingBegunAt, bumping begun_at to ~now. The
+    // reaper's stale-row delete is an ATOMIC conditional delete keyed
+    // on `begun_at < staleBefore` (staleBefore = sweep-time − TTL), so
+    // a row refreshed fresh no longer matches the predicate and
+    // survives for the commit. Previously the protection was an
+    // in-lock begun_at re-read; now it's the SQL predicate itself.
+    // We model the refresh landing before the sweep's conditional
+    // delete by refreshing begun_at to now, then sweeping: the row +
+    // file MUST survive because the conditional delete can't match.
     const { handle, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin())
       writeStaging(b.filePath, Buffer.alloc(16))
-      // Backdate to past TTL so the snapshot tags this as stale.
+      // Backdate to past TTL — without a refresh this row is stale.
       handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
-      // Pre-acquire the per-resource lock — reaper queues behind us.
-      let release
-      const acquired = handle.lock.run(lockKey('workspace-tag-1', 'resource-tag-1'), () => new Promise((r) => { release = r }))
-      const sweep = reapOrphans(handle)
-      // Yield so reaper progresses to its lock.run() call.
-      await new Promise((r) => { setImmediate(r) })
-      // Refresh while we still hold the lock — exactly the REST
-      // PUT's last action before queuing for the commit lock.
+      // The REST PUT's last action before commit: refresh begun_at to
+      // now, moving it well after any staleBefore the sweep computes.
       handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).run(Date.now(), 'workspace-tag-1', 'resource-tag-1', b.stagingId)
-      release()
-      await acquired
-      await sweep
-      // Row + file MUST survive: reaper's inside-lock re-check saw
-      // the fresh begun_at and bailed.
-      assert.equal(existsSync(b.filePath), true, 'reaper must not unlink a row whose refresh landed mid-sweep')
+      await reapOrphans(handle)
+      // Row + file MUST survive: the conditional delete's
+      // `begun_at < staleBefore` predicate no longer matches.
+      assert.equal(existsSync(b.filePath), true, 'reaper must not unlink a row whose begun_at was refreshed fresh')
       const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
-      assert.ok(row, 'staging row preserved by the inside-lock TTL re-check')
+      assert.ok(row, 'staging row preserved by the begun_at < staleBefore predicate')
+    } finally { cleanup() }
+  })
+
+  it('conditional delete drops a genuinely-stale, un-refreshed row and unlinks its blob (F1)', async () => {
+    // The companion to the refresh-survives case: a row that exceeded
+    // the TTL and was NOT refreshed (no in-flight commit) DOES match
+    // the conditional delete's `begun_at < staleBefore` predicate, so
+    // it is deleted and its staging blob unlinked. This pins that the
+    // predicate still reaps real garbage — the F1 protection narrows
+    // to "refreshed-fresh", not "never reap".
+    const { handle, cleanup } = freshHandle()
+    try {
+      const b = await beginPut(handle, fakeBegin())
+      writeStaging(b.filePath, Buffer.alloc(16))
+      // Stale and never refreshed.
+      handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
+        Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
+      )
+      await reapOrphans(handle)
+      assert.equal(existsSync(b.filePath), false, 'genuinely-stale staging blob unlinked')
+      const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?`).get('workspace-tag-1', 'resource-tag-1', b.stagingId)
+      assert.equal(row, undefined, 'genuinely-stale staging row deleted by the conditional delete')
     } finally { cleanup() }
   })
 
@@ -776,12 +792,14 @@ describe('token payload validation', () => {
 })
 
 describe('KeyedAsyncLock', () => {
-  // The async mutex is the only thing keeping `commitPut` /
-  // `deleteObject` race-free across their `await` boundaries
-  // (PR #4 audit, sub-agent finding #2). Tested transitively via
-  // the WS+REST round-trips, but the integration tests can't pin
-  // ordering reliably enough to catch a subtle regression in the
-  // tail-chaining or refcount-GC. Cover the contract directly.
+  // The objstore plane no longer uses this mutex — its commit/delete
+  // races are resolved by the version-CAS + content-addressing (see
+  // store.ts). But `KeyedAsyncLock` (server/objstore/lock.ts) is still
+  // load-bearing for the revision-chain plane's write-lock in
+  // server/db.ts (`commitRevisionViaWriteLock`). These tests pin the
+  // primitive's contract directly — its tail-chaining + refcount-GC —
+  // because that plane's integration tests can't reliably force the
+  // ordering that would catch a subtle regression here.
   it('serialises operations on the same key (FIFO of acquire order)', async () => {
     const { KeyedAsyncLock } = await import('../server/objstore/lock.ts')
     const lock = new KeyedAsyncLock()

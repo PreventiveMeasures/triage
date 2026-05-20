@@ -104,19 +104,19 @@ export type BlobBackend = {
   // Return the storage-side byte count of the staging slot, or null
   // if it's missing. The REST PUT layer uses this as the belt-and-
   // braces size verification after the request body has been fully
-  // consumed; commitPut re-stats under the per-resource lock as a
-  // last line of defense before promotion.
+  // consumed; commitPut re-stats as a last line of defense against a
+  // short/truncated upload before promotion (the staging slot is
+  // single-writer — its stagingId is freshly random per begin).
   statStaging(tag: string, stagingId: string): Promise<number | null>
 
   // Promote staging → live at the CONTENT-ADDRESSED live path
   // `${tag}/${contentHash}.bin`. Returns true on success, false on
-  // any I/O error. The caller (commitPut) has already validated size
-  // under the per-resource lock; this method just performs the
-  // bytes-side transition. Because the live address is the content
-  // hash, promoting the same bytes twice (a retry, or a different
-  // resource committing identical content) lands at the SAME path —
-  // an idempotent re-write of identical bytes, never a clobber of
-  // different bytes.
+  // any I/O error. The caller (commitPut) has already validated size;
+  // this method just performs the bytes-side transition. Because the
+  // live address is the content hash, promoting the same bytes twice
+  // (a retry, or a different resource committing identical content)
+  // lands at the SAME path — an idempotent re-write of identical bytes,
+  // never a clobber of different bytes.
   //
   // Crash safety: implementations MUST ensure that a crash mid-
   // promotion leaves at most a stranded staging blob (reaper-
