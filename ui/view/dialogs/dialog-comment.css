@@ -2,28 +2,29 @@
    .mark-comment button. Composed into the dialog's shadow
    `static styles` on top of dialog-base.css (the `dialog` frame +
    reset + WCO) and dialog-severity.css (the `.conflict-sev` chip).
-   Only the wider frame + the `.cd-*` inner chrome live here; the
-   border/padding/shadow/backdrop come from the base. Flattened from
+   Shadow isolation lets the body address structural singletons by
+   type (`header h3`, `textarea`) and use short, unprefixed class
+   names — there's no global scope to collide with. Flattened from
    the `.comment-dialog { … }` block in styles/dialogs.css. */
 
 /* Roomier frame than the base 480px for the textarea. */
 dialog { max-width: 640px; width: min(94vw, 640px); }
 
-.cd-head h3 {
+header h3 {
   margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
 }
-.cd-finding {
+.finding {
   display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap;
   margin-bottom: .35rem;
 }
-.cd-loc {
+.loc {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76rem; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0; flex: 1;
 }
-.cd-desc {
+.desc {
   font-size: .78rem; color: var(--muted);
   margin: 0 0 .7rem;
   display: -webkit-box;
@@ -31,7 +32,7 @@ dialog { max-width: 640px; width: min(94vw, 640px); }
   overflow: hidden;
 }
 
-.cd-textarea {
+textarea {
   display: block; width: 100%; box-sizing: border-box;
   min-height: 9rem; max-height: 50vh; resize: vertical;
   padding: .55rem .65rem;

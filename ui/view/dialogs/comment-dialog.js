@@ -80,18 +80,17 @@ class CommentDialog extends AppDialog {
     const loc = f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
     const hasInitial = (this.initial ?? '').length > 0
     return html`<dialog @close=${this._onClose}>
-      <header class="cd-head">
+      <header>
         <h3>${hasInitial ? 'Edit comment' : 'Add comment'}</h3>
-        <div class="cd-finding">
+        <div class="finding">
           ${severityBadge(f.severity)}
-          ${loc ? html`<span class="cd-loc" title=${loc}>${loc}</span>` : nothing}
+          ${loc ? html`<span class="loc" title=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description
-          ? html`<div class="cd-desc" title=${f.description}>${f.description}</div>`
+          ? html`<div class="desc" title=${f.description}>${f.description}</div>`
           : nothing}
       </header>
       <textarea
-        class="cd-textarea"
         rows="6"
         placeholder="Write your notes here. Markdown is not rendered. Ctrl/⌘+Enter to save, Esc to cancel."
         .value=${this._value}
