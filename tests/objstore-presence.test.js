@@ -104,10 +104,10 @@ describe('client/sync/objstore-presence', () => {
       const peer = await openPeerSession(ws)
       try {
         await awaitPresence(() => isInRemote(ws.id, 'live-report.json') === false, 'initial false')
-        const put = await peer.put({ fileName: 'live-report.json', content: Buffer.from('payload-bytes'), prevVersion: null })
+        const put = await peer.put({ fileName: 'live-report.json', content: Buffer.from('payload-bytes'), prev: null })
         assert.equal(put.ok, true)
         await awaitPresence(() => isInRemote(ws.id, 'live-report.json'), 'cloud after PUT')
-        await peer.delete('live-report.json', put.meta.version)
+        await peer.delete('live-report.json', put.meta)
         await awaitPresence(() => !isInRemote(ws.id, 'live-report.json'), 'local after DELETE')
       } finally { peer.close() }
     } finally {
@@ -167,7 +167,7 @@ describe('client/sync/objstore-presence', () => {
       const peer = await openPeerSession(ws)
       try {
         for (const name of ['alpha.json', 'beta.json']) {
-          const r = await peer.put({ fileName: name, content: Buffer.from(`payload-${name}`), prevVersion: null })
+          const r = await peer.put({ fileName: name, content: Buffer.from(`payload-${name}`), prev: null })
           assert.equal(r.ok, true)
         }
         // Tag count reflects immediately on broadcast.
@@ -191,7 +191,7 @@ describe('client/sync/objstore-presence', () => {
       try {
         // PUT first, THEN open the workspace, so the discovery has
         // a non-empty inventory to chase from the get-go.
-        await peer.put({ fileName: 'discover-me.json', content: Buffer.from('payload'), prevVersion: null })
+        await peer.put({ fileName: 'discover-me.json', content: Buffer.from('payload'), prev: null })
         openWorkspace(ws.id)
         const names = await discoverRemoteFileNames(ws.id)
         assert.deepEqual(names.toSorted(), ['discover-me.json'])
@@ -209,7 +209,7 @@ describe('client/sync/objstore-presence', () => {
       await awaitPresence(() => remoteCount(ws.id) === 0, 'empty inventory')
       const peer = await openPeerSession(ws)
       try {
-        const put = await peer.put({ fileName: 'to-fetch.json', content: Buffer.from('round-tripped-bytes'), prevVersion: null })
+        const put = await peer.put({ fileName: 'to-fetch.json', content: Buffer.from('round-tripped-bytes'), prev: null })
         assert.equal(put.ok, true)
         await awaitPresence(() => isInRemote(ws.id, 'to-fetch.json'), 'visible in inventory')
         const got = await fetchFile(ws.id, 'to-fetch.json')
@@ -268,7 +268,7 @@ describe('client/sync/objstore-presence', () => {
     // `{ ok: true, deletedVersion: 0 }`. (A `delete(name, N)`
     // where N is a non-null version against a missing row returns
     // `{ ok: false, reason: 'not-found' }`; the deletion-from-
-    // dialog path goes through `prevVersion: null` so that case
+    // dialog path goes through `prev: null` so that case
     // doesn't fire here.)
     const ws = await createWorkspaceWithReports('presence-del-nothing', [])
     try {
@@ -297,7 +297,7 @@ describe('client/sync/objstore-presence', () => {
       // delete. The presence module is NOT opened here.
       const peer = await openPeerSession(ws)
       try {
-        await peer.put({ fileName: 'on-demand.json', content: Buffer.from('payload'), prevVersion: null })
+        await peer.put({ fileName: 'on-demand.json', content: Buffer.from('payload'), prev: null })
       } finally { peer.close() }
       assert.equal(remoteCount(ws.id), 0, 'no presence session cached yet → remoteCount returns 0')
       // The remote delete runs against an auto-opened session.
@@ -338,7 +338,7 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.put({ fileName: 'race-target.json', content: Buffer.from('payload'), prevVersion: null })
+        await peer.put({ fileName: 'race-target.json', content: Buffer.from('payload'), prev: null })
         // Open the presence session — list() snapshots the peer-
         // uploaded tag into remoteTags; ensureRemoteNames kicks
         // off a background fetchByTag.
@@ -392,7 +392,7 @@ describe('client/sync/objstore-presence', () => {
       openWorkspace(ws.id)
       const peer = await openPeerSession(ws)
       try {
-        const put = await peer.put({ fileName, content: Buffer.from('peer-cloud-bytes'), prevVersion: null })
+        const put = await peer.put({ fileName, content: Buffer.from('peer-cloud-bytes'), prev: null })
         assert.equal(put.ok, true)
         // The auto-attach path is fired off the broadcast →
         // ensureRemoteNames → maybeAutoDownload chain. Wait for the
@@ -453,7 +453,7 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.put({ fileName, content: Buffer.from('peer-bytes'), prevVersion: null })
+        await peer.put({ fileName, content: Buffer.from('peer-bytes'), prev: null })
         openWorkspace(ws.id)
         await awaitPresence(() => remoteCount(ws.id) === 1, 'one tag in cache')
         const del = await deleteFromRemote(ws.id, fileName)
@@ -505,7 +505,7 @@ describe('client/sync/objstore-presence', () => {
       openWorkspace(wsA.id)
       const peer = await openPeerSession(wsA)
       try {
-        const put = await peer.put({ fileName, content: Buffer.from('peer-into-wsA'), prevVersion: null })
+        const put = await peer.put({ fileName, content: Buffer.from('peer-into-wsA'), prev: null })
         assert.equal(put.ok, true)
         // Wait for the auto-attach to land in wsA.reports.
         const startedAt = Date.now()
@@ -589,7 +589,7 @@ describe('client/sync/objstore-presence', () => {
       openWorkspace(ws.id)
       const peer = await openPeerSession(ws)
       try {
-        await peer.put({ fileName, content: Buffer.from('peer'), prevVersion: null })
+        await peer.put({ fileName, content: Buffer.from('peer'), prev: null })
         const startedAt = Date.now()
         while (Date.now() - startedAt < 5_000 && fires.length === 0) {
           await new Promise((resolve) => { setTimeout(resolve, 50) })
@@ -621,7 +621,7 @@ describe('client/sync/objstore-presence', () => {
       openWorkspace(wsA.id)
       const peer = await openPeerSession(wsA)
       try {
-        await peer.put({ fileName, content: Buffer.from('peer-A'), prevVersion: null })
+        await peer.put({ fileName, content: Buffer.from('peer-A'), prev: null })
         const startedAt = Date.now()
         while (Date.now() - startedAt < 5_000 && fires.length === 0) {
           await new Promise((resolve) => { setTimeout(resolve, 50) })
@@ -671,7 +671,7 @@ describe('client/sync/objstore-presence', () => {
       await awaitPresence(() => isBundleInRemote(ws.id, integrity) === false, 'initial false')
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bytes'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bytes'), prev: null })
         await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'cloud after peer put')
       } finally { peer.close() }
     } finally {
@@ -690,8 +690,8 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity: integrityA, name: 'b.js', content: Buffer.from('A'), prevVersion: null })
-        await peer.putBundle({ integrity: integrityB, name: 'b.js', content: Buffer.from('B'), prevVersion: null })
+        await peer.putBundle({ integrity: integrityA, name: 'b.js', content: Buffer.from('A'), prev: null })
+        await peer.putBundle({ integrity: integrityB, name: 'b.js', content: Buffer.from('B'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       // Wait for the discovery pass to classify both tags.
@@ -710,7 +710,7 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('z'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('z'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       // Without awaiting discovery, `remoteBundleIntegrities` may
@@ -731,7 +731,7 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('x'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('x'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'cloud after peer put')
@@ -774,7 +774,7 @@ describe('client/sync/objstore-presence', () => {
         // synchronous answer. If the tag wasn't derived (pre-fix
         // behavior), `isBundleInRemote` would stay false until
         // something else triggered `trackBundle`.
-        await peer.putBundle({ integrity, name: 'attached-later.js', content: Buffer.from('x'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'attached-later.js', content: Buffer.from('x'), prev: null })
         await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'isBundleInRemote flips after post-open attach')
       } finally { peer.close() }
     } finally {
@@ -789,7 +789,7 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity, name: 'my-named-bundle.js', content: Buffer.from('x'), prevVersion: null })
+        await peer.putBundle({ integrity, name: 'my-named-bundle.js', content: Buffer.from('x'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       const { remoteBundleName } = await import('../client/sync/objstore-presence.js')
@@ -819,8 +819,8 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.putBundle({ integrity: integA, name: 'b.js', content: Buffer.from('A'), prevVersion: null })
-        await peer.putBundle({ integrity: integB, name: 'b.js', content: Buffer.from('B'), prevVersion: null })
+        await peer.putBundle({ integrity: integA, name: 'b.js', content: Buffer.from('A'), prev: null })
+        await peer.putBundle({ integrity: integB, name: 'b.js', content: Buffer.from('B'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       // Post-discovery: 2 total tags, both classified as bundles.
@@ -859,7 +859,7 @@ describe('client/sync/objstore-presence', () => {
           integrity: forgedIntegrity,
           name: 'forged.js',
           content: Buffer.from('not-hashing-to-the-claimed-integrity'),
-          prevVersion: null,
+          prev: null,
         })
       } finally { peer.close() }
       openWorkspace(ws.id)
@@ -888,8 +888,8 @@ describe('client/sync/objstore-presence', () => {
     try {
       const peer = await openPeerSession(ws)
       try {
-        await peer.put({ fileName, content: Buffer.from('report-bytes'), prevVersion: null })
-        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bundle-bytes'), prevVersion: null })
+        await peer.put({ fileName, content: Buffer.from('report-bytes'), prev: null })
+        await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bundle-bytes'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
       await awaitPresence(() => remoteCount(ws.id) === 2 && remoteBundleCount(ws.id) === 1, 'both kinds classified')

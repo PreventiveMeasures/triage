@@ -57,21 +57,24 @@ async function signSubscribe(sk, tag, from, connectionNonce) {
   return b64url(sig)
 }
 
-async function buildObjstorePut(sk, tag, resourceTag, prevVersion, expectedLength, contentHash, connectionNonce) {
+async function buildObjstorePut(sk, tag, resourceTag, prevVersion, prevIncarnation, expectedLength, contentHash, connectionNonce) {
   // Canonical encoding mirrors server/objstore/sign.ts:canonicalObjstorePut
   // (fields positional newline-joined; null prev_version → empty
-  // string via `intOrEmpty`; the per-connection challenge nonce is
-  // the LAST field — binds the signature to this TCP connection so a
-  // captured frame can't replay from elsewhere). Field ORDER:
-  //   domain, tag, resourceTag, prevVersion, contentHash,
-  //   expectedLength, connectionNonce
-  // (yes — contentHash precedes expectedLength here; the order is
-  // load-bearing and a swap silently fails verify.)
+  // string via `intOrEmpty`; null prev_incarnation → empty string via
+  // `strOrEmpty`; the per-connection challenge nonce is the LAST field
+  // — binds the signature to this TCP connection so a captured frame
+  // can't replay from elsewhere). Field ORDER:
+  //   domain, tag, resourceTag, prevVersion, prevIncarnation,
+  //   contentHash, expectedLength, connectionNonce
+  // (yes — contentHash precedes expectedLength here, and prevIncarnation
+  // rides between prevVersion and contentHash; the order is load-bearing
+  // and a swap silently fails verify.)
   const payload = encodeUtf8([
     OBJSTORE_PUT_DOMAIN,
     tag,
     resourceTag,
     prevVersion == null ? '' : String(prevVersion),
+    prevIncarnation == null ? '' : String(prevIncarnation),
     contentHash,
     String(expectedLength),
     connectionNonce,
@@ -297,10 +300,10 @@ describe('triage-sync server: first-action password gate (password configured)',
     // Content hash is 43 base64url chars (SHA-256 of 32 bytes, no padding).
     const contentHash = b64url(crypto.getRandomValues(new Uint8Array(32)))
     const c = await connect(server.url)
-    const sig = await buildObjstorePut(sk, tag, resourceTag, null, expectedLength, contentHash, c.connectionNonce)
+    const sig = await buildObjstorePut(sk, tag, resourceTag, null, null, expectedLength, contentHash, c.connectionNonce)
     c.ws.send(JSON.stringify({
       type: 'objstore-put-begin',
-      workspaceTag: tag, resourceTag, prevVersion: null,
+      workspaceTag: tag, resourceTag, prevVersion: null, prevIncarnation: null,
       expectedLength, contentHash, signature: sig,
     }))
     const rej = await c.recv((m) => m.type === 'unauthorized')
@@ -391,10 +394,10 @@ describe('triage-sync server: first-action password gate (password configured)',
     const resourceTag = b64url(crypto.getRandomValues(new Uint8Array(16)))
     const contentHash = b64url(crypto.getRandomValues(new Uint8Array(32)))
     const c1 = await connect(server.url)
-    const putSig = await buildObjstorePut(sk, tag, resourceTag, null, 64, contentHash, c1.connectionNonce)
+    const putSig = await buildObjstorePut(sk, tag, resourceTag, null, null, 64, contentHash, c1.connectionNonce)
     c1.ws.send(JSON.stringify({
       type: 'objstore-put-begin',
-      workspaceTag: tag, resourceTag, prevVersion: null,
+      workspaceTag: tag, resourceTag, prevVersion: null, prevIncarnation: null,
       expectedLength: 64, contentHash, signature: putSig,
     }))
     await c1.recv((m) => m.type === 'unauthorized' && m.kind === 'gated')
