@@ -83,6 +83,8 @@ import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
 import { debugTag, errMsg, errStack, randomId } from './util.ts'
 import { Peer } from './peer.ts'
+import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
+import { MAX_CIPHERTEXT_LEN, MAX_FIELD_LEN, validCiphertextShape, validNonce, validTagSigBase } from './validation.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -217,65 +219,11 @@ const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null = (() => {
   return new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(p, 'utf8').digest())
 })()
 
-// Same-origin gate for the WS upgrade and REST data plane. We don't
-// support cross-origin browser clients, so any Origin header
-// present on an incoming request MUST match the server's own host
-// (derived from `req.headers.host` directly, or from `X-Forwarded-
-// Host` / `X-Forwarded-Proto` when a reverse proxy is in front and
-// we're configured to trust it).
-//
-// Why "present-must-match" rather than "always required":
-// - WebSocket handshakes from browsers always carry an Origin header
-//   (per RFC 6455), so a foreign-page session attempt always
-//   surfaces here.
-// - Browser same-origin XHR/fetch may OMIT the Origin header
-//   entirely; requiring it would break legitimate same-origin REST
-//   calls.
-// - Non-browser clients (the test suite's `ws`, an admin CLI, …)
-//   may also omit Origin. Same-origin in that context just means
-//   "trusted operator process" and the network is the trust
-//   boundary.
-//
-// Reverse-proxy support is OPT-IN via TRUST_PROXY. When off, we
-// ignore `X-Forwarded-Host` / `X-Forwarded-Proto` entirely and
-// derive the expected origin from `req.headers.host` + `http://`.
-// When on, the proxy headers take precedence. This guards a public-
-// bind deployment (`HOST=0.0.0.0` directly on a port, no proxy)
-// from a trivial bypass: an attacker page would otherwise send its
-// own `X-Forwarded-Host` + matching `Origin` and walk through the
-// gate. Default: ON for loopback binds (typical: relay behind nginx
-// on the same host), OFF for everything else (operator must
-// explicitly opt-in when fronting a public bind with a proxy).
-// Transport audit `server/index.ts:530` + `server/objstore/rest.ts:103`.
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
+// Same-origin gate for the WS upgrade and REST data plane (see
+// ./origin.ts for the full rationale). `TRUST_PROXY_ENV` is kept
+// around for the boot-time misconfiguration fail-fast below.
 const TRUST_PROXY_ENV = env['TRUST_PROXY']
-const TRUST_PROXY = TRUST_PROXY_ENV == null
-  ? LOOPBACK_HOSTS.has(HOST)
-  : TRUST_PROXY_ENV === '1' || TRUST_PROXY_ENV.toLowerCase() === 'true'
-
-function firstHeaderValue(v: string | string[] | undefined): string | null {
-  if (typeof v === 'string') return v.split(',')[0]!.trim() || null
-  if (Array.isArray(v) && v.length > 0) return String(v[0]).trim() || null
-  return null
-}
-function expectedOrigin(req: { headers: HttpRequest['headers'] }): string | null {
-  const xfHost = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-host']) : null
-  const xfProto = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-proto']) : null
-  const host = xfHost ?? firstHeaderValue(req.headers['host'])
-  if (!host) return null
-  const proto = xfProto ?? 'http'
-  return `${proto}://${host}`
-}
-function isOriginAllowed(req: { headers: HttpRequest['headers'] }): boolean {
-  const origin = firstHeaderValue(req.headers['origin'])
-  // Missing Origin → same-origin browser fetch OR non-browser
-  // client. Both are allowed; non-browser callers' trust boundary
-  // is the network / token, not Origin.
-  if (origin == null) return true
-  const expected = expectedOrigin(req)
-  if (expected == null) return false // Origin present but no Host to compare → deny
-  return origin === expected
-}
+const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUST_PROXY_ENV)
 
 // Per-socket buffered-bytes cap. `socket.send` returns synchronously
 // even when the kernel/ws library can't drain to the wire fast
@@ -678,43 +626,6 @@ function broadcast(tag: string, msg: object, except: WebSocket | null): void {
     sendRaw(s, payload)
   }
 }
-
-// Save-message field gate: base64-or-base64url alphabet, length-
-// bounded. Critical guarantee is "no newlines" — without it,
-// `nonce = "AAA\nBBB"` + `ciphertext = "CCC"` produces the same
-// canonical bytes as `nonce = "AAA"` + `ciphertext = "BBB\nCCC"`
-// (canonicalSave newline-joins), causing same-id collisions across
-// distinct stored fields. Two alphabets:
-//
-//   - workspaceTag / signature / base — base64url-no-padding only.
-//     Clients always emit these via `toBase64({ alphabet: 'base64url',
-//     omitPadding: true })` (client/sync-crypto.ts), and the same
-//     workspaceTag must round-trip through objstore's TAG_RE (also
-//     base64url-no-padding) for cross-protocol consistency. Accepting
-//     `+/=` here would let a buggy or hostile client split its data
-//     across two encodings of the same workspace.
-//   - nonce / ciphertext — base64 OR base64url (union alphabet).
-//     Clients emit these via `toBase64()` with no alphabet hint
-//     (standard base64 with `+/=` padding), and the bytes are opaque
-//     to the server — no cross-protocol identity is bound to the
-//     encoding. The newline-collision guard is the only invariant
-//     here; the wider alphabet is acceptable.
-//
-// Short-field length caps bound the canonical and `MAX_CIPHERTEXT_LEN`
-// bounds chain-bloat; the ciphertext size check runs post-sig so the
-// error response (`workspace-save-error`) only reaches a legit signer.
-const TAG_SIG_BASE_RE = /^[\w-]+$/u
-const NONCE_CIPHER_RE = /^[\w+/=-]+$/u
-const MAX_FIELD_LEN = 128
-const MAX_CIPHERTEXT_LEN = 2 * 1024 * 1024
-
-const validTagSigBase = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && TAG_SIG_BASE_RE.test(s)
-const validNonce = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && NONCE_CIPHER_RE.test(s)
-// Ciphertext: same alphabet as nonce but the size cap is checked
-// POST-sig (to avoid leaking the cap to unauthenticated probes).
-// Pre-sig only the shape gate applies; `maxPayload` (4 MiB) already
-// bounds the total frame, so the worst-case bytes are still bounded.
-const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && NONCE_CIPHER_RE.test(s)
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
