@@ -21,7 +21,7 @@
 //     aggregate block instead of unreadable confetti;
 //   * sub-pixel rects are dropped, and a box too small to host a
 //     header + children renders as a single block.
-import { LitElement, html } from 'lit'
+import { LitElement, html, render as litRender } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
@@ -182,6 +182,11 @@ class BundleTreemap extends LitElement {
     this._status = 'loading'
     this._meta = { files: 0, total: 0, prefix: '' }
     this._ro = null
+    this._plot = null
+    this._tooltip = null
+    this._ttCell = null
+    this._onPointerMove = this._onPointerMove.bind(this)
+    this._onPointerLeave = this._onPointerLeave.bind(this)
   }
 
   willUpdate(changed) {
@@ -189,8 +194,9 @@ class BundleTreemap extends LitElement {
   }
 
   firstUpdated() {
-    const plot = this.querySelector('.bundle-treemap-plot')
-    if (!plot || typeof ResizeObserver === 'undefined') return
+    this._plot = this.querySelector('.bundle-treemap-plot')
+    this._tooltip = this.querySelector('.bundle-treemap-tooltip')
+    if (!this._plot || typeof ResizeObserver === 'undefined') return
     this._ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect
       if (!cr) return
@@ -198,12 +204,63 @@ class BundleTreemap extends LitElement {
       const h = Math.floor(cr.height)
       if (w !== this._w || h !== this._h) { this._w = w; this._h = h }
     })
-    this._ro.observe(plot)
+    this._ro.observe(this._plot)
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     if (this._ro) { this._ro.disconnect(); this._ro = null }
+  }
+
+  // Custom tooltip — mirrors the graph's #g2-tooltip (graph/canvas.js):
+  // a static element rendered into imperatively and positioned with
+  // edge-flip + clamp, so hovering never triggers the component's
+  // (layout-running) render(). Pointer events are delegated on the plot;
+  // the hovered cell carries its text in data-tt-* attributes.
+  _onPointerMove(e) {
+    const cell = e.target.closest('.bundle-treemap-node')
+    if (!cell || !this._tooltip) { this._hideTooltip(); return }
+    if (cell !== this._ttCell) {
+      this._ttCell = cell
+      const d = cell.dataset
+      litRender(html`
+        <div class="bundle-treemap-tt-path">${d.ttPath}</div>
+        ${d.ttPkg ? html`<div class="bundle-treemap-tt-head">
+          <span class="bundle-treemap-tt-dot" style=${`background:${d.ttColor}`}></span>
+          <span class="bundle-treemap-tt-pkg">${d.ttPkg}</span>
+        </div>` : ''}
+        <div class="bundle-treemap-tt-meta">${d.ttMeta}</div>
+      `, this._tooltip)
+    }
+    this._positionTooltip(e.clientX, e.clientY)
+  }
+
+  _onPointerLeave() { this._hideTooltip() }
+
+  // Place the tooltip 12px down-right of the cursor, flipping to the
+  // other side of either axis when it would overflow the plot and
+  // clamping so it never escapes the (overflow-hidden) plot box.
+  _positionTooltip(cx, cy) {
+    const tt = this._tooltip
+    if (!tt || !this._plot) return
+    tt.classList.add('show')
+    const rect = this._plot.getBoundingClientRect()
+    const sx = cx - rect.left
+    const sy = cy - rect.top
+    const OFFSET = 12
+    let tx = sx + OFFSET
+    if (tx + tt.offsetWidth > rect.width - 4) tx = sx - tt.offsetWidth - OFFSET
+    if (tx < 4) tx = 4
+    let ty = sy + OFFSET
+    if (ty + tt.offsetHeight > rect.height - 4) ty = sy - tt.offsetHeight - OFFSET
+    if (ty < 4) ty = 4
+    tt.style.left = `${tx}px`
+    tt.style.top = `${ty}px`
+  }
+
+  _hideTooltip() {
+    this._ttCell = null
+    if (this._tooltip) this._tooltip.classList.remove('show')
   }
 
   // Parse the bundle into a path tree once per `details` change:
@@ -268,20 +325,30 @@ class BundleTreemap extends LitElement {
     const p = (c.node.value / total) * 100
     const pctStr = p >= 10 ? p.toFixed(0) : p.toFixed(p >= 1 ? 1 : 2)
     const pos = { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` }
+    const fileCount = `${c.node.count} ${c.node.count === 1 ? 'file' : 'files'}`
+    // dir/agg are directories — tooltip path gets a trailing slash + a
+    // file-count; the dir container omits the package head line (a
+    // directory spans packages), leaves carry it.
     if (c.kind === 'dir') {
       return html`<div
         class="bundle-treemap-node bundle-treemap-dir"
         style=${styleMap(pos)}
-        title=${`${c.node.path}/ — ${formatBytes(c.node.value)} · ${c.node.count} ${c.node.count === 1 ? 'file' : 'files'} · ${pctStr}%`}
+        data-tt-path=${`${c.node.path}/`}
+        data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
       ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
     }
-    const color = pkgColor(bundlePkgOf(c.node.path))
+    const pkg = bundlePkgOf(c.node.path)
+    const color = pkgColor(pkg)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
+    const ttPkg = pkg === '__own__' ? 'own source' : pkg
     if (c.kind === 'agg') {
       return html`<div
         class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
         style=${style}
-        title=${`${c.node.path}/ — ${formatBytes(c.node.value)} · ${c.node.count} ${c.node.count === 1 ? 'file' : 'files'} · ${pctStr}%`}
+        data-tt-path=${`${c.node.path}/`}
+        data-tt-pkg=${ttPkg}
+        data-tt-color=${color}
+        data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
       ><span class="bundle-treemap-label">${c.node.name}/</span></div>`
     }
     return html`<button
@@ -289,7 +356,10 @@ class BundleTreemap extends LitElement {
       class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-file"
       style=${style}
       data-bundle-view-source=${c.node.origPath}
-      title=${`${c.node.path}\n${formatBytes(c.node.value)} · ${pctStr}% of bundle`}
+      data-tt-path=${c.node.path}
+      data-tt-pkg=${ttPkg}
+      data-tt-color=${color}
+      data-tt-meta=${`${formatBytes(c.node.value)} · ${pctStr}% of bundle`}
     ><span class="bundle-treemap-label">${c.node.name}</span></button>`
   }
 
@@ -304,14 +374,15 @@ class BundleTreemap extends LitElement {
     const { files, total, prefix } = this._meta
     return html`<header class="bundle-treemap-head">
         <span class="bundle-treemap-title">Source treemap</span>
-        <span class="bundle-treemap-sub">${files} ${files === 1 ? 'file' : 'files'} · ${formatBytes(total)}${prefix ? html` · <span class="mono" title=${prefix}>${prefix}</span>` : ''}</span>
+        <span class="bundle-treemap-sub">${files} ${files === 1 ? 'file' : 'files'} · ${formatBytes(total)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
       </header>
-      <div class="bundle-treemap-plot">
+      <div class="bundle-treemap-plot" @pointermove=${this._onPointerMove} @pointerleave=${this._onPointerLeave}>
         ${this._status === 'loading'
           ? html`<div class="bundle-treemap-empty">Loading…</div>`
           : this._status === 'empty'
             ? html`<div class="bundle-treemap-empty">This bundle doesn't carry any source content.</div>`
             : cells.map((c) => this._cell(c))}
+        <div class="bundle-treemap-tooltip"></div>
       </div>`
   }
 }

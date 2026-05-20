@@ -1287,18 +1287,18 @@ function renderBundleSlide(entry) {
         >Terminal</button>
         <button
           type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
-          data-bundle-tab="graph"
-          aria-selected=${String(tab === 'graph')}
-          role="tab"
-        >Graph</button>
-        <button
-          type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
           data-bundle-tab="treemap"
           aria-selected=${String(tab === 'treemap')}
           role="tab"
         >Treemap</button>
+        <button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
+          data-bundle-tab="graph"
+          aria-selected=${String(tab === 'graph')}
+          role="tab"
+        >Graph</button>
         ${hasIssues ? html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
