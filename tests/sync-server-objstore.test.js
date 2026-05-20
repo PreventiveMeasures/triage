@@ -42,19 +42,28 @@ function signSubscribe(sk, tag, from, connectionNonce) {
 }
 
 function signPut(sk, fields, connectionNonce) {
+  // Field order mirrors server/objstore/sign.ts:canonicalObjstorePut —
+  // prevIncarnation rides between prevVersion and contentHash, '' when
+  // null (matching `strOrEmpty`). A numeric prevVersion always carries a
+  // valid incarnation id; the pair is inseparable (verifyObjstorePutSig's
+  // validPrevPair gate).
   return sign(sk, encodeUtf8([
     PUT_DOMAIN,
     fields.workspaceTag, fields.resourceTag,
     fields.prevVersion == null ? '' : String(fields.prevVersion),
+    fields.prevIncarnation == null ? '' : String(fields.prevIncarnation),
     fields.contentHash, String(fields.expectedLength),
     connectionNonce,
   ].join('\n')))
 }
 
 function signDelete(sk, fields, connectionNonce) {
+  // prevIncarnation rides between prevVersion and the nonce, '' when null
+  // (server/objstore/sign.ts:canonicalObjstoreDelete).
   return sign(sk, encodeUtf8([
     DELETE_DOMAIN, fields.workspaceTag, fields.resourceTag,
     fields.prevVersion == null ? '' : String(fields.prevVersion),
+    fields.prevIncarnation == null ? '' : String(fields.prevIncarnation),
     connectionNonce,
   ].join('\n')))
 }
@@ -68,6 +77,14 @@ function signFetch(sk, tag, resourceTag, connectionNonce) {
 }
 
 function syntheticHash() { return b64url(crypto.getRandomValues(new Uint8Array(32))) }
+// A wire-valid incarnation id (16 random bytes → 22 base64url chars,
+// matching server/objstore/store.ts:randomId + isValidIncarnation).
+// Used where a non-null prevIncarnation must accompany a non-null
+// prevVersion to satisfy the `validPrevPair` gate but the exact value
+// is irrelevant — e.g. preconditioning a delete against a row that
+// doesn't exist (the handler reaches deleteObject and returns
+// not-found regardless of which incarnation was supplied).
+function syntheticIncarnation() { return b64url(crypto.getRandomValues(new Uint8Array(16))) }
 
 function connect(url) {
   return new Promise((resolve, reject) => {
@@ -130,9 +147,20 @@ async function subscribeWS(c, sk, tag) {
 
 // Two-step PUT: WS objstore-put-begin → objstore-put-token, then
 // HTTP PUT to the urlPath with the bearer + ciphertext body.
-async function putBlob(c, sk, tag, resourceTag, payloadBytes, prevVersion = null, httpOrigin) {
+//
+// `prev` is the optimistic-concurrency precondition: `null` for a
+// first write, otherwise the `{ version, incarnation }` token the
+// caller observed for the row it intends to overwrite (a prior
+// `ackBody`, an `objstore-put` broadcast, a fetch-token, or a list
+// entry — all carry both fields now). The wire frame + signature
+// carry `prevVersion`/`prevIncarnation` as an inseparable pair (the
+// server's `validPrevPair` gate rejects a half-pair), so we derive
+// both from `prev`.
+async function putBlob(c, sk, tag, resourceTag, payloadBytes, prev = null, httpOrigin) {
   const fields = {
-    workspaceTag: tag, resourceTag, prevVersion,
+    workspaceTag: tag, resourceTag,
+    prevVersion: prev?.version ?? null,
+    prevIncarnation: prev?.incarnation ?? null,
     expectedLength: payloadBytes.byteLength,
     contentHash: syntheticHash(),
   }
@@ -232,14 +260,15 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const c2 = await connect(serverUrl)
     await subscribeWS(c1, sk, tag)
     await subscribeWS(c2, sk, tag)
-    await putBlob(c1, sk, tag, 'soon-deleted', Buffer.from('bytes', 'utf8'), null, httpOrigin)
+    const { ackBody } = await putBlob(c1, sk, tag, 'soon-deleted', Buffer.from('bytes', 'utf8'), null, httpOrigin)
     await c2.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
     // Drain c1's own put broadcast echo before issuing the delete.
     await c1.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'soon-deleted')
-    const sig = await signDelete(sk, { workspaceTag: tag, resourceTag: 'soon-deleted', prevVersion: 1 }, c1.connectionNonce)
-    c1.ws.send(JSON.stringify({
-      type: 'objstore-delete', workspaceTag: tag, resourceTag: 'soon-deleted', prevVersion: 1, signature: sig,
-    }))
+    // The delete precondition is the (version, incarnation) the PUT
+    // ack just reported for the live row.
+    const delFields = { workspaceTag: tag, resourceTag: 'soon-deleted', prevVersion: 1, prevIncarnation: ackBody.incarnation }
+    const sig = await signDelete(sk, delFields, c1.connectionNonce)
+    c1.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature: sig }))
     const [ack, broadcastMsg] = await Promise.all([
       c1.recv((m) => m.type === 'objstore-deleted-ack' && m.resourceTag === 'soon-deleted'),
       c2.recv((m) => m.type === 'objstore-deleted' && m.resourceTag === 'soon-deleted'),
@@ -253,13 +282,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const { sk, tag } = await makeKp()
     const c1 = await connect(serverUrl)
     await subscribeWS(c1, sk, tag)
-    await putBlob(c1, sk, tag, 'will-vanish', Buffer.from('xx', 'utf8'), null, httpOrigin)
+    const { ackBody } = await putBlob(c1, sk, tag, 'will-vanish', Buffer.from('xx', 'utf8'), null, httpOrigin)
     // Drain own broadcast.
     await c1.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'will-vanish')
-    const sig = await signDelete(sk, { workspaceTag: tag, resourceTag: 'will-vanish', prevVersion: 1 }, c1.connectionNonce)
-    c1.ws.send(JSON.stringify({
-      type: 'objstore-delete', workspaceTag: tag, resourceTag: 'will-vanish', prevVersion: 1, signature: sig,
-    }))
+    const delFields = { workspaceTag: tag, resourceTag: 'will-vanish', prevVersion: 1, prevIncarnation: ackBody.incarnation }
+    const sig = await signDelete(sk, delFields, c1.connectionNonce)
+    c1.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature: sig }))
     await c1.recv((m) => m.type === 'objstore-deleted-ack')
     const c2 = await connect(serverUrl)
     await subscribeWS(c2, sk, tag)
@@ -320,18 +348,18 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const c2 = await connect(serverUrl)
     await subscribeWS(c1, sk, tag)
     await subscribeWS(c2, sk, tag)
-    await putBlob(c1, sk, tag, 'r-replay-target', Buffer.from('victim', 'utf8'), null, httpOrigin)
+    const { ackBody } = await putBlob(c1, sk, tag, 'r-replay-target', Buffer.from('victim', 'utf8'), null, httpOrigin)
     await c1.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'r-replay-target')
     await c2.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'r-replay-target')
-    // Sign a delete bound to c1's nonce — perfectly valid on c1.
-    const c1Sig = await signDelete(sk, { workspaceTag: tag, resourceTag: 'r-replay-target', prevVersion: 1 }, c1.connectionNonce)
+    // Sign a delete bound to c1's nonce — perfectly valid on c1 (the
+    // (version, incarnation) precondition matches the live row, so the
+    // ONLY thing that should reject it on c2 is the nonce mismatch).
+    const replayFields = { workspaceTag: tag, resourceTag: 'r-replay-target', prevVersion: 1, prevIncarnation: ackBody.incarnation }
+    const c1Sig = await signDelete(sk, replayFields, c1.connectionNonce)
     // Replay that signed delete on c2 — c2's nonce is different, so
     // the canonical bytes differ, verify fails, the message is
     // silently dropped.
-    c2.ws.send(JSON.stringify({
-      type: 'objstore-delete', workspaceTag: tag, resourceTag: 'r-replay-target',
-      prevVersion: 1, signature: c1Sig,
-    }))
+    c2.ws.send(JSON.stringify({ type: 'objstore-delete', ...replayFields, signature: c1Sig }))
     await c2.expectSilent(200)
     // Resource still present.
     const listSig = await signList(sk, tag, c2.connectionNonce)
@@ -451,14 +479,15 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
-    await putBlob(c, sk, tag, 'r-stale-ver', Buffer.from('v1', 'utf8'), null, httpOrigin)
+    const { ackBody: v1 } = await putBlob(c, sk, tag, 'r-stale-ver', Buffer.from('v1', 'utf8'), null, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'r-stale-ver')
     // Mint a GET token for v1.
     const fetchSig = await signFetch(sk, tag, 'r-stale-ver', c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-fetch', workspaceTag: tag, resourceTag: 'r-stale-ver', signature: fetchSig }))
     const tok = await c.recv((m) => m.type === 'objstore-fetch-token')
-    // Overwrite to v2 — invalidates the token's `ver = 1` binding.
-    await putBlob(c, sk, tag, 'r-stale-ver', Buffer.from('v2', 'utf8'), 1, httpOrigin)
+    // Overwrite to v2 — invalidates the token's `ver = 1` binding. The
+    // re-upload preconditions on v1's (version, incarnation).
+    await putBlob(c, sk, tag, 'r-stale-ver', Buffer.from('v2', 'utf8'), v1, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.version === 2)
     // Now the v1 GET token must 404.
     const res = await fetch(httpOrigin + tok.urlPath, {
@@ -486,10 +515,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // regression that changed the `reason` string would slip through.
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
-    const sig = await signDelete(sk, { workspaceTag: tag, resourceTag: 'never-existed', prevVersion: 1 }, c.connectionNonce)
-    c.ws.send(JSON.stringify({
-      type: 'objstore-delete', workspaceTag: tag, resourceTag: 'never-existed', prevVersion: 1, signature: sig,
-    }))
+    // prevVersion is non-null, so it must carry a wire-valid
+    // prevIncarnation (the `validPrevPair` gate). The row doesn't
+    // exist, so any valid id reaches deleteObject → not-found.
+    const delFields = { workspaceTag: tag, resourceTag: 'never-existed', prevVersion: 1, prevIncarnation: syntheticIncarnation() }
+    const sig = await signDelete(sk, delFields, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature: sig }))
     const err = await c.recv((m) => m.type === 'objstore-delete-error' && m.resourceTag === 'never-existed')
     assert.equal(err.workspaceTag, tag)
     assert.equal(err.reason, 'not-found')
@@ -626,13 +657,16 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const { ackBody: ack1 } = await putBlob(c, sk, tag, r, Buffer.from('v1-bytes', 'utf8'), null, httpOrigin)
     assert.equal(ack1.version, 1)
     await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === r)
-    const delSig = await signDelete(sk, { workspaceTag: tag, resourceTag: r, prevVersion: 1 }, c.connectionNonce)
-    c.ws.send(JSON.stringify({ type: 'objstore-delete', workspaceTag: tag, resourceTag: r, prevVersion: 1, signature: delSig }))
+    const delFields = { workspaceTag: tag, resourceTag: r, prevVersion: 1, prevIncarnation: ack1.incarnation }
+    const delSig = await signDelete(sk, delFields, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'objstore-delete', ...delFields, signature: delSig }))
     await c.recv((m) => m.type === 'objstore-deleted-ack')
-    // Stale prevVersion=1 against a missing row → not-found (the
-    // wire path returns objstore-delete-error reason='not-found',
-    // but for PUT we get an objstore-conflict with current=null).
-    const stale = await putBlob(c, sk, tag, r, Buffer.from('v2-attempt', 'utf8'), 1, httpOrigin)
+    // Stale precondition (the deleted incarnation's v1 token) against a
+    // missing row → for PUT we get an objstore-conflict with no current
+    // row. This is exactly the cross-incarnation case the incarnation
+    // id defends: the stale (version, incarnation) pair no longer
+    // matches any live row.
+    const stale = await putBlob(c, sk, tag, r, Buffer.from('v2-attempt', 'utf8'), ack1, httpOrigin)
     assert.equal(stale.conflict?.type, 'objstore-conflict')
     // prevVersion=null re-establishes the row at version 1.
     const { ackBody: ack2 } = await putBlob(c, sk, tag, r, Buffer.from('reborn', 'utf8'), null, httpOrigin)
@@ -756,7 +790,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
-    await putBlob(c, sk, tag, 'r-op-mix', Buffer.from('payload', 'utf8'), null, httpOrigin)
+    const { ackBody } = await putBlob(c, sk, tag, 'r-op-mix', Buffer.from('payload', 'utf8'), null, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'r-op-mix')
     // Mint a GET token, use on PUT.
     const fetchSig = await signFetch(sk, tag, 'r-op-mix', c.connectionNonce)
@@ -769,9 +803,10 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     })
     assert.equal(wrongMethod.status, 405)
     // The reverse: PUT token on GET. Issue a fresh begin (prev
-    // resource was version 1; prevVersion=1 for the next bump).
+    // resource was version 1; precondition on v1's (version,
+    // incarnation) for the next bump).
     const putFields = {
-      workspaceTag: tag, resourceTag: 'r-op-mix', prevVersion: 1,
+      workspaceTag: tag, resourceTag: 'r-op-mix', prevVersion: 1, prevIncarnation: ackBody.incarnation,
       expectedLength: 1,
       contentHash: syntheticHash(),
     }
@@ -894,9 +929,11 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     await subscribeWS(c, sk, tag)
     // Fill the workspace right up to the cap via the full WS+REST
     // path so we exercise the same code the wire frame depends on.
+    let fill0 = null
     for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
       const res = await putBlob(c, sk, tag, `r-fill-${i}`, Buffer.from('x'.repeat(4)), null, httpOrigin)
       assert.equal(res.putRes?.status, 200, `setup row #${i} should succeed`)
+      if (i === 0) fill0 = res.ackBody  // keep r-fill-0's token for the re-upload below
       // Drain own broadcast so it doesn't block the next iteration.
       await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === `r-fill-${i}`)
     }
@@ -911,7 +948,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(result.putError.reason, 'workspace-full')
     // Update path is still allowed at the cap — re-upload an existing
     // resource (new version) is not a NEW resource, no count change.
-    const reup = await putBlob(c, sk, tag, 'r-fill-0', Buffer.from('y'.repeat(8)), 1, httpOrigin)
+    const reup = await putBlob(c, sk, tag, 'r-fill-0', Buffer.from('y'.repeat(8)), fill0, httpOrigin)
     assert.equal(reup.putRes?.status, 200, 'update of existing resource should succeed at the cap')
     c.ws.close()
   })
@@ -1102,7 +1139,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // 64 KiB payload — large enough that the response body is
     // streamed in multiple ticks, widening the race window.
     const payload = Buffer.from(crypto.getRandomValues(new Uint8Array(64 * 1024)))
-    await putBlob(c, sk, tag, 'race-1', payload, null, httpOrigin)
+    const { ackBody } = await putBlob(c, sk, tag, 'race-1', payload, null, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'race-1')
     // Mint a v1-bound fetch token.
     const fetchSig = await signFetch(sk, tag, 'race-1', c.connectionNonce)
@@ -1114,10 +1151,9 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const fetchPromise = fetch(httpOrigin + tok.urlPath, {
       headers: { authorization: `Bearer ${tok.token}` },
     })
-    const deleteSig = await signDelete(sk, { workspaceTag: tag, resourceTag: 'race-1', prevVersion: 1 }, c.connectionNonce)
-    c.ws.send(JSON.stringify({
-      type: 'objstore-delete', workspaceTag: tag, resourceTag: 'race-1', prevVersion: 1, signature: deleteSig,
-    }))
+    const deleteFields = { workspaceTag: tag, resourceTag: 'race-1', prevVersion: 1, prevIncarnation: ackBody.incarnation }
+    const deleteSig = await signDelete(sk, deleteFields, c.connectionNonce)
+    c.ws.send(JSON.stringify({ type: 'objstore-delete', ...deleteFields, signature: deleteSig }))
     const res = await fetchPromise
     if (res.status === 200) {
       const body = Buffer.from(await res.arrayBuffer())
@@ -1142,7 +1178,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
     const v1 = Buffer.from(crypto.getRandomValues(new Uint8Array(64 * 1024)))
-    await putBlob(c, sk, tag, 'race-2', v1, null, httpOrigin)
+    const { ackBody: v1Ack } = await putBlob(c, sk, tag, 'race-2', v1, null, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === 'race-2')
     const fetchSig = await signFetch(sk, tag, 'race-2', c.connectionNonce)
     c.ws.send(JSON.stringify({ type: 'objstore-fetch', workspaceTag: tag, resourceTag: 'race-2', signature: fetchSig }))
@@ -1153,9 +1189,10 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
       headers: { authorization: `Bearer ${tok.token}` },
     })
     // Fire the PUT v2 right after the GET — race the rename against
-    // the GET's lock-protected fd open. Capture the promise so we
-    // can drain it before closing the socket.
-    const putPromise = putBlob(c, sk, tag, 'race-2', v2, 1, httpOrigin)
+    // the GET's lock-protected fd open. The v2 re-upload preconditions
+    // on v1's (version, incarnation). Capture the promise so we can
+    // drain it before closing the socket.
+    const putPromise = putBlob(c, sk, tag, 'race-2', v2, v1Ack, httpOrigin)
     const res = await fetchPromise
     if (res.status === 200) {
       const body = Buffer.from(await res.arrayBuffer())

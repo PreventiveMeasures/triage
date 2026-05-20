@@ -23,6 +23,7 @@ export type ObjstorePutBeginFields = {
   workspaceTag: string
   resourceTag: string
   prevVersion: number | null
+  prevIncarnation: string | null
   expectedLength: number
   contentHash: string
 }
@@ -31,6 +32,7 @@ export type ObjstoreDeleteFields = {
   workspaceTag: string
   resourceTag: string
   prevVersion: number | null
+  prevIncarnation: string | null
 }
 
 // Null-or-int → '' or decimal string. Matches `intOrEmpty` in
@@ -39,6 +41,13 @@ export type ObjstoreDeleteFields = {
 // produces identical canonical bytes.
 function intOrEmpty(v: number | null): string {
   return v == null ? '' : String(v)
+}
+
+// Mirror of `strOrEmpty` in server/objstore/sign.ts — '' when null,
+// the base64url incarnation id verbatim otherwise. Keeps the canonical
+// bytes byte-identical with the server verifier.
+function incOrEmpty(v: string | null): string {
+  return v == null ? '' : v
 }
 
 // Newline-joined fields after the domain prefix — same construction
@@ -56,6 +65,7 @@ export function canonicalObjstorePut(fields: ObjstorePutBeginFields, connectionN
     fields.workspaceTag,
     fields.resourceTag,
     intOrEmpty(fields.prevVersion),
+    incOrEmpty(fields.prevIncarnation),
     fields.contentHash,
     String(fields.expectedLength),
     connectionNonce,
@@ -68,6 +78,7 @@ export function canonicalObjstoreDelete(fields: ObjstoreDeleteFields, connection
     fields.workspaceTag,
     fields.resourceTag,
     intOrEmpty(fields.prevVersion),
+    incOrEmpty(fields.prevIncarnation),
     connectionNonce,
   ].join('\n'))
 }

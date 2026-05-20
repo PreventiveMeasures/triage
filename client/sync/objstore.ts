@@ -87,6 +87,7 @@ export type ObjstoreAuthResolver = (context: { retry: boolean }) => Promise<stri
 type ObjectMeta = {
   resourceTag: string
   version: number
+  incarnation: string
   contentHash: string
   contentLength: number
   signature: string
@@ -103,12 +104,22 @@ type ObjectMeta = {
 export type Listing = {
   resourceTag: string
   version: number
+  incarnation: string
   contentLength: number
 }
 
+// Optimistic-concurrency precondition. `null` = "must not exist" (first
+// write). Otherwise the EXACT (version, incarnation) the caller observed
+// for the state it intends to update — both echoed back from a prior
+// put/fetch/list result. Carrying the incarnation is what stops a stale
+// version from matching a freshly-recreated incarnation at the same
+// number (the cross-incarnation overwrite). Pass a result's `meta` or a
+// listing entry straight through.
+export type ObjstorePrev = { version: number; incarnation: string } | null
+
 export type PutResult =
-  | { ok: true; meta: { version: number; contentLength: number } }
-  | { ok: false; reason: 'conflict'; currentVersion: number | null }
+  | { ok: true; meta: { version: number; incarnation: string; contentLength: number } }
+  | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
   // Operator-side first-action gate fired: this is the FIRST signed
   // action against a workspace tag that doesn't yet exist on the
@@ -121,19 +132,19 @@ export type PutResult =
 
 export type DeleteResult =
   | { ok: true; deletedVersion: number }
-  | { ok: false; reason: 'conflict'; currentVersion: number | null }
+  | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'not-found' }
 
 // `fetch(fileName)` returns plaintext content + version. `fileName`
 // is omitted from the result because the caller already knows it
 // (they passed it in). `fetchByTag` reverses the AAD-bound name and
 // returns both fields.
-export type FetchResult = { content: Uint8Array; version: number }
+export type FetchResult = { content: Uint8Array; version: number; incarnation: string }
 // Bundle fetch carries the user-friendly name alongside the bytes —
 // peers downloading a bundle they didn't upload themselves need this
 // to render a meaningful sidebar label. The integrity is what the
 // caller passed in.
-export type FetchBundleResult = { name: string; content: Uint8Array; version: number }
+export type FetchBundleResult = { name: string; content: Uint8Array; version: number; incarnation: string }
 // `fetchByTag` returns a discriminated union: the embedded "name" in
 // the encrypted payload is either a report fileName (kind='report')
 // or a bundle's sha512 integrity (kind='bundle'). The session decides
@@ -143,8 +154,8 @@ export type FetchBundleResult = { name: string; content: Uint8Array; version: nu
 // discard bundles. The bundle branch additionally unwraps the
 // structured content prefix to surface the user-friendly bundle name.
 export type FetchByTagResult =
-  | { kind: 'report'; fileName: string; content: Uint8Array; version: number }
-  | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number }
+  | { kind: 'report'; fileName: string; content: Uint8Array; version: number; incarnation: string }
+  | { kind: 'bundle'; integrity: string; name: string; content: Uint8Array; version: number; incarnation: string }
 
 // Per-client deps. The client opens one WebSocket and multiplexes
 // every workspace's session over it. `authResolver` is shared too —
@@ -203,7 +214,7 @@ export type ObjstoreSession = {
   // REST PUT round-trip. `prevVersion` is the optimistic-concurrency
   // precondition: `null` for first upload, the version returned by
   // the previous `put` / `list` / `fetch` for an in-place overwrite.
-  put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult>
+  put(opts: { fileName: string; content: Uint8Array; prev: ObjstorePrev }): Promise<PutResult>
   // FETCH by plaintext fileName. Derives the tag, fetches the wire
   // ciphertext, verifies the AAD-bound (workspaceTag, tag) match and
   // the fileName inside the AEAD blob equals the requested one
@@ -218,7 +229,7 @@ export type ObjstoreSession = {
   fetchByTag(resourceTag: string): Promise<FetchByTagResult | null>
   // DELETE by plaintext fileName. `prevVersion` carries the same
   // optimistic-concurrency precondition as `put`.
-  delete(fileName: string, prevVersion: number | null): Promise<DeleteResult>
+  delete(fileName: string, prev: ObjstorePrev): Promise<DeleteResult>
   // LIST every resource the relay holds for this workspace. The
   // `resourceTag` field is opaque (HMAC); callers who need a list
   // of plaintext fileNames must `fetchByTag` on each tag to
@@ -237,9 +248,9 @@ export type ObjstoreSession = {
   // friendly bundle name rides in a structured content prefix so
   // peers downloading the bundle see the original name, not just
   // the integrity.
-  putBundle(opts: { integrity: string; name: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult>
+  putBundle(opts: { integrity: string; name: string; content: Uint8Array; prev: ObjstorePrev }): Promise<PutResult>
   fetchBundle(integrity: string): Promise<FetchBundleResult | null>
-  deleteBundle(integrity: string, prevVersion: number | null): Promise<DeleteResult>
+  deleteBundle(integrity: string, prev: ObjstorePrev): Promise<DeleteResult>
   close(): void
 }
 
@@ -297,8 +308,11 @@ type SessionState = {
   tagKey: Uint8Array
   putHandlers: Set<(event: { resourceTag: string; version: number; contentLength: number }) => void>
   deletedHandlers: Set<(event: { resourceTag: string; version: number }) => void>
-  // Per-tag monotonic version watermark — see `noteVersion` below.
-  seenVersions: Map<string, number>
+  // Per-tag rollback watermark, keyed by incarnation — see
+  // `noteVersion` / `assertFreshOrLater`. Tracks the highest version
+  // seen WITHIN the current incarnation; a different incarnation
+  // (delete+recreate) legitimately restarts at v1 and resets the floor.
+  seenVersions: Map<string, { incarnation: string; version: number }>
   // True once a `workspace-subscribe` for this session has been
   // SENT on the current socket (flag flips in `sendSubscribeFor`
   // before the send, with a rollback if the send fails — guards
@@ -345,9 +359,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const queue: WireMessage[] = []
   const waiters: Array<{ predicate: (m: WireMessage) => boolean; resolve: (m: WireMessage) => void; reject: (err: Error) => void }> = []
 
-  function noteVersion(state: SessionState, tag: string, version: number): void {
-    const prev = state.seenVersions.get(tag) ?? 0
-    if (version > prev) state.seenVersions.set(tag, version)
+  function noteVersion(state: SessionState, tag: string, incarnation: string, version: number): void {
+    const prev = state.seenVersions.get(tag)
+    // A new incarnation resets the floor (fresh lineage); within the same
+    // incarnation we keep the high-water mark.
+    if (!prev || prev.incarnation !== incarnation || version > prev.version) {
+      state.seenVersions.set(tag, { incarnation, version })
+    }
   }
 
   function makeSubscribedDeferred(state: Partial<SessionState>): void {
@@ -438,7 +456,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const meta = toObjectMeta(msg)
       // Advance the per-tag rollback watermark — a relay that promises
       // v5 in a broadcast then serves v3 on FETCH hits assertFreshOrLater.
-      noteVersion(state, meta.resourceTag, meta.version)
+      noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
       const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
       for (const h of state.putHandlers) { try { h(putEvent) } catch {} }
       return
@@ -527,7 +545,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
-  async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prevVersion: number | null }): Promise<RawPutResult> {
+  async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
@@ -536,7 +554,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     const fields: ObjstorePutBeginFields = {
       workspaceTag: state.workspaceTag,
       resourceTag: opts.resourceTag,
-      prevVersion: opts.prevVersion,
+      prevVersion: opts.prev?.version ?? null,
+      prevIncarnation: opts.prev?.incarnation ?? null,
       expectedLength: opts.bytes.byteLength,
       contentHash,
     }
@@ -595,7 +614,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       if (res.status === 409 || res.status === 410) {
         // 409 carries `currentVersion` for the retry loop; 410
         // (`gone`, staging row reaped) doesn't have a live version.
-        const current = res.status === 409 ? await parseRestConflictVersion(res) : null
+        const current = res.status === 409 ? await parseRestConflict(res) : null
         return { ok: false, reason: 'conflict', current }
       }
       let body = ''
@@ -611,11 +630,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     catch { throw new TypeError('objstore: PUT ack JSON parse failed') }
     if (!ack || typeof ack !== 'object'
       || typeof (ack as { version?: unknown }).version !== 'number'
+      || typeof (ack as { incarnation?: unknown }).incarnation !== 'string'
       || typeof (ack as { contentHash?: unknown }).contentHash !== 'string'
       || typeof (ack as { contentLength?: unknown }).contentLength !== 'number') {
-      throw new TypeError('objstore: PUT ack malformed (missing version/contentHash/contentLength)')
+      throw new TypeError('objstore: PUT ack malformed (missing version/incarnation/contentHash/contentLength)')
     }
-    const meta = ack as { version: number; contentHash: string; contentLength: number }
+    const meta = ack as { version: number; incarnation: string; contentHash: string; contentLength: number }
     if (meta.contentHash !== contentHash || meta.contentLength !== opts.bytes.byteLength) {
       throw new Error(`objstore: PUT ack mismatch — server returned contentHash=${meta.contentHash.slice(0, 16)}… length=${meta.contentLength}, client signed ${contentHash.slice(0, 16)}… length=${opts.bytes.byteLength}`)
     }
@@ -704,12 +724,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
   // Wire-level DELETE. `delete` (public) is the encrypting wrapper —
   // it derives the tag from the plaintext fileName and calls here.
-  async function _rawDelete(state: SessionState, resourceTag: string, prevVersion: number | null): Promise<RawDeleteResult> {
+  async function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
     await state.subscribedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
-    const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion }
+    const fields: ObjstoreDeleteFields = { workspaceTag: state.workspaceTag, resourceTag, prevVersion: prev?.version ?? null, prevIncarnation: prev?.incarnation ?? null }
     const signature = await signObjstoreDelete(state.signingKey, fields, nonce)
     send({ type: 'objstore-delete', ...fields, signature })
     const reply = await recv((m) =>
@@ -753,15 +773,18 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     return out
   }
 
-  // Reject a fetched object whose version is strictly lower than
-  // the highest we've already seen for this tag. The Ed25519 PUT
+  // Reject a fetched object whose version is strictly lower than the
+  // highest we've already seen FOR THE SAME INCARNATION. The Ed25519 PUT
   // signature is valid for ANY historical version, so without this
-  // watermark a relay could serve a stale-but-signed copy on FETCH
-  // and the AEAD / contentHash chain would all check out.
-  function assertFreshOrLater(state: SessionState, tag: string, version: number): void {
-    const last = state.seenVersions.get(tag) ?? 0
-    if (version < last) {
-      throw new Error(`objstore: version-rollback rejected — fetched v${version} for a tag we've already seen at v${last}`)
+  // watermark a relay could serve a stale-but-signed copy on FETCH and
+  // the AEAD / contentHash chain would all check out. Scoping to the
+  // incarnation keeps that protection while letting a legitimate
+  // delete+recreate (fresh incarnation, restarting at v1) read cleanly
+  // even when the client missed the delete broadcast (reconnect window).
+  function assertFreshOrLater(state: SessionState, tag: string, incarnation: string, version: number): void {
+    const last = state.seenVersions.get(tag)
+    if (last && last.incarnation === incarnation && version < last.version) {
+      throw new Error(`objstore: version-rollback rejected — fetched v${version} for an incarnation we've already seen at v${last.version}`)
     }
   }
 
@@ -835,47 +858,46 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // PUT `ciphertext` under `resourceTag` with optimistic concurrency,
     // mapping the raw server result into a PutResult. Shared by `put`
     // (reports) and `putBundle`.
-    async function rawPutAndMap(resourceTag: string, ciphertext: Uint8Array, prevVersion: number | null): Promise<PutResult> {
-      const raw = await _rawPut(full, { resourceTag, bytes: ciphertext, prevVersion })
+    async function rawPutAndMap(resourceTag: string, ciphertext: Uint8Array, prev: ObjstorePrev): Promise<PutResult> {
+      const raw = await _rawPut(full, { resourceTag, bytes: ciphertext, prev })
       if (raw.ok) {
-        // `prevVersion: null` is the server's "must not exist"
-        // precondition — its success means the row was created
-        // fresh, possibly atop a deleted prior incarnation we
-        // never saw the broadcast for. Re-seed the watermark from
-        // this incarnation's v1.
-        if (prevVersion == null) full.seenVersions.delete(resourceTag)
-        noteVersion(full, resourceTag, raw.meta.version)
-        return { ok: true, meta: { version: raw.meta.version, contentLength: raw.meta.contentLength } }
+        // `prev: null` is the server's "must not exist" precondition —
+        // its success means the row was created fresh, possibly atop a
+        // deleted prior incarnation we never saw the broadcast for.
+        // Re-seed the watermark from this incarnation's v1.
+        if (prev == null) full.seenVersions.delete(resourceTag)
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+        return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
-      return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+      if (raw.current) noteVersion(full, resourceTag, raw.current.incarnation, raw.current.version)
+      return { ok: false, reason: 'conflict', current: raw.current }
     }
 
-    async function put(opts: { fileName: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+    async function put(opts: { fileName: string; content: Uint8Array; prev: ObjstorePrev }): Promise<PutResult> {
       const resourceTag = await computeResourceTag(full.tagKey, opts.fileName)
       const ciphertext = encryptObjstorePayload(full.contentKey, opts.fileName, opts.content, workspaceTag, resourceTag)
-      return await rawPutAndMap(resourceTag, ciphertext, opts.prevVersion)
+      return await rawPutAndMap(resourceTag, ciphertext, opts.prev)
     }
 
     async function fetch(fileName: string): Promise<FetchResult | null> {
       const resourceTag = await computeResourceTag(full.tagKey, fileName)
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       const { fileName: decoded, content } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       if (decoded !== fileName) {
         throw new Error(`objstore: fileName-binding mismatch — requested '${fileName}', payload encoded '${decoded}'`)
       }
-      noteVersion(full, resourceTag, raw.meta.version)
-      return { content, version: raw.meta.version }
+      noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+      return { content, version: raw.meta.version, incarnation: raw.meta.incarnation }
     }
 
     async function fetchByTag(resourceTag: string): Promise<FetchByTagResult | null> {
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       // The decrypted payload's embedded "name" is one of:
       //   - a report fileName (most common)
       //   - a bundle's sha512 integrity
@@ -886,14 +908,14 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const { fileName: embeddedName, content } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       const expectedReport = await computeResourceTag(full.tagKey, embeddedName)
       if (expectedReport === resourceTag) {
-        noteVersion(full, resourceTag, raw.meta.version)
-        return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version }
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+        return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
       }
       const expectedBundle = await computeBundleResourceTag(full.tagKey, embeddedName)
       if (expectedBundle === resourceTag) {
         const { name, content: bundleContent } = unwrapBundleContent(content)
-        noteVersion(full, resourceTag, raw.meta.version)
-        return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version }
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+        return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version, incarnation: raw.meta.incarnation }
       }
       throw new Error('objstore: fetchByTag — decrypted name does not derive back to the requested resourceTag under either the report or bundle tag scheme (relay or workspace member produced a non-round-trippable tag-name pair)')
     }
@@ -901,8 +923,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // DELETE `resourceTag` with optimistic concurrency, mapping the raw
     // server result into a DeleteResult. Shared by `deleteByName`
     // (reports) and `deleteBundle`.
-    async function rawDeleteAndMap(resourceTag: string, prevVersion: number | null): Promise<DeleteResult> {
-      const raw = await _rawDelete(full, resourceTag, prevVersion)
+    async function rawDeleteAndMap(resourceTag: string, prev: ObjstorePrev): Promise<DeleteResult> {
+      const raw = await _rawDelete(full, resourceTag, prev)
       if (raw.ok) {
         // Delete drops the server-side row; the next PUT under this
         // tag starts a new incarnation at v1.
@@ -910,45 +932,45 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         return raw
       }
       if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
-      return { ok: false, reason: 'conflict', currentVersion: raw.current?.version ?? null }
+      if (raw.current) noteVersion(full, resourceTag, raw.current.incarnation, raw.current.version)
+      return { ok: false, reason: 'conflict', current: raw.current }
     }
 
-    async function deleteByName(fileName: string, prevVersion: number | null): Promise<DeleteResult> {
+    async function deleteByName(fileName: string, prev: ObjstorePrev): Promise<DeleteResult> {
       const resourceTag = await computeResourceTag(full.tagKey, fileName)
-      return await rawDeleteAndMap(resourceTag, prevVersion)
+      return await rawDeleteAndMap(resourceTag, prev)
     }
 
     async function list(): Promise<Listing[]> {
       const entries = await _rawList(full)
-      for (const m of entries) noteVersion(full, m.resourceTag, m.version)
-      return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, contentLength: m.contentLength }))
+      for (const m of entries) noteVersion(full, m.resourceTag, m.incarnation, m.version)
+      return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength }))
     }
 
-    async function putBundle(opts: { integrity: string; name: string; content: Uint8Array; prevVersion: number | null }): Promise<PutResult> {
+    async function putBundle(opts: { integrity: string; name: string; content: Uint8Array; prev: ObjstorePrev }): Promise<PutResult> {
       const resourceTag = await computeBundleResourceTag(full.tagKey, opts.integrity)
       const wrapped = wrapBundleContent(opts.name, opts.content)
       const ciphertext = encryptObjstorePayload(full.contentKey, opts.integrity, wrapped, workspaceTag, resourceTag)
-      return await rawPutAndMap(resourceTag, ciphertext, opts.prevVersion)
+      return await rawPutAndMap(resourceTag, ciphertext, opts.prev)
     }
 
     async function fetchBundle(integrity: string): Promise<FetchBundleResult | null> {
       const resourceTag = await computeBundleResourceTag(full.tagKey, integrity)
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       const { fileName: decoded, content: wrapped } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       if (decoded !== integrity) {
         throw new Error(`objstore: bundle-integrity binding mismatch — requested '${integrity}', payload encoded '${decoded}'`)
       }
       const { name, content } = unwrapBundleContent(wrapped)
-      noteVersion(full, resourceTag, raw.meta.version)
-      return { name, content, version: raw.meta.version }
+      noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+      return { name, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
     }
 
-    async function deleteBundle(integrity: string, prevVersion: number | null): Promise<DeleteResult> {
+    async function deleteBundle(integrity: string, prev: ObjstorePrev): Promise<DeleteResult> {
       const resourceTag = await computeBundleResourceTag(full.tagKey, integrity)
-      return await rawDeleteAndMap(resourceTag, prevVersion)
+      return await rawDeleteAndMap(resourceTag, prev)
     }
 
     return {
@@ -1055,32 +1077,33 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
 
 // Internal wire-level result shapes returned by `_rawPut` /
 // `_rawDelete`. Kept separate from the public `PutResult` /
-// `DeleteResult` so the public types can carry just
-// `currentVersion` (a number from the conflict envelope) rather
-// than the full server-meta blob — the conflict envelope's
-// resourceTag is the OPAQUE wire tag, which the caller can't
-// meaningfully consume without the tagKey.
+// `DeleteResult` so the public types carry just the rebase token
+// `current: { version, incarnation }` rather than the full server-meta
+// blob — the conflict envelope's resourceTag is the OPAQUE wire tag,
+// which the caller can't meaningfully consume without the tagKey.
 type RawPutResult =
-  | { ok: true; meta: { version: number; contentHash: string; contentLength: number } }
-  | { ok: false; reason: 'conflict'; current: { version: number } | null }
+  | { ok: true; meta: { version: number; incarnation: string; contentHash: string; contentLength: number } }
+  | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
   | { ok: false; reason: 'unauthorized' }
 
 type RawDeleteResult =
   | { ok: true; deletedVersion: number }
-  | { ok: false; reason: 'conflict'; current: { version: number } | null }
+  | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'not-found' }
 
-// Read the live row's version out of a REST PUT 409 `conflict` body.
-// Returns `null` for malformed bodies, missing fields, or non-safe
-// integer values. The caller treats `null` the same as "no version
-// surfaced" — the retry path won't loop against a live row, but the
-// caller can't precondition on a known version either.
-async function parseRestConflictVersion(res: Response): Promise<{ version: number } | null> {
+// Read the live row's (version, incarnation) out of a REST PUT 409
+// `conflict` body. Returns `null` for malformed bodies, missing fields,
+// a non-safe-integer version, or a missing incarnation. The caller
+// treats `null` the same as "no precondition surfaced" — the retry path
+// won't loop against a live row, and can't rebase onto a known state
+// either (both halves must be present to form a valid `prev`).
+async function parseRestConflict(res: Response): Promise<{ version: number; incarnation: string } | null> {
   try {
-    const body = (await res.json()) as { currentVersion?: unknown }
-    if (typeof body.currentVersion === 'number' && Number.isSafeInteger(body.currentVersion)) {
-      return { version: body.currentVersion }
+    const body = (await res.json()) as { currentVersion?: unknown; currentIncarnation?: unknown }
+    if (typeof body.currentVersion === 'number' && Number.isSafeInteger(body.currentVersion)
+      && typeof body.currentIncarnation === 'string') {
+      return { version: body.currentVersion, incarnation: body.currentIncarnation }
     }
   } catch {}
   return null
@@ -1095,6 +1118,7 @@ function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
   if (!m || typeof m !== 'object') return false
   return typeof m['resourceTag'] === 'string'
     && typeof m['version'] === 'number'
+    && typeof m['incarnation'] === 'string'
     && typeof m['contentHash'] === 'string'
     && typeof m['contentLength'] === 'number'
     && typeof m['signature'] === 'string'
@@ -1107,6 +1131,7 @@ function toObjectMeta(m: WireMessage): ObjectMeta {
   return {
     resourceTag: m['resourceTag'] as string,
     version: m['version'] as number,
+    incarnation: m['incarnation'] as string,
     contentHash: m['contentHash'] as string,
     contentLength: m['contentLength'] as number,
     signature: m['signature'] as string,

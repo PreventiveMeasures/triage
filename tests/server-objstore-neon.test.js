@@ -47,12 +47,18 @@ function fakeBegin(over = {}) {
     workspaceTag: 'workspace-tag-1',
     resourceTag,
     prevVersion: null,
+    prevIncarnation: null,
     expectedLength: 16,
     contentHash: chash(resourceTag),
     signature: b64u64(),
     ...over,
   }
 }
+
+// Deterministic incarnation for a directly-seeded row (see seedLiveRows).
+// A re-upload precondition against a seeded row passes this as its
+// prevIncarnation so the advisory tuple check + CAS match.
+function seedIncarnation(i) { return `seedinc${i.toString().padStart(14, '0')}` }
 
 function writeStaging(filePath, bytes) {
   const fd = openSync(filePath, 'a')
@@ -88,9 +94,9 @@ async function seedLiveRows(pg, tag, n) {
   for (let i = 0; i < n; i++) {
     await pg.query(
       `INSERT INTO workspace_object
-         (workspace_tag, resource_tag, version, content_hash, content_length, signature, put_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [tag, `seed-res-${i}`, 1, chash(`seed-${i}`), 8, b64u64(), Date.now()],
+         (workspace_tag, resource_tag, version, incarnation, content_hash, content_length, signature, put_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [tag, `seed-res-${i}`, 1, seedIncarnation(i), chash(`seed-${i}`), 8, b64u64(), Date.now()],
     )
   }
 }
@@ -145,10 +151,10 @@ describe('beginPut → commitPut happy path (Neon)', () => {
     try {
       const b1 = await beginPut(handle, fakeBegin({ expectedLength: 8 }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b1.stagingId), Buffer.alloc(8))
-      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b1.stagingId })
+      const c1 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b1.stagingId })
       const v1blob = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       const h2 = chash('resource-tag-1@v2')
-      const b2 = await beginPut(handle, fakeBegin({ prevVersion: 1, expectedLength: 24, contentHash: h2 }))
+      const b2 = await beginPut(handle, fakeBegin({ prevVersion: 1, prevIncarnation: c1.row.incarnation, expectedLength: 24, contentHash: h2 }))
       assert.equal(b2.ok, true)
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b2.stagingId), Buffer.alloc(24))
       const c2 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b2.stagingId })
@@ -178,7 +184,7 @@ describe('beginPut — version preconditions (Neon)', () => {
   it('rejects a fresh PUT with prevVersion=N when the row is missing', async () => {
     const { handle, cleanup } = await freshNeonObjstore()
     try {
-      const begin = await beginPut(handle, fakeBegin({ prevVersion: 1 }))
+      const begin = await beginPut(handle, fakeBegin({ prevVersion: 1, prevIncarnation: 'a'.repeat(22) }))
       assert.equal(begin.ok, false)
       assert.equal(begin.reason, 'conflict')
       assert.equal(begin.conflict, null)
@@ -214,7 +220,7 @@ describe('beginPut — per-workspace resource cap (Neon)', () => {
     const { handle, pg, cleanup } = await freshNeonObjstore()
     try {
       await seedLiveRows(pg, 'workspace-tag-1', MAX_RESOURCES_PER_WORKSPACE)
-      const begin = await beginPut(handle, fakeBegin({ resourceTag: 'seed-res-0', prevVersion: 1 }))
+      const begin = await beginPut(handle, fakeBegin({ resourceTag: 'seed-res-0', prevVersion: 1, prevIncarnation: seedIncarnation(0) }))
       assert.equal(begin.ok, true)
     } finally { await cleanup() }
   })
@@ -303,9 +309,9 @@ describe('deleteObject (Neon)', () => {
     try {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b.stagingId), Buffer.alloc(4))
-      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
+      const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
       const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1, c.row.incarnation)
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 1)
       assert.equal(await getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
@@ -320,7 +326,7 @@ describe('deleteObject (Neon)', () => {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b.stagingId), Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 99)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 99, 'a'.repeat(22))
       assert.equal(d.ok, false)
       assert.equal(d.reason, 'conflict')
       assert.equal(d.conflict.version, 1)
@@ -330,7 +336,7 @@ describe('deleteObject (Neon)', () => {
   it('idempotent: prevVersion=null on a missing row succeeds with sentinel deletedVersion=0', async () => {
     const { handle, cleanup } = await freshNeonObjstore()
     try {
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-missing', null)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-missing', null, null)
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 0)
     } finally { await cleanup() }
@@ -365,10 +371,10 @@ describe('commit version-CAS — cross-replica races (two Handles, one PGlite) (
     try {
       const b0 = await beginPut(handle1, fakeBegin({ expectedLength: 4 }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b0.stagingId), Buffer.alloc(4))
-      await commitPut(handle1, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b0.stagingId })
+      const c0 = await commitPut(handle1, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b0.stagingId })
 
-      const bA = await beginPut(handle1, fakeBegin({ prevVersion: 1, contentHash: chash('A@v2') }))
-      const bB = await beginPut(handle2, fakeBegin({ prevVersion: 1, contentHash: chash('B@v2') }))
+      const bA = await beginPut(handle1, fakeBegin({ prevVersion: 1, prevIncarnation: c0.row.incarnation, contentHash: chash('A@v2') }))
+      const bB = await beginPut(handle2, fakeBegin({ prevVersion: 1, prevIncarnation: c0.row.incarnation, contentHash: chash('B@v2') }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', bA.stagingId), Buffer.alloc(16))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', bB.stagingId), Buffer.alloc(16))
       const [rA, rB] = await Promise.all([
@@ -389,12 +395,12 @@ describe('commit version-CAS — cross-replica races (two Handles, one PGlite) (
     try {
       const b0 = await beginPut(handle1, fakeBegin({ expectedLength: 4 }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', b0.stagingId), Buffer.alloc(4))
-      await commitPut(handle1, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b0.stagingId })
+      const c0 = await commitPut(handle1, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b0.stagingId })
 
-      const bB = await beginPut(handle2, fakeBegin({ prevVersion: 1, contentHash: chash('B@v2') }))
+      const bB = await beginPut(handle2, fakeBegin({ prevVersion: 1, prevIncarnation: c0.row.incarnation, contentHash: chash('B@v2') }))
       writeStaging(stagingFilePath(objDir, 'workspace-tag-1', bB.stagingId), Buffer.alloc(16))
       const [del, commit] = await Promise.all([
-        deleteObject(handle1, 'workspace-tag-1', 'resource-tag-1', 1),
+        deleteObject(handle1, 'workspace-tag-1', 'resource-tag-1', 1, c0.row.incarnation),
         commitPut(handle2, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: bB.stagingId }),
       ])
       assert.notEqual(del.ok, commit.ok, 'exactly one of {delete, commit} wins — no lost update')

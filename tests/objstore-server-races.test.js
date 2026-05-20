@@ -77,6 +77,7 @@ function fakeBegin(over = {}) {
     workspaceTag: 'ws-1',
     resourceTag,
     prevVersion: null,
+    prevIncarnation: null,
     expectedLength: 16,
     contentHash: chash(resourceTag),
     signature: b64u64(),
@@ -106,9 +107,12 @@ async function lockedPut(handle, input, bytes) {
   })
 }
 
-// Convenience: a direct deleteObject (no lock — see lockedPut).
-function lockedDelete(handle, tag, res, prev) {
-  return deleteObject(handle, tag, res, prev)
+// Convenience: a direct deleteObject (no lock — see lockedPut). The
+// precondition is the (version, incarnation) pair the caller observed;
+// `prevIncarnation` is null iff `prev` is null (the must-not-exist /
+// idempotent-ack gate), matching deleteObject's null-iff-null rule.
+function lockedDelete(handle, tag, res, prev, prevIncarnation = null) {
+  return deleteObject(handle, tag, res, prev, prevIncarnation)
 }
 
 describe('isolation: many concurrent puts on distinct resources', () => {
@@ -213,17 +217,19 @@ describe('CAS serialisation: many concurrent commits on the SAME resource', () =
     const { handle, objDir, cleanup } = freshHandle()
     try {
       let lastVer = null
+      let lastInc = null
       let lastBytes = null
       for (let i = 1; i <= 10; i++) {
         const bytes = Buffer.from(`v${i}-${'x'.repeat(8 - String(i).length)}`)
         const r = await lockedPut(
           handle,
-          fakeBegin({ resourceTag: 'chain', expectedLength: bytes.byteLength, prevVersion: lastVer }),
+          fakeBegin({ resourceTag: 'chain', expectedLength: bytes.byteLength, prevVersion: lastVer, prevIncarnation: lastInc }),
           bytes,
         )
         assert.equal(r.ok, true)
         assert.equal(r.row.version, i)
         lastVer = i
+        lastInc = r.row.incarnation
         lastBytes = bytes
       }
       // Live file contains v10's bytes specifically. Every version
@@ -357,7 +363,7 @@ describe('delete-then-recreate (the user-data scenario)', () => {
       // Delete the live row. The blob is NOT unlinked inline — the row
       // drops, the now-unreferenced original blob is left for the
       // reaper's GC (deferred, post-grace-window).
-      const d = await lockedDelete(handle, 'ws-1', 'recycled', 1)
+      const d = await lockedDelete(handle, 'ws-1', 'recycled', 1, r1.row.incarnation)
       assert.equal(d.ok, true)
       assert.equal(await getLive(handle, 'ws-1', 'recycled'), null)
       assert.equal(existsSync(origBlob), true, 'delete drops the row but leaves the blob for the reaper')
@@ -394,7 +400,7 @@ describe('delete-then-recreate (the user-data scenario)', () => {
         // the row is still live (before this cycle's delete).
         const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash('flip')))
         assert.equal(Buffer.compare(onDisk, bytes), 0, `cycle ${cycle}: live bytes match this cycle's payload`)
-        const d = await lockedDelete(handle, 'ws-1', 'flip', 1)
+        const d = await lockedDelete(handle, 'ws-1', 'flip', 1, r.row.incarnation)
         assert.equal(d.ok, true)
       }
     } finally { cleanup() }
@@ -419,13 +425,13 @@ describe('delete-then-recreate (the user-data scenario)', () => {
       // specific blob is never promoted.
       const hV2 = chash('mid@v2')
       const begin = await beginPut(handle, fakeBegin({
-        resourceTag: 'mid', prevVersion: 1, expectedLength: 4, contentHash: hV2,
+        resourceTag: 'mid', prevVersion: 1, prevIncarnation: r1.row.incarnation, expectedLength: 4, contentHash: hV2,
       }))
       assert.equal(begin.ok, true)
       writeStaging(begin.filePath, Buffer.alloc(4))
       // Interleave: DELETE the v1 row. Row drops; v1 blob lingers
       // (deferred GC), but it is now unreferenced.
-      const d = await lockedDelete(handle, 'ws-1', 'mid', 1)
+      const d = await lockedDelete(handle, 'ws-1', 'mid', 1, r1.row.incarnation)
       assert.equal(d.ok, true)
       assert.equal(await getLive(handle, 'ws-1', 'mid'), null)
       // Now commit v2. commitPut's getLive returns null and the
@@ -484,7 +490,7 @@ describe('delete-then-recreate (the user-data scenario)', () => {
           // needed — any rejection here is a real defect and
           // should fail the test loudly.
           const live = await getLive(handle, 'ws-1', 'churn')
-          if (live) await lockedDelete(handle, 'ws-1', 'churn', live.version)
+          if (live) await lockedDelete(handle, 'ws-1', 'churn', live.version, live.incarnation)
           return lockedPut(
             handle,
             fakeBegin({ resourceTag: 'churn', expectedLength: fresh.byteLength, contentHash: hFresh }),
@@ -534,7 +540,7 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
     try {
       // Seed: put + reap (no orphans yet).
       const original = Buffer.from('reap-orig-bytes')
-      await lockedPut(handle, fakeBegin({ resourceTag: 'reap-race', expectedLength: original.byteLength }), original)
+      const seed = await lockedPut(handle, fakeBegin({ resourceTag: 'reap-race', expectedLength: original.byteLength }), original)
       // Cycle: delete + recreate + reap, all kicked together so the
       // reaper's snapshot is racing the row-state changes. The
       // recreate reuses the same content hash as the seed (default),
@@ -543,7 +549,7 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
       // delete dropped the intervening row.
       const replacement = Buffer.from('reap-replacement-x')
       const [, , reapResult] = await Promise.all([
-        lockedDelete(handle, 'ws-1', 'reap-race', 1),
+        lockedDelete(handle, 'ws-1', 'reap-race', 1, seed.row.incarnation),
         lockedPut(handle, fakeBegin({ resourceTag: 'reap-race', expectedLength: replacement.byteLength }), replacement),
         reapOrphans(handle),
       ])
@@ -766,10 +772,10 @@ describe('reaper × delete-then-recreate (the danger zone)', () => {
       // that commitPut+delete produce in production.
       handle.db.prepare(`
         INSERT INTO workspace_object
-          (workspace_tag, resource_tag, version, content_hash, content_length,
+          (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
            signature, put_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'R', 1, h, bytes.byteLength, b64u64(), Date.now())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('ws-1', 'R', 1, 'aaaaaaaaaaaaaaaaaaaaaa', h, bytes.byteLength, b64u64(), Date.now())
       // Age the blob and sweep with grace 0: neither youth nor grace
       // can be what spares it — only the live row's reference to H.
       ageBlob(blob)
@@ -831,7 +837,7 @@ describe('reaper × delete-then-recreate (the danger zone)', () => {
             if (put.ok) lastPut = { put, bytes }
             // lockedDelete returns a result object on every
             // outcome (ok / not-found / conflict); no catch needed.
-            await lockedDelete(handle, 'ws-1', tag, put.ok ? put.row.version : null)
+            await lockedDelete(handle, 'ws-1', tag, put.ok ? put.row.version : null, put.ok ? put.row.incarnation : null)
           }
           // Final put — leaves the resource at v1.
           const finalBytes = Buffer.from(`r${r}-final-${'q'.repeat(8)}`)
@@ -887,10 +893,10 @@ describe('reaper × delete-then-recreate (the danger zone)', () => {
       // The CAS landed the row referencing the blob's hash.
       handle.db.prepare(`
         INSERT INTO workspace_object
-          (workspace_tag, resource_tag, version, content_hash, content_length,
+          (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
            signature, put_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'R', 1, h, content.length, b64u64(), Date.now())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('ws-1', 'R', 1, 'aaaaaaaaaaaaaaaaaaaaaa', h, content.length, b64u64(), Date.now())
       // Age it and sweep with grace 0 so only the live row's reference
       // (not the grace window) can be what spares it.
       ageBlob(livePath)
@@ -968,10 +974,11 @@ describe('deleteObject idempotency + races', () => {
     // a row a concurrent commit just bumped: see the next test.)
     const { handle, cleanup } = freshHandle()
     try {
-      await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
+      const seed = await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
+      const inc1 = seed.row.incarnation
       const [d1, d2] = await Promise.all([
-        lockedDelete(handle, 'ws-1', 'res-1', 1),
-        lockedDelete(handle, 'ws-1', 'res-1', 1),
+        lockedDelete(handle, 'ws-1', 'res-1', 1, inc1),
+        lockedDelete(handle, 'ws-1', 'res-1', 1, inc1),
       ])
       const oks = [d1, d2].filter((d) => d.ok)
       const notFounds = [d1, d2].filter((d) => !d.ok && d.reason === 'not-found')
@@ -991,12 +998,13 @@ describe('deleteObject idempotency + races', () => {
     for (let i = 0; i < 40; i++) {
       const { handle, cleanup } = freshHandle()
       try {
-        await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
+        const seed = await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
+        const inc1 = seed.row.incarnation
         const newBytes = Buffer.from('UPDATED-CONTENT')
         const h2 = chash('res-1@v2')
         const [commitRes, delRes] = await Promise.all([
-          lockedPut(handle, fakeBegin({ prevVersion: 1, expectedLength: newBytes.byteLength, contentHash: h2 }), newBytes),
-          lockedDelete(handle, 'ws-1', 'res-1', 1),
+          lockedPut(handle, fakeBegin({ prevVersion: 1, prevIncarnation: inc1, expectedLength: newBytes.byteLength, contentHash: h2 }), newBytes),
+          lockedDelete(handle, 'ws-1', 'res-1', 1, inc1),
         ])
         const live = await getLive(handle, 'ws-1', 'res-1')
         if (commitRes.ok) {
@@ -1043,8 +1051,8 @@ describe('deleteObject idempotency + races', () => {
   it('deleteObject(prev=null) on a missing row twice in a row — both ack zero', async () => {
     const { handle, cleanup } = freshHandle()
     try {
-      const d1 = await deleteObject(handle, 'ws-1', 'res-1', null)
-      const d2 = await deleteObject(handle, 'ws-1', 'res-1', null)
+      const d1 = await deleteObject(handle, 'ws-1', 'res-1', null, null)
+      const d2 = await deleteObject(handle, 'ws-1', 'res-1', null, null)
       assert.equal(d1.ok, true); assert.equal(d1.deletedVersion, 0)
       assert.equal(d2.ok, true); assert.equal(d2.deletedVersion, 0)
     } finally { cleanup() }
@@ -1063,10 +1071,10 @@ describe('deleteObject idempotency + races', () => {
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'will-strand', expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
-      await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'will-strand', stagingId: b.stagingId })
+      const c = await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'will-strand', stagingId: b.stagingId })
       const live = liveFilePath(objDir, 'ws-1', chash('will-strand'))
       assert.equal(existsSync(live), true)
-      const d = await deleteObject(handle, 'ws-1', 'will-strand', 1)
+      const d = await deleteObject(handle, 'ws-1', 'will-strand', 1, c.row.incarnation)
       assert.equal(d.ok, true)
       // Row gone, blob lingers — delete defers the unlink to the GC.
       assert.equal(await getLive(handle, 'ws-1', 'will-strand'), null)
@@ -1414,16 +1422,18 @@ describe('cap enforcement under concurrent NEW resources', () => {
     const { handle, cleanup } = freshHandle()
     try {
       // Fill to the cap.
+      const incByTag = new Map()
       for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
         const t = `r-${i.toString().padStart(4, '0')}`
-        await lockedPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }), Buffer.alloc(4))
+        const c = await lockedPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }), Buffer.alloc(4))
+        incByTag.set(t, c.row.incarnation)
       }
       // Fire 5 concurrent updates on existing rows — should all
       // succeed (cap check skipped for existing resource).
       const updates = []
       for (let i = 0; i < 5; i++) {
         const t = `r-${i.toString().padStart(4, '0')}`
-        updates.push(lockedPut(handle, fakeBegin({ resourceTag: t, prevVersion: 1, expectedLength: 8 }), Buffer.alloc(8)))
+        updates.push(lockedPut(handle, fakeBegin({ resourceTag: t, prevVersion: 1, prevIncarnation: incByTag.get(t), expectedLength: 8 }), Buffer.alloc(8)))
       }
       const results = await Promise.all(updates)
       for (const r of results) {
@@ -1588,10 +1598,10 @@ describe('crash-recovery / partial-state cleanup', () => {
       assert.equal(renamed, true)
       handle.db.prepare(`
         INSERT INTO workspace_object
-          (workspace_tag, resource_tag, version, content_hash, content_length,
+          (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
            signature, put_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'half-commit', 1, hHalf, 8, b64u64(), Date.now())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('ws-1', 'half-commit', 1, 'aaaaaaaaaaaaaaaaaaaaaa', hHalf, 8, b64u64(), Date.now())
       // State: live row + live file OK, staging row dangling (no file).
       assert.equal(existsSync(livePath), true)
       assert.equal(existsSync(b.filePath), false, 'staging file renamed away')
@@ -1662,9 +1672,9 @@ describe('crash-recovery / partial-state cleanup', () => {
         await durableRenameStagedToLive(b.filePath, liveFilePath(objDir, 'ws-1', h))
         handle.db.prepare(`
           INSERT INTO workspace_object
-            (workspace_tag, resource_tag, version, content_hash, content_length, signature, put_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run('ws-1', t, 1, h, 4, b64u64(), Date.now())
+            (workspace_tag, resource_tag, version, incarnation, content_hash, content_length, signature, put_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run('ws-1', t, 1, 'aaaaaaaaaaaaaaaaaaaaaa', h, 4, b64u64(), Date.now())
         // Don't delete the staging row → crash-point.
         // Age it past TTL.
         handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
@@ -1925,7 +1935,7 @@ describe('content integrity invariants', () => {
       const v1Blob = liveFilePath(objDir, 'ws-1', hV1)
       const r2 = await lockedPut(
         handle,
-        fakeBegin({ resourceTag: 'rew', prevVersion: 1, expectedLength: 64, contentHash: hV2 }),
+        fakeBegin({ resourceTag: 'rew', prevVersion: 1, prevIncarnation: r1.row.incarnation, expectedLength: 64, contentHash: hV2 }),
         v2,
       )
       assert.equal(r2.ok, true)
@@ -1977,14 +1987,14 @@ describe('GET (openLiveReader) immutability under concurrent re-upload + GC', ()
     try {
       const v1 = Buffer.from('VERSION-ONE-BYTES')
       const hV1 = chash('rsrc@v1')
-      await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', expectedLength: v1.byteLength, contentHash: hV1 }), v1)
+      const seed = await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', expectedLength: v1.byteLength, contentHash: hV1 }), v1)
       // Open a reader on hV1 — models an in-flight GET holding its snapshot.
       const opened = await handle.blob.openLiveReader('ws-1', hV1)
       assert.equal(opened.ok, true)
       // Re-upload v2 at a NEW hash → hV1 becomes unreferenced.
       const v2 = Buffer.from('VERSION-TWO-DIFFERENT-LEN')
       const hV2 = chash('rsrc@v2')
-      await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', prevVersion: 1, expectedLength: v2.byteLength, contentHash: hV2 }), v2)
+      await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', prevVersion: 1, prevIncarnation: seed.row.incarnation, expectedLength: v2.byteLength, contentHash: hV2 }), v2)
       // Age + sweep: hV1 is unreferenced and past grace → GC'd.
       ageBlob(liveFilePath(objDir, 'ws-1', hV1))
       await reapOrphans(handle)
@@ -2016,15 +2026,15 @@ describe('content dedup — shared blob safety across resources', () => {
     try {
       const bytes = Buffer.from('SHARED-IDENTICAL-BYTES')
       const h = chash('shared-content') // both resources carry the SAME hash (same bytes)
-      await lockedPut(handle, fakeBegin({ resourceTag: 'res-A', expectedLength: bytes.byteLength, contentHash: h }), bytes)
-      await lockedPut(handle, fakeBegin({ resourceTag: 'res-B', expectedLength: bytes.byteLength, contentHash: h }), bytes)
+      const ra = await lockedPut(handle, fakeBegin({ resourceTag: 'res-A', expectedLength: bytes.byteLength, contentHash: h }), bytes)
+      const rb = await lockedPut(handle, fakeBegin({ resourceTag: 'res-B', expectedLength: bytes.byteLength, contentHash: h }), bytes)
       const blobPath = liveFilePath(objDir, 'ws-1', h)
       assert.equal(existsSync(blobPath), true, 'shared blob exists')
       assert.equal((await getLive(handle, 'ws-1', 'res-A')).contentHash, h)
       assert.equal((await getLive(handle, 'ws-1', 'res-B')).contentHash, h)
       // Delete res-A. Even aged + a full sweep, the shared blob must
       // survive — res-B still references its hash.
-      assert.equal((await deleteObject(handle, 'ws-1', 'res-A', 1)).ok, true)
+      assert.equal((await deleteObject(handle, 'ws-1', 'res-A', 1, ra.row.incarnation)).ok, true)
       ageBlob(blobPath)
       await reapOrphans(handle)
       assert.equal(existsSync(blobPath), true, 'shared blob survives — still referenced by res-B')
@@ -2035,7 +2045,7 @@ describe('content dedup — shared blob safety across resources', () => {
       for await (const chunk of opened.reader.stream) chunks.push(chunk)
       assert.equal(Buffer.compare(Buffer.concat(chunks), bytes), 0, 'res-B bytes intact after res-A deleted')
       // Delete res-B too → no resource references the hash → GC'd once aged.
-      assert.equal((await deleteObject(handle, 'ws-1', 'res-B', 1)).ok, true)
+      assert.equal((await deleteObject(handle, 'ws-1', 'res-B', 1, rb.row.incarnation)).ok, true)
       ageBlob(blobPath)
       await reapOrphans(handle)
       assert.equal(existsSync(blobPath), false, 'blob GCd once no live row references it')

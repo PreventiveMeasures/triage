@@ -56,6 +56,7 @@ function fakeBegin(over = {}) {
     workspaceTag: 'workspace-tag-1',
     resourceTag,
     prevVersion: null,
+    prevIncarnation: null,
     expectedLength: 16,
     contentHash: chash(resourceTag),
     signature: b64u64(),
@@ -112,11 +113,11 @@ describe('beginPut → commitPut happy path', () => {
     try {
       const begin1 = await beginPut(handle, fakeBegin({ expectedLength: 8 }))
       writeStaging(begin1.filePath, Buffer.alloc(8))
-      await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin1.stagingId })
+      const commit1 = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: begin1.stagingId })
       const v1blob = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       // Second PUT: new bytes ⇒ new content hash ⇒ new blob address.
       const h2 = chash('resource-tag-1@v2')
-      const begin2 = await beginPut(handle, fakeBegin({ prevVersion: 1, expectedLength: 24, contentHash: h2 }))
+      const begin2 = await beginPut(handle, fakeBegin({ prevVersion: 1, prevIncarnation: commit1.row.incarnation, expectedLength: 24, contentHash: h2 }))
       assert.equal(begin2.ok, true)
       writeStaging(begin2.filePath, Buffer.alloc(24))
       const commit2 = await commitPut(handle, {
@@ -138,7 +139,7 @@ describe('beginPut — version preconditions', () => {
   it('rejects a fresh PUT with prevVersion=N when the row is missing', async () => {
     const { handle, cleanup } = freshHandle()
     try {
-      const begin = await beginPut(handle, fakeBegin({ prevVersion: 1 }))
+      const begin = await beginPut(handle, fakeBegin({ prevVersion: 1, prevIncarnation: 'a'.repeat(22) }))
       assert.equal(begin.ok, false)
       assert.equal(begin.conflict, null)
     } finally { cleanup() }
@@ -189,14 +190,16 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
     // workspace is full — no count change.
     const { handle, cleanup } = freshHandle()
     try {
+      let r0Incarnation = null
       for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
         const tag = `r-${i.toString().padStart(4, '0')}`
         const b = await beginPut(handle, fakeBegin({ resourceTag: tag, expectedLength: 4 }))
         writeStaging(b.filePath, Buffer.alloc(4))
-        await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
+        const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
+        if (tag === 'r-0000') r0Incarnation = c.row.incarnation
       }
       // Re-upload r-0000 as version 2 — should pass the cap check.
-      const reup = await beginPut(handle, fakeBegin({ resourceTag: 'r-0000', prevVersion: 1, expectedLength: 8 }))
+      const reup = await beginPut(handle, fakeBegin({ resourceTag: 'r-0000', prevVersion: 1, prevIncarnation: r0Incarnation, expectedLength: 8 }))
       assert.equal(reup.ok, true)
       writeStaging(reup.filePath, Buffer.alloc(8))
       const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'r-0000', stagingId: reup.stagingId })
@@ -373,7 +376,7 @@ describe('deleteObject', () => {
       assert.equal(c.ok, true)
       const live = liveFilePath(objDir, 'workspace-tag-1', chash('resource-tag-1'))
       assert.equal(existsSync(live), true)
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 1, c.row.incarnation)
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 1)
       // Row gone immediately. The blob is NOT unlinked inline — content
@@ -393,7 +396,7 @@ describe('deleteObject', () => {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: 'resource-tag-1', stagingId: b.stagingId })
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 99)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', 99, 'a'.repeat(22))
       assert.equal(d.ok, false)
       assert.equal(d.reason, 'conflict')
       assert.equal(d.conflict.version, 1)
@@ -403,7 +406,7 @@ describe('deleteObject', () => {
   it('idempotent: prevVersion=null on a missing row succeeds with sentinel deletedVersion=0', async () => {
     const { handle, cleanup } = freshHandle()
     try {
-      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', null)
+      const d = await deleteObject(handle, 'workspace-tag-1', 'resource-tag-1', null, null)
       assert.equal(d.ok, true)
       assert.equal(d.deletedVersion, 0)
     } finally { cleanup() }
@@ -721,7 +724,7 @@ describe('token payload validation', () => {
     // Past the safe-integer ceiling — must reject.
     const badLen = signToken(secret, { ...okPayload, len: Number.MAX_SAFE_INTEGER + 1 })
     assert.equal(verifyToken(secret, badLen), null)
-    const badVer = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: Number.MAX_SAFE_INTEGER + 1, exp: Date.now() + 60_000 })
+    const badVer = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: Number.MAX_SAFE_INTEGER + 1, inc: 'i', exp: Date.now() + 60_000 })
     assert.equal(verifyToken(secret, badVer), null)
   })
 
@@ -737,7 +740,7 @@ describe('token payload validation', () => {
     const { newTokenSecret, signToken, verifyToken } = await import('../server/objstore/tokens.ts')
     const secret = newTokenSecret()
     const exp = Date.now() - 1
-    const tok = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: 1, exp })
+    const tok = signToken(secret, { op: 'get', tag: 't', res: 'r', ver: 1, inc: 'i', exp })
     assert.equal(verifyToken(secret, tok), null)
   })
 
@@ -774,7 +777,7 @@ describe('token payload validation', () => {
     // Negative len (put).
     assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: -1, exp: now })), null)
     // Negative ver (get).
-    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: -1, exp: now })), null)
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: -1, inc: 'i', exp: now })), null)
     // Non-safe-int exp.
     assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: Number.MAX_SAFE_INTEGER + 1 })), null)
     // NaN exp.
@@ -782,11 +785,15 @@ describe('token payload validation', () => {
     // Non-string sid (put).
     assert.equal(verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 123, len: 1, exp: now })), null)
     // Non-number ver (get).
-    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 'v1', exp: now })), null)
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 'v1', inc: 'i', exp: now })), null)
+    // Missing inc (get) — the GET token now binds the live incarnation.
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 1, exp: now })), null)
+    // Non-string inc (get).
+    assert.equal(verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 1, inc: 123, exp: now })), null)
     // Sanity: well-formed put + get still pass.
     const okPut = verifyToken(secret, sign({ op: 'put', tag: 't', res: 'r', sid: 's', len: 1, exp: now }))
     assert.equal(okPut?.op, 'put')
-    const okGet = verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 1, exp: now }))
+    const okGet = verifyToken(secret, sign({ op: 'get', tag: 't', res: 'r', ver: 1, inc: 'i', exp: now }))
     assert.equal(okGet?.op, 'get')
   })
 })

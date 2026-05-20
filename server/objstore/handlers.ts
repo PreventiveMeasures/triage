@@ -115,12 +115,15 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
     return
   }
   const prevVersion = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
-  // No lock: beginPut's prev_version check is advisory (a fast-fail so
-  // the client rebases before uploading). The authoritative
-  // precondition is commitPut's version-CAS, which stays correct no
-  // matter what races between this begin and that commit.
+  // `verifyObjstorePutSig` already enforced the prevVersion/prevIncarnation
+  // pairing (null-iff-null + valid id shape), so this narrows safely.
+  const prevIncarnation = typeof msg.prevIncarnation === 'string' ? msg.prevIncarnation : null
+  // No lock: beginPut's prev check is advisory (a fast-fail so the
+  // client rebases before uploading). The authoritative precondition is
+  // commitPut's version+incarnation-CAS, which stays correct no matter
+  // what races between this begin and that commit.
   const result = await beginPut(deps.handle, {
-    workspaceTag: tag, resourceTag, prevVersion,
+    workspaceTag: tag, resourceTag, prevVersion, prevIncarnation,
     expectedLength: msg.expectedLength as number,
     contentHash: msg.contentHash as string,
     signature: msg.signature as string,
@@ -160,13 +163,14 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   const tag = msg.workspaceTag
   const resourceTag = msg.resourceTag
   const prev = typeof msg.prevVersion === 'number' ? msg.prevVersion : null
+  const prevIncarnation = typeof msg.prevIncarnation === 'string' ? msg.prevIncarnation : null
   // No lock: deleteObject is a precondition-checked version-CAS drop.
   // A concurrent commit OR delete races that CAS (not a shared blob —
   // the live blob is content-addressed + GC'd by the reaper, never
   // unlinked here): exactly one op wins, the loser gets conflict /
   // not-found (and never broadcasts). See the deleteObject doc in
   // store.ts.
-  const result = await deleteObject(deps.handle, tag, resourceTag, prev)
+  const result = await deleteObject(deps.handle, tag, resourceTag, prev, prevIncarnation)
   if (!result.ok) {
     if (result.reason === 'conflict') deps.send(socket, conflictReply('delete', tag, resourceTag, result.conflict ?? null))
     else deps.send(socket, { type: 'objstore-delete-error', workspaceTag: tag, resourceTag, reason: result.reason })
@@ -208,7 +212,7 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
     deps.send(socket, { type: 'objstore-fetch-not-found', workspaceTag: tag, resourceTag })
     return
   }
-  const { token, exp } = mintGetToken(deps.secret, tag, resourceTag, row.version)
+  const { token, exp } = mintGetToken(deps.secret, tag, resourceTag, row.version, row.incarnation)
   deps.send(socket, {
     type: 'objstore-fetch-token',
     workspaceTag: tag,

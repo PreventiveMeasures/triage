@@ -42,6 +42,7 @@ const SCHEMA = `
     workspace_tag  TEXT    NOT NULL,
     resource_tag   TEXT    NOT NULL,
     version        INTEGER NOT NULL,
+    incarnation    TEXT    NOT NULL,
     content_hash   TEXT    NOT NULL,
     content_length INTEGER NOT NULL,
     signature      TEXT    NOT NULL,
@@ -50,11 +51,12 @@ const SCHEMA = `
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS workspace_object_staging (
-    workspace_tag   TEXT    NOT NULL,
-    resource_tag    TEXT    NOT NULL,
-    staging_id      TEXT    NOT NULL,
-    prev_version    INTEGER,
-    expected_length INTEGER NOT NULL,
+    workspace_tag    TEXT    NOT NULL,
+    resource_tag     TEXT    NOT NULL,
+    staging_id       TEXT    NOT NULL,
+    prev_version     INTEGER,
+    prev_incarnation TEXT,
+    expected_length  INTEGER NOT NULL,
     content_hash    TEXT    NOT NULL,
     signature       TEXT    NOT NULL,
     begun_at        INTEGER NOT NULL,
@@ -72,6 +74,12 @@ const SCHEMA = `
 export type ObjectRow = {
   resourceTag: string
   version: number
+  // Random id minted on each first-write (insertLiveIfAbsent) and held
+  // constant across version bumps within a lineage. Delete drops the
+  // row, so a recreate mints a FRESH incarnation — this is what lets
+  // the commit CAS tell a stale `prev` (from a deleted incarnation)
+  // apart from a recreated one at the same version number.
+  incarnation: string
   contentHash: string
   contentLength: number
   signature: string
@@ -85,6 +93,10 @@ export type BeginPutInput = {
   workspaceTag: string
   resourceTag: string
   prevVersion: number | null
+  // The incarnation the client believes is live. Null iff prevVersion
+  // is null (first-write precondition). Travels with prevVersion as an
+  // inseparable pair — a numeric prevVersion always carries one.
+  prevIncarnation: string | null
   expectedLength: number
   contentHash: string
   signature: string
@@ -140,7 +152,7 @@ export type DeleteResult =
 // Row shape coming back from SELECTs (snake_case columns). The
 // public `ObjectRow` is camelCased by `rowFromDb` at the call site.
 type DbRow = {
-  resource_tag: string; version: number; content_hash: string; content_length: number
+  resource_tag: string; version: number; incarnation: string; content_hash: string; content_length: number
   signature: string; put_at: number
 }
 
@@ -177,9 +189,10 @@ export type Handle = {
   // canonical paths via `stagingFilePath(handle.dir, …)`. The
   // Vercel-backed Handle omits it.
   dir?: string
-  insertStaging: RunStmt<[string, string, string, number | null, number, string, string, number]>
+  insertStaging: RunStmt<[string, string, string, number | null, string | null, number, string, string, number]>
   selectStaging: GetStmt<[string, string, string], {
     prev_version: number | null
+    prev_incarnation: string | null
     expected_length: number
     content_hash: string
     signature: string
@@ -218,14 +231,14 @@ export type Handle = {
   //   RETURNING 1`. Returns `{ ok: 1 }` if our CAS matched the live
   //   version; undefined if a racer bumped it first (caller →
   //   conflict + re-read). Exactly one racer wins; the loser rebases.
-  insertLiveIfAbsent: GetStmt<[string, string, string, number, string, number], { ok: number }>
-  updateLiveCAS: GetStmt<[string, string, number, string, number, string, number, number], { ok: number }>
+  insertLiveIfAbsent: GetStmt<[string, string, string, string, number, string, number], { ok: number }>
+  updateLiveCAS: GetStmt<[string, string, number, string, number, string, number, number, string], { ok: number }>
   // Version-CAS delete: `deleteLiveCAS(tag, res, expectedVersion)` drops
   // the row only while its version still matches the precondition
   // deleteObject read, returning `{ ok: 1 }` iff it removed a row.
   // Without it, a stale delete could destroy a row a concurrent commit
   // just bumped (lost update). Symmetric with `updateLiveCAS`.
-  deleteLiveCAS: GetStmt<[string, string, number], { ok: number }>
+  deleteLiveCAS: GetStmt<[string, string, number, string], { ok: number }>
   // `[staleBefore]` — only rows whose `begun_at < staleBefore` are
   // returned. The reaper passes `Date.now() - stagingTtlMs` so the
   // index `workspace_object_staging_begun_at_idx` is used and the
@@ -293,10 +306,17 @@ export function isValidSignature(s: unknown): s is string {
 export function isValidStagingId(s: unknown): s is string {
   return typeof s === 'string' && STAGING_ID_RE.test(s)
 }
+// Incarnation ids are minted by `randomId()` (same 16-byte base64url
+// shape as staging ids), so they share the wire-shape gate. Used by
+// the sig verifiers to reject a malformed client-supplied
+// `prevIncarnation` before it reaches the CAS.
+export function isValidIncarnation(s: unknown): s is string {
+  return typeof s === 'string' && STAGING_ID_RE.test(s)
+}
 
 function rowFromDb(r: DbRow): ObjectRow {
   return {
-    resourceTag: r.resource_tag, version: r.version, contentHash: r.content_hash,
+    resourceTag: r.resource_tag, version: r.version, incarnation: r.incarnation, contentHash: r.content_hash,
     contentLength: r.content_length, signature: r.signature, putAt: r.put_at,
   }
 }
@@ -307,11 +327,11 @@ function rowFromDb(r: DbRow): ObjectRow {
 // (handlers.ts handleList / handleFetch, rest.ts PUT broadcast) can't
 // drift on the shape.
 export type ObjectMetaWire = {
-  resourceTag: string; version: number; contentHash: string; contentLength: number; signature: string
+  resourceTag: string; version: number; incarnation: string; contentHash: string; contentLength: number; signature: string
 }
 export function objectMetaWire(row: ObjectRow): ObjectMetaWire {
   return {
-    resourceTag: row.resourceTag, version: row.version, contentHash: row.contentHash,
+    resourceTag: row.resourceTag, version: row.version, incarnation: row.incarnation, contentHash: row.contentHash,
     contentLength: row.contentLength, signature: row.signature,
   }
 }
@@ -353,12 +373,12 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     dir,
     insertStaging: wrapRun(db.prepare(`
       INSERT INTO workspace_object_staging
-        (workspace_tag, resource_tag, staging_id, prev_version,
+        (workspace_tag, resource_tag, staging_id, prev_version, prev_incarnation,
          expected_length, content_hash, signature, begun_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)),
     selectStaging: wrapGet(db.prepare(`
-      SELECT prev_version, expected_length, content_hash, signature, begun_at
+      SELECT prev_version, prev_incarnation, expected_length, content_hash, signature, begun_at
       FROM workspace_object_staging
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
     `)),
@@ -388,14 +408,14 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
       RETURNING 1 AS ok
     `)),
     selectLive: wrapAll(db.prepare(`
-      SELECT resource_tag, version, content_hash, content_length,
+      SELECT resource_tag, version, incarnation, content_hash, content_length,
              signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ?
       ORDER BY resource_tag ASC
     `)),
     selectLiveOne: wrapGet(db.prepare(`
-      SELECT resource_tag, version, content_hash, content_length,
+      SELECT resource_tag, version, incarnation, content_hash, content_length,
              signature, put_at
       FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
@@ -409,9 +429,9 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     // literal 1.
     insertLiveIfAbsent: wrapGet(db.prepare(`
       INSERT INTO workspace_object
-        (workspace_tag, resource_tag, version, content_hash, content_length,
+        (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
          signature, put_at)
-      VALUES (?, ?, 1, ?, ?, ?, ?)
+      VALUES (?, ?, 1, ?, ?, ?, ?, ?)
       ON CONFLICT (workspace_tag, resource_tag) DO NOTHING
       RETURNING 1 AS ok
     `)),
@@ -429,7 +449,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
           content_length = ?5,
           signature      = ?6,
           put_at         = ?7
-      WHERE workspace_tag = ?1 AND resource_tag = ?2 AND version = ?8
+      WHERE workspace_tag = ?1 AND resource_tag = ?2 AND version = ?8 AND incarnation = ?9
       RETURNING 1 AS ok
     `)),
     // Version-conditional drop for deleteObject: removes the row only
@@ -439,7 +459,7 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     // (tag, res, expectedVersion).
     deleteLiveCAS: wrapGet(db.prepare(`
       DELETE FROM workspace_object
-      WHERE workspace_tag = ? AND resource_tag = ? AND version = ?
+      WHERE workspace_tag = ? AND resource_tag = ? AND version = ? AND incarnation = ?
       RETURNING 1 AS ok
     `)),
     listAllStaging: wrapAll(db.prepare(`
@@ -482,7 +502,13 @@ export async function listLive(handle: Handle, tag: string): Promise<ObjectRow[]
 export async function beginPut(handle: Handle, input: BeginPutInput): Promise<BeginPutResult> {
   const live = await getLive(handle, input.workspaceTag, input.resourceTag)
   const liveVersion = live?.version ?? null
-  if (liveVersion !== input.prevVersion) {
+  const liveIncarnation = live?.incarnation ?? null
+  // Advisory tuple check: both version AND incarnation must match the
+  // precondition. A stale `prev` whose version happens to align with a
+  // recreated incarnation (the cross-incarnation overwrite) is rejected
+  // here on the incarnation mismatch. Authoritative re-check is the CAS
+  // in commitPut.
+  if (liveVersion !== input.prevVersion || liveIncarnation !== input.prevIncarnation) {
     return { ok: false, reason: 'conflict', conflict: live }
   }
   // Per-workspace resource cap. Only enforced for NEW resources —
@@ -503,6 +529,7 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
     input.resourceTag,
     stagingId,
     input.prevVersion,
+    input.prevIncarnation,
     input.expectedLength,
     input.contentHash,
     input.signature,
@@ -589,7 +616,8 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // lost, and gives us the current row for the conflict result.
   const live = await getLive(handle, input.workspaceTag, input.resourceTag)
   const liveVersion = live?.version ?? null
-  if (liveVersion !== staging.prev_version) {
+  const liveIncarnation = live?.incarnation ?? null
+  if (liveVersion !== staging.prev_version || liveIncarnation !== staging.prev_incarnation) {
     // Don't unlink the staging blob here — the caller routes
     // through abortPut to clean up consistently.
     return { ok: false, reason: 'conflict', ...(live ? { conflict: live } : {}) }
@@ -607,6 +635,12 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     return { ok: false, reason: 'io-error' }
   }
   const nextVersion = (liveVersion ?? 0) + 1
+  // First-write mints a fresh incarnation; a re-upload preserves the
+  // matched one (updateLiveCAS doesn't touch the column). The pre-check
+  // above guarantees `prev_incarnation` is a real string on the
+  // re-upload path (live exists and its non-null incarnation equals it).
+  const freshIncarnation = randomId()
+  const committedIncarnation = staging.prev_version == null ? freshIncarnation : staging.prev_incarnation!
   const putAt = Date.now()
   // Version-CAS in try/catch so a Neon transient (5xx, network
   // hiccup, connection-pool exhaustion) doesn't bypass the abortPut
@@ -625,6 +659,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
       won = await handle.insertLiveIfAbsent.get(
         input.workspaceTag,
         input.resourceTag,
+        freshIncarnation,
         staging.content_hash,
         staging.expected_length,
         staging.signature,
@@ -643,6 +678,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
         staging.signature,
         putAt,
         staging.prev_version,
+        committedIncarnation,
       )
     }
   } catch (err) {
@@ -679,6 +715,7 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     row: {
       resourceTag: input.resourceTag,
       version: nextVersion,
+      incarnation: committedIncarnation,
       contentHash: staging.content_hash,
       contentLength: staging.expected_length,
       signature: staging.signature,
@@ -723,18 +760,19 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 // The reaper's GC unlinks the blob once no live row references its
 // hash AND it's past the grace window.
 export async function deleteObject(
-  handle: Handle, tag: string, resourceTag: string, prevVersion: number | null,
+  handle: Handle, tag: string, resourceTag: string, prevVersion: number | null, prevIncarnation: string | null,
 ): Promise<DeleteResult> {
   const live = await getLive(handle, tag, resourceTag)
   if (!live) {
     if (prevVersion == null) return { ok: true, deletedVersion: 0 }
     return { ok: false, reason: 'not-found' }
   }
-  if (live.version !== prevVersion) return { ok: false, reason: 'conflict', conflict: live }
-  // Version-conditional drop: only delete while the row is STILL at the
-  // version we just read, so a commit landing between the read above
-  // and here can't have its bumped row removed by this stale delete.
-  const removed = await handle.deleteLiveCAS.get(tag, resourceTag, live.version)
+  if (live.version !== prevVersion || live.incarnation !== prevIncarnation) return { ok: false, reason: 'conflict', conflict: live }
+  // Version+incarnation-conditional drop: only delete while the row is
+  // STILL the exact (version, incarnation) we just read, so neither a
+  // commit bump NOR a delete+recreate landing between the read above and
+  // here can have its row removed by this stale delete.
+  const removed = await handle.deleteLiveCAS.get(tag, resourceTag, live.version, live.incarnation)
   if (removed) return { ok: true, deletedVersion: live.version }
   // A racing commit/delete moved or removed the row after our read.
   const current = await getLive(handle, tag, resourceTag)

@@ -126,16 +126,16 @@ function deny(res: ServerResponse, status: number, body: string): void {
   res.end(JSON.stringify({ error: body }))
 }
 
-// Variant of `deny` that augments the JSON envelope with the
-// live row's `currentVersion` so a REST PUT 409 lets the caller
-// retry with the right precondition. Without this the client only
-// learns the slot is occupied — not at what version — and retries
-// with `prevVersion: null` against a non-empty slot, looping
+// Variant of `deny` that augments the JSON envelope with the live
+// row's `currentVersion` + `currentIncarnation` so a REST PUT 409 lets
+// the caller rebase onto the right precondition token. Without this the
+// client only learns the slot is occupied — not at what (version,
+// incarnation) — and retries blindly against a non-empty slot, looping
 // indefinitely against a live row. Symmetric with the WS plane's
 // `objstore-conflict` envelope.
-function denyConflict(res: ServerResponse, currentVersion: number | null): void {
+function denyConflict(res: ServerResponse, currentVersion: number | null, currentIncarnation: string | null): void {
   res.writeHead(409, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ error: 'conflict', currentVersion }))
+  res.end(JSON.stringify({ error: 'conflict', currentVersion, currentIncarnation }))
 }
 
 export async function handleRest(deps: ObjstoreRestDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -219,7 +219,7 @@ async function handleRestPut(
 // updating this dispatch.
 function denyCommitFailure(res: ServerResponse, result: Exclude<CommitPutResult, { ok: true }>): void {
   if (result.reason === 'conflict') {
-    denyConflict(res, result.conflict?.version ?? null)
+    denyConflict(res, result.conflict?.version ?? null, result.conflict?.incarnation ?? null)
     return
   }
   if (result.reason === 'no-staging') { deny(res, 410, 'gone'); return }
@@ -260,7 +260,8 @@ async function handleRestPutBody(
   // PUT passes. The 409 echoes the live version like a commit-time
   // conflict so the client rebases / re-handshakes.
   if (inFlightSids.has(payload.sid)) {
-    denyConflict(res, (await getLive(deps.handle, route.tag, route.resourceTag))?.version ?? null)
+    const cur = await getLive(deps.handle, route.tag, route.resourceTag)
+    denyConflict(res, cur?.version ?? null, cur?.incarnation ?? null)
     return
   }
   inFlightSids.add(payload.sid)
@@ -276,6 +277,7 @@ async function handleRestPutBody(
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({
       version: row.version,
+      incarnation: row.incarnation,
       contentHash: row.contentHash,
       contentLength: row.contentLength,
     }))
@@ -422,7 +424,7 @@ type GetOpened =
   | { reason: 'unavailable' }
 
 async function openLiveSnapshot(
-  deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number },
+  deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number; inc: string },
 ): Promise<GetOpened> {
   // Validate row version + open the reader (by the row's content hash).
   // No lock is needed because the live blob is CONTENT-ADDRESSED and
@@ -435,7 +437,7 @@ async function openLiveSnapshot(
   // never serve torn or wrong bytes. (For the FS backend the open also
   // returns a pinned fd; for the Vercel backend a fetch-backed stream.)
   const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
-  if (!live || live.version !== payload.ver) return { reason: 'not-found' }
+  if (!live || live.version !== payload.ver || live.incarnation !== payload.inc) return { reason: 'not-found' }
   let opened
   try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
   catch { return { reason: 'unavailable' } }
@@ -455,7 +457,7 @@ async function handleRestGet(
   deps: ObjstoreRestDeps,
   res: ServerResponse,
   route: RouteMatch,
-  payload: { ver: number },
+  payload: { ver: number; inc: string },
 ): Promise<void> {
   // Token's `ver` is the live row's version at issuance. A later
   // PUT/DELETE invalidates the capability — new version (or missing

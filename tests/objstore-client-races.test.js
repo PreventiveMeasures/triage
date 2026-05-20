@@ -22,7 +22,8 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createSocketTransport } from '../client/sync/socket-transport.ts'
 import { bootServer } from './_helpers.js'
 
 // Generate fresh workspace keys (single workspaceId per call).
@@ -112,7 +113,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const ops = sessions.map((s, i) => s.put({
         fileName: 'crowded.json',
         content: Buffer.from(`from-session-${i}`),
-        prevVersion: null,
+        prev: null,
       }))
       const results = await Promise.all(ops)
       const oks = results.filter((r) => r.ok)
@@ -120,7 +121,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
       assert.equal(oks.length, 1, 'exactly one PUT wins')
       assert.equal(conflicts.length, 4, '4 PUTs see conflict')
       for (const c of conflicts) {
-        assert.equal(c.currentVersion, 1, 'every conflict signal carries currentVersion=1')
+        assert.equal(c.current?.version, 1, 'every conflict signal carries current.version=1')
       }
       const winner = sessions[results.findIndex((r) => r.ok)]
       const got = await winner.fetch('crowded.json')
@@ -138,7 +139,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const ops = sessions.map((s, i) => s.put({
         fileName: `independent-${i}.json`,
         content: Buffer.from(`bytes-${i}`),
-        prevVersion: null,
+        prev: null,
       }))
       const results = await Promise.all(ops)
       for (let i = 0; i < results.length; i++) {
@@ -157,14 +158,14 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      let lastVer = null
+      let lastPrev = null
       let lastBytes = null
       for (let i = 1; i <= 20; i++) {
         const bytes = Buffer.from(`v${i}-payload-${'p'.repeat(8)}`)
-        const r = await session.put({ fileName: 'ladder.json', content: bytes, prevVersion: lastVer })
+        const r = await session.put({ fileName: 'ladder.json', content: bytes, prev: lastPrev })
         assert.equal(r.ok, true, `step ${i} succeeded`)
         assert.equal(r.meta.version, i)
-        lastVer = i
+        lastPrev = r.meta
         lastBytes = bytes
       }
       const got = await session.fetch('ladder.json')
@@ -194,7 +195,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const original = Buffer.from('ORIGINAL-CONTENT-THAT-MUST-NOT-LEAK-AFTER-DELETE')
       const replacement = Buffer.from('REPLACEMENT-CONTENT-AFTER-RECREATE')
       // A puts v1.
-      await a.put({ fileName: 'recycled.json', content: original, prevVersion: null })
+      const aV1 = await a.put({ fileName: 'recycled.json', content: original, prev: null })
       // B subscribes (already done at session create), fetches v1.
       const v1 = await b.fetch('recycled.json')
       assert.ok(v1)
@@ -209,11 +210,11 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const deletedSeen = pendingDelete(b, undefined, 'B sees delete')
       const rebirthSeen = pendingPut(b, (e) => e.version === 1, 'B sees rebirth')
       // A deletes.
-      const del = await a.delete('recycled.json', 1)
+      const del = await a.delete('recycled.json', aV1.meta)
       assert.equal(del.ok, true)
       await deletedSeen
       // A re-puts. Fresh incarnation starts at v1 again.
-      const rebirth = await a.put({ fileName: 'recycled.json', content: replacement, prevVersion: null })
+      const rebirth = await a.put({ fileName: 'recycled.json', content: replacement, prev: null })
       assert.equal(rebirth.ok, true)
       assert.equal(rebirth.meta.version, 1)
       await rebirthSeen
@@ -249,7 +250,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
         const deletedSeen = pendingDelete(b, undefined, `cycle ${cycle} delete`)
         // PUT with explicit prev=null (must-not-exist; passes since
         // last cycle ended with a delete).
-        const put = await a.put({ fileName: 'churn.bin', content: bytes, prevVersion: null })
+        const put = await a.put({ fileName: 'churn.bin', content: bytes, prev: null })
         assert.equal(put.ok, true)
         assert.equal(put.meta.version, 1, `cycle ${cycle}: incarnation starts at v1`)
         const putEvent = await putSeen
@@ -263,7 +264,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
           `cycle ${cycle}: peer fetch returns this cycle's bytes byte-for-byte`,
         )
         // Delete to prepare for next cycle.
-        await a.delete('churn.bin', 1)
+        await a.delete('churn.bin', put.meta)
         await deletedSeen
       }
     } finally { a.close(); b.close() }
@@ -286,14 +287,14 @@ describe('objstore client/server races', { concurrency: true }, () => {
     try {
       const bytes = Buffer.from('soon-to-be-deleted')
       const v1Seen = pendingPut(b, (e) => e.version === 1, 'B sees v1')
-      await a.put({ fileName: 'transient.json', content: bytes, prevVersion: null })
+      const aV1 = await a.put({ fileName: 'transient.json', content: bytes, prev: null })
       // Wait for B to see the put broadcast so we know it's
       // committed before the race begins.
       await v1Seen
       // Fire fetch + delete concurrently.
       const [fetchResult, deleteResult] = await Promise.allSettled([
         b.fetch('transient.json'),
-        a.delete('transient.json', 1),
+        a.delete('transient.json', aV1.meta),
       ])
       assert.equal(deleteResult.status, 'fulfilled')
       assert.equal(deleteResult.value.ok, true)
@@ -307,62 +308,49 @@ describe('objstore client/server races', { concurrency: true }, () => {
     } finally { a.close(); b.close() }
   })
 
-  it.todo('delete-recreate while peer holds stale prevVersion: peer\'s prev=N PUT must conflict (currently silently overwrites the recreate)', async () => {
-    // OBSERVATION: real-world flow that silently loses A's data —
-    //   1. A puts v1.
-    //   2. B fetches v1; B remembers `prevVersion = 1`.
-    //   3. A deletes v1, then puts a fresh v1 with different bytes.
-    //   4. B issues `put(prev=1)` thinking it's updating the v1 it
-    //      saw earlier.
+  it('delete-recreate while peer holds a stale prev token: peer\'s PUT must conflict (incarnation guard)', async () => {
+    // Real-world flow that USED to silently lose A's data — now pinned
+    // green by the per-incarnation guard:
+    //   1. A puts incarnation #1 at v1.
+    //   2. B fetches it; B remembers the (version, incarnation) it saw.
+    //   3. A deletes, then puts a FRESH incarnation #2 — also at v1
+    //      (versions restart after delete; there are no tombstones).
+    //   4. B issues a put preconditioned on the v1 it saw earlier.
     //
-    // Server-side: the recreate is row-version=1. B's prev=1 PUT
-    // arrives. The server compares `live.version (1) ===
-    // input.prevVersion (1)` → MATCH → accepts B's PUT → bumps to v2.
-    // A's fresh recreate is SILENTLY OVERWRITTEN.
-    //
-    // SHOULD-BE: B's prev=1 refers to a DIFFERENT incarnation
-    // (the one A already deleted). The server should reject this
-    // PUT with a conflict so B is forced to refetch and reconcile.
-    //
-    // ROOT CAUSE: the schema has no tombstone / incarnation ID, so
-    // the protocol can't distinguish "B's v1" from "A's recreate v1".
-    // Possible fixes:
-    //   - Add an incarnation column that resets on every delete →
-    //     prevIncarnation bound into the PUT signature.
-    //   - Tombstone rows that the next PUT must explicitly clear.
-    //   - Refuse prev=N PUTs on a row whose put_at is more recent
-    //     than the client's known view (requires a `since` field).
-    //
-    // IMPACT: silent data loss. B's PUT looks ok=true to B, but A
-    // (and any other peer that fetched the recreate) loses their
-    // bytes. The watermark + contentHash chain catches a relay
-    // TAMPERING with bytes, but not a legitimate peer overwriting
-    // a different incarnation under the same prev_version.
+    // B's remembered precondition belongs to incarnation #1. The bare
+    // version (1) matches incarnation #2's v1, but the incarnation id
+    // does NOT — so the commit CAS rejects B's stale write instead of
+    // silently overwriting A's recreate. B must refetch and reconcile.
     const { keys } = await makeKeys()
     const a = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     const b = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await a.put({ fileName: 'risky.json', content: Buffer.from('A-original-v1'), prevVersion: null })
-      // B fetches so it has prev=1 in mind.
+      const a1 = await a.put({ fileName: 'risky.json', content: Buffer.from('A-original-v1'), prev: null })
+      assert.equal(a1.ok, true)
+      // B fetches so it holds incarnation #1's (version, incarnation).
       const bView = await b.fetch('risky.json')
       assert.ok(bView)
       assert.equal(bView.version, 1)
       // Arm B's listeners BEFORE the broadcast-triggering ops.
       const deletedSeen = pendingDelete(b, undefined, 'B sees delete')
       const rebornSeen = pendingPut(b, (e) => e.version === 1, 'B sees reborn')
-      // A deletes + recreates with different bytes.
-      await a.delete('risky.json', 1)
+      // A deletes + recreates with different bytes → incarnation #2 at v1.
+      await a.delete('risky.json', a1.meta)
       await deletedSeen
-      const reborn = await a.put({ fileName: 'risky.json', content: Buffer.from('A-FRESH-v1-REBORN'), prevVersion: null })
+      const reborn = await a.put({ fileName: 'risky.json', content: Buffer.from('A-FRESH-v1-REBORN'), prev: null })
+      assert.equal(reborn.ok, true)
       assert.equal(reborn.meta.version, 1)
+      assert.notEqual(reborn.meta.incarnation, bView.incarnation, 'recreate is a distinct incarnation')
       await rebornSeen
-      // B PUTs with the prev=1 it remembered.
-      const bPut = await b.put({ fileName: 'risky.json', content: Buffer.from('B-overwrite-bytes'), prevVersion: 1 })
-      // SHOULD-BE: conflict. CURRENT: silently accepts → bumps to v2,
-      // A's recreate bytes lost.
-      assert.equal(bPut.ok, false, 'B\'s stale prev=1 must conflict (refers to a different incarnation)')
+      // B PUTs preconditioned on the STALE incarnation-#1 view it still
+      // holds (NOT the current incarnation). Must conflict.
+      const bPut = await b.put({ fileName: 'risky.json', content: Buffer.from('B-overwrite-bytes'), prev: bView })
+      assert.equal(bPut.ok, false, 'B\'s stale prev must conflict (refers to a deleted incarnation)')
       assert.equal(bPut.reason, 'conflict')
-      // A's recreate bytes survive.
+      // The conflict surfaces the CURRENT incarnation so B can rebase.
+      assert.equal(bPut.current?.version, 1)
+      assert.equal(bPut.current?.incarnation, reborn.meta.incarnation)
+      // A's recreate bytes survive untouched.
       const final = await a.fetch('risky.json')
       assert.equal(final?.version, 1, 'A\'s recreate remains at v1')
       assert.equal(Buffer.from(final.content).toString('utf8'), 'A-FRESH-v1-REBORN', 'A\'s bytes survive')
@@ -389,9 +377,9 @@ describe('objstore client/server races', { concurrency: true }, () => {
         const putV1 = pendingPut(b, (e) => e.version === 1, 'put v1')
         const putV2 = pendingPut(b, (e) => e.version === 2, 'put v2')
         const delV2 = pendingDelete(b, (e) => e.version === 2, 'delete v2')
-        await a.put({ fileName: 'ordered.json', content: Buffer.from('v1'), prevVersion: null })
-        await a.put({ fileName: 'ordered.json', content: Buffer.from('v2-bytes'), prevVersion: 1 })
-        await a.delete('ordered.json', 2)
+        const oV1 = await a.put({ fileName: 'ordered.json', content: Buffer.from('v1'), prev: null })
+        const oV2 = await a.put({ fileName: 'ordered.json', content: Buffer.from('v2-bytes'), prev: oV1.meta })
+        await a.delete('ordered.json', oV2.meta)
         await Promise.all([putV1, putV2, delV2])
         assert.equal(events.length, 3, 'B received exactly 3 broadcasts')
         assert.equal(events[0].type, 'put'); assert.equal(events[0].v, 1)
@@ -402,7 +390,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
         assert.equal(events[1].tag, events[2].tag)
         // After the delete, a fresh put at v1 must NOT trip the
         // rollback watermark (the delete reset it).
-        await a.put({ fileName: 'ordered.json', content: Buffer.from('v1-reborn'), prevVersion: null })
+        await a.put({ fileName: 'ordered.json', content: Buffer.from('v1-reborn'), prev: null })
         const got = await b.fetch('ordered.json') // should not raise version-rollback
         assert.equal(got?.version, 1, 'reborn v1 fetches cleanly after delete reset the watermark')
       } finally { offPut(); offDel() }
@@ -422,8 +410,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
       a.onPut((e) => aSeen.push({ v: e.version, tag: e.resourceTag }))
       b.onPut((e) => bSeen.push({ v: e.version, tag: e.resourceTag }))
       await Promise.all([
-        a.put({ fileName: 'a-only.json', content: Buffer.from('A'), prevVersion: null }),
-        b.put({ fileName: 'b-only.json', content: Buffer.from('B'), prevVersion: null }),
+        a.put({ fileName: 'a-only.json', content: Buffer.from('A'), prev: null }),
+        b.put({ fileName: 'b-only.json', content: Buffer.from('B'), prev: null }),
       ])
       const deadline = Date.now() + 3_000
       while ((aSeen.length < 2 || bSeen.length < 2) && Date.now() < deadline) {
@@ -451,8 +439,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
       let deletedFired = 0
       session.onPut(() => { putFired++ })
       session.onDeleted(() => { deletedFired++ })
-      await session.put({ fileName: 'asym.json', content: Buffer.from('x'), prevVersion: null })
-      await session.delete('asym.json', 1)
+      const asymPut = await session.put({ fileName: 'asym.json', content: Buffer.from('x'), prev: null })
+      await session.delete('asym.json', asymPut.meta)
       // Give broadcasts a chance to round-trip.
       await new Promise((r) => { setTimeout(r, 200) })
       assert.equal(putFired, 1, 'own put fires onPut')
@@ -465,7 +453,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const a = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     const b = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await a.put({ fileName: 'pre-subscribe.json', content: Buffer.from('lost-event'), prevVersion: null })
+      await a.put({ fileName: 'pre-subscribe.json', content: Buffer.from('lost-event'), prev: null })
       // Deterministic barrier: `b.list()` is a WS round-trip on the
       // same socket the broadcast travels on. WS frames arrive in
       // order, so when list-result returns, every prior frame
@@ -483,7 +471,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
         // time it landed) — collected should still be empty.
         assert.equal(collected.length, 0, 'no retroactive delivery of broadcasts before listener was attached')
         // But subsequent puts ARE delivered.
-        await a.put({ fileName: 'post-subscribe.json', content: Buffer.from('seen'), prevVersion: null })
+        await a.put({ fileName: 'post-subscribe.json', content: Buffer.from('seen'), prev: null })
         await postSeen
         assert.equal(collected.length, 1, 'listener captures every subsequent broadcast')
       } finally { offCollect() }
@@ -504,7 +492,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
           ops.push(sessions[s].put({
             fileName: `burst-s${s}-f${f}.json`,
             content: Buffer.from(`payload-s${s}-f${f}`),
-            prevVersion: null,
+            prev: null,
           }))
         }
       }
@@ -533,19 +521,19 @@ describe('objstore client/server races', { concurrency: true }, () => {
           const name = `chaos-s${sidx}-f${f}.json`
           const v1Bytes = Buffer.from(`s${sidx}-f${f}-v1`)
           const v2Bytes = Buffer.from(`s${sidx}-f${f}-v2-bytes-here`)
-          const p1 = await s.put({ fileName: name, content: v1Bytes, prevVersion: null })
+          const p1 = await s.put({ fileName: name, content: v1Bytes, prev: null })
           assert.equal(p1.ok, true)
           assert.equal(p1.meta.version, 1)
           const f1 = await s.fetch(name)
           assert.ok(f1)
           assert.equal(Buffer.compare(Buffer.from(f1.content), v1Bytes), 0, `${name}: v1 byte-match`)
-          const p2 = await s.put({ fileName: name, content: v2Bytes, prevVersion: 1 })
+          const p2 = await s.put({ fileName: name, content: v2Bytes, prev: p1.meta })
           assert.equal(p2.ok, true)
           assert.equal(p2.meta.version, 2)
           const f2 = await s.fetch(name)
           assert.ok(f2)
           assert.equal(Buffer.compare(Buffer.from(f2.content), v2Bytes), 0, `${name}: v2 byte-match`)
-          const d = await s.delete(name, 2)
+          const d = await s.delete(name, p2.meta)
           assert.equal(d.ok, true)
         }
       })())
@@ -567,11 +555,11 @@ describe('objstore client/server races', { concurrency: true }, () => {
         const r = await session.put({
           fileName: 'rolling.json',
           content: Buffer.from(`step-${i.toString().padStart(2, '0')}`),
-          prevVersion: prev,
+          prev,
         })
         assert.equal(r.ok, true, `step ${i} succeeded`)
         assert.equal(r.meta.version, i, `step ${i} version = ${i}`)
-        prev = i
+        prev = r.meta
       }
       const got = await session.fetch('rolling.json')
       assert.equal(got?.version, 30)
@@ -590,8 +578,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
     try {
       // Both put 'shared-name.json' concurrently.
       const [aPut, bPut] = await Promise.all([
-        a.put({ fileName: 'shared-name.json', content: Buffer.from('A-CONTENT'), prevVersion: null }),
-        b.put({ fileName: 'shared-name.json', content: Buffer.from('B-CONTENT'), prevVersion: null }),
+        a.put({ fileName: 'shared-name.json', content: Buffer.from('A-CONTENT'), prev: null }),
+        b.put({ fileName: 'shared-name.json', content: Buffer.from('B-CONTENT'), prev: null }),
       ])
       assert.equal(aPut.ok, true); assert.equal(bPut.ok, true)
       // Each sees their own bytes; the lists are independent.
@@ -610,10 +598,10 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const a = await createObjstoreSession({ serverUrl, httpOrigin, keys: ka.keys })
     const b = await createObjstoreSession({ serverUrl, httpOrigin, keys: kb.keys })
     try {
-      await a.put({ fileName: 'iso.json', content: Buffer.from('A-bytes'), prevVersion: null })
-      await b.put({ fileName: 'iso.json', content: Buffer.from('B-bytes'), prevVersion: null })
+      const aIso = await a.put({ fileName: 'iso.json', content: Buffer.from('A-bytes'), prev: null })
+      await b.put({ fileName: 'iso.json', content: Buffer.from('B-bytes'), prev: null })
       // A deletes its iso.json. B's must survive.
-      await a.delete('iso.json', 1)
+      await a.delete('iso.json', aIso.meta)
       assert.equal(await a.fetch('iso.json'), null)
       const bGot = await b.fetch('iso.json')
       assert.ok(bGot)
@@ -630,14 +618,14 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const { keys } = await makeKeys()
     const writer = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await writer.put({ fileName: 'persisted.json', content: Buffer.from('initial'), prevVersion: null })
+      const persistedPut = await writer.put({ fileName: 'persisted.json', content: Buffer.from('initial'), prev: null })
       // Reader connects, fetches, disconnects.
       const reader1 = await createObjstoreSession({ serverUrl, httpOrigin, keys })
       const seen = await reader1.fetch('persisted.json')
       assert.equal(seen?.version, 1)
       reader1.close()
       // Writer deletes.
-      await writer.delete('persisted.json', 1)
+      await writer.delete('persisted.json', persistedPut.meta)
       // New reader session — must see absent state, not stale view.
       const reader2 = await createObjstoreSession({ serverUrl, httpOrigin, keys })
       try {
@@ -651,9 +639,9 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const { keys } = await makeKeys()
     const writer = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await writer.put({ fileName: 'cycled.json', content: Buffer.from('GEN-1-CONTENT'), prevVersion: null })
-      await writer.delete('cycled.json', 1)
-      await writer.put({ fileName: 'cycled.json', content: Buffer.from('GEN-2-CONTENT'), prevVersion: null })
+      const gen1Put = await writer.put({ fileName: 'cycled.json', content: Buffer.from('GEN-1-CONTENT'), prev: null })
+      await writer.delete('cycled.json', gen1Put.meta)
+      await writer.put({ fileName: 'cycled.json', content: Buffer.from('GEN-2-CONTENT'), prev: null })
       // Reader connects AFTER both cycles; sees only the second
       // incarnation.
       const reader = await createObjstoreSession({ serverUrl, httpOrigin, keys })
@@ -682,8 +670,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const b = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       const [aPut, bPut] = await Promise.all([
-        a.put({ fileName: 'empty.bin', content: new Uint8Array(0), prevVersion: null }),
-        b.put({ fileName: 'nonempty.bin', content: Buffer.from('hi'), prevVersion: null }),
+        a.put({ fileName: 'empty.bin', content: new Uint8Array(0), prev: null }),
+        b.put({ fileName: 'nonempty.bin', content: Buffer.from('hi'), prev: null }),
       ])
       assert.equal(aPut.ok, true); assert.equal(bPut.ok, true)
       const emptyGot = await a.fetch('empty.bin')
@@ -703,10 +691,10 @@ describe('objstore client/server races', { concurrency: true }, () => {
         const put = await writer.put({
           fileName: `flicker-${i}.json`,
           content: Buffer.from(`flicker-${i}-content`),
-          prevVersion: null,
+          prev: null,
         })
         assert.equal(put.ok, true)
-        const del = await writer.delete(`flicker-${i}.json`, 1)
+        const del = await writer.delete(`flicker-${i}.json`, put.meta)
         assert.equal(del.ok, true)
       }
       // Reader sees nothing.
@@ -733,8 +721,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await session.put({ fileName: 'monotonic.json', content: Buffer.from('v1'), prevVersion: null })
-      await session.put({ fileName: 'monotonic.json', content: Buffer.from('v2-bytes'), prevVersion: 1 })
+      const monoV1 = await session.put({ fileName: 'monotonic.json', content: Buffer.from('v1'), prev: null })
+      await session.put({ fileName: 'monotonic.json', content: Buffer.from('v2-bytes'), prev: monoV1.meta })
       // List — advances watermark to 2.
       const live = await session.list()
       assert.equal(live.length, 1)
@@ -745,6 +733,59 @@ describe('objstore client/server races', { concurrency: true }, () => {
     } finally { session.close() }
   })
 
+  it('incarnation-keyed watermark: a recreated v1 read after a MISSED delete broadcast does not trip rollback', async () => {
+    // Regression for the cross-incarnation watermark false-positive
+    // (PR #79 / Copilot review). The rollback gate keys on
+    // {version, incarnation}, not version alone. A peer that advanced
+    // its watermark to v>=2 and then MISSED the delete+recreate
+    // broadcasts (reconnect window — broadcasts are never replayed)
+    // must still read the recreated incarnation's v1 cleanly instead of
+    // throwing `version-rollback`.
+    //
+    // We drive B through a caller-owned transport so we can drop its
+    // socket for the duration of A's delete+recreate. The reconnect is a
+    // 1s timer (socket-transport INITIAL_RECONNECT_DELAY) and A's two
+    // ops run on its own still-live socket, so B is reliably down across
+    // them. (If B happened to reconnect early and catch a broadcast the
+    // assertion still holds — the new gate never throws across
+    // incarnations — so the test can only fail on the OLD version-only
+    // watermark, never spuriously.)
+    const { keys } = await makeKeys()
+    const a = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    const bTransport = createSocketTransport({ serverUrl })
+    const bClient = createObjstoreClient({ serverUrl, httpOrigin, transport: bTransport })
+    try {
+      const b = await bClient.openWorkspace(keys)
+      const a1 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v1'), prev: null })
+      assert.equal(a1.ok, true)
+      const a2 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v2-bytes'), prev: a1.meta })
+      assert.equal(a2.meta.version, 2)
+      // B advances its watermark to {incarnation #1, v2}.
+      const bSaw = await b.fetch('wm-inc.json')
+      assert.ok(bSaw)
+      assert.equal(bSaw.version, 2)
+      // Drop B's socket so it misses A's next broadcasts.
+      bTransport.getSocket()?.close()
+      // A deletes + recreates → incarnation #2 at v1, while B is down.
+      await a.delete('wm-inc.json', a2.meta)
+      const reborn = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I2-v1-REBORN'), prev: null })
+      assert.equal(reborn.meta.version, 1)
+      assert.notEqual(reborn.meta.incarnation, bSaw.incarnation, 'recreate is a distinct incarnation')
+      // B reconnects (auto) and fetches. Old version-only watermark would
+      // throw (v1 < remembered v2); the incarnation-keyed gate reads the
+      // fresh lineage cleanly.
+      const afterReconnect = await b.fetch('wm-inc.json')
+      assert.ok(afterReconnect)
+      assert.equal(afterReconnect.version, 1)
+      assert.equal(afterReconnect.incarnation, reborn.meta.incarnation)
+      assert.equal(Buffer.from(afterReconnect.content).toString('utf8'), 'I2-v1-REBORN')
+    } finally {
+      a.close()
+      bClient.close()
+      bTransport.close()
+    }
+  })
+
   it('post-delete fetch returns null even when the relay has not yet broadcast the delete to this session', async () => {
     // After session.delete(), the local seenVersions is cleared.
     // A subsequent fetch on the same session must return null
@@ -752,8 +793,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await session.put({ fileName: 'self-delete.json', content: Buffer.from('mine'), prevVersion: null })
-      const del = await session.delete('self-delete.json', 1)
+      const selfPut = await session.put({ fileName: 'self-delete.json', content: Buffer.from('mine'), prev: null })
+      const del = await session.delete('self-delete.json', selfPut.meta)
       assert.equal(del.ok, true)
       // Immediately fetch on the same session — null.
       assert.equal(await session.fetch('self-delete.json'), null)
@@ -781,14 +822,14 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const b = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       const v1Seen = pendingPut(b, (e) => e.version === 1, 'B sees v1')
-      await a.put({ fileName: 'evolving.json', content: Buffer.from('v1'), prevVersion: null })
+      const aV1 = await a.put({ fileName: 'evolving.json', content: Buffer.from('v1'), prev: null })
       await v1Seen
       // B fetches at v1 — advances watermark.
       const v1 = await b.fetch('evolving.json')
       assert.equal(v1?.version, 1)
       // A overwrites to v2.
       const v2Seen = pendingPut(b, (e) => e.version === 2, 'B sees v2')
-      await a.put({ fileName: 'evolving.json', content: Buffer.from('v2-bytes'), prevVersion: 1 })
+      await a.put({ fileName: 'evolving.json', content: Buffer.from('v2-bytes'), prev: aV1.meta })
       await v2Seen
       // B re-fetches — gets v2 (the get-token minted now is for v2,
       // not v1).
@@ -805,14 +846,15 @@ describe('objstore client/server races', { concurrency: true }, () => {
     try {
       // Seed a few resources.
       const tags = ['a', 'b', 'c']
+      const seeded = {}
       for (const tag of tags) {
-        await writer.put({ fileName: `${tag}.json`, content: Buffer.from(`payload-${tag}`), prevVersion: null })
+        seeded[tag] = await writer.put({ fileName: `${tag}.json`, content: Buffer.from(`payload-${tag}`), prev: null })
       }
       // Concurrent: lister calls list, writer deletes one + puts a new one.
       const [listResult] = await Promise.all([
         lister.list(),
-        writer.delete('a.json', 1),
-        writer.put({ fileName: 'd.json', content: Buffer.from('payload-d'), prevVersion: null }),
+        writer.delete('a.json', seeded.a.meta),
+        writer.put({ fileName: 'd.json', content: Buffer.from('payload-d'), prev: null }),
       ])
       // The list result is ATOMIC server-side (a single SELECT under
       // the connection). Every entry it contains is a real live row
@@ -844,7 +886,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       // Commit one normal resource.
-      await session.put({ fileName: 'committed.json', content: Buffer.from('real'), prevVersion: null })
+      await session.put({ fileName: 'committed.json', content: Buffer.from('real'), prev: null })
       // Issue a put-begin via the public API and immediately abandon
       // it. We can do this by issuing a put with a payload that's
       // valid but expecting it to succeed.
@@ -865,15 +907,15 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const writer = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     const peer = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
-      await writer.put({ fileName: 'tag-cycle.json', content: Buffer.from('GEN-1'), prevVersion: null })
+      const gen1Put = await writer.put({ fileName: 'tag-cycle.json', content: Buffer.from('GEN-1'), prev: null })
       const list1 = await peer.list()
       const tag1 = list1[0].resourceTag
       // Cycle.
       const delSeen = pendingDelete(peer, undefined, 'peer sees delete')
-      await writer.delete('tag-cycle.json', 1)
+      await writer.delete('tag-cycle.json', gen1Put.meta)
       await delSeen
       const rebirthSeen = pendingPut(peer, (e) => e.version === 1, 'peer sees re-put')
-      await writer.put({ fileName: 'tag-cycle.json', content: Buffer.from('GEN-2'), prevVersion: null })
+      await writer.put({ fileName: 'tag-cycle.json', content: Buffer.from('GEN-2'), prev: null })
       await rebirthSeen
       // The tag is deterministic (HMAC of fileName) → same tag after
       // recreate. fetchByTag returns the fresh bytes.
@@ -901,7 +943,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
         putOps.push(session.put({
           fileName: `stress-${i.toString().padStart(3, '0')}.json`,
           content: Buffer.from(`payload-${i}-stress-test-content`),
-          prevVersion: null,
+          prev: null,
         }))
       }
       const putResults = await Promise.all(putOps)
@@ -923,7 +965,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
       // Delete all in parallel.
       const deletes = []
       for (let i = 0; i < N; i++) {
-        deletes.push(session.delete(`stress-${i.toString().padStart(3, '0')}.json`, 1))
+        deletes.push(session.delete(`stress-${i.toString().padStart(3, '0')}.json`, putResults[i].meta))
       }
       const delResults = await Promise.all(deletes)
       for (const d of delResults) assert.equal(d.ok, true)
@@ -941,7 +983,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       const payload = Buffer.from(crypto.getRandomValues(new Uint8Array(8 * 1024)))
-      await session.put({ fileName: 'parallel-read.bin', content: payload, prevVersion: null })
+      await session.put({ fileName: 'parallel-read.bin', content: payload, prev: null })
       const ops = Array.from({ length: 30 }, () => session.fetch('parallel-read.bin'))
       const results = await Promise.all(ops)
       for (let i = 0; i < results.length; i++) {
@@ -965,10 +1007,10 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       const payload = Buffer.from(crypto.getRandomValues(new Uint8Array(64 * 1024)))
-      await session.put({ fileName: 'race-get-del.bin', content: payload, prevVersion: null })
+      const seedPut = await session.put({ fileName: 'race-get-del.bin', content: payload, prev: null })
       // Fire 5 fetches + 1 delete concurrently.
       const fetchPromises = Array.from({ length: 5 }, () => session.fetch('race-get-del.bin'))
-      const deletePromise = session.delete('race-get-del.bin', 1)
+      const deletePromise = session.delete('race-get-del.bin', seedPut.meta)
       const [fetchResults, deleteResult] = await Promise.all([
         Promise.all(fetchPromises), deletePromise,
       ])
@@ -1001,9 +1043,9 @@ describe('objstore client/server races', { concurrency: true }, () => {
     try {
       const v1 = Buffer.from(crypto.getRandomValues(new Uint8Array(64 * 1024)))
       const v2 = Buffer.from(crypto.getRandomValues(new Uint8Array(32 * 1024))) // DIFFERENT size
-      await session.put({ fileName: 'race-get-put.bin', content: v1, prevVersion: null })
+      const seedPut = await session.put({ fileName: 'race-get-put.bin', content: v1, prev: null })
       const fetchPromise = session.fetch('race-get-put.bin')
-      const putPromise = session.put({ fileName: 'race-get-put.bin', content: v2, prevVersion: 1 })
+      const putPromise = session.put({ fileName: 'race-get-put.bin', content: v2, prev: seedPut.meta })
       const [fetched, putResult] = await Promise.all([fetchPromise, putPromise])
       assert.equal(putResult.ok, true)
       assert.equal(putResult.meta.version, 2)
@@ -1032,13 +1074,13 @@ describe('objstore client/server races', { concurrency: true }, () => {
       // Cycle 5 times back-to-back.
       for (let i = 0; i < 5; i++) {
         const gen = Buffer.from(`GEN-${i}-INSTANT-${'q'.repeat(16)}`)
-        const put = await session.put({ fileName: 'instant.bin', content: gen, prevVersion: null })
+        const put = await session.put({ fileName: 'instant.bin', content: gen, prev: null })
         assert.equal(put.ok, true)
         const got = await session.fetch('instant.bin')
         assert.ok(got)
         assert.equal(got.version, 1)
         assert.equal(Buffer.compare(Buffer.from(got.content), gen), 0, `cycle ${i}: fetch returns this generation's bytes`)
-        await session.delete('instant.bin', 1)
+        await session.delete('instant.bin', put.meta)
       }
     } finally { session.close() }
   })
@@ -1053,8 +1095,8 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {
       for (let i = 0; i < 100; i++) {
-        await session.put({ fileName: 'cyclic.bin', content: Buffer.from(`gen-${i}`), prevVersion: null })
-        await session.delete('cyclic.bin', 1)
+        const cyclicPut = await session.put({ fileName: 'cyclic.bin', content: Buffer.from(`gen-${i}`), prev: null })
+        await session.delete('cyclic.bin', cyclicPut.meta)
       }
       // Final state: row gone (last op was delete).
       assert.deepEqual(await session.list(), [])
@@ -1072,7 +1114,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
           ops.push(sessions[s].put({
             fileName: `stress2-s${s}-f${f.toString().padStart(2, '0')}.json`,
             content: Buffer.from(`s${s}-f${f}-content`),
-            prevVersion: null,
+            prev: null,
           }))
         }
       }
