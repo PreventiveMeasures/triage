@@ -11,6 +11,7 @@
 
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { errMsg } from '../util.ts'
 
 export function liveFilePath(dir: string, tag: string, resourceTag: string): string {
   return join(dir, tag, `${resourceTag}.bin`)
@@ -59,6 +60,6 @@ export async function unlinkIfExists(filePath: string): Promise<void> {
     // Log the basename only — the full path contains the workspace
     // tag (Ed25519 public key) and shouldn't go to operator logs
     // verbatim. PR #4 review H3.
-    console.warn(`unlink …/${basename(filePath)} failed: ${code ?? (err as Error)?.message ?? err}`)
+    console.warn(`unlink …/${basename(filePath)} failed:`, code ?? errMsg(err))
   }
 }

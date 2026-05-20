@@ -34,6 +34,7 @@
 import { PassThrough, type Readable } from 'node:stream'
 import { Buffer } from 'node:buffer'
 import type { BlobBackend, OpenLiveResult, StagingWriter } from './blob.ts'
+import { errMsg } from '../util.ts'
 
 // Minimal structural shape of the bits of `@vercel/blob` we use.
 // Kept local so the optional peer dep doesn't have to type-resolve
@@ -306,7 +307,7 @@ function buildPromoteStagingToLive(sdk: VercelBlobSdk, token: string): BlobBacke
         cacheControlMaxAge: 60,
       })
     } catch (err) {
-      console.warn('vercel-blob promote: copy failed:', (err as Error)?.message ?? err)
+      console.warn('vercel-blob promote: copy failed:', errMsg(err))
       return false
     }
     // Staging-blob cleanup runs in the caller AFTER upsertLive so a
@@ -371,7 +372,7 @@ function buildUnlink(sdk: VercelBlobSdk, token: string, op: 'staging' | 'live', 
       // committed by the time the caller reaches here, and the
       // reaper picks up the stranded blob on its next sweep. Same
       // policy as FS unlinkIfExists (PR #4 review).
-      console.warn(`vercel-blob unlink ${op} failed:`, (err as Error)?.message ?? err)
+      console.warn(`vercel-blob unlink ${op} failed:`, errMsg(err))
     }
   }
 }

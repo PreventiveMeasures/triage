@@ -110,45 +110,47 @@ function isSafeIntOrNull(v: unknown): boolean {
   return v == null || (typeof v === 'number' && Number.isSafeInteger(v))
 }
 
-export async function verifyObjstorePutSig(msg: ObjstorePutBeginMsg, connectionNonce: unknown): Promise<boolean> {
+// Shared tail for the four verifiers. The universal trust-boundary
+// checks (workspaceTag / signature / connectionNonce must be strings)
+// live here; each verifier adds only its own message-specific field
+// gates before delegating. `build` is a thunk over the already-
+// validated message + the (now-narrowed) nonce — a throw from it
+// (lone surrogate, etc.) is treated as a verify failure, never an
+// escaping exception. Centralising the build→verify step keeps the
+// four message types from drifting on the canonical-bytes / Ed25519
+// plumbing.
+async function verifyObjstoreSig(
+  msg: { workspaceTag?: unknown; signature?: unknown },
+  connectionNonce: unknown,
+  build: (connectionNonce: string) => Uint8Array<ArrayBuffer>,
+): Promise<boolean> {
   if (typeof msg.workspaceTag !== 'string') return false
-  if (typeof msg.resourceTag !== 'string') return false
-  if (typeof msg.contentHash !== 'string') return false
   if (typeof msg.signature !== 'string') return false
   if (typeof connectionNonce !== 'string') return false
-  if (!isSafeIntOrNull(msg.prevVersion)) return false
-  if (!isSafeNonNegativeInt(msg.expectedLength)) return false
   let payload: Uint8Array<ArrayBuffer>
-  try { payload = canonicalObjstorePut(msg, connectionNonce) } catch { return false }
+  try { payload = build(connectionNonce) } catch { return false }
   return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
 }
 
-export async function verifyObjstoreDeleteSig(msg: ObjstoreDeleteMsg, connectionNonce: unknown): Promise<boolean> {
-  if (typeof msg.workspaceTag !== 'string') return false
-  if (typeof msg.resourceTag !== 'string') return false
-  if (typeof msg.signature !== 'string') return false
-  if (typeof connectionNonce !== 'string') return false
-  if (!isSafeIntOrNull(msg.prevVersion)) return false
-  let payload: Uint8Array<ArrayBuffer>
-  try { payload = canonicalObjstoreDelete(msg, connectionNonce) } catch { return false }
-  return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
+export function verifyObjstorePutSig(msg: ObjstorePutBeginMsg, connectionNonce: unknown): Promise<boolean> {
+  if (typeof msg.resourceTag !== 'string') return Promise.resolve(false)
+  if (typeof msg.contentHash !== 'string') return Promise.resolve(false)
+  if (!isSafeIntOrNull(msg.prevVersion)) return Promise.resolve(false)
+  if (!isSafeNonNegativeInt(msg.expectedLength)) return Promise.resolve(false)
+  return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstorePut(msg, nonce))
 }
 
-export async function verifyObjstoreListSig(msg: ObjstoreListMsg, connectionNonce: unknown): Promise<boolean> {
-  if (typeof msg.workspaceTag !== 'string') return false
-  if (typeof msg.signature !== 'string') return false
-  if (typeof connectionNonce !== 'string') return false
-  let payload: Uint8Array<ArrayBuffer>
-  try { payload = canonicalObjstoreList(msg, connectionNonce) } catch { return false }
-  return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
+export function verifyObjstoreDeleteSig(msg: ObjstoreDeleteMsg, connectionNonce: unknown): Promise<boolean> {
+  if (typeof msg.resourceTag !== 'string') return Promise.resolve(false)
+  if (!isSafeIntOrNull(msg.prevVersion)) return Promise.resolve(false)
+  return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreDelete(msg, nonce))
 }
 
-export async function verifyObjstoreFetchSig(msg: ObjstoreFetchMsg, connectionNonce: unknown): Promise<boolean> {
-  if (typeof msg.workspaceTag !== 'string') return false
-  if (typeof msg.resourceTag !== 'string') return false
-  if (typeof msg.signature !== 'string') return false
-  if (typeof connectionNonce !== 'string') return false
-  let payload: Uint8Array<ArrayBuffer>
-  try { payload = canonicalObjstoreFetch(msg, connectionNonce) } catch { return false }
-  return await verifyEd25519(msg.workspaceTag, payload, msg.signature)
+export function verifyObjstoreListSig(msg: ObjstoreListMsg, connectionNonce: unknown): Promise<boolean> {
+  return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreList(msg, nonce))
+}
+
+export function verifyObjstoreFetchSig(msg: ObjstoreFetchMsg, connectionNonce: unknown): Promise<boolean> {
+  if (typeof msg.resourceTag !== 'string') return Promise.resolve(false)
+  return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreFetch(msg, nonce))
 }

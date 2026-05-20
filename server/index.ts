@@ -81,6 +81,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
 import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
+import { debugTag, errMsg, errStack, randomId } from './util.ts'
 import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
@@ -113,16 +114,27 @@ type WireRevision = {
   signature: string
 }
 
-const PORT = Number(env['PORT'] ?? 8765)
-const HOST = env['HOST'] ?? '127.0.0.1'
-// Fail fast on a malformed PORT — `Number("abc")` is NaN, and
-// `WebSocketServer({ port: NaN })` throws deep inside `node:net`
-// with a confusing trace. A clear up-front error lets the operator
-// fix the env var without trawling the stack.
-if (!Number.isSafeInteger(PORT) || PORT < 0 || PORT > 65535) {
-  console.error(`Invalid PORT: ${env['PORT']}`)
-  process.exit(1)
+// Parse + range-validate an integer env var, exiting with a clear
+// up-front message on a malformed value — a NaN from `Number("abc")`
+// otherwise surfaces as a confusing crash deep inside `node:net`
+// (`WebSocketServer({ port: NaN })`) or a 0-ms `setInterval` loop. An
+// absent var falls back to `def` (assumed in-range). One shape for
+// every integer env var below so they validate + fail identically;
+// `hint` appends operator guidance (range meaning, default) to the
+// error line.
+function intEnv(name: string, def: number, min: number, max: number, hint = ''): number {
+  const raw = env[name]
+  const n = raw == null ? def : Number(raw)
+  if (!Number.isSafeInteger(n) || n < min || n > max) {
+    console.error(`Invalid ${name}: ${raw} — must be an integer in [${min}, ${max}].${hint ? ` ${hint}` : ''}`)
+    process.exit(1)
+  }
+  return n
 }
+
+// 0 = OS-assigned ephemeral port (the test harness boots with PORT=0).
+const PORT = intEnv('PORT', 8765, 0, 65535)
+const HOST = env['HOST'] ?? '127.0.0.1'
 // `fileURLToPath` decodes percent-escapes and handles non-ASCII path
 // segments correctly (the older `new URL(...).pathname` form left
 // `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
@@ -131,12 +143,8 @@ const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data/data.db', import
 // returns backslash-separated) doesn't get a mixed-separator child
 // (`C:\srv\foo/objstore`). Cosmetic on POSIX, real bug on win32.
 const OBJSTORE_DIR = env['OBJSTORE_DIR'] ?? join(dirname(DB_PATH), 'objstore')
-// `Number('abc')` is NaN and `setInterval(…, NaN)` runs a 0-ms loop;
-// reject up front like PORT does.
-const OBJSTORE_REAP_INTERVAL_MS = Number(env['OBJSTORE_REAP_INTERVAL_MS'] ?? 10 * 60 * 1000)
-if (!Number.isSafeInteger(OBJSTORE_REAP_INTERVAL_MS) || OBJSTORE_REAP_INTERVAL_MS <= 0) {
-  console.error(`Invalid OBJSTORE_REAP_INTERVAL_MS: ${env['OBJSTORE_REAP_INTERVAL_MS']}`); process.exit(1)
-}
+// No practical upper bound beyond the safe-integer range.
+const OBJSTORE_REAP_INTERVAL_MS = intEnv('OBJSTORE_REAP_INTERVAL_MS', 10 * 60 * 1000, 1, Number.MAX_SAFE_INTEGER)
 // Distributed commit-lock lease duration. The default (5 min) is
 // tuned for Vercel Functions' Pro Max execution cap; self-hosted
 // long-running processes with multi-MB uploads on slow links may
@@ -147,14 +155,12 @@ if (!Number.isSafeInteger(OBJSTORE_REAP_INTERVAL_MS) || OBJSTORE_REAP_INTERVAL_M
 // (every concurrent caller steals instantly). Too long → a SIGKILL/
 // OOM-crashed holder pins the key for hours/days waiting on TTL
 // expiry. 1 second–1 hour is the operationally-sensible band.
-const OBJSTORE_COMMIT_LOCK_LEASE_MS = Number(env['OBJSTORE_COMMIT_LOCK_LEASE_MS'] ?? 5 * 60 * 1000)
 const LEASE_MS_MIN = 1000
 const LEASE_MS_MAX = 60 * 60 * 1000
-if (!Number.isSafeInteger(OBJSTORE_COMMIT_LOCK_LEASE_MS) || OBJSTORE_COMMIT_LOCK_LEASE_MS < LEASE_MS_MIN || OBJSTORE_COMMIT_LOCK_LEASE_MS > LEASE_MS_MAX) {
-  console.error(`Invalid OBJSTORE_COMMIT_LOCK_LEASE_MS: ${env['OBJSTORE_COMMIT_LOCK_LEASE_MS']}`)
-  console.error(`Must be an integer in [${LEASE_MS_MIN}, ${LEASE_MS_MAX}] (1s..1h). Default is 300000 (5 min).`)
-  process.exit(1)
-}
+const OBJSTORE_COMMIT_LOCK_LEASE_MS = intEnv(
+  'OBJSTORE_COMMIT_LOCK_LEASE_MS', 5 * 60 * 1000, LEASE_MS_MIN, LEASE_MS_MAX,
+  '(1s..1h). Default is 300000 (5 min).',
+)
 setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
 const DEBUG = env['DEBUG'] === '1'
 
@@ -171,11 +177,11 @@ function loadConfig(path: string): ServerConfig {
   let raw: string
   try { raw = readFileSync(path, 'utf8') } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
-    console.error(`Failed to read ${path}:`, (err as Error)?.message ?? err); process.exit(1)
+    console.error(`Failed to read ${path}:`, errMsg(err)); process.exit(1)
   }
   try { return JSON.parse(raw) as ServerConfig }
   catch (err) {
-    console.error(`Failed to parse ${path} as JSON:`, (err as Error)?.message ?? err); process.exit(1)
+    console.error(`Failed to parse ${path} as JSON:`, errMsg(err)); process.exit(1)
   }
 }
 const SERVER_CONFIG = loadConfig(CONFIG_PATH)
@@ -288,20 +294,11 @@ const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 // Env-configurable via `MAX_INFLIGHT_PER_SOCKET` for tests that
 // want to deterministically exercise the cap (`busy` NACK
 // regression) without needing 65 signed sends. Default 64.
-const MAX_INFLIGHT_PER_SOCKET = (() => {
-  const raw = env['MAX_INFLIGHT_PER_SOCKET']
-  if (raw == null) return 64
-  const n = Number(raw)
-  // Upper bound = 65_536. The cap's point is to bound memory under
-  // hostile load; a deployer passing `MAX_SAFE_INTEGER` would silently
-  // defeat the purpose. 65_536 is way above any realistic legitimate
-  // value (default is 64) but cheap to enforce. Adversarial-audit
-  // foot-gun guard.
-  if (!Number.isSafeInteger(n) || n < 1 || n > 65_536) {
-    console.error(`Invalid MAX_INFLIGHT_PER_SOCKET: ${raw} (must be integer 1..65536)`); process.exit(1)
-  }
-  return n
-})()
+// Upper bound 65_536 — the cap bounds memory under hostile load; a
+// deployer passing `MAX_SAFE_INTEGER` would silently defeat the
+// purpose. Way above any realistic legitimate value (default 64) but
+// cheap to enforce. Adversarial-audit foot-gun guard.
+const MAX_INFLIGHT_PER_SOCKET = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
 const socketInflight = new WeakMap<WebSocket, number>()
 
 // Per-socket liveness tracker for the server-driven heartbeat
@@ -530,7 +527,7 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
 // uniqueness; base64url so the wire stays JSON-text.
 const socketChallenge = new WeakMap<WebSocket, string>()
 function newChallenge(): string {
-  return randomBytes(16).toString('base64url')
+  return randomId()
 }
 
 // Per-connection authorization flag for the password-gated "first
@@ -665,11 +662,6 @@ function sendRaw(socket: WebSocket, payload: string): void {
   // every subscriber after the dead one. Audit M4.
   try { socket.send(payload) } catch {}
 }
-
-// Truncate a base64url tag for `DEBUG=1` logging. Full workspaceTag
-// is an Ed25519 public key; operator logs shouldn't carry it
-// verbatim. Same convention as objstore/handlers.ts.
-function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 
 // Normalise `keyframe` on outbound chain entries to a strict boolean.
 // SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
@@ -1105,7 +1097,7 @@ const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     // above. Logs and ensures the response is terminated so the TCP
     // socket doesn't dangle.
     const p = handleRest(objstoreRestDeps, req, res).catch((err) => {
-      console.warn('REST handler error:', (err as Error)?.stack ?? err)
+      console.warn('REST handler error:', errStack(err))
       if (res.headersSent) { try { res.destroy() } catch {} }
       else { try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'internal' })) } catch {} }
     })
@@ -1301,7 +1293,7 @@ wss.on('connection', (socket: WebSocket, req) => {
         try {
           sendSaveError(socket, tagField, baseField, 'busy')
         } catch (err) {
-          console.warn('Handler error (type=workspace-save):', (err as Error)?.stack ?? err)
+          console.warn('Handler error (type=workspace-save):', errStack(err))
         }
       }
       return
@@ -1327,7 +1319,7 @@ wss.on('connection', (socket: WebSocket, req) => {
         // path, and prefer `.stack` over `.message` so the post-
         // mortem has the throw site.
         const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
-        console.warn(`Handler error (type=${typeStr}):`, (err as Error)?.stack ?? err)
+        console.warn(`Handler error (type=${typeStr}):`, errStack(err))
       } finally {
         const n = (socketInflight.get(socket) ?? 1) - 1
         if (n <= 0) socketInflight.delete(socket)
@@ -1353,7 +1345,7 @@ wss.on('connection', (socket: WebSocket, req) => {
   // violations). The previous `() => {}` left every per-connection
   // failure invisible. `close` fires after `error` and runs the
   // unsubscribe cleanup, so logging here doesn't risk leaking.
-  socket.on('error', (err: Error) => { console.warn('Socket error:', err?.message ?? err) })
+  socket.on('error', (err: Error) => { console.warn('Socket error:', errMsg(err)) })
 })
 
 // Periodic heartbeat sweep. Two-tick liveness window: a socket
@@ -1401,7 +1393,7 @@ httpServer.on('listening', () => {
 // the launcher sees a confusing crash rather than the bind
 // failure. Audit round-9 M2.
 httpServer.on('error', (err: Error) => {
-  console.error('Server error:', err?.stack ?? err)
+  console.error('Server error:', errStack(err))
   fireShutdown(1)
 })
 wss.on('error', (err: Error) => {
@@ -1412,7 +1404,7 @@ wss.on('error', (err: Error) => {
   // `pendingExitCode` from 0 → 1; without `fireShutdown`, a pre-
   // shutdown `wss.error` would log + drop and the launcher would
   // never know to treat the process as failed.
-  console.error('WS server error:', err?.stack ?? err)
+  console.error('WS server error:', errStack(err))
   fireShutdown(1)
 })
 
@@ -1421,7 +1413,7 @@ wss.on('error', (err: Error) => {
 // non-zero exit the launcher relies on.
 function fireShutdown(code: number): void {
   shutdown(code).catch((err) => {
-    console.warn('shutdown error:', (err as Error)?.stack ?? err)
+    console.warn('shutdown error:', errStack(err))
     process.exit(code === 0 ? 1 : code)
   })
 }
@@ -1518,7 +1510,7 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   if (heldBefore > 0) {
     if (DEBUG) console.log(`releasing ${heldBefore} commit-lock lease(s) held by this process`)
     try { await releaseAllForThisProcess(objstoreHandle) }
-    catch (err) { console.warn('commit-lock shutdown release error:', (err as Error)?.message ?? err) }
+    catch (err) { console.warn('commit-lock shutdown release error:', errMsg(err)) }
   }
   // objstoreHandle has no `close()`:
   //  - SQLite: it shares the workspace_revision handle's
@@ -1527,7 +1519,7 @@ async function shutdown(exitCode: number = 0): Promise<void> {
   //    returns a stateless HTTP callable, and the SQLite-only
   //    `DatabaseSync` is the only thing that ever needs explicit
   //    shutdown. `handle.close()` below is itself a no-op on Neon.
-  try { await handle.close() } catch (err) { console.warn('DB close error:', (err as Error)?.message ?? err) }
+  try { await handle.close() } catch (err) { console.warn('DB close error:', errMsg(err)) }
   // Read `pendingExitCode` (not the parameter) so a re-entrant
   // `shutdown(1)` that landed during the drain wins over the
   // original `shutdown(0)`. See round-13 escalation note.
@@ -1545,11 +1537,11 @@ process.on('SIGTERM', () => fireShutdown(0))
 // so the launcher records a non-zero exit and the same teardown path
 // runs as on a SIGTERM. Audit round-11 observability.
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', (reason as Error)?.stack ?? reason)
+  console.error('Unhandled rejection:', errStack(reason))
   fireShutdown(1)
 })
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err?.stack ?? err)
+  console.error('Uncaught exception:', errStack(err))
   fireShutdown(1)
 })
 
