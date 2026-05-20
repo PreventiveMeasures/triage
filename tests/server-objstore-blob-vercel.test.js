@@ -15,15 +15,22 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
 
 import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
 import { abortPut, beginPut, commitPut, deleteObject, getLive, lockKey, openObjstore } from '../server/objstore/store.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 
-// 32-byte b64url, 43 chars no padding (CONTENT_HASH_RE)
-function b64u32() { return 'a'.repeat(43) }
 // 64-byte b64url, 86 chars no padding (SIG_RE)
 function b64u64() { return 'a'.repeat(86) }
+// Deterministic, valid (43-char base64url) content hash from a seed.
+// Live blobs are content-addressed (`${tag}/${contentHash}.bin`), so
+// keying each payload's hash off its resourceTag gives each resource
+// its own blob pathname (mirrors the old per-resourceTag layout).
+function chash(seed) { return createHash('sha256').update(String(seed)).digest('base64url') }
+// The live-blob pathname the Vercel backend writes for a resource's
+// default payload.
+function liveName(tag, resourceTag) { return `${tag}/${chash(resourceTag)}.bin` }
 
 // Minimal stand-in for the `@vercel/blob` SDK. Keeps an in-memory
 // blob store keyed by pathname so we can assert end-to-end (put →
@@ -64,7 +71,7 @@ function mockSdk() {
         if (blobs.has(pathname) && !options?.allowOverwrite) {
           throw new Error('blob exists')
         }
-        blobs.set(pathname, { bytes })
+        blobs.set(pathname, { bytes, uploadedAt: Date.now() })
         return { url: urlFor(pathname), pathname }
       },
       // eslint-disable-next-line require-await
@@ -103,7 +110,7 @@ function mockSdk() {
         // fully written or not at all. Overwrite semantics match
         // `put` with allowOverwrite (Vercel docs: copy overwrites
         // unconditionally when toPathname already has a blob).
-        blobs.set(toPathname, { bytes: Buffer.from(b.bytes) })
+        blobs.set(toPathname, { bytes: Buffer.from(b.bytes), uploadedAt: Date.now() })
         return { url: urlFor(toPathname), pathname: toPathname }
       },
       // eslint-disable-next-line require-await
@@ -134,7 +141,7 @@ function mockSdk() {
             const rest = k.slice(prefix.length)
             const slash = rest.indexOf('/')
             if (slash === -1) {
-              topBlobs.push({ pathname: k, size: blobs.get(k).bytes.byteLength })
+              topBlobs.push({ pathname: k, size: blobs.get(k).bytes.byteLength, uploadedAt: blobs.get(k).uploadedAt })
             } else {
               folders.add(`${prefix}${rest.slice(0, slash + 1)}`)
             }
@@ -147,7 +154,7 @@ function mockSdk() {
           }
         }
         return {
-          blobs: matched.map((k) => ({ pathname: k, size: blobs.get(k).bytes.byteLength })),
+          blobs: matched.map((k) => ({ pathname: k, size: blobs.get(k).bytes.byteLength, uploadedAt: blobs.get(k).uploadedAt })),
           hasMore: startIdx + limit < all.length,
           cursor: startIdx + limit < all.length ? String(startIdx + limit) : undefined,
         }
@@ -184,12 +191,13 @@ async function freshVercelHandle() {
 }
 
 function fakeBegin(over = {}) {
+  const resourceTag = over.resourceTag ?? 'res-1'
   return {
     workspaceTag: 'ws-1',
-    resourceTag: 'res-1',
+    resourceTag,
     prevVersion: null,
     expectedLength: 16,
-    contentHash: b64u32(),
+    contentHash: chash(resourceTag),
     signature: b64u64(),
     ...over,
   }
@@ -227,9 +235,9 @@ describe('vercel blob backend — happy path', () => {
       assert.equal(commit.row.version, 1)
       // Post-commit: live blob exists, staging gone (the backend
       // attempts a best-effort delete after copy).
-      assert.equal(blobs.has('ws-1/res-1.bin'), true)
+      assert.equal(blobs.has(liveName('ws-1', 'res-1')), true)
       assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), false)
-      assert.equal(blobs.get('ws-1/res-1.bin').bytes.byteLength, 16)
+      assert.equal(blobs.get(liveName('ws-1', 'res-1')).bytes.byteLength, 16)
       // listLive sees the row.
       const live = await getLive(handle, 'ws-1', 'res-1')
       assert.deepEqual(live?.version, 1)
@@ -248,7 +256,7 @@ describe('vercel blob backend — happy path', () => {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
       }))
       assert.equal(c.ok, true)
-      const opened = await handle.blob.openLiveReader('ws-1', 'res-1')
+      const opened = await handle.blob.openLiveReader('ws-1', chash('res-1'))
       assert.equal(opened.ok, true)
       assert.equal(opened.reader.size, payload.byteLength)
       const chunks = []
@@ -299,7 +307,7 @@ describe('vercel blob backend — error & race surfaces', () => {
     } finally { cleanup() }
   })
 
-  it('deleteObject removes the live row and the live blob', async () => {
+  it('deleteObject drops the live row; the reaper GCs the unreferenced blob past the grace window', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
       const key = lockKey('ws-1', 'res-1')
@@ -308,17 +316,25 @@ describe('vercel blob backend — error & race surfaces', () => {
       await handle.lock.run(key, () => commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
       }))
-      assert.equal(blobs.has('ws-1/res-1.bin'), true)
+      const live = liveName('ws-1', 'res-1')
+      assert.equal(blobs.has(live), true)
       const del = await handle.lock.run(key, () => deleteObject(handle, 'ws-1', 'res-1', 1))
       assert.equal(del.ok, true)
       assert.equal(del.deletedVersion, 1)
-      assert.equal(blobs.has('ws-1/res-1.bin'), false)
+      // deleteObject only drops the row — the blob (possibly shared via
+      // content dedup) is left for the reaper, which GCs it once
+      // unreferenced AND past the grace window. Backdate uploadedAt to
+      // clear the window.
+      assert.equal(blobs.has(live), true)
+      blobs.get(live).uploadedAt = Date.now() - 2 * 60 * 60 * 1000
+      await reapOrphans(handle)
+      assert.equal(blobs.has(live), false)
     } finally { cleanup() }
   })
 })
 
 describe('vercel blob backend — listing for the reaper', () => {
-  it('lists workspace tags, live resource tags, and staging ids', async () => {
+  it('lists workspace tags, live blob hashes, and staging ids', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
       // Seed two workspaces with one live + one staging each.
@@ -334,8 +350,12 @@ describe('vercel blob backend — listing for the reaper', () => {
       const wsTags = (await handle.blob.listWorkspaceTags()).toSorted()
       assert.deepEqual(wsTags, ['ws-A', 'ws-B'])
       for (const tag of ['ws-A', 'ws-B']) {
-        const liveTags = await handle.blob.listLiveResourceTags(tag)
-        assert.deepEqual(liveTags, ['r'])
+        const liveBlobs = await handle.blob.listLiveBlobs(tag)
+        // Content-addressed: the listing yields content hashes (the
+        // committed resource 'r' used the default chash('r')), each
+        // with a modified time for the GC grace window.
+        assert.deepEqual(liveBlobs.map((b) => b.hash), [chash('r')])
+        assert.equal(typeof liveBlobs[0].modifiedMs, 'number')
         const stagingIds = await handle.blob.listStagingIds(tag)
         assert.equal(stagingIds.length, 1)
         // Staging id is 16-byte random base64url — 22 chars.
@@ -346,7 +366,7 @@ describe('vercel blob backend — listing for the reaper', () => {
     } finally { cleanup() }
   })
 
-  it('reaper drops a stranded live blob whose row was deleted out-of-band', async () => {
+  it('reaper GCs a stranded live blob (row deleted out-of-band) once past the grace window', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
       const key = lockKey('ws-1', 'res-1')
@@ -355,13 +375,19 @@ describe('vercel blob backend — listing for the reaper', () => {
       await handle.lock.run(key, () => commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
       }))
-      assert.equal(blobs.has('ws-1/res-1.bin'), true)
-      // Simulate a row drop without unlink (e.g. crash between
-      // deleteLive.run() and the unlinkLive call). The blob is now
-      // stranded — reaper should pick it up.
+      const live = liveName('ws-1', 'res-1')
+      assert.equal(blobs.has(live), true)
+      // Simulate a row drop without unlink (deleteObject leaves the
+      // blob behind; or a crash mid-delete). The blob is now
+      // stranded/unreferenced.
       handle.deleteLive.run('ws-1', 'res-1')
+      // Within the grace window → a default sweep leaves it.
       await reapOrphans(handle)
-      assert.equal(blobs.has('ws-1/res-1.bin'), false, 'reaper unlinks the stranded live blob')
+      assert.equal(blobs.has(live), true, 'grace window protects a recent blob')
+      // Past the grace window → GC'd.
+      blobs.get(live).uploadedAt = Date.now() - 2 * 60 * 60 * 1000
+      await reapOrphans(handle)
+      assert.equal(blobs.has(live), false, 'reaper unlinks the stranded live blob')
     } finally { cleanup() }
   })
 
@@ -412,7 +438,7 @@ describe('vercel blob backend — SDK call shape', () => {
       const copy = calls.find((c) => c.fn === 'copy')
       assert.ok(copy)
       assert.equal(copy.from, `ws-1/.staging/${begin.stagingId}.bin`)
-      assert.equal(copy.to, 'ws-1/res-1.bin')
+      assert.equal(copy.to, liveName('ws-1', 'res-1'))
     } finally { cleanup() }
   })
 
@@ -426,11 +452,11 @@ describe('vercel blob backend — SDK call shape', () => {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
       }))
       calls.length = 0  // clear call log so we measure just the read
-      const opened = await handle.blob.openLiveReader('ws-1', 'res-1')
+      const opened = await handle.blob.openLiveReader('ws-1', chash('res-1'))
       assert.equal(opened.ok, true)
       const get = calls.find((c) => c.fn === 'get')
       assert.ok(get)
-      assert.equal(get.pathname, 'ws-1/res-1.bin')
+      assert.equal(get.pathname, liveName('ws-1', 'res-1'))
     } finally { cleanup() }
   })
 })

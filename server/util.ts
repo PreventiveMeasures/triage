@@ -9,9 +9,9 @@ import { randomBytes } from 'node:crypto'
 export function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 
 // 16 random bytes → 22 base64url chars (no padding). The shared shape
-// for per-socket challenge nonces, staging ids, and commit-lock holder
-// ids — collision is 1/2^128. `isValidStagingId` in objstore/store.ts
-// validates exactly this shape.
+// for per-socket challenge nonces and staging ids — collision is
+// 1/2^128. `isValidStagingId` in objstore/store.ts validates exactly
+// this shape.
 export function randomId(): string { return randomBytes(16).toString('base64url') }
 
 // Log-friendly view of an unknown throw, for use as a `console.*`

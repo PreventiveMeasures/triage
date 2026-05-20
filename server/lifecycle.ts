@@ -15,11 +15,8 @@ export type ShutdownDeps = {
   heartbeatTimer: ReturnType<typeof setInterval>
   // Stops the periodic reaper AND awaits any in-flight sweep.
   stopReaper: () => Promise<void>
-  // App-specific teardown, run (in order) AFTER the in-flight drain:
-  // release any commit-lock leases this process holds, then close the
-  // DB. Each swallows its own errors (a failed release/close shouldn't
-  // abort the exit).
-  releaseLeases: () => Promise<void>
+  // App-specific teardown, run AFTER the in-flight drain: close the DB.
+  // Swallows its own errors (a failed close shouldn't abort the exit).
   closeDb: () => Promise<void>
 }
 
@@ -54,7 +51,7 @@ export function createLifecycle(): Lifecycle {
   let pendingExitCode = 0
 
   function install(deps: ShutdownDeps): void {
-    const { httpServer, wss, heartbeatTimer, stopReaper, releaseLeases, closeDb } = deps
+    const { httpServer, wss, heartbeatTimer, stopReaper, closeDb } = deps
 
     async function shutdown(exitCode: number = 0): Promise<void> {
       // Re-entry: don't restart the teardown, but escalate the pending
@@ -124,10 +121,7 @@ export function createLifecycle(): Lifecycle {
       // the window spans several yield points. `Promise.allSettled` so a
       // single handler rejection doesn't abort the drain.
       if (inFlight.size > 0) await Promise.allSettled([...inFlight])
-      // App teardown AFTER the drain: a PUT that was mid-commit has
-      // already run its own finally-release, so we only mop up stragglers,
-      // then close the DB.
-      await releaseLeases()
+      // App teardown AFTER the drain: close the DB.
       await closeDb()
       // Read `pendingExitCode` (not the parameter) so a re-entrant
       // `shutdown(1)` that landed during the drain wins over the original

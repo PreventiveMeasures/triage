@@ -17,10 +17,11 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, utimesSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
 
 import {
   MAX_RESOURCES_PER_WORKSPACE,
@@ -50,18 +51,35 @@ function freshHandle() {
   }
 }
 
-// 32-byte b64url (CONTENT_HASH_RE — 43 chars)
-function b64u32() { return 'a'.repeat(43) }
 // 64-byte b64url (SIG_RE — 86 chars)
 function b64u64() { return 'a'.repeat(86) }
 
+// Deterministic, valid (43-char base64url) content hash from a seed.
+// Live blobs are content-addressed (`${tag}/${contentHash}.bin`), so
+// keying each test payload's hash off its resourceTag gives each
+// resource its own blob — mirroring the OLD per-resourceTag on-disk
+// layout so the concurrency coverage carries straight over. A test
+// that wants a NEW address for new bytes passes a distinct seed.
+function chash(seed) { return createHash('sha256').update(String(seed)).digest('base64url') }
+
+// Backdate a live blob's mtime so the reaper's GC grace window
+// (default = STAGING_TTL_MS_DEFAULT) treats it as collectible.
+// Mirrors how the staging-TTL tests backdate `begun_at`; avoids
+// depending on a grace=0 edge case (fs mtime can round a just-written
+// file slightly ahead of Date.now()).
+function ageBlob(filePath, msAgo = 2 * 60 * 60 * 1000) {
+  const t = (Date.now() - msAgo) / 1000
+  utimesSync(filePath, t, t)
+}
+
 function fakeBegin(over = {}) {
+  const resourceTag = over.resourceTag ?? 'res-1'
   return {
     workspaceTag: 'ws-1',
-    resourceTag: 'res-1',
+    resourceTag,
     prevVersion: null,
     expectedLength: 16,
-    contentHash: b64u32(),
+    contentHash: chash(resourceTag),
     signature: b64u64(),
     ...over,
   }
@@ -94,12 +112,12 @@ function lockedDelete(handle, tag, res, prev) {
 
 describe('lock isolation: many concurrent puts on distinct resources', () => {
   // The per-resource lock keys on (workspaceTag, resourceTag). If two
-  // puts on DIFFERENT resources somehow contended on the same lock
-  // (e.g. someone keyed on workspaceTag alone), throughput would
-  // collapse and the ordering would be observable in the version
-  // ladder. Here we fire N puts in parallel and check every one
-  // committed to version 1 without a single conflict — proves keys
-  // are distinct and the lock map handles concurrent acquisitions.
+  // puts on DIFFERENT resources serialised on the same lock (e.g.
+  // someone keyed on workspaceTag alone), throughput would collapse
+  // and the ordering would be observable in the version ladder. Here
+  // we fire N puts in parallel and check every one committed to
+  // version 1 without a single conflict — proves keys are distinct
+  // and the lock map handles concurrent acquisitions.
   it('MAX_RESOURCES_PER_WORKSPACE different resources commit in parallel without conflicts', async () => {
     const { handle, cleanup } = freshHandle()
     try {
@@ -173,9 +191,10 @@ describe('lock serialisation: many concurrent commits on the SAME resource', () 
       // Live row is v1 (NOT v20 / not the sum-of-attempts).
       const live = await getLive(handle, 'ws-1', 'race')
       assert.equal(live?.version, 1, 'only one upsert landed — version stays at 1')
-      // Live FILE contains the WINNER's bytes — losers' bytes were
-      // staged + abandoned, never promoted via rename.
-      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'race'))
+      // Live FILE (content-addressed at chash('race') — every racer
+      // declared the same hash) contains the WINNER's bytes: losers'
+      // bytes were staged + abandoned, never promoted to the live path.
+      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash('race')))
       assert.equal(Buffer.compare(onDisk, winners[0].bytes), 0, 'live file bytes match the winner')
     } finally { cleanup() }
   })
@@ -200,8 +219,10 @@ describe('lock serialisation: many concurrent commits on the SAME resource', () 
         lastVer = i
         lastBytes = bytes
       }
-      // Live file contains v10's bytes specifically.
-      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'chain'))
+      // Live file contains v10's bytes specifically. Every version
+      // declared chash('chain'), so each commit promoted to the same
+      // content-addressed path; v10 is the last writer.
+      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash('chain')))
       assert.equal(Buffer.compare(onDisk, lastBytes), 0)
     } finally { cleanup() }
   })
@@ -304,22 +325,40 @@ describe('delete-then-recreate (the user-data scenario)', () => {
     try {
       const original = Buffer.from('ORIGINAL-BYTES-32B'.padEnd(32, 'X'))
       const replacement = Buffer.from('REPLACEMENT-BYTES-32B'.padEnd(32, 'Y'))
-      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'recycled', expectedLength: 32 }), original)
+      // Distinct bytes ⇒ distinct content hashes ⇒ distinct blob
+      // addresses — the realistic model, and what makes a byte-leak
+      // structurally impossible: the new incarnation never shares a
+      // file with the deleted predecessor.
+      const hOrig = chash('recycled@orig')
+      const hRepl = chash('recycled@repl')
+      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'recycled', expectedLength: 32, contentHash: hOrig }), original)
       assert.equal(r1.ok, true)
       assert.equal(r1.row.version, 1)
-      // Delete the live row.
+      const origBlob = liveFilePath(objDir, 'ws-1', hOrig)
+      assert.equal(existsSync(origBlob), true)
+      // Delete the live row. The blob is NOT unlinked inline — the row
+      // drops, the now-unreferenced original blob is left for the
+      // reaper's GC (deferred, post-grace-window).
       const d = await lockedDelete(handle, 'ws-1', 'recycled', 1)
       assert.equal(d.ok, true)
-      // File is gone (delete unlinked it inline).
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'recycled')), false)
-      // Re-put under the same tag, prev=null (must-not-exist gate).
-      const r2 = await lockedPut(handle, fakeBegin({ resourceTag: 'recycled', expectedLength: 32 }), replacement)
+      assert.equal(await getLive(handle, 'ws-1', 'recycled'), null)
+      assert.equal(existsSync(origBlob), true, 'delete drops the row but leaves the blob for the reaper')
+      // Re-put under the same tag, prev=null (must-not-exist gate),
+      // with NEW bytes → new content address.
+      const r2 = await lockedPut(handle, fakeBegin({ resourceTag: 'recycled', expectedLength: 32, contentHash: hRepl }), replacement)
       assert.equal(r2.ok, true)
       assert.equal(r2.row.version, 1, 'new incarnation starts back at v1 (no tombstone)')
-      // Live file holds the replacement bytes — never the original.
-      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'recycled'))
+      // Live file (at the replacement's own address) holds the
+      // replacement bytes — never the original.
+      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', hRepl))
       assert.equal(Buffer.compare(onDisk, replacement), 0)
       assert.equal(onDisk.indexOf('ORIGINAL'), -1, 'no leak of the deleted predecessor')
+      // The orphaned original blob the GC reaps once aged past the
+      // grace window; the new incarnation's blob (referenced) stays.
+      ageBlob(origBlob)
+      await reapOrphans(handle)
+      assert.equal(existsSync(origBlob), false, 'unreferenced predecessor blob GCd once aged')
+      assert.equal(Buffer.compare(readFileSync(liveFilePath(objDir, 'ws-1', hRepl)), replacement), 0, 'live incarnation untouched by the GC')
     } finally { cleanup() }
   })
 
@@ -331,8 +370,11 @@ describe('delete-then-recreate (the user-data scenario)', () => {
         const r = await lockedPut(handle, fakeBegin({ resourceTag: 'flip', expectedLength: bytes.byteLength }), bytes)
         assert.equal(r.ok, true)
         assert.equal(r.row.version, 1, `cycle ${cycle}: version always 1 after delete+recreate`)
-        // Verify bytes match this cycle's payload exactly.
-        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'flip'))
+        // Verify bytes match this cycle's payload exactly. Every cycle
+        // declares chash('flip'), so each put promotes this cycle's
+        // bytes to the same content-addressed path; we read it while
+        // the row is still live (before this cycle's delete).
+        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash('flip')))
         assert.equal(Buffer.compare(onDisk, bytes), 0, `cycle ${cycle}: live bytes match this cycle's payload`)
         const d = await lockedDelete(handle, 'ws-1', 'flip', 1)
         assert.equal(d.ok, true)
@@ -343,26 +385,32 @@ describe('delete-then-recreate (the user-data scenario)', () => {
   it('mid-cycle interleave: delete arrives between two commit phases on the same resource', async () => {
     // Resource exists at v1. Begin a v2 put-attempt (under lock,
     // releases lock). Body writes (no lock). Before commit acquires
-    // the lock, a DELETE lands and drops the row + file. The
-    // commit's precondition-recheck (inside lock) sees no row;
-    // staging.prev_version is 1 but live is null → conflict. The
-    // row STAYS deleted; v2 bytes never become live.
+    // the lock, a DELETE lands and drops the row (the v1 blob is left
+    // for the reaper). The commit's precondition-recheck (inside lock)
+    // sees no row; staging.prev_version is 1 but live is null →
+    // conflict, BEFORE the promote. The row STAYS deleted; v2's bytes
+    // never reach their content-addressed live path.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Seed v1.
+      // Seed v1 (its own content hash).
       const v1 = Buffer.from('v1-content-staying-around')
-      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'mid', expectedLength: v1.byteLength }), v1)
+      const hV1 = chash('mid@v1')
+      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'mid', expectedLength: v1.byteLength, contentHash: hV1 }), v1)
       assert.equal(r1.ok, true)
-      // Begin v2 (lock held briefly).
+      const v1Blob = liveFilePath(objDir, 'ws-1', hV1)
+      // Begin v2 (lock held briefly) — distinct bytes + distinct hash
+      // so we can assert v2's specific blob is never promoted.
+      const hV2 = chash('mid@v2')
       const begin = await handle.lock.run(lockKey('ws-1', 'mid'), () => beginPut(handle, fakeBegin({
-        resourceTag: 'mid', prevVersion: 1, expectedLength: 4,
+        resourceTag: 'mid', prevVersion: 1, expectedLength: 4, contentHash: hV2,
       })))
       assert.equal(begin.ok, true)
       writeStaging(begin.filePath, Buffer.alloc(4))
-      // Interleave: DELETE the v1 row.
+      // Interleave: DELETE the v1 row. Row drops; v1 blob lingers
+      // (deferred GC), but it is now unreferenced.
       const d = await lockedDelete(handle, 'ws-1', 'mid', 1)
       assert.equal(d.ok, true)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'mid')), false)
+      assert.equal(await getLive(handle, 'ws-1', 'mid'), null)
       // Now commit v2. Inside the lock, getLive returns null and the
       // staging row's prev_version = 1 — mismatch → conflict.
       const c = await handle.lock.run(lockKey('ws-1', 'mid'), () => commitPut(handle, {
@@ -370,34 +418,42 @@ describe('delete-then-recreate (the user-data scenario)', () => {
       }))
       assert.equal(c.ok, false)
       assert.equal(c.reason, 'conflict')
-      // No live row, no live file. The delete won, the v2 attempt lost.
+      // No live row. The delete won, the v2 attempt lost: v2's bytes
+      // were never promoted to their content-addressed path.
       assert.equal(await getLive(handle, 'ws-1', 'mid'), null)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'mid')), false)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', hV2)), false, 'v2 bytes never promoted (conflict precedes the promote)')
+      // The stranded v1 blob is unreferenced → GCd once aged.
+      ageBlob(v1Blob)
+      await reapOrphans(handle)
+      assert.equal(existsSync(v1Blob), false, 'unreferenced v1 blob GCd once aged')
       // Cleanup the abandoned staging.
       await abortPut(handle, 'ws-1', 'mid', begin.stagingId)
     } finally { cleanup() }
   })
 
   it('many concurrent peers each doing delete-then-recreate cycles — final state is consistent (no partial bytes)', async () => {
-    // The lock guarantee: a delete under lock unlinks v1's file
-    // INSIDE the lock; any concurrent begin/commit for the same
-    // resource queues behind. If the lock leaked, a commit could
-    // rename a NEW staging file over the OLD live path while the
-    // delete's unlink raced — leaving us with either no file or
-    // the new file unlinked seconds later. We model the chaos by
-    // running 10 concurrent "peers" each doing a delete-then-put
-    // cycle. The final invariant: any surviving file's bytes are
-    // byte-for-byte equal to one of the known payloads (NEVER a
-    // mix or a truncation).
+    // The lock guarantee: a commit's promote + CAS and a delete's
+    // row-drop on the same resource serialise; concurrent begin/commit
+    // for the same resource queue behind. If the lock leaked, a commit
+    // could promote a NEW blob whose row never lands (or lands then is
+    // dropped), and the live row could end up naming a blob that holds
+    // the wrong bytes. We model the chaos by running 10 concurrent
+    // "peers" each doing a delete-then-put cycle. The final invariant:
+    // a surviving live row names a content hash whose blob holds that
+    // payload byte-for-byte (NEVER a mix or a truncation).
     const { handle, objDir, cleanup } = freshHandle()
     try {
       // Both payloads have the SAME byte length so a length-based
-      // sanity check is meaningful: any surviving live row's
-      // content_length must match whichever bytes are on disk.
+      // sanity check is meaningful. Distinct bytes ⇒ distinct content
+      // hashes ⇒ distinct immutable blob addresses, so the live row's
+      // content_hash unambiguously names which blob is the live one.
       const seed = Buffer.from('SEED-PAYLOAD-XYZ12')   // 18 bytes
       const fresh = Buffer.from('FRESH-PAYLOAD-AB99')  // 18 bytes
       assert.equal(seed.byteLength, fresh.byteLength)
-      await lockedPut(handle, fakeBegin({ resourceTag: 'churn', expectedLength: seed.byteLength }), seed)
+      const hSeed = chash('churn@seed')
+      const hFresh = chash('churn@fresh')
+      const byHash = new Map([[hSeed, seed], [hFresh, fresh]])
+      await lockedPut(handle, fakeBegin({ resourceTag: 'churn', expectedLength: seed.byteLength, contentHash: hSeed }), seed)
       const cycles = []
       for (let i = 0; i < 10; i++) {
         cycles.push((async () => {
@@ -413,35 +469,37 @@ describe('delete-then-recreate (the user-data scenario)', () => {
           if (live) await lockedDelete(handle, 'ws-1', 'churn', live.version)
           return lockedPut(
             handle,
-            fakeBegin({ resourceTag: 'churn', expectedLength: fresh.byteLength }),
+            fakeBegin({ resourceTag: 'churn', expectedLength: fresh.byteLength, contentHash: hFresh }),
             fresh,
           )
         })())
       }
       await Promise.all(cycles)
-      // Invariant: surviving file matches a KNOWN payload byte-for-byte.
-      // Either:
+      // Invariant: a surviving live row names one of the two known
+      // hashes, and the blob at THAT hash holds the matching payload
+      // byte-for-byte. Either:
       //  - the seed survived (no cycle's delete-then-put landed cleanly),
-      //  - or some cycle's recreate landed → file is `fresh`,
-      //  - or the row was deleted last → no file.
+      //  - or some cycle's recreate landed → row names hFresh,
+      //  - or the row was deleted last → no live row.
       const live = await getLive(handle, 'ws-1', 'churn')
       if (live) {
         assert.equal(live.version, 1, 'live row is v1 (seed v1 or fresh-incarnation v1)')
         assert.equal(live.contentLength, 18, 'declared length matches both known payloads')
-        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'churn'))
+        const expected = byHash.get(live.contentHash)
+        assert.ok(expected, `live row must name a known content hash, got ${live.contentHash}`)
+        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', live.contentHash))
         assert.equal(onDisk.byteLength, 18, 'on-disk size matches declared length')
-        const matchesFresh = Buffer.compare(onDisk, fresh) === 0
-        const matchesSeed = Buffer.compare(onDisk, seed) === 0
-        assert.ok(
-          matchesFresh || matchesSeed,
-          `live bytes must be byte-for-byte one of {seed, fresh} — never partial. got: ${onDisk.toString()}`,
+        assert.equal(
+          Buffer.compare(onDisk, expected), 0,
+          `live blob bytes must be byte-for-byte the payload its hash names — never partial. got: ${onDisk.toString()}`,
         )
       } else {
-        assert.equal(
-          existsSync(liveFilePath(objDir, 'ws-1', 'churn')),
-          false,
-          'absent row implies absent file (delete is symmetric)',
-        )
+        // No live row. Any blobs still on disk are unreferenced
+        // (delete defers to the reaper now), so a grace-0 sweep that
+        // can only be blocked by a live reference collects everything.
+        await reapOrphans(handle, 0)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', hSeed)), false, 'no live row ⇒ seed blob unreferenced, GCd')
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', hFresh)), false, 'no live row ⇒ fresh blob unreferenced, GCd')
       }
     } finally { cleanup() }
   })
@@ -460,7 +518,11 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
       const original = Buffer.from('reap-orig-bytes')
       await lockedPut(handle, fakeBegin({ resourceTag: 'reap-race', expectedLength: original.byteLength }), original)
       // Cycle: delete + recreate + reap, all kicked together so the
-      // reaper's snapshot is racing the row-state changes.
+      // reaper's snapshot is racing the row-state changes. The
+      // recreate reuses the same content hash as the seed (default),
+      // so its row continuously references chash('reap-race') — the
+      // reaper's live-set re-check must spare that blob even though a
+      // delete dropped the intervening row.
       const replacement = Buffer.from('reap-replacement-x')
       const [, , reapResult] = await Promise.all([
         lockedDelete(handle, 'ws-1', 'reap-race', 1),
@@ -470,15 +532,19 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
       // The recreate may have raced ahead of the delete (in which
       // case the conflict resolution drops one of them) or behind it
       // (in which case both succeed sequentially). Either way the
-      // INVARIANT is: a surviving live row has its file intact.
+      // INVARIANT is: a surviving live row has the blob its hash names
+      // intact, with matching size.
       const live = await getLive(handle, 'ws-1', 'reap-race')
       if (live) {
-        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'reap-race'))
+        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', live.contentHash))
         assert.equal(onDisk.byteLength, live.contentLength, 'live row content_length matches on-disk size')
       } else {
-        // No row → no live file (either delete cleaned it or reaper
-        // legitimately swept a stranded `.bin`).
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'reap-race')), false)
+        // No live row → the blob is unreferenced. The default sweep
+        // already ran (grace window protects a young blob); a grace-0
+        // sweep now collects it deterministically, proving nothing but
+        // the absent reference protected it.
+        await reapOrphans(handle, 0)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('reap-race'))), false, 'no live row ⇒ blob unreferenced, GCd by a grace-0 sweep')
       }
       void reapResult
     } finally { cleanup() }
@@ -504,9 +570,10 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
       }
       const reaps = [reapOrphans(handle), reapOrphans(handle), reapOrphans(handle)]
       await Promise.all([...inflight, ...reaps])
-      // Every seeded resource still has its file.
+      // Every seeded resource still has its file — each is referenced
+      // by its live row, so the reaper's referenced-set check spares it.
       for (const t of seeded) {
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', t)), true, `seeded resource ${t} file survives reap`)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(t))), true, `seeded resource ${t} file survives reap`)
       }
       // Every in-flight commit landed successfully too.
       for (const r of inflight) {
@@ -521,33 +588,37 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
   it('multiple concurrent reaper sweeps run safely (idempotent, no missing files)', async () => {
     // The init.ts wrapper guards concurrent sweeps with an
     // `inFlight` Promise. The reaper module itself has no such
-    // guard — so parallel calls hit readdir/unlink concurrently.
-    // Each per-resource unlink is itself ENOENT-tolerant, so two
-    // sweeps trying to unlink the same stranded file must both
+    // guard — so parallel calls hit list/unlink concurrently.
+    // Each per-blob unlink is itself ENOENT-tolerant, so two
+    // sweeps trying to unlink the same stranded blob must both
     // return cleanly (one wins, the other sees ENOENT). We assert
     // the ENOENT-tolerance by running 5 reapers in parallel and
     // checking the cleanup is correct.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Manufacture 20 stranded files (committed → row deleted).
+      // Manufacture 20 stranded blobs (committed → row deleted). Each
+      // resource has its own content hash (chash(resourceTag)), so the
+      // 20 blobs are 20 distinct files. Age each past the grace window
+      // so the unreferenced-blob GC is eligible to collect it.
       for (let i = 0; i < 20; i++) {
         const t = `strand-${i}`
         await lockedPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }), Buffer.alloc(4))
-        // Direct row drop — simulates a delete that crashed pre-unlink.
+        // Direct row drop — simulates a delete that left the blob.
         handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', t)
+        ageBlob(liveFilePath(objDir, 'ws-1', chash(t)))
       }
       // Files exist on disk.
       for (let i = 0; i < 20; i++) {
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', `strand-${i}`)), true)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(`strand-${i}`))), true)
       }
       // Run 5 reapers concurrently — they should not throw.
       await Promise.all([
         reapOrphans(handle), reapOrphans(handle), reapOrphans(handle),
         reapOrphans(handle), reapOrphans(handle),
       ])
-      // All stranded files gone.
+      // All stranded files gone (unreferenced + aged past grace).
       for (let i = 0; i < 20; i++) {
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', `strand-${i}`)), false, `stranded file strand-${i} reaped`)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(`strand-${i}`))), false, `stranded file strand-${i} reaped`)
       }
     } finally { cleanup() }
   })
@@ -615,7 +686,7 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
       })
       assert.equal(c.ok, true)
       await reapOrphans(handle)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'staging-only')), true)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('staging-only'))), true)
     } finally { cleanup() }
   })
 
@@ -643,60 +714,79 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
 })
 
 describe('reaper × delete-then-recreate (the danger zone)', () => {
-  // Subtle: a reaper snapshot taken just before a delete sees live
-  // R. The delete drops the row + unlinks the file. Then a fresh
-  // begin+commit lands a NEW file at the canonical path. If the
-  // reaper relied solely on its pre-snapshot live set without re-
-  // checking under the lock, it would see "R wasn't supposed to be
-  // here at snapshot time" and unlink the freshly-committed file.
-  // The fix: per-resource lock + selectLiveOne re-check.
-  it('snapshot-before-delete: a recreate landing during reap is preserved', async () => {
-    // We model the "snapshot before delete" by pre-acquiring the
-    // lock under our test driver. The reaper queues behind on the
-    // lock; while we hold it, we delete + recreate manually (DB +
-    // FS at-the-row level). When we release, the reaper's inside-
-    // lock re-check sees a live row and skips the unlink — even
-    // though its pre-snapshot saw "no R row" at that moment.
+  // Subtle: a delete drops R's row, leaving its (now unreferenced)
+  // blob for the GC. A fresh begin+commit then re-adds R. Under
+  // content-addressing the danger is dedup: if the recreate commits
+  // BYTE-IDENTICAL content, it lands at the SAME content hash as the
+  // just-deleted predecessor's stranded blob — so that blob becomes
+  // referenced again. The reaper must never unlink a blob whose hash
+  // a live row references. The old commit-lock + selectLiveOne recheck
+  // is gone; the protections now are (1) the grace window for a
+  // just-promoted young blob and (2) `gcBlobIfUnreferenced` re-reading
+  // the live reference set immediately before each unlink. This pair
+  // of tests pins both halves deterministically (mirroring how the
+  // template replaced its lock-interpose test).
+  it('referenced-set: a recreate that re-references the predecessor blob hash protects it from the delete-aimed sweep', async () => {
+    // Model the danger directly: a stranded unreferenced blob at hash
+    // H (the deleted predecessor), then a recreate commits the SAME
+    // bytes → its live row references H again. A sweep aimed at the
+    // orphan must spare H because a live row now names it — even aged
+    // past the grace window and swept with grace 0, so ONLY the live
+    // reference (not youth) can be what protects it.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Seed R v1 so reapCommittedForTag actually iterates ws-1.
+      // Seed an unrelated live resource so listLiveTags iterates ws-1.
       await lockedPut(handle, fakeBegin({ resourceTag: 'other', expectedLength: 4 }), Buffer.alloc(4))
-      // Pre-acquire the lock on R, hold it.
-      let release
-      const held = handle.lock.run(lockKey('ws-1', 'R'), () => new Promise((r) => { release = r }))
-      // Manufacture the pre-existing condition: drop a stranded
-      // `.bin` for R at the live path, no row. This is the shape
-      // reapCommittedForTag is supposed to find and unlink.
-      const stranded = liveFilePath(objDir, 'ws-1', 'R')
-      writeFileSync(stranded, 'STRANDED-PRE-RECREATE')
-      // Kick reapOrphans. It will:
-      //   - listLiveTags → [ws-1]
-      //   - reapCommittedForTag(ws-1) → selectLive → [other], NOT R
-      //   - sees R.bin on disk, queues for lock on (ws-1, R)
-      const sweep = reapOrphans(handle)
-      await new Promise((r) => { setImmediate(r) }) // yield to reaper
-      // While we hold the lock, simulate the recreate landing INSIDE
-      // the lock (which is what production commitPut + delete do).
-      // We overwrite the stranded file with the "fresh" recreate
-      // bytes and insert a live row.
-      const fresh = Buffer.from('FRESH-RECREATE-BYTES')
-      writeFileSync(stranded, fresh)
+      const bytes = Buffer.from('FRESH-RECREATE-BYTES')
+      const h = chash('R@dedup')
+      // Predecessor's stranded blob at H (no row references it yet).
+      const blob = liveFilePath(objDir, 'ws-1', h)
+      mkdirSync(path.dirname(blob), { recursive: true })
+      writeFileSync(blob, bytes)
+      // Recreate lands a live row referencing H (byte-identical
+      // content dedup → same content hash). This is the row + blob
+      // that commitPut+delete produce in production.
       handle.db.prepare(`
         INSERT INTO workspace_object
           (workspace_tag, resource_tag, version, content_hash, content_length,
            signature, put_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'R', 1, b64u32(), fresh.byteLength, b64u64(), Date.now())
-      release()
-      await held
-      await sweep
-      // The fresh file MUST survive — reaper's inside-lock recheck
-      // saw the row and bailed.
-      assert.equal(existsSync(stranded), true, 'reaper must not unlink a file whose recreate row landed mid-sweep')
-      const onDisk = readFileSync(stranded)
-      assert.equal(Buffer.compare(onDisk, fresh), 0, 'fresh bytes preserved')
+      `).run('ws-1', 'R', 1, h, bytes.byteLength, b64u64(), Date.now())
+      // Age the blob and sweep with grace 0: neither youth nor grace
+      // can be what spares it — only the live row's reference to H.
+      ageBlob(blob)
+      await reapOrphans(handle, 0)
+      assert.equal(existsSync(blob), true, 'reaper must not unlink a blob whose hash a live row references')
+      const onDisk = readFileSync(blob)
+      assert.equal(Buffer.compare(onDisk, bytes), 0, 'recreate bytes preserved')
       const row = handle.db.prepare('SELECT 1 FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').get('ws-1', 'R')
       assert.ok(row)
+    } finally { cleanup() }
+  })
+
+  it('grace-window: a just-promoted recreate blob survives a default sweep; aged + unreferenced → GCd', async () => {
+    // The other half of the old mid-sweep race: a recreate's commit
+    // that lands a YOUNG blob is protected by the grace window even
+    // before its row's reference is observed. We pin that the grace
+    // window alone spares a recent unreferenced blob (the not-yet-
+    // CAS'd promote window's real-world shape), and that once aged AND
+    // unreferenced it is collected.
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      await lockedPut(handle, fakeBegin({ resourceTag: 'other', expectedLength: 4 }), Buffer.alloc(4))
+      // A freshly-promoted blob with no row yet (commit between
+      // promote and CAS) — unreferenced but YOUNG.
+      const h = chash('R@young')
+      const blob = liveFilePath(objDir, 'ws-1', h)
+      mkdirSync(path.dirname(blob), { recursive: true })
+      writeFileSync(blob, Buffer.from('JUST-PROMOTED-BYTES'))
+      // Default sweep: the grace window protects the recent blob.
+      await reapOrphans(handle)
+      assert.equal(existsSync(blob), true, 'grace window protects a just-promoted (young) blob from a concurrent sweep')
+      // Aged past the grace window and still unreferenced → GCd.
+      ageBlob(blob)
+      await reapOrphans(handle)
+      assert.equal(existsSync(blob), false, 'an aged, unreferenced blob is collected')
     } finally { cleanup() }
   })
 
@@ -739,10 +829,14 @@ describe('reaper × delete-then-recreate (the danger zone)', () => {
       const reapers = []
       for (let i = 0; i < 50; i++) reapers.push(reapOrphans(handle))
       const [cycleResults] = await Promise.all([Promise.all(cycles), Promise.all(reapers)])
-      // Every final put landed and its file holds the final bytes.
+      // Every final put landed and its blob holds the final bytes. The
+      // final put's row references chash(tag), so the reapers' live-set
+      // re-check spares the blob; in the brief unreferenced windows
+      // between cycles the blob is too young for the grace window — so
+      // the final bytes survive all 50 sweeps.
       for (const { tag, finalPut, finalBytes } of cycleResults) {
         assert.equal(finalPut.ok, true, `final put for ${tag} succeeded`)
-        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', tag))
+        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash(tag)))
         assert.equal(Buffer.compare(onDisk, finalBytes), 0, `${tag}: final bytes intact despite reapers`)
       }
       // Live row count matches resources × 1 (final put = v1 fresh
@@ -752,51 +846,40 @@ describe('reaper × delete-then-recreate (the danger zone)', () => {
     } finally { cleanup() }
   })
 
-  it('reaper does NOT reap a `.bin` whose row landed AFTER reapCommittedForTag began iterating', async () => {
-    // The reaper iterates `readdir` entries and for each not-in-snapshot
-    // queues on the lock. A commit landing between readdir and the
-    // lock acquire could land its row WITHOUT the file (yet). When the
-    // reaper's lock-recheck runs, the row IS there → skip. Good.
-    // The dangerous case is the converse: a commit landing the file
-    // (via rename) BEFORE its row — but commitPut order is
-    // rename-then-upsert, so the file lands first. Bad if reaper
-    // sees the new file in readdir, queues on the lock, the commit's
-    // upsertLive hasn't run yet at the time reaper enters its lock
-    // block. Production: the rename is INSIDE the lock, so the
-    // reaper can't enter the lock block until commitPut releases —
-    // by which time the row exists. We pin this ordering by holding
-    // the lock and simulating the same sequence.
+  it('reaper does NOT reap a `.bin` whose row references its hash (rename-then-CAS ordering)', async () => {
+    // commitPut promotes (rename) to the content-addressed path BEFORE
+    // the version CAS lands the row — the blob exists momentarily with
+    // no row referencing it. The reaper must not collect it once the
+    // row lands. With the distributed commit lock removed, the guard is
+    // `gcBlobIfUnreferenced`'s live-reference re-read immediately
+    // before each unlink: a row that references the blob's hash by the
+    // time the reaper reaches the unlink spares it. (The grace window
+    // is the separate guard for the narrow promote→CAS window while no
+    // row yet exists; covered by the grace-window test above.) We pin
+    // the referenced-set half deterministically: blob present + a live
+    // row naming its hash ⇒ never collected, even aged + grace 0.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Pre-acquire lock for R.
-      let release
-      const held = handle.lock.run(lockKey('ws-1', 'R'), () => new Promise((r) => { release = r }))
-      // Drop a `.bin` for R at the live path (pretending a rename
-      // just landed it INSIDE this lock — production commitPut runs
-      // the rename here).
-      const livePath = liveFilePath(objDir, 'ws-1', 'R')
+      const content = 'just-renamed-here'
+      const h = chash('R@renamed')
+      // A blob promoted to its content-addressed live path.
+      const livePath = liveFilePath(objDir, 'ws-1', h)
       mkdirSync(path.dirname(livePath), { recursive: true })
-      writeFileSync(livePath, 'just-renamed-here')
-      // Kick reaper. It snapshots live tags (none — workspace was
-      // empty before we wrote the file via writeFileSync). It won't
-      // see ws-1 in liveTags. The top-level walk DOES find ws-1 dir
-      // and processes the .bin there, queuing on the lock.
-      const sweep = reapOrphans(handle)
-      await new Promise((r) => { setImmediate(r) })
-      // Insert the live row (production commitPut's upsertLive,
-      // also INSIDE the lock).
+      writeFileSync(livePath, content)
+      // The CAS landed the row referencing the blob's hash.
       handle.db.prepare(`
         INSERT INTO workspace_object
           (workspace_tag, resource_tag, version, content_hash, content_length,
            signature, put_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'R', 1, b64u32(), 'just-renamed-here'.length, b64u64(), Date.now())
-      release()
-      await held
-      await sweep
-      // The file survives.
+      `).run('ws-1', 'R', 1, h, content.length, b64u64(), Date.now())
+      // Age it and sweep with grace 0 so only the live row's reference
+      // (not the grace window) can be what spares it.
+      ageBlob(livePath)
+      await reapOrphans(handle, 0)
+      // The blob survives — its hash is referenced by a live row.
       assert.equal(existsSync(livePath), true)
-      assert.equal(readFileSync(livePath, 'utf8'), 'just-renamed-here')
+      assert.equal(readFileSync(livePath, 'utf8'), content)
     } finally { cleanup() }
   })
 })
@@ -903,27 +986,31 @@ describe('deleteObject idempotency + races', () => {
     } finally { cleanup() }
   })
 
-  it('deleteObject DB-row drop happens BEFORE file unlink: a crash between leaves the file (reaper-cleaned)', async () => {
+  it('deleteObject drops the row and leaves the blob for the reaper GC (no inline unlink)', async () => {
     // The commit/delete asymmetry doc in store.ts:
-    //   DELETE:   DB write → unlink (best-effort; ENOENT ok)
-    // A crash between the DB write and the unlink leaves the file
-    // stranded — reaper sweep picks it up. We manufacture the crash
-    // by replacing handle.deleteLive with a wrapper that runs the
-    // SQL but skips the unlink path, then assert the reaper cleans up.
+    //   DELETE:   DB row drop (the reaper GCs the unreferenced blob)
+    // deleteObject no longer unlinks the blob inline — content dedup
+    // means another resource may reference the same hash, so the GC
+    // unlinks only once NO live row references it AND it's past the
+    // grace window. Here we use deleteObject itself (not a direct row
+    // drop), then assert the blob lingers immediately and is collected
+    // once unreferenced + aged.
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'will-strand', expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'will-strand', stagingId: b.stagingId })
-      const live = liveFilePath(objDir, 'ws-1', 'will-strand')
+      const live = liveFilePath(objDir, 'ws-1', chash('will-strand'))
       assert.equal(existsSync(live), true)
-      // Simulate "crashed before unlink": drop row directly via the
-      // DB, don't unlink.
-      handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', 'will-strand')
-      assert.equal(existsSync(live), true, 'file lingers when DB row drop happens but unlink crashed')
-      // Reaper cleans up.
+      const d = await deleteObject(handle, 'ws-1', 'will-strand', 1)
+      assert.equal(d.ok, true)
+      // Row gone, blob lingers — delete defers the unlink to the GC.
+      assert.equal(await getLive(handle, 'ws-1', 'will-strand'), null)
+      assert.equal(existsSync(live), true, 'blob lingers after the row drop — GC owns the unlink')
+      // Unreferenced + past the grace window → reaper collects it.
+      ageBlob(live)
       await reapOrphans(handle)
-      assert.equal(existsSync(live), false, 'reaper unlinks the stranded committed file')
+      assert.equal(existsSync(live), false, 'reaper GCs the stranded unreferenced blob')
     } finally { cleanup() }
   })
 })
@@ -1047,7 +1134,10 @@ describe('reaper at scale', () => {
   it('100 stranded files across 4 workspaces — single reapOrphans sweep cleans them all', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Set up 25 stranded files per workspace × 4 workspaces.
+      // Set up 25 stranded blobs per workspace × 4 workspaces. Each
+      // resource's blob is content-addressed at chash(tag); after the
+      // row drop the blob is unreferenced. Age each past the grace
+      // window so a single sweep is eligible to GC it.
       const stranded = []
       for (let w = 0; w < 4; w++) {
         const ws = `ws-${w}`
@@ -1056,9 +1146,11 @@ describe('reaper at scale', () => {
           const b = await beginPut(handle, fakeBegin({ workspaceTag: ws, resourceTag: tag, expectedLength: 4 }))
           writeStaging(b.filePath, Buffer.alloc(4))
           await commitPut(handle, { workspaceTag: ws, resourceTag: tag, stagingId: b.stagingId })
-          // Drop row → file becomes stranded.
+          // Drop row → blob becomes unreferenced.
           handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run(ws, tag)
-          stranded.push(liveFilePath(objDir, ws, tag))
+          const blob = liveFilePath(objDir, ws, chash(tag))
+          ageBlob(blob)
+          stranded.push(blob)
         }
       }
       for (const f of stranded) assert.equal(existsSync(f), true)
@@ -1070,7 +1162,8 @@ describe('reaper at scale', () => {
   it('mixed state: stranded committed files + stale staging rows + fresh in-flight rows — reaper distinguishes correctly', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // 3 stranded committed files (drop-row simulating crashed delete).
+      // 3 stranded committed blobs (drop-row simulating crashed
+      // delete). Age each so the unreferenced-blob GC is eligible.
       const stranded = []
       for (let i = 0; i < 3; i++) {
         const t = `stranded-${i}`
@@ -1078,7 +1171,9 @@ describe('reaper at scale', () => {
         writeStaging(b.filePath, Buffer.alloc(4))
         await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: t, stagingId: b.stagingId })
         handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', t)
-        stranded.push(liveFilePath(objDir, 'ws-1', t))
+        const blob = liveFilePath(objDir, 'ws-1', chash(t))
+        ageBlob(blob)
+        stranded.push(blob)
       }
       // 3 stale staging rows (backdated begun_at).
       const staleStaging = []
@@ -1099,13 +1194,15 @@ describe('reaper at scale', () => {
         writeStaging(b.filePath, Buffer.alloc(8))
         freshStaging.push({ tag: t, sid: b.stagingId, path: b.filePath })
       }
-      // 3 fully-committed live rows (no reap needed).
+      // 3 fully-committed live rows (no reap needed). Each blob is
+      // referenced by its live row, so the GC's referenced-set check
+      // spares it.
       const live = []
       for (let i = 0; i < 3; i++) {
         const t = `live-${i}`
         const r = await lockedPut(handle, fakeBegin({ resourceTag: t, expectedLength: 16 }), Buffer.alloc(16))
         assert.equal(r.ok, true)
-        live.push(liveFilePath(objDir, 'ws-1', t))
+        live.push(liveFilePath(objDir, 'ws-1', chash(t)))
       }
       await reapOrphans(handle)
       // Stranded files cleaned.
@@ -1129,20 +1226,24 @@ describe('reaper at scale', () => {
 
   it('reaper across many workspaces — top-level walk discovers tag dirs not in liveTags snapshot', async () => {
     // Workspace-with-no-rows: the listLiveTags query won't surface
-    // it, but the on-disk dir might still contain stranded `.bin`
-    // files from a since-deleted incarnation. The top-level walk
-    // post-listLiveTags catches this.
+    // it, but the on-disk dir might still contain stranded live blobs
+    // from a since-deleted incarnation. The top-level walk
+    // post-listLiveTags catches this. The blob must carry a valid
+    // content-hash name (the reaper's GC skips non-content-hash names
+    // as foreign/defensive) and be aged past the grace window.
     const { handle, objDir, cleanup } = freshHandle()
     try {
-      // Stranded file in a workspace WITHOUT any live rows. Manually
-      // create the dir + file; reaper's top-level walk should pick
-      // it up even though listLiveTags returns nothing for ws-empty.
+      // Stranded unreferenced live blob in a workspace WITHOUT any live
+      // rows. Manually create the dir + content-addressed blob; the
+      // reaper's top-level walk should pick it up even though
+      // listLiveTags returns nothing for ws-empty.
       const wsDir = path.join(objDir, 'ws-empty')
       mkdirSync(wsDir, { recursive: true })
-      const stranded = path.join(wsDir, 'stray-resource.bin')
+      const stranded = liveFilePath(objDir, 'ws-empty', chash('stray-resource'))
       writeFileSync(stranded, 'stranded-from-deleted-workspace')
+      ageBlob(stranded)
       await reapOrphans(handle)
-      assert.equal(existsSync(stranded), false, 'top-level walk catches files in workspaces with no live rows')
+      assert.equal(existsSync(stranded), false, 'top-level walk GCs unreferenced blobs in workspaces with no live rows')
     } finally { cleanup() }
   })
 })
@@ -1298,7 +1399,7 @@ describe('reaper × stale-staging × refresh — F1/H4 corner cases', () => {
       // re-check would have spared the row.
       assert.equal(c.ok, true, 'fresh-upload commit succeeded despite a racing reaper sweep')
       assert.equal(c.row.version, 1)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'slow-upload')), true)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('slow-upload'))), true)
     } finally { cleanup() }
   })
 
@@ -1375,7 +1476,7 @@ describe('reaper × stale-staging × refresh — F1/H4 corner cases', () => {
       // for the lock first. Currently fails with `no-staging`.
       assert.equal(c.ok, true, 'an upload that finished streaming must not be lost to a racing reaper')
       assert.equal(c.row.version, 1)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'lose-commit')), true)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('lose-commit'))), true)
     } finally { cleanup() }
   })
 
@@ -1407,7 +1508,7 @@ describe('reaper × stale-staging × refresh — F1/H4 corner cases', () => {
       void _
       assert.equal(c.ok, true, 'commit lands first → success')
       assert.equal(c.row.version, 1)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'commit-wins')), true)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('commit-wins'))), true)
     } finally { cleanup() }
   })
 })
@@ -1426,10 +1527,13 @@ describe('crash-recovery / partial-state cleanup', () => {
       // beginPut + staging file.
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'half-commit', expectedLength: 8 }))
       writeStaging(b.filePath, Buffer.alloc(8))
-      // Simulate commitPut's first half: rename staging → live + upsertLive,
-      // SKIP the final deleteStaging (the "crash" point).
+      // Simulate commitPut's first half: promote staging → the
+      // content-addressed live path + upsertLive (the row references
+      // that same hash), SKIP the final deleteStaging (the "crash"
+      // point).
       const { durableRenameStagedToLive } = await import('../server/objstore/fs.ts')
-      const livePath = liveFilePath(objDir, 'ws-1', 'half-commit')
+      const hHalf = chash('half-commit')
+      const livePath = liveFilePath(objDir, 'ws-1', hHalf)
       const renamed = await durableRenameStagedToLive(b.filePath, livePath)
       assert.equal(renamed, true)
       handle.db.prepare(`
@@ -1437,7 +1541,7 @@ describe('crash-recovery / partial-state cleanup', () => {
           (workspace_tag, resource_tag, version, content_hash, content_length,
            signature, put_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('ws-1', 'half-commit', 1, b64u32(), 8, b64u64(), Date.now())
+      `).run('ws-1', 'half-commit', 1, hHalf, 8, b64u64(), Date.now())
       // State: live row + live file OK, staging row dangling (no file).
       assert.equal(existsSync(livePath), true)
       assert.equal(existsSync(b.filePath), false, 'staging file renamed away')
@@ -1466,16 +1570,18 @@ describe('crash-recovery / partial-state cleanup', () => {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'crash-del', expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'crash-del', stagingId: b.stagingId })
-      const livePath = liveFilePath(objDir, 'ws-1', 'crash-del')
+      const livePath = liveFilePath(objDir, 'ws-1', chash('crash-del'))
       assert.equal(existsSync(livePath), true)
       // "Crash" between DB drop and unlink: drop row directly, skip
-      // unlink.
+      // the GC. The blob is now unreferenced; age it past the grace
+      // window so the reaper's unreferenced-blob GC collects it.
       handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', 'crash-del')
-      assert.equal(existsSync(livePath), true, 'file still on disk after row drop')
+      assert.equal(existsSync(livePath), true, 'blob still on disk after row drop')
       assert.equal(await getLive(handle, 'ws-1', 'crash-del'), null)
-      // Reaper's committed-file sweep finds the orphan.
+      ageBlob(livePath)
+      // Reaper's unreferenced-blob GC finds the orphan.
       await reapOrphans(handle)
-      assert.equal(existsSync(livePath), false, 'reaper unlinks orphan')
+      assert.equal(existsSync(livePath), false, 'reaper GCs orphan')
     } finally { cleanup() }
   })
 
@@ -1483,7 +1589,8 @@ describe('crash-recovery / partial-state cleanup', () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       // Manufacture several partial states in parallel:
-      // - 5 stranded committed files (DELETE crashed before unlink)
+      // - 5 stranded committed blobs (DELETE crashed before the GC),
+      //   aged so the unreferenced-blob GC is eligible
       // - 5 stranded staging rows (commit crashed before deleteStaging)
       // - 3 healthy committed rows (no crash)
       for (let i = 0; i < 5; i++) {
@@ -1492,18 +1599,22 @@ describe('crash-recovery / partial-state cleanup', () => {
         writeStaging(b.filePath, Buffer.alloc(4))
         await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: t, stagingId: b.stagingId })
         handle.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', t)
+        ageBlob(liveFilePath(objDir, 'ws-1', chash(t)))
       }
       for (let i = 0; i < 5; i++) {
         const t = `crashed-commit-${i}`
         const b = await beginPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }))
         writeStaging(b.filePath, Buffer.alloc(4))
         const { durableRenameStagedToLive } = await import('../server/objstore/fs.ts')
-        await durableRenameStagedToLive(b.filePath, liveFilePath(objDir, 'ws-1', t))
+        // Promote to the content-addressed path; the live row
+        // references that same hash (the metadata-vs-bytes binding).
+        const h = chash(t)
+        await durableRenameStagedToLive(b.filePath, liveFilePath(objDir, 'ws-1', h))
         handle.db.prepare(`
           INSERT INTO workspace_object
             (workspace_tag, resource_tag, version, content_hash, content_length, signature, put_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run('ws-1', t, 1, b64u32(), 4, b64u64(), Date.now())
+        `).run('ws-1', t, 1, h, 4, b64u64(), Date.now())
         // Don't delete the staging row → crash-point.
         // Age it past TTL.
         handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
@@ -1521,23 +1632,24 @@ describe('crash-recovery / partial-state cleanup', () => {
       // dangling staging rows; 3 healthy are clean).
       assert.equal((await listLive(handle, 'ws-1')).length, 5 + 3)
       await reapOrphans(handle)
-      // Stranded files (from crashed-del) cleaned.
+      // Stranded blobs (from crashed-del) GC'd.
       for (let i = 0; i < 5; i++) {
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', `crashed-del-${i}`)), false)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(`crashed-del-${i}`))), false)
       }
-      // Crashed-commit live rows + files intact; staging rows cleaned.
+      // Crashed-commit live rows + blobs intact (referenced); staging
+      // rows cleaned.
       for (let i = 0; i < 5; i++) {
         const t = `crashed-commit-${i}`
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', t)), true)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(t))), true)
         const live = await getLive(handle, 'ws-1', t)
         assert.equal(live?.version, 1)
         // No staging row left.
         const stagingRows = handle.db.prepare('SELECT 1 FROM workspace_object_staging WHERE workspace_tag = ? AND resource_tag = ?').get('ws-1', t)
         assert.equal(stagingRows, undefined, `crashed-commit-${i}: staging row reaped`)
       }
-      // Healthy untouched.
+      // Healthy untouched (referenced).
       for (const t of healthy) {
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', t)), true)
+        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash(t))), true)
       }
     } finally { cleanup() }
   })
@@ -1567,7 +1679,9 @@ describe('crash-recovery / partial-state cleanup', () => {
         assert.equal(live.length, 5)
         for (const r of live) {
           assert.equal(r.version, 1)
-          assert.equal(existsSync(liveFilePath(objDir, 'ws-1', r.resourceTag)), true)
+          // Live blobs are content-addressed: the row's content hash
+          // names its blob file.
+          assert.equal(existsSync(liveFilePath(objDir, 'ws-1', r.contentHash)), true)
         }
         // Reaper-equivalent startup sweep finds nothing to clean.
         await reapOrphans(handle2)
@@ -1586,17 +1700,19 @@ describe('crash-recovery / partial-state cleanup', () => {
       const b = await beginPut(handle1, fakeBegin({ resourceTag: 'pre-crash', expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
       await commitPut(handle1, { workspaceTag: 'ws-1', resourceTag: 'pre-crash', stagingId: b.stagingId })
-      // "Crash" before unlinking: drop row, leave file.
+      // "Crash" before the GC: drop row, leave the blob. Age it past
+      // the grace window so the startup sweep is eligible to GC it.
       handle1.db.prepare('DELETE FROM workspace_object WHERE workspace_tag = ? AND resource_tag = ?').run('ws-1', 'pre-crash')
-      const livePath = liveFilePath(objDir, 'ws-1', 'pre-crash')
+      const livePath = liveFilePath(objDir, 'ws-1', chash('pre-crash'))
       assert.equal(existsSync(livePath), true)
+      ageBlob(livePath)
       db1.close()
       // "Boot": fresh handle, startup reaper sweep.
       const db2 = new DatabaseSync(dbPath)
       const handle2 = openObjstore(db2, objDir)
       try {
         await reapOrphans(handle2)
-        assert.equal(existsSync(livePath), false, 'startup reaper cleans pre-crash stranded file')
+        assert.equal(existsSync(livePath), false, 'startup reaper GCs pre-crash stranded blob')
       } finally { db2.close() }
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
@@ -1686,7 +1802,7 @@ describe('reaper × orphan row (row stays, file gone)', () => {
       // Seed a normal resource.
       const r = await lockedPut(handle, fakeBegin({ resourceTag: 'broken', expectedLength: 4 }), Buffer.alloc(4))
       assert.equal(r.ok, true)
-      const livePath = liveFilePath(objDir, 'ws-1', 'broken')
+      const livePath = liveFilePath(objDir, 'ws-1', chash('broken'))
       assert.equal(existsSync(livePath), true)
       // Simulate the corruption window: external `rm` of the
       // committed file.
@@ -1733,9 +1849,10 @@ describe('content integrity invariants', () => {
       }
       const results = await Promise.all(ops)
       for (const r of results) assert.equal(r.ok, true)
-      // Every live file's bytes match what we wrote — byte-for-byte.
+      // Every live blob's bytes match what we wrote — byte-for-byte.
+      // Each resource has its own content hash (chash(tag)).
       for (const [tag, bytes] of written) {
-        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', tag))
+        const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash(tag)))
         assert.equal(onDisk.byteLength, bytes.byteLength, `${tag}: size matches`)
         assert.equal(Buffer.compare(onDisk, bytes), 0, `${tag}: bytes match exactly`)
         const live = await getLive(handle, 'ws-1', tag)
@@ -1744,23 +1861,39 @@ describe('content integrity invariants', () => {
     } finally { cleanup() }
   })
 
-  it('write-then-rewrite-then-fetch: only the latest bytes survive on disk (no echo of prior version)', async () => {
+  it('write-then-rewrite-then-fetch: only the latest bytes are live on disk (no echo of prior version)', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const v1 = Buffer.from('VERSION-1-OLD-BYTES-MUST-NOT-LEAK'.padEnd(64, '_'))
       const v2 = Buffer.from('VERSION-2-NEW-BYTES'.padEnd(64, '#'))
-      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'rew', expectedLength: 64 }), v1)
+      // Distinct bytes ⇒ distinct content hashes ⇒ distinct blob
+      // addresses. v2 lands at a NEW path; v1's immutable blob is left
+      // untouched (now unreferenced — the reaper GCs it once aged).
+      const hV1 = chash('rew@v1')
+      const hV2 = chash('rew@v2')
+      const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'rew', expectedLength: 64, contentHash: hV1 }), v1)
       assert.equal(r1.ok, true)
+      const v1Blob = liveFilePath(objDir, 'ws-1', hV1)
       const r2 = await lockedPut(
         handle,
-        fakeBegin({ resourceTag: 'rew', prevVersion: 1, expectedLength: 64 }),
+        fakeBegin({ resourceTag: 'rew', prevVersion: 1, expectedLength: 64, contentHash: hV2 }),
         v2,
       )
       assert.equal(r2.ok, true)
-      // Re-read; only v2 bytes survive.
-      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', 'rew'))
+      assert.equal(r2.row.version, 2)
+      assert.equal(r2.row.contentHash, hV2)
+      // The live blob (named by the live row's hash) holds only v2.
+      const live = await getLive(handle, 'ws-1', 'rew')
+      assert.equal(live.contentHash, hV2)
+      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', live.contentHash))
       assert.equal(Buffer.compare(onDisk, v2), 0)
-      assert.equal(onDisk.indexOf('VERSION-1'), -1, 'v1 substring must not survive in v2 file')
+      assert.equal(onDisk.indexOf('VERSION-1'), -1, 'v1 substring must not survive in the v2 blob')
+      // v1's blob is now unreferenced; once aged past the grace window
+      // the reaper GCs it, while the live v2 blob (referenced) stays.
+      ageBlob(v1Blob)
+      await reapOrphans(handle)
+      assert.equal(existsSync(v1Blob), false, 'unreferenced v1 blob GCd once aged')
+      assert.equal(Buffer.compare(readFileSync(liveFilePath(objDir, 'ws-1', hV2)), v2), 0, 'live v2 blob untouched by the GC')
     } finally { cleanup() }
   })
 
@@ -1778,7 +1911,7 @@ describe('content integrity invariants', () => {
       assert.equal(c.ok, false)
       assert.equal(c.reason, 'size-mismatch')
       assert.equal((await listLive(handle, 'ws-1')).length, 0)
-      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', 'res-1')), false)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('res-1'))), false)
     } finally { cleanup() }
   })
 })

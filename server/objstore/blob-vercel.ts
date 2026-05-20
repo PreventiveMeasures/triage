@@ -9,8 +9,9 @@
 // reaches the import. Same dynamic-import pattern as db-neon.ts.
 //
 // Pathname layout (mirrors the FS backend's directory layout so the
-// reaper logic stays identical):
-//   ${tag}/${resourceTag}.bin               — live
+// reaper logic stays identical). Live blobs are content-addressed —
+// the pathname's filename is the content hash, not the resourceTag:
+//   ${tag}/${contentHash}.bin               — live
 //   ${tag}/.staging/${stagingId}.bin        — staging
 //
 // All blobs are created with `access: 'private'` so the URL alone
@@ -21,15 +22,18 @@
 //
 // Crash-safety contract (mirrors blob-fs.ts but via copy+del instead
 // of fsync+rename):
-//   PUT commit:  put(staging) → copy(staging → live) → del(staging)
-//                → DB write
-//   DELETE:      DB write → del(live)  (best-effort; not-found ok)
+//   PUT commit:  put(staging) → copy(staging → live) → DB version-CAS
+//                → del(staging)
+//   DELETE:      DB row drop (the reaper GCs the now-unreferenced blob)
 // A crash mid-`copy` leaves NO live blob (Vercel's copy is atomic
-// per-blob). A crash between `copy` and `del(staging)` leaves a
-// stranded staging blob; the reaper's stale-staging TTL sweep picks
-// it up. A crash between `copy+del` and DB write leaves a live blob
-// whose DB row hasn't been bumped — the reaper's
-// reapCommittedForTag pass sees a live blob with no live row → del.
+// per-blob). A crash between `copy` and the CAS leaves a stranded,
+// unreferenced live blob; a crash after the CAS but before
+// `del(staging)` leaves a stranded staging blob. The reaper reconciles
+// both: `reapUnreferencedForTag` GCs a live blob that no live row
+// references (once past the grace window — content blobs are immutable
+// and may be shared, so GC is keyed on the referenced-hash set, not on
+// any single resource), and the stale-staging TTL sweep drops orphan
+// staging blobs.
 
 import { PassThrough, type Readable } from 'node:stream'
 import { Buffer } from 'node:buffer'
@@ -102,7 +106,11 @@ type VercelBlobSdk = {
     mode?: 'expanded' | 'folded'
     token?: string
   }) => Promise<{
-    blobs: Array<{ pathname: string; size: number }>
+    // `uploadedAt` (a Date per the SDK v2 surface) is the blob's
+    // creation time — used by the reaper's GC grace window. Optional
+    // in the type because the `folded` listing path ignores it (only
+    // `listLiveBlobs` reads it, and it uses the default expanded mode).
+    blobs: Array<{ pathname: string; size: number; uploadedAt?: Date | string | number }>
     folders?: string[]
     cursor?: string
     hasMore: boolean
@@ -132,11 +140,28 @@ function isNotFound(err: unknown): boolean {
   return typeof name === 'string' && name === 'BlobNotFoundError'
 }
 
-function liveBlobPath(tag: string, resourceTag: string): string {
-  return `${tag}/${resourceTag}.bin`
+function liveBlobPath(tag: string, contentHash: string): string {
+  return `${tag}/${contentHash}.bin`
 }
 function stagingBlobPath(tag: string, stagingId: string): string {
   return `${tag}/.staging/${stagingId}.bin`
+}
+
+// Coerce the SDK's `uploadedAt` (Date | ISO string | epoch-ms number)
+// into epoch-ms for the reaper's grace-window comparison. The real SDK
+// always returns a valid `uploadedAt`; a missing / unparseable value
+// fails CLOSED to "just now" so the grace window still shields the
+// blob from GC. This matters because the grace window is the ONLY guard
+// during a commit's promote→CAS gap: no live row exists yet, so the
+// reaper's live-set re-read can't cover it. Reading an unknown
+// timestamp as "ancient" would let a sweep collect a just-promoted blob
+// out from under an in-flight commit (a metadata→bytes desync). We
+// prefer a (theoretical, real-SDK-unreachable) storage leak over that.
+function uploadedAtMs(uploadedAt: Date | string | number | undefined): number {
+  if (uploadedAt == null) return Date.now()
+  if (typeof uploadedAt === 'number') return Number.isFinite(uploadedAt) ? uploadedAt : Date.now()
+  const t = new Date(uploadedAt).getTime()
+  return Number.isFinite(t) ? t : Date.now()
 }
 
 // Strip a `.bin` suffix and reject anything else. Same defensive
@@ -156,8 +181,8 @@ function stripBinSuffix(pathname: string, prefix: string): string | null {
 async function listAll(
   sdk: VercelBlobSdk,
   opts: { prefix?: string; mode?: 'expanded' | 'folded'; token: string },
-): Promise<{ blobs: Array<{ pathname: string }>; folders: string[] }> {
-  const blobs: Array<{ pathname: string }> = []
+): Promise<{ blobs: Array<{ pathname: string; uploadedAt?: Date | string | number | undefined }>; folders: string[] }> {
+  const blobs: Array<{ pathname: string; uploadedAt?: Date | string | number | undefined }> = []
   const folders: string[] = []
   let cursor: string | undefined
   // Bounded loop to defend against a misbehaving driver that returns
@@ -171,7 +196,7 @@ async function listAll(
     if (opts.mode !== undefined) callOpts.mode = opts.mode
     if (cursor !== undefined) callOpts.cursor = cursor
     const page = await sdk.list(callOpts)
-    for (const b of page.blobs) blobs.push({ pathname: b.pathname })
+    for (const b of page.blobs) blobs.push({ pathname: b.pathname, uploadedAt: b.uploadedAt })
     if (page.folders) for (const f of page.folders) folders.push(f)
     if (!page.hasMore) return { blobs, folders }
     if (!page.cursor) {
@@ -280,20 +305,22 @@ function buildStatStaging(sdk: VercelBlobSdk, token: string): BlobBackend['statS
 }
 
 function buildPromoteStagingToLive(sdk: VercelBlobSdk, token: string): BlobBackend['promoteStagingToLive'] {
-  return async (tag, stagingId, resourceTag): Promise<boolean> => {
+  return async (tag, stagingId, contentHash): Promise<boolean> => {
     const from = stagingBlobPath(tag, stagingId)
-    const to = liveBlobPath(tag, resourceTag)
+    const to = liveBlobPath(tag, contentHash)
     try {
       // `copy` is atomic per the SDK contract — either the new
       // pathname carries the full source bytes, or it fails. No
       // partial state at the destination.
       //
-      // `allowOverwrite: true` is REQUIRED for version bumps — the
-      // live pathname `${tag}/${resourceTag}.bin` is reused across
-      // commits (each new version overwrites the prior). Without
-      // this, the SDK sends `x-allow-overwrite: 0` (verified against
-      // @vercel/blob 2.3.3 source) and Vercel rejects the second
-      // commit with BlobAccessError, breaking every re-upload.
+      // `allowOverwrite: true` because the content-addressed live
+      // pathname `${tag}/${contentHash}.bin` can be (re)written by a
+      // retry of the same content or by a second resource committing
+      // byte-identical content. The destination bytes are identical
+      // by construction (the hash names them), so the overwrite is
+      // idempotent — never a clobber of DIFFERENT bytes. Without the
+      // flag, the SDK sends `x-allow-overwrite: 0` and Vercel rejects
+      // any such re-promote with BlobAccessError.
       await sdk.copy(from, to, {
         access: 'private',
         allowOverwrite: true,
@@ -319,16 +346,16 @@ function buildPromoteStagingToLive(sdk: VercelBlobSdk, token: string): BlobBacke
 }
 
 function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['openLiveReader'] {
-  return async (tag, resourceTag): Promise<OpenLiveResult> => {
-    const path = liveBlobPath(tag, resourceTag)
+  return async (tag, contentHash): Promise<OpenLiveResult> => {
+    const path = liveBlobPath(tag, contentHash)
     let res
-    // `useCache: false` — bypass Vercel's CDN cache so a re-upload
-    // (same pathname, new version) is immediately visible. The CDN
-    // cache for private blobs is on by default and would otherwise
-    // serve a stale prior version for up to `cacheControlMaxAge`
-    // seconds (defaults to 30 days; we cap at 60s on put/copy as
-    // belt-and-braces). Origin fetch is the right default for a
-    // versioned store where freshness > latency.
+    // `useCache: false` — the content-addressed pathname is immutable
+    // (the hash names exactly one byte-string), so cache staleness
+    // across versions is no longer a correctness concern; but a CDN
+    // edge could still cache a 404 from a brief window before the
+    // copy landed, so bypassing the cache keeps the read anchored to
+    // origin truth. Origin fetch is the right default for a store
+    // where freshness > latency.
     try { res = await sdk.get(path, { access: 'private', useCache: false, token }) } catch (err) {
       if (isNotFound(err)) return { ok: false, reason: 'not-found' }
       throw err
@@ -391,23 +418,40 @@ function buildListWorkspaceTags(sdk: VercelBlobSdk, token: string): BlobBackend[
   }
 }
 
-// Shared helper for the two per-prefix list builders. Both walk
-// `list({ prefix, mode })` and strip the prefix + `.bin` suffix
-// from each blob's pathname to recover the bare id. Entries whose
-// remainder contains a `/` are skipped — they're inside a deeper
-// sub-prefix (e.g. listing `${tag}/` shouldn't surface staging blobs
-// under `${tag}/.staging/`).
-function buildListIds(sdk: VercelBlobSdk, token: string, mkPrefix: (tag: string) => string, mode?: 'folded'): (tag: string) => Promise<string[]> {
+// Builder for `listStagingIds`. Walks `list({ prefix })` and strips
+// the prefix + `.bin` suffix from each blob's pathname to recover the
+// bare staging id. Entries whose remainder contains a `/` are skipped
+// — they're inside a deeper sub-prefix.
+function buildListStagingIds(sdk: VercelBlobSdk, token: string, mkPrefix: (tag: string) => string): (tag: string) => Promise<string[]> {
   return async (tag) => {
     const prefix = mkPrefix(tag)
-    const opts: Parameters<typeof listAll>[1] = { prefix, token }
-    if (mode !== undefined) opts.mode = mode
-    const { blobs } = await listAll(sdk, opts)
+    const { blobs } = await listAll(sdk, { prefix, token })
     const out: string[] = []
     for (const b of blobs) {
       const id = stripBinSuffix(b.pathname, prefix)
       if (id == null || id.includes('/')) continue
       out.push(id)
+    }
+    return out
+  }
+}
+
+// Builder for `listLiveBlobs`. Lists the workspace prefix in `folded`
+// mode so the `.staging/` sub-prefix rolls up as a folder entry (not
+// expanded into the blobs[] array) — without it, listing `${tag}/`
+// would surface every staging blob as a live blob. Each surviving
+// entry is a top-level content-addressed live blob; we recover its
+// hash from the pathname and its `modifiedMs` from the SDK's
+// `uploadedAt` for the reaper's GC grace window.
+function buildListLiveBlobs(sdk: VercelBlobSdk, token: string): BlobBackend['listLiveBlobs'] {
+  return async (tag) => {
+    const prefix = `${tag}/`
+    const { blobs } = await listAll(sdk, { prefix, mode: 'folded', token })
+    const out: Array<{ hash: string; modifiedMs: number }> = []
+    for (const b of blobs) {
+      const hash = stripBinSuffix(b.pathname, prefix)
+      if (hash == null || hash.includes('/')) continue
+      out.push({ hash, modifiedMs: uploadedAtMs(b.uploadedAt) })
     }
     return out
   }
@@ -449,12 +493,12 @@ export async function openVercelBlobBackend(opts: VercelBlobBackendOptions): Pro
     // prefix returns folder names at the store root; each folder is
     // one workspace.
     listWorkspaceTags: buildListWorkspaceTags(sdk, token),
-    // `mode: 'folded'` keeps `.staging/` rolled up as a folder
-    // entry (filtered out below) rather than expanded into the
-    // blobs[] array — without it, listing a workspace prefix would
-    // double-count every staging blob as a live resource.
-    listLiveResourceTags: buildListIds(sdk, token, (tag) => `${tag}/`, 'folded'),
-    listStagingIds: buildListIds(sdk, token, (tag) => `${tag}/.staging/`),
+    // Content-addressed live blobs under `${tag}/`, with each blob's
+    // `uploadedAt` surfaced for the reaper's GC grace window. `folded`
+    // mode keeps `.staging/` rolled up as a folder entry rather than
+    // expanded into the live-blob list.
+    listLiveBlobs: buildListLiveBlobs(sdk, token),
+    listStagingIds: buildListStagingIds(sdk, token, (tag) => `${tag}/.staging/`),
   }
 }
 

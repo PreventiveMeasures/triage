@@ -16,13 +16,27 @@
 // and ./reaper.ts goes through `handle.blob.*` and is backend-
 // agnostic — no `if (vercel) … else` branching in consumers.
 //
+// Live blobs are CONTENT-ADDRESSED: a live blob lives at
+// `${tag}/${contentHash}.bin`, where `contentHash` is the client-
+// supplied, signed, server-opaque hash on the staging row. Because a
+// hash names exactly one byte-string, the live blob is immutable —
+// two racing commits write to DIFFERENT addresses, neither overwrites
+// the other, and the DB row's `content_hash` literally NAMES its blob
+// file (so "row says hash B, blob holds bytes A" is impossible). The
+// hash is workspace-namespaced under `${tag}/`, so this is never a
+// global content-addressed store. `unlinkLive` is therefore only ever
+// called by the reaper's GC (a live blob may be shared across resource
+// versions / resources via content dedup; commit + delete never unlink
+// it directly).
+//
 // Crash-safety contract every backend MUST preserve, so the reaper's
 // "stranded file, never row-points-at-nothing" guarantee holds:
 //   PUT commit:  bytes durable in staging → promote → DB write
-//   DELETE:      DB write → unlink (best-effort; not-found ok)
+//   DELETE:      DB write (the reaper GCs the now-unreferenced blob)
 // A crash at the worst moment leaves at most a stranded blob (the
-// reaper cleans these on its periodic sweep). The FS backend uses
-// fsync + rename; the Vercel backend uses copy + delete (Vercel's
+// reaper cleans these on its periodic sweep, once the blob is both
+// unreferenced and older than the GC grace window). The FS backend
+// uses fsync + rename; the Vercel backend uses copy + delete (Vercel's
 // copy is atomic per-blob, so the cross-blob staging→live transition
 // can produce a stranded staging blob if del fails, but never a
 // half-written live blob).
@@ -94,41 +108,58 @@ export type BlobBackend = {
   // last line of defense before promotion.
   statStaging(tag: string, stagingId: string): Promise<number | null>
 
-  // Promote staging → live. Returns true on success, false on any
-  // I/O error. The caller (commitPut) has already validated size and
-  // re-checked the version precondition under the per-resource lock;
-  // this method just performs the bytes-side transition.
+  // Promote staging → live at the CONTENT-ADDRESSED live path
+  // `${tag}/${contentHash}.bin`. Returns true on success, false on
+  // any I/O error. The caller (commitPut) has already validated size
+  // under the per-resource lock; this method just performs the
+  // bytes-side transition. Because the live address is the content
+  // hash, promoting the same bytes twice (a retry, or a different
+  // resource committing identical content) lands at the SAME path —
+  // an idempotent re-write of identical bytes, never a clobber of
+  // different bytes.
   //
   // Crash safety: implementations MUST ensure that a crash mid-
   // promotion leaves at most a stranded staging blob (reaper-
   // cleanable), never a partial live blob. FS uses fsync+rename;
   // Vercel uses atomic-copy followed by best-effort staging delete.
-  promoteStagingToLive(tag: string, stagingId: string, resourceTag: string): Promise<boolean>
+  promoteStagingToLive(tag: string, stagingId: string, contentHash: string): Promise<boolean>
 
-  // Open a streaming reader for the live blob. `not-found` lets the
-  // REST layer return 404; `unavailable` returns 503 for a transient
-  // state (file/blob missing while the row still exists — reaper
-  // will reconcile on the next sweep).
-  openLiveReader(tag: string, resourceTag: string): Promise<OpenLiveResult>
+  // Open a streaming reader for the content-addressed live blob.
+  // `not-found` lets the REST layer return 404; `unavailable` returns
+  // 503 for a transient state (file/blob missing while the row still
+  // exists — reaper will reconcile on the next sweep).
+  openLiveReader(tag: string, contentHash: string): Promise<OpenLiveResult>
 
   // Idempotent deletes. Backends MUST tolerate "already gone" as
-  // success (FS: ENOENT; Vercel: BlobNotFoundError) — abortPut and
-  // deleteObject rely on this for retry idempotence, and the reaper
-  // races against concurrent operations on the same key.
+  // success (FS: ENOENT; Vercel: BlobNotFoundError) — abortPut relies
+  // on this for retry idempotence, and the reaper races against
+  // concurrent operations on the same key. `unlinkLive` is called
+  // ONLY by the reaper's GC (commit / delete never unlink a live blob
+  // directly — it may still be referenced by another resource via
+  // content dedup).
   unlinkStaging(tag: string, stagingId: string): Promise<void>
-  unlinkLive(tag: string, resourceTag: string): Promise<void>
+  unlinkLive(tag: string, contentHash: string): Promise<void>
 
-  // Reaper enumeration helpers. Each returns identifiers stripped of
-  // any backend-specific suffix (`.bin` etc.) — the reaper compares
-  // them against the DB's `resource_tag` / `staging_id` strings.
-  // Implementations MAY paginate internally; the reaper consumes the
-  // returned full list per workspace.
+  // Reaper enumeration helpers. Implementations MAY paginate
+  // internally; the reaper consumes the returned full list per
+  // workspace.
   //
   // `listWorkspaceTags()` returns every tag with ANY trace of state
   // (live or staging). The reaper uses it to find dirs/prefixes the
   // live table no longer knows about (whole-workspace deletes leave
   // residue the per-tag sweep would otherwise miss).
+  //
+  // `listLiveBlobs(tag)` returns every live blob under the tag with
+  // its `hash` (the `.bin`-stripped content hash) AND `modifiedMs`
+  // (last-modified epoch-ms: FS mtime / Vercel `uploadedAt`). The GC
+  // needs the timestamp for the age grace window — a blob is only
+  // eligible for unlink once it's BOTH unreferenced by any live row
+  // AND older than the grace, so a just-promoted but not-yet-
+  // referenced blob isn't reaped out from under an in-flight commit.
+  //
+  // `listStagingIds(tag)` returns staging ids stripped of the `.bin`
+  // suffix — the reaper compares them against the DB's `staging_id`.
   listWorkspaceTags(): Promise<string[]>
-  listLiveResourceTags(tag: string): Promise<string[]>
+  listLiveBlobs(tag: string): Promise<Array<{ hash: string; modifiedMs: number }>>
   listStagingIds(tag: string): Promise<string[]>
 }
