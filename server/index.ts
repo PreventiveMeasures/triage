@@ -74,17 +74,18 @@
 import { type WebSocket, WebSocketServer } from 'ws'
 import { type IncomingMessage as HttpRequest, type ServerResponse, createServer } from 'node:http'
 import { Buffer } from 'node:buffer'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { argv, env } from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import { decodeUtf8 } from '../common/utf8.js'
-import { SAVE_ERROR_REASONS, type SaveErrorReason } from '../common/save-error-reason.ts'
-import { debugTag, errMsg, errStack, randomId } from './util.ts'
-import { type Handle, type RevisionRow, chainFrom, commitRevision, openDb, revisionExists } from './db.ts'
+import { errMsg, errStack, randomId } from './util.ts'
+import { Peer } from './peer.ts'
+import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
+import { createHub } from './hub.ts'
+import { type AuthenticateMsg, createAuth } from './auth.ts'
+import { createSyncHandlers } from './sync-handlers.ts'
+import { loadConfig } from './config.ts'
+import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
-import { type SaveMsg, type SubscribeMsg, canonicalSave, computeRevisionIdFromCanonical, verifyEd25519, verifySubscribeSig } from './sign.ts'
+import type { SaveMsg, SubscribeMsg } from './sign.ts'
 import { handleRest, matchRoute } from './objstore/rest.ts'
 import { initObjstore } from './objstore/init.ts'
 import { loadStatic } from './static.ts'
@@ -102,179 +103,26 @@ type IncomingMessage = {
   [k: string]: unknown
 }
 
-// `chainForWire` accepts the row shape from `chainFrom` (where
-// `keyframe` is the SQLite INTEGER 0 / 1) and returns the same fields
-// with `keyframe` normalised to a strict boolean for the wire.
-type WireRevision = {
-  base: string | null
-  id: string
-  keyframe: boolean
-  nonce: string
-  ciphertext: string
-  signature: string
-}
+// All external inputs (env vars + optional config.json) are parsed
+// and validated in ./config.ts. Destructure into the existing
+// uppercase names so the rest of this module reads unchanged.
+const config = loadConfig()
+const {
+  port: PORT, host: HOST, dbPath: DB_PATH, objstoreDir: OBJSTORE_DIR,
+  reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS, leaseMs: OBJSTORE_COMMIT_LOCK_LEASE_MS,
+  maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, debug: DEBUG,
+  neonUrl: NEON_URL, blobToken: BLOB_TOKEN, tokenSecret: TOKEN_SECRET,
+  password: CONFIG_PASSWORD, trustProxyEnv: TRUST_PROXY_ENV,
+} = config
 
-// Parse + range-validate an integer env var, exiting with a clear
-// up-front message on a malformed value — a NaN from `Number("abc")`
-// otherwise surfaces as a confusing crash deep inside `node:net`
-// (`WebSocketServer({ port: NaN })`) or a 0-ms `setInterval` loop. An
-// absent var falls back to `def` (assumed in-range). One shape for
-// every integer env var below so they validate + fail identically;
-// `hint` appends operator guidance (range meaning, default) to the
-// error line.
-function intEnv(name: string, def: number, min: number, max: number, hint = ''): number {
-  const raw = env[name]
-  const n = raw == null ? def : Number(raw)
-  if (!Number.isSafeInteger(n) || n < min || n > max) {
-    console.error(`Invalid ${name}: ${raw} — must be an integer in [${min}, ${max}].${hint ? ` ${hint}` : ''}`)
-    process.exit(1)
-  }
-  return n
-}
-
-// 0 = OS-assigned ephemeral port (the test harness boots with PORT=0).
-const PORT = intEnv('PORT', 8765, 0, 65535)
-const HOST = env['HOST'] ?? '127.0.0.1'
-// `fileURLToPath` decodes percent-escapes and handles non-ASCII path
-// segments correctly (the older `new URL(...).pathname` form left
-// `%20` etc. raw, breaking deploys under paths like `/srv/deep view/`).
-const DB_PATH = env['DB_PATH'] ?? fileURLToPath(new URL('./data/data.db', import.meta.url))
-// `path.join` so a Windows DB_PATH (`C:\srv\foo\data.db` → dirname
-// returns backslash-separated) doesn't get a mixed-separator child
-// (`C:\srv\foo/objstore`). Cosmetic on POSIX, real bug on win32.
-const OBJSTORE_DIR = env['OBJSTORE_DIR'] ?? join(dirname(DB_PATH), 'objstore')
-// No practical upper bound beyond the safe-integer range.
-const OBJSTORE_REAP_INTERVAL_MS = intEnv('OBJSTORE_REAP_INTERVAL_MS', 10 * 60 * 1000, 1, Number.MAX_SAFE_INTEGER)
-// Distributed commit-lock lease duration. The default (5 min) is
-// tuned for Vercel Functions' Pro Max execution cap; self-hosted
-// long-running processes with multi-MB uploads on slow links may
-// bump this. A crashed-held lease without graceful release pins
-// the key for at most this long. Setter passes via opts.leaseMs
-// to withCommitLock at every call site.
-// Range-clamped: too short → the lock effectively doesn't exist
-// (every concurrent caller steals instantly). Too long → a SIGKILL/
-// OOM-crashed holder pins the key for hours/days waiting on TTL
-// expiry. 1 second–1 hour is the operationally-sensible band.
-const LEASE_MS_MIN = 1000
-const LEASE_MS_MAX = 60 * 60 * 1000
-const OBJSTORE_COMMIT_LOCK_LEASE_MS = intEnv(
-  'OBJSTORE_COMMIT_LOCK_LEASE_MS', 5 * 60 * 1000, LEASE_MS_MIN, LEASE_MS_MAX,
-  '(1s..1h). Default is 300000 (5 min).',
-)
+// Apply the validated commit-lock lease to the lock module. The setter
+// threads it via opts.leaseMs to withCommitLock at every call site.
 setDefaultLeaseMs(OBJSTORE_COMMIT_LOCK_LEASE_MS)
-const DEBUG = env['DEBUG'] === '1'
 
-// Optional operator-side config file. Read once at boot; absence is
-// silently fine (preserves the no-auth default — fresh installs and
-// existing deployments without config.json keep working as before).
-// Parse errors fail loud at startup so a typo doesn't silently fall
-// back to "no auth required". `config.example.json` ships with the
-// repo as the documented shape; the real `config.json` is git-
-// ignored so operators can store secrets locally.
-const CONFIG_PATH = env['CONFIG_PATH'] ?? fileURLToPath(new URL('./config.json', import.meta.url))
-type ServerConfig = { password?: string | null }
-function loadConfig(path: string): ServerConfig {
-  let raw: string
-  try { raw = readFileSync(path, 'utf8') } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
-    console.error(`Failed to read ${path}:`, errMsg(err)); process.exit(1)
-  }
-  try { return JSON.parse(raw) as ServerConfig }
-  catch (err) {
-    console.error(`Failed to parse ${path} as JSON:`, errMsg(err)); process.exit(1)
-  }
-}
-const SERVER_CONFIG = loadConfig(CONFIG_PATH)
-// Password is the only auth method today. A non-empty string in
-// config gates first-action (workspace creation) on the wire-level
-// `authenticate { password }` handshake; null / undefined / empty
-// disables the gate (the no-config default — first action is
-// allowed without an authenticate handshake).
-//
-// Comparison is HMAC-SHA-256 under a per-process random key:
-//   * at boot, generate `PASSWORD_HMAC_KEY` (32 random bytes,
-//     static for the process lifetime, never persisted, never
-//     leaves this module);
-//   * compute `CONFIGURED_PASSWORD_HMAC = HMAC(key, configured)`
-//     once at boot and discard the raw configured-password bytes
-//     so a heap snapshot post-boot doesn't expose the plaintext;
-//   * on each `authenticate`, compute the same HMAC over the
-//     submitted password and compare with `timingSafeEqual`.
-// HMAC outputs are fixed at 32 bytes so `timingSafeEqual` runs
-// without a length-equal precondition (no length leak), and even
-// a hypothetical timing leak only exposes HMAC bytes — useless to
-// an attacker without the per-process key. A `null`
-// `CONFIGURED_PASSWORD_HMAC` is the "no gate" sentinel that every
-// other check reads.
-const PASSWORD_HMAC_KEY: Uint8Array<ArrayBuffer> = new Uint8Array(randomBytes(32))
-const CONFIGURED_PASSWORD_HMAC: Uint8Array<ArrayBuffer> | null = (() => {
-  const p = SERVER_CONFIG.password
-  if (p == null || p === '') return null
-  if (typeof p !== 'string') {
-    console.error(`Invalid ${CONFIG_PATH}: "password" must be a string or null`); process.exit(1)
-  }
-  return new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(p, 'utf8').digest())
-})()
-
-// Same-origin gate for the WS upgrade and REST data plane. We don't
-// support cross-origin browser clients, so any Origin header
-// present on an incoming request MUST match the server's own host
-// (derived from `req.headers.host` directly, or from `X-Forwarded-
-// Host` / `X-Forwarded-Proto` when a reverse proxy is in front and
-// we're configured to trust it).
-//
-// Why "present-must-match" rather than "always required":
-// - WebSocket handshakes from browsers always carry an Origin header
-//   (per RFC 6455), so a foreign-page session attempt always
-//   surfaces here.
-// - Browser same-origin XHR/fetch may OMIT the Origin header
-//   entirely; requiring it would break legitimate same-origin REST
-//   calls.
-// - Non-browser clients (the test suite's `ws`, an admin CLI, …)
-//   may also omit Origin. Same-origin in that context just means
-//   "trusted operator process" and the network is the trust
-//   boundary.
-//
-// Reverse-proxy support is OPT-IN via TRUST_PROXY. When off, we
-// ignore `X-Forwarded-Host` / `X-Forwarded-Proto` entirely and
-// derive the expected origin from `req.headers.host` + `http://`.
-// When on, the proxy headers take precedence. This guards a public-
-// bind deployment (`HOST=0.0.0.0` directly on a port, no proxy)
-// from a trivial bypass: an attacker page would otherwise send its
-// own `X-Forwarded-Host` + matching `Origin` and walk through the
-// gate. Default: ON for loopback binds (typical: relay behind nginx
-// on the same host), OFF for everything else (operator must
-// explicitly opt-in when fronting a public bind with a proxy).
-// Transport audit `server/index.ts:530` + `server/objstore/rest.ts:103`.
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
-const TRUST_PROXY_ENV = env['TRUST_PROXY']
-const TRUST_PROXY = TRUST_PROXY_ENV == null
-  ? LOOPBACK_HOSTS.has(HOST)
-  : TRUST_PROXY_ENV === '1' || TRUST_PROXY_ENV.toLowerCase() === 'true'
-
-function firstHeaderValue(v: string | string[] | undefined): string | null {
-  if (typeof v === 'string') return v.split(',')[0]!.trim() || null
-  if (Array.isArray(v) && v.length > 0) return String(v[0]).trim() || null
-  return null
-}
-function expectedOrigin(req: { headers: HttpRequest['headers'] }): string | null {
-  const xfHost = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-host']) : null
-  const xfProto = TRUST_PROXY ? firstHeaderValue(req.headers['x-forwarded-proto']) : null
-  const host = xfHost ?? firstHeaderValue(req.headers['host'])
-  if (!host) return null
-  const proto = xfProto ?? 'http'
-  return `${proto}://${host}`
-}
-function isOriginAllowed(req: { headers: HttpRequest['headers'] }): boolean {
-  const origin = firstHeaderValue(req.headers['origin'])
-  // Missing Origin → same-origin browser fetch OR non-browser
-  // client. Both are allowed; non-browser callers' trust boundary
-  // is the network / token, not Origin.
-  if (origin == null) return true
-  const expected = expectedOrigin(req)
-  if (expected == null) return false // Origin present but no Host to compare → deny
-  return origin === expected
-}
+// Same-origin gate for the WS upgrade and REST data plane (see
+// ./origin.ts). `TRUST_PROXY_ENV` (from config) also feeds the
+// boot-time misconfiguration fail-fast below.
+const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUST_PROXY_ENV)
 
 // Per-socket buffered-bytes cap. `socket.send` returns synchronously
 // even when the kernel/ws library can't drain to the wire fast
@@ -285,30 +133,20 @@ function isOriginAllowed(req: { headers: HttpRequest['headers'] }): boolean {
 // cap; the heartbeat will eventually close a peer that never
 // drains. Transport audit `server/index.ts:225`.
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
-// Per-socket in-flight async-handler cap. Each inbound text frame
-// spawns a `track(handler)` IIFE; an authorised peer who keeps
-// firing valid frames can grow this set without bound, growing the
-// SIGTERM drain time. Drop frames once the cap is hit. Transport
+// Per-socket in-flight async-handler cap (MAX_INFLIGHT_PER_SOCKET,
+// env-validated in config). Each inbound text frame spawns a
+// `track(handler)` IIFE; an authorised peer firing valid frames could
+// otherwise grow the set without bound, stretching SIGTERM drain time.
+// Saves dropped at the cap surface as a typed `busy` NACK. Transport
 // audit `server/index.ts:590`.
-//
-// Env-configurable via `MAX_INFLIGHT_PER_SOCKET` for tests that
-// want to deterministically exercise the cap (`busy` NACK
-// regression) without needing 65 signed sends. Default 64.
-// Upper bound 65_536 — the cap bounds memory under hostile load; a
-// deployer passing `MAX_SAFE_INTEGER` would silently defeat the
-// purpose. Way above any realistic legitimate value (default 64) but
-// cheap to enforce. Adversarial-audit foot-gun guard.
-const MAX_INFLIGHT_PER_SOCKET = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
-const socketInflight = new WeakMap<WebSocket, number>()
 
-// Per-socket liveness tracker for the server-driven heartbeat
-// (see `heartbeatTimer` below). The connection handler seeds an
-// entry `true` and re-arms it on each `pong`; the periodic sweep
-// terminates any socket whose value is `false` (didn't pong since
-// the last tick) and pings everyone else. WeakMap so a closed
-// socket's entry GCs alongside the WebSocket — no manual cleanup
-// in the close handler.
-const socketAlive = new WeakMap<WebSocket, boolean>()
+// Per-connection state registry. One `Peer` per accepted socket holds
+// the challenge nonce, auth flag, heartbeat liveness, in-flight count,
+// and subscribed tags (see ./peer.ts) — replacing what were five
+// parallel per-socket WeakMaps. The connection handler holds the Peer
+// in a closure for the hot paths; cross-function call sites resolve it
+// via `peers.get(socket)`.
+const peers = new WeakMap<WebSocket, Peer>()
 
 // REST PUT idle-body timeout. A slow-loris client trickling bytes
 // within the declared Content-Length holds the staging fd and an
@@ -329,86 +167,14 @@ const REST_PUT_IDLE_TIMEOUT_MS = 30_000
 // Origin headers through (legitimate non-browser callers), so a
 // hostile CLI can stack arbitrarily many idle sockets without it.
 // Kernel TCP keepalive is hours by default; without this interval
-// each abandoned socket pins its `wss.clients` Set entry,
-// `socketChallenge` / `socketAuthorized` / `socketTags` WeakMap
-// entries, and an FD until the kernel reclaims it. Two ticks max
+// each abandoned socket pins its `wss.clients` Set entry, its `Peer`
+// state, and an FD until the kernel reclaims it. Two ticks max
 // from silence to termination, so the longest a dead socket
 // survives is ~2 × HEARTBEAT_INTERVAL_MS.
 const HEARTBEAT_INTERVAL_MS = 30_000
 
-if (argv.includes('--help') || argv.includes('-h')) {
-  console.log(`Usage: node server/index.ts
-Environment:
-  PORT                       listen port (default 8765)
-  HOST                       bind host (default 127.0.0.1)
-  DB_PATH                    sqlite file (default: server/data/data.db);
-                             ignored when DATABASE_URL is set
-  DATABASE_URL               Neon Postgres connection string; if set,
-                             selects the Neon backend instead of
-                             SQLite. Requires the optional peer dep
-                             @neondatabase/serverless. The Neon
-                             pairing additionally requires
-                             BLOB_READ_WRITE_TOKEN (Vercel Blob
-                             Private Storage) for the byte plane —
-                             local-FS bytes cannot back a multi-
-                             replica DB plane.
-  BLOB_READ_WRITE_TOKEN      Vercel Blob R/W token (private store).
-                             Required when DATABASE_URL is set;
-                             ignored otherwise. Requires the optional
-                             peer dep @vercel/blob.
-  OBJSTORE_TOKEN_SECRET      Base64 (32 bytes) HMAC secret for REST
-                             bearer tokens. REQUIRED when DATABASE_URL
-                             is set (multi-replica deployments: a
-                             token minted on one replica's WS plane
-                             must validate on another replica's REST
-                             plane). Optional under SQLite (a fresh
-                             per-process secret is minted at boot).
-                             Generate one with:
-                               node -e 'console.log(crypto.randomBytes(32).toString("base64"))'
-  OBJSTORE_DIR               object store root (default: ./objstore
-                             next to DB_PATH). Used by the local-FS
-                             byte plane only; ignored when
-                             DATABASE_URL + BLOB_READ_WRITE_TOKEN
-                             are set (bytes live in Vercel Blob).
-  OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
-  OBJSTORE_COMMIT_LOCK_LEASE_MS
-                             distributed commit-lock lease duration
-                             (default 300000 = 5 min). A crashed-held
-                             lease pins (workspace_tag, resource_tag)
-                             for at most this long. Bump for self-
-                             hosted deployments where uploads can
-                             legitimately exceed 5 min (e.g. 100 MiB
-                             on a 100 KB/s link).
-  TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
-                             Host / X-Forwarded-Proto when computing
-                             the same-origin gate's expected origin.
-                             Default: ON when HOST is a loopback
-                             (127.0.0.1, ::1, localhost) — the typical
-                             "behind nginx on same host" deployment.
-                             OFF for public binds (HOST=0.0.0.0 etc.)
-                             where a bare X-Forwarded-* would
-                             otherwise let an attacker page bypass
-                             the gate.
-  MAX_INFLIGHT_PER_SOCKET    per-socket in-flight async-handler
-                             cap; saves dropped past this fire a
-                             typed 'busy' workspace-save-error
-                             NACK. Default 64. Lower for tests
-                             that need to deterministically
-                             exercise the cap.
-  CONFIG_PATH                operator config JSON path (default:
-                             server/config.json). Currently the
-                             only field is { "password": "..." }
-                             which gates first-action creation of
-                             a new workspace on the
-                             authenticate { password } handshake.
-                             Missing file / null password →
-                             no gating (default).
-  DEBUG=1                    log every message`)
-  process.exit(0)
-}
-
 // Backend selection. Both planes (workspace_revision DB + the
-// v1.objstore byte store) are picked from env at boot. Two supported
+// v1.objstore byte store) are picked from config at boot. Two supported
 // pairings:
 //   1. DATABASE_URL set → Neon (workspace_revision + objstore
 //      tables) + Vercel Blob Private Storage (bytes). Requires
@@ -424,52 +190,6 @@ Environment:
 // keeps its `SqliteHandle` narrowing — `sqliteHandle.db` is typed
 // as a non-optional `DatabaseSync` and `openObjstore` accepts it
 // without a non-null assertion.
-const NEON_URL = env['DATABASE_URL'] ?? null
-const BLOB_TOKEN = env['BLOB_READ_WRITE_TOKEN'] ?? null
-const TOKEN_SECRET_B64 = env['OBJSTORE_TOKEN_SECRET'] ?? null
-// Decode + length-check the HMAC secret upfront so a misconfigured
-// secret fails at boot, not at the first token verification. 32
-// bytes matches `newTokenSecret()` and HMAC-SHA-256's block/output
-// size.
-//
-// `Buffer.from(s, 'base64')` does NOT throw on invalid input — it
-// silently strips non-alphabet characters, so a typo like `+→-`
-// (base64url char in a base64 string) decodes to a DIFFERENT secret
-// without warning. Detect this by re-encoding and comparing — a
-// faithful round-trip should match the input (modulo `=` padding).
-let TOKEN_SECRET: Uint8Array<ArrayBuffer> | null = null
-if (TOKEN_SECRET_B64) {
-  // Trim surrounding whitespace — a copy-pasted env value often
-  // ends in `\n` and Buffer.from(..., 'base64') would silently
-  // strip it, then the typo-detector below would fail with a
-  // misleading "non-base64 characters" message. The trim happens
-  // here so the round-trip comparison sees the same bytes the
-  // decoder saw.
-  const trimmed = TOKEN_SECRET_B64.trim()
-  if (trimmed.length === 0) {
-    console.error('OBJSTORE_TOKEN_SECRET is empty after trimming whitespace')
-    process.exit(1)
-  }
-  const decoded = Buffer.from(trimmed, 'base64')
-  const reencoded = decoded.toString('base64')
-  // Strip trailing `=` padding for the comparison — operators may
-  // omit it. Anything else differing means a silent strip happened
-  // (e.g. a base64url '-' or '_' in a standard base64 secret).
-  const norm = (s: string): string => s.replace(/=+$/u, '')
-  if (norm(reencoded) !== norm(trimmed)) {
-    console.error('OBJSTORE_TOKEN_SECRET contains non-base64 characters (likely a typo, e.g. base64url chars in a base64 secret).')
-    console.error('Regenerate with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
-    process.exit(1)
-  }
-  if (decoded.byteLength !== 32) {
-    console.error(`OBJSTORE_TOKEN_SECRET must decode to 32 bytes (got ${decoded.byteLength})`)
-    process.exit(1)
-  }
-  // `new Uint8Array(decoded)` copies into a fresh ArrayBuffer so the
-  // type matches `TokenSecret = Uint8Array<ArrayBuffer>` (Buffer is
-  // backed by SharedArrayBuffer in some Node configs).
-  TOKEN_SECRET = new Uint8Array(decoded)
-}
 let handle: Handle
 let objstoreHandle: ObjstoreHandle
 let objstoreBanner: string
@@ -515,54 +235,6 @@ if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !==
   process.exit(1)
 }
 
-// Per-connection challenge nonce (round-9 H2). Issued in a
-// `challenge` frame the moment the socket opens; the client signs
-// it into every subsequent `workspace-subscribe`. Bound to the
-// socket via WeakMap so a reconnecting client gets a fresh nonce
-// and a captured subscribe frame can't be replayed from a
-// different connection (the canonical bytes the captured signature
-// covered include the OLD nonce; the attacker's new connection
-// has a NEW nonce; the canonical bytes differ; signature verify
-// fails). 16 bytes (128 bits) is enough for collision-free
-// uniqueness; base64url so the wire stays JSON-text.
-const socketChallenge = new WeakMap<WebSocket, string>()
-function newChallenge(): string {
-  return randomId()
-}
-
-// Per-connection authorization flag for the password-gated "first
-// action in a workspace" path. Once a connection completes the
-// `authenticate { password }` handshake, every subsequent action on
-// that socket bypasses the gate — the access-control surface is the
-// per-message Ed25519 signature (the seed-holder is the authorised
-// writer), and once a workspace EXISTS on the server the gate is
-// off for that workspace regardless of which connection touches it.
-// The gate only protects against an unauthenticated client creating
-// a brand-new workspace on the server. WeakMap so a closed socket
-// drops its flag immediately via the close handler's delete.
-const socketAuthorized = new WeakMap<WebSocket, boolean>()
-function isAuthorized(socket: WebSocket): boolean {
-  return socketAuthorized.get(socket) === true
-}
-// `CONFIGURED_PASSWORD_HMAC == null` → no gate; everyone is
-// effectively authorised and every first action proceeds without an
-// `authenticate` handshake. Otherwise the per-socket flag is the
-// live state.
-function requiresAuth(socket: WebSocket): boolean {
-  if (CONFIGURED_PASSWORD_HMAC == null) return false
-  return !isAuthorized(socket)
-}
-// HMAC-based constant-time password compare. Both sides are passed
-// through `HMAC(PASSWORD_HMAC_KEY, …)` so the inputs to
-// `timingSafeEqual` are always 32-byte fixed-length digests — no
-// length-equal precondition, no length leak, and any residual
-// timing variance in the comparator reveals only HMAC bytes that
-// are useless without the per-process key.
-function passwordMatches(submitted: string): boolean {
-  if (CONFIGURED_PASSWORD_HMAC == null) return false
-  const submittedHmac = new Uint8Array(createHmac('sha256', PASSWORD_HMAC_KEY).update(submitted, 'utf8').digest())
-  return timingSafeEqual(submittedHmac, CONFIGURED_PASSWORD_HMAC)
-}
 // "Workspace exists on the server" gate. The auth requirement only
 // kicks in for the FIRST action against a never-before-seen tag —
 // once any row lands (triage revision or objstore object), the
@@ -576,170 +248,30 @@ async function workspaceExists(tag: string): Promise<boolean> {
   return (c?.c ?? 0) > 0
 }
 
-// workspaceTag → Set<WebSocket>
-const subscribers = new Map<string, Set<WebSocket>>()
-// WebSocket → Set<workspaceTag> — for cleanup on disconnect
-const socketTags = new WeakMap<WebSocket, Set<string>>()
+// WS fan-out hub: subscriber registry + backpressure-aware send /
+// broadcast (see ./hub.ts). Destructure into the existing names so the
+// handlers / dispatcher / objstore wiring below read unchanged.
+const hub = createHub({ peers, maxBufferedBytes: MAX_BUFFERED_BYTES, debug: DEBUG })
+const { send, broadcast, subscribe, unsubscribeAll } = hub
 
-function subscribe(socket: WebSocket, tag: string): void {
-  let set = subscribers.get(tag)
-  if (!set) {
-    set = new Set()
-    subscribers.set(tag, set)
-  }
-  set.add(socket)
-  let tags = socketTags.get(socket)
-  if (!tags) {
-    tags = new Set()
-    socketTags.set(socket, tags)
-  }
-  tags.add(tag)
-}
+// Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
+// handshake. Destructure into the existing names for the wiring below.
+const auth = createAuth({ peers, password: CONFIG_PASSWORD, send, debug: DEBUG })
+const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
 
-function unsubscribeAll(socket: WebSocket): void {
-  const tags = socketTags.get(socket)
-  if (!tags) return
-  for (const tag of tags) {
-    const set = subscribers.get(tag)
-    if (!set) continue
-    set.delete(socket)
-    if (set.size === 0) subscribers.delete(tag)
-  }
-}
-
-function send(socket: WebSocket, msg: object): void {
-  sendRaw(socket, JSON.stringify(msg))
-}
-
-// Typed wrapper for the three `workspace-save-error` emit sites
-// (too-large at handleSave, stale-base after the catch-up, busy
-// at the inflight-cap drop). Forces the `reason` argument to be a
-// member of `SaveErrorReason` so a typo or a server-side addition
-// that didn't update `common/save-error-reason.ts` fails at
-// compile time rather than turning into a wire-level surprise.
-// The shared taxonomy is pinned by
-// `tests/save-error-reason-taxonomy.test.js`.
-function sendSaveError(
-  socket: WebSocket,
-  workspaceTag: string,
-  base: string | null,
-  reason: SaveErrorReason,
-): void {
-  // Runtime guard alongside the compile-time `SaveErrorReason`
-  // union — covers the case where the `reason` argument is a
-  // variable (not a string literal) and TypeScript's narrowing
-  // can't enforce taxonomy membership at the call site. Throws
-  // because a server emitting a typo'd reason would be a wire-
-  // protocol break the client can't recover from; better to fail
-  // fast in the test suite than to silently land bytes the
-  // client coerces to `'rejected'`.
-  if (!SAVE_ERROR_REASONS.has(reason)) {
-    throw new Error(`sendSaveError: reason '${reason}' is not in SAVE_ERROR_REASONS — update common/save-error-reason.ts`)
-  }
-  send(socket, { type: 'workspace-save-error', workspaceTag, base, reason })
-}
-
-// Lower-level send for when the JSON payload is already serialised
-// (e.g. broadcast fan-out — stringify once, send N times).
-function sendRaw(socket: WebSocket, payload: string): void {
-  if (socket.readyState !== socket.OPEN) return
-  // Backpressure cap. `socket.bufferedAmount` is the count of bytes
-  // queued in the `ws` send pipeline that haven't drained to the
-  // kernel yet — a slow / blackholed peer accumulates them
-  // unboundedly during fan-out broadcasts. Drop above the cap and
-  // terminate the socket so the heartbeat doesn't keep it alive on
-  // ping/pong while every broadcast piles up. Transport audit
-  // `server/index.ts:225`.
-  if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
-    if (DEBUG) console.warn(`drop broadcast: socket buffered ${socket.bufferedAmount}B > cap`)
-    try { socket.terminate() } catch {}
-    return
-  }
-  // Wrap send() in try/catch — readyState can transition from OPEN
-  // to CLOSING between the check above and the send() call (TOCTOU
-  // window in `ws`'s event loop). Without this, a socket dying
-  // mid-broadcast would throw and abort the broadcast loop, skipping
-  // every subscriber after the dead one. Audit M4.
-  try { socket.send(payload) } catch {}
-}
-
-// Normalise `keyframe` on outbound chain entries to a strict boolean.
-// SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
-// raw rows; the wire contract (and the canonical signing payload)
-// uses strict `=== true` to mark keyframes. Forwarding the integer
-// shape works only because every shipping client coerces via
-// `Boolean(rev.keyframe)` before reconstructing the canonical
-// bytes — fragile if a future client (or test harness) ever
-// strict-compares. Convert once on the send side.
-function chainForWire(revisions: RevisionRow[]): WireRevision[] {
-  return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 }))
-}
-
-// `except: null` is the REST-originated path — byte transfer
-// landed via HTTP, not via a particular WS socket; broadcast hits
-// every subscriber. WS-originated broadcasts pass the originator's
-// socket so the sender doesn't see its own message echoed back.
-function broadcast(tag: string, msg: object, except: WebSocket | null): void {
-  const set = subscribers.get(tag)
-  if (!set) return
-  // Stringify ONCE outside the fan-out loop. For a workspace-state
-  // catch-up with a multi-MB ciphertext × N subscribers, per-recipient
-  // JSON.stringify would dominate CPU; this is the cheap win.
-  const payload = JSON.stringify(msg)
-  // Snapshot before iterating — `send`'s try/catch swallows
-  // socket.send errors, but a socket transitioning to CLOSED
-  // mid-broadcast triggers `unsubscribeAll` from the 'close'
-  // handler, which mutates `set` while we're walking it. Set
-  // iteration is well-defined under same-key delete today; the
-  // snapshot keeps a future refactor (e.g. switching to a
-  // different collection or an async send) from silently
-  // skipping subscribers. Audit M4 round-3.
-  for (const s of [...set]) {
-    if (s === except) continue
-    sendRaw(s, payload)
-  }
-}
-
-// Save-message field gate: base64-or-base64url alphabet, length-
-// bounded. Critical guarantee is "no newlines" — without it,
-// `nonce = "AAA\nBBB"` + `ciphertext = "CCC"` produces the same
-// canonical bytes as `nonce = "AAA"` + `ciphertext = "BBB\nCCC"`
-// (canonicalSave newline-joins), causing same-id collisions across
-// distinct stored fields. Two alphabets:
-//
-//   - workspaceTag / signature / base — base64url-no-padding only.
-//     Clients always emit these via `toBase64({ alphabet: 'base64url',
-//     omitPadding: true })` (client/sync-crypto.ts), and the same
-//     workspaceTag must round-trip through objstore's TAG_RE (also
-//     base64url-no-padding) for cross-protocol consistency. Accepting
-//     `+/=` here would let a buggy or hostile client split its data
-//     across two encodings of the same workspace.
-//   - nonce / ciphertext — base64 OR base64url (union alphabet).
-//     Clients emit these via `toBase64()` with no alphabet hint
-//     (standard base64 with `+/=` padding), and the bytes are opaque
-//     to the server — no cross-protocol identity is bound to the
-//     encoding. The newline-collision guard is the only invariant
-//     here; the wider alphabet is acceptable.
-//
-// Short-field length caps bound the canonical and `MAX_CIPHERTEXT_LEN`
-// bounds chain-bloat; the ciphertext size check runs post-sig so the
-// error response (`workspace-save-error`) only reaches a legit signer.
-const TAG_SIG_BASE_RE = /^[\w-]+$/u
-const NONCE_CIPHER_RE = /^[\w+/=-]+$/u
-const MAX_FIELD_LEN = 128
-const MAX_CIPHERTEXT_LEN = 2 * 1024 * 1024
-
-const validTagSigBase = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && TAG_SIG_BASE_RE.test(s)
-const validNonce = (s: unknown, max: number): s is string => typeof s === 'string' && s.length > 0 && s.length <= max && NONCE_CIPHER_RE.test(s)
-// Ciphertext: same alphabet as nonce but the size cap is checked
-// POST-sig (to avoid leaking the cap to unauthenticated probes).
-// Pre-sig only the shape gate applies; `maxPayload` (4 MiB) already
-// bounds the total frame, so the worst-case bytes are still bounded.
-const validCiphertextShape = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && NONCE_CIPHER_RE.test(s)
+// Triage-sync protocol handlers (see ./sync-handlers.ts). `getNonce`
+// resolves a socket's challenge nonce and is shared with the objstore
+// wiring below; `sendSaveError` is reused by the dispatcher's `busy`
+// inflight-cap NACK path.
+const getNonce = (socket: WebSocket): string | undefined => peers.get(socket)?.challenge
+const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
+  handle, send, broadcast, subscribe, getNonce,
+  requiresAuth, sendUnauthorized, workspaceExists, debug: DEBUG,
+})
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
-  send, broadcast, getNonce: (socket) => socketChallenge.get(socket), debug: DEBUG,
+  send, broadcast, getNonce, debug: DEBUG,
   // Auth gate for the FIRST objstore-put-begin against a workspace
   // that doesn't yet exist on the server. Mirrors handleSave's gate
   // below; handlers.ts calls this AFTER sig verify so the
@@ -754,272 +286,6 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
   // behaviour, fine for single-replica).
   ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
-
-// Top-level `unauthorized` frame (Server → Client). Sent when:
-//   * A `workspace-save` for a NEW workspace tag arrives on a socket
-//     that hasn't authenticated yet (handleSave below) — `kind:
-//     'gated'`, with `workspaceTag` + `base` so the client can clear
-//     the matching pending save and prompt the user for the password.
-//   * An `objstore-put-begin` hits the same gate (handlers.ts) —
-//     `kind: 'gated'`, with `workspaceTag` + `resourceTag` for the
-//     in-flight putBegin caller.
-//   * The client's `authenticate { password }` was rejected by
-//     `handleAuthenticate` (wrong password) — `kind: 'auth-failed'`,
-//     no other context fields.
-// The explicit `kind` discriminator is the wire-protocol contract:
-// callers MUST switch on it rather than infer from the presence /
-// absence of other fields. A future server change adding context
-// to either branch can't silently misroute under this contract,
-// whereas a field-presence inference would. The client's wire-side
-// dispatcher (client/triage-sync.ts handleMessage) and the objstore
-// client's put-begin recv predicate both pin on `kind`.
-type UnauthorizedContext =
-  | { kind: 'gated'; workspaceTag: string; base: string | null }       // workspace-save gated
-  | { kind: 'gated'; workspaceTag: string; resourceTag: string }       // objstore-put-begin gated
-  | { kind: 'auth-failed' }                                             // authenticate-failed
-function sendUnauthorized(socket: WebSocket, ctx: UnauthorizedContext): void {
-  send(socket, { type: 'unauthorized', ...ctx })
-}
-
-// `authenticate { password }` handler. Constant-time password
-// compare; success flips the per-socket flag and emits
-// `authenticated` (the client's signal to retry any queued
-// pendingSave / pendingSubscribe). Failure emits
-// `unauthorized { kind: 'auth-failed' }` so the client knows its
-// retry loop should ask for a different password rather than treat
-// the message as a new action-gating signal (`kind: 'gated'`).
-//
-// Pre-shape gate: password must be a non-empty string, length-
-// capped so a peer can't make us HMAC megabytes per frame. This
-// handler is fast-inlined OUTSIDE the per-socket MAX_INFLIGHT
-// cap (see the dispatcher's ping/authenticate special-case below),
-// so without the cap a frame-spamming peer would dominate the
-// event loop on `createHmac().update(p)`. 4096 bytes is far above
-// any conceivable real password and well below the WS frame
-// `maxPayload` of 4 MiB.
-const MAX_AUTH_PASSWORD_LEN = 4096
-type AuthenticateMsg = { password?: unknown }
-function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
-  if (typeof msg.password !== 'string' || msg.password.length === 0 || msg.password.length > MAX_AUTH_PASSWORD_LEN) return
-  // No-config short-circuit: if the server isn't gating, treat any
-  // authenticate as success. This lets a client cache its password
-  // and replay it on reconnect even when the server happens to be
-  // un-gated today — the wire shape stays consistent.
-  if (CONFIGURED_PASSWORD_HMAC == null) {
-    socketAuthorized.set(socket, true)
-    send(socket, { type: 'authenticated' })
-    return
-  }
-  if (!passwordMatches(msg.password)) {
-    if (DEBUG) console.warn('authenticate: wrong password')
-    sendUnauthorized(socket, { kind: 'auth-failed' })
-    return
-  }
-  socketAuthorized.set(socket, true)
-  if (DEBUG) console.log('authenticate: success')
-  send(socket, { type: 'authenticated' })
-}
-
-async function handleSave(socket: WebSocket, msg: SaveMsg): Promise<void> {
-  // `base` is `string | null`; null is the keyframe-root marker.
-  if (!validTagSigBase(msg.workspaceTag, MAX_FIELD_LEN) || !validNonce(msg.nonce, MAX_FIELD_LEN) || !validCiphertextShape(msg.ciphertext) || !validTagSigBase(msg.signature, MAX_FIELD_LEN) || (msg.base != null && !validTagSigBase(msg.base, MAX_FIELD_LEN))) return
-  // Compute canonical bytes + content-addressed id ONCE, then thread
-  // both through the precheck → sig verify → commit pipeline:
-  //   1. canonicalSave (sync, throws on lone-surrogate input)
-  //   2. SHA-256 → id
-  //   3. precheck: revisionExists → short-circuit ack on replay
-  //      (skips Ed25519 verify; closes the round-9 H1 CPU-DoS vector
-  //      where a passive observer floods captured saves)
-  //   4. verifyEd25519 against the SAME canonical bytes the id was
-  //      hashed from — provably tied
-  //   5. ciphertext size policy (post-sig so the explicit error only
-  //      reaches a legit signer)
-  //   6. commitRevision — re-checks dup + base + inserts, all under
-  //      one per-workspace_tag lock. The previously-separate dup
-  //      recheck, headFor, base-match, insertRevision calls all
-  //      collapse here. Without the lock, two concurrent saves with
-  //      the same `base` and different ids would both pass an
-  //      out-of-lock base check, both insert, and FORK THE CHAIN
-  //      (two rows with the same base — UNIQUE is on id, not base);
-  //      and two concurrent same-id retransmits would have one of
-  //      them throw on UNIQUE with no ack reaching the originator.
-  let canonical: Uint8Array<ArrayBuffer>
-  try { canonical = canonicalSave(msg) } catch { return }
-  const id = await computeRevisionIdFromCanonical(canonical)
-  const tag = msg.workspaceTag
-  if (await revisionExists(handle, tag, id)) {
-    if (DEBUG) console.log(`save (precheck dup ${id.slice(0, 8)}…) → ack-only`)
-    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: msg.base ?? null, id })
-    return
-  }
-  if (!await verifyEd25519(tag, canonical, msg.signature)) {
-    if (DEBUG) console.warn('reject save: bad signature', debugTag(tag))
-    return
-  }
-  // Size policy — emit an explicit error so the client can surface
-  // the failure to the user. Without this, an oversized save hangs
-  // forever in the client's `pending` slot (no ack, no rebase).
-  if (msg.ciphertext.length > MAX_CIPHERTEXT_LEN) {
-    if (DEBUG) console.warn(`reject save: ciphertext too large (${msg.ciphertext.length} > ${MAX_CIPHERTEXT_LEN})`)
-    sendSaveError(socket, tag, msg.base == null || typeof msg.base !== 'string' ? null : msg.base, 'too-large')
-    return
-  }
-  // Auth gate for the FIRST action against a workspace tag that
-  // doesn't yet exist on the server (no rows in workspace_revision
-  // AND none in workspace_object). Once any row lands, the workspace
-  // is established and every signed action flows freely — access
-  // control falls back to the Ed25519 signature for the rest of the
-  // workspace's lifetime. Checked AFTER sig verify so the
-  // `unauthorized` frame only reaches a legitimate signer; shape /
-  // sig attacks still drop silently.
-  //
-  // RACE: `workspaceExists` reads outside the per-tag write lock that
-  // `commitRevision` later acquires. Under concurrent saves on a
-  // fresh tag, an unauthenticated socket whose `workspaceExists`
-  // observes "true" (because an authenticated peer's commit landed
-  // between this socket's check and its commit) skips the gate and
-  // commits as the second writer. Accepted: the unauthenticated peer
-  // still had to produce a valid Ed25519 signature (= holds the
-  // workspace seed), and "two concurrent writes both authorising"
-  // is the worst case. Tightening would require moving the gate
-  // inside `commitRevision`'s lock and is not worth the layer
-  // crossing for the soft-policy guarantee.
-  if (requiresAuth(socket) && !await workspaceExists(tag)) {
-    if (DEBUG) console.warn(`reject save: unauthorized (new workspace ${debugTag(tag)})`)
-    sendUnauthorized(socket, { kind: 'gated', workspaceTag: tag, base: msg.base ?? null })
-    return
-  }
-  // NOTE: Earlier revisions auto-subscribed the sending socket here.
-  // That created a replay vector — a passive observer who captured
-  // any single valid `workspace-save` frame could replay it from any
-  // TCP connection forever to attach as a subscriber and silently
-  // mirror every future encrypted broadcast for the workspace,
-  // without ever holding the seed (the duplicate-id path returns
-  // ack-only and doesn't reject the socket). Audit round-9 H1.
-  //
-  // The legitimate client always sends an explicit
-  // `workspace-subscribe` (see `trySendSubscribe` in
-  // `client/triage-sync.js` — fires on key derivation, on
-  // socket open, on continuity-break recovery, on dismissError).
-  // The subscribe path remains the only way to attach as a
-  // broadcast subscriber.
-  const baseNorm = msg.base ?? null
-  // `keyframe === true` is what canonicalSave bound the signature
-  // to (strict equality); the signer's intent is unambiguous here.
-  const keyframe = msg.keyframe === true
-  const commit = await commitRevision(handle, {
-    tag, id, base: baseNorm, keyframe,
-    nonce: msg.nonce, ciphertext: msg.ciphertext, signature: msg.signature,
-  })
-  if (commit.kind === 'duplicate') {
-    if (DEBUG) console.log(`save (duplicate id ${id.slice(0, 8)}…) → ack-only`)
-    send(socket, { type: 'workspace-save-ack', workspaceTag: tag, base: baseNorm, id })
-    return
-  }
-  if (commit.kind === 'stale-base') {
-    // Client claimed a base that's no longer head. Catch-up chain
-    // is computed OUTSIDE the lock — a concurrent commit landing
-    // between lock-release and `chainFrom` only means the catch-up
-    // is fresher than the recheck saw, which is benign (clients
-    // tolerate extra revisions in the chain).
-    //
-    // Wire order: send `workspace-state` (catch-up) FIRST, then
-    // the typed `workspace-save-error { reason: 'stale-base' }`.
-    // The catch-up's handler clears `session.pending`; the
-    // subsequent error frame's `handleSaveError` then early-returns
-    // on the missing pending and does NOT mark the session errored
-    // — exactly what we want, since stale-base is a recoverable
-    // race (client rebases + re-saves). The typed frame is for
-    // protocol clarity (debug surfaces / explicit rejection signal),
-    // not for triggering an error transition.
-    // Audit follow-up to round-15 — `sync-server-races.test.js:1105`.
-    const revisions = chainForWire(await chainFrom(handle, tag, baseNorm))
-    if (DEBUG) console.log(`save (stale base ${baseNorm} vs head ${commit.head}) → chain ${revisions.length}`)
-    send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
-    sendSaveError(socket, tag, baseNorm, 'stale-base')
-    return
-  }
-  if (DEBUG) console.log(`save${keyframe ? ' [keyframe]' : ''} → revision ${id.slice(0, 8)}… for ${debugTag(tag)}`)
-  send(socket, {
-    type: 'workspace-save-ack',
-    workspaceTag: tag,
-    base: baseNorm,
-    id,
-  })
-  // Carry `keyframe` as a strict boolean on the broadcast wire —
-  // peers strict-compare `=== true` (matching the canonical-payload
-  // contract). The previous shape emitted `keyframe ? 1 : 0` which
-  // a strict check would treat as non-keyframe, making a replayed
-  // keyframe look like a regular delta on broadcast paths even
-  // though the chain-fetch path (chainFrom → SQLite integer) DID
-  // round-trip correctly.
-  broadcast(tag, {
-    type: 'workspace-state',
-    workspaceTag: tag,
-    revisions: [{
-      base: baseNorm,
-      id,
-      keyframe,
-      nonce: msg.nonce,
-      ciphertext: msg.ciphertext,
-      signature: msg.signature,
-    }],
-  }, socket)
-}
-
-async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<void> {
-  if (typeof msg.workspaceTag !== 'string') return
-  // Same `string | null` contract as `base` in handleSave. The
-  // signed canonical uses `String(from)`, but the chain-lookup path
-  // (`typeof msg.from === 'string' ? msg.from : null`) treats every
-  // non-string as null — so a legit signer sending `from: { … }`
-  // would silently take the keyframe-fallback path even though the
-  // signature was over a different canonical shape. Reject at the
-  // wire gate.
-  if (msg.from != null && typeof msg.from !== 'string') return
-  // The challenge nonce we issued on this socket is bound into
-  // the signed canonical, blocking cross-connection replay of a
-  // captured subscribe frame. A subscribe arriving before we sent
-  // the challenge (impossible from the legitimate client) has no
-  // nonce to verify against — drop. Audit round-9 H2.
-  const nonce = socketChallenge.get(socket)
-  if (typeof nonce !== 'string') return
-  const ok = await verifySubscribeSig(msg, nonce)
-  if (!ok) {
-    if (DEBUG) console.warn('reject subscribe: bad signature', debugTag(msg.workspaceTag))
-    return
-  }
-  // Bail if the socket closed during the verify await. The close
-  // handler's `unsubscribeAll(socket)` already ran (when there was
-  // nothing to remove yet), and `subscribe()` below would add the
-  // dead socket to `subscribers[tag]` — a permanent leak: broadcasts
-  // no-op via `send`'s readyState gate, but the Set entry pins the
-  // socket reference past close, blocking GC. Audit round-12.
-  if (socket.readyState !== socket.OPEN) {
-    if (DEBUG) console.warn('reject subscribe: socket closed mid-verify', debugTag(msg.workspaceTag))
-    return
-  }
-  const tag = msg.workspaceTag
-  subscribe(socket, tag)
-  // Explicit ack — distinguishes "the server processed my
-  // subscribe and registered me as a peer" from "the WebSocket
-  // is open". A client that sent a malformed / bad-sig subscribe
-  // never gets this; a client that did gets one before the chain
-  // arrives. Lets the UI surface a `connecting → online`
-  // transition based on real handshake completion, not just
-  // socket state.
-  send(socket, { type: 'workspace-subscribed', workspaceTag: tag })
-  // `from` is the last revision id the client claims to have
-  // applied — now a base64url string, not an integer. We send
-  // only revisions after that. Client lying about `from` just
-  // means they get a smaller catch-up — their subsequent saves
-  // will reveal stale state on the usual base-mismatch path.
-  // Null / missing → send the full chain.
-  const fromId = typeof msg.from === 'string' ? msg.from : null
-  const revisions = chainForWire(await chainFrom(handle, tag, fromId))
-  if (DEBUG) console.log(`subscribe ${debugTag(tag)} from=${fromId?.slice(0, 8) ?? 'null'} → chain ${revisions.length}`)
-  send(socket, { type: 'workspace-state', workspaceTag: tag, revisions })
-}
 
 // `/api/*` is reserved for backend traffic so a fronting nginx
 // (or similar) can route `/api/*` → this process and `/*` → the
@@ -1178,23 +444,22 @@ let pendingExitCode = 0
 
 wss.on('connection', (socket: WebSocket, req) => {
   if (DEBUG) console.log(`connect from ${req.socket.remoteAddress}`)
-  // Seed the heartbeat tracker `true`. The periodic sweep flips it
-  // to `false` after each `ping()`; the `pong` listener flips it
-  // back. A socket the sweep observes still `false` on the next
-  // tick gets terminated — that's the only thing closing FDs for
-  // an idle non-browser client.
-  socketAlive.set(socket, true)
-  socket.on('pong', () => { socketAlive.set(socket, true) })
-  // Issue a per-connection challenge nonce BEFORE the client can
-  // send anything that needs it. The client signs this nonce into
-  // every `workspace-subscribe` (see canonicalSubscribe in
-  // server/sign.ts); a captured subscribe frame can't be replayed
-  // from a different connection because that connection's nonce
-  // is different and the signature won't verify against the new
-  // canonical bytes. Audit round-9 H2.
-  const nonce = newChallenge()
-  socketChallenge.set(socket, nonce)
-  send(socket, { type: 'challenge', nonce })
+  // One Peer holds this connection's state (challenge / authorized /
+  // alive / inflight / tags). Created before any client frame can
+  // arrive (`socket.on('message')` is wired below). The heartbeat
+  // sweep flips `alive` false after each `ping()`; the `pong` listener
+  // flips it back, and a socket still false on the next sweep is
+  // terminated — the only thing closing FDs for an idle peer.
+  const peer = new Peer(randomId())
+  peers.set(socket, peer)
+  socket.on('pong', () => { peer.alive = true })
+  // Issue the per-connection challenge nonce BEFORE the client can
+  // send anything that needs it. The client signs it into every
+  // `workspace-subscribe` (see canonicalSubscribe in server/sign.ts);
+  // a captured subscribe frame can't be replayed from a different
+  // connection because that connection's nonce differs and the
+  // signature won't verify against the new canonical bytes. Round-9 H2.
+  send(socket, { type: 'challenge', nonce: peer.challenge })
   // Per-socket handlers are DELIBERATELY NOT serialized (vs the
   // client-side `messageQueue = messageQueue.then(...)` Promise
   // chain inside `client/triage-sync.ts:onTransportMessage`).
@@ -1258,9 +523,8 @@ wss.on('connection', (socket: WebSocket, req) => {
       handleAuthenticate(socket, parsed as AuthenticateMsg)
       return
     }
-    const inflightForSocket = socketInflight.get(socket) ?? 0
-    if (inflightForSocket >= MAX_INFLIGHT_PER_SOCKET) {
-      if (DEBUG) console.warn(`drop message: socket inflight ${inflightForSocket} >= ${MAX_INFLIGHT_PER_SOCKET}`)
+    if (peer.inflight >= MAX_INFLIGHT_PER_SOCKET) {
+      if (DEBUG) console.warn(`drop message: socket inflight ${peer.inflight} >= ${MAX_INFLIGHT_PER_SOCKET}`)
       // For workspace-save specifically, send a typed NACK so the
       // client's `pending` slot clears IMMEDIATELY instead of
       // hanging until the next heartbeat (~15–30s). Reason `busy`
@@ -1298,7 +562,7 @@ wss.on('connection', (socket: WebSocket, req) => {
       }
       return
     }
-    socketInflight.set(socket, inflightForSocket + 1)
+    peer.inflight += 1
     const handler = (async () => {
       try {
         if (parsed.type === 'workspace-save') await handleSave(socket, parsed as SaveMsg)
@@ -1321,23 +585,19 @@ wss.on('connection', (socket: WebSocket, req) => {
         const typeStr = typeof parsed.type === 'string' ? parsed.type : '<unknown>'
         console.warn(`Handler error (type=${typeStr}):`, errStack(err))
       } finally {
-        const n = (socketInflight.get(socket) ?? 1) - 1
-        if (n <= 0) socketInflight.delete(socket)
-        else socketInflight.set(socket, n)
+        peer.inflight -= 1
       }
     })()
     track(handler)
   })
   socket.on('close', () => {
-    unsubscribeAll(socket)
-    // WeakMap entries clear via GC once the socket is unreachable,
-    // but `wss.clients` (and the `ws` library's internals) hold the
-    // socket strongly until well after `close` — explicit delete on
-    // BOTH WeakMaps keeps the nonce + tag-set out of memory
+    // `unsubscribeAll` reads `peer.tags` (peer still registered), then
+    // we drop the Peer. The Peer's state would GC once the socket is
+    // unreachable, but `wss.clients` / `ws` internals hold the socket
+    // strongly well past `close`, so the explicit delete frees it
     // immediately. Audit round-10 + round-13.
-    socketChallenge.delete(socket)
-    socketTags.delete(socket)
-    socketAuthorized.delete(socket)
+    unsubscribeAll(socket)
+    peers.delete(socket)
   })
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness
@@ -1361,11 +621,12 @@ wss.on('connection', (socket: WebSocket, req) => {
 // after `wss.close` resolved.
 const heartbeatTimer = setInterval(() => {
   for (const ws of wss.clients) {
-    if (socketAlive.get(ws) === false) {
+    const peer = peers.get(ws)
+    if (peer?.alive === false) {
       try { ws.terminate() } catch {}
       continue
     }
-    socketAlive.set(ws, false)
+    if (peer) peer.alive = false
     try { ws.ping() } catch {}
   }
 }, HEARTBEAT_INTERVAL_MS)
