@@ -17,9 +17,14 @@
 // registers the module mock at import time.
 
 import { after, mock } from 'node:test'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 
 import { openNeonDb } from '../server/db-neon.ts'
+import { openNeonObjstore } from '../server/objstore/store-neon.ts'
+import { openFsBlobBackend } from '../server/objstore/blob-fs.ts'
 
 // One PGlite instance shared across the whole file. WASM init costs
 // ~1-2s, so creating an instance per test would dominate the suite's
@@ -120,6 +125,52 @@ export async function freshNeonDb() {
 // `pendingFault`. `fault` is `{ before?: (pg) => Promise<void>, error }`.
 export function failNextCommit(fault) {
   pendingFault = fault
+}
+
+// ---- v1.objstore Neon plane (store-neon.ts) ----
+// Pairs the PGlite metadata plane with a REAL filesystem byte plane —
+// the same `openFsBlobBackend` the SQLite `openObjstore` uses — so only
+// the metadata SQL differs from the SQLite suite. The objstore plane is
+// lock-free (atomic version-CAS commits + content-addressed blobs), so
+// there is no commit-lock helper to mock. The Neon Handle leaves `dir`
+// unset, so ported tests compute staging/live paths from the returned
+// `objDir` (live blobs are content-addressed: liveFilePath(objDir, tag,
+// contentHash)).
+
+const OBJSTORE_TABLES = 'workspace_object, workspace_object_staging'
+
+export async function freshNeonObjstore() {
+  pendingFault = null
+  const pg = sharedInstance()
+  await pg.exec(`DROP TABLE IF EXISTS ${OBJSTORE_TABLES}`)
+  const root = mkdtempSync(path.join(tmpdir(), `deepview-neon-obj-${++counter}-`))
+  const objDir = path.join(root, 'objstore')
+  mkdirSync(objDir, { recursive: true })
+  const handle = await openNeonObjstore(`pglite://objstore-${counter}`, openFsBlobBackend(objDir))
+  return {
+    handle,
+    objDir,
+    pg,
+    cleanup: () => { rmSync(root, { recursive: true, force: true }) },
+  }
+}
+
+// Two Neon Handles over the SAME PGlite + SAME blob dir — two replicas
+// pointed at one Neon endpoint + blob store, the deployment shape the
+// lock-free version-CAS commit path is built for (the SQLite suite only
+// *simulates* this with two connections to one file). Used to pin the
+// "exactly one of N racing commits wins, the rest get conflict"
+// invariant the design rests on.
+export async function twoNeonReplicas() {
+  const fx = await freshNeonObjstore()
+  const handle2 = await openNeonObjstore(`pglite://objstore-r2-${counter}`, openFsBlobBackend(fx.objDir))
+  return {
+    handle1: fx.handle,
+    handle2,
+    objDir: fx.objDir,
+    pg: fx.pg,
+    cleanup: fx.cleanup,
+  }
 }
 
 after(async () => {
