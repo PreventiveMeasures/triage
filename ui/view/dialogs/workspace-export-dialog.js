@@ -208,7 +208,7 @@ class WorkspaceExportDialog extends AppDialog {
 
   render() {
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>Export workspace</h3>
       </header>
       ${this._body()}

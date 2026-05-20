@@ -264,7 +264,7 @@ class WorkspaceShareLinkDialog extends AppDialog {
 
   render() {
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>${this._url ? 'Workspace share link' : 'Share workspace by link'}</h3>
       </header>
       ${this._body()}

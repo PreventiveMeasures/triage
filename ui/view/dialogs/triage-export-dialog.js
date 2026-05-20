@@ -106,12 +106,12 @@ class TriageExportDialog extends AppDialog {
   render() {
     const p = this.parsed
     return html`<dialog @close=${this._onClose}>
-      <header class="te-head">
+      <header>
         <h3>Triage backup</h3>
         <p>Bundles every triage entry (markers, triage states, comments, fixes, per-report ignores) and all saved repo URLs into a single gzipped JSON file.</p>
       </header>
 
-      <section class="te-section">
+      <section class="section">
         <h4>Export</h4>
         <p>Download the current triage + repo-URL set as a portable backup.</p>
         <button type="button" class="primary" @click=${this._onDownload} ?disabled=${this.busy}>
@@ -121,20 +121,20 @@ class TriageExportDialog extends AppDialog {
 
       <hr>
 
-      <section class="te-section">
+      <section class="section">
         <h4>Import</h4>
         <p>Pick a previously-exported backup. Nothing is applied until you click Apply.</p>
         <input type="file" accept=".gz,application/gzip" @change=${this._onFile} ?disabled=${this.busy}>
         ${this.parseError
-          ? html`<div class="te-error">Failed to parse: ${this.parseError}</div>`
+          ? html`<div class="error">Failed to parse: ${this.parseError}</div>`
           : nothing}
         ${p ? html`
-          <div class="te-summary">
+          <div class="summary">
             Found <strong>${Object.keys(p.triage).length}</strong> triage entries and
             <strong>${Object.keys(p.repoUrls).length}</strong> repo URLs.
-            ${p.exportedAt ? html`<span class="te-meta">Exported ${p.exportedAt}.</span>` : nothing}
+            ${p.exportedAt ? html`<span class="meta">Exported ${p.exportedAt}.</span>` : nothing}
           </div>
-          <fieldset class="te-mode">
+          <fieldset class="mode">
             <legend>Merge mode</legend>
             <label>
               <input type="radio" name="te-mode" value="prefer-current"
@@ -159,10 +159,10 @@ class TriageExportDialog extends AppDialog {
       </section>
 
       ${this.status
-        ? html`<div class=${`te-status te-status-${this.status.kind}`}>${this.status.text}</div>`
+        ? html`<div class=${`status status-${this.status.kind}`}>${this.status.text}</div>`
         : nothing}
 
-      <footer class="te-actions">
+      <footer class="actions">
         <button type="button" @click=${this._onClose}>Close</button>
       </footer>
     </dialog>`

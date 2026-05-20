@@ -191,7 +191,7 @@ class LeaveWorkspaceDialog extends AppDialog {
         ? html`<p class="lwd-empty">No reports are attached to this workspace (only bundles, see below).</p>`
         : html`<p class="lwd-empty">No reports are attached to this workspace.</p>`)
     return html`<dialog @close=${this._onClose}>
-      <header class="lwd-head">
+      <header>
         <h3>Leave workspace</h3>
       </header>
       <p class="lwd-body">

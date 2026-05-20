@@ -163,7 +163,7 @@ class DeleteReportDialog extends AppDialog {
 
   render() {
     return html`<dialog @close=${this._onClose}>
-      <header class="lwd-head">
+      <header>
         <h3>Delete report</h3>
       </header>
       <p class="lwd-body">

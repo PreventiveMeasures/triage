@@ -56,7 +56,7 @@ class SyncAuthDialog extends AppDialog {
       ? 'That password didn\'t match. Try again, or cancel to leave the workspace unsynced for now.'
       : 'This sync server requires a password before it accepts a new workspace. Enter it to create the workspace on the server.'
     return html`<dialog @close=${this._onClose}>
-      <header class="nwd-head">
+      <header>
         <h3>Sync server password</h3>
       </header>
       <p class="nwd-intro">${intro}</p>

@@ -1,28 +1,27 @@
 /* `<fix-link-dialog>` layer — single-line URL editor for the per-
    finding .mark-fix button. Composed into the dialog's shadow
    `static styles` on top of dialog-base.css (frame + reset + WCO)
-   and dialog-severity.css (the `.conflict-sev` chip). Only the
-   frame width + the `.fl-*` inner chrome live here. Flattened from
-   the `.fix-link-dialog { … }` block in styles/dialogs.css. */
+   and dialog-severity.css (the `.conflict-sev` chip). Shadow
+   isolation lets the body address the lone input by type and use
+   short, unprefixed class names. */
 
 /* Wider frame than the base 480px for the URL row. */
 dialog { max-width: 560px; width: min(94vw, 560px); }
 
-.fl-head h3 {
-  margin: 0 0 .4rem; font-size: 1rem; font-weight: 600;
-}
-.fl-finding {
+header h3 { margin: 0 0 .4rem; }  /* tighter than base; font/weight inherited */
+
+.finding {
   display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap;
   margin-bottom: .35rem;
 }
-.fl-loc {
+.loc {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76rem; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0; flex: 1;
 }
-.fl-desc {
+.desc {
   font-size: .78rem; color: var(--muted);
   margin: 0 0 .7rem;
   display: -webkit-box;
@@ -30,10 +29,10 @@ dialog { max-width: 560px; width: min(94vw, 560px); }
   overflow: hidden;
 }
 
-.fl-input-row {
+.input-row {
   display: flex; align-items: stretch; gap: .4rem;
 }
-.fl-input {
+input {
   flex: 1; min-width: 0;
   padding: .5rem .65rem;
   border: 1px solid var(--border); border-radius: 6px;
@@ -52,7 +51,7 @@ dialog { max-width: 560px; width: min(94vw, 560px); }
     font-family: inherit;
   }
 }
-.fl-open {
+.open {
   display: inline-flex; align-items: center;
   padding: 0 .7rem;
   border: 1px solid var(--accent); border-radius: 6px;
@@ -62,7 +61,7 @@ dialog { max-width: 560px; width: min(94vw, 560px); }
 
   &:hover { background: rgb(from var(--accent) r g b / .1); }
 }
-.fl-hint {
+.hint {
   margin: .45rem 0 0;
   color: var(--muted); font-size: .74rem;
 }

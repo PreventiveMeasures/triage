@@ -81,19 +81,18 @@ class FixLinkDialog extends AppDialog {
     const trimmed = (this._value ?? '').trim()
     const openable = isHttpUrl(trimmed)
     return html`<dialog @close=${this._onClose}>
-      <header class="fl-head">
+      <header>
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
-        <div class="fl-finding">
+        <div class="finding">
           ${severityBadge(f.severity)}
-          ${loc ? html`<span class="fl-loc" title=${loc}>${loc}</span>` : nothing}
+          ${loc ? html`<span class="loc" title=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description
-          ? html`<div class="fl-desc" title=${f.description}>${f.description}</div>`
+          ? html`<div class="desc" title=${f.description}>${f.description}</div>`
           : nothing}
       </header>
-      <div class="fl-input-row">
+      <div class="input-row">
         <input
-          class="fl-input"
           type="url"
           inputmode="url"
           autocomplete="off"
@@ -104,10 +103,10 @@ class FixLinkDialog extends AppDialog {
           @keydown=${this._onKeydown}
         >
         ${openable
-          ? html`<a class="fl-open" href=${trimmed} target="_blank" rel="noopener noreferrer" title="Open in a new tab">Open ↗</a>`
+          ? html`<a class="open" href=${trimmed} target="_blank" rel="noopener noreferrer" title="Open in a new tab">Open ↗</a>`
           : nothing}
       </div>
-      <p class="fl-hint">PR URL, issue link, commit, or any free-form reference. Enter to save, Esc to cancel.</p>
+      <p class="hint">PR URL, issue link, commit, or any free-form reference. Enter to save, Esc to cancel.</p>
       <footer class="nwd-actions">
         ${hasInitial
           ? html`<button type="button" class="danger" @click=${this._onClear}>Clear</button>`

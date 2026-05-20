@@ -22,7 +22,10 @@ dialog {
   &::backdrop { background: rgb(from var(--theme-bar) r g b / .55); backdrop-filter: blur(2px); }
 }
 
-.nwd-head h3 {
+/* Every dialog has exactly one `<header><h3>`; address it by type
+   so the bodies don't each carry a `*-head` class. Per-dialog layers
+   override just the margin where they differ. */
+header h3 {
   margin: 0 0 .6rem; font-size: 1rem; font-weight: 600;
 }
 .nwd-input {
