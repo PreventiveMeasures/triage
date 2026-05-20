@@ -36,7 +36,7 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // and the boot-time restore in view.js all key off this list.
 // 'packages' is the default and is omitted from the LAST_FILE_KEY
 // suffix; an unrecognised value on restore falls back to 'packages'.
-export const BUNDLE_TABS = new Set(['packages', 'files', 'reports', 'graph', 'issues', 'code', 'terminal'])
+export const BUNDLE_TABS = new Set(['packages', 'files', 'reports', 'graph', 'treemap', 'issues', 'code', 'terminal'])
 
 // Persist a bundle selection to LAST_FILE_KEY, encoding the active
 // sub-tab as `b:<integrity> <tab>`. The default 'packages' tab is

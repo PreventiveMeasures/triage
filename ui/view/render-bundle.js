@@ -555,6 +555,11 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       <button
         type="button"
         class="bundles-tab bundles-tab-action"
+        data-bundle-tab="treemap"
+      >Treemap →</button>
+      <button
+        type="button"
+        class="bundles-tab bundles-tab-action"
         data-bundle-tab="graph"
       >Graph →</button>
       ${issueTotal > 0 ? html`<button
@@ -1250,6 +1255,130 @@ function renderBundleCodeView(details) {
   </div>`
 }
 
+// Pick black or white label text for legibility over an arbitrary
+// hex fill. Treemap cells paint the package hue edge to edge, so the
+// foreground has to adapt per color (the pastel dark-theme golds /
+// light blues want dark text; the saturated tones want white).
+// Standard sRGB relative-luminance split — no per-theme table to
+// keep in sync with the palette.
+function readableTextOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/iu.exec(hex)
+  if (!m) return '#fff'
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 0xff
+  const g = (n >> 8) & 0xff
+  const b = n & 0xff
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+  return lum > 0.6 ? '#1a1a1a' : '#fff'
+}
+
+// Treemap slide — an area-accurate picture of where a bundle's
+// source bytes live. Two-level slice-and-dice built entirely from
+// flexbox: each PACKAGE is a row whose height grows with its total
+// source bytes, and within a row each FILE is a cell whose width
+// grows with its own size. Every row spans the full width, so a
+// cell's AREA tracks its share of the whole bundle (row-height ∝
+// pkgTotal, cell-width ∝ fileSize / pkgTotal, product ∝ fileSize /
+// grandTotal). No canvas, no pixel measurement — it reflows with the
+// slide and re-renders cheaply through Lit, the 2-D sibling of the
+// Packages-tab stacked bar (`renderBundleSizeDistribution`). Package
+// hues come from the shared `pkgColor` palette so a package reads as
+// the same color here, in that bar, and on the graph canvas; clicking
+// a cell opens the source viewer via the same `data-bundle-view-source`
+// delegate the Files tab + Code slide use.
+//
+// Real stasis bundles vendor whole dependency trees (hundreds of tiny
+// modules), so each package's sub-pixel long tail (files below
+// MIN_CELL_FRACTION of the bundle) folds into one non-clickable "+N"
+// cell — the plot stays legible and the merged cell's grow is the
+// summed bytes, so the area stays honest. A package with a single
+// tail file keeps it as its own clickable cell instead.
+const MIN_CELL_FRACTION = 0.002
+function renderBundleTreemap(details) {
+  if (!details || (!details.json && !details.bundle)) return nothing
+  const sources = bundleSourcesAsMap(details)
+  if (sources.size === 0) {
+    return html`<div class="bundle-treemap-empty">This bundle doesn't carry any source content.</div>`
+  }
+  // Bucket files by package on the PREFIX-STRIPPED path so a shared
+  // build-output root doesn't collapse everything under one package
+  // (same reason renderBundleSourcesPanel strips before bucketing).
+  const origPaths = [...sources.keys()]
+  const { prefix, stripped } = stripCommonPathPrefix(origPaths)
+  const enc = new TextEncoder()
+  const byPkg = new Map()
+  let grandTotal = 0
+  for (let i = 0; i < origPaths.length; i++) {
+    const content = sources.get(origPaths[i])
+    const size = typeof content === 'string' ? enc.encode(content).byteLength : 0
+    if (size <= 0) continue
+    grandTotal += size
+    const pkg = bundlePkgOf(stripped[i])
+    let bucket = byPkg.get(pkg)
+    if (!bucket) { bucket = { pkg, total: 0, files: [] }; byPkg.set(pkg, bucket) }
+    bucket.total += size
+    bucket.files.push({ orig: origPaths[i], bare: stripped[i], size })
+  }
+  if (grandTotal === 0) {
+    return html`<div class="bundle-treemap-empty">Source files carry no measurable size.</div>`
+  }
+  // Largest package row on top, largest cell first within each row.
+  // Then fold each package's sub-threshold tail into one merged cell
+  // (only when it collapses 2+ files — a lone small file keeps its
+  // own clickable cell rather than hiding behind a "+1").
+  const threshold = grandTotal * MIN_CELL_FRACTION
+  const rows = [...byPkg.values()].toSorted((a, b) => b.total - a.total)
+  for (const row of rows) {
+    row.files.sort((a, b) => b.size - a.size)
+    const big = row.files.filter((f) => f.size >= threshold)
+    const small = row.files.filter((f) => f.size < threshold)
+    const cells = big.map((f) => ({ kind: 'file', orig: f.orig, bare: f.bare, size: f.size }))
+    if (small.length >= 2) {
+      cells.push({ kind: 'other', size: small.reduce((n, f) => n + f.size, 0), count: small.length })
+    } else {
+      for (const f of small) cells.push({ kind: 'file', orig: f.orig, bare: f.bare, size: f.size })
+    }
+    row.cells = cells
+    row.color = pkgColor(row.pkg)
+    row.textColor = readableTextOn(row.color)
+    row.label = row.pkg === '__own__' ? 'own source' : row.pkg
+  }
+  const fileCount = origPaths.length
+  const pct = (n) => (n / grandTotal) * 100
+  return html`<div class="bundle-treemap">
+    <header class="bundle-treemap-head">
+      <span class="bundle-treemap-title">Source treemap</span>
+      <span class="bundle-treemap-sub">${fileCount} ${fileCount === 1 ? 'file' : 'files'} · ${byPkg.size} ${byPkg.size === 1 ? 'package' : 'packages'} · ${formatBytes(grandTotal)}${prefix ? html` · <span class="mono" title=${prefix}>${prefix}</span>` : nothing}</span>
+    </header>
+    <div class="bundle-treemap-plot">
+      ${repeat(rows, (row) => row.pkg, (row) => html`<div
+          class="bundle-treemap-row"
+          style=${styleMap({ flexGrow: row.total, color: row.textColor })}
+          title=${`${row.label} — ${formatBytes(row.total)} (${pct(row.total).toFixed(1)}%)`}
+        >
+          ${repeat(
+            row.cells,
+            (cell) => cell.kind === 'file' ? cell.orig : `__other__:${row.pkg}`,
+            (cell) => cell.kind === 'other'
+              ? html`<div
+                  class="bundle-treemap-cell bundle-treemap-cell-other"
+                  style=${styleMap({ flexGrow: cell.size, background: row.color })}
+                  title=${`${cell.count} smaller files — ${formatBytes(cell.size)} · ${pct(cell.size).toFixed(2)}%`}
+                ><span class="bundle-treemap-cell-label">+${cell.count}</span></div>`
+              : html`<button
+                  type="button"
+                  class="bundle-treemap-cell"
+                  style=${styleMap({ flexGrow: cell.size, background: row.color })}
+                  data-bundle-view-source=${cell.orig}
+                  title=${`${cell.bare}\n${formatBytes(cell.size)} · ${pct(cell.size).toFixed(2)}% of bundle`}
+                ><span class="bundle-treemap-cell-label">${cell.bare}</span></button>`,
+          )}
+          <span class="bundle-treemap-row-tag" aria-hidden="true">${row.label}</span>
+        </div>`)}
+    </div>
+  </div>`
+}
+
 function renderBundleSlide(entry) {
   const tab = state.bundleDetailsTab
   // Hide the in-slide Graph / Issues switcher when this bundle has
@@ -1292,6 +1421,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'graph')}
           role="tab"
         >Graph</button>
+        <button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
+          data-bundle-tab="treemap"
+          aria-selected=${String(tab === 'treemap')}
+          role="tab"
+        >Treemap</button>
         ${hasIssues ? html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
@@ -1312,6 +1448,7 @@ function renderBundleSlide(entry) {
       ${choose(tab, [
         ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
         ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+        ['treemap', () => renderBundleTreemap(state.bundleDetails)],
         ['code', () => renderBundleCodeView(state.bundleDetails)],
         ['issues', () => renderBundleIssuesList(state.bundleDetails)],
       ])}
@@ -1533,7 +1670,7 @@ export function renderBundlesList(bundles) {
   // sub-tab's content edge to edge. The other tabs (no bundle
   // open, or Packages / Files) render the regular list + details.
   const inSlide = selectedEntry
-    && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
+    && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'graph' || state.bundleDetailsTab === 'treemap' || state.bundleDetailsTab === 'issues' || state.bundleDetailsTab === 'code')
   // Source modal mounts at the global overlay slot via render.js;
   // no need to inline it here.
   if (inSlide) return renderBundleSlide(selectedEntry)

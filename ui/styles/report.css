@@ -445,6 +445,130 @@
   scrollbar-gutter: stable;
 }
 
+/* Treemap slide — two-level slice-and-dice size map. The plot is a
+   vertical flex stack of package rows (height ∝ package bytes); each
+   row is a horizontal strip of file cells (width ∝ file bytes).
+   flex-basis:0 + min-width/height:0 leave `flex-grow` as the sole
+   size driver, so a cell's area tracks its share of the bundle. Each
+   row's text color is set inline (luminance-picked against the
+   package hue) so labels stay legible over any palette entry. */
+.bundles-slide-body > .bundle-treemap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.bundle-treemap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.bundle-treemap-title {
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-size: .7rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bundle-treemap-sub {
+  min-width: 0;
+  font-size: .72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  & .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+.bundle-treemap-plot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  overflow: hidden;
+}
+.bundle-treemap-row {
+  position: relative;
+  flex-basis: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  overflow: hidden;
+}
+/* Cell = a file (button, opens the source viewer) or the merged
+   tail (div). Bottom-aligned label so it never collides with the
+   row's top-left package tag. */
+.bundle-treemap-cell {
+  flex-basis: 0;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: filter .1s ease;
+
+  &:hover { filter: brightness(1.12); }
+  &:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+}
+.bundle-treemap-cell-other {
+  cursor: default;
+  opacity: .55;
+}
+.bundle-treemap-cell-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .66rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Package name pinned to the row's top-left, out of flow so it
+   doesn't eat any of the proportional width. Theme-colored chip so
+   it reads regardless of the row's fill hue. */
+.bundle-treemap-row-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: 65%;
+  padding: 0 4px;
+  font-size: .62rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text);
+  background: rgb(from var(--surface) r g b / .72);
+  border-bottom-right-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.bundle-treemap-empty {
+  margin: auto;
+  padding: 2rem;
+  color: var(--muted);
+  font-size: .85rem;
+  text-align: center;
+}
+
 /* Code slide — file tree on the left, source viewer on the
    right (and an optional finding panel inside the right column
    when a per-line dot is clicked). flex chain so both columns
