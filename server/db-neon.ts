@@ -38,6 +38,19 @@
 
 import type { AllStmt, GetStmt, RunStmt } from './db-stmt.ts'
 import { type CommitResult, type Handle, type RevisionInsert, type RevisionRow, isUniqueViolation } from './db.ts'
+import {
+  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, HEAD_FOR_SQL, LAST_KEYFRAME_SEQ_SQL,
+  REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, buildGatedInsertSql, mapRevisionRow, num, numOrNull,
+} from './db-revision-sql.ts'
+
+// `num` / `numOrNull` (safe-integer BIGINT coercion) live in the shared
+// `./db-revision-sql.ts` so the shared `mapRevisionRow` can use them
+// without a backend→backend import cycle. Re-exported here because the
+// objstore Neon plane (`./objstore/store-neon.ts`) imports them from
+// this module — keeping that import working without touching the
+// objstore code, and keeping a single definition shared by all three
+// call sites (revision Neon, revision SQLite mapper, objstore Neon).
+export { num, numOrNull }
 
 // Minimal structural type for the `neon()` callable. We don't pull
 // `@neondatabase/serverless`'s types in at the top level because
@@ -147,48 +160,6 @@ const SCHEMA_PG = [
   // covering lookups — Postgres' planner does.
 ]
 
-// Postgres BIGINT can round-trip through the Neon driver as a string
-// when the value would lose precision. For our use (per-workspace
-// monotonic seq, epoch ms, byte lengths up to 100 MiB) the JS safe-
-// integer range is fine — coerce to number for parity with the
-// SQLite shape so chain consumers don't need to special-case the
-// backend. Strict: throw on anything that isn't a safe-integer-
-// compatible value. Silently returning 0 / null for unexpected shapes
-// would mask driver-shape changes and let bogus values feed `seq` /
-// `head` / length / version comparisons. `numOrNull`'s null return is
-// reserved for genuine SQL NULL. Both Neon planes share these — the
-// objstore plane (`store-neon.ts`) imports them rather than keeping
-// its own copies.
-export function num(v: unknown): number {
-  if (typeof v === 'number' && Number.isSafeInteger(v)) return v
-  if (typeof v === 'string' && v.length > 0) {
-    const n = Number(v)
-    if (Number.isSafeInteger(n)) return n
-  }
-  if (typeof v === 'bigint' && v >= -9_007_199_254_740_991n && v <= 9_007_199_254_740_991n) {
-    return Number(v)
-  }
-  throw new TypeError(`num: expected safe-integer value, got ${typeof v} ${String(v)}`)
-}
-export function numOrNull(v: unknown): number | null {
-  if (v == null) return null
-  return num(v)
-}
-
-function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
-  return {
-    base: (r['base'] as string | null) ?? null,
-    id: String(r['id']),
-    // SMALLINT round-trips as `number`; coerce defensively so a
-    // driver upgrade returning `string` doesn't silently break the
-    // strict-equality `keyframe === 1` check downstream.
-    keyframe: numOrNull(r['keyframe']) === 1 ? 1 : 0,
-    nonce: String(r['nonce']),
-    ciphertext: String(r['ciphertext']),
-    signature: String(r['signature']),
-  }
-}
-
 // Generic statement-builder helpers shared by both Neon planes
 // (workspace_revision here + the objstore tables in store-neon.ts).
 // They remove the repeated `{ run/get: async (...args) => sql(...) }`
@@ -214,26 +185,12 @@ export function getRowStmt<P extends unknown[], T>(sql: NeonSql, query: string):
 // (max-lines-per-function budget). Each closes over the Neon `sql`
 // callable.
 function buildHeadFor(sql: NeonSql): GetStmt<[string], { id: string }> {
-  return getRowStmt(sql, `SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`)
-}
-
-function buildHeadSeq(sql: NeonSql): GetStmt<[string], { s: number | null }> {
-  return { get: async (tag) => {
-    const rows = await sql(
-      `SELECT MAX(seq) AS s FROM workspace_revision WHERE workspace_tag = $1`,
-      [tag],
-    ) as Array<{ s: number | string | null }>
-    const r = rows[0]
-    return r ? { s: numOrNull(r.s) } : undefined
-  } }
+  return getRowStmt(sql, HEAD_FOR_SQL)
 }
 
 function buildSeqOfId(sql: NeonSql): GetStmt<[string, string], { seq: number }> {
   return { get: async (tag, id) => {
-    const rows = await sql(
-      `SELECT seq FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`,
-      [tag, id],
-    ) as Array<{ seq: number | string }>
+    const rows = await sql(SEQ_OF_ID_SQL, [tag, id]) as Array<{ seq: number | string }>
     const r = rows[0]
     if (!r) return undefined
     const n = numOrNull(r.seq)
@@ -243,10 +200,7 @@ function buildSeqOfId(sql: NeonSql): GetStmt<[string, string], { seq: number }> 
 
 function buildLastKeyframeSeq(sql: NeonSql): GetStmt<[string], { s: number | null }> {
   return { get: async (tag) => {
-    const rows = await sql(
-      `SELECT MAX(seq) AS s FROM workspace_revision WHERE workspace_tag = $1 AND keyframe = 1`,
-      [tag],
-    ) as Array<{ s: number | string | null }>
+    const rows = await sql(LAST_KEYFRAME_SEQ_SQL, [tag]) as Array<{ s: number | string | null }>
     const r = rows[0]
     return r ? { s: numOrNull(r.s) } : undefined
   } }
@@ -267,13 +221,7 @@ function buildChainSeq(sql: NeonSql, query: string): AllStmt<[string, number], R
 }
 
 function buildRevisionExists(sql: NeonSql): GetStmt<[string, string], unknown> {
-  return getRowStmt(sql, `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`)
-}
-
-function buildInsertRevision(sql: NeonSql): RunStmt<[string, number, string, string | null, number, string, string, string, number]> {
-  return runStmt(sql, `INSERT INTO workspace_revision
-         (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`)
+  return getRowStmt(sql, REVISION_EXISTS_SQL)
 }
 
 // Atomic commit of a single revision (Neon backend). Wraps the
@@ -322,29 +270,22 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
         // the two flows. Acceptable for a small-collision-rate space.
         sql(`SELECT pg_advisory_xact_lock($1, hashtext($2))`, [COMMIT_LOCK_NAMESPACE, tag]),
         // Dup-id check.
-        sql(`SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`, [tag, id]),
+        sql(REVISION_EXISTS_SQL, [tag, id]),
         // Current head id (NULL when the chain is empty).
-        sql(`SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`, [tag]),
-        // Gated INSERT. `seq` is computed via the same MAX(seq)
+        sql(HEAD_FOR_SQL, [tag]),
+        // Gated INSERT (shared `$N` builder, Postgres null-safe equality
+        // `IS NOT DISTINCT FROM`). `seq` is computed via the same MAX(seq)
         // subquery as the head-check's snapshot. The WHERE clause
         // re-asserts both gates so the INSERT is a no-op when either
         // fails. RETURNING seq lets us discriminate inserted vs
         // not-inserted by row count.
         //
-        // `IS NOT DISTINCT FROM` is the NULL-safe equality needed to
-        // match `base = NULL` on the first revision against the
-        // empty-chain head (also NULL). Plain `=` would always be
-        // NULL → false → first revision would never insert.
+        // The null-safe equality matches `base = NULL` on the first
+        // revision against the empty-chain head (also NULL). Plain `=`
+        // would always be NULL → false → first revision would never
+        // insert.
         sql(
-          `INSERT INTO workspace_revision
-             (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
-           SELECT $1,
-                  COALESCE((SELECT MAX(seq) FROM workspace_revision WHERE workspace_tag = $1), 0) + 1,
-                  $2, $3, $4, $5, $6, $7, $8
-           WHERE NOT EXISTS (SELECT 1 FROM workspace_revision WHERE workspace_tag = $1 AND id = $2)
-             AND (SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1)
-                 IS NOT DISTINCT FROM $3
-           RETURNING seq`,
+          buildGatedInsertSql('IS NOT DISTINCT FROM'),
           [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
         ),
       ])
@@ -362,15 +303,9 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
       // driver rejection escaping to `handleSave`'s IIFE. Other
       // errors (network, syntax, type mismatch) rethrow.
       if (!isUniqueViolation(err)) throw err
-      const dupRows = await sql(
-        `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`,
-        [tag, id],
-      ) as Array<unknown>
+      const dupRows = await sql(REVISION_EXISTS_SQL, [tag, id]) as Array<unknown>
       if (dupRows.length > 0) return { kind: 'inserted' }
-      const headRows = await sql(
-        `SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`,
-        [tag],
-      ) as Array<{ id: string }>
+      const headRows = await sql(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
       return { kind: 'stale-base', head: headRows[0]?.id ?? null }
     }
     const dupRows = results[1] as Array<unknown>
@@ -381,13 +316,6 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
     return { kind: 'stale-base', head: headRows[0]?.id ?? null }
   }
 }
-
-const CHAIN_ALL_SQL = `SELECT base, id, keyframe, nonce, ciphertext, signature
-  FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq ASC`
-const CHAIN_AFTER_SQL = `SELECT base, id, keyframe, nonce, ciphertext, signature
-  FROM workspace_revision WHERE workspace_tag = $1 AND seq > $2 ORDER BY seq ASC`
-const CHAIN_FROM_SQL = `SELECT base, id, keyframe, nonce, ciphertext, signature
-  FROM workspace_revision WHERE workspace_tag = $1 AND seq >= $2 ORDER BY seq ASC`
 
 export async function openNeonDb(connectionString: string): Promise<Handle> {
   // Dynamic import so the dep is only required when the Neon path is
@@ -420,17 +348,17 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
   ])
 
   const handle: Handle = {
-    // `db` intentionally unset — Neon has no `DatabaseSync`. The
-    // Handle type makes it optional precisely for this case.
+    // `db` (and the SQLite-only `gatedInsert` statement) intentionally
+    // unset — Neon has no `DatabaseSync`, and its gated INSERT lives
+    // inside `tryCommitNeon`'s pipelined transaction. The Handle type
+    // makes both optional precisely for this case.
     headFor: buildHeadFor(sql),
-    headSeq: buildHeadSeq(sql),
     seqOfId: buildSeqOfId(sql),
     lastKeyframeSeq: buildLastKeyframeSeq(sql),
     chainAll: buildChain(sql, CHAIN_ALL_SQL),
     chainAfterSeq: buildChainSeq(sql, CHAIN_AFTER_SQL),
     chainFromSeq: buildChainSeq(sql, CHAIN_FROM_SQL),
     revisionExists: buildRevisionExists(sql),
-    insertRevision: buildInsertRevision(sql),
     tryCommit: tryCommitNeon(sql),
     // The serverless HTTP client is stateless — no socket to close.
     // Async no-op so shutdown's `handle.close()` works uniformly
