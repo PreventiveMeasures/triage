@@ -1,11 +1,12 @@
 // Prism syntax highlighter — loaded ONLY when the bundle
 // source viewer opens a file whose extension we know how to
-// highlight. Built as a separate esbuild entry point so prismjs
+// highlight. Built as a separate bundler entry point so prismjs
 // (~50KB minified for the core + the languages we care about)
 // doesn't land in the main view.js bundle. `view/prism-highlight.js`
-// `await import('./prism.js')`s this file lazily on first
-// use; the dynamic import URL is a runtime string so esbuild leaves
-// it alone and the browser resolves it against the page's URL.
+// `await import('./prism.js')`s this file lazily on first use; the
+// dynamic import URL is a runtime string + `@vite-ignore`, so the
+// bundler leaves it alone and the browser resolves it against the
+// page's URL.
 // prismjs/prism.js publishes itself to `window.Prism` as a side
 // effect of its IIFE, so the language packs (plain scripts that
 // reference `Prism` as a free global) resolve correctly once they
