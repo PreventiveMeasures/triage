@@ -5,13 +5,16 @@
 // affordance for an existing URL, and the same look as the
 // other deepview dialogs.
 //
-// Sibling of `<comment-dialog>`: native <dialog> for focus-trap
-// + Esc-to-cancel, light-DOM render so global stylesheet rules
-// in sidebar.css apply. Public `openFixLinkDialog(...)` returns
-// a Promise that resolves to the trimmed new value, or null on
-// cancel (= no change).
-import { LitElement, html, nothing } from 'lit'
+// Sibling of `<comment-dialog>`: extends `AppDialog` for the shared
+// shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel), with the
+// severity-badge + fix-link layers added on top. Public
+// `openFixLinkDialog(...)` returns a Promise that resolves to the
+// trimmed new value, or null on cancel (= no change).
+import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from './format.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import severityCSS from '../styles/dialog-severity.css'
+import fixLinkCSS from '../styles/dialog-fix-link.css'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing
@@ -19,15 +22,14 @@ function severityBadgeTemplate(sev) {
   return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
 }
 
-class FixLinkDialog extends LitElement {
+class FixLinkDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(fixLinkCSS)]
+
   static properties = {
     initial: { attribute: false },
     finding: { attribute: false },
     _value: { state: true },
   }
-
-  // Light DOM — `.fix-link-dialog` rules live in sidebar.css.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -36,32 +38,22 @@ class FixLinkDialog extends LitElement {
     this._value = ''
   }
 
-  // Show the modal once the <dialog> is in the document, then
-  // focus + select-all the input. Select-all (vs caret-at-end)
+  // Seed the editor from the incoming value before the base
+  // `firstUpdated` shows the modal.
+  beforeOpen() { this._value = this.initial ?? '' }
+
+  // Focus + select-all the input. Select-all (vs caret-at-end)
   // matches single-line URL editors — the common edit is "paste
   // a new URL", which overwrites the current one.
-  firstUpdated() {
-    this._value = this.initial ?? ''
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const input = this.querySelector('input[type="url"]')
-    if (input) {
-      input.focus()
-      try { input.select() } catch {}
-    }
+  focusInitial() {
+    const input = this.renderRoot.querySelector('input[type="url"]')
+    if (!input) return
+    input.focus()
+    try { input.select() } catch {}
   }
 
-  _finish(result) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
-  }
-
-  // Esc / backdrop close → cancel (= no change). The native
-  // <dialog> fires `close` for both paths.
-  _onClose = () => this._finish(null)
+  // Base `_finish` (close + resolve) and `_onClose` (Esc / backdrop →
+  // resolve null) are inherited unchanged.
 
   _onInput = (e) => { this._value = e.target.value }
 
@@ -93,7 +85,7 @@ class FixLinkDialog extends LitElement {
     const hasInitial = (this.initial ?? '').length > 0
     const trimmed = (this._value ?? '').trim()
     const openable = isHttpUrl(trimmed)
-    return html`<dialog class="fix-link-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="fl-head">
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
         <div class="fl-finding">
@@ -141,14 +133,5 @@ customElements.define('fix-link-dialog', FixLinkDialog)
 //   * null on cancel / Esc / backdrop / unchanged save
 // Callers treat null as a no-op.
 export function openFixLinkDialog({ initial = '', finding = null } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('fix-link-dialog')
-    el.initial = initial
-    el.finding = finding
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('fix-link-dialog', { initial, finding })
 }

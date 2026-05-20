@@ -26,13 +26,38 @@ import { LitElement, unsafeCSS } from 'lit'
 import dialogBaseCSS from '../styles/dialog-base.css'
 
 export class AppDialog extends LitElement {
-  static styles = unsafeCSS(dialogBaseCSS)
+  // Array so subclasses extend it: `static styles = [...AppDialog.styles,
+  // unsafeCSS(extraCSS)]`. The base CSSResult is one shared object,
+  // so the browser dedupes the underlying adoptedStyleSheet across
+  // every dialog instance.
+  static styles = [unsafeCSS(dialogBaseCSS)]
 
   firstUpdated() {
+    this.beforeOpen()
     const dialog = this.renderRoot.querySelector('dialog')
-    if (dialog) dialog.showModal()
+    if (!dialog) return
+    try {
+      dialog.showModal()
+    } catch (err) {
+      // Another modal is already open (showModal throws
+      // InvalidStateError). Mark settled so a stray `close` event
+      // can't drive `_finish` after the conflict, then dispatch:
+      // dialogs whose open() helper listens for `modal-conflict`
+      // turn this into a rejection (and wipe any wrapper-set secret
+      // in that listener); the rest just stay closed (their open()
+      // promise never resolves — matches the pre-component behavior).
+      this._settled = true
+      this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
+      return
+    }
     this.focusInitial()
   }
+
+  // Override hook: seed reactive state from properties before the
+  // dialog opens (the public open() helper assigns props after
+  // createElement, so they're set by firstUpdated time). Default
+  // no-op.
+  beforeOpen() {}
 
   // Initial focus target. Default: first text field, else the
   // primary action button, else the first button.

@@ -10,15 +10,19 @@
 //     the destructive choice doesn't slip past while reading)
 //   - the final destructive confirm
 //
-// Sibling of `<leave-workspace-dialog>`: native <dialog> for
-// focus-trap + Esc-to-cancel, light-DOM render so global
-// stylesheet rules in sidebar.css apply. Public
+// Sibling of `<leave-workspace-dialog>`: extends `AppDialog` for the
+// shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
+// with the `.lwd-*` list-dialog layer added on top. Public
 // `openDeleteReportDialog({ name, triageImpact, inRemote })`
 // returns a Promise that resolves to `{ confirmed, triage,
 // deleteFromRemote }`.
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import listCSS from '../styles/dialog-list.css'
 
-class DeleteReportDialog extends LitElement {
+class DeleteReportDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
+
   static properties = {
     reportName: { type: String },
     orphanedTriage: { type: Number },
@@ -31,9 +35,6 @@ class DeleteReportDialog extends LitElement {
     _triage: { state: true },
     _scope: { state: true },
   }
-
-  // Light DOM — `.delete-report-dialog` rules live in sidebar.css.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -55,18 +56,14 @@ class DeleteReportDialog extends LitElement {
     this._scope = 'everywhere'
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const cancel = this.querySelector('button[data-role="cancel"]')
-    if (cancel) cancel.focus()
+  // Focus the Cancel button (not the base default's first input) so
+  // an accidental Enter doesn't immediately commit the delete.
+  focusInitial() {
+    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
   }
 
   _finish(confirmed) {
     if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
     const triage = this.orphanedTriage > 0 ? this._triage : 'keep'
     // `deleteFromRemote` only ever flips on when (1) the dialog
     // was confirmed (Cancel/Esc → false), (2) the report is
@@ -75,9 +72,7 @@ class DeleteReportDialog extends LitElement {
     // when inRemote); the explicit radio + this final gate match
     // what the user clicked.
     const deleteFromRemote = Boolean(confirmed) && this.inRemote && this._scope === 'everywhere'
-    this.dispatchEvent(new CustomEvent('resolve', {
-      detail: { confirmed: Boolean(confirmed), triage, deleteFromRemote },
-    }))
+    super._finish({ confirmed: Boolean(confirmed), triage, deleteFromRemote })
   }
 
   _onClose = () => this._finish(false)
@@ -167,7 +162,7 @@ class DeleteReportDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="delete-report-dialog leave-workspace-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="lwd-head">
         <h3>Delete report</h3>
       </header>
@@ -195,16 +190,10 @@ customElements.define('delete-report-dialog', DeleteReportDialog)
 // remote-scope radio and the resolved `deleteFromRemote` flips on
 // for the user's pick.
 export function openDeleteReportDialog({ name, triageImpact, inRemote } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('delete-report-dialog')
-    el.reportName = name ?? ''
-    el.orphanedTriage = triageImpact?.orphanedCount ?? 0
-    el.sharedTriage = triageImpact?.sharedCount ?? 0
-    el.inRemote = Boolean(inRemote)
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
+  return openAppDialog('delete-report-dialog', {
+    reportName: name ?? '',
+    orphanedTriage: triageImpact?.orphanedCount ?? 0,
+    sharedTriage: triageImpact?.sharedCount ?? 0,
+    inRemote: Boolean(inRemote),
   })
 }

@@ -12,16 +12,19 @@
 // → `'local'` / `'imported'`, or `null` if cancelled (= keep
 // local everywhere).
 //
-// Uses a native <dialog> for focus-trap + Esc-to-cancel. Light
-// DOM render so the existing `.workspace-conflict-dialog` rules
-// in the global stylesheet apply directly.
-import { LitElement, html, nothing } from 'lit'
+// Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
+// (focus-trap + Esc-to-cancel), with the severity-badge + conflict
+// layers added on top.
+import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from './format.js'
 import { makeStackedModalError } from './dom.js'
+import { AppDialog } from './app-dialog.js'
+import severityCSS from '../styles/dialog-severity.css'
+import conflictCSS from '../styles/dialog-conflict.css'
 
 // Swatch reads its hue from the global `--marker-*` custom
 // properties (see theme.css); the matching `.conflict-color-dot`
-// rules in sidebar.css map a `marker-{red,blue,green,gray}`
+// rules in dialog-conflict.css map a `marker-{red,blue,green,gray}`
 // modifier class to the right `var(--marker-…)` background.
 // One source for the four marker colors — change theme.css and
 // both the in-app picker and these swatches follow.
@@ -98,19 +101,15 @@ const DEFAULT_LABELS = {
 const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3 }
 const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state' }
 
-class TriageConflictDialog extends LitElement {
+class TriageConflictDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(conflictCSS)]
+
   static properties = {
     conflicts: { attribute: false },
     findingLookup: { attribute: false },
     labels: { attribute: false },
     _settled: { state: true },
   }
-
-  // Light DOM — `.workspace-conflict-dialog` rules live in the
-  // global stylesheet; a shadow root would hide them. Same shape
-  // the rest of the deepview LitElements use (severity-chips,
-  // triage-filter, etc.).
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -120,51 +119,29 @@ class TriageConflictDialog extends LitElement {
     this._settled = false
   }
 
-  // Show the modal once the <dialog> lands in the document. Uses
-  // updateComplete-via-firstUpdated so the underlying element
-  // exists before showModal() is called. Esc / backdrop / the
-  // explicit Cancel button all converge on `_finish(null)`. A
-  // stacked-modal failure (another dialog is already open) dispatches
-  // 'modal-conflict' so the wrapper rejects — caller wraps that with
-  // an alert so the user knows their imported peer's triage decisions
-  // were skipped (otherwise the silent-keep-local fallback would
-  // discard the disagreements without any feedback).
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (!dialog) return
-    try {
-      dialog.showModal()
-    } catch (err) {
-      this._signalModalConflict(err)
-    }
-  }
-
-  _signalModalConflict(err) {
-    if (this._settled) return
-    this._settled = true
-    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
-  }
-
-  _finish(decisions) {
-    if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: decisions }))
-  }
+  // No explicit initial focus — showModal()'s native autofocus lands
+  // on the first bulk button, which is what we want (the base default
+  // `focusInitial` would instead grab the first radio). Modal-conflict
+  // (another dialog already open) is handled by the base
+  // `firstUpdated`, which dispatches `modal-conflict`; the wrapper
+  // rejects so the caller can alert that the imported peer's triage
+  // decisions were skipped. Base `_finish` (close + resolve) and
+  // `_onClose` (Esc / backdrop → resolve null = keep all current) are
+  // inherited unchanged.
+  focusInitial() {}
 
   _onClick = (e) => {
     const bulk = e.target.closest('[data-bulk]')
     if (bulk) {
       const value = bulk.dataset.bulk
-      for (const r of this.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
+      for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
       return
     }
     if (e.target.closest('[data-action="apply"]')) {
       const decisions = {}
       for (const c of this.conflicts) {
         const key = `${c.id}:${c.property}`
-        const checked = this.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
+        const checked = this.renderRoot.querySelector(`input[name="conflict-${CSS.escape(key)}"]:checked`)
         decisions[key] = checked?.value ?? 'local'
       }
       this._finish(decisions)
@@ -172,10 +149,6 @@ class TriageConflictDialog extends LitElement {
     }
     if (e.target.closest('[data-action="cancel"]')) this._finish(null)
   }
-
-  // Esc / backdrop close → cancel = keep all current. The native
-  // <dialog> fires a `close` event in both cases.
-  _onClose = () => this._finish(null)
 
   render() {
     const lbl = this.labels
@@ -207,7 +180,6 @@ class TriageConflictDialog extends LitElement {
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
     return html`<dialog
-      class="workspace-conflict-dialog"
       @click=${this._onClick}
       @close=${this._onClose}
     >

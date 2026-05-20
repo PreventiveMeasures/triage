@@ -1,0 +1,24 @@
+/* Severity badge layer — composed into the shadow `static styles`
+   of the finding-context dialogs that show a `.conflict-sev` chip
+   (comment, fix-link, triage-conflict). Sits on top of
+   dialog-base.css. The palette is themed via theme.css's
+   per-severity custom properties, so tweaks land in one place.
+   Flattened from the duplicated `.conflict-sev` blocks that lived
+   under each dialog's wrapper in styles/dialogs.css. */
+
+.conflict-sev {
+  display: inline-block;
+  padding: 1px .4rem;
+  border-radius: 3px;
+  font-size: .62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: #fff; flex-shrink: 0;
+
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
+}

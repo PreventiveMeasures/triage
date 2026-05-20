@@ -1,0 +1,66 @@
+/* Share / unlock / export dialog layer — composed into the shadow
+   `static styles` of the dialogs that put `workspace-share-dialog` /
+   `workspace-unlock-dialog` / `workspace-export-dialog` on their
+   frame (passkey-setup, passkey-unlock, workspace-share-link,
+   workspace-export, workspace-unlock-bundle, workspace-unlock-link).
+   Sits on top of dialog-base.css (the `dialog` frame + `.nwd-*`).
+   Flattened from the nested `.workspace-*-dialog { … }` block in
+   styles/dialogs.css — each lives in its own shadow root with one
+   `<dialog>`, so the wrapping class isn't needed for scoping. */
+
+/* Wider frame than the base 480px. */
+dialog { max-width: 520px; width: min(94vw, 520px); }
+
+.wsl-field {
+  display: block; margin-top: .6rem;
+  color: var(--text); font-size: .78rem;
+
+  & > span {
+    display: block; margin-bottom: .25rem;
+    color: var(--muted); font-size: .72rem;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+}
+
+/* Acknowledgement checkbox row used by the orphan-setup-resolve
+   flow. The label spans a single row so the checkbox sits inline
+   with its text instead of stacking. */
+.wsl-ack {
+  display: flex; align-items: flex-start; gap: .5rem;
+  margin-top: .6rem;
+  color: var(--text); font-size: .8rem; line-height: 1.4;
+
+  & > input[type='checkbox'] {
+    flex: 0 0 auto;
+    margin-top: .15rem;
+  }
+  & > span { flex: 1 1 auto; }
+}
+.wsl-link {
+  display: block; width: 100%; box-sizing: border-box;
+  padding: .5rem .65rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text);
+  font: inherit; font-size: .78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+  word-break: break-all;
+}
+.wsl-error {
+  margin: .55rem 0 0;
+  color: var(--critical, #f87171); font-size: .74rem; line-height: 1.4;
+}
+.wsl-warning {
+  padding: .55rem .65rem;
+  border: 1px solid var(--critical, #f87171); border-radius: 6px;
+  background: rgb(from var(--critical, #f87171) r g b / .08);
+}
+.wsl-optout {
+  display: flex; align-items: center; gap: .5rem;
+  margin-top: .7rem;
+  color: var(--text); font-size: .78rem;
+}
+.nwd-input:disabled {
+  opacity: .5;
+}

@@ -6,9 +6,9 @@
 // passkey, and the dialog resolves true.
 //
 // Sibling of `<workspace-share-link-dialog>` /
-// `<new-workspace-dialog>`: native <dialog> for focus-trap +
-// Esc-to-cancel, light-DOM render so global stylesheet rules in
-// sidebar.css apply. State machine mirrors the share-link dialog
+// `<new-workspace-dialog>`: extends `AppDialog` for the shared
+// shadow-DOM dialog chrome (native <dialog> focus-trap +
+// Esc-to-cancel). State machine mirrors the share-link dialog
 // (form → busy → result).
 //
 // Migration is invoked from passkey-vault.enableEncryption — this
@@ -17,10 +17,14 @@
 // itself is wrapped in the vault's Web Lock so a sibling tab can't
 // race a competing enable.
 
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing, unsafeCSS } from 'lit'
 import { enableEncryption, hasOrphanedUserId, isEncryptionEnabled, isPasskeyEnvironmentSupported, migrateOpfsBundlesEncrypt, migrateOpfsFilesEncrypt, migrateSecureStorageToEncrypted, migrateTriageToEncrypted, onVaultStateChange, wipeAllVaultData } from '#client/index.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class PasskeySetupDialog extends LitElement {
+class PasskeySetupDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     _userName: { state: true },
     _busy: { state: true },
@@ -31,8 +35,6 @@ class PasskeySetupDialog extends LitElement {
     _orphanAck: { state: true },
     _canCancel: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -68,35 +70,23 @@ class PasskeySetupDialog extends LitElement {
     // the user just clicked (often the now-removed "Enable" button)
     // and keyboard users have to Tab to find the close affordance.
     if (changed.has('_success') && this._success) {
-      const btn = this.querySelector('footer button.primary')
+      const btn = this.renderRoot.querySelector('footer button.primary')
       if (btn) btn.focus()
     }
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
+  // Seed the default name + orphan state + cross-tab listener before
+  // the base `firstUpdated` calls `showModal()`, so the first modal
+  // interaction already reflects them.
+  beforeOpen() {
     // Default name = origin hostname so the user has a reasonable
     // label without typing. They can still edit it; the value rides
     // through to the authenticator as the "user.name" field, which
     // shows up in the OS-level passkey manager.
     if (typeof location !== 'undefined') this._userName = location.hostname || 'DeepView'
     // Detect orphan AFTER the default-name fill so the orphan body
-    // renders with the right state on first paint.
+    // renders with the right state.
     this._orphan = hasOrphanedUserId()
-    // Wait for Lit to re-render with the orphan/normal body before
-    // querying for the input element — `firstUpdated` runs after
-    // the first render, but the synchronous `_orphan = true` above
-    // hasn't been reflected yet. Without the await, the
-    // `input[data-role="orphan-ack"]` query returns null and focus
-    // is silently skipped, leaving keyboard users on the dialog
-    // body with no visible focus indicator.
-    const focusInitial = () => {
-      const selector = this._orphan ? 'input[data-role="orphan-ack"]' : 'input[data-role="name"]'
-      const el = this.querySelector(selector)
-      if (el) el.focus()
-    }
-    void this.updateComplete.then(focusInitial)
     // Watch for cross-tab vault state changes while the dialog is
     // open. A sibling tab enabling encryption (or wiping) while the
     // user is reading the orphan warning invalidates the dialog's
@@ -122,6 +112,18 @@ class PasskeySetupDialog extends LitElement {
     })
   }
 
+  // Wait for Lit to re-render with the orphan/normal body before
+  // querying for the input — `beforeOpen` set `_orphan` synchronously
+  // but the reactive re-render hasn't landed yet. Without the await,
+  // the `input[data-role="orphan-ack"]` query returns null and focus
+  // is silently skipped, leaving keyboard users with no visible
+  // focus indicator.
+  async focusInitial() {
+    await this.updateComplete
+    const selector = this._orphan ? 'input[data-role="orphan-ack"]' : 'input[data-role="name"]'
+    this.renderRoot.querySelector(selector)?.focus()
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback()
     if (this._vaultStateUnsub) {
@@ -132,7 +134,6 @@ class PasskeySetupDialog extends LitElement {
 
   _finish(success) {
     if (this._settled) return
-    this._settled = true
     // Abort any in-flight WebAuthn ceremony so the system prompt
     // disappears when the user cancels via our dialog. The vault's
     // enableEncryption is responsible for cleaning up the credential
@@ -140,9 +141,7 @@ class PasskeySetupDialog extends LitElement {
     if (this._abortController) {
       try { this._abortController.abort() } catch {}
     }
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: !!success }))
+    super._finish(!!success)
   }
 
   _onClose = () => this._finish(this._success)
@@ -394,7 +393,7 @@ class PasskeySetupDialog extends LitElement {
   }
 
   render() {
-    return html`<dialog class="new-workspace-dialog workspace-share-dialog" @close=${this._onClose} @cancel=${this._onDialogCancel}>
+    return html`<dialog @close=${this._onClose} @cancel=${this._onDialogCancel}>
       <header class="nwd-head">
         <h3>${
           this._success ? 'Encryption enabled'
@@ -410,12 +409,5 @@ class PasskeySetupDialog extends LitElement {
 customElements.define('passkey-setup-dialog', PasskeySetupDialog)
 
 export function openPasskeySetupDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('passkey-setup-dialog')
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('passkey-setup-dialog')
 }

@@ -11,14 +11,18 @@
 // name choice. URL replacement + the actual `attachSharedWorkspace`
 // call live in the boot handler (view.js).
 //
-// Sibling of `<workspace-share-link-dialog>`: native <dialog> for
-// focus-trap + Esc-to-cancel, light-DOM render so global
-// stylesheet rules in sidebar.css apply.
-import { LitElement, html, nothing } from 'lit'
+// Sibling of `<workspace-share-link-dialog>`: extends `AppDialog`
+// for the shared shadow-DOM <dialog> chrome (focus-trap +
+// Esc-to-cancel).
+import { html, nothing, unsafeCSS } from 'lit'
 import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '#client/index.js'
 import { makeStackedModalError } from './dom.js'
+import { AppDialog } from './app-dialog.js'
+import shareCSS from '../styles/dialog-share.css'
 
-class WorkspaceUnlockLinkDialog extends LitElement {
+class WorkspaceUnlockLinkDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
+
   static properties = {
     encoded: { type: String },
     _stage: { state: true },
@@ -30,8 +34,6 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     _error: { state: true },
     _settled: { state: true },
   }
-
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -46,29 +48,13 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     this._settled = false
   }
 
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (!dialog) return
-    try {
-      dialog.showModal()
-    } catch (err) {
-      // Another modal is already open. Let the wrapper reject so the
-      // boot handler can surface a contextual error.
-      this._signalModalConflict(err)
-      return
-    }
+  // Initial focus (via the base `firstUpdated`) lands on the active
+  // stage's input. Modal-conflict (another modal already open) is
+  // handled by the base `firstUpdated`, which dispatches
+  // `modal-conflict`; the open() wrapper wipes the wrapper-set
+  // `encoded` ciphertext in that listener.
+  focusInitial() {
     this._focusActiveInput()
-  }
-
-  _signalModalConflict(err) {
-    if (this._settled) return
-    this._settled = true
-    // `_finish` wipes `_decoded` / `_password` too, but at modal-conflict
-    // time the user hasn't unlocked yet — only the wrapper-set `encoded`
-    // AES-GCM ciphertext is populated and needs wiping so it doesn't
-    // sit on the element until GC.
-    this.encoded = ''
-    this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
   }
 
   updated(changed) {
@@ -77,10 +63,9 @@ class WorkspaceUnlockLinkDialog extends LitElement {
 
   _focusActiveInput() {
     if (this._stage === 'password') {
-      const input = this.querySelector('input[type="password"]')
-      if (input) input.focus()
+      this.renderRoot.querySelector('input[type="password"]')?.focus()
     } else if (this._stage === 'name') {
-      const input = this.querySelector('input[data-role="name"]')
+      const input = this.renderRoot.querySelector('input[data-role="name"]')
       if (input) {
         input.focus()
         input.select()
@@ -90,12 +75,11 @@ class WorkspaceUnlockLinkDialog extends LitElement {
 
   _finish(result) {
     if (this._settled) return
-    this._settled = true
-    // Drop the decrypted privateKey from the LitElement instance
-    // before the resolve hop. Lit's reactive setter briefly retains
-    // the old value in its change-tracker until the next microtask,
-    // so the wipe doesn't fully erase the value until `el.remove()`
-    // detaches the host — but the property slot itself is empty.
+    // Drop the decrypted privateKey from the instance before the
+    // resolve hop. Lit's reactive setter briefly retains the old
+    // value in its change-tracker until the next microtask, so the
+    // wipe doesn't fully erase the value until `el.remove()` detaches
+    // the host — but the property slot itself is empty.
     this._decoded = null
     this._password = ''
     // Drop the encrypted blob too — `encoded` came in via property
@@ -103,9 +87,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     // outlive the resolve hop on the still-mounted element until
     // `el.remove()` runs.
     this.encoded = ''
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
-    this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
+    super._finish(result)
   }
 
   _onClose = () => this._finish(null)
@@ -290,7 +272,7 @@ class WorkspaceUnlockLinkDialog extends LitElement {
     const heading = this._stage === 'password'
       ? 'Attach shared workspace'
       : (this._existingById ? 'Workspace already attached' : 'Name the workspace')
-    return html`<dialog class="new-workspace-dialog workspace-unlock-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="nwd-head">
         <h3>${heading}</h3>
       </header>
@@ -316,6 +298,9 @@ export function openWorkspaceUnlockLinkDialog({ encoded } = {}) {
       resolve(e.detail)
     })
     el.addEventListener('modal-conflict', (e) => {
+      // Wipe the wrapper-set `encoded` ciphertext before detaching —
+      // the dialog never opened, so its own `_finish` wipe didn't run.
+      el.encoded = ''
       el.remove()
       reject(makeStackedModalError(e.detail?.cause))
     })

@@ -11,17 +11,21 @@
 // Either way the server-side chain is left intact, so a leave on
 // this device won't disturb peers still subscribed.
 //
-// Sibling of `<new-workspace-dialog>`: native <dialog> for
-// focus-trap + Esc-to-cancel, light-DOM render so global
-// stylesheet rules in sidebar.css apply. Public
+// Sibling of `<new-workspace-dialog>`: extends `AppDialog` for the
+// shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
+// with the `.lwd-*` list-dialog layer added on top. Public
 // `openLeaveWorkspaceDialog({ name, reportCount, triageImpact })`
 // returns a Promise that resolves to `{ confirmed, mode, triage }`
 // where `mode` is 'detach' | 'delete' and `triage` is 'keep' |
 // 'wipe' ('keep' is the default + falls back when the radio
 // isn't shown).
-import { LitElement, html } from 'lit'
+import { html, unsafeCSS } from 'lit'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import listCSS from '../styles/dialog-list.css'
 
-class LeaveWorkspaceDialog extends LitElement {
+class LeaveWorkspaceDialog extends AppDialog {
+  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
+
   static properties = {
     workspaceName: { type: String },
     reportCount: { type: Number },
@@ -32,9 +36,6 @@ class LeaveWorkspaceDialog extends LitElement {
     _triage: { state: true },
     _settled: { state: true },
   }
-
-  // Light DOM — `.leave-workspace-dialog` rules live in sidebar.css.
-  createRenderRoot() { return this }
 
   constructor() {
     super()
@@ -58,21 +59,15 @@ class LeaveWorkspaceDialog extends LitElement {
     this._settled = false
   }
 
-  // Show the modal once the <dialog> lands in the document, then
-  // focus the Cancel button so an accidental Enter doesn't
-  // immediately commit a destructive action.
-  firstUpdated() {
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.showModal()
-    const cancel = this.querySelector('button[data-role="cancel"]')
-    if (cancel) cancel.focus()
+  // Focus the Cancel button (not the base default's first input) so
+  // an accidental Enter doesn't immediately commit a destructive
+  // action.
+  focusInitial() {
+    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
   }
 
   _finish(confirmed) {
     if (this._settled) return
-    this._settled = true
-    const dialog = this.querySelector('dialog')
-    if (dialog) dialog.close()
     // Empty workspaces never had a choice surfaced — fall back to
     // 'detach' (the no-op path) regardless of what the state cached.
     const mode = this.reportCount > 0 ? this._mode : 'detach'
@@ -81,9 +76,7 @@ class LeaveWorkspaceDialog extends LitElement {
     const triage = mode === 'delete' && this.orphanedTriage > 0
       ? this._triage
       : 'keep'
-    this.dispatchEvent(new CustomEvent('resolve', {
-      detail: { confirmed: Boolean(confirmed), mode, triage },
-    }))
+    super._finish({ confirmed: Boolean(confirmed), mode, triage })
   }
 
   _onClose = () => this._finish(false)
@@ -197,7 +190,7 @@ class LeaveWorkspaceDialog extends LitElement {
       : (b > 0
         ? html`<p class="lwd-empty">No reports are attached to this workspace (only bundles, see below).</p>`
         : html`<p class="lwd-empty">No reports are attached to this workspace.</p>`)
-    return html`<dialog class="leave-workspace-dialog" @close=${this._onClose}>
+    return html`<dialog @close=${this._onClose}>
       <header class="lwd-head">
         <h3>Leave workspace</h3>
       </header>
@@ -226,17 +219,11 @@ customElements.define('leave-workspace-dialog', LeaveWorkspaceDialog)
 // mode: 'detach', triage: 'keep' }`. Callers should branch on
 // `confirmed` first.
 export function openLeaveWorkspaceDialog({ name, reportCount, bundleCount, triageImpact } = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement('leave-workspace-dialog')
-    el.workspaceName = name ?? ''
-    el.reportCount = reportCount ?? 0
-    el.bundleCount = bundleCount ?? 0
-    el.orphanedTriage = triageImpact?.orphanedCount ?? 0
-    el.sharedTriage = triageImpact?.sharedCount ?? 0
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    document.body.append(el)
+  return openAppDialog('leave-workspace-dialog', {
+    workspaceName: name ?? '',
+    reportCount: reportCount ?? 0,
+    bundleCount: bundleCount ?? 0,
+    orphanedTriage: triageImpact?.orphanedCount ?? 0,
+    sharedTriage: triageImpact?.sharedCount ?? 0,
   })
 }
