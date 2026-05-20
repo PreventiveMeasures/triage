@@ -382,9 +382,27 @@ let keyframeInterval = 100
 let maxConsecutiveFailures = 5
 
 // True only when all gates align: a URL exists, the user hasn't
-// flipped off, and the sidebar isn't suppressing.
+// flipped off, the sidebar isn't suppressing, AND at least one
+// workspace exists. The workspace-count gate is what releases the
+// shared-transport acquire once the LAST workspace is deleted:
+// without it, triage-sync keeps the socket open with nothing to
+// sync (the disconnect would then depend on the sidebar happening
+// to call `setForcedOff(true)`, fragile UI coupling). It's gated on
+// workspace count rather than open-session count deliberately —
+// `closeSession` keeps the socket warm across a workspace switch
+// (close old + open new), and that switch doesn't change the
+// workspace count, so the socket survives. `applyActive()` is
+// re-run from the workspace-deleted handler so the acquire tracks
+// deletions.
 function isActive(): boolean {
-  return userEnabled && !forcedOff && Boolean(serverUrl)
+  return userEnabled && !forcedOff && Boolean(serverUrl) && hasWorkspaces()
+}
+
+// Workspace presence, guarded for the pre-install window where the
+// late-bound `listWorkspaces` host accessor isn't wired yet (no
+// host ⇒ nothing to sync ⇒ inactive).
+function hasWorkspaces(): boolean {
+  try { return listWorkspaces().length > 0 } catch { return false }
 }
 
 // `off` | `offline` | `connecting` | `online`. Public via the API
@@ -2640,6 +2658,11 @@ export const triageSync = {
       if (s) wipeSessionKey(s)
       sessions.delete(workspaceId)
     }
+    // No `applyActive()` here: closeSession deliberately keeps the
+    // shared socket warm (a workspace switch closes the old session
+    // then opens the new one — the workspace still exists, so
+    // `isActive()` stays true). The acquire is reconciled by the
+    // workspace-deleted handler instead.
     emitStatusIfChanged()
   },
 
@@ -2825,6 +2848,14 @@ onSyncHostInstalled((host) => {
     dropPersistedSession(workspaceId).catch((err) => {
       console.warn('Triage sync: dropPersistedSession lock failed:', err)
     })
+    // Reconcile the transport acquire unconditionally: deleting the
+    // LAST workspace makes `isActive()` false (no workspaces left),
+    // so the socket tears down — even if this workspace never had an
+    // open triage session (the acquire is held while any workspace
+    // exists, not per-session). `fireWorkspaceDeleted` runs after the
+    // store mutation commits, so `listWorkspaces()` already reflects
+    // the deletion here.
+    applyActive()
     if (removed) emitStatusIfChanged()
   })
 

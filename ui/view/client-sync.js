@@ -239,7 +239,14 @@ export const triageSync = {
     }
     deferCall('setEnabled', [value])
   },
-  isEnabled() { return realModule ? realModule.triageSync.isEnabled() : true },
+  isEnabled() {
+    if (realModule) return realModule.triageSync.isEnabled()
+    // Pre-load: reflect the persisted user-enabled flag so callers
+    // that decide whether to load the chunk (sidebar's
+    // renderSyncStatus) don't treat an opted-out user as enabled
+    // and pull sync in. Defaults to true (matches triage-sync.ts).
+    return userWantsSync()
+  },
 
   // Session / queue / config methods — all defer without loading.
   // If sync never loads, they're silent no-ops. If sync does load,
