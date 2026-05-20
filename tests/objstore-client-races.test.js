@@ -774,11 +774,11 @@ describe('objstore client/server races', { concurrency: true }, () => {
       // B reconnects (auto) and fetches. Old version-only watermark would
       // throw (v1 < remembered v2); the incarnation-keyed gate reads the
       // fresh lineage cleanly.
-      const after = await b.fetch('wm-inc.json')
-      assert.ok(after)
-      assert.equal(after.version, 1)
-      assert.equal(after.incarnation, reborn.meta.incarnation)
-      assert.equal(Buffer.from(after.content).toString('utf8'), 'I2-v1-REBORN')
+      const afterReconnect = await b.fetch('wm-inc.json')
+      assert.ok(afterReconnect)
+      assert.equal(afterReconnect.version, 1)
+      assert.equal(afterReconnect.incarnation, reborn.meta.incarnation)
+      assert.equal(Buffer.from(afterReconnect.content).toString('utf8'), 'I2-v1-REBORN')
     } finally {
       a.close()
       bClient.close()
