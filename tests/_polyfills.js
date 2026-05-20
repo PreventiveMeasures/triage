@@ -119,5 +119,11 @@ if (typeof navigator !== 'undefined' && !navigator.locks) {
 // so the localStorage + navigator.locks shims above are in place
 // for the install's bootstrap path (`getSecureItem`,
 // `prunePersistedSessions`).
-const { installDefaultSyncHost } = await import('../client/sync.js')
-installDefaultSyncHost()
+//
+// `client/sync.js` itself doesn't import from non-sync `client/*`
+// — `applyDefaultSyncHost` in `client/sync-host.js` is the seam
+// where the chunk meets the rest of the client API. Tests load
+// both modules and call the seam directly.
+const syncMod = await import('../client/sync.js')
+const { applyDefaultSyncHost } = await import('../client/sync-host.js')
+applyDefaultSyncHost(syncMod)

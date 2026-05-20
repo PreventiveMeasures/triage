@@ -23,6 +23,16 @@
 // into the real sync module. If the load never happens, the
 // callbacks just sit there — the UI degrades to "sync is off",
 // which is exactly the user's intent.
+//
+// `applyDefaultSyncHost` is statically imported from `#client/
+// sync-host.js` — that module lives in the MAIN bundle alongside
+// the rest of `client/*`, so the `setTriageChangeNotifier` slot it
+// wires is the same one `saveTriage` writes through. If the host
+// install happened from inside the sync chunk instead, the chunk's
+// duplicated `client/triage.js` would receive the notifier and the
+// main bundle's `saveTriage` would never fan the change out.
+
+import { applyDefaultSyncHost } from '#client/sync-host.js'
 
 let realModule = null
 let loadPromise = null
@@ -37,11 +47,10 @@ function loadSyncOnce() {
     const path = './client-sync.js'
     try {
       const mod = await import(path)
-      // Install the host as part of the load. Boot code used to
-      // call `installDefaultSyncHost()` explicitly; folding it in
-      // here means a single `loadSync()` is enough to get a
-      // fully-wired sync module.
-      mod.installDefaultSyncHost()
+      // Apply the host wiring from the MAIN bundle so the
+      // triageChangeNotifier slot saveTriage flips is the live one
+      // (see module-top comment).
+      applyDefaultSyncHost(mod)
       realModule = mod
       drainPending()
       return mod
