@@ -5,9 +5,9 @@
 // the same shared shadow-DOM chrome the share-link dialogs use.
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildWorkspaceExportBundle } from '#client/index.js'
-import { downloadBlob, makeStackedModalError } from './dom.js'
+import { downloadBlob, makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
-import shareCSS from '../styles/dialog-share.css'
+import shareCSS from './dialog-share.css'
 
 class WorkspaceExportDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]

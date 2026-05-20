@@ -12,8 +12,8 @@
 // trimmed new value, or null on cancel (= no change).
 import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import severityCSS from '../styles/dialog-severity.css'
-import commentCSS from '../styles/dialog-comment.css'
+import severityCSS from './dialog-severity.css'
+import commentCSS from './dialog-comment.css'
 
 function severityBadgeTemplate(sev) {
   if (!sev) return nothing

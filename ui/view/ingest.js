@@ -14,7 +14,7 @@ import { parseDeepsecFindings } from '../../common/parse-deepsec.js'
 import { deriveFindingId } from '../../common/finding-id.js'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstImport } from './first-import-prompt.js'
-import { openPasskeyUnlockDialog } from './passkey-unlock-dialog.js'
+import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 
 // Run-level meta fields that the analyzer emits at the top of each report
 // (and that the deduplicate command stamps on each finding individually).

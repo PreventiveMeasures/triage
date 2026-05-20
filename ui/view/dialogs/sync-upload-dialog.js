@@ -15,9 +15,9 @@
 
 import { html, nothing, unsafeCSS } from 'lit'
 import { readFileBytes } from '#client/index.js'
-import { putBundleToRemote, putFile } from './client-sync.js'
+import { putBundleToRemote, putFile } from '../client-sync.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from '../styles/dialog-list.css'
+import listCSS from './dialog-list.css'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`

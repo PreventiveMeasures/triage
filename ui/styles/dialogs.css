@@ -1,6 +1,6 @@
 /* Remaining light-DOM modal + full-page lock-overlay styles. The
    app's reusable modal dialogs are now shadow-DOM components that
-   extend `AppDialog` (view/app-dialog.js) and carry their own
+   extend `AppDialog` (view/dialogs/app-dialog.js) and carry their own
    chrome via the dialog-*.css layers. What's left here targets the
    two light-DOM holdouts that must stay in the global cascade: the
    boot-time `<origin-migration-dialog>` (origin-check.js) and the

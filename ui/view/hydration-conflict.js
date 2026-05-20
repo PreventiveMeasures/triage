@@ -1,6 +1,6 @@
 import { buildFindingLookupForLoadedReports } from '#client/index.js'
 import { setHydrationConflictResolver } from './client-sync.js'
-import { resolveTriageConflicts } from './triage-conflict-dialog.js'
+import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 
 // Wires the per-finding conflict dialog into both the report-attach
 // hydration path AND the chain-receive path (a peer's broadcast — or

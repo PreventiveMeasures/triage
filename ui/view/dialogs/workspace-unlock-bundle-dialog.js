@@ -3,9 +3,9 @@
 // Owns the wrong-password retry loop: each typed password calls
 // `tryPassword`, and a throw keeps the dialog open.
 import { html, nothing, unsafeCSS } from 'lit'
-import { makeStackedModalError } from './dom.js'
+import { makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
-import shareCSS from '../styles/dialog-share.css'
+import shareCSS from './dialog-share.css'
 
 class WorkspaceUnlockBundleDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]

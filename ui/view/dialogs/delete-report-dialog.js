@@ -18,7 +18,7 @@
 // deleteFromRemote }`.
 import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from '../styles/dialog-list.css'
+import listCSS from './dialog-list.css'
 
 class DeleteReportDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS)]

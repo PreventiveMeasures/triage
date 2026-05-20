@@ -30,8 +30,8 @@ import {
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { getFocusCode } from './focus-code.js'
-import { openSyncUploadDialog } from './sync-upload-dialog.js'
-import { openSyncDownloadDialog } from './sync-download-dialog.js'
+import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
+import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host

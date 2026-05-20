@@ -21,7 +21,7 @@
 // isn't shown).
 import { html, unsafeCSS } from 'lit'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from '../styles/dialog-list.css'
+import listCSS from './dialog-list.css'
 
 class LeaveWorkspaceDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS)]

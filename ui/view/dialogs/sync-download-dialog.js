@@ -15,12 +15,12 @@
 //   → Promise<{ downloaded, failed }>
 
 import { html, nothing, unsafeCSS } from 'lit'
-import { decodeUtf8 } from '../../common/utf8.js'
+import { decodeUtf8 } from '../../../common/utf8.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeContent, gunzipBytes, saveFileBytes, setCount, state } from '#client/index.js'
-import { fetchBundleFromRemote, fetchFile } from './client-sync.js'
-import { switchToWorkspace } from './ingest.js'
+import { fetchBundleFromRemote, fetchFile } from '../client-sync.js'
+import { switchToWorkspace } from '../ingest.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from '../styles/dialog-list.css'
+import listCSS from './dialog-list.css'
 
 function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`

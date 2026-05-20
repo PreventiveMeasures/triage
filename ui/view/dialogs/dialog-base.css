@@ -1,13 +1,8 @@
 /* Shared modal-dialog chrome for the `AppDialog` base class
-   (view/app-dialog.js). Inlined into each dialog component's shadow
-   root via inherited `static styles`, so it targets the bare
+   (app-dialog.js, same dir). Inlined into each dialog component's
+   shadow root via inherited `static styles`, so it targets the bare
    `dialog` element (there's exactly one per dialog shadow) for the
-   frame, plus the `.nwd-*` inner classes the dialog bodies use.
-
-   Mirrors the light-DOM `.new-workspace-dialog` + `.nwd-*` block in
-   styles/dialogs.css — that copy stays until every dialog using the
-   `.new-workspace-dialog` frame class has migrated to <app-dialog>;
-   the two are kept in sync during the rollout. */
+   frame, plus the `.nwd-*` inner classes the dialog bodies use. */
 
 /* Shadow trees don't inherit theme.css's global reset. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

@@ -10,9 +10,9 @@
 // so global stylesheet rules in sidebar.css apply.
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildShareUrl, encodeShareLink } from '#client/index.js'
-import { makeStackedModalError } from './dom.js'
+import { makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
-import shareCSS from '../styles/dialog-share.css'
+import shareCSS from './dialog-share.css'
 
 class WorkspaceShareLinkDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]

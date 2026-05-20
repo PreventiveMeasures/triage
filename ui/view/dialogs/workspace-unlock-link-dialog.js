@@ -16,9 +16,9 @@
 // Esc-to-cancel).
 import { html, nothing, unsafeCSS } from 'lit'
 import { decodeShareLink, listWorkspaces, sanitizeWorkspaceName } from '#client/index.js'
-import { makeStackedModalError } from './dom.js'
+import { makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
-import shareCSS from '../styles/dialog-share.css'
+import shareCSS from './dialog-share.css'
 
 class WorkspaceUnlockLinkDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]

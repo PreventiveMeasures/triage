@@ -1,6 +1,6 @@
 // `AppDialog` — base class for the app's modal dialogs. Owns the
 // shared shadow-DOM chrome (the `dialog` frame + `.nwd-*` inner
-// classes, via styles/dialog-base.css) and the common open/close
+// classes, via dialog-base.css) and the common open/close
 // plumbing, so each concrete dialog is just its body template +
 // behavior.
 //
@@ -23,7 +23,7 @@
 //   - override `focusInitial()` / `_onClose` when the defaults
 //     (focus first field, Esc → resolve null) don't fit.
 import { LitElement, unsafeCSS } from 'lit'
-import dialogBaseCSS from '../styles/dialog-base.css'
+import dialogBaseCSS from './dialog-base.css'
 
 export class AppDialog extends LitElement {
   // Array so subclasses extend it: `static styles = [...AppDialog.styles,
