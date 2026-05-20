@@ -4,6 +4,7 @@ import { RECOVERABLE_SAVE_ERROR_REASONS } from '../../common/save-error-reason.t
 import { makeIgnoredKey, splitIgnoredKey } from '../../common/ignored-key.js'
 import { applyChangeset, changesetEmpty, collectChainConflicts, computeChangeset, statesEqual } from './triage-changeset.ts'
 import type { Changeset, Conflict, ConflictProperty, TriageEntry, TriageStateMap } from './triage-changeset.ts'
+import { effectiveLocalState } from './triage-state-projection.ts'
 
 // The triage data model + the pure changeset algebra live in
 // triage-changeset.ts. `applyChangeset` is re-exported here so
@@ -481,58 +482,6 @@ function wipeSessionKey(session: Session): void {
 
 // ─────────── pure state / changeset helpers ───────────
 
-// Collect every per-report ignore key matching `id`, returned as
-// the wire-shaped `[reportName, ...]` array. One-off callers
-// (snapshotEntry without a pre-built index) pay O(|state.ignoredIds|)
-// per call. Loop callers that snapshot many ids (effectiveLocalState)
-// build a per-id bucket once via `bucketIgnoredByid` and pass it
-// in via `ignoredByid` to drop the per-call cost to O(1) — closes
-// the symmetric L1 round-4 perf gap that round-3 fixed for the
-// apply side.
-function snapshotEntry(id: string, ignoredByid: Map<string, string[]> | null = null): TriageEntry {
-  const entry: TriageEntry = {}
-  const color = state.markers.get(id)
-  if (color !== undefined) entry.color = color
-  const triage = state.triageState.get(id)
-  if (triage) entry.triage = triage
-  const ignoredReports = ignoredByid == null
-    ? ignoredReportsForId(id)
-    : (ignoredByid.get(id) ?? [])
-  if (ignoredReports.length > 0) entry.ignoredReports = ignoredReports
-  const comment = state.comments.get(id)
-  if (comment) entry.comment = comment
-  const fix = state.fixes.get(id)
-  if (fix) entry.fix = fix
-  return entry
-}
-
-function ignoredReportsForId(id: string): string[] {
-  const out: string[] = []
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts || parts.id !== id) continue
-    out.push(parts.reportName)
-  }
-  return out
-}
-
-// Pre-bucket `state.ignoredIds` by id, optionally filtered to a set
-// of ids of interest. Used by `effectiveLocalState` (and any future
-// many-id snapshotter) so per-id `ignoredReports` lookup is O(1).
-function bucketIgnoredByid(idsScope: Set<string> | null = null): Map<string, string[]> {
-  const map = new Map<string, string[]>()
-  for (const key of state.ignoredIds) {
-    const parts = splitIgnoredKey(key)
-    if (!parts) continue
-    const { reportName, id } = parts
-    if (idsScope && !idsScope.has(id)) continue
-    const list = map.get(id)
-    if (list) list.push(reportName)
-    else map.set(id, [reportName])
-  }
-  return map
-}
-
 // Collect the finding ids that belong to a workspace's reports,
 // scoped by the workspace's `reports` filename list (set by
 // drag-into-workspace in the sidebar). With multiple workspaces
@@ -555,38 +504,6 @@ function buildWorkspaceIds(workspaceId: string): Set<string> {
     }
   }
   return ids
-}
-
-// The session's "effective" local state — what the next save
-// represents as the workspace's full triage. Starts from
-// `baseState` (= the chain we've applied so far, including
-// entries for finding-ids belonging to reports the user doesn't
-// have loaded — a peer triaged them), then overlays the live
-// state.* values for ids the workspace DOES know about. Without
-// preserving the unknown-id half, the next save's changeset
-// against `baseState` would emit `<unknown>: null` (delete),
-// destroying the triage on the server for clients that DO have
-// that report. Mirrors the keyframe-emit case as well: the full
-// state we sign and ship under `compute({}, localState)` must
-// carry every id we've ever seen in the chain, not just the ones
-// in our current session.ids scope.
-function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> | Iterable<string>): TriageStateMap {
-  // `Object.create(null)` so a `__proto__` own key on the incoming
-  // baseState (via prior `applyChangeset` of a peer-controlled
-  // changeset) doesn't trigger the Object.prototype setter when
-  // spread into a normal `{}` — that path would re-pollute out's
-  // prototype chain and propagate attacker entries into localState
-  // → computeChangeset's `target[id]` lookups → emitted changesets.
-  // Audit round-12 H6.
-  const out: TriageStateMap = Object.assign(Object.create(null), baseState)
-  const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
-  const ignoredByid = bucketIgnoredByid(idsSet)
-  for (const id of idsSet) {
-    const entry = snapshotEntry(id, ignoredByid)
-    if (Object.keys(entry).length > 0) out[id] = entry
-    else delete out[id]
-  }
-  return out
 }
 
 // Gap-only hydration: for each id in `ids`, fill missing state.*
