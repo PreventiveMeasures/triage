@@ -76,3 +76,20 @@ dialog {
   }
   &:disabled { opacity: .5; }
 }
+
+/* WCO PWA mode — theme.css makes the whole <body> a window drag
+   region and opts interactive elements (incl. `dialog`) back out
+   with `app-region: no-drag`. Those light-DOM rules can't reach
+   into the dialog's shadow root, so without this mirror the
+   shadow `<dialog>` stays a drag region and its buttons / input
+   drag the window instead of taking the click. `no-drag` on the
+   `dialog` covers its whole subtree (children inherit the
+   region). */
+/* stylelint-disable media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  dialog {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown */
