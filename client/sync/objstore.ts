@@ -308,8 +308,11 @@ type SessionState = {
   tagKey: Uint8Array
   putHandlers: Set<(event: { resourceTag: string; version: number; contentLength: number }) => void>
   deletedHandlers: Set<(event: { resourceTag: string; version: number }) => void>
-  // Per-tag monotonic version watermark — see `noteVersion` below.
-  seenVersions: Map<string, number>
+  // Per-tag rollback watermark, keyed by incarnation — see
+  // `noteVersion` / `assertFreshOrLater`. Tracks the highest version
+  // seen WITHIN the current incarnation; a different incarnation
+  // (delete+recreate) legitimately restarts at v1 and resets the floor.
+  seenVersions: Map<string, { incarnation: string; version: number }>
   // True once a `workspace-subscribe` for this session has been
   // SENT on the current socket (flag flips in `sendSubscribeFor`
   // before the send, with a rollback if the send fails — guards
@@ -356,9 +359,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const queue: WireMessage[] = []
   const waiters: Array<{ predicate: (m: WireMessage) => boolean; resolve: (m: WireMessage) => void; reject: (err: Error) => void }> = []
 
-  function noteVersion(state: SessionState, tag: string, version: number): void {
-    const prev = state.seenVersions.get(tag) ?? 0
-    if (version > prev) state.seenVersions.set(tag, version)
+  function noteVersion(state: SessionState, tag: string, incarnation: string, version: number): void {
+    const prev = state.seenVersions.get(tag)
+    // A new incarnation resets the floor (fresh lineage); within the same
+    // incarnation we keep the high-water mark.
+    if (!prev || prev.incarnation !== incarnation || version > prev.version) {
+      state.seenVersions.set(tag, { incarnation, version })
+    }
   }
 
   function makeSubscribedDeferred(state: Partial<SessionState>): void {
@@ -449,7 +456,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const meta = toObjectMeta(msg)
       // Advance the per-tag rollback watermark — a relay that promises
       // v5 in a broadcast then serves v3 on FETCH hits assertFreshOrLater.
-      noteVersion(state, meta.resourceTag, meta.version)
+      noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
       const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
       for (const h of state.putHandlers) { try { h(putEvent) } catch {} }
       return
@@ -766,15 +773,18 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     return out
   }
 
-  // Reject a fetched object whose version is strictly lower than
-  // the highest we've already seen for this tag. The Ed25519 PUT
+  // Reject a fetched object whose version is strictly lower than the
+  // highest we've already seen FOR THE SAME INCARNATION. The Ed25519 PUT
   // signature is valid for ANY historical version, so without this
-  // watermark a relay could serve a stale-but-signed copy on FETCH
-  // and the AEAD / contentHash chain would all check out.
-  function assertFreshOrLater(state: SessionState, tag: string, version: number): void {
-    const last = state.seenVersions.get(tag) ?? 0
-    if (version < last) {
-      throw new Error(`objstore: version-rollback rejected — fetched v${version} for a tag we've already seen at v${last}`)
+  // watermark a relay could serve a stale-but-signed copy on FETCH and
+  // the AEAD / contentHash chain would all check out. Scoping to the
+  // incarnation keeps that protection while letting a legitimate
+  // delete+recreate (fresh incarnation, restarting at v1) read cleanly
+  // even when the client missed the delete broadcast (reconnect window).
+  function assertFreshOrLater(state: SessionState, tag: string, incarnation: string, version: number): void {
+    const last = state.seenVersions.get(tag)
+    if (last && last.incarnation === incarnation && version < last.version) {
+      throw new Error(`objstore: version-rollback rejected — fetched v${version} for an incarnation we've already seen at v${last.version}`)
     }
   }
 
@@ -856,12 +866,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // deleted prior incarnation we never saw the broadcast for.
         // Re-seed the watermark from this incarnation's v1.
         if (prev == null) full.seenVersions.delete(resourceTag)
-        noteVersion(full, resourceTag, raw.meta.version)
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
         return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
+      if (raw.current) noteVersion(full, resourceTag, raw.current.incarnation, raw.current.version)
       return { ok: false, reason: 'conflict', current: raw.current }
     }
 
@@ -875,19 +885,19 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const resourceTag = await computeResourceTag(full.tagKey, fileName)
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       const { fileName: decoded, content } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       if (decoded !== fileName) {
         throw new Error(`objstore: fileName-binding mismatch — requested '${fileName}', payload encoded '${decoded}'`)
       }
-      noteVersion(full, resourceTag, raw.meta.version)
+      noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       return { content, version: raw.meta.version, incarnation: raw.meta.incarnation }
     }
 
     async function fetchByTag(resourceTag: string): Promise<FetchByTagResult | null> {
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       // The decrypted payload's embedded "name" is one of:
       //   - a report fileName (most common)
       //   - a bundle's sha512 integrity
@@ -898,13 +908,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const { fileName: embeddedName, content } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       const expectedReport = await computeResourceTag(full.tagKey, embeddedName)
       if (expectedReport === resourceTag) {
-        noteVersion(full, resourceTag, raw.meta.version)
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
         return { kind: 'report', fileName: embeddedName, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
       }
       const expectedBundle = await computeBundleResourceTag(full.tagKey, embeddedName)
       if (expectedBundle === resourceTag) {
         const { name, content: bundleContent } = unwrapBundleContent(content)
-        noteVersion(full, resourceTag, raw.meta.version)
+        noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
         return { kind: 'bundle', integrity: embeddedName, name, content: bundleContent, version: raw.meta.version, incarnation: raw.meta.incarnation }
       }
       throw new Error('objstore: fetchByTag — decrypted name does not derive back to the requested resourceTag under either the report or bundle tag scheme (relay or workspace member produced a non-round-trippable tag-name pair)')
@@ -922,7 +932,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         return raw
       }
       if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
-      if (raw.current) noteVersion(full, resourceTag, raw.current.version)
+      if (raw.current) noteVersion(full, resourceTag, raw.current.incarnation, raw.current.version)
       return { ok: false, reason: 'conflict', current: raw.current }
     }
 
@@ -933,7 +943,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
 
     async function list(): Promise<Listing[]> {
       const entries = await _rawList(full)
-      for (const m of entries) noteVersion(full, m.resourceTag, m.version)
+      for (const m of entries) noteVersion(full, m.resourceTag, m.incarnation, m.version)
       return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength }))
     }
 
@@ -948,13 +958,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const resourceTag = await computeBundleResourceTag(full.tagKey, integrity)
       const raw = await _rawFetch(full, resourceTag)
       if (!raw) return null
-      assertFreshOrLater(full, resourceTag, raw.meta.version)
+      assertFreshOrLater(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       const { fileName: decoded, content: wrapped } = decryptObjstorePayload(full.contentKey, raw.bytes, workspaceTag, resourceTag)
       if (decoded !== integrity) {
         throw new Error(`objstore: bundle-integrity binding mismatch — requested '${integrity}', payload encoded '${decoded}'`)
       }
       const { name, content } = unwrapBundleContent(wrapped)
-      noteVersion(full, resourceTag, raw.meta.version)
+      noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
       return { name, content, version: raw.meta.version, incarnation: raw.meta.incarnation }
     }
 
@@ -1067,11 +1077,10 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
 
 // Internal wire-level result shapes returned by `_rawPut` /
 // `_rawDelete`. Kept separate from the public `PutResult` /
-// `DeleteResult` so the public types can carry just
-// `currentVersion` (a number from the conflict envelope) rather
-// than the full server-meta blob — the conflict envelope's
-// resourceTag is the OPAQUE wire tag, which the caller can't
-// meaningfully consume without the tagKey.
+// `DeleteResult` so the public types carry just the rebase token
+// `current: { version, incarnation }` rather than the full server-meta
+// blob — the conflict envelope's resourceTag is the OPAQUE wire tag,
+// which the caller can't meaningfully consume without the tagKey.
 type RawPutResult =
   | { ok: true; meta: { version: number; incarnation: string; contentHash: string; contentLength: number } }
   | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }

@@ -22,7 +22,8 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createSocketTransport } from '../client/sync/socket-transport.ts'
 import { bootServer } from './_helpers.js'
 
 // Generate fresh workspace keys (single workspaceId per call).
@@ -730,6 +731,59 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const got = await session.fetch('monotonic.json')
       assert.equal(got?.version, 2)
     } finally { session.close() }
+  })
+
+  it('incarnation-keyed watermark: a recreated v1 read after a MISSED delete broadcast does not trip rollback', async () => {
+    // Regression for the cross-incarnation watermark false-positive
+    // (PR #79 / Copilot review). The rollback gate keys on
+    // {version, incarnation}, not version alone. A peer that advanced
+    // its watermark to v>=2 and then MISSED the delete+recreate
+    // broadcasts (reconnect window — broadcasts are never replayed)
+    // must still read the recreated incarnation's v1 cleanly instead of
+    // throwing `version-rollback`.
+    //
+    // We drive B through a caller-owned transport so we can drop its
+    // socket for the duration of A's delete+recreate. The reconnect is a
+    // 1s timer (socket-transport INITIAL_RECONNECT_DELAY) and A's two
+    // ops run on its own still-live socket, so B is reliably down across
+    // them. (If B happened to reconnect early and catch a broadcast the
+    // assertion still holds — the new gate never throws across
+    // incarnations — so the test can only fail on the OLD version-only
+    // watermark, never spuriously.)
+    const { keys } = await makeKeys()
+    const a = await createObjstoreSession({ serverUrl, httpOrigin, keys })
+    const bTransport = createSocketTransport({ serverUrl })
+    const bClient = createObjstoreClient({ serverUrl, httpOrigin, transport: bTransport })
+    try {
+      const b = await bClient.openWorkspace(keys)
+      const a1 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v1'), prev: null })
+      assert.equal(a1.ok, true)
+      const a2 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v2-bytes'), prev: a1.meta })
+      assert.equal(a2.meta.version, 2)
+      // B advances its watermark to {incarnation #1, v2}.
+      const bSaw = await b.fetch('wm-inc.json')
+      assert.ok(bSaw)
+      assert.equal(bSaw.version, 2)
+      // Drop B's socket so it misses A's next broadcasts.
+      bTransport.getSocket()?.close()
+      // A deletes + recreates → incarnation #2 at v1, while B is down.
+      await a.delete('wm-inc.json', a2.meta)
+      const reborn = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I2-v1-REBORN'), prev: null })
+      assert.equal(reborn.meta.version, 1)
+      assert.notEqual(reborn.meta.incarnation, bSaw.incarnation, 'recreate is a distinct incarnation')
+      // B reconnects (auto) and fetches. Old version-only watermark would
+      // throw (v1 < remembered v2); the incarnation-keyed gate reads the
+      // fresh lineage cleanly.
+      const after = await b.fetch('wm-inc.json')
+      assert.ok(after)
+      assert.equal(after.version, 1)
+      assert.equal(after.incarnation, reborn.meta.incarnation)
+      assert.equal(Buffer.from(after.content).toString('utf8'), 'I2-v1-REBORN')
+    } finally {
+      a.close()
+      bClient.close()
+      bTransport.close()
+    }
   })
 
   it('post-delete fetch returns null even when the relay has not yet broadcast the delete to this session', async () => {

@@ -126,11 +126,11 @@ function deny(res: ServerResponse, status: number, body: string): void {
   res.end(JSON.stringify({ error: body }))
 }
 
-// Variant of `deny` that augments the JSON envelope with the
-// live row's `currentVersion` so a REST PUT 409 lets the caller
-// retry with the right precondition. Without this the client only
-// learns the slot is occupied — not at what version — and retries
-// with `prevVersion: null` against a non-empty slot, looping
+// Variant of `deny` that augments the JSON envelope with the live
+// row's `currentVersion` + `currentIncarnation` so a REST PUT 409 lets
+// the caller rebase onto the right precondition token. Without this the
+// client only learns the slot is occupied — not at what (version,
+// incarnation) — and retries blindly against a non-empty slot, looping
 // indefinitely against a live row. Symmetric with the WS plane's
 // `objstore-conflict` envelope.
 function denyConflict(res: ServerResponse, currentVersion: number | null, currentIncarnation: string | null): void {
