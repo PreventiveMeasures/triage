@@ -1,0 +1,157 @@
+/* Styles for the <bundle-treemap> light-DOM component (the Treemap
+   slide in the bundles view — see view/bundle-treemap.js). Global
+   (not shadow-scoped) because the component renders into light DOM so
+   its file cells reach the document-level [data-bundle-view-source]
+   click delegate. */
+
+/* Treemap slide — a squarified treemap of the bundle's source files
+   over their PATH hierarchy (layout computed in view/bundle-treemap.js,
+   which measures the plot and positions every node absolutely). These
+   rules are mostly paint: directories are faint bordered containers
+   with a name strip; leaves (files) and depth-capped aggregates are
+   filled with the package hue, their text color set inline for
+   contrast. */
+.bundles-slide-body > bundle-treemap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.bundle-treemap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.bundle-treemap-title {
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-size: .7rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bundle-treemap-sub {
+  min-width: 0;
+  font-size: .72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  & .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+.bundle-treemap-plot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.bundle-treemap-node {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 2px;
+}
+/* Directory container — faint fill + border so its children read as
+   nested inside it; the name sits in the reserved top strip. */
+.bundle-treemap-dir {
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid rgb(from var(--text) r g b / .14);
+}
+.bundle-treemap-dirname {
+  display: block;
+  padding: 0 4px;
+  line-height: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .62rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Leaf = a file (button) or a depth-capped directory aggregate (div),
+   both filled with the package hue and bordered for separation. */
+.bundle-treemap-leaf {
+  margin: 0;
+  padding: 1px 3px;
+  border: 1px solid rgb(0 0 0 / .18);
+  display: flex;
+  align-items: flex-start;
+  text-align: left;
+}
+.bundle-treemap-file { cursor: pointer; transition: filter .1s ease; }
+.bundle-treemap-file:hover { filter: brightness(1.14); }
+.bundle-treemap-file:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; z-index: 2; }
+.bundle-treemap-agg { cursor: default; font-style: italic; }
+.bundle-treemap-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .64rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.bundle-treemap-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--muted);
+  font-size: .85rem;
+  text-align: center;
+}
+/* Hover tooltip — same glass look + cursor-following behavior as the
+   graph's .g2-tooltip; position is owned by bundle-treemap.js (no CSS
+   transform, or the JS-computed left/top would be off). */
+.bundle-treemap-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  min-width: 150px;
+  max-width: 340px;
+  padding: 8px 10px;
+  background: var(--surface);
+  /* Smaller than the shared --glass-blur (10px): this tooltip tracks
+     the cursor over the busy treemap DOM, so a tighter backdrop kernel
+     cuts the per-frame re-blur cost. */
+  backdrop-filter: blur(5px);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: var(--shadow-glass);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s;
+
+  &.show { opacity: 1; }
+}
+.bundle-treemap-tt-path {
+  font: 500 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+.bundle-treemap-tt-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.bundle-treemap-tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.bundle-treemap-tt-pkg { font-size: 10px; color: var(--muted); word-break: break-all; }
+.bundle-treemap-tt-meta {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
