@@ -1964,3 +1964,111 @@ describe('content integrity invariants', () => {
     } finally { cleanup() }
   })
 })
+
+describe('GET (openLiveReader) immutability under concurrent re-upload + GC', () => {
+  // The lockless GET (rest.ts openLiveSnapshot) rests entirely on
+  // content-addressed blobs being immutable: a reader opened on hash H
+  // keeps reading H's bytes even as the resource is re-uploaded to a new
+  // hash and H is GC'd. So a GET can NEVER serve torn / wrong bytes under
+  // a concurrent write — at worst it sees a clean not-found if its hash
+  // was already collected.
+  it('an in-flight reader keeps its bytes across a re-upload + GC of its (now-unreferenced) hash', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const v1 = Buffer.from('VERSION-ONE-BYTES')
+      const hV1 = chash('rsrc@v1')
+      await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', expectedLength: v1.byteLength, contentHash: hV1 }), v1)
+      // Open a reader on hV1 — models an in-flight GET holding its snapshot.
+      const opened = await handle.blob.openLiveReader('ws-1', hV1)
+      assert.equal(opened.ok, true)
+      // Re-upload v2 at a NEW hash → hV1 becomes unreferenced.
+      const v2 = Buffer.from('VERSION-TWO-DIFFERENT-LEN')
+      const hV2 = chash('rsrc@v2')
+      await lockedPut(handle, fakeBegin({ resourceTag: 'rsrc', prevVersion: 1, expectedLength: v2.byteLength, contentHash: hV2 }), v2)
+      // Age + sweep: hV1 is unreferenced and past grace → GC'd.
+      ageBlob(liveFilePath(objDir, 'ws-1', hV1))
+      await reapOrphans(handle)
+      assert.equal(existsSync(liveFilePath(objDir, 'ws-1', hV1)), false, 'unreferenced hV1 blob GCd')
+      // The reader opened BEFORE the GC still streams hV1's ORIGINAL bytes
+      // intact (FS pins the inode at open). Never torn / mixed with v2.
+      const chunks = []
+      for await (const chunk of opened.reader.stream) chunks.push(chunk)
+      assert.equal(Buffer.compare(Buffer.concat(chunks), v1), 0, 'in-flight reader sees v1 bytes intact')
+      // A FRESH open of the GC'd hash now fails cleanly (→ 503), never wrong bytes.
+      const reopened = await handle.blob.openLiveReader('ws-1', hV1)
+      assert.equal(reopened.ok, false)
+      assert.equal(reopened.reason, 'unavailable')
+      // The live row points at hV2, whose blob holds v2 exactly.
+      assert.equal((await getLive(handle, 'ws-1', 'rsrc')).contentHash, hV2)
+      assert.equal(Buffer.compare(readFileSync(liveFilePath(objDir, 'ws-1', hV2)), v2), 0)
+    } finally { cleanup() }
+  })
+})
+
+describe('content dedup — shared blob safety across resources', () => {
+  // Two DISTINCT resources committing byte-identical content land the
+  // SAME content hash → one shared blob. deleteObject drops only the row
+  // (never an inline unlink), and the reaper GCs by the referenced-hash
+  // SET — so deleting one sharer must never pull the bytes out from under
+  // the other.
+  it('two resources with identical bytes share one blob; deleting one keeps the other readable', async () => {
+    const { handle, objDir, cleanup } = freshHandle()
+    try {
+      const bytes = Buffer.from('SHARED-IDENTICAL-BYTES')
+      const h = chash('shared-content') // both resources carry the SAME hash (same bytes)
+      await lockedPut(handle, fakeBegin({ resourceTag: 'res-A', expectedLength: bytes.byteLength, contentHash: h }), bytes)
+      await lockedPut(handle, fakeBegin({ resourceTag: 'res-B', expectedLength: bytes.byteLength, contentHash: h }), bytes)
+      const blobPath = liveFilePath(objDir, 'ws-1', h)
+      assert.equal(existsSync(blobPath), true, 'shared blob exists')
+      assert.equal((await getLive(handle, 'ws-1', 'res-A')).contentHash, h)
+      assert.equal((await getLive(handle, 'ws-1', 'res-B')).contentHash, h)
+      // Delete res-A. Even aged + a full sweep, the shared blob must
+      // survive — res-B still references its hash.
+      assert.equal((await deleteObject(handle, 'ws-1', 'res-A', 1)).ok, true)
+      ageBlob(blobPath)
+      await reapOrphans(handle)
+      assert.equal(existsSync(blobPath), true, 'shared blob survives — still referenced by res-B')
+      // res-B remains readable with the correct bytes.
+      const opened = await handle.blob.openLiveReader('ws-1', h)
+      assert.equal(opened.ok, true)
+      const chunks = []
+      for await (const chunk of opened.reader.stream) chunks.push(chunk)
+      assert.equal(Buffer.compare(Buffer.concat(chunks), bytes), 0, 'res-B bytes intact after res-A deleted')
+      // Delete res-B too → no resource references the hash → GC'd once aged.
+      assert.equal((await deleteObject(handle, 'ws-1', 'res-B', 1)).ok, true)
+      ageBlob(blobPath)
+      await reapOrphans(handle)
+      assert.equal(existsSync(blobPath), false, 'blob GCd once no live row references it')
+    } finally { cleanup() }
+  })
+})
+
+describe('reaper stale-staging — conditional-delete batch predicate', () => {
+  // The lockless reaper uses an atomic conditional delete
+  // (`deleteStagingIfStale` — DELETE ... WHERE begun_at < staleBefore),
+  // replacing the old lock + in-lock begun_at re-read. One sweep must
+  // remove EXACTLY the rows still stale at delete time, sparing any whose
+  // begun_at was refreshed fresh (a slow upload that just completed).
+  it('one sweep reaps exactly the stale staging rows and spares the fresh / refreshed ones', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      const old = Date.now() - 2 * 60 * 60 * 1000
+      const a = await beginPut(handle, fakeBegin({ resourceTag: 'A', expectedLength: 4 })); writeStaging(a.filePath, Buffer.alloc(4))
+      const b = await beginPut(handle, fakeBegin({ resourceTag: 'B', expectedLength: 4 })); writeStaging(b.filePath, Buffer.alloc(4))
+      const c = await beginPut(handle, fakeBegin({ resourceTag: 'C', expectedLength: 4 })); writeStaging(c.filePath, Buffer.alloc(4))
+      // A and B both look stale at snapshot time...
+      handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id IN (?, ?)').run(old, a.stagingId, b.stagingId)
+      // ...but B's upload "just completed" — its begun_at is refreshed
+      // fresh before the sweep, so the conditional delete won't match it.
+      await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'B', b.stagingId)
+      await reapOrphans(handle)
+      // A (genuinely stale) reaped; B (refreshed) and C (fresh) survive.
+      assert.equal(await handle.selectStaging.get('ws-1', 'A', a.stagingId), undefined, 'stale A row reaped')
+      assert.equal(existsSync(a.filePath), false, 'stale A blob unlinked')
+      assert.ok(await handle.selectStaging.get('ws-1', 'B', b.stagingId), 'refreshed B row spared')
+      assert.equal(existsSync(b.filePath), true, 'refreshed B blob spared')
+      assert.ok(await handle.selectStaging.get('ws-1', 'C', c.stagingId), 'fresh C row spared')
+      assert.equal(existsSync(c.filePath), true, 'fresh C blob spared')
+    } finally { cleanup() }
+  })
+})
