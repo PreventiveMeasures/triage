@@ -564,7 +564,10 @@
   max-width: 340px;
   padding: 8px 10px;
   background: var(--surface);
-  backdrop-filter: var(--glass-blur);
+  /* Smaller than the shared --glass-blur (10px): this tooltip tracks
+     the cursor over the busy treemap DOM, so a tighter backdrop kernel
+     cuts the per-frame re-blur cost. */
+  backdrop-filter: blur(5px);
   border: 1px solid var(--border);
   border-radius: 7px;
   box-shadow: var(--shadow-glass);
