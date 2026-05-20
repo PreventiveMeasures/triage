@@ -21,15 +21,7 @@ import { fetchBundleFromRemote, fetchFile } from '../client-sync.js'
 import { switchToWorkspace } from '../ingest.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
-
-function bundleShortLabel(integrity) {
-  return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`
-}
-
-function itemDisplayLabel(item) {
-  if (item.kind === 'bundle') return item.label ?? bundleShortLabel(item.identifier)
-  return item.identifier
-}
+import { itemDisplayLabel } from './shared.js'
 
 class SyncDownloadDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
@@ -163,8 +155,8 @@ class SyncDownloadDialog extends AppDialog {
       <p class="lwd-body">${intro}</p>
       ${list}
       ${this._errorsSection()}
-      <footer class="lwd-actions">
-        <span class="lwd-spacer"></span>
+      <footer class="nwd-actions">
+        <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running}>
           ${this._done && this._errors.length > 0 ? 'Close' : 'Cancel'}
         </button>

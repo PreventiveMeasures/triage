@@ -21,6 +21,7 @@ import { makeStackedModalError } from '../dom.js'
 import { AppDialog } from './app-dialog.js'
 import severityCSS from './dialog-severity.css'
 import conflictCSS from './dialog-conflict.css'
+import { severityBadge } from './shared.js'
 
 // Swatch reads its hue from the global `--marker-*` custom
 // properties (see theme.css); the matching `.conflict-color-dot`
@@ -68,19 +69,13 @@ function valueTemplate(property, value) {
   return html`${String(value)}`
 }
 
-function severityBadgeTemplate(sev) {
-  if (!sev) return nothing
-  const label = sev.replaceAll('_', ' ')
-  return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
-}
-
 function findingHeaderTemplate(meta, id) {
   const loc = meta?.file
     ? (meta.line ? `${meta.file}:${meta.line}` : meta.file)
     : ''
   return html`
     <div class="conflict-card-head">
-      ${severityBadgeTemplate(meta?.severity)}
+      ${severityBadge(meta?.severity)}
       ${loc ? html`<span class="conflict-loc" title=${loc}>${loc}</span>` : nothing}
       <code class="conflict-id" title=${id}>${id.slice(0, 8)}…</code>
     </div>

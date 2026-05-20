@@ -15,12 +15,7 @@ import { isHttpUrl } from '../format.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import severityCSS from './dialog-severity.css'
 import fixLinkCSS from './dialog-fix-link.css'
-
-function severityBadgeTemplate(sev) {
-  if (!sev) return nothing
-  const label = sev.replaceAll('_', ' ')
-  return html`<span class=${`conflict-sev sev-${sev}`}>${label}</span>`
-}
+import { severityBadge } from './shared.js'
 
 class FixLinkDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(fixLinkCSS)]
@@ -89,7 +84,7 @@ class FixLinkDialog extends AppDialog {
       <header class="fl-head">
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
         <div class="fl-finding">
-          ${severityBadgeTemplate(f.severity)}
+          ${severityBadge(f.severity)}
           ${loc ? html`<span class="fl-loc" title=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description
@@ -113,11 +108,11 @@ class FixLinkDialog extends AppDialog {
           : nothing}
       </div>
       <p class="fl-hint">PR URL, issue link, commit, or any free-form reference. Enter to save, Esc to cancel.</p>
-      <footer class="fl-actions">
+      <footer class="nwd-actions">
         ${hasInitial
           ? html`<button type="button" class="danger" @click=${this._onClear}>Clear</button>`
           : nothing}
-        <span class="fl-spacer"></span>
+        <span class="nwd-spacer"></span>
         <button type="button" @click=${this._onCancel}>Cancel</button>
         <button type="button" class="primary" @click=${this._onSave}>Save</button>
       </footer>

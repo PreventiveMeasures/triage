@@ -203,8 +203,8 @@ class LeaveWorkspaceDialog extends AppDialog {
       <ul class="lwd-list">
         <li>Workspace synchronization data stays on the sync server — peers (and your other devices) keep their copy.</li>
       </ul>
-      <footer class="lwd-actions">
-        <span class="lwd-spacer"></span>
+      <footer class="nwd-actions">
+        <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
         <button type="button" class="danger" @click=${this._onConfirm}>Leave</button>
       </footer>
