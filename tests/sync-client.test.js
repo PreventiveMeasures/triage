@@ -24,7 +24,7 @@ import { Buffer } from 'node:buffer'
 // MUST run before any client module loads — `_polyfills.js` shims
 // `localStorage` / `navigator.locks` and (critically) drops the
 // broken native `Uint8Array.prototype.toHex` that some Node 24.x
-// builds expose under `--js-base-64`, before @noble/hashes captures
+// builds expose under `--js-base-64`, before @noble/ciphers captures
 // `hasHexBuiltin` at first import.
 await import('./_polyfills.js')
 

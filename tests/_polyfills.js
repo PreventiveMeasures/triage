@@ -21,11 +21,12 @@
 // / .toBase64) the client relies on, but on some Node 24.x hosts the
 // same flag turns on a buggy native `Uint8Array.prototype.toHex` that
 // emits 'O'..'V' for nibbles ≥ 8 instead of '8'..'9' / 'a'..'f'.
-// @noble/hashes routes ed25519 key derivation through that method, so
-// triage-sync derivation throws `Cannot convert 0x…O…V… to a BigInt`.
-// Overwrite (not delete) so the result is timing-independent —
-// @noble/hashes captures `hasHexBuiltin` at module load and the test
-// runner can land that capture before _polyfills.js runs; replacing
+// @noble/ciphers routes hex through that method (`utils.bytesToHex`),
+// and its poly1305 MAC parses the result back through BigInt, so the
+// ChaCha20-Poly1305 fallback throws `Cannot convert 0x…O…V… to a
+// BigInt`. Overwrite (not delete) so the result is timing-independent
+// — @noble/ciphers captures `hasHexBuiltin` at module load and the
+// test runner can land that capture before _polyfills.js runs; replacing
 // in place keeps `typeof === 'function'` but routes every call to a
 // correct JS implementation. Fixed and unflagged in Node 25, so the
 // probe is a no-op there.
