@@ -2,7 +2,7 @@ import { html, render as litRender, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state } from '#client/index.js'
-import { deleteFromRemote as deleteRemote, isInRemote, triageSync } from './client-sync.js'
+import { deleteFromRemote as deleteRemote, isInRemote, loadSync, triageSync } from './client-sync.js'
 import { fileList, sidebar } from './dom.js'
 import { render } from './render.js'
 import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
@@ -844,6 +844,16 @@ function renderSyncStatus(status) {
   const btn = document.querySelector('#sync-status')
   if (!btn) return
   const visible = syncButtonVisible()
+  // Single trigger for the lazy `client-sync.js` chunk: sync is
+  // worth loading only when the status button is visible (a usable
+  // URL exists AND at least one workspace exists) AND the user
+  // hasn't opted out. Boot does NOT pre-load — so a user with no
+  // workspaces, or one who turned sync off, never downloads the
+  // chunk. `loadSync` is idempotent (shares one in-flight promise),
+  // so re-running on every sidebar render is cheap once kicked.
+  if (visible && triageSync.isEnabled()) {
+    loadSync().catch((err) => { console.warn('sync: load failed', err) })
+  }
   // Auto-prime the default sync URL the first time any workspace
   // exists — workspaces opt the user into sync (unattached reports
   // stay local-only), so the offline → online flip shouldn't

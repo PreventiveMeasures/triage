@@ -16,7 +16,7 @@
 import './view/frontend-install.js'
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
-import { loadSync, onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
+import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
@@ -215,16 +215,12 @@ async function continueBoot() {
   // storage event doesn't fire phantom workspace-created listeners
   // for entries that were already in storage at boot.
   syncObservedAfterHydrate()
-  // Auto-resume sync if the persisted user-enabled flag is on. The
-  // flag is `'0'` when the user explicitly disabled in a prior
-  // session; any other value (including the unset default) is "on",
-  // matching `triage-sync.ts`'s boot init. Triggers the dynamic
-  // import of `ui/client-sync.js` — see `view/client-sync.js`.
-  // Skipped entirely (no load) when the user opted out, which is
-  // the whole point of the lazy-load split.
-  if (getSecureItem('deepview.sync.userEnabled') !== '0') {
-    loadSync().catch((err) => { console.warn('boot: sync auto-resume failed', err) })
-  }
+  // Sync chunk loading is driven entirely by the sidebar's
+  // `renderSyncStatus` (called from `renderSidebar` below): it
+  // loads `ui/client-sync.js` only when the status button is
+  // visible (usable URL + at least one workspace) and the user
+  // hasn't opted out. Boot does NOT pre-load — a user with no
+  // workspaces never downloads the sync payload.
   await renderSidebar()
   // Share-link hash takes precedence over the last-file restore so
   // the user lands on the freshly-attached workspace, not whatever
