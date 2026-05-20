@@ -75,16 +75,12 @@
     },
     {
       "files": [
-        "client/sync/triage-sync.js",
         "client/sync/triage-sync.ts",
-        "client/sync/sync-crypto.js",
-        "client/sync/sync-crypto.ts",
         "client/sync/objstore.ts",
         "client/sync/objstore-presence.js",
         "client/sync/socket-transport.ts",
         "client/storage.js",
         "client/passkey-vault.js",
-        "client/passkey-crypto.ts",
         "client/workspaces.js",
         "server/objstore/store.ts"
       ],
