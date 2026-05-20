@@ -33,14 +33,18 @@ import { openFsBlobBackend } from '../server/objstore/blob-fs.ts'
 // openNeonDb's DDL bootstrap each time). node:test runs the tests in a
 // file sequentially, so the shared instance sees no inter-test races;
 // the in-test `Promise.all` races are serialised by PGlite's single
-// connection exactly as `tryCommitNeon`'s advisory lock intends.
+// connection. NOTE: that single connection also means PGlite cannot
+// reproduce a genuine cross-replica race against `tryCommitNeon`'s
+// lockless gated INSERT — these tests confirm commit-outcome + recovery
+// parity, not the cross-replica snapshot+PK fork-safety argument (which
+// needs a real-Postgres concurrency test; see `tryCommitNeon`).
 let sharedPg = null
 let counter = 0
 
 // One-shot fault injection for `tryCommitNeon`'s unique-violation
 // recovery path. PGlite is single-connection, so a real cross-replica
-// race (a sibling bypassing the advisory lock with a direct INSERT)
-// can't be reproduced naturally; `failNextCommit` stages it instead.
+// race (a sibling landing our seq/id with a direct INSERT) can't be
+// reproduced naturally; `failNextCommit` stages it instead.
 // The next pipelined commit transaction runs an optional `before(pg)`
 // (e.g. land the sibling row) and then throws `error`. The standalone
 // refetch queries inside the catch still hit real PGlite, so the

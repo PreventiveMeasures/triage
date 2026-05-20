@@ -159,7 +159,7 @@ type DbRow = {
 //     delete (`deleteStagingIfStale`) so the stale-staging sweep
 //     can't race an upload that just finished.
 // These hold both within a single process AND across replicas — the
-// old per-(tag, resourceTag) `KeyedAsyncLock` added nothing the CAS +
+// old per-(tag, resourceTag) in-process mutex added nothing the CAS +
 // content-addressing didn't already give, so it was removed.
 export type Handle = {
   // SQLite-only: the underlying `DatabaseSync`. Unset on the Neon

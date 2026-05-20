@@ -5,16 +5,16 @@
 // client lifecycle + signature gates. This one targets:
 //   - chain-fork prevention under concurrent saves on the same base,
 //   - subscribe races (close-mid-verify, subscribe-before-key-arrive),
-//   - per-workspace lock isolation across many sockets / tags,
+//   - per-workspace commit isolation across many sockets / tags,
 //   - broadcast fan-out under contention,
 //   - idempotent retransmit across sockets,
 //   - chain-continuity invariants after a bursty workload.
 //
-// The relay's per-tag write lock (`writeLocks` in server/db.ts:141)
-// is the only thing keeping `commitRevision` from forking a chain.
-// Tests below exercise it under real WS contention rather than
-// hand-acquiring the lock — production ordering is what matters,
-// not a synthetic single-process invariant.
+// `commitRevision` keeps the chain from forking with NO write lock:
+// its single gated INSERT reads head + MAX(seq) from one snapshot and
+// the `UNIQUE(workspace_tag, seq)` PK rejects a racer on the same seq
+// (see `commitRevisionSqlite` in server/db.ts). Tests below exercise
+// that under real WS contention — production ordering is what matters.
 
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
@@ -154,12 +154,13 @@ describe('triage-sync server races', { concurrency: true }, () => {
   // SECTION 1: chain-fork prevention under concurrent saves
   // ──────────────────────────────────────────────────────────────
   //
-  // The per-`workspace_tag` write lock in `commitRevision` is the
-  // only thing keeping two saves with the SAME `base` from both
-  // inserting and forking the chain. Without it, both pre-INSERT
-  // base-match checks pass and both INSERTs land (UNIQUE is on
-  // (workspace_tag, id), not on `base`). The tests below exercise
-  // this under real WS contention.
+  // `commitRevision`'s single gated INSERT keeps two saves with the
+  // SAME `base` from both inserting and forking the chain — no lock
+  // needed. A naive pre-INSERT base-match would let both land (UNIQUE
+  // is on (workspace_tag, id), not on `base`); the gated INSERT instead
+  // re-asserts `head IS base` on the same snapshot that computes the
+  // seq, so the loser inserts nothing and gets `stale-base`. The tests
+  // below exercise this under real WS contention.
 
   it('two sockets racing on the SAME base: exactly one ack, one stale-base; chain has exactly one revision', async () => {
     const { sk, tag } = await makeKp()
@@ -172,8 +173,8 @@ describe('triage-sync server races', { concurrency: true }, () => {
     const { msg: m2, id: id2 } = await buildSave(sk, tag, null, 'from-c2')
     assert.notEqual(id1, id2, 'distinct ciphertext → distinct content-addressed ids')
     // Send both onto the wire as close together as the test driver
-    // can. The lock serialises; one wins (ack), the other catches up
-    // via workspace-state.
+    // can. The gated INSERTs resolve to one winner (ack); the other
+    // catches up via workspace-state.
     c1.ws.send(JSON.stringify(m1))
     c2.ws.send(JSON.stringify(m2))
     // Collect each socket's first save-reply (either ack or
@@ -182,7 +183,7 @@ describe('triage-sync server races', { concurrency: true }, () => {
     const r2 = await c2.recv((m) => m.type === 'workspace-save-ack' || (m.type === 'workspace-state' && m.revisions?.length > 0))
     const acks = [r1, r2].filter((m) => m.type === 'workspace-save-ack')
     const catchups = [r1, r2].filter((m) => m.type === 'workspace-state')
-    assert.equal(acks.length, 1, 'exactly one save wins the lock')
+    assert.equal(acks.length, 1, 'exactly one save wins the commit')
     assert.equal(catchups.length, 1, 'the other gets a stale-base catch-up')
     // The catch-up echoes the winner's revision so the loser can
     // rebase + retry.
@@ -211,7 +212,7 @@ describe('triage-sync server races', { concurrency: true }, () => {
       // Fire all sends in parallel.
       for (let i = 0; i < N; i++) sockets[i].ws.send(JSON.stringify(saves[i].msg))
       // Each socket gets either an ack (it won) or a workspace-state
-      // catch-up (it lost the lock race). Don't await broadcasts here
+      // catch-up (it lost the commit race). Don't await broadcasts here
       // — they're per-socket and a winner doesn't see its own.
       const replies = await Promise.all(sockets.map((c, i) =>
         c.recv((m) =>
@@ -293,9 +294,9 @@ describe('triage-sync server races', { concurrency: true }, () => {
 
   it('same content from two sockets concurrently: both get ack, chain has exactly one revision', async () => {
     // Same plaintext + same nonce + same key = same canonical bytes
-    // = same content-addressed id. The `revisionExists` recheck
-    // inside the lock returns `duplicate` for the loser without
-    // inserting a duplicate.
+    // = same content-addressed id. The gated INSERT's
+    // `NOT EXISTS(dup-id)` clause (re-checked on its own snapshot)
+    // returns `duplicate` for the loser without inserting a duplicate.
     const { sk, tag } = await makeKp()
     const c1 = await connect(serverUrl); const c2 = await connect(serverUrl)
     try {
@@ -400,8 +401,8 @@ describe('triage-sync server races', { concurrency: true }, () => {
   // ──────────────────────────────────────────────────────────────
 
   it('one socket subscribed to 5 tags: concurrent saves on each tag stay isolated', async () => {
-    // The per-tag lock keys on `workspace_tag` (db.ts:379). Five
-    // different tags should not contend with each other; concurrent
+    // The gated INSERT scopes its dup / head / seq subqueries by
+    // `workspace_tag`, so five different tags never contend; concurrent
     // saves on each commit independently.
     const tagsAndKeys = await Promise.all(Array.from({ length: 5 }, () => makeKp()))
     const c = await connect(serverUrl)
@@ -510,10 +511,10 @@ describe('triage-sync server races', { concurrency: true }, () => {
     }
   })
 
-  it('100 saves serialised on one socket reach all subscribers in chain order', async () => {
-    // Same socket, base-chained sequence of 100 saves. The server's
-    // per-tag lock serialises them; peers receive 100 broadcasts in
-    // chain order.
+  it('100 base-chained saves on one socket reach all subscribers in chain order', async () => {
+    // Same socket, base-chained sequence of 100 saves. Each save's base
+    // is the prior id, so the gated INSERTs apply in chain order; peers
+    // receive 100 broadcasts in that order.
     const { sk, tag } = await makeKp()
     const writer = await connect(serverUrl)
     const peer = await connect(serverUrl)
@@ -581,14 +582,15 @@ describe('triage-sync server races', { concurrency: true }, () => {
     } finally { writer.ws.close(); peer.ws.close() }
   })
 
-  it('unpaced rapid saves on the same socket can race the verify queue: server still serialises commits, no fork', async () => {
+  it('unpaced rapid saves on the same socket can race the verify queue: gated commit prevents a fork', async () => {
     // Companion to the paced test above: send 5 saves WITHOUT
     // awaiting acks between them, demonstrating the documented
     // race. Whatever the eventual outcome (some acks, some
     // stale-base catch-ups for the same socket's own retries),
-    // the CHAIN never forks — every committed revision links to
-    // a valid base, and the final chain length matches how many
-    // acks the writer collected.
+    // the gated INSERT (one-snapshot head-check + the
+    // `UNIQUE(tag, seq)` PK) keeps the CHAIN from forking — every
+    // committed revision links to a valid base, and the final chain
+    // length matches how many acks the writer collected.
     const { sk, tag } = await makeKp()
     const writer = await connect(serverUrl)
     try {
@@ -849,10 +851,10 @@ describe('triage-sync server races', { concurrency: true }, () => {
   })
 
   it('stale-base PUT returns a continuous catch-up chain; racer can rebase + retry', async () => {
-    // server/index.ts:402: chainFrom runs AFTER the per-tag lock
-    // releases. The catch-up returned to a stale-base loser is
+    // `chainFrom` runs AFTER `commitRevision` returns the stale-base
+    // outcome. The catch-up returned to a stale-base loser is
     // server-current at chainFrom-time (possibly fresher than the
-    // commitRevision recheck saw). Whatever depth it has, the
+    // gated INSERT's head-check saw). Whatever depth it has, the
     // catch-up MUST be continuous and the loser MUST be able to
     // rebase against its tail and retry successfully.
     //

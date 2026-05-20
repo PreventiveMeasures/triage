@@ -102,15 +102,17 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     //      reaches a legit signer)
     //   6. commitRevision — re-checks dup + base + inserts via a single
     //      gated INSERT (dup gate + head-equals-base gate + the
-    //      server-assigned seq folded into one statement) under one
-    //      per-workspace_tag lock. The previously-separate dup recheck,
-    //      headFor, base-match and insert all collapse into that one
-    //      statement. Without the lock, two concurrent saves with
-    //      the same `base` and different ids would both pass an
-    //      out-of-lock base check, both insert, and FORK THE CHAIN
-    //      (two rows with the same base — UNIQUE is on id, not base);
-    //      and two concurrent same-id retransmits would have one of
-    //      them throw on UNIQUE with no ack reaching the originator.
+    //      server-assigned seq folded into one statement) — NO write
+    //      lock. The dup recheck, headFor, base-match and insert all
+    //      collapse into that one statement, whose head-check and
+    //      MAX(seq) read one snapshot; the `UNIQUE(workspace_tag, seq)`
+    //      PK rejects any racer that computed the same seq. So two
+    //      concurrent saves with the same `base` and different ids
+    //      can't both insert (the loser's `head IS base` gate fails →
+    //      `stale-base`, no chain fork even though UNIQUE is on id, not
+    //      base), and two concurrent same-id retransmits resolve to one
+    //      `inserted` + one `duplicate` with no UNIQUE throw escaping.
+    //      See `commitRevisionSqlite` / `tryCommitNeon` in db*.ts.
     let canonical: Uint8Array<ArrayBuffer>
     try { canonical = canonicalSave(msg) } catch { return }
     const id = await computeRevisionIdFromCanonical(canonical)
@@ -141,17 +143,18 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // `unauthorized` frame only reaches a legitimate signer; shape /
     // sig attacks still drop silently.
     //
-    // RACE: `workspaceExists` reads outside the per-tag write lock that
-    // `commitRevision` later acquires. Under concurrent saves on a
-    // fresh tag, an unauthenticated socket whose `workspaceExists`
-    // observes "true" (because an authenticated peer's commit landed
-    // between this socket's check and its commit) skips the gate and
-    // commits as the second writer. Accepted: the unauthenticated peer
-    // still had to produce a valid Ed25519 signature (= holds the
-    // workspace seed), and "two concurrent writes both authorising"
-    // is the worst case. Tightening would require moving the gate
-    // inside `commitRevision`'s lock and is not worth the layer
-    // crossing for the soft-policy guarantee.
+    // RACE: `workspaceExists` reads at a different moment than the
+    // commit's gated INSERT (a plain TOCTOU — there is no lock spanning
+    // the two). Under concurrent saves on a fresh tag, an
+    // unauthenticated socket whose `workspaceExists` observes "true"
+    // (because an authenticated peer's commit landed between this
+    // socket's check and its commit) skips the gate and commits as the
+    // second writer. Accepted: the unauthenticated peer still had to
+    // produce a valid Ed25519 signature (= holds the workspace seed),
+    // and "two concurrent writes both authorising" is the worst case.
+    // Tightening would require folding the gate into the commit
+    // statement itself and is not worth the layer crossing for the
+    // soft-policy guarantee.
     if (requiresAuth(socket) && !await workspaceExists(tag)) {
       if (debug) console.warn(`reject save: unauthorized (new workspace ${debugTag(tag)})`)
       sendUnauthorized(socket, { kind: 'gated', workspaceTag: tag, base: msg.base ?? null })

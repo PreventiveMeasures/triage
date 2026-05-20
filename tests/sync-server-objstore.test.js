@@ -709,12 +709,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
   })
 
   it('two concurrent commits on the same resource — exactly one wins, the other gets 409', async () => {
-    // The per-resource async lock serialises commit / delete / begin
-    // across the `await` boundaries inside commitPut. Both PUTs
-    // begin against `prevVersion = null` (no live row yet); both
-    // get tokens; both stream bytes. The first commit creates
-    // version 1, the second's recheck inside commitPut sees the
-    // bumped version and fails with conflict → HTTP 409.
+    // The objstore plane takes NO lock — the version compare-and-set
+    // in commitPut resolves the race. Both PUTs begin against
+    // `prevVersion = null` (no live row yet); both get tokens; both
+    // stream bytes. The first commit's CAS creates version 1, the
+    // second's CAS sees the bumped version, fails the precondition,
+    // and returns conflict → HTTP 409.
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
