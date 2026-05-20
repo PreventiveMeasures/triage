@@ -18,7 +18,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 
 import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
-import { abortPut, beginPut, commitPut, deleteObject, getLive, lockKey, openObjstore } from '../server/objstore/store.ts'
+import { abortPut, beginPut, commitPut, deleteObject, getLive, openObjstore } from '../server/objstore/store.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 
 // 64-byte b64url, 86 chars no padding (SIG_RE)
@@ -217,8 +217,7 @@ describe('vercel blob backend — happy path', () => {
   it('begin → put bytes → commit promotes staging → live', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       assert.equal(begin.ok, true)
       // Vercel handle: filePath is omitted — pathname is meaningful
       // only inside the Vercel store, not as an OS path.
@@ -228,9 +227,9 @@ describe('vercel blob backend — happy path', () => {
       assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), true)
       const stagedSize = await handle.blob.statStaging('ws-1', begin.stagingId)
       assert.equal(stagedSize, 16)
-      const commit = await handle.lock.run(key, () => commitPut(handle, {
+      const commit = await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       assert.equal(commit.ok, true)
       assert.equal(commit.row.version, 1)
       // Post-commit: live blob exists, staging gone (the backend
@@ -247,14 +246,13 @@ describe('vercel blob backend — happy path', () => {
   it('openLiveReader streams the bytes back', async () => {
     const { handle, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
       const payload = Buffer.from('hello-vercel-blob')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin({ expectedLength: payload.byteLength })))
+      const begin = await beginPut(handle, fakeBegin({ expectedLength: payload.byteLength }))
       assert.equal(begin.ok, true)
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, payload)
-      const c = await handle.lock.run(key, () => commitPut(handle, {
+      const c = await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       assert.equal(c.ok, true)
       const opened = await handle.blob.openLiveReader('ws-1', chash('res-1'))
       assert.equal(opened.ok, true)
@@ -296,12 +294,11 @@ describe('vercel blob backend — error & race surfaces', () => {
   it('abortPut after a partial upload cleans the staging blob and the row', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       assert.equal(begin.ok, true)
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
       assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), true)
-      await handle.lock.run(key, () => abortPut(handle, 'ws-1', 'res-1', begin.stagingId))
+      await abortPut(handle, 'ws-1', 'res-1', begin.stagingId)
       // Staging blob gone, staging row gone.
       assert.equal(blobs.has(`ws-1/.staging/${begin.stagingId}.bin`), false)
     } finally { cleanup() }
@@ -310,15 +307,14 @@ describe('vercel blob backend — error & race surfaces', () => {
   it('deleteObject drops the live row; the reaper GCs the unreferenced blob past the grace window', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
-      await handle.lock.run(key, () => commitPut(handle, {
+      await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       const live = liveName('ws-1', 'res-1')
       assert.equal(blobs.has(live), true)
-      const del = await handle.lock.run(key, () => deleteObject(handle, 'ws-1', 'res-1', 1))
+      const del = await deleteObject(handle, 'ws-1', 'res-1', 1)
       assert.equal(del.ok, true)
       assert.equal(del.deletedVersion, 1)
       // deleteObject only drops the row — the blob (possibly shared via
@@ -339,12 +335,11 @@ describe('vercel blob backend — listing for the reaper', () => {
     try {
       // Seed two workspaces with one live + one staging each.
       for (const tag of ['ws-A', 'ws-B']) {
-        const key = lockKey(tag, 'r')
-        const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r' })))
+        const begin = await beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r' }))
         await streamBytesToStaging(handle, tag, begin.stagingId, Buffer.alloc(16))
-        await handle.lock.run(key, () => commitPut(handle, { workspaceTag: tag, resourceTag: 'r', stagingId: begin.stagingId }))
+        await commitPut(handle, { workspaceTag: tag, resourceTag: 'r', stagingId: begin.stagingId })
         // A second beginPut staged but not committed — staging blob persists.
-        const stagedOnly = await handle.lock.run(lockKey(tag, 'r2'), () => beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r2' })))
+        const stagedOnly = await beginPut(handle, fakeBegin({ workspaceTag: tag, resourceTag: 'r2' }))
         await streamBytesToStaging(handle, tag, stagedOnly.stagingId, Buffer.alloc(16))
       }
       const wsTags = (await handle.blob.listWorkspaceTags()).toSorted()
@@ -369,12 +364,11 @@ describe('vercel blob backend — listing for the reaper', () => {
   it('reaper GCs a stranded live blob (row deleted out-of-band) once past the grace window', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
-      await handle.lock.run(key, () => commitPut(handle, {
+      await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       const live = liveName('ws-1', 'res-1')
       assert.equal(blobs.has(live), true)
       // Simulate a row drop without unlink (deleteObject leaves the
@@ -429,12 +423,11 @@ describe('vercel blob backend — SDK call shape', () => {
   it('copy uses access:private and references the canonical staging+live pathnames', async () => {
     const { handle, calls, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
-      await handle.lock.run(key, () => commitPut(handle, {
+      await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       const copy = calls.find((c) => c.fn === 'copy')
       assert.ok(copy)
       assert.equal(copy.from, `ws-1/.staging/${begin.stagingId}.bin`)
@@ -445,12 +438,11 @@ describe('vercel blob backend — SDK call shape', () => {
   it('get uses access:private with the token', async () => {
     const { handle, calls, cleanup } = await freshVercelHandle()
     try {
-      const key = lockKey('ws-1', 'res-1')
-      const begin = await handle.lock.run(key, () => beginPut(handle, fakeBegin()))
+      const begin = await beginPut(handle, fakeBegin())
       await streamBytesToStaging(handle, 'ws-1', begin.stagingId, Buffer.alloc(16))
-      await handle.lock.run(key, () => commitPut(handle, {
+      await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
-      }))
+      })
       calls.length = 0  // clear call log so we measure just the read
       const opened = await handle.blob.openLiveReader('ws-1', chash('res-1'))
       assert.equal(opened.ok, true)

@@ -29,7 +29,6 @@ import { mkdirSync } from 'node:fs'
 import { type BlobBackend } from './blob.ts'
 import { openFsBlobBackend } from './blob-fs.ts'
 import { stagingFilePath } from './fs.ts'
-import { KeyedAsyncLock } from './lock.ts'
 import { type AllStmt, type GetStmt, type RunStmt, wrapAll, wrapGet, wrapRun } from '../db-stmt.ts'
 import { errMsg, randomId } from '../util.ts'
 
@@ -116,11 +115,13 @@ export type CommitPutInput = {
   // verified after the upload landed. When provided, commitPut
   // skips the otherwise-redundant `statStaging` round-trip — for
   // the Vercel backend that's one fewer HTTP HEAD per PUT.
-  // Caller must ONLY pass a value it observed under the same
-  // per-resource lock holding through commitPut (i.e. the REST
-  // PUT path's post-upload `statStaging`). Tests that drive
-  // commitPut directly without the REST layer should omit this
-  // and let commitPut stat for itself.
+  // Caller must ONLY pass a value it observed for THIS stagingId
+  // after its upload finished (i.e. the REST PUT path's post-upload
+  // `statStaging`). Safe without a lock because staging ids are
+  // random — no other request writes this blob — and the sole writer
+  // (this PUT) has already completed. Tests that drive commitPut
+  // directly without the REST layer should omit this and let
+  // commitPut stat for itself.
   observedSize?: number
 }
 
@@ -143,20 +144,23 @@ type DbRow = {
   signature: string; put_at: number
 }
 
-// Pre-prepared statements + the byte-plane backend + the per-
-// resource lock that serialises commit / delete / reaper. Held for
-// process lifetime, closed from `shutdown()`. Bundling the lock
-// into the handle means everyone (handlers, REST, reaper) pulls
-// the same lock instance from the same place — no separate
-// plumbing per call site.
+// Pre-prepared statements + the byte-plane backend. Held for process
+// lifetime, closed from `shutdown()`.
 //
-// There is no distributed commit lock: content-addressed live blobs
-// make the metadata-vs-bytes desync impossible, so commit is a plain
-// version compare-and-set (`insertLiveIfAbsent` / `updateLiveCAS`).
-// The in-process `KeyedAsyncLock` is still bundled here — it's cheap
-// and reduces churn against concurrent ops on the same key within a
-// single process — but cross-replica correctness rests on the CAS,
-// not on any lock.
+// The objstore plane takes NO in-process mutex. Correctness rests
+// entirely on three lock-free mechanisms:
+//   - the atomic version compare-and-set on commit
+//     (`insertLiveIfAbsent` / `updateLiveCAS`): N racing commits →
+//     exactly one wins, the losers get `conflict`;
+//   - content-addressed live blobs (`${tag}/${contentHash}.bin`):
+//     immutable, so a re-upload writes a DIFFERENT address and an
+//     in-flight GET never sees torn bytes;
+//   - the reaper's age grace window + an atomic conditional staging
+//     delete (`deleteStagingIfStale`) so the stale-staging sweep
+//     can't race an upload that just finished.
+// These hold both within a single process AND across replicas — the
+// old per-(tag, resourceTag) `KeyedAsyncLock` added nothing the CAS +
+// content-addressing didn't already give, so it was removed.
 export type Handle = {
   // SQLite-only: the underlying `DatabaseSync`. Unset on the Neon
   // backend (see ./store-neon.ts). Test-only fixture SQL routes
@@ -173,7 +177,6 @@ export type Handle = {
   // canonical paths via `stagingFilePath(handle.dir, …)`. The
   // Vercel-backed Handle omits it.
   dir?: string
-  lock: KeyedAsyncLock<string>
   insertStaging: RunStmt<[string, string, string, number | null, number, string, string, number]>
   selectStaging: GetStmt<[string, string, string], {
     prev_version: number | null
@@ -185,6 +188,17 @@ export type Handle = {
   selectStagingByWsSid: GetStmt<[string, string], unknown>
   refreshStagingBegunAt: RunStmt<[number, string, string, string]>
   deleteStaging: RunStmt<[string, string, string]>
+  // Atomic conditional staging delete used by the reaper's stale-row
+  // sweep. `deleteStagingIfStale(tag, res, sid, staleBefore)` deletes
+  // the row IFF its `begun_at < staleBefore`, returning `{ ok: 1 }`
+  // when a row was actually removed and `undefined` otherwise. This is
+  // the lock-free replacement for the old in-lock begun_at re-read
+  // (PR #4 "F1"): a slow PUT that finishes and calls
+  // `refreshStagingBegunAt` bumps `begun_at` fresh, so a concurrent
+  // reaper's conditional delete simply doesn't match (its predicate
+  // fails atomically) and the row survives for the commit. Mirrors the
+  // `insertLiveIfAbsent` RETURNING pattern.
+  deleteStagingIfStale: GetStmt<[string, string, string, number], { ok: number }>
   selectLive: AllStmt<[string], DbRow>
   selectLiveOne: GetStmt<[string, string], DbRow>
   // Version-CAS commit primitives. Exactly one of the two runs per
@@ -207,6 +221,12 @@ export type Handle = {
   insertLiveIfAbsent: GetStmt<[string, string, string, number, string, number], { ok: number }>
   updateLiveCAS: GetStmt<[string, string, number, string, number, string, number, number], { ok: number }>
   deleteLive: RunStmt<[string, string]>
+  // Version-CAS delete: `deleteLiveCAS(tag, res, expectedVersion)` drops
+  // the row only while its version still matches the precondition
+  // deleteObject read, returning `{ ok: 1 }` iff it removed a row.
+  // Without it, a stale delete could destroy a row a concurrent commit
+  // just bumped (lost update). Symmetric with `updateLiveCAS`.
+  deleteLiveCAS: GetStmt<[string, string, number], { ok: number }>
   // `[staleBefore]` — only rows whose `begun_at < staleBefore` are
   // returned. The reaper passes `Date.now() - stagingTtlMs` so the
   // index `workspace_object_staging_begun_at_idx` is used and the
@@ -232,11 +252,13 @@ export type SqliteHandle = Handle & { db: DatabaseSync }
 // quotas land) can't grow `workspace_object` without bound. Enforced
 // at `beginPut` time for NEW resources only — re-uploads of an existing
 // resourceTag (a new version of the same row) don't change the count
-// and are allowed regardless. Checked under the per-resource lock, so
-// the count is consistent with the live-row check on the same path;
+// and are allowed regardless. The count + insert are not atomic, so
 // transient over-shoot under high concurrency across DIFFERENT
 // resources is bounded by `(parallel new-resource begins - 1)` and is
 // accepted (the cap is a soft policy bound, not a security invariant).
+// This was already the contract under the old per-resource lock —
+// that lock keyed on (tag, resourceTag), so concurrent NEW-resource
+// begins held DIFFERENT locks and raced the count anyway.
 export const MAX_RESOURCES_PER_WORKSPACE = 100
 
 // Per-upload byte cap, shared by the WS plane (rejects oversize
@@ -244,12 +266,6 @@ export const MAX_RESOURCES_PER_WORKSPACE = 100
 // the PUT body via Content-Length + post-upload stat). Single source
 // of truth so the two planes can't drift apart on a future bump.
 export const MAX_CONTENT_LENGTH = 100 * 1024 * 1024
-
-// Lock key for the per-resource mutex. Exported so handler / REST /
-// reaper share one shape.
-export function lockKey(tag: string, resourceTag: string): string {
-  return `${tag}|${resourceTag}`
-}
 
 const TAG_RE = /^[\w-]+$/u
 const CONTENT_HASH_RE = /^[\w-]{43}$/u   // 32 raw bytes → 43 b64url chars (no padding)
@@ -336,7 +352,6 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     db,
     blob,
     dir,
-    lock: new KeyedAsyncLock<string>(),
     insertStaging: wrapRun(db.prepare(`
       INSERT INTO workspace_object_staging
         (workspace_tag, resource_tag, staging_id, prev_version,
@@ -361,6 +376,17 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     deleteStaging: wrapRun(db.prepare(`
       DELETE FROM workspace_object_staging
       WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ?
+    `)),
+    // Conditional stale-row delete for the reaper. Atomic CAS on
+    // `begun_at`: drops the row only if it's still older than
+    // `staleBefore` (bind 4), so a concurrent `refreshStagingBegunAt`
+    // that bumped `begun_at` fresh makes the predicate fail and the
+    // RETURNING comes back empty → caller skips. Bind order:
+    // (tag, res, sid, staleBefore).
+    deleteStagingIfStale: wrapGet(db.prepare(`
+      DELETE FROM workspace_object_staging
+      WHERE workspace_tag = ? AND resource_tag = ? AND staging_id = ? AND begun_at < ?
+      RETURNING 1 AS ok
     `)),
     selectLive: wrapAll(db.prepare(`
       SELECT resource_tag, version, content_hash, content_length,
@@ -411,6 +437,16 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
       DELETE FROM workspace_object
       WHERE workspace_tag = ? AND resource_tag = ?
     `)),
+    // Version-conditional drop for deleteObject: removes the row only
+    // if its version still equals the precondition. RETURNING tells us
+    // whether we won; 0 rows → a racing commit/delete moved it → the
+    // caller re-reads and returns conflict / not-found. Bind order:
+    // (tag, res, expectedVersion).
+    deleteLiveCAS: wrapGet(db.prepare(`
+      DELETE FROM workspace_object
+      WHERE workspace_tag = ? AND resource_tag = ? AND version = ?
+      RETURNING 1 AS ok
+    `)),
     listAllStaging: wrapAll(db.prepare(`
       SELECT workspace_tag, resource_tag, staging_id, begun_at
       FROM workspace_object_staging
@@ -439,8 +475,11 @@ export async function listLive(handle: Handle, tag: string): Promise<ObjectRow[]
 // inserts the staging row. Async — `ensureWorkspace` is genuinely
 // async on the FS backend (mkdir) and a no-op on the Vercel backend;
 // the DB calls are async-shaped wrappers around the sync
-// `node:sqlite` driver. Callers MUST serialise
-// per-(tag, resourceTag) with the KeyedAsyncLock — see handlers.ts.
+// `node:sqlite` driver. No lock: the prev_version check here is
+// ADVISORY (a fast-fail so the client rebases before uploading) — the
+// authoritative precondition is commitPut's version-CAS, which is
+// atomic against concurrent commits regardless of what happens
+// between this begin and that commit.
 //
 // Returns the stagingId the REST PUT layer pairs with the bytes; the
 // optional `filePath` is set only for the FS backend (test seam, see
@@ -453,9 +492,9 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
   }
   // Per-workspace resource cap. Only enforced for NEW resources —
   // re-uploads of an existing resourceTag (live != null) don't
-  // change the count, so they're always allowed. The check sits
-  // inside the per-resource lock (caller-acquired), so it's
-  // consistent with the live-row read above.
+  // change the count, so they're always allowed. Not atomic with the
+  // insert below (see MAX_RESOURCES_PER_WORKSPACE) — a soft policy
+  // bound, accepted to over-shoot under concurrent NEW-resource begins.
   if (!live) {
     const count = await handle.countLive.get(input.workspaceTag) as { c: number } | undefined
     if ((count?.c ?? 0) >= MAX_RESOURCES_PER_WORKSPACE) {
@@ -487,15 +526,27 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
 // the losers get `conflict` (with the current live row) and rebase.
 // Because the live blob is content-addressed, a losing racer's promote
 // only ever (idempotently) re-writes the SAME bytes the winner's row
-// names — there is no metadata-vs-bytes desync to guard against, so no
-// distributed lock is needed. The in-process `KeyedAsyncLock` the
-// caller holds gives concurrency atomicity within a single process; the
-// CAS gives it across replicas. A crash between the promote and the CAS
-// leaves the staging blob/row intact alongside (at most) a stranded,
-// unreferenced live blob — the reaper's stale-staging sweep cleans the
-// row, and the GC reaps the unreferenced live blob once it's past the
-// grace window, matching the "stranded state, reaper-cleaned, never
-// row-pointing-at-nothing" crash-safety contract.
+// names — there is no metadata-vs-bytes desync to guard against. The
+// CAS provides the commit's atomicity both within a process and across
+// replicas, so NO in-process lock is taken. A crash between the
+// promote and the CAS leaves the staging blob/row intact alongside (at
+// most) a stranded, unreferenced live blob — the reaper's stale-staging
+// sweep cleans the row, and the GC reaps the unreferenced live blob
+// once it's past the grace window, matching the "stranded state,
+// reaper-cleaned, never row-pointing-at-nothing" crash-safety contract.
+//
+// ACCEPTED TRADEOFF (lock removal): with no lock, the reaper no longer
+// WAITS for an in-flight upload on this key. An upload taking >1h FROM
+// BEGIN (i.e. exceeding the staging TTL during the body) can have its
+// staging row reaped mid-flight by `deleteStagingIfStale`; this commit
+// then sees no staging row and returns `no-staging` → REST 410. The
+// previous lock made the reaper block on any in-flight upload
+// (unbounded). Sub-1h uploads are unaffected: `begun_at` (set at begin)
+// stays within the TTL through the body, so the conditional delete
+// can't match, and the after-body `refreshStagingBegunAt` re-extends
+// the TTL to cover this commit step. This matches the staging TTL's
+// documented intent ("1h, comfortably over a 50 MiB upload on a slow
+// line").
 export async function commitPut(handle: Handle, input: CommitPutInput): Promise<CommitPutResult> {
   const staging = await handle.selectStaging.get(input.workspaceTag, input.resourceTag, input.stagingId)
   if (!staging) return { ok: false, reason: 'no-staging' }
@@ -505,14 +556,16 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // unreachable, …) — not a client length-mismatch. Route through
   // `io-error` so the REST layer returns 5xx, not 400. PR #4 review.
   //
-  // The REST PUT layer already statted post-upload under the
-  // per-resource lock and threads the result in via `observedSize` —
-  // skipping the round-trip saves one Vercel HEAD per PUT. The
-  // staging blob can't have been resized between that stat and here
-  // because the in-process lock (held continuously across the
-  // post-upload stat and this commit) excludes every writer of this
-  // stagingId within the process, and staging ids are random so no
-  // other request targets the same blob. WS / test paths that omit
+  // The REST PUT layer already statted the staging blob post-upload
+  // and threads the result in via `observedSize` — skipping the
+  // round-trip saves one Vercel HEAD per PUT. The staging blob can't
+  // have been resized between that stat and here: staging ids are
+  // 16-byte random, so no other request targets this blob, and the
+  // sole writer (this PUT's upload pipeline) has already finished
+  // before the REST stat ran. The only other actor that touches a
+  // staging blob is the reaper, which UNLINKS (it never resizes); a
+  // racing reaper unlink surfaces below as statStaging→io-error or a
+  // promote failure, not a wrong size. WS / test paths that omit
   // `observedSize` fall through to the explicit stat.
   if (input.observedSize === undefined) {
     try { stagedSize = await handle.blob.statStaging(input.workspaceTag, input.stagingId) }
@@ -525,14 +578,14 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // mid-stream abort that left a short staging file) MUST NEVER be
   // promoted to live. The REST layer already gates on
   // `received !== declared` before reaching here, but commitPut re-
-  // stats under the per-resource lock as the last line of defense —
-  // if the storage-side size doesn't match what the signature
-  // committed to, we bail BEFORE the promotion. A client that
-  // retries the upload under the same resourceTag gets a fresh
-  // stagingId + fresh staging slot; the truncated original is
-  // untouched by the retry's promote. Together with the per-(tag,
-  // resourceTag) lock, this guarantees the live blob's bytes are
-  // always a complete signed payload.
+  // stats as the last line of defense — if the storage-side size
+  // doesn't match what the signature committed to, we bail BEFORE the
+  // promotion. A client that retries the upload under the same
+  // resourceTag gets a fresh stagingId + fresh staging slot (staging
+  // ids are random, so the retry never shares a blob with the
+  // truncated original); the truncated original is untouched by the
+  // retry's promote. The live blob's bytes are therefore always a
+  // complete signed payload.
   if (stagedSize !== staging.expected_length) return { ok: false, reason: 'size-mismatch' }
   // Cheap early-out conflict check: a concurrent commit / delete may
   // have raced past us between begin and now. The authoritative test
@@ -651,7 +704,21 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 // `prevVersion = null` + missing row = already-deleted-or-never-
 // existed; treat as success so retried DELETEs are idempotent. The
 // `deletedVersion = 0` sentinel tells the broadcast path to skip.
-// Callers serialise per-resource via KeyedAsyncLock.
+//
+// No lock: the drop is a version-CAS (`deleteLiveCAS` — DELETE WHERE
+// version = prev), so every race resolves to exactly one winner, the
+// same as the old lock did, with no lost update:
+//   - delete vs. a concurrent COMMIT on the same resource: whichever
+//     CAS lands first wins. A stale delete can NOT remove a row the
+//     commit just bumped — the `WHERE version = prev` no longer matches,
+//     so the delete gets `conflict` (re-read sees the bumped version).
+//     If the delete wins, the commit's `updateLiveCAS` matches no row →
+//     `conflict`. (The earlier draft used an UNCONDITIONAL delete here,
+//     which — without the lock — let `getLive` read v1, a commit bump
+//     to v2 slip in, and the delete then destroy v2: a lost update. The
+//     version-CAS closes that.)
+//   - two concurrent deletes with the same prevVersion: one CAS removes
+//     the row; the other matches no row → re-read → `not-found`.
 //
 // On success we ONLY drop the live row — we do NOT unlink the live
 // blob. With content-addressing the blob at `${tag}/${hash}.bin` may
@@ -669,6 +736,13 @@ export async function deleteObject(
     return { ok: false, reason: 'not-found' }
   }
   if (live.version !== prevVersion) return { ok: false, reason: 'conflict', conflict: live }
-  await handle.deleteLive.run(tag, resourceTag)
-  return { ok: true, deletedVersion: live.version }
+  // Version-conditional drop: only delete while the row is STILL at the
+  // version we just read, so a commit landing between the read above
+  // and here can't have its bumped row removed by this stale delete.
+  const removed = await handle.deleteLiveCAS.get(tag, resourceTag, live.version)
+  if (removed) return { ok: true, deletedVersion: live.version }
+  // A racing commit/delete moved or removed the row after our read.
+  const current = await getLive(handle, tag, resourceTag)
+  if (!current) return { ok: false, reason: 'not-found' }
+  return { ok: false, reason: 'conflict', conflict: current }
 }

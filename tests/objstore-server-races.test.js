@@ -2,18 +2,19 @@
 //
 // Sibling of tests/server-objstore.test.js (which pins the core
 // happy-path + single-event semantics). This file targets the
-// concurrency surface: per-resource lock isolation, reaper × put ×
+// concurrency surface: independent-resource isolation, reaper × put ×
 // delete interleavings, delete-then-recreate cycles, and the
 // (workspace_tag, resource_tag, staging_id) tuple integrity that
 // keeps a stagingId minted under one resource from being usable
-// against another.
+// against another. The objstore plane takes NO in-process lock; its
+// races are resolved by the version-CAS + content-addressing + the
+// reaper's atomic conditional staging delete (see server/objstore).
 //
 // User data is the priority: anywhere a race could promote a
 // truncated upload, drop a live row whose file still exists (or
 // vice-versa), or let a fresh commit's bytes get unlinked, we want
 // an assertion. The reaper is the most subtle piece — it runs
-// asynchronously, holds the per-resource lock only briefly per
-// candidate, and must never unlink a file the live row points at.
+// asynchronously and must never unlink a blob the live row references.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -25,17 +26,15 @@ import { createHash } from 'node:crypto'
 
 import {
   MAX_RESOURCES_PER_WORKSPACE,
-  STAGING_TTL_MS_DEFAULT,
   abortPut,
   beginPut,
   commitPut,
   deleteObject,
   getLive,
   listLive,
-  lockKey,
   openObjstore,
 } from '../server/objstore/store.ts'
-import { liveFilePath, stagingFilePath, unlinkIfExists } from '../server/objstore/fs.ts'
+import { liveFilePath } from '../server/objstore/fs.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 
 let counter = 0
@@ -90,34 +89,34 @@ function writeStaging(filePath, bytes) {
   try { writeSync(fd, bytes) } finally { closeSync(fd) }
 }
 
-// Wrap a beginPut + body-write + commit triple under the per-resource
-// lock to mimic the production REST PUT path. Returns the commit
-// result. Bytes default to a buffer of `expectedLength` zeros.
+// A beginPut + body-write + commit triple, mimicking the production
+// REST PUT path. The objstore plane takes no lock anymore (the
+// version-CAS arbitrates concurrent commits), so these run as direct
+// calls. The name is retained from the lock era to minimise churn at
+// the ~30 call sites. Returns the commit result; bytes default to a
+// buffer of `expectedLength` zeros.
 async function lockedPut(handle, input, bytes) {
-  const key = lockKey(input.workspaceTag, input.resourceTag)
-  const begin = await handle.lock.run(key, () => beginPut(handle, input))
+  const begin = await beginPut(handle, input)
   if (!begin.ok) return begin
   writeStaging(begin.filePath, bytes ?? Buffer.alloc(input.expectedLength))
-  return handle.lock.run(key, () => commitPut(handle, {
+  return commitPut(handle, {
     workspaceTag: input.workspaceTag,
     resourceTag: input.resourceTag,
     stagingId: begin.stagingId,
-  }))
+  })
 }
 
-// Convenience: locked deleteObject.
+// Convenience: a direct deleteObject (no lock — see lockedPut).
 function lockedDelete(handle, tag, res, prev) {
-  return handle.lock.run(lockKey(tag, res), () => deleteObject(handle, tag, res, prev))
+  return deleteObject(handle, tag, res, prev)
 }
 
-describe('lock isolation: many concurrent puts on distinct resources', () => {
-  // The per-resource lock keys on (workspaceTag, resourceTag). If two
-  // puts on DIFFERENT resources serialised on the same lock (e.g.
-  // someone keyed on workspaceTag alone), throughput would collapse
-  // and the ordering would be observable in the version ladder. Here
-  // we fire N puts in parallel and check every one committed to
-  // version 1 without a single conflict — proves keys are distinct
-  // and the lock map handles concurrent acquisitions.
+describe('isolation: many concurrent puts on distinct resources', () => {
+  // No lock keys on (workspaceTag, resourceTag) anymore — but the same
+  // observable property must hold: N puts on DIFFERENT resources fired
+  // in parallel must EACH commit to version 1 with not a single
+  // conflict. Each is a fresh-write CAS against its own (tag,
+  // resourceTag) slot, so they're mutually independent.
   it('MAX_RESOURCES_PER_WORKSPACE different resources commit in parallel without conflicts', async () => {
     const { handle, cleanup } = freshHandle()
     try {
@@ -134,8 +133,6 @@ describe('lock isolation: many concurrent puts on distinct resources', () => {
         assert.equal(results[i].row.version, 1, `commit ${i} should be v1`)
       }
       assert.equal((await listLive(handle, 'ws-1')).length, MAX_RESOURCES_PER_WORKSPACE)
-      // The lock map should drain back to 0 once nothing's in flight.
-      assert.equal(handle.lock.size, 0, 'lock map GCs after all in-flight ops complete')
     } finally { cleanup() }
   })
 
@@ -159,27 +156,35 @@ describe('lock isolation: many concurrent puts on distinct resources', () => {
   })
 })
 
-describe('lock serialisation: many concurrent commits on the SAME resource', () => {
-  // 20 concurrent racers, all begin against `prevVersion=null`. Under
-  // the lock, exactly one upserts the live row to v1; the other 19
-  // hit the precondition recheck inside `commitPut` and fail with
-  // `conflict`. None should silently land at v1 on top of the
-  // winner's bytes, none should produce a row with version > 1
-  // when only one PUT actually succeeded.
-  it('20 concurrent commits — exactly one wins, rest see conflict, only winner bytes are live', async () => {
+describe('CAS serialisation: many concurrent commits on the SAME resource', () => {
+  // 20 concurrent racers, all begin against `prevVersion=null`. The
+  // first-write version-CAS (`insertLiveIfAbsent`) lets exactly one
+  // land the live row at v1; the other 19 find the row already present
+  // → empty RETURNING → `conflict`. None should silently land at v1 on
+  // top of the winner's bytes, none should produce a row with version
+  // > 1 when only one PUT actually succeeded.
+  it('20 concurrent commits — exactly one wins, rest see conflict, the winner row names a blob holding the winner bytes', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const N = 20
-      // Each racer writes a unique 8-byte payload so we can identify
-      // the winner from the live file's bytes.
-      const inputs = Array.from({ length: N }, (_, i) => ({
-        ...fakeBegin({ resourceTag: 'race', expectedLength: 8 }),
-        racerId: i,
-        bytes: Buffer.from(`RACE${i.toString().padStart(4, '0')}`),
-      }))
+      // Each racer writes a unique 8-byte payload with a MATCHING,
+      // distinct content hash — content-addressing's real invariant
+      // (the hash is of the bytes). So each racer promotes to its OWN
+      // immutable address; no racer clobbers another's blob (unlike the
+      // old same-hash-different-bytes fixture, which only worked because
+      // the lock serialised promotes to a shared path). We then prove
+      // exactly one CAS winner and that its row's hash names its bytes.
+      const inputs = Array.from({ length: N }, (_, i) => {
+        const bytes = Buffer.from(`RACE${i.toString().padStart(4, '0')}`)
+        return {
+          ...fakeBegin({ resourceTag: 'race', expectedLength: 8, contentHash: chash(`race@${i}`) }),
+          racerId: i,
+          bytes,
+        }
+      })
       const results = await Promise.all(inputs.map(async (input) => {
         const r = await lockedPut(handle, input, input.bytes)
-        return { ...r, racerId: input.racerId, bytes: input.bytes }
+        return { ...r, racerId: input.racerId, bytes: input.bytes, hash: input.contentHash }
       }))
       const winners = results.filter((r) => r.ok)
       const losers = results.filter((r) => !r.ok)
@@ -191,11 +196,13 @@ describe('lock serialisation: many concurrent commits on the SAME resource', () 
       // Live row is v1 (NOT v20 / not the sum-of-attempts).
       const live = await getLive(handle, 'ws-1', 'race')
       assert.equal(live?.version, 1, 'only one upsert landed — version stays at 1')
-      // Live FILE (content-addressed at chash('race') — every racer
-      // declared the same hash) contains the WINNER's bytes: losers'
-      // bytes were staged + abandoned, never promoted to the live path.
-      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', chash('race')))
-      assert.equal(Buffer.compare(onDisk, winners[0].bytes), 0, 'live file bytes match the winner')
+      // The live row names the WINNER's content hash, and the blob at
+      // that content-addressed path holds the winner's bytes exactly.
+      // Losers' blobs (distinct hashes) are unreferenced — never the
+      // live row's bytes.
+      assert.equal(live.contentHash, winners[0].hash, 'live row names the winner content hash')
+      const onDisk = readFileSync(liveFilePath(objDir, 'ws-1', live.contentHash))
+      assert.equal(Buffer.compare(onDisk, winners[0].bytes), 0, 'winner blob holds the winner bytes')
     } finally { cleanup() }
   })
 
@@ -291,25 +298,36 @@ describe('(ws, res, sid) tuple integrity — stagingIds are scoped', () => {
     } finally { cleanup() }
   })
 
-  it('two concurrent identical commits for the SAME (ws, res, sid) — exactly one succeeds, the other gets no-staging', async () => {
+  it('two concurrent identical commits for the SAME (ws, res, sid) — exactly one succeeds, the other loses', async () => {
     // Models the deduplicated-request case where the same token
     // commit is issued twice in parallel (NOT the in-flight HTTP
-    // dedup that rest.ts owns — here it's direct DB-level). The
-    // first commit drops the staging row; the second's SELECT
-    // misses → no-staging.
+    // dedup that rest.ts owns — here it's direct DB-level), now with
+    // NO lock. Both may read the staging row, but only one outcome is
+    // possible per the version-CAS: exactly ONE commit lands the live
+    // row. The loser's reason depends on how far it got before the
+    // winner consumed the shared staging slot:
+    //   - `conflict` — it raced the version-CAS and lost;
+    //   - `no-staging` — the winner's `deleteStaging` ran before the
+    //     loser's `selectStaging`;
+    //   - `io-error` — on the FS backend the winner's promote (rename)
+    //     removed the staging file before the loser's own promote.
+    // All three are correct losses; the invariant is exactly one ok,
+    // a single live row at v1, and never a double-commit.
     const { handle, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ expectedLength: 4 }))
       writeStaging(b.filePath, Buffer.alloc(4))
-      const key = lockKey('ws-1', 'res-1')
-      const commit = () => handle.lock.run(key, () => commitPut(handle, {
+      const commit = () => commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: b.stagingId,
-      }))
+      })
       const [c1, c2] = await Promise.all([commit(), commit()])
       const oks = [c1, c2].filter((c) => c.ok)
-      const nons = [c1, c2].filter((c) => !c.ok && c.reason === 'no-staging')
+      const losers = [c1, c2].filter((c) => !c.ok && (c.reason === 'conflict' || c.reason === 'no-staging' || c.reason === 'io-error'))
       assert.equal(oks.length, 1, 'exactly one commit succeeds')
-      assert.equal(nons.length, 1, 'the other sees no-staging (row already consumed)')
+      assert.equal(losers.length, 1, 'the other loses with conflict / no-staging / io-error — never a second success')
+      // The live row landed exactly once, at v1.
+      const live = await getLive(handle, 'ws-1', 'res-1')
+      assert.equal(live?.version, 1)
     } finally { cleanup() }
   })
 })
@@ -383,13 +401,12 @@ describe('delete-then-recreate (the user-data scenario)', () => {
   })
 
   it('mid-cycle interleave: delete arrives between two commit phases on the same resource', async () => {
-    // Resource exists at v1. Begin a v2 put-attempt (under lock,
-    // releases lock). Body writes (no lock). Before commit acquires
-    // the lock, a DELETE lands and drops the row (the v1 blob is left
-    // for the reaper). The commit's precondition-recheck (inside lock)
-    // sees no row; staging.prev_version is 1 but live is null →
-    // conflict, BEFORE the promote. The row STAYS deleted; v2's bytes
-    // never reach their content-addressed live path.
+    // Resource exists at v1. Begin a v2 put-attempt, body writes. Before
+    // the commit runs, a DELETE lands and drops the row (the v1 blob is
+    // left for the reaper). The commit's precondition-recheck sees no
+    // row; staging.prev_version is 1 but live is null → conflict, BEFORE
+    // the promote (the version-CAS would also fail). The row STAYS
+    // deleted; v2's bytes never reach their content-addressed live path.
     const { handle, objDir, cleanup } = freshHandle()
     try {
       // Seed v1 (its own content hash).
@@ -398,12 +415,12 @@ describe('delete-then-recreate (the user-data scenario)', () => {
       const r1 = await lockedPut(handle, fakeBegin({ resourceTag: 'mid', expectedLength: v1.byteLength, contentHash: hV1 }), v1)
       assert.equal(r1.ok, true)
       const v1Blob = liveFilePath(objDir, 'ws-1', hV1)
-      // Begin v2 (lock held briefly) — distinct bytes + distinct hash
-      // so we can assert v2's specific blob is never promoted.
+      // Begin v2 — distinct bytes + distinct hash so we can assert v2's
+      // specific blob is never promoted.
       const hV2 = chash('mid@v2')
-      const begin = await handle.lock.run(lockKey('ws-1', 'mid'), () => beginPut(handle, fakeBegin({
+      const begin = await beginPut(handle, fakeBegin({
         resourceTag: 'mid', prevVersion: 1, expectedLength: 4, contentHash: hV2,
-      })))
+      }))
       assert.equal(begin.ok, true)
       writeStaging(begin.filePath, Buffer.alloc(4))
       // Interleave: DELETE the v1 row. Row drops; v1 blob lingers
@@ -411,11 +428,12 @@ describe('delete-then-recreate (the user-data scenario)', () => {
       const d = await lockedDelete(handle, 'ws-1', 'mid', 1)
       assert.equal(d.ok, true)
       assert.equal(await getLive(handle, 'ws-1', 'mid'), null)
-      // Now commit v2. Inside the lock, getLive returns null and the
-      // staging row's prev_version = 1 — mismatch → conflict.
-      const c = await handle.lock.run(lockKey('ws-1', 'mid'), () => commitPut(handle, {
+      // Now commit v2. commitPut's getLive returns null and the
+      // staging row's prev_version = 1 — mismatch → conflict (the
+      // version-CAS would also fail, but the precheck short-circuits).
+      const c = await commitPut(handle, {
         workspaceTag: 'ws-1', resourceTag: 'mid', stagingId: begin.stagingId,
-      }))
+      })
       assert.equal(c.ok, false)
       assert.equal(c.reason, 'conflict')
       // No live row. The delete won, the v2 attempt lost: v2's bytes
@@ -432,15 +450,15 @@ describe('delete-then-recreate (the user-data scenario)', () => {
   })
 
   it('many concurrent peers each doing delete-then-recreate cycles — final state is consistent (no partial bytes)', async () => {
-    // The lock guarantee: a commit's promote + CAS and a delete's
-    // row-drop on the same resource serialise; concurrent begin/commit
-    // for the same resource queue behind. If the lock leaked, a commit
-    // could promote a NEW blob whose row never lands (or lands then is
-    // dropped), and the live row could end up naming a blob that holds
-    // the wrong bytes. We model the chaos by running 10 concurrent
-    // "peers" each doing a delete-then-put cycle. The final invariant:
-    // a surviving live row names a content hash whose blob holds that
-    // payload byte-for-byte (NEVER a mix or a truncation).
+    // The CAS + content-addressing guarantee: a commit's promote +
+    // version-CAS and a delete's row-drop on the same resource resolve
+    // deterministically (the version is the arbiter), and a losing
+    // commit's promoted blob is content-addressed (immutable, GC'd if
+    // unreferenced) — so the live row can NEVER end up naming a blob
+    // that holds the wrong bytes. We model the chaos by running 10
+    // concurrent "peers" each doing a delete-then-put cycle. The final
+    // invariant: a surviving live row names a content hash whose blob
+    // holds that payload byte-for-byte (NEVER a mix or a truncation).
     const { handle, objDir, cleanup } = freshHandle()
     try {
       // Both payloads have the SAME byte length so a length-based
@@ -506,11 +524,11 @@ describe('delete-then-recreate (the user-data scenario)', () => {
 })
 
 describe('reaper × concurrent ops — never unlink a live file', () => {
-  // The reaper's most-dangerous failure mode is unlinking a file
-  // that a live row points at. The fix is a per-resource lock +
-  // re-check of `selectLiveOne` inside the lock. These tests fire
-  // real concurrent operations (not just hand-acquired locks) and
-  // confirm the live file survives.
+  // The reaper's most-dangerous failure mode is unlinking a blob a
+  // live row references. The protection (no lock): content-addressed
+  // immutable blobs + the age grace window + a live-reference re-read
+  // immediately before each unlink. These tests fire real concurrent
+  // operations and confirm the live blob survives.
   it('reaper running concurrent with a delete-then-put cycle preserves the recreate file', async () => {
     const { handle, objDir, cleanup } = freshHandle()
     try {
@@ -939,7 +957,15 @@ describe('abortPut idempotency + races', () => {
 })
 
 describe('deleteObject idempotency + races', () => {
-  it('two concurrent deleteObject(prev=N) calls on the same row → one succeeds, one not-found', async () => {
+  it('two concurrent deleteObject(prev=N) calls on the same row → exactly one drops it (ok), the other not-found', async () => {
+    // Lockless model: both deletes read v1 and pass the prev check, then
+    // each runs the version-CAS drop (`deleteLiveCAS` — DELETE WHERE
+    // version = 1 RETURNING). Only ONE can match the v1 row; the other
+    // matches no row → re-read → not-found. Exactly one ok + one
+    // not-found, the same outcome the old lock produced. (An
+    // unconditional DELETE here would let both "succeed"; the CAS
+    // prevents that — and, more importantly, prevents a delete dropping
+    // a row a concurrent commit just bumped: see the next test.)
     const { handle, cleanup } = freshHandle()
     try {
       await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
@@ -947,13 +973,50 @@ describe('deleteObject idempotency + races', () => {
         lockedDelete(handle, 'ws-1', 'res-1', 1),
         lockedDelete(handle, 'ws-1', 'res-1', 1),
       ])
-      // The lock serialises them. The first sees v1 and drops; the
-      // second sees missing row + prev=1 → not-found.
       const oks = [d1, d2].filter((d) => d.ok)
-      const nfs = [d1, d2].filter((d) => !d.ok && d.reason === 'not-found')
-      assert.equal(oks.length, 1, 'one delete actually drops the row')
-      assert.equal(nfs.length, 1, 'the other sees not-found')
+      const notFounds = [d1, d2].filter((d) => !d.ok && d.reason === 'not-found')
+      assert.equal(oks.length, 1, 'exactly one delete drops the row')
+      assert.equal(oks[0].deletedVersion, 1)
+      assert.equal(notFounds.length, 1, 'the loser sees the row already gone → not-found')
+      assert.equal(await getLive(handle, 'ws-1', 'res-1'), null, 'row deleted')
     } finally { cleanup() }
+  })
+
+  it('concurrent delete(prev=1) and commit(prev=1) — exactly one wins; a committed version is never lost', async () => {
+    // THE lost-update guard. With an unconditional delete, deleteObject
+    // could read v1, a concurrent commit bump v1→v2, and the delete then
+    // destroy v2 while the commit reported success. The version-CAS
+    // (`deleteLiveCAS` WHERE version = prev) makes the loser conflict
+    // instead. Loop to exercise both interleavings.
+    for (let i = 0; i < 40; i++) {
+      const { handle, cleanup } = freshHandle()
+      try {
+        await lockedPut(handle, fakeBegin({ expectedLength: 4 }), Buffer.alloc(4))
+        const newBytes = Buffer.from('UPDATED-CONTENT')
+        const h2 = chash('res-1@v2')
+        const [commitRes, delRes] = await Promise.all([
+          lockedPut(handle, fakeBegin({ prevVersion: 1, expectedLength: newBytes.byteLength, contentHash: h2 }), newBytes),
+          lockedDelete(handle, 'ws-1', 'res-1', 1),
+        ])
+        const live = await getLive(handle, 'ws-1', 'res-1')
+        if (commitRes.ok) {
+          // Commit won: its v2 MUST still be live (never silently
+          // deleted), and the delete MUST have lost with a conflict.
+          assert.ok(live, `iter ${i}: committed v2 must not be lost to a racing delete`)
+          assert.equal(live.version, 2)
+          assert.equal(live.contentHash, h2)
+          assert.equal(delRes.ok, false, `iter ${i}: delete must not also succeed`)
+          assert.equal(delRes.reason, 'conflict')
+        } else {
+          // Delete won (or commit lost its begin/commit CAS): row gone,
+          // commit conflicted.
+          assert.equal(commitRes.reason, 'conflict', `iter ${i}: commit lost → conflict`)
+          assert.equal(delRes.ok, true, `iter ${i}: delete won`)
+          assert.equal(delRes.deletedVersion, 1)
+          assert.equal(live, null, `iter ${i}: delete won → row gone`)
+        }
+      } finally { cleanup() }
+    }
   })
 
   it('two concurrent deleteObject(prev=null) calls — at-most-one drops, the other ack-zero', async () => {
@@ -966,9 +1029,10 @@ describe('deleteObject idempotency + races', () => {
         lockedDelete(handle, 'ws-1', 'res-1', null),
         lockedDelete(handle, 'ws-1', 'res-1', null),
       ])
-      // Both see the row at the start of their lock-block — both
-      // conflict (prev=null !== 1). Neither succeeds; the row
-      // survives.
+      // Both deletes read the row (v1) and both compare it against
+      // prev=null → mismatch → conflict. The conflict check is
+      // read-only, so the lockless interleaving doesn't change the
+      // outcome: neither succeeds; the row survives.
       assert.equal(d1.ok, false); assert.equal(d1.reason, 'conflict')
       assert.equal(d2.ok, false); assert.equal(d2.reason, 'conflict')
       const live = await getLive(handle, 'ws-1', 'res-1')
@@ -1093,13 +1157,14 @@ describe('listLive consistency under concurrent writes', () => {
   })
 })
 
-describe('lock GC after many concurrent ops', () => {
-  // After every op completes, refs drop to 0 and the entry is
-  // deleted from the map. A leak here would grow `handle.lock.size`
-  // by total-resources-ever-seen, eventually OOM'ing a long-running
-  // server. The KeyedAsyncLock test in server-objstore.test.js
-  // covers a single op; this is the stress version.
-  it('lock map drains to 0 after 100 concurrent commits on 100 distinct keys', async () => {
+describe('many concurrent ops settle correctly (no lock to leak)', () => {
+  // The objstore plane holds no in-process lock, so there is no lock
+  // map to drain (the KeyedAsyncLock GC contract is pinned directly in
+  // server-objstore.test.js, for the revision-chain plane that still
+  // uses it). What still matters under heavy concurrency is that the
+  // version-CAS produces the right outcomes: independent keys all
+  // land, same-key racers resolve to exactly one winner.
+  it('100 concurrent commits on 100 distinct keys all land at v1', async () => {
     const { handle, cleanup } = freshHandle()
     try {
       const ops = []
@@ -1107,15 +1172,17 @@ describe('lock GC after many concurrent ops', () => {
         const t = `r-${i.toString().padStart(4, '0')}`
         ops.push(lockedPut(handle, fakeBegin({ resourceTag: t, expectedLength: 4 }), Buffer.alloc(4)))
       }
-      await Promise.all(ops)
-      assert.equal(handle.lock.size, 0)
+      const results = await Promise.all(ops)
+      for (const r of results) { assert.equal(r.ok, true); assert.equal(r.row.version, 1) }
+      assert.equal((await listLive(handle, 'ws-1')).length, 100)
     } finally { cleanup() }
   })
 
-  it('lock map drains even when ops reject (commitPut conflicts)', async () => {
+  it('5 concurrent puts on the SAME resource resolve to exactly one winner', async () => {
     const { handle, cleanup } = freshHandle()
     try {
-      // 5 concurrent puts on the SAME resource — 4 will reject.
+      // 5 concurrent first-writes on the SAME resource — the version-
+      // CAS lets exactly one land; the other 4 reject with conflict.
       const ops = []
       for (let i = 0; i < 5; i++) {
         ops.push(lockedPut(handle, fakeBegin({ resourceTag: 'one', expectedLength: 4 }), Buffer.alloc(4)))
@@ -1125,7 +1192,6 @@ describe('lock GC after many concurrent ops', () => {
       const conflict = results.filter((r) => !r.ok && r.reason === 'conflict').length
       assert.equal(ok, 1)
       assert.equal(conflict, 4)
-      assert.equal(handle.lock.size, 0, 'rejected ops still release their lock entry')
     } finally { cleanup() }
   })
 })
@@ -1288,31 +1354,34 @@ describe('staging file management — paths and lifecycles', () => {
 })
 
 describe('cap enforcement under concurrent NEW resources', () => {
-  // The cap is enforced under the per-resource lock. Under heavy
-  // concurrent NEW-resource creation, transient over-shoot is
-  // documented and bounded — but the BIG INVARIANT (eventually
-  // settles at ≤ MAX_RESOURCES_PER_WORKSPACE + a small race window
-  // per the docstring) needs holding.
+  // The cap check + insert are not atomic. Under heavy concurrent
+  // NEW-resource creation, transient over-shoot is documented and
+  // bounded — but the BIG INVARIANT (eventually settles at ≤
+  // MAX_RESOURCES_PER_WORKSPACE + a small race window per the
+  // docstring) needs holding.
   it.todo('99 already-live + 10 concurrent new-resource begins: cap should be strict (currently overshoots up to (parallel-1))', async () => {
-    // OBSERVATION: the cap check (`count >= MAX`) lives inside the
-    // per-resource lock — but per-resource locks are keyed on
-    // (workspaceTag, resourceTag), not on workspaceTag alone. Ten
-    // concurrent begins for NEW resources each hold a DIFFERENT
-    // lock, so their `selectLive.all + count + insert` races. The
-    // store.ts docstring documents this as accepted: "transient
-    // over-shoot under high concurrency across DIFFERENT resources
-    // is bounded by (parallel new-resource begins - 1) and is
-    // accepted (the cap is a soft policy bound, not a security
-    // invariant)".
+    // OBSERVATION: the cap check (`count >= MAX`) and the staging
+    // insert are not atomic — beginPut reads the count, then inserts,
+    // with `await`s between. Ten concurrent NEW-resource begins each
+    // read the count before any has inserted, so all ten can pass the
+    // check. (Removing the per-resource lock didn't change this: that
+    // lock keyed on (workspaceTag, resourceTag), so concurrent
+    // begins for DIFFERENT resources never serialised against each
+    // other anyway.) The store.ts docstring documents this as
+    // accepted: "transient over-shoot under high concurrency across
+    // DIFFERENT resources is bounded by (parallel new-resource begins
+    // - 1) and is accepted (the cap is a soft policy bound, not a
+    // security invariant)".
     //
     // SHOULD-BE: the cap is a cap. With 99 already-live + 10
     // concurrent begins, exactly 1 should land and 9 should be
     // rejected with `workspace-full`. The current "soft policy" is
     // a description of the bug, not a justification.
     //
-    // FIX HINT: introduce a per-workspaceTag lock (or use a SQLite
-    // transaction with appropriate isolation) so the count + insert
-    // are atomic across NEW-resource creation for the same workspace.
+    // FIX HINT: make the count + insert atomic for NEW-resource
+    // creation per workspace — e.g. a per-workspaceTag mutex, a SQLite
+    // transaction with appropriate isolation, or an INSERT guarded by
+    // a `WHERE (SELECT count(*) ...) < MAX` predicate.
     //
     // IMPACT: a holder of the seed could grow `workspace_object`
     // past MAX_RESOURCES_PER_WORKSPACE by deliberately spawning
@@ -1368,35 +1437,34 @@ describe('cap enforcement under concurrent NEW resources', () => {
 })
 
 describe('reaper × stale-staging × refresh — F1/H4 corner cases', () => {
-  it('refresh inside the commit lock prevents reaper from reaping a fresh upload', async () => {
-    // Replays the production sequence:
+  it('a refreshed-fresh row is not a reaper candidate, so a concurrent sweep + commit both win', async () => {
+    // Replays the production sequence in the lockless model:
     //   1. beginPut → row inserted (begun_at = NOW)
-    //   2. (REST PUT body takes a LONG time, hand-aged begun_at)
-    //   3. Reaper sees stale row, queues for the lock
-    //   4. commit acquires the lock first; INSIDE the lock:
-    //      refreshStagingBegunAt → row's begun_at = NOW; commitPut
-    //      → row dropped; row gone, file renamed to live
-    //   5. Reaper enters its lock block, sees no staging row → skip
+    //   2. (REST PUT body takes a while, hand-aged begun_at)
+    //   3. body finishes → refreshStagingBegunAt bumps begun_at = NOW
+    //      (this is the after-body refresh, which happens BEFORE the
+    //      commit and before any sweep could treat the row as stale)
+    //   4. commit + a concurrent reaper sweep race; the sweep's
+    //      `listAllStaging(now − TTL)` snapshot no longer matches the
+    //      fresh row, so no conditional delete is even attempted, and
+    //      the commit lands cleanly.
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'slow-upload', expectedLength: 8 }))
       writeStaging(b.filePath, Buffer.alloc(8))
-      // Backdate begun_at past the TTL.
+      // Body looked stale mid-stream...
       handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
+      // ...but the after-body refresh restamps begun_at to NOW before
+      // the commit step (production order). This is what keeps the
+      // conditional delete from matching.
+      await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'slow-upload', b.stagingId)
+      // Now race the commit against a sweep — no lock.
+      const commit = commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'slow-upload', stagingId: b.stagingId })
       const sweep = reapOrphans(handle)
-      // Mimic the production commit: under the lock, refresh + commit.
-      const commit = handle.lock.run(lockKey('ws-1', 'slow-upload'), async () => {
-        await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'slow-upload', b.stagingId)
-        return commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'slow-upload', stagingId: b.stagingId })
-      })
       const [c, _] = await Promise.all([commit, sweep])
       void _
-      // Commit MUST succeed — the row was promoted to live before the
-      // reaper got the lock; even if reaper got the lock first, the
-      // refresh would have moved begun_at to NOW and the inside-lock
-      // re-check would have spared the row.
       assert.equal(c.ok, true, 'fresh-upload commit succeeded despite a racing reaper sweep')
       assert.equal(c.row.version, 1)
       assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('slow-upload'))), true)
@@ -1418,94 +1486,76 @@ describe('reaper × stale-staging × refresh — F1/H4 corner cases', () => {
     } finally { cleanup() }
   })
 
-  it.todo('reaper-first F1 race: a commit whose body finished must NOT be dropped just because the reaper got the per-resource lock first', async () => {
-    // OBSERVATION: round-12 moved `refreshStagingBegunAt` INSIDE the
-    // commit lock. The inline comment in rest.ts claims this "closes
-    // the race", but it only closes it for the COMMIT-FIRST direction.
+  it.todo('reaper-vs-commit: a body that finishes AFTER exceeding the staging TTL can still be reaped mid-flight (accepted tradeoff)', async () => {
+    // OBSERVATION: with the per-resource lock removed, the reaper no
+    // longer WAITS for an in-flight upload. The F1 protection is now
+    // the atomic conditional delete `deleteStagingIfStale` (predicate
+    // `begun_at < staleBefore`). For a SUB-TTL upload this is airtight:
+    // begun_at (set at begin) stays within the TTL through the body,
+    // so the predicate can't match and the row is never reaped (see
+    // the passing tests in this block). But for an upload whose body
+    // streams LONGER than the staging TTL (default 1 h), the row's
+    // begun_at is genuinely older than staleBefore at sweep time, so a
+    // sweep that runs before the after-body refresh DOES match and
+    // deletes the row; the subsequent commit then sees `no-staging`
+    // → REST 410.
     //
-    // When the reaper acquires the lock FIRST (its `lock.run` was
-    // queued before the commit's), the reaper's inside-lock
-    // fresh-read SELECT runs BEFORE the commit's refresh has
-    // executed (because refresh now lives inside the commit's
-    // lock block). The fresh-read sees the still-stale begun_at
-    // and reaps the row + file. The commit then fails with
-    // `no-staging` → REST 410.
+    // SHOULD-BE (aspirational): an upload whose body finished
+    // streaming should ALWAYS land, even past the 1 h TTL.
     //
-    // SHOULD-BE: an upload whose body finished streaming before the
-    // reaper finalised its sweep should ALWAYS land. Round-11 had
-    // refresh OUTSIDE the lock — refresh ran sync against SQLite
-    // BEFORE either party queued for the lock, so the reaper's
-    // in-lock fresh-read always saw the updated begun_at. Moving
-    // refresh back outside the lock fixes this regression.
+    // ACTUAL: this is now a DOCUMENTED ACCEPTED TRADEOFF of removing
+    // the lock (see commitPut + reaper comments). The old lock made
+    // the reaper block on any in-flight upload (unbounded); the
+    // bounded-staleness conditional delete trades that unbounded wait
+    // for a >1h-upload reap window. Pinned as `it.todo` because the
+    // >1h data-loss window is real — a future fix (e.g. a heartbeat
+    // refresh during the body, or a "commit-intent" marker the reaper
+    // honors) could close it without reintroducing an unbounded wait.
     //
-    // IMPACT: an upload that streams for > TTL (default 1 h) loses
-    // its bytes if the reaper-first lock ordering happens. The
-    // client gets 410 and must retry. If the client can't retry
-    // (network died, app closed), the user's data is lost.
-    //
-    // This test simulates the reaper-first ordering deterministically
-    // by having the reaper's per-row logic run BEFORE the commit
-    // tries — modelling the lock-queue ordering precisely. With the
-    // current code, the commit fails with `no-staging`. With the
-    // intended round-12 contract (or a round-13 fix that moves
-    // refresh back outside the lock), the commit should succeed.
+    // Modelled against the conditional delete (no lock seam exists):
+    // the reaper's stale-row delete runs (and matches the genuinely-
+    // stale row) BEFORE the commit's after-body refresh.
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'lose-commit', expectedLength: 8 }))
       writeStaging(b.filePath, Buffer.alloc(8))
-      // Body has been streaming for hours; begun_at is now stale.
+      // Body has been streaming for hours; begun_at is genuinely stale.
       handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
-      // Simulate reaper acquiring the lock FIRST and running its
-      // in-lock reap logic (mirroring reapStaleStagingRows).
-      await handle.lock.run(lockKey('ws-1', 'lose-commit'), async () => {
-        const fresh = await handle.selectStaging.get('ws-1', 'lose-commit', b.stagingId)
-        if (fresh && Date.now() - fresh.begun_at >= STAGING_TTL_MS_DEFAULT) {
-          await unlinkIfExists(stagingFilePath(handle.dir, 'ws-1', b.stagingId))
-          await handle.deleteStaging.run('ws-1', 'lose-commit', b.stagingId)
-        }
-      })
-      // Commit attempts — production order: refresh-then-commit
-      // INSIDE the lock.
-      const c = await handle.lock.run(lockKey('ws-1', 'lose-commit'), async () => {
-        await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'lose-commit', b.stagingId)
-        return commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'lose-commit', stagingId: b.stagingId })
-      })
-      // SHOULD BE: the commit succeeds even when the reaper raced
-      // for the lock first. Currently fails with `no-staging`.
+      // Reaper sweep runs first and its conditional delete matches the
+      // genuinely-stale row → row + blob reaped.
+      await reapOrphans(handle)
+      // Commit attempts after the body finishes (refresh + commit).
+      await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'lose-commit', b.stagingId)
+      const c = await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'lose-commit', stagingId: b.stagingId })
+      // SHOULD BE: the commit succeeds. ACTUAL: `no-staging` (the row
+      // was reaped) — the accepted >1h tradeoff.
       assert.equal(c.ok, true, 'an upload that finished streaming must not be lost to a racing reaper')
       assert.equal(c.row.version, 1)
       assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('lose-commit'))), true)
     } finally { cleanup() }
   })
 
-  it('reaper queued AFTER commit lock: refresh-inside-lock keeps the commit valid', async () => {
-    // The companion scenario: commit acquires the lock first. The
-    // reaper queues behind. Inside the lock, refresh updates
-    // begun_at; commit then drops the staging row + renames to
-    // live. Reaper enters its lock block, finds no staging row,
-    // skips. Commit wins cleanly.
+  it('commit that finishes before a sweep removes the staging row, so the sweep is a no-op', async () => {
+    // The companion scenario: the commit runs to completion (refresh +
+    // promote + CAS + deleteStaging) BEFORE the reaper sweep's stale-
+    // row pass. The row is already gone, so the sweep's snapshot finds
+    // nothing to delete. Commit wins cleanly. (Sequencing the commit
+    // first makes this deterministic; the lockless model has no queue.)
     const { handle, objDir, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'commit-wins', expectedLength: 8 }))
       writeStaging(b.filePath, Buffer.alloc(8))
-      // Hand-age begun_at.
+      // Hand-age begun_at — it would look stale to a sweep, but the
+      // commit consumes the row before any sweep runs.
       handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
-      // Pre-acquire the commit lock briefly so the reaper has to
-      // queue behind. We release immediately after kicking the
-      // reaper; the commit's actual work happens AFTER reaper
-      // queues but BEFORE reaper acquires.
-      const commit = handle.lock.run(lockKey('ws-1', 'commit-wins'), async () => {
-        await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'commit-wins', b.stagingId)
-        return commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'commit-wins', stagingId: b.stagingId })
-      })
-      // Reaper runs after, queues behind the commit.
-      const sweep = reapOrphans(handle)
-      const [c, _] = await Promise.all([commit, sweep])
-      void _
+      await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'commit-wins', b.stagingId)
+      const c = await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'commit-wins', stagingId: b.stagingId })
+      // Reaper runs after the commit already dropped the staging row.
+      await reapOrphans(handle)
       assert.equal(c.ok, true, 'commit lands first → success')
       assert.equal(c.row.version, 1)
       assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('commit-wins'))), true)
@@ -1719,11 +1769,12 @@ describe('crash-recovery / partial-state cleanup', () => {
 })
 
 describe('reaper × in-flight upload (slow streaming body)', () => {
-  // The H4 / F1 protection is most visible when a body streams
-  // for longer than the TTL. The refresh INSIDE the commit lock
-  // restamps begun_at so the reaper's freshness re-check (also
-  // inside its lock-block) sees a fresh row and bails.
-  it('a row whose begun_at was refreshed inside the commit lock survives a reaper sweep', async () => {
+  // The H4 / F1 protection is most visible when a body streams for
+  // longer than the TTL. The after-body refresh restamps begun_at so
+  // a row that LOOKED stale mid-stream is fresh by commit time, and
+  // the reaper's conditional delete (predicate `begun_at < staleBefore`)
+  // no longer matches it.
+  it('a row whose begun_at was refreshed before commit survives a later reaper sweep', async () => {
     const { handle, cleanup } = freshHandle()
     try {
       const b = await beginPut(handle, fakeBegin({ resourceTag: 'long-up', expectedLength: 8 }))
@@ -1732,11 +1783,9 @@ describe('reaper × in-flight upload (slow streaming body)', () => {
       handle.db.prepare('UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?').run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
-      // Commit acquires the lock first, refreshes inside lock, drops staging row.
-      const c = await handle.lock.run(lockKey('ws-1', 'long-up'), async () => {
-        await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'long-up', b.stagingId)
-        return commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'long-up', stagingId: b.stagingId })
-      })
+      // After-body refresh, then commit drops the staging row (no lock).
+      await handle.refreshStagingBegunAt.run(Date.now(), 'ws-1', 'long-up', b.stagingId)
+      const c = await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'long-up', stagingId: b.stagingId })
       assert.equal(c.ok, true)
       // Reaper sweep AFTER commit: finds no staging row, finds the
       // live row + matching file — nothing to do.

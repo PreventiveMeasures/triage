@@ -79,9 +79,8 @@ export function openFsBlobBackend(dir: string): BlobBackend {
       const path = stagingFilePath(dir, tag, stagingId)
       // `flags: 'w'` truncates an existing file. Two distinct begins
       // mint distinct (16-byte random) staging ids, so they never
-      // target the same path; the per-resource KeyedAsyncLock
-      // serialises a same-stagingId replay within a process. If that
-      // gate were bypassed (test fixture, future refactor), the second
+      // target the same path — a same-stagingId collision is ~1/2^128.
+      // If a fixture or future refactor reused a stagingId, the second
       // write would clobber the first.
       const writable = createWriteStream(path, { flags: 'w' })
       return {

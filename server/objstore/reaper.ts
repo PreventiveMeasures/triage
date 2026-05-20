@@ -19,13 +19,14 @@
 // Backend-agnostic: every storage operation goes through
 // `handle.blob.*`. The FS backend (blob-fs.ts) implements list/
 // unlink against the local filesystem; the Vercel backend (blob-
-// vercel.ts) against the SDK's list / del. There is no distributed
-// commit lock: content-addressing + the age grace window remove the
-// need for it. The reaper re-reads the live reference set under the
-// per-resource lock just before unlinking so it never races a
-// just-landed commit on the same key within a process.
+// vercel.ts) against the SDK's list / del. The reaper takes NO lock.
+// Pass 1's blob GC is made race-safe by content-addressing + the age
+// grace window + a live-reference re-read just before each unlink.
+// Pass 2's stale-staging sweep is made race-safe by an atomic
+// conditional delete (`deleteStagingIfStale`) whose `begun_at`
+// predicate can't match a row a concurrent upload just refreshed.
 
-import { type Handle, STAGING_TTL_MS_DEFAULT, isValidContentHash, isValidStagingId, isValidTag, lockKey } from './store.ts'
+import { type Handle, STAGING_TTL_MS_DEFAULT, isValidContentHash, isValidStagingId, isValidTag } from './store.ts'
 
 type StagingRow = {
   workspace_tag: string
@@ -43,7 +44,7 @@ type StagingRow = {
 // (reapUnreferencedForTag's per-tag sweep and reapOrphans'
 // whole-workspace straggler sweep).
 //
-// Two layers of race protection, in lieu of the old distributed lock:
+// Two layers of race protection, neither of which is a lock:
 //   - Age grace window. A blob a freshly-promoted-but-not-yet-CAS'd
 //     commit just wrote is younger than the grace, so it survives this
 //     sweep entirely (its listing mtime is recent). This is the
@@ -53,13 +54,13 @@ type StagingRow = {
 //     caught here — its row now references the hash, so we skip. The
 //     hash may be shared across resources via content dedup, so the
 //     test is "no live row references this hash", not "this resource".
-// No in-process lock is taken: it would key on the content hash, but
-// the commit path locks on the resourceTag, so a hash-keyed lock can't
-// serialise against an in-flight commit — the grace window + re-read
-// are the actual safety net. init.ts runs one sweep at a time per
-// process, but a multi-replica deploy genuinely runs reapers
-// concurrently; they stay safe via idempotent unlink + the per-blob
-// grace window + live-set re-read, not via mutual exclusion.
+// A lock would not help here even if one existed: the commit path is
+// keyed on the resourceTag while a blob is named by its content hash,
+// so the two can't share a key. The grace window + re-read are the
+// actual safety net. init.ts runs one sweep at a time per process,
+// but a multi-replica deploy genuinely runs reapers concurrently;
+// they stay safe via idempotent unlink + the per-blob grace window +
+// live-set re-read, not via mutual exclusion.
 async function gcBlobIfUnreferenced(
   handle: Handle, tag: string, hash: string, modifiedMs: number, now: number, grace: number,
 ): Promise<void> {
@@ -79,8 +80,8 @@ async function liveHashSet(handle: Handle, tag: string): Promise<Set<string>> {
 // Sweep one workspace's live-blob listing against the referenced-hash
 // set. Anything unreferenced AND past the grace window → GC. The
 // snapshot we read up front can race a concurrent commit; the
-// per-resource-lock recheck inside `gcBlobIfUnreferenced` (plus the
-// grace window) ensures we never unlink a blob a live row names.
+// reference re-read inside `gcBlobIfUnreferenced` (plus the grace
+// window) ensures we never unlink a blob a live row names.
 async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, grace: number): Promise<void> {
   if (!isValidTag(tag)) return
   const blobs = await handle.blob.listLiveBlobs(tag)
@@ -88,8 +89,8 @@ async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, 
   const referenced = await liveHashSet(handle, tag)
   for (const { hash, modifiedMs } of blobs) {
     if (!isValidContentHash(hash)) continue
-    // Referenced in our snapshot → skip the lock + recheck entirely;
-    // only unreferenced blobs need the grace + recheck path.
+    // Referenced in our snapshot → skip the grace + re-read path
+    // entirely; only unreferenced blobs need it.
     if (referenced.has(hash)) continue
     await gcBlobIfUnreferenced(handle, tag, hash, modifiedMs, now, grace)
   }
@@ -103,11 +104,8 @@ async function reapUnreferencedForTag(handle: Handle, tag: string, now: number, 
 async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: number): Promise<void> {
   // Push the staleness filter into SQL so the
   // `workspace_object_staging_begun_at_idx` index handles the scan.
-  // The pre-lock-snapshot is now O(stale-rows) cluster-wide; the
-  // per-lock fresh-read inside the loop still re-validates with the
-  // current begun_at to catch a refresh that landed between
-  // snapshot-time and lock-acquire-time. DB-layout audit
-  // `server/objstore/store.ts:312`.
+  // The snapshot is O(stale-rows) cluster-wide. DB-layout audit
+  // `server/objstore/store.ts`.
   const staleBefore = now - stagingTtlMs
   const staging = await handle.listAllStaging.all(staleBefore) as StagingRow[]
   for (const s of staging) {
@@ -118,30 +116,23 @@ async function reapStaleStagingRows(handle: Handle, now: number, stagingTtlMs: n
       console.warn(`reaper: skipping malformed staging row tag=${String(s.workspace_tag).slice(0, 12)}… res=${String(s.resource_tag).slice(0, 8)}… sid=${String(s.staging_id).slice(0, 8)}…`)
       continue
     }
-    // Re-check freshness INSIDE the lock against the row's current
-    // begun_at, not the pre-lock snapshot. A concurrent REST PUT
-    // calls `refreshStagingBegunAt` right after the body finishes
-    // (and before queuing on this same lock for commit). If our
-    // snapshot saw the row as stale but the refresh landed before
-    // we acquired the lock, the freshness re-check here lets the
-    // commit proceed. Without this, the reaper deletes a row whose
-    // upload completed but whose commit hasn't acquired the lock
-    // yet → client gets 410 after streaming the whole body. PR #4
-    // review F1.
-    await handle.lock.run(lockKey(s.workspace_tag, s.resource_tag), async () => {
-      const fresh = await handle.selectStaging.get(s.workspace_tag, s.resource_tag, s.staging_id)
-      if (!fresh) return
-      if (Date.now() - fresh.begun_at < stagingTtlMs) return
-      // DB row first, then unlink — symmetric with deleteObject in
-      // store.ts. Inverting from the previous unlink-first order
-      // closes a narrow crash window where the bytes are gone but
-      // the row points at a missing path; the next reaper sweep's
-      // unlink of an absent blob is a no-op, so the inverted
-      // ordering self-heals via the reaper's idempotent re-sweep.
-      // Concurrency audit `server/objstore/reaper.ts:94`.
-      await handle.deleteStaging.run(s.workspace_tag, s.resource_tag, s.staging_id)
-      await handle.blob.unlinkStaging(s.workspace_tag, s.staging_id)
-    })
+    // ATOMIC conditional delete (replaces the old in-lock begun_at
+    // re-read, PR #4 "F1"). The delete fires only if `begun_at` is
+    // STILL older than the SAME `staleBefore` we snapshotted with — so
+    // a concurrent REST PUT that finished its body and called
+    // `refreshStagingBegunAt` (bumping begun_at to ~now, well after
+    // `staleBefore`) makes the predicate fail: the row isn't deleted,
+    // `deleteStagingIfStale` returns undefined, and we skip the unlink,
+    // leaving the row for that PUT's commit. No lock, no TOCTOU window
+    // between a read and a delete — the CAS is the whole check.
+    const deleted = await handle.deleteStagingIfStale.get(s.workspace_tag, s.resource_tag, s.staging_id, staleBefore)
+    if (!deleted) continue
+    // The row was genuinely stale and we removed it; now drop its
+    // bytes. Row-first, then unlink — symmetric with deleteObject in
+    // store.ts. If a crash lands between them the bytes outlive the
+    // row, and a later sweep's orphan-staging-file pass (or this
+    // pass's idempotent unlink of an absent blob) self-heals.
+    await handle.blob.unlinkStaging(s.workspace_tag, s.staging_id)
   }
 }
 

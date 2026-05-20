@@ -955,13 +955,20 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(res.status, 404)
   })
 
-  it('concurrent PUTs with the same put-token — exactly one runs, the other returns 410', async () => {
-    // PR #4 review: without the in-flight sid guard, two requests
-    // with the same token would both open the staging file in 'w'
-    // mode. The first commit renames staging → live; the second's
-    // still-open fd points at the inode that's now under the live
-    // name, and remaining writes would corrupt the committed blob.
-    // The guard refuses the second outright.
+  it('concurrent PUTs with the same put-token — exactly one commits, the other loses without corrupting the blob', async () => {
+    // Two requests with the same token race the same staging slot.
+    // With the per-resource lock removed, they no longer serialise:
+    // exactly one wins the version-CAS and replies 200; the other
+    // loses and replies 410 (its commit's staging lookup missed
+    // because the winner already consumed the row) OR 500 (on the FS
+    // backend the winner's promote renamed the staging file away
+    // before the loser's own promote → io-error). Both loss codes are
+    // correct. The SAFETY property — which this test exists to pin —
+    // is that the committed blob is never corrupted: both PUTs carry
+    // the SAME signed contentHash (so the same bytes), the live blob
+    // is content-addressed at that hash, and the loser can only ever
+    // (idempotently) rewrite the identical bytes. We verify the final
+    // blob reads back byte-for-byte.
     const { sk, tag } = await makeKp()
     const c = await connect(serverUrl)
     await subscribeWS(c, sk, tag)
@@ -985,7 +992,12 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
       fetch(httpOrigin + tok.urlPath, opts),
     ])
     const statuses = [r1.status, r2.status].toSorted()
-    assert.deepEqual(statuses, [200, 410], 'one succeeds, the other gets 410 gone')
+    assert.equal(statuses[0], 200, 'exactly one PUT commits (200)')
+    assert.ok(statuses[1] === 410 || statuses[1] === 500, `the other loses with 410 or 500, got ${statuses[1]}`)
+    // The committed blob is intact — fetch it back and compare bytes.
+    const fetched = await fetchBlob(c, sk, tag, 'r-concurrent-replay', httpOrigin)
+    assert.ok(fetched.body, `resource is live + readable after the race (got ${JSON.stringify({ notFound: fetched.notFound, httpStatus: fetched.httpStatus })})`)
+    assert.equal(Buffer.compare(fetched.body, payload), 0, 'committed blob bytes are uncorrupted')
     c.ws.close()
   })
 

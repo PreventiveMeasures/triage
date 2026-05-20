@@ -5,10 +5,10 @@
 //   PUT  — body is the raw ciphertext blob; `Authorization: Bearer
 //          <put-token>` carries the WS-issued capability that binds
 //          (workspaceTag, resourceTag, stagingId, expectedLength).
-//          Server streams the body to the staging file, then under
-//          the per-resource lock runs `commitPut`, broadcasts
-//          `objstore-put` to subscribed peers, and replies 200 with
-//          `{ version, contentHash }`.
+//          Server streams the body to the staging file, runs
+//          `commitPut` (whose version-CAS arbitrates concurrent
+//          commits — no lock), broadcasts `objstore-put` to subscribed
+//          peers, and replies 200 with `{ version, contentHash }`.
 //
 //   GET  — `Authorization: Bearer <get-token>` carries a capability
 //          bound to (workspaceTag, resourceTag, version). Server
@@ -36,7 +36,6 @@ import {
   commitPut,
   isValidStagingId,
   isValidTag,
-  lockKey,
   objectMetaWire,
 } from './store.ts'
 import type { LiveReader } from './blob.ts'
@@ -64,15 +63,13 @@ export type ObjstoreRestDeps = {
   debug: boolean
 }
 
-// Concurrent commits no longer need a distributed lock: the live
-// blob is content-addressed (`${tag}/${contentHash}.bin`) so two
-// racing commits write to DIFFERENT immutable addresses, and the
-// commit itself is an atomic version compare-and-set on the live row
-// (see commitPut in store.ts). Exactly one racer wins the CAS; the
-// loser gets a 409 `conflict` and rebases. The upload + commit run
-// under the in-process `KeyedAsyncLock` (cheap, reduces same-process
-// churn against concurrent ops on the same key); cross-replica
-// correctness rests on the CAS, not on any lock.
+// Concurrent commits need no lock at all: the live blob is content-
+// addressed (`${tag}/${contentHash}.bin`) so two racing commits write
+// to DIFFERENT immutable addresses, and the commit itself is an atomic
+// version compare-and-set on the live row (see commitPut in store.ts).
+// Exactly one racer wins the CAS; the loser gets a 409 `conflict` and
+// rebases. This holds within a single process and across replicas —
+// there is no in-process mutex on the objstore plane.
 
 // `/api/objstore/${workspaceTag}/${resourceTag}` — base64url
 // alphabet, case-sensitive. The `?…` query is permitted but ignored
@@ -178,15 +175,15 @@ async function handleRestPut(
     deny(res, 411, 'length-required'); return
   }
   if (declared !== payload.len) { deny(res, 400, 'length-mismatch'); return }
-  // Upload + commit run under the in-process per-resource lock. There
-  // is no distributed lock: the live blob is content-addressed and the
-  // commit is an atomic version-CAS (see commitPut), so a concurrent
-  // commit on another replica can't desync metadata vs bytes — it just
-  // races the CAS, and the loser surfaces a 409 `conflict`. The
-  // in-process lock keeps a SINGLE replica's concurrent ops on the same
-  // key from interleaving their begun_at refresh + commit, and the
-  // long upload body itself runs inside it so the reaper's per-resource
-  // freshness re-check sees the in-flight PUT as fresh.
+  // No lock: the commit's version-CAS arbitrates concurrent commits
+  // (the live blob is content-addressed, so racers can't desync
+  // metadata vs bytes — the loser surfaces a 409 `conflict`). The
+  // staging row is protected from the reaper not by a lock but by its
+  // `begun_at`: an upload under the staging TTL stays fresh through the
+  // body, and the after-body `refreshStagingBegunAt` re-extends the
+  // TTL across the commit. (An upload exceeding the TTL during the
+  // body can be reaped mid-flight → commit 410s; documented accepted
+  // tradeoff — see commitPut in store.ts.)
   await handleRestPutLocked(deps, req, res, route, payload, declared)
 }
 
@@ -232,16 +229,11 @@ async function handleRestPutLocked(
   if (!await deps.handle.selectStaging.get(route.tag, route.resourceTag, payload.sid)) {
     deny(res, 410, 'gone'); return
   }
-  // The entire upload + commit runs under ONE in-process per-resource
-  // lock acquisition (acquired in handleRestPut). The upload body is
-  // inside the lock so the reaper's per-resource freshness re-check
-  // (which takes the same lock) can't delete this staging row out from
-  // under an in-flight PUT, and so a same-process concurrent commit /
-  // delete on the same key serialises behind us. `abortPut` runs
-  // directly here (no nested lock.run — KeyedAsyncLock is not
-  // re-entrant; we already hold the key).
-  const result = await deps.handle.lock.run(lockKey(route.tag, route.resourceTag), () =>
-    runUploadAndCommit(deps, route, payload, declared, req, res))
+  // Stream the upload + commit, no lock. The commit's version-CAS
+  // arbitrates concurrent commits; the staging row is kept fresh for
+  // the reaper by its `begun_at` (+ the after-body refresh), not by a
+  // mutex. See the rationale in handleRestPut above.
+  const result = await runUploadAndCommit(deps, route, payload, declared, req, res)
   if (result.handled) return
   if (!result.commit.ok) { denyCommitFailure(res, result.commit); return }
   const row = result.commit.row
@@ -259,14 +251,13 @@ async function handleRestPutLocked(
   if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
 }
 
-// The lock-held body of a PUT: stream the upload into the staging
-// slot, verify size, refresh the staging row's begun_at, and commit.
-// Runs entirely under the per-resource in-process lock the caller
-// holds. Returns `{ handled: true }` when it already wrote the
-// (error) response itself; `{ handled: false, commit }` when it
-// reached commitPut (caller maps the result to the success / failure
-// response OUTSIDE the lock so the broadcast + body write don't
-// extend the critical section).
+// The body of a PUT: stream the upload into the staging slot, verify
+// size, refresh the staging row's begun_at, and commit. No lock — the
+// commit's version-CAS arbitrates concurrent commits. Returns
+// `{ handled: true }` when it already wrote the (error) response
+// itself; `{ handled: false, commit }` when it reached commitPut
+// (caller maps the result to the success / failure response, keeping
+// the broadcast + body write out of this helper).
 async function runUploadAndCommit(
   deps: ObjstoreRestDeps,
   route: RouteMatch,
@@ -361,20 +352,20 @@ async function runUploadAndCommit(
     await abortPut(deps.handle, route.tag, route.resourceTag, payload.sid)
     deny(res, 400, 'length-mismatch'); return { handled: true }
   }
-  // Refresh begun_at so the reaper's next freshness check (inside its
-  // own per-resource lock-block) sees this staging row as fresh —
-  // bounded by the lock we hold against the reaper's competing read.
-  // The whole PUT runs under this lock, so a long upload's row can't
-  // be reaped mid-flight; the refresh additionally re-extends the TTL
-  // from upload-done.
+  // Refresh begun_at AFTER the body lands so the TTL effectively
+  // counts from upload-done. This is what keeps the reaper's atomic
+  // conditional delete (`deleteStagingIfStale`, predicate
+  // `begun_at < staleBefore`) from matching this row at the commit
+  // step: a sub-TTL upload's begun_at is bumped fresh here, well
+  // inside the window, so a concurrent reaper sweep can't drop it.
+  // (No lock — the conditional delete IS the F1 protection now.)
   await deps.handle.refreshStagingBegunAt.run(Date.now(), route.tag, route.resourceTag, payload.sid)
   // Commit: precondition recheck + content-addressed promote + version
-  // CAS, serialised against same-process concurrent commits / deletes /
-  // begins on this key. Thread the post-upload `onDisk` size as
-  // `observedSize` so commitPut skips its own redundant statStaging
-  // round-trip (one fewer Vercel HEAD per PUT) — safe because the
-  // staging blob cannot have been resized between the stat above and
-  // here while we hold the per-resource lock.
+  // CAS (the CAS arbitrates concurrent commits — no lock). Thread the
+  // post-upload `onDisk` size as `observedSize` so commitPut skips its
+  // own redundant statStaging round-trip (one fewer Vercel HEAD per
+  // PUT) — safe because staging ids are random, so nothing else writes
+  // this blob, and the upload pipeline already finished above.
   const commit = await commitPut(deps.handle, {
     workspaceTag: route.tag, resourceTag: route.resourceTag, stagingId: payload.sid,
     observedSize: onDisk,
@@ -388,34 +379,34 @@ type GetOpened =
   | { reason: 'not-found' }
   | { reason: 'unavailable' }
 
-function openLiveUnderLock(
+async function openLiveSnapshot(
   deps: ObjstoreRestDeps, route: RouteMatch, payload: { ver: number },
 ): Promise<GetOpened> {
-  // Validate row version + open the reader (by the row's content hash —
-  // the live blob is content-addressed) inside the lock so a concurrent
-  // commit's promote or the reaper's GC unlink can't slip between the
-  // row check and the open. For the FS backend the open returns a
-  // pinned fd (inode stays alive even if the path is later unlinked);
-  // for the Vercel backend the SDK's `get` returns a stream backed by a
-  // fetch reader that streams the bytes the row's hash names. Either way
-  // the snapshot stays consistent for the duration of the response.
-  return deps.handle.lock.run<GetOpened>(lockKey(route.tag, route.resourceTag), async (): Promise<GetOpened> => {
-    const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
-    if (!live || live.version !== payload.ver) return { reason: 'not-found' }
-    let opened
-    try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
-    catch { return { reason: 'unavailable' } }
-    if (!opened.ok) return { reason: opened.reason }
-    // Size mismatch between the live row and the on-storage bytes
-    // is a transient inconsistency — reaper will reconcile. Close
-    // the reader before returning so we don't leak the fd / fetch
-    // reader. PR #4 review H8.
-    if (opened.reader.size !== live.content_length) {
-      await opened.reader.close().catch(() => {})
-      return { reason: 'unavailable' }
-    }
-    return { reason: 'ok', reader: opened.reader }
-  })
+  // Validate row version + open the reader (by the row's content hash).
+  // No lock is needed because the live blob is CONTENT-ADDRESSED and
+  // therefore IMMUTABLE: a concurrent re-upload writes a DIFFERENT hash
+  // (a new address), leaving the hash this row names untouched. So the
+  // bytes behind `live.content_hash` can never change underneath us —
+  // the worst a race can do is have the reaper GC an already-superseded
+  // hash just before we open it, which surfaces as openLiveReader
+  // not-found → `unavailable` → 503, and the client refetches. We can
+  // never serve torn or wrong bytes. (For the FS backend the open also
+  // returns a pinned fd; for the Vercel backend a fetch-backed stream.)
+  const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)
+  if (!live || live.version !== payload.ver) return { reason: 'not-found' }
+  let opened
+  try { opened = await deps.handle.blob.openLiveReader(route.tag, live.content_hash) }
+  catch { return { reason: 'unavailable' } }
+  if (!opened.ok) return { reason: opened.reason }
+  // Size mismatch between the live row and the on-storage bytes
+  // is a transient inconsistency — reaper will reconcile. Close
+  // the reader before returning so we don't leak the fd / fetch
+  // reader. PR #4 review H8.
+  if (opened.reader.size !== live.content_length) {
+    await opened.reader.close().catch(() => {})
+    return { reason: 'unavailable' }
+  }
+  return { reason: 'ok', reader: opened.reader }
 }
 
 async function handleRestGet(
@@ -428,7 +419,7 @@ async function handleRestGet(
   // PUT/DELETE invalidates the capability — new version (or missing
   // row) means this snapshot is gone. 404 keeps the response shape
   // uniform with "never existed" so a probe can't distinguish.
-  const opened = await openLiveUnderLock(deps, route, payload)
+  const opened = await openLiveSnapshot(deps, route, payload)
   if (opened.reason === 'not-found') { deny(res, 404, 'not-found'); return }
   // If the live row is there but the bytes are missing / wrong size,
   // it's a transient inconsistency the reaper will sort out — 503
