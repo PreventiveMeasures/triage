@@ -149,15 +149,17 @@ const SCHEMA_PG = [
 
 // Postgres BIGINT can round-trip through the Neon driver as a string
 // when the value would lose precision. For our use (per-workspace
-// monotonic seq, epoch ms) the JS safe-integer range is fine —
-// coerce to number for parity with the SQLite shape so chain
-// consumers don't need to special-case the backend.
-// Strict: throw on anything that isn't a safe-integer-compatible
-// value. Silently returning `null` for unexpected shapes would mask
-// driver-shape changes and let bogus values feed `seq` / `head`
-// comparisons. The `null` return is reserved for genuine SQL NULL.
-function toNumberOrNull(v: unknown): number | null {
-  if (v == null) return null
+// monotonic seq, epoch ms, byte lengths up to 100 MiB) the JS safe-
+// integer range is fine — coerce to number for parity with the
+// SQLite shape so chain consumers don't need to special-case the
+// backend. Strict: throw on anything that isn't a safe-integer-
+// compatible value. Silently returning 0 / null for unexpected shapes
+// would mask driver-shape changes and let bogus values feed `seq` /
+// `head` / length / version comparisons. `numOrNull`'s null return is
+// reserved for genuine SQL NULL. Both Neon planes share these — the
+// objstore plane (`store-neon.ts`) imports them rather than keeping
+// its own copies.
+export function num(v: unknown): number {
   if (typeof v === 'number' && Number.isSafeInteger(v)) return v
   if (typeof v === 'string' && v.length > 0) {
     const n = Number(v)
@@ -166,7 +168,11 @@ function toNumberOrNull(v: unknown): number | null {
   if (typeof v === 'bigint' && v >= -9_007_199_254_740_991n && v <= 9_007_199_254_740_991n) {
     return Number(v)
   }
-  throw new TypeError(`toNumberOrNull: expected safe-integer value or null, got ${typeof v} ${String(v)}`)
+  throw new TypeError(`num: expected safe-integer value, got ${typeof v} ${String(v)}`)
+}
+export function numOrNull(v: unknown): number | null {
+  if (v == null) return null
+  return num(v)
 }
 
 function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
@@ -176,24 +182,39 @@ function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
     // SMALLINT round-trips as `number`; coerce defensively so a
     // driver upgrade returning `string` doesn't silently break the
     // strict-equality `keyframe === 1` check downstream.
-    keyframe: toNumberOrNull(r['keyframe']) === 1 ? 1 : 0,
+    keyframe: numOrNull(r['keyframe']) === 1 ? 1 : 0,
     nonce: String(r['nonce']),
     ciphertext: String(r['ciphertext']),
     signature: String(r['signature']),
   }
 }
 
+// Generic statement-builder helpers shared by both Neon planes
+// (workspace_revision here + the objstore tables in store-neon.ts).
+// They remove the repeated `{ run/get: async (...args) => sql(...) }`
+// wrapper for the statements whose positional args map straight to
+// the query's `$1..$N` placeholders and whose rows need no coercion.
+// Statements that coerce BIGINT (via `num`) or map snake_case rows
+// stay bespoke. `args as readonly unknown[]` widens the call-site
+// tuple to the driver's positional-params type.
+
+// Trivial passthrough write: args → $1..$N in order, no result shape.
+export function runStmt<P extends unknown[]>(sql: NeonSql, query: string): RunStmt<P> {
+  return { run: async (...args: P) => { await sql(query, args as readonly unknown[]) } }
+}
+
+// First-row read with no coercion (callers needing BIGINT→number or
+// snake_case mapping build their own). Returns `undefined` on the
+// empty result set, matching the SQLite `wrapGet` contract.
+export function getRowStmt<P extends unknown[], T>(sql: NeonSql, query: string): GetStmt<P, T> {
+  return { get: async (...args: P) => (await sql(query, args as readonly unknown[]) as T[])[0] }
+}
+
 // Per-statement builders — extracted so `openNeonDb` stays small
 // (max-lines-per-function budget). Each closes over the Neon `sql`
 // callable.
 function buildHeadFor(sql: NeonSql): GetStmt<[string], { id: string }> {
-  return { get: async (tag) => {
-    const rows = await sql(
-      `SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`,
-      [tag],
-    ) as Array<{ id: string }>
-    return rows[0]
-  } }
+  return getRowStmt(sql, `SELECT id FROM workspace_revision WHERE workspace_tag = $1 ORDER BY seq DESC LIMIT 1`)
 }
 
 function buildHeadSeq(sql: NeonSql): GetStmt<[string], { s: number | null }> {
@@ -203,7 +224,7 @@ function buildHeadSeq(sql: NeonSql): GetStmt<[string], { s: number | null }> {
       [tag],
     ) as Array<{ s: number | string | null }>
     const r = rows[0]
-    return r ? { s: toNumberOrNull(r.s) } : undefined
+    return r ? { s: numOrNull(r.s) } : undefined
   } }
 }
 
@@ -215,7 +236,7 @@ function buildSeqOfId(sql: NeonSql): GetStmt<[string, string], { seq: number }> 
     ) as Array<{ seq: number | string }>
     const r = rows[0]
     if (!r) return undefined
-    const n = toNumberOrNull(r.seq)
+    const n = numOrNull(r.seq)
     return n == null ? undefined : { seq: n }
   } }
 }
@@ -227,7 +248,7 @@ function buildLastKeyframeSeq(sql: NeonSql): GetStmt<[string], { s: number | nul
       [tag],
     ) as Array<{ s: number | string | null }>
     const r = rows[0]
-    return r ? { s: toNumberOrNull(r.s) } : undefined
+    return r ? { s: numOrNull(r.s) } : undefined
   } }
 }
 
@@ -246,24 +267,13 @@ function buildChainSeq(sql: NeonSql, query: string): AllStmt<[string, number], R
 }
 
 function buildRevisionExists(sql: NeonSql): GetStmt<[string, string], unknown> {
-  return { get: async (tag, id) => {
-    const rows = await sql(
-      `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`,
-      [tag, id],
-    ) as Array<{ one: number }>
-    return rows[0]
-  } }
+  return getRowStmt(sql, `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`)
 }
 
 function buildInsertRevision(sql: NeonSql): RunStmt<[string, number, string, string | null, number, string, string, string, number]> {
-  return { run: async (tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt) => {
-    await sql(
-      `INSERT INTO workspace_revision
+  return runStmt(sql, `INSERT INTO workspace_revision
          (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [tag, seq, id, base, keyframe, nonce, ciphertext, signature, createdAt],
-    )
-  } }
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`)
 }
 
 // Atomic commit of a single revision (Neon backend). Wraps the

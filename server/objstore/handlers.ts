@@ -40,6 +40,7 @@ import {
   verifyObjstorePutSig,
 } from './sign.ts'
 import { type TokenSecret, mintGetToken, mintPutToken } from './tokens.ts'
+import { debugTag } from '../debug.ts'
 
 export type ObjstoreDeps = {
   handle: Handle
@@ -56,7 +57,6 @@ export type ObjstoreDeps = {
   sendUnauthorized?: (socket: WebSocket, ctx: { kind: 'gated'; workspaceTag: string; resourceTag: string }) => void
 }
 
-function debugTag(s: string): string { return `${s.slice(0, 12)}…` }
 function urlPathFor(tag: string, resourceTag: string): string {
   return `/api/objstore/${tag}/${resourceTag}`
 }

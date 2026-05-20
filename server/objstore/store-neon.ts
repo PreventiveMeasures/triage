@@ -26,7 +26,7 @@ import type { BlobBackend } from './blob.ts'
 import { KeyedAsyncLock } from './lock.ts'
 import type { AllStmt, GetStmt, RunStmt } from '../db-stmt.ts'
 import type { Handle } from './store.ts'
-import { type NeonSql, assertDurableSyncCommit } from '../db-neon.ts'
+import { type NeonSql, assertDurableSyncCommit, getRowStmt, num, numOrNull, runStmt } from '../db-neon.ts'
 
 // Advisory-lock keys (two int32s for the two-arg form). Distinct
 // from the workspace_revision DDL keys in `db-neon.ts` so the two
@@ -88,30 +88,9 @@ const SCHEMA_PG = [
    )`,
 ]
 
-// BIGINT can round-trip as a JS string when it would lose precision.
-// For our use (epoch ms, version counters, byte lengths up to
-// 100 MiB) the safe-integer range is fine — coerce to `number` so
-// the row shape matches the SQLite path's INTEGER round-trip.
-// Strict: throw on anything that isn't a safe-integer-compatible
-// value. Silently returning 0 / NaN would mask driver-shape
-// changes (e.g. a future Neon release switching BIGINT to a
-// `{ toString() }` object) and propagate bogus values into
-// length / version / put_at fields.
-function num(v: unknown): number {
-  if (typeof v === 'number' && Number.isSafeInteger(v)) return v
-  if (typeof v === 'string' && v.length > 0) {
-    const n = Number(v)
-    if (Number.isSafeInteger(n)) return n
-  }
-  if (typeof v === 'bigint' && v >= -9_007_199_254_740_991n && v <= 9_007_199_254_740_991n) {
-    return Number(v)
-  }
-  throw new TypeError(`num: expected safe-integer value, got ${typeof v} ${String(v)}`)
-}
-function numOrNull(v: unknown): number | null {
-  if (v == null) return null
-  return num(v)
-}
+// `num` / `numOrNull` (safe-integer BIGINT coercion) are shared with
+// the workspace_revision Neon plane — imported from ../db-neon.ts so
+// the two planes can't drift on the coercion / range-check rules.
 
 type LiveDbRow = {
   resource_tag: string; version: number; content_hash: string; content_length: number
@@ -134,15 +113,10 @@ function mapLiveRow(r: Record<string, unknown>): LiveDbRow {
 // Neon `sql` callable.
 
 function buildInsertStaging(sql: NeonSql): RunStmt<[string, string, string, number | null, number, string, string, number]> {
-  return { run: async (tag, resourceTag, stagingId, prevVersion, expectedLength, contentHash, signature, begunAt) => {
-    await sql(
-      `INSERT INTO workspace_object_staging
+  return runStmt(sql, `INSERT INTO workspace_object_staging
          (workspace_tag, resource_tag, staging_id, prev_version,
           expected_length, content_hash, signature, begun_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [tag, resourceTag, stagingId, prevVersion, expectedLength, contentHash, signature, begunAt],
-    )
-  } }
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
 }
 
 type StagingRow = {
@@ -174,33 +148,17 @@ function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], Sta
 }
 
 function buildSelectStagingByWsSid(sql: NeonSql): GetStmt<[string, string], unknown> {
-  return { get: async (tag, stagingId) => {
-    const rows = await sql(
-      `SELECT 1 AS one FROM workspace_object_staging WHERE workspace_tag = $1 AND staging_id = $2`,
-      [tag, stagingId],
-    ) as Array<{ one: number }>
-    return rows[0]
-  } }
+  return getRowStmt(sql, `SELECT 1 AS one FROM workspace_object_staging WHERE workspace_tag = $1 AND staging_id = $2`)
 }
 
 function buildRefreshStagingBegunAt(sql: NeonSql): RunStmt<[number, string, string, string]> {
-  return { run: async (now, tag, resourceTag, stagingId) => {
-    await sql(
-      `UPDATE workspace_object_staging SET begun_at = $1
-       WHERE workspace_tag = $2 AND resource_tag = $3 AND staging_id = $4`,
-      [now, tag, resourceTag, stagingId],
-    )
-  } }
+  return runStmt(sql, `UPDATE workspace_object_staging SET begun_at = $1
+       WHERE workspace_tag = $2 AND resource_tag = $3 AND staging_id = $4`)
 }
 
 function buildDeleteStaging(sql: NeonSql): RunStmt<[string, string, string]> {
-  return { run: async (tag, resourceTag, stagingId) => {
-    await sql(
-      `DELETE FROM workspace_object_staging
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`,
-      [tag, resourceTag, stagingId],
-    )
-  } }
+  return runStmt(sql, `DELETE FROM workspace_object_staging
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`)
 }
 
 function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
@@ -232,9 +190,7 @@ function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> 
 }
 
 function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string, number, string, number]> {
-  return { run: async (tag, resourceTag, version, contentHash, contentLength, signature, putAt) => {
-    await sql(
-      `INSERT INTO workspace_object
+  return runStmt(sql, `INSERT INTO workspace_object
          (workspace_tag, resource_tag, version, content_hash, content_length,
           signature, put_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -243,10 +199,7 @@ function buildUpsertLive(sql: NeonSql): RunStmt<[string, string, number, string,
          content_hash   = EXCLUDED.content_hash,
          content_length = EXCLUDED.content_length,
          signature      = EXCLUDED.signature,
-         put_at         = EXCLUDED.put_at`,
-      [tag, resourceTag, version, contentHash, contentLength, signature, putAt],
-    )
-  } }
+         put_at         = EXCLUDED.put_at`)
 }
 
 // Conditional upsert that gates on the commit-lock still being
@@ -285,12 +238,7 @@ function buildUpsertLiveIfHeld(sql: NeonSql): GetStmt<[string, string, number, s
 }
 
 function buildDeleteLive(sql: NeonSql): RunStmt<[string, string]> {
-  return { run: async (tag, resourceTag) => {
-    await sql(
-      `DELETE FROM workspace_object WHERE workspace_tag = $1 AND resource_tag = $2`,
-      [tag, resourceTag],
-    )
-  } }
+  return runStmt(sql, `DELETE FROM workspace_object WHERE workspace_tag = $1 AND resource_tag = $2`)
 }
 
 function buildListAllStaging(sql: NeonSql): AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }> {
@@ -373,22 +321,12 @@ function buildTryAcquireCommitLock(sql: NeonSql): GetStmt<[string, string, strin
 }
 
 function buildReleaseCommitLock(sql: NeonSql): RunStmt<[string, string, string]> {
-  return { run: async (tag, resourceTag, holder) => {
-    await sql(
-      `DELETE FROM workspace_object_commit_lock
-       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3`,
-      [tag, resourceTag, holder],
-    )
-  } }
+  return runStmt(sql, `DELETE FROM workspace_object_commit_lock
+       WHERE workspace_tag = $1 AND resource_tag = $2 AND holder = $3`)
 }
 
 function buildReleaseAllCommitLocksFor(sql: NeonSql): RunStmt<[string]> {
-  return { run: async (holder) => {
-    await sql(
-      `DELETE FROM workspace_object_commit_lock WHERE holder = $1`,
-      [holder],
-    )
-  } }
+  return runStmt(sql, `DELETE FROM workspace_object_commit_lock WHERE holder = $1`)
 }
 
 function buildVerifyCommitLockHeld(sql: NeonSql): GetStmt<[string, string, string], { held: number }> {

@@ -26,12 +26,40 @@ type StagingRow = {
   begun_at: number
 }
 
+// Unlink a committed blob IFF the live table has no row for it,
+// under the cross-replica DB commit lock + the in-process per-
+// resource lock. Shared by both passes that delete orphaned live
+// blobs (reapCommittedForTag's per-tag sweep and reapOrphans'
+// whole-workspace straggler sweep).
+//
+// Try-acquire the DB commit lock first (cross-replica gate). If
+// contended, another replica is mid-commit on this same key — skip
+// and let it land; we'll re-scan on the next sweep. This closes the
+// multi-replica race where replica A's reaper would delete the live
+// blob that replica B is about to commit but whose `upsertLive`
+// hasn't landed yet. Without the DB lock, replica A's in-process
+// lock is uncontested (B's lock is on a different process) and we'd
+// unlink the in-flight commit's bytes. The `selectLiveOne` recheck
+// inside the lock catches a commit that raced past the caller's
+// listing and landed a fresh row + blob — that blob IS the fresh
+// commit's live blob, so skip. PR #4 review.
+async function unlinkLiveIfOrphaned(handle: Handle, tag: string, resourceTag: string): Promise<void> {
+  const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
+  if (!acquired.ok) return
+  try {
+    await handle.lock.run(lockKey(tag, resourceTag), async () => {
+      if (await handle.selectLiveOne.get(tag, resourceTag)) return
+      await handle.blob.unlinkLive(tag, resourceTag)
+    })
+  } finally { await acquired.lock.release() }
+}
+
 // Sweep one workspace's live-blob listing against the live-row set.
 // Anything with no row → unlink. The live snapshot we read up front
 // can race a concurrent commit (delete drops the row → put-begin →
 // commit lands a fresh row + blob between our snapshot and the
-// unlink). Re-check `selectLiveOne` under the per-resource lock so
-// we never unlink a blob the live row points at. PR #4 review.
+// unlink); `unlinkLiveIfOrphaned` re-checks under the per-resource
+// lock so we never unlink a blob the live row points at.
 async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
   if (!isValidTag(tag)) return
   const entries = await handle.blob.listLiveResourceTags(tag)
@@ -45,27 +73,10 @@ async function reapCommittedForTag(handle: Handle, tag: string): Promise<void> {
     // production write paths only ever produce base64url-shaped
     // resource tags.
     if (!isValidTag(resourceTag)) continue
+    // Known-live in our snapshot → skip the lock + recheck entirely;
+    // only blobs the live table doesn't list need the orphan check.
     if (live.has(resourceTag)) continue
-    // Try-acquire the DB commit lock (cross-replica gate). If
-    // contended, another replica is mid-commit on this same key —
-    // skip and let it land; we'll re-scan on the next sweep. This
-    // closes the multi-replica race where replica A's reaper would
-    // delete the live blob that replica B is about to commit, but
-    // replica B's `upsertLive` hasn't landed yet. Without the DB
-    // lock, replica A's in-process lock is uncontested (B's lock
-    // is on a different process) and we'd unlink the in-flight
-    // commit's bytes.
-    const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
-    if (!acquired.ok) continue
-    try {
-      await handle.lock.run(lockKey(tag, resourceTag), async () => {
-        // Recheck under the lock — a commit that raced past our snapshot
-        // landed a fresh row + blob; the blob we're about to unlink IS
-        // that fresh commit's live blob. Skip.
-        if (await handle.selectLiveOne.get(tag, resourceTag)) return
-        await handle.blob.unlinkLive(tag, resourceTag)
-      })
-    } finally { await acquired.lock.release() }
+    await unlinkLiveIfOrphaned(handle, tag, resourceTag)
   }
 }
 
@@ -163,16 +174,7 @@ export async function reapOrphans(handle: Handle, stagingTtlMs: number = STAGING
     const stragglers = await handle.blob.listLiveResourceTags(tag)
     for (const resourceTag of stragglers) {
       if (!isValidTag(resourceTag)) continue
-      // Same cross-replica gate as reapCommittedForTag — skip on
-      // contention so an in-flight commit's bytes aren't deleted.
-      const acquired = await tryAcquireCommitLock(handle, tag, resourceTag)
-      if (!acquired.ok) continue
-      try {
-        await handle.lock.run(lockKey(tag, resourceTag), async () => {
-          if (await handle.selectLiveOne.get(tag, resourceTag)) return
-          await handle.blob.unlinkLive(tag, resourceTag)
-        })
-      } finally { await acquired.lock.release() }
+      await unlinkLiveIfOrphaned(handle, tag, resourceTag)
     }
   }
   // Pass 2: stale staging rows + orphan staging blobs. The orphan
