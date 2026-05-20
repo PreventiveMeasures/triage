@@ -6,11 +6,11 @@
 // between backends.
 //
 // Single source of truth, in `$N` (Postgres) form:
-//   • the read queries (`headFor`, `headSeq`, `seqOfId`,
-//     `lastKeyframeSeq`, the three `chain*` selects, `revisionExists`),
-//   • the gated commit INSERT (parameterised by the dialect's null-safe
-//     equality operator — `IS` for SQLite, `IS NOT DISTINCT FROM` for
-//     Postgres), and
+//   • the read queries (`headFor`, `seqOfId`, `lastKeyframeSeq`, the
+//     three `chain*` selects, `revisionExists`),
+//   • the gated commit INSERT, exported as two FINISHED per-dialect
+//     constants (`GATED_INSERT_SQL_PG` / `GATED_INSERT_SQL_SQLITE`; the
+//     only difference is the null-safe equality operator), and
 //   • `mapRevisionRow`, the chain-row coercion.
 // SQLite consumers run the strings through `toSqlitePlaceholders` first
 // (`$N` → `?N`); `node:sqlite` supports the numbered `?N` form with reuse
@@ -123,10 +123,15 @@ export const REVISION_EXISTS_SQL =
 // Postgres, `IS` on SQLite. It must be NULL-safe so the FIRST revision
 // (base = NULL against an empty-chain head, also NULL) matches —
 // plain `=` would be NULL → false and the first revision would never
-// insert. This operator is the ONLY dialect difference in the statement,
-// so it is the single parameter; everything else (column list, COALESCE,
-// the `NOT EXISTS` dup gate, `RETURNING seq`) is shared verbatim.
-export function buildGatedInsertSql(nullSafeEq: string): string {
+// insert. This operator is the ONLY dialect difference in the statement.
+//
+// NOT exported: it interpolates `nullSafeEq` into the SQL, so exporting
+// it would be a latent SQL-injection vector on accidental misuse (a
+// future caller passing a dynamic / unsanitised value). It is invoked
+// ONLY here, with the two hardcoded operator literals, to build the two
+// finished per-dialect constants below — the interpolation never escapes
+// this module, so callers only ever receive an expected, fixed string.
+function buildGatedInsertSql(nullSafeEq: string): string {
   return `INSERT INTO workspace_revision
        (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
      SELECT $1,
@@ -137,3 +142,11 @@ export function buildGatedInsertSql(nullSafeEq: string): string {
            ${nullSafeEq} $3
      RETURNING seq`
 }
+
+// The two finished gated-INSERT statements, one per dialect — built
+// in-file from the hardcoded operators so each backend imports a ready,
+// fixed string and never touches the interpolating builder. Postgres
+// uses the `$N` form directly; SQLite uses the `?N` form (node:sqlite
+// numbered placeholders, with reuse) via `toSqlitePlaceholders`.
+export const GATED_INSERT_SQL_PG = buildGatedInsertSql('IS NOT DISTINCT FROM')
+export const GATED_INSERT_SQL_SQLITE = toSqlitePlaceholders(buildGatedInsertSql('IS'))

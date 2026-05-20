@@ -39,8 +39,8 @@
 import type { AllStmt, GetStmt, RunStmt } from './db-stmt.ts'
 import { type CommitResult, type Handle, type RevisionInsert, type RevisionRow, isUniqueViolation } from './db.ts'
 import {
-  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, HEAD_FOR_SQL, LAST_KEYFRAME_SEQ_SQL,
-  REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, buildGatedInsertSql, mapRevisionRow, num, numOrNull,
+  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_PG, HEAD_FOR_SQL,
+  LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, num, numOrNull,
 } from './db-revision-sql.ts'
 
 // `num` / `numOrNull` (safe-integer BIGINT coercion) live in the shared
@@ -285,7 +285,7 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
         // would always be NULL → false → first revision would never
         // insert.
         sql(
-          buildGatedInsertSql('IS NOT DISTINCT FROM'),
+          GATED_INSERT_SQL_PG,
           [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
         ),
       ])

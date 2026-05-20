@@ -44,8 +44,8 @@ import { dirname } from 'node:path'
 import { KeyedAsyncLock } from './objstore/lock.ts'
 import { type AllStmt, type GetStmt, wrapAll, wrapGet } from './db-stmt.ts'
 import {
-  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, HEAD_FOR_SQL, LAST_KEYFRAME_SEQ_SQL,
-  REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, buildGatedInsertSql, mapRevisionRow, toSqlitePlaceholders,
+  CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_SQLITE, HEAD_FOR_SQL,
+  LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, toSqlitePlaceholders,
 } from './db-revision-sql.ts'
 
 const SCHEMA = `
@@ -258,7 +258,7 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     gatedInsert: wrapGet<
       [string, string, string | null, number, string, string, string, number],
       { seq: number }
-    >(db.prepare(toSqlitePlaceholders(buildGatedInsertSql('IS')))),
+    >(db.prepare(GATED_INSERT_SQL_SQLITE)),
     tryCommit: (input) => commitRevisionViaWriteLock(handle, input),
     // Match the wrap{Get,All,Run} contract: async-wrapped so a sync
     // throw from `db.close()` (already closed, locked transaction, …)
