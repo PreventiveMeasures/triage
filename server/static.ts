@@ -58,6 +58,23 @@ const CONTENT_TYPE: Record<string, string> = {
 // CONTENT_TYPE: every entry here MUST be a text-shaped MIME above.
 const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.webmanifest'])
 
+// Defensive headers attached to every static response. `nosniff` is
+// the load-bearing one: without it a browser may MIME-sniff the
+// `application/octet-stream` fallback (buildEntry) or a directly-
+// navigated `image/svg+xml` icon into something script-executable.
+// `no-referrer` keeps URLs of this (potentially sensitive) viewer out
+// of outbound Referer headers, and `same-origin` CORP stops other
+// origins embedding these bytes. CSP is deliberately NOT here: the
+// HTML documents carry their own per-page `<meta http-equiv>` policy
+// (and the three pages differ), so a blanket header CSP would just AND
+// against the meta one and risk breaking a page — non-document assets
+// get their own flat CSP via `StaticEntry.csp` instead.
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'cross-origin-resource-policy': 'same-origin',
+} as const
+
 type StaticEntry = {
   type: string
   etag: string
@@ -65,6 +82,7 @@ type StaticEntry = {
   gzip: Buffer | null
   br: Buffer | null
   link: string | null
+  csp: string | null
 }
 
 export type StaticHandler = (req: HttpRequest, res: ServerResponse) => boolean
@@ -96,14 +114,16 @@ export function loadStatic(staticDir: string): StaticHandler {
       // entity already has a `Content-Encoding` matching this
       // negotiation, so re-asserting it lets a strict shared cache
       // bind the freshening to the right variant under Vary.
-      const headers: Record<string, string | number> = { 'etag': entry.etag, 'cache-control': 'no-cache', 'vary': 'accept-encoding' }
+      const headers: Record<string, string | number> = { ...SECURITY_HEADERS, 'etag': entry.etag, 'cache-control': 'no-cache', 'vary': 'accept-encoding' }
       if (encoding != null) headers['content-encoding'] = encoding
       if (entry.link != null) headers['link'] = entry.link
+      if (entry.csp != null) headers['content-security-policy'] = entry.csp
       res.writeHead(304, headers)
       res.end()
       return true
     }
     const headers: Record<string, string | number> = {
+      ...SECURITY_HEADERS,
       'content-type': entry.type,
       'content-length': body.byteLength,
       'etag': entry.etag,
@@ -112,6 +132,7 @@ export function loadStatic(staticDir: string): StaticHandler {
     }
     if (encoding != null) headers['content-encoding'] = encoding
     if (entry.link != null) headers['link'] = entry.link
+    if (entry.csp != null) headers['content-security-policy'] = entry.csp
     res.writeHead(200, headers)
     // HEAD shares the GET response headers but never carries a body.
     // Node won't drop it for us — caller must skip the write.
@@ -175,7 +196,16 @@ function buildEntry(staticDir: string, name: string): StaticEntry {
     },
   }) : null
   const gzip = isCompressible ? gzipSync(identity, { level: 9 }) : null
-  return { type, etag, identity, gzip, br, link }
+  // HTML documents self-protect with a per-page `<meta http-equiv>`
+  // CSP, so we don't set a header CSP for them (it'd AND against the
+  // meta policy). Every other asset carries no in-body policy — a
+  // directly-navigated SVG icon or the octet-stream fallback would run
+  // with none — so pin them to `default-src 'none'`: it neutralises
+  // inline script and external fetches if such a resource is ever
+  // loaded as a top-level document, and is inert when the asset is
+  // fetched as a sub-resource (CSP only governs the document context).
+  const csp = ext === '.html' ? null : "default-src 'none'"
+  return { type, etag, identity, gzip, br, link, csp }
 }
 
 // Walk every `<link …>` in `html` that isn't inside an HTML comment
