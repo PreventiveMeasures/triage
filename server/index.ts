@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // DeepView triage-sync relay server. WebSocket front-end, SQLite
 // backing store. Implements the protocol described in
 // `client/triage-sync.js` (and `server/sign.ts` for the canonical
