@@ -78,6 +78,37 @@ describe('openObjstore — schema', () => {
       assert.equal(await getLive(handle, 'workspace-tag-1', 'resource-tag-1'), null)
     } finally { cleanup() }
   })
+
+  it('CHECK constraints reject negative version / length values (operator-write guard)', () => {
+    // STRICT enforces the columns' TYPE but NOT their value domain — a
+    // direct `version = -1` write is a valid integer STRICT accepts,
+    // which then round-trips through `num()` and corrupts the commitPut
+    // monotonicity arithmetic. The CHECKs reject it at write time,
+    // matching the Neon schema (server-db-neon parity, but for objstore).
+    const { handle, cleanup } = freshHandle()
+    try {
+      const insertObject = (version, contentLength) => handle.db.prepare(`
+        INSERT INTO workspace_object
+          (workspace_tag, resource_tag, version, incarnation, content_hash, content_length, signature, put_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('ws', 'res', version, 'inc', b64u32(), contentLength, b64u64(), Date.now())
+      assert.throws(() => insertObject(-1, 0), /CHECK constraint failed/u, 'version >= 0')
+      assert.throws(() => insertObject(0, -1), /CHECK constraint failed/u, 'content_length >= 0')
+      insertObject(0, 0) // boundary value is allowed
+
+      let sid = 0
+      const insertStaging = (prevVersion, expectedLength) => handle.db.prepare(`
+        INSERT INTO workspace_object_staging
+          (workspace_tag, resource_tag, staging_id, prev_version, prev_incarnation,
+           expected_length, content_hash, signature, begun_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('ws', 'res', `sid-${++sid}`, prevVersion, null, expectedLength, b64u32(), b64u64(), Date.now())
+      assert.throws(() => insertStaging(0, -1), /CHECK constraint failed/u, 'expected_length >= 0')
+      assert.throws(() => insertStaging(-1, 16), /CHECK constraint failed/u, 'prev_version >= 0 when present')
+      insertStaging(null, 16) // prev_version NULL (first-write precondition) is allowed
+      insertStaging(0, 0) // boundary values allowed
+    } finally { cleanup() }
+  })
 })
 
 describe('beginPut → commitPut happy path', () => {

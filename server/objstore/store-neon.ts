@@ -41,12 +41,15 @@ const DDL_LOCK_KEY_OBJSTORE_SUB = 0x6f62_6a73 // 'objs'
 // whole schema either applies or rolls back, AND grabs a
 // transaction-scoped advisory lock so concurrent boots serialize.
 //
-// `CHECK (version >= 0)` / `CHECK (content_length >= 0)` defend the
-// commitPut conflict arithmetic — a manual `UPDATE workspace_object
-// SET version = -1` would otherwise round-trip through `num()`
-// (which only rejects non-safe-integers) and corrupt the version
-// monotonicity invariant. Same vector covered for SQLite by the
-// STRICT type affinity + boot-time `pragma_table_list` check.
+// `CHECK (version >= 0)` / `CHECK (content_length >= 0)` (plus the
+// staging table's `expected_length >= 0` and `prev_version` guards)
+// defend the commitPut conflict arithmetic — a manual `UPDATE
+// workspace_object SET version = -1` would otherwise round-trip
+// through `num()` (which only rejects non-safe-integers) and corrupt
+// the version monotonicity invariant. The SQLite schema carries the
+// identical CHECKs (see `store.ts`) — STRICT there enforces the column
+// TYPE but NOT this value domain (`version = -1` is a valid integer
+// STRICT accepts), so both backends need the explicit CHECKs.
 const SCHEMA_PG = [
   `CREATE TABLE IF NOT EXISTS workspace_object (
      workspace_tag  TEXT    NOT NULL,

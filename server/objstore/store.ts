@@ -37,14 +37,24 @@ import { errMsg, randomId } from '../util.ts'
 // the TTL are dropped and their on-disk files unlinked.
 export const STAGING_TTL_MS_DEFAULT = 60 * 60 * 1000
 
+// `CHECK (version >= 0)` / `CHECK (content_length >= 0)` /
+// `CHECK (expected_length >= 0)` / `CHECK (prev_version IS NULL OR
+// prev_version >= 0)` are value-domain guards. STRICT (the table
+// markers below) enforces each column's TYPE — an INTEGER stays an
+// INTEGER — but NOT its value range: a manual `UPDATE workspace_object
+// SET version = -1` is a perfectly valid integer that STRICT accepts,
+// which then round-trips through `num()` (it only rejects
+// non-safe-integers) and corrupts the commitPut version-monotonicity
+// arithmetic. The CHECKs close that value-domain gap, mirroring the
+// Neon schema's identical constraints (see `store-neon.ts`).
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS workspace_object (
     workspace_tag  TEXT    NOT NULL,
     resource_tag   TEXT    NOT NULL,
-    version        INTEGER NOT NULL,
+    version        INTEGER NOT NULL CHECK (version >= 0),
     incarnation    TEXT    NOT NULL,
     content_hash   TEXT    NOT NULL,
-    content_length INTEGER NOT NULL,
+    content_length INTEGER NOT NULL CHECK (content_length >= 0),
     signature      TEXT    NOT NULL,
     put_at         INTEGER NOT NULL,
     PRIMARY KEY (workspace_tag, resource_tag)
@@ -54,9 +64,9 @@ const SCHEMA = `
     workspace_tag    TEXT    NOT NULL,
     resource_tag     TEXT    NOT NULL,
     staging_id       TEXT    NOT NULL,
-    prev_version     INTEGER,
+    prev_version     INTEGER CHECK (prev_version IS NULL OR prev_version >= 0),
     prev_incarnation TEXT,
-    expected_length  INTEGER NOT NULL,
+    expected_length  INTEGER NOT NULL CHECK (expected_length >= 0),
     content_hash    TEXT    NOT NULL,
     signature       TEXT    NOT NULL,
     begun_at        INTEGER NOT NULL,
