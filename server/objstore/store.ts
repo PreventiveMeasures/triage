@@ -68,8 +68,7 @@ const SCHEMA = `
 `
 
 // One LIVE row, exactly the shape the `workspace-subscribed` ack's
-// `resources` array carries on the wire (the subscribe handshake folds
-// in the former `objstore-list-result`), minus `keyframe`-style
+// `resources` array carries on the wire, minus `keyframe`-style
 // server-only flags. `put_at` is a
 // debug aid the wire format doesn't include — operators can inspect
 // it via the DB but the server never volunteers it.

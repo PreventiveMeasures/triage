@@ -228,10 +228,9 @@ type WireMessage = {
   // has to round-trip through the wire-message shape.
   kind?: unknown
   resourceTag?: unknown
-  // `workspace-subscribed` folds in the objstore inventory snapshot
-  // (replaced the old `objstore-list` round-trip). We pass it through to
-  // the objstore presence layer via `ensureSubscription`; this module
-  // treats it as an opaque row array.
+  // `workspace-subscribed` carries the objstore inventory snapshot. We
+  // pass it through to the objstore presence layer via
+  // `ensureSubscription`; this module treats it as an opaque row array.
   resources?: unknown
 }
 
@@ -1404,8 +1403,7 @@ async function handleMessage(wire: WireMessage): Promise<void> {
     // out of `connecting`. The chain that follows arrives as
     // a separate `workspace-state` message.
     session.subscribeAcked = true
-    // The ack also folds in the objstore inventory snapshot (replaced
-    // the old `objstore-list` round-trip). Resolve any
+    // The ack also carries the objstore inventory snapshot. Resolve any
     // `ensureSubscription` callers waiting for it so the objstore
     // presence layer seeds its inventory without observing this ack.
     const rows = Array.isArray(wire.resources) ? wire.resources as object[] : []

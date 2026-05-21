@@ -114,9 +114,9 @@ describe('client/objstore session', { concurrency: true }, () => {
 
   it('list returns opaque HMAC resourceTags (not plaintext fileNames)', async () => {
     // The server never sees the fileName — only the HMAC tag. This
-    // pins the privacy contract: a third party reading the
-    // workspace's `objstore-list-result` frame can't reverse-engineer
-    // which reports the workspace holds.
+    // pins the privacy contract: a third party reading the workspace's
+    // inventory snapshot (the `workspace-subscribed` `resources`) can't
+    // reverse-engineer which reports the workspace holds.
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {

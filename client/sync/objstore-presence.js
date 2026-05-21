@@ -124,11 +124,11 @@ let client = null
 function ensureClient(httpOrigin) {
   if (!client) {
     client = createObjstoreClient({
-      // `serverUrl` is a deps field for the private-transport
-      // fallback (tests via `createObjstoreSession`); the shared
-      // transport is what carries actual WebSocket traffic here.
-      // Pass empty string so the deps shape stays valid without
-      // pretending to drive the URL.
+      // `serverUrl` only matters when the client builds its own
+      // private transport (the path tests take when they pass no
+      // `transport`); here the shared transport carries all WebSocket
+      // traffic, so pass empty string to keep the deps shape valid
+      // without pretending to drive the URL.
       serverUrl: '',
       httpOrigin,
       transport: getSharedTransport(),
@@ -245,8 +245,8 @@ export function openWorkspace(workspaceId) {
   // sync session that owns the subscribe and returns the token the
   // objstore client requires — without it `c.openWorkspace` throws.
   // Bail if the workspace can't be subscribed (unknown to sync): we
-  // must not open a presence session that would `objstore-list` against
-  // a tag nothing is subscribed to.
+  // must not open a presence session whose inventory nothing seeds and
+  // whose ops run against a tag nobody is subscribed to.
   const subscription = triageSync.ensureSubscription(workspaceId)
   if (!subscription) return
   // `fileTags` mirrors the objstore's HMAC tags for every fileName

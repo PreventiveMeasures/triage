@@ -260,8 +260,7 @@ export type ObjstoreSession = {
 // unrepresentable in the API rather than a latent client logic error.
 //
 // The token also carries the objstore inventory snapshot from the
-// `workspace-subscribed` ack (the subscribe handshake replaced the old
-// `objstore-list` round-trip). triage-sync owns the subscribe and
+// `workspace-subscribed` ack. triage-sync owns the subscribe and
 // receives the ack, so it hands the rows over here — the objstore
 // client seeds its inventory from this rather than racing to observe a
 // one-shot ack on the shared socket (which it may not even be listening
@@ -331,9 +330,8 @@ type SessionState = {
   rejectConnected: (err: Error) => void
   // Live inventory keyed by resourceTag — the client's view of what the
   // relay holds for this workspace. Seeded from the `workspace-subscribed`
-  // ack's `resources` snapshot (the subscribe handshake that replaced the
-  // old `objstore-list` round-trip), then kept current by this session's
-  // own put/delete results and by `objstore-put` / `-deleted` broadcasts.
+  // ack's `resources` snapshot, then kept current by this session's own
+  // put/delete results and by `objstore-put` / `-deleted` broadcasts.
   // `list()` is a read of this map, not a wire request.
   inventory: Map<string, { version: number; incarnation: string; contentLength: number }>
   // Resolves once the inventory has been seeded at least once (the first

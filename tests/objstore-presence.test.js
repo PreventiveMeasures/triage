@@ -45,11 +45,17 @@ async function createWorkspaceWithReports(name, reports) {
 // session is open at a time and `online` reflects it.
 function awaitSyncOnline(timeoutMs = 5_000) {
   return new Promise((resolve, reject) => {
-    if (triageSync.status === 'online') { resolve(); return }
+    let off = () => {}
     const t = setTimeout(() => { off(); reject(new Error('awaitSyncOnline timeout')) }, timeoutMs)
-    const off = triageSync.onStatusChange(() => {
-      if (triageSync.status === 'online') { clearTimeout(t); off(); resolve() }
-    })
+    const check = () => {
+      if (triageSync.status !== 'online') return
+      clearTimeout(t); off(); resolve()
+    }
+    // Register BEFORE the initial check so a transition landing in the
+    // gap can't be missed (`onStatusChange` only fires on transitions);
+    // then check immediately in case we're already online.
+    off = triageSync.onStatusChange(check)
+    check()
   })
 }
 
@@ -107,7 +113,7 @@ describe('client/sync/objstore-presence', () => {
     // Presence never subscribes on its own — it rides triage-sync's
     // single `workspace-subscribe`. Opening a presence session must
     // therefore ensure a sync session exists for the tag (via
-    // `ensureSubscription`), so the objstore client never `objstore-list`s
+    // `ensureSubscription`), so the objstore client never operates
     // against a tag nothing is subscribed to. Without a pre-opened sync
     // session, the presence open must create one synchronously.
     const ws = await createWorkspace('presence-ensures-sync')

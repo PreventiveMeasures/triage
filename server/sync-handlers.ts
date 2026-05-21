@@ -35,11 +35,11 @@ export type SyncHandlersDeps = {
   sendUnauthorized: (socket: WebSocket, ctx: UnauthorizedContext) => void
   workspaceExists: (tag: string) => Promise<boolean>
   // Objstore inventory snapshot for a workspace tag, as wire rows. The
-  // `workspace-subscribed` ack folds it in (replacing the former
-  // `objstore-list` round-trip). Injected — the objstore store has its
-  // own richer `Handle`, so index.ts wires `listLive(objstoreHandle,
-  // tag).then(rows => rows.map(objectMetaWire))` rather than coupling
-  // this module to that store type. Returns [] for a triage-only tag.
+  // `workspace-subscribed` ack carries it. Injected — the objstore store
+  // has its own richer `Handle`, so index.ts wires `listLive(
+  // objstoreHandle, tag).then(rows => rows.map(objectMetaWire))` rather
+  // than coupling this module to that store type. Returns [] for a
+  // triage-only tag.
   objstoreResources: (tag: string) => Promise<object[]>
   debug: boolean
 }
@@ -285,12 +285,11 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // surface a `connecting → online` transition based on real handshake
     // completion, not just socket state.
     //
-    // The ack also carries the objstore inventory snapshot, folding the
-    // former `objstore-list` round-trip into the subscribe handshake:
-    // the same subscribe that registers this socket for objstore-put /
-    // -deleted broadcasts seeds the client's initial inventory. The
-    // client keeps it live thereafter from those broadcasts. Returns []
-    // for a triage-only workspace.
+    // The ack also carries the objstore inventory snapshot: the same
+    // subscribe that registers this socket for objstore-put / -deleted
+    // broadcasts seeds the client's initial inventory in one handshake.
+    // The client keeps it live thereafter from those broadcasts.
+    // Returns [] for a triage-only workspace.
     const resources = await objstoreResources(tag)
     send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
     // `from` is the last revision id the client claims to have applied —

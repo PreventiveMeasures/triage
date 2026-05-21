@@ -153,11 +153,16 @@ ping                   // application-level liveness probe; no payload needed
 ### Server → Client
 
 ```
-workspace-subscribed { workspaceTag }
+workspace-subscribed { workspaceTag, resources: [...] }
                        // explicit handshake-complete ack, sent BEFORE the
                        // initial chain — lets the UI flip
                        // `connecting → online` only after the server
-                       // registered the peer
+                       // registered the peer. `resources` is the objstore
+                       // inventory snapshot (one row per live object:
+                       // resourceTag, version, incarnation, contentHash,
+                       // contentLength, signature) — folds in what was a
+                       // separate objstore listing request. `[]` for a
+                       // triage-only workspace.
 
 workspace-save-ack { workspaceTag, base, id }
                        // `id` is content-addressed (SHA-256 of canonical
@@ -328,15 +333,17 @@ Two-plane protocol on the same listener:
 
 - **WS plane** — control + auth. Signed `objstore-put-begin` /
   `objstore-fetch` requests mint short-TTL HMAC bearer tokens that
-  authorise a corresponding REST byte transfer. `objstore-delete` /
-  `objstore-list` stay fully on WS (no bytes involved). Same Ed25519
+  authorise a corresponding REST byte transfer. `objstore-delete` stays
+  fully on WS (no bytes involved). The inventory listing is not a
+  separate frame: the `workspace-subscribed` ack carries the current
+  `resources` snapshot (see triage-sync below). Same Ed25519
   authentication as triage-sync (every signed message verified
   against `workspaceTag`), separate domain prefixes
-  (`deepview-objstore.v1.{put,delete,list,fetch}`) so triage signatures
+  (`deepview-objstore.v1.{put,delete,fetch}`) so triage signatures
   can't replay across protocols. Canonical signing payloads for each
   message type are the source of truth in `server/objstore/sign.ts`
   (`canonicalObjstorePut` / `canonicalObjstoreDelete` /
-  `canonicalObjstoreList` / `canonicalObjstoreFetch`); the WIRE field
+  `canonicalObjstoreFetch`); the WIRE field
   order below is JSON-keyed (order-irrelevant) but the SIGNED canonical
   byte order differs and is fixed by the canonical builders.
 - **REST plane** — byte transfer. `PUT` and `GET` under
@@ -381,11 +388,6 @@ objstore-delete {
   workspaceTag, resourceTag, prevVersion, signature
 }
 
-objstore-list {
-  workspaceTag,
-  signature             // bound to per-socket connectionNonce (replay protection)
-}
-
 objstore-fetch {
   workspaceTag, resourceTag,
   signature             // bound to per-socket connectionNonce
@@ -425,7 +427,9 @@ objstore-conflict     { action, workspaceTag, resourceTag, current? }
                         // current echoes the server's live row when the
                         // conflict is a version race; absent on the
                         // never-existed-yet path
-objstore-list-result  { workspaceTag, resources: [...] }
+                        // (The inventory listing isn't a reply here — the
+                        // `workspace-subscribed` ack carries the current
+                        // `resources` snapshot; see triage-sync.)
 
 // broadcasts to subscribed peers (PUT broadcast on REST commit;
 //                                 DELETE broadcast on WS handler):
@@ -519,7 +523,8 @@ here so the client implementation has one source of truth.
   housekeeping is independent and not covered by the protocol.
 - **Delete-arrived-from-peer.** A client receiving an
   `objstore-deleted` broadcast (or noticing a server-side absence
-  on a reconnect `objstore-list` diff) prompts the user when a
+  when it diffs the `workspace-subscribed` `resources` snapshot on a
+  reconnect) prompts the user when a
   local copy exists: keep-and-optionally-reupload, or drop-local.
   The "kept-local" decision is sticky — the dialog must not re-fire
   on every reconnect once recorded.
@@ -621,9 +626,9 @@ being collected mid-commit).
 - Promote / re-attribute a resource to a different `resourceTag` —
   the tag is in the signed canonical, signed `contentHash` ties
   the bytes to the announcement.
-- Replay a captured `objstore-list` / `objstore-fetch` from a
-  different TCP connection — both sigs bind the per-socket
-  `connectionNonce`.
+- Replay a captured `workspace-subscribe` (the inventory snapshot's
+  carrier) / `objstore-fetch` from a different TCP connection — both
+  sigs bind the per-socket `connectionNonce`.
 
 ## Transport backpressure
 
