@@ -81,9 +81,7 @@
     "out/icon-maskable.svg",
     "out/icon.svg",
     "out/index.html",
-    "out/logs.css",
-    "out/logs.html",
-    "out/logs.js",
+
     "out/manifest.webmanifest",
     "out/prism.js",
     "out/terminal.js",
