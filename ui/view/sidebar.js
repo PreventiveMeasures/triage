@@ -899,16 +899,19 @@ function renderSyncStatus(status) {
   // `persistenceDegraded` is orthogonal to the connection status — the
   // socket can be online while local writes are paused (a future-version
   // sessions blob, quota-exceeded, or a locked vault). Surface it as an
-  // amber ring (visible even when collapsed) + a label suffix + a
-  // tooltip. The off→on edge also raises a one-shot dialog; see the
+  // amber ring on the dot (visible even when collapsed) + a tooltip. The
+  // off→on edge also raises a one-shot dialog; see the
   // onPersistenceDegraded subscription below.
   const degraded = triageSync.persistenceDegraded
   btn.toggleAttribute('data-degraded', degraded)
+  // Keep the label to the status word — the action row is tight (it
+  // wraps). The amber ring + this tooltip carry the degraded signal in
+  // the badge; the one-shot dialog explains it in full.
   btn.title = degraded
-    ? 'Changes aren’t being saved in this browser and won’t survive a reload (another tab may be on a different version, or storage is full).'
+    ? 'Not saving to this browser right now (storage may be full, or another tab is on a newer version). Changes that haven’t synced could be lost on reload.'
     : ''
   const label = btn.querySelector('.sync-label')
-  if (label) label.textContent = (SYNC_LABELS[s] ?? '') + (degraded ? ' · not saving' : '')
+  if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
 // `renderSyncStatus` no-ops until the shadow DOM exists (`root` is
 // null pre-mount), so the subscription is safe to register at module

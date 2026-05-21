@@ -24,22 +24,22 @@ class PersistenceDegradedDialog extends AppDialog {
   render() {
     return html`<dialog @close=${this._onClose}>
       <header>
-        <h3>Your changes aren't being saved</h3>
+        <h3>Changes might not be saved</h3>
       </header>
       <p class="nwd-intro">
-        Triage still works in this tab, but it <strong>can't be saved in this
-        browser right now</strong> — anything you change won't survive a page
-        reload.
+        Triage works in this tab, but this browser <strong>can't save its sync
+        state right now</strong> — so changes that haven't reached the server
+        could be lost if you reload the page.
       </p>
       <p class="nwd-intro">
-        This usually means another tab is running a different version of the
-        app, or the browser's storage is full. To avoid overwriting data a
-        newer version may have saved, this tab has paused writing.
+        This usually means the browser's storage is full, or another tab is
+        running a newer version of the app (to avoid overwriting that newer
+        version's data, this tab has paused saving).
       </p>
       <p class="nwd-note">
-        Copy anything important elsewhere, then close other tabs of this app
-        (or reload them all to the same version) and free up storage if it's
-        full. This notice clears on its own once saving works again.
+        Free up space if storage is full, and close or reload other tabs of
+        this app to the same version. This notice clears on its own once
+        saving works again.
       </p>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
