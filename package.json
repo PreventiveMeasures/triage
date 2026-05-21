@@ -75,7 +75,21 @@
     "common/save-error-reason.ts",
     "common/utf8.d.ts",
     "common/utf8.js",
-    "out"
+    "out/brotli-fallback.js",
+    "out/client-sync.js",
+    "out/graph.js",
+    "out/icon-maskable.svg",
+    "out/icon.svg",
+    "out/index.html",
+    "out/logs.css",
+    "out/logs.html",
+    "out/logs.js",
+    "out/manifest.webmanifest",
+    "out/prism.js",
+    "out/terminal.js",
+    "out/view.css",
+    "out/view.html",
+    "out/view.js"
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
