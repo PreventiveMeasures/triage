@@ -352,8 +352,26 @@ type SessionState = {
   closed: boolean
 }
 
+// Exported for unit testing. Validates and resolves a server-supplied
+// urlPath against a known-good httpOrigin. Two gates:
+//   1. Regex: only the exact server route shape is accepted.
+//   2. WHATWG URL origin check: catches percent-encoding / backslash
+//      normalisation tricks that slip past the regex.
+export function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
+  if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
+    throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
+  }
+  const expectedOrigin = new URL(httpOrigin).origin
+  const url = new URL(urlPath, httpOrigin)
+  if (url.origin !== expectedOrigin) {
+    throw new TypeError(`objstore: urlPath origin mismatch — expected ${expectedOrigin}, got ${url.origin}`)
+  }
+  return url.href
+}
+
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
+  const httpOriginParsed = new URL(deps.httpOrigin).origin
 
   // Shared WebSocket transport owns lifecycle, nonce, heartbeat,
   // and the `authenticate` flow. We register as a consumer and
@@ -571,21 +589,13 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     onDisconnected: onTransportDisconnected,
   })
 
-  // Validate a server-supplied urlPath before concatenating it with
-  // httpOrigin. A `urlPath` like `@attacker.host/path` is valid in
-  // string terms but makes WHATWG URL parsing treat `httpOrigin` as
-  // userinfo, redirecting the request (and its bearer token) to an
-  // attacker-controlled host. Double-checked: regex gate first, then
-  // WHATWG origin comparison so both fast-path and edge-case paths
-  // (percent-encoding, Unicode, backslash normalisation) are covered.
   function buildObjstoreUrl(urlPath: string): string {
     if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
       throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
     }
     const url = new URL(urlPath, deps.httpOrigin)
-    const expectedOrigin = new URL(deps.httpOrigin).origin
-    if (url.origin !== expectedOrigin) {
-      throw new TypeError(`objstore: urlPath origin mismatch — expected ${expectedOrigin}, got ${url.origin}`)
+    if (url.origin !== httpOriginParsed) {
+      throw new TypeError(`objstore: urlPath origin mismatch — expected ${httpOriginParsed}, got ${url.origin}`)
     }
     return url.href
   }
