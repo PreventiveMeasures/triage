@@ -435,17 +435,6 @@ function getSessionByTag(tag: string): Session | null {
   return null
 }
 
-// True iff triage-sync has a session for this workspace tag — meaning
-// IT owns the one `workspace-subscribe` for the tag on the shared
-// socket (every session subscribes on connect). objstore-presence
-// consults this so it never sends a duplicate subscribe for a tag sync
-// already covers; broadcasts reach the socket via sync's single
-// subscribe. (When there's no session — e.g. presence used standalone
-// in tests — this is false and objstore subscribes for itself.)
-export function ownsWorkspaceSubscription(tag: string): boolean {
-  return getSessionByTag(tag) !== null
-}
-
 // True iff `session` is still the live entry for its workspaceId in
 // the session map. Handlers that await across boundaries (decrypt,
 // saveTriage, persistence) must re-check before mutating world state

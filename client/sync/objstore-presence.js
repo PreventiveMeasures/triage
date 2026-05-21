@@ -19,7 +19,7 @@
 import { computeBundleResourceTag, computeResourceTag, deriveObjstoreKeys } from './objstore-content-crypto.ts'
 import { createObjstoreClient } from './objstore.ts'
 import { getSharedTransport } from './sync-transport.ts'
-import { ownsWorkspaceSubscription, triageSync } from './triage-sync.ts'
+import { triageSync } from './triage-sync.ts'
 import { decodeUtf8 } from '../../common/utf8.js'
 import { computeSha512Integrity } from '../../common/integrity.js'
 import { onSyncHostInstalled } from './host.ts'
@@ -132,16 +132,13 @@ function ensureClient(httpOrigin) {
       serverUrl: '',
       httpOrigin,
       transport: getSharedTransport(),
-      // Defer the `workspace-subscribe` to triage-sync for any tag it
-      // already owns (the normal case — presence and sync open/close a
-      // workspace together). Without this, our duplicate `from:null`
-      // subscribe makes the server replay the full triage chain, which
-      // triage-sync reads as a continuity break and re-subscribes to
-      // "recover" from — three subscribes for one workspace. When sync
-      // ISN'T tracking the tag (e.g. presence standalone in tests), the
-      // predicate is false and we subscribe for ourselves so broadcasts
-      // still reach us.
-      externalSubscription: ownsWorkspaceSubscription,
+      // No `selfSubscribe`: presence sends NO `workspace-subscribe`. It
+      // relies on triage-sync's single subscribe for the same tag on
+      // this shared socket (presence and sync open a workspace together,
+      // so sync always owns it). That one subscribe registers the socket
+      // for the tag's broadcasts — including objstore-put/-deleted — so
+      // ours would be a pure duplicate (and would trip triage-sync's
+      // continuity-break re-subscribe via the full-chain replay).
     })
   }
   return client

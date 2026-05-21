@@ -27,7 +27,29 @@ const {
 async function createWorkspaceWithReports(name, reports) {
   const ws = await createWorkspace(name)
   for (const r of reports) await setReportWorkspace(r, ws.id)
+  // Production parity: presence no longer sends its own
+  // `workspace-subscribe` — it rides triage-sync's single subscribe on
+  // the shared socket (presence + sync open a workspace together). Open
+  // a sync session and wait for it to subscribe so presence receives
+  // objstore-put/-deleted broadcasts. Teardown: the test's
+  // `deleteWorkspace` drops this session via host.onWorkspaceDeleted.
+  triageSync.openSession(ws.id)
+  await awaitSyncOnline()
   return ws
+}
+
+// Resolve once triage-sync reaches `online` (its session subscribed on
+// the shared socket). Tests run sequentially and each workspace is
+// deleted in its finally — which closes the sync session — so only one
+// session is open at a time and `online` reflects it.
+function awaitSyncOnline(timeoutMs = 5_000) {
+  return new Promise((resolve, reject) => {
+    if (triageSync.status === 'online') { resolve(); return }
+    const t = setTimeout(() => { off(); reject(new Error('awaitSyncOnline timeout')) }, timeoutMs)
+    const off = triageSync.onStatusChange(() => {
+      if (triageSync.status === 'online') { clearTimeout(t); off(); resolve() }
+    })
+  })
 }
 
 // Wait until `predicate()` returns truthy, polling on each
@@ -656,6 +678,11 @@ describe('client/sync/objstore-presence', () => {
   async function createWorkspaceWithBundles(name, bundles) {
     const ws = await createWorkspace(name)
     for (const b of bundles) await setBundleWorkspace(b, ws.id)
+    // Same as createWorkspaceWithReports: presence rides triage-sync's
+    // single subscribe on the shared socket, so open a sync session and
+    // wait for it to subscribe before the test drives broadcasts.
+    triageSync.openSession(ws.id)
+    await awaitSyncOnline()
     return ws
   }
 

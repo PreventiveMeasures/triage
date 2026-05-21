@@ -191,23 +191,15 @@ export type ObjstoreClientDeps = {
   // — used by `createObjstoreSession` and by tests that need a
   // peer-broadcast-isolated socket).
   transport?: SocketTransport
-  // Optional per-tag predicate: returns true when ANOTHER consumer on
-  // the (shared) transport already owns the one `workspace-subscribe`
-  // for that workspace tag — in production that's triage-sync, which
-  // subscribes every workspace this client also tracks (the two are
-  // always active together). For a tag it returns true, this client
-  // sends NO `workspace-subscribe` of its own: a duplicate would make
-  // the server replay the full triage-sync revision chain on the shared
-  // socket, which triage-sync reads as a continuity break and "recovers"
-  // from with a third subscribe. The socket is already in the server's
-  // `subscribers[tag]` set via that single subscribe, so objstore
-  // broadcasts (objstore-put / -deleted) still reach us; our own
-  // requests are nonce-signed and only need the socket connected, which
-  // is what the readiness gate resolves on instead. Omitted (or false
-  // for a tag — e.g. `createObjstoreSession` on a private transport, or
-  // presence used standalone with no sync session) keeps the
-  // self-subscribe: there's no other consumer to register the tag.
-  externalSubscription?: (workspaceTag: string) => boolean
+  // When true, this client sends its own `workspace-subscribe` per open
+  // workspace. Default FALSE: the production client (objstore-presence)
+  // sends none — it rides triage-sync's single subscribe for the same
+  // tag on the shared socket (the two always open a workspace together),
+  // which is what registers the socket for objstore-put/-deleted
+  // broadcasts; our nonce-signed requests only need the socket connected.
+  // Set true only for a standalone client with no sync on its transport
+  // (`createObjstoreSession`), where nothing else subscribes the tag.
+  selfSubscribe?: boolean
 }
 
 // Backwards-compatible single-session deps. Each `createObjstoreSession`
@@ -359,11 +351,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // supplied transport (production) is shared and not owned;
   // omitted (tests, single-session) gets a private one.
   const ownsTransport = deps.transport === undefined
-  // Per-tag predicate: when another consumer (triage-sync) owns the
-  // single `workspace-subscribe` for a tag, we don't send our own — see
-  // the `externalSubscription` deps doc. The readiness gate then
-  // resolves on socket-connect rather than on a subscribe ack.
-  const externalSubscription = deps.externalSubscription
+  // Default false: production presence relies on triage-sync's single
+  // `workspace-subscribe` (see the `selfSubscribe` deps doc). Only a
+  // standalone client with no sync on its transport opts in.
+  const selfSubscribe = deps.selfSubscribe === true
   const transport: SocketTransport = deps.transport ?? createSocketTransport(
     deps.authResolver === undefined
       ? { serverUrl: deps.serverUrl }
@@ -440,14 +431,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // swaps during the await, the captured pair won't match and the
   // send is suppressed.
   function sendSubscribeFor(state: SessionState, nonce: string): void {
-    // Single subscription mechanism: when triage-sync owns the
-    // workspace-subscribe for this tag, we send none of our own. Being
-    // called with a live nonce means the socket is connected — all our
-    // nonce-signed requests need — so just resolve the readiness gate
-    // (mirrors what the `workspace-subscribed` ack does in the
-    // self-subscribe path). Broadcasts still arrive: triage-sync's
-    // subscribe put this socket in the server's `subscribers[tag]` set.
-    if (externalSubscription?.(state.workspaceTag)) {
+    if (!selfSubscribe) {
+      // triage-sync owns the single subscribe for this tag (see the
+      // `selfSubscribe` deps doc). We send none of our own; a live nonce
+      // means the socket is connected, so just resolve the readiness gate.
       if (!state.closed && !state.subscribed) {
         state.subscribed = true
         state.resolveSubscribed()
@@ -1088,7 +1075,10 @@ export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<
   // Spread to forward optional fields without coercing undefined onto
   // the target — exactOptionalPropertyTypes wants the key absent, not
   // explicitly undefined.
-  const clientDeps: ObjstoreClientDeps = { serverUrl: deps.serverUrl, httpOrigin: deps.httpOrigin }
+  // Standalone session on a private socket with no triage-sync — it
+  // must send its own `workspace-subscribe` to receive broadcasts, since
+  // nothing else registers the tag on this transport.
+  const clientDeps: ObjstoreClientDeps = { serverUrl: deps.serverUrl, httpOrigin: deps.httpOrigin, selfSubscribe: true }
   if (deps.requestTimeoutMs !== undefined) clientDeps.requestTimeoutMs = deps.requestTimeoutMs
   if (deps.authResolver !== undefined) clientDeps.authResolver = deps.authResolver
   const client = createObjstoreClient(clientDeps)
