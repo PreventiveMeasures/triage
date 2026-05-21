@@ -223,7 +223,7 @@ describe('reloadTriageFromStorage (cross-tab triage)', () => {
   })
 
   it('crash mid-compress: pending uncompressed snapshot recovers the user edit', async () => {
-    // Audit M3 round-5: saveTriage's `await compressBrotli` window
+    // Audit M3 round-5: saveTriage's `await compressDeflate` window
     // would lose the user's edit on a tab crash — in-memory state.*
     // dies with the process, the compressed key wasn't updated, and
     // triageSync.notify hadn't fired yet. The fix writes an
