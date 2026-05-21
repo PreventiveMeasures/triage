@@ -917,20 +917,33 @@ function renderSyncStatus(status) {
 // null pre-mount), so the subscription is safe to register at module
 // load; the initial paint happens in `mount()`.
 triageSync.onStatusChange(renderSyncStatus)
-// Reflect the persistence-degraded latch on the same badge, and raise a
-// one-shot explanatory dialog on each clean→degraded edge. The latch
+// Reflect the persistence-degraded latch on the badge, and show a
+// one-shot explanatory dialog once per degraded episode. The latch
 // fires once on subscribe with the current state and then on every
-// transition; the `degradedDialogOpen` guard keeps at most one dialog
-// up at a time (re-degrading after a dismiss/recovery re-notifies). The
-// client-sync passthrough defers this until the lazy sync chunk loads,
-// so the first fire lands after mount.
-let degradedDialogOpen = false
+// transition; the client-sync passthrough defers this until the lazy
+// sync chunk loads, so the first fire lands after mount.
+//
+// `shownThisEpisode` makes it one-shot (not re-shown on unrelated
+// re-renders) and resets when the latch clears, so a fresh degradation
+// re-notifies. If the dialog can't open because another modal is up
+// (modal-conflict → resolves `{ shown: false }`), retry on a short
+// delay while still degraded — otherwise the notice would be skipped
+// for the whole episode (the amber badge still shows meanwhile).
+let degradedDialogInFlight = false
+let degradedShownThisEpisode = false
+async function showDegradedDialogOnce() {
+  if (!triageSync.persistenceDegraded || degradedShownThisEpisode || degradedDialogInFlight) return
+  degradedDialogInFlight = true
+  const { shown } = await openPersistenceDegradedDialog()
+  degradedDialogInFlight = false
+  if (shown) { degradedShownThisEpisode = true; return }
+  // Couldn't show (another modal was open). Retry while still degraded.
+  if (triageSync.persistenceDegraded) setTimeout(showDegradedDialogOnce, 1500)
+}
 triageSync.onPersistenceDegraded((degraded) => {
   renderSyncStatus()
-  if (degraded && !degradedDialogOpen) {
-    degradedDialogOpen = true
-    openPersistenceDegradedDialog().finally(() => { degradedDialogOpen = false })
-  }
+  if (degraded) showDegradedDialogOnce()
+  else degradedShownThisEpisode = false
 })
 
 // Double-click a workspace row → inline rename. Replaces the label

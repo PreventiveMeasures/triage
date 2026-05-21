@@ -7,9 +7,9 @@
 // the amber ring on the sidebar's `#sync-status` badge.
 //
 // Single-acknowledge dialog: extends `AppDialog` for the shared
-// shadow-DOM <dialog> chrome (focus-trap + Esc-to-close). The resolve
-// value is unused — callers fire-and-forget via
-// `openPersistenceDegradedDialog()`.
+// shadow-DOM <dialog> chrome (focus-trap + Esc-to-close). The open
+// helper resolves `{ shown }` so the caller can retry if a
+// `modal-conflict` kept it from displaying.
 import { html } from 'lit'
 import { AppDialog } from './app-dialog.js'
 
@@ -56,16 +56,16 @@ customElements.define('persistence-degraded-dialog', PersistenceDegradedDialog)
 // persistence degrades, `AppDialog.firstUpdated`'s `showModal()` throws
 // and dispatches `modal-conflict` instead of `resolve`. The shared
 // helper only listens for `resolve`, so it would hang forever and leak
-// the element — which would also wedge the caller's "one dialog at a
-// time" guard, suppressing every later degradation notice. Resolve
-// (null on conflict, the dialog's detail otherwise) and remove the
-// element on BOTH paths so the promise always settles and cleans up.
+// the element. Resolve `{ shown }` and remove the element on BOTH paths
+// so the promise always settles and cleans up; `shown: false` (conflict,
+// never displayed) tells the caller to retry while still degraded so the
+// one-shot notice isn't skipped for the whole episode.
 export function openPersistenceDegradedDialog() {
   return new Promise((resolve) => {
     const el = document.createElement('persistence-degraded-dialog')
-    const settle = (detail) => { el.remove(); resolve(detail) }
-    el.addEventListener('resolve', (e) => settle(e.detail))
-    el.addEventListener('modal-conflict', () => settle(null))
+    const settle = (shown) => { el.remove(); resolve({ shown }) }
+    el.addEventListener('resolve', () => settle(true))
+    el.addEventListener('modal-conflict', () => settle(false))
     document.body.append(el)
   })
 }
