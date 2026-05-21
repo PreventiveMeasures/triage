@@ -10,7 +10,8 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { validateObjstoreUrlPath } from '../client/sync/objstore.ts'
+import { __test__ } from '../client/sync/objstore.ts'
+const { validateObjstoreUrlPath } = __test__
 
 const ORIGIN = 'https://relay.example.com'
 
@@ -95,17 +96,36 @@ describe('validateObjstoreUrlPath', () => {
     )
   })
 
-  it('rejects a path whose parsed origin differs from httpOrigin (origin mismatch gate)', () => {
-    // Construct a URL that passes the regex shape check but still
-    // produces a different origin when parsed against the base.
-    // The easiest way: supply an httpOrigin that new URL() itself
-    // would parse differently, so the two URL() calls disagree.
-    // Here we use a non-normalised base (uppercase scheme) to confirm
-    // the guard handles origin comparison case-insensitively via
-    // the WHATWG parser's own normalisation.
-    const upperOrigin = 'HTTPS://relay.example.com'
-    // A valid path should still resolve to the same normalised origin
-    // (WHATWG lowercases the scheme), so this MUST NOT throw.
-    assert.doesNotThrow(() => validateObjstoreUrlPath('/api/objstore/a/b', upperOrigin))
+  it('normalises a non-canonical httpOrigin (uppercase scheme) without rejecting a valid path', () => {
+    // WHATWG URL lowercases the scheme, so 'HTTPS://relay.example.com'
+    // and 'https://relay.example.com' produce the same .origin. A valid
+    // path must not be rejected due to scheme case alone.
+    assert.doesNotThrow(() => validateObjstoreUrlPath('/api/objstore/a/b', 'HTTPS://relay.example.com'))
+  })
+
+  it('rejects a path that resolves to a different origin (origin mismatch gate)', () => {
+    // The regex prevents all realistic injection strings, so the origin
+    // check is defense-in-depth. Simulate what it catches by calling the
+    // underlying WHATWG URL parser directly to confirm the error path is
+    // reachable: a path that somehow produced a different origin would
+    // trigger the mismatch throw. We verify the error message is correct
+    // by monkey-patching URL for this single call.
+    const realURL = globalThis.URL
+    let calls = 0
+    try {
+      globalThis.URL = class extends realURL {
+        constructor(input, base) {
+          super(input, base)
+          // On the second URL() call (the urlPath parse), override origin
+          if (++calls === 2) Object.defineProperty(this, 'origin', { value: 'https://attacker.example.com' })
+        }
+      }
+      assert.throws(
+        () => validateObjstoreUrlPath('/api/objstore/a/b', 'https://relay.example.com'),
+        /urlPath origin mismatch/u,
+      )
+    } finally {
+      globalThis.URL = realURL
+    }
   })
 })

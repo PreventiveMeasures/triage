@@ -352,22 +352,23 @@ type SessionState = {
   closed: boolean
 }
 
-// Exported for unit testing. Validates and resolves a server-supplied
-// urlPath against a known-good httpOrigin. Two gates:
+// Validates and resolves a server-supplied urlPath against a known-good
+// httpOrigin. Two gates:
 //   1. Regex: only the exact server route shape is accepted.
-//   2. WHATWG URL origin check: catches percent-encoding / backslash
-//      normalisation tricks that slip past the regex.
-export function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
+//   2. WHATWG URL origin check: defense-in-depth against encoding tricks.
+// Exported via __test__ only — not a committed public API.
+function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
   if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
     throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
   }
   const expectedOrigin = new URL(httpOrigin).origin
-  const url = new URL(urlPath, httpOrigin)
+  const url = new URL(urlPath, expectedOrigin)
   if (url.origin !== expectedOrigin) {
     throw new TypeError(`objstore: urlPath origin mismatch — expected ${expectedOrigin}, got ${url.origin}`)
   }
   return url.href
 }
+export const __test__ = { validateObjstoreUrlPath }
 
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
@@ -589,16 +590,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     onDisconnected: onTransportDisconnected,
   })
 
-  function buildObjstoreUrl(urlPath: string): string {
-    if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
-      throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
-    }
-    const url = new URL(urlPath, deps.httpOrigin)
-    if (url.origin !== httpOriginParsed) {
-      throw new TypeError(`objstore: urlPath origin mismatch — expected ${httpOriginParsed}, got ${url.origin}`)
-    }
-    return url.href
-  }
+  const buildObjstoreUrl = (urlPath: string) => validateObjstoreUrlPath(urlPath, httpOriginParsed)
 
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
