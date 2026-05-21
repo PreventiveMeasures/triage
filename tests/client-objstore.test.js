@@ -12,7 +12,8 @@ import { after, before, describe, it } from 'node:test'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreSession } from './_objstore-session.js'
 import { bootServer } from './_helpers.js'
 
 // Create a fresh workspace's full key bundle. Generates 32 random

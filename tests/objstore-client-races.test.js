@@ -22,7 +22,8 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreClient, createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreSession } from './_objstore-session.js'
 import { createSocketTransport } from '../client/sync/socket-transport.ts'
 import { bootServer } from './_helpers.js'
 

@@ -3,12 +3,17 @@
 //
 // - **WS control plane**. A single multiplexed WebSocket per client
 //   (`createObjstoreClient`) — every workspace the client opens
-//   (`client.openWorkspace(keys)`) subscribes over the SAME socket
-//   and shares the per-connection `challenge` nonce. Request frames
-//   (`objstore-put-begin` / `-fetch` / `-delete` / `-list`) carry
-//   `workspaceTag` so replies route back to the right session.
-//   Broadcasts (`objstore-put`, `objstore-deleted`) carry
-//   `workspaceTag` and fan out to the matching session's handlers.
+//   (`client.openWorkspace(keys)`) shares the per-connection
+//   `challenge` nonce, bound into every signed request frame. The
+//   client does NOT send `workspace-subscribe` of its own: it rides
+//   triage-sync's single subscribe for the same workspace tag on the
+//   shared socket (the two always open a workspace together), which is
+//   what registers the socket for `objstore-put` / `-deleted`
+//   broadcasts; our nonce-signed requests only need the socket
+//   connected. Request frames (`objstore-put-begin` / `-fetch` /
+//   `-delete` / `-list`) carry `workspaceTag` so replies route back to
+//   the right session. Broadcasts (`objstore-put`, `objstore-deleted`)
+//   carry `workspaceTag` and fan out to the matching session's handlers.
 //
 // - **REST data plane**. PUT bytes via `fetch(httpOrigin + urlPath,
 //   { method: 'PUT', headers: { Authorization: 'Bearer <token>' },
@@ -67,7 +72,6 @@ import {
   type SocketTransport,
   createSocketTransport,
 } from './socket-transport.ts'
-import { encodeUtf8 } from '../../common/utf8.js'
 
 export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto.ts'
 
@@ -187,34 +191,9 @@ export type ObjstoreClientDeps = {
   // `./sync-transport.ts`). When provided, this client doesn't own
   // the transport — `client.close()` releases its acquisitions and
   // detaches its consumer but DOESN'T call `transport.close()`. When
-  // omitted, the client creates a private transport (current default
-  // — used by `createObjstoreSession` and by tests that need a
-  // peer-broadcast-isolated socket).
+  // omitted, the client creates a private transport (used by tests
+  // that need a peer-broadcast-isolated socket).
   transport?: SocketTransport
-  // When true, this client sends its own `workspace-subscribe` per open
-  // workspace. Default FALSE: the production client (objstore-presence)
-  // sends none — it rides triage-sync's single subscribe for the same
-  // tag on the shared socket (the two always open a workspace together),
-  // which is what registers the socket for objstore-put/-deleted
-  // broadcasts; our nonce-signed requests only need the socket connected.
-  // Set true only for a standalone client with no sync on its transport
-  // (`createObjstoreSession`), where nothing else subscribes the tag.
-  selfSubscribe?: boolean
-}
-
-// Backwards-compatible single-session deps. Each `createObjstoreSession`
-// call creates its OWN client (its own socket) — tests that exercise
-// peer-broadcast behavior rely on this (the server excludes the
-// originator socket from broadcasts, so two sessions for the same
-// workspace must live on separate sockets for one to see the other's
-// puts).
-export type ObjstoreSessionDeps = ObjstoreClientDeps & {
-  // Workspace identity + keys. `workspaceTag` is the base64url
-  // Ed25519 public key (also stored on `keys`); `keys.signingKey`
-  // signs wire frames, `keys.contentKey` / `keys.tagKey` drive the
-  // content-layer AEAD + HMAC. See `deriveObjstoreKeys` for the
-  // single-entrypoint derivation from a workspace's 32-byte secret.
-  keys: ObjstoreKeys
 }
 
 export type ObjstoreSession = {
@@ -277,16 +256,6 @@ export type ObjstoreClient = {
 // outbound frames carry the same shape but with stricter types.
 type WireMessage = { type?: unknown; workspaceTag?: unknown; resourceTag?: unknown; [k: string]: unknown }
 
-// The relay sends a `challenge` frame on connect that the client
-// must bind into every subsequent objstore signature (and the
-// `workspace-subscribe` signature too — the relay's subscribe path
-// is shared with triage-sync's). Audit round-9 H2.
-//
-// The subscribe canonical is `[domain, tag, from, connectionNonce]`
-// with `from = null` since the objstore session doesn't carry a
-// triage-sync chain cursor.
-const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
-
 // Cap on the unmatched-message queue. Any waiter older than this
 // many unmatched frames is lost — acceptable, since a properly-
 // behaving session shouldn't have unmatched frames piling up at
@@ -300,12 +269,6 @@ const MAX_QUEUE_SIZE = 64
 // the next attempt usually picks up the stable post-commit state.
 const REST_RACE_MAX_ATTEMPTS = 4
 const REST_RACE_BACKOFF_MS = 15
-
-async function signSubscribe(privateKey: CryptoKey, workspaceTag: string, connectionNonce: string): Promise<string> {
-  const canonical = encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag, '', connectionNonce].join('\n'))
-  const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, canonical))
-  return sig.toBase64({ alphabet: 'base64url', omitPadding: true })
-}
 
 // Per-workspace state held by the client's session map. The shared
 // socket routes broadcasts here via `workspaceTag`; the per-session
@@ -322,23 +285,21 @@ type SessionState = {
   // seen WITHIN the current incarnation; a different incarnation
   // (delete+recreate) legitimately restarts at v1 and resets the floor.
   seenVersions: Map<string, { incarnation: string; version: number }>
-  // True once a `workspace-subscribe` for this session has been
-  // SENT on the current socket (flag flips in `sendSubscribeFor`
-  // before the send, with a rollback if the send fails — guards
-  // against a re-entered `onTransportConnected` double-sending
-  // while the ack is in flight). Distinct from the ack-received
-  // signal carried by `subscribedPromise` / `resolveSubscribed`
-  // below. Reset on disconnect so the next `onTransportConnected`
-  // re-subscribes.
-  subscribed: boolean
-  // Resolves once the next subscribe-ack lands. Pending requests
-  // (and `openWorkspace` itself) await this before sending. Re-armed
-  // on disconnect so a request issued during the reconnect window
-  // blocks until the new socket finishes its subscribe handshake
-  // rather than failing fast.
-  subscribedPromise: Promise<void>
-  resolveSubscribed: () => void
-  rejectSubscribed: (err: Error) => void
+  // True while the shared socket is connected (a challenge nonce is
+  // available). Flips in `onTransportConnected` (and openWorkspace's
+  // already-connected check), cleared in `onTransportDisconnected`.
+  // Guards the re-arm of `connectedPromise` so a disconnect while
+  // already disconnected doesn't churn the deferred.
+  connected: boolean
+  // Resolves once the socket is connected. Pending requests (and
+  // `openWorkspace` itself) await this before signing — the per-frame
+  // signature binds the connection nonce, so an op can't proceed until
+  // a nonce exists. Re-armed on disconnect so a request issued during
+  // the reconnect window blocks until the new socket's challenge lands
+  // rather than failing fast with "socket not open".
+  connectedPromise: Promise<void>
+  resolveConnected: () => void
+  rejectConnected: (err: Error) => void
   closed: boolean
 }
 
@@ -351,10 +312,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // supplied transport (production) is shared and not owned;
   // omitted (tests, single-session) gets a private one.
   const ownsTransport = deps.transport === undefined
-  // Default false: production presence relies on triage-sync's single
-  // `workspace-subscribe` (see the `selfSubscribe` deps doc). Only a
-  // standalone client with no sync on its transport opts in.
-  const selfSubscribe = deps.selfSubscribe === true
   const transport: SocketTransport = deps.transport ?? createSocketTransport(
     deps.authResolver === undefined
       ? { serverUrl: deps.serverUrl }
@@ -381,14 +338,14 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
   }
 
-  function makeSubscribedDeferred(state: Partial<SessionState>): void {
-    state.subscribedPromise = new Promise<void>((resolve, reject) => {
-      state.resolveSubscribed = resolve
-      state.rejectSubscribed = reject
+  function makeConnectedDeferred(state: Partial<SessionState>): void {
+    state.connectedPromise = new Promise<void>((resolve, reject) => {
+      state.resolveConnected = resolve
+      state.rejectConnected = reject
     })
     // Pre-attach a catch so reconnect-time rejections don't spam
     // the console as unhandled — internal paths don't always await.
-    state.subscribedPromise.catch(() => {})
+    state.connectedPromise.catch(() => {})
   }
 
   function recv(predicate: (m: WireMessage) => boolean): Promise<WireMessage> {
@@ -427,43 +384,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
   }
 
-  // Stale-tolerant: signSubscribe is async; if (socket, nonce)
-  // swaps during the await, the captured pair won't match and the
-  // send is suppressed.
-  function sendSubscribeFor(state: SessionState, nonce: string): void {
-    if (!selfSubscribe) {
-      // triage-sync owns the single subscribe for this tag (see the
-      // `selfSubscribe` deps doc). We send none of our own; a live nonce
-      // means the socket is connected, so just resolve the readiness gate.
-      if (!state.closed && !state.subscribed) {
-        state.subscribed = true
-        state.resolveSubscribed()
-      }
-      return
-    }
-    const startSocket = transport.getSocket()
-    void (async () => {
-      let sig: string
-      try { sig = await signSubscribe(state.signingKey, state.workspaceTag, nonce) }
-      catch (err) {
-        console.warn('objstore: signSubscribe failed:', err)
-        return
-      }
-      if (state.closed || state.subscribed) return
-      if (transport.getSocket() !== startSocket || transport.getNonce() !== nonce) return
-      // Flip `subscribed` BEFORE send so a re-entrant onConnected
-      // (double `challenge`, replay-on-addConsumer, etc.) can't
-      // double-fire while the first ack is in flight. Roll back on
-      // send-failure so a fresh onConnected can retry. Mirrors
-      // `trySendSubscribe` in `client/triage-sync.ts`.
-      state.subscribed = true
-      if (!transport.send({ type: 'workspace-subscribe', workspaceTag: state.workspaceTag, from: null, signature: sig })) {
-        state.subscribed = false
-        console.warn('objstore: workspace-subscribe send failed (socket not open)')
-      }
-    })()
-  }
-
   // MUST REMAIN SYNCHRONOUS — broadcast handlers fire and waiters
   // resolve in wire-arrival order; an `await` here would let two
   // messages interleave. Compare to triage-sync's `messageQueue
@@ -498,26 +418,14 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       return
     }
 
-    // `subscribed` already flipped true at SEND time (see
-    // `sendSubscribeFor`); this handler just unblocks awaiters.
-    // Edge: a stale ack from the prior socket can arrive after
-    // `onTransportDisconnected` re-armed `subscribedPromise` and
-    // unblock awaiters early. Bounded impact — the server doesn't
-    // gate ops on subscribe state (only on connection-nonce sig),
-    // so a racing op signs against the NEW socket's nonce. Worst
-    // case: ops fire ~ms sooner than the proper-subscribe gate
-    // would prefer, not "wrong-socket op."
-    if (msg.type === 'workspace-subscribed' && typeof msg.workspaceTag === 'string') {
-      const state = sessionsByTag.get(msg.workspaceTag)
-      if (state) state.resolveSubscribed()
-      return
-    }
-
-    // Triage-sync frames share the socket (unified transport).
-    // Drop explicitly so they don't pile up in `queue`.
+    // Triage-sync frames share the socket (unified transport). Drop
+    // explicitly so they don't pile up in `queue`.
+    // `workspace-subscribed` is triage-sync's subscribe ack — the
+    // objstore client no longer subscribes (it rides that single
+    // subscribe), but the ack still lands on this shared consumer.
     // `authenticated` is transport-internal-but-passed-through
     // (triage-sync claims it as a deferred-send kicker).
-    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'authenticated') return
+    if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'workspace-subscribed' || msg.type === 'authenticated') return
 
     // Request-response correlation: first matching waiter wins,
     // else queue for a later `recv`.
@@ -540,22 +448,23 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
   }
 
-  function onTransportConnected(nonce: string): void {
+  function onTransportConnected(): void {
     for (const state of sessionsByTag.values()) {
-      if (state.closed || state.subscribed) continue
-      sendSubscribeFor(state, nonce)
+      if (state.closed || state.connected) continue
+      state.connected = true
+      state.resolveConnected()
     }
   }
 
   function onTransportDisconnected(reason: string): void {
     // Drain so in-flight requests don't time out, then re-arm each
-    // session's subscribed gate for the next onConnected.
+    // session's connected gate for the next onConnected.
     failPendingWaiters(reason)
     for (const state of sessionsByTag.values()) {
       if (state.closed) continue
-      if (state.subscribed) {
-        state.subscribed = false
-        makeSubscribedDeferred(state)
+      if (state.connected) {
+        state.connected = false
+        makeConnectedDeferred(state)
       }
     }
   }
@@ -569,7 +478,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
   async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
-    await state.subscribedPromise
+    await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
@@ -704,7 +613,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     | { kind: 'not-found' }
     | { kind: 'retry' }
   > {
-    await state.subscribedPromise
+    await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
@@ -748,7 +657,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // Wire-level DELETE. `delete` (public) is the encrypting wrapper —
   // it derives the tag from the plaintext fileName and calls here.
   async function _rawDelete(state: SessionState, resourceTag: string, prev: ObjstorePrev): Promise<RawDeleteResult> {
-    await state.subscribedPromise
+    await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
@@ -777,7 +686,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // Wire-level LIST. Returns raw ObjectMeta (with opaque resourceTag
   // HMACs). `list` (public) downgrades to the small Listing shape.
   async function _rawList(state: SessionState): Promise<ObjectMeta[]> {
-    await state.subscribedPromise
+    await state.connectedPromise
     if (state.closed) throw new Error('objstore: session closed')
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore: socket not open')
@@ -830,10 +739,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       putHandlers: new Set(),
       deletedHandlers: new Set(),
       seenVersions: new Map(),
-      subscribed: false,
+      connected: false,
       closed: false,
     }
-    makeSubscribedDeferred(state)
+    makeConnectedDeferred(state)
     sessionsByTag.set(workspaceTag, state as SessionState)
     const full = state as SessionState
 
@@ -843,23 +752,26 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     const acquireHandle = transport.acquire()
     acquiresByTag.set(workspaceTag, acquireHandle)
 
-    // If the socket is already connected, kick a subscribe immediately
-    // so we don't wait for the next reconnect. Otherwise the
-    // transport's `onConnected(nonce)` callback will pick us up the
+    // If the socket is already connected, resolve the gate immediately —
+    // `addConsumer` doesn't replay `onConnected`, so a session opened on
+    // an already-live socket would otherwise wait for the next reconnect.
+    // Otherwise the transport's `onConnected` callback flips the gate the
     // moment the challenge frame lands.
-    const currentNonce = transport.getNonce()
-    if (currentNonce) sendSubscribeFor(full, currentNonce)
+    if (transport.getNonce()) {
+      full.connected = true
+      full.resolveConnected()
+    }
 
-    // Cap the open's wait on the subscribe-ack at `timeoutMs` so a
-    // server that silently drops the subscribe (bad sig, etc.)
-    // doesn't hang the caller forever.
+    // Cap the open's wait on socket-connect at `timeoutMs` so a server
+    // that never completes the handshake (or an unreachable URL) doesn't
+    // hang the caller forever.
     let openTimeout: ReturnType<typeof setTimeout> | null = null
     try {
       await new Promise<void>((resolve, reject) => {
         openTimeout = setTimeout(() => {
-          reject(new Error(`objstore: subscribe-ack timeout after ${timeoutMs}ms`))
+          reject(new Error(`objstore: connect timeout after ${timeoutMs}ms`))
         }, timeoutMs)
-        full.subscribedPromise.then(() => resolve(), (err) => reject(err))
+        full.connectedPromise.then(() => resolve(), (err) => reject(err))
       })
     } catch (err) {
       if (openTimeout) clearTimeout(openTimeout)
@@ -1016,10 +928,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // workspace's content + tag key material.
         try { full.contentKey.fill(0) } catch {}
         try { full.tagKey.fill(0) } catch {}
-        // If a request happened to be awaiting subscribedPromise at
+        // If a request happened to be awaiting connectedPromise at
         // the moment of close, unblock it with an error so it doesn't
         // hang past the session's lifetime.
-        try { full.rejectSubscribed(new Error('objstore: session closed')) } catch {}
+        try { full.rejectConnected(new Error('objstore: session closed')) } catch {}
         // Note: the server has no per-tag unsubscribe message, so
         // broadcasts for this workspaceTag may continue to arrive on
         // the shared socket. The dispatcher drops them silently
@@ -1044,14 +956,14 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (clientClosed) return
     clientClosed = true
     // Close every open session — wipe keys, drop from the map, reject
-    // pending subscribe waiters. We release all acquisitions and then
+    // pending connect waiters. We release all acquisitions and then
     // close the transport: closing the transport triggers
     // `onTransportDisconnected` which calls `failPendingWaiters`.
     for (const state of sessionsByTag.values()) {
       state.closed = true
       try { state.contentKey.fill(0) } catch {}
       try { state.tagKey.fill(0) } catch {}
-      try { state.rejectSubscribed(new Error('objstore: client closed')) } catch {}
+      try { state.rejectConnected(new Error('objstore: client closed')) } catch {}
     }
     sessionsByTag.clear()
     for (const handle of acquiresByTag.values()) handle.release()
@@ -1064,41 +976,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   }
 
   return { openWorkspace, close }
-}
-
-// Backwards-compatible single-session entry point. Each call creates
-// its OWN client (its own WebSocket) — peer-broadcast tests rely on
-// this isolation (the server excludes the originator socket from
-// broadcasts). Production code that wants connection multiplexing
-// across workspaces should call `createObjstoreClient` directly.
-export async function createObjstoreSession(deps: ObjstoreSessionDeps): Promise<ObjstoreSession> {
-  // Spread to forward optional fields without coercing undefined onto
-  // the target — exactOptionalPropertyTypes wants the key absent, not
-  // explicitly undefined.
-  // Standalone session on a private socket with no triage-sync — it
-  // must send its own `workspace-subscribe` to receive broadcasts, since
-  // nothing else registers the tag on this transport.
-  const clientDeps: ObjstoreClientDeps = { serverUrl: deps.serverUrl, httpOrigin: deps.httpOrigin, selfSubscribe: true }
-  if (deps.requestTimeoutMs !== undefined) clientDeps.requestTimeoutMs = deps.requestTimeoutMs
-  if (deps.authResolver !== undefined) clientDeps.authResolver = deps.authResolver
-  const client = createObjstoreClient(clientDeps)
-  let session: ObjstoreSession
-  try {
-    session = await client.openWorkspace(deps.keys)
-  } catch (err) {
-    try { client.close() } catch {}
-    throw err
-  }
-  // Wrap close to tear the client down too — single-session callers
-  // expect `session.close()` to drop the underlying socket.
-  const inner = session.close
-  return {
-    ...session,
-    close() {
-      try { inner() } catch {}
-      try { client.close() } catch {}
-    },
-  }
 }
 
 // Internal wire-level result shapes returned by `_rawPut` /
