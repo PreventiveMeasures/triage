@@ -146,6 +146,10 @@ export function onChange(cb) {
 let pendingRedraw = null
 let pendingAuthResolver = null
 let pendingConflictResolver = null
+// Presence sessions torn down by `setEnabled(false)` so the matching
+// `setEnabled(true)` can reopen exactly them — each reopen re-sends
+// `objstore-list`, which is what refreshes `isInRemote`.
+let presenceToReopen = []
 
 export function setRedraw(fn) {
   if (realModule) { realModule.setRedraw(fn); return }
@@ -220,16 +224,38 @@ export const triageSync = {
   // default and the next reload would auto-resume).
   setEnabled(value) {
     if (value === true) {
-      return loadSyncOnce().then((m) => m.triageSync.setEnabled(true)).catch((err) => {
+      return loadSyncOnce().then((m) => {
+        m.triageSync.setEnabled(true)
+        // Reopen the presence sessions the matching `setEnabled(false)`
+        // tore down. Disabling closes every presence session (below) so
+        // the socket can actually drop; re-enabling reconnects the
+        // socket but leaves presence with NO live session, so no
+        // `objstore-list` is sent and `isInRemote` reports a stale
+        // "local" for every report until a navigation reopens presence.
+        // `openWorkspace` is idempotent and defers its list() until the
+        // socket re-subscribes, so reopening here re-sends the list as
+        // soon as the connection is back.
+        const ids = presenceToReopen
+        presenceToReopen = []
+        for (const id of ids) {
+          try { m.openWorkspace(id) } catch (err) {
+            console.warn(`client-sync: openWorkspace(${id}) failed during re-enable:`, err)
+          }
+        }
+        return null
+      }).catch((err) => {
         console.warn('client-sync: setEnabled load failed:', err)
         return null
       })
     }
     if (realModule) {
-      // Close every presence session so its transport acquire
-      // releases. `openWorkspaceIds()` snapshots the keys; iterate
-      // a copy because `closeWorkspace` mutates the live map.
-      for (const id of realModule.openWorkspaceIds()) {
+      // Snapshot the open presence sessions BEFORE closing, so the
+      // matching re-enable reopens exactly them. Close every session so
+      // its transport acquire releases — otherwise the WS lingers and
+      // "Sync off" doesn't actually disconnect. (`openWorkspaceIds()`
+      // already returns a fresh array; closeWorkspace mutates the map.)
+      presenceToReopen = realModule.openWorkspaceIds()
+      for (const id of presenceToReopen) {
         try { realModule.closeWorkspace(id) } catch (err) {
           console.warn(`client-sync: closeWorkspace(${id}) failed during disable:`, err)
         }

@@ -16,7 +16,7 @@
 import './view/frontend-install.js'
 import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
-import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, openWorkspace as openPresence, setRedraw, triageSync } from './view/client-sync.js'
+import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
@@ -67,18 +67,7 @@ onPresenceChange(render)
 // offline) gate the badge: it only renders while sync is `online`
 // (any other state means `isInRemote` can't give a trustworthy
 // answer, so showing "local" would be misleading).
-//
-// On the transition INTO `online`, also reopen presence for the active
-// workspace. Switching sync off tears every presence session down
-// (client-sync's setEnabled(false) closes them so the socket actually
-// drops), so on reconnect `isInRemote` would report stale "local" until
-// the next navigation reopened presence. openWorkspace is idempotent
-// and re-lists the remote inventory; its list() fires onPresenceChange
-// → render, repainting the report-status chip as "cloud".
-triageSync.onStatusChange((status) => {
-  if (status === 'online' && state.currentWorkspace) openPresence(state.currentWorkspace)
-  render()
-})
+triageSync.onStatusChange(render)
 // Auto-download bridge — the presence module silently fetches +
 // saves peer-uploaded reports it discovers. If the workspace that
 // gained the new report is the active view, re-run
