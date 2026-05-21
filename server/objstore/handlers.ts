@@ -26,17 +26,14 @@ import {
   isValidContentHash,
   isValidSignature,
   isValidTag,
-  listLive,
   objectMetaWire,
 } from './store.ts'
 import {
   type ObjstoreDeleteMsg,
   type ObjstoreFetchMsg,
-  type ObjstoreListMsg,
   type ObjstorePutBeginMsg,
   verifyObjstoreDeleteSig,
   verifyObjstoreFetchSig,
-  verifyObjstoreListSig,
   verifyObjstorePutSig,
 } from './sign.ts'
 import { type TokenSecret, mintGetToken, mintPutToken } from './tokens.ts'
@@ -188,17 +185,6 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   if (deps.debug) console.log(`objstore delete → ${debugTag(tag)}/${resourceTag.slice(0, 8)}…`)
 }
 
-async function handleList(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreListMsg): Promise<void> {
-  if (!isValidTag(msg.workspaceTag) || !isValidSignature(msg.signature)) return
-  if (!await verified(deps, socket, msg, 'list', verifyObjstoreListSig)) return
-  const rows = await listLive(deps.handle, msg.workspaceTag)
-  deps.send(socket, {
-    type: 'objstore-list-result',
-    workspaceTag: msg.workspaceTag,
-    resources: rows.map(objectMetaWire),
-  })
-}
-
 async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreFetchMsg): Promise<void> {
   if (!isValidTag(msg.workspaceTag) || !isValidTag(msg.resourceTag) || !isValidSignature(msg.signature)) return
   if (!await verified(deps, socket, msg, 'fetch', verifyObjstoreFetchSig)) return
@@ -231,7 +217,6 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
 export type ObjstoreHandlers = {
   handlePutBegin: (s: WebSocket, m: ObjstorePutBeginMsg) => Promise<void>
   handleDelete: (s: WebSocket, m: ObjstoreDeleteMsg) => Promise<void>
-  handleList: (s: WebSocket, m: ObjstoreListMsg) => Promise<void>
   handleFetch: (s: WebSocket, m: ObjstoreFetchMsg) => Promise<void>
 }
 
@@ -239,7 +224,6 @@ export function createObjstoreHandlers(deps: ObjstoreDeps): ObjstoreHandlers {
   return {
     handlePutBegin: (s, m) => handlePutBegin(deps, s, m),
     handleDelete: (s, m) => handleDelete(deps, s, m),
-    handleList: (s, m) => handleList(deps, s, m),
     handleFetch: (s, m) => handleFetch(deps, s, m),
   }
 }

@@ -5,8 +5,9 @@
 // keypair (= fresh workspaceTag) so chains don't collide.
 //
 // Two-plane shape under test:
-//   WS:     workspace-subscribe (broadcast attach), objstore-put-begin,
-//           objstore-fetch (token issuance), objstore-delete, objstore-list
+//   WS:     workspace-subscribe (broadcast attach + inventory snapshot
+//           in the ack), objstore-put-begin, objstore-fetch (token
+//           issuance), objstore-delete
 //   REST:   PUT /api/objstore/{tag}/{res}, GET /api/objstore/{tag}/{res}
 //           (Authorization: Bearer <token>, body = raw ciphertext)
 
@@ -21,7 +22,6 @@ import { bootServer } from './_helpers.js'
 const SUBSCRIBE_DOMAIN = 'deepview-triage-sync.v1.subscribe'
 const PUT_DOMAIN = 'deepview-objstore.v1.put'
 const DELETE_DOMAIN = 'deepview-objstore.v1.delete'
-const LIST_DOMAIN = 'deepview-objstore.v1.list'
 const FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 
 function b64url(bytes) { return Buffer.from(bytes).toString('base64url') }
@@ -66,10 +66,6 @@ function signDelete(sk, fields, connectionNonce) {
     fields.prevIncarnation == null ? '' : String(fields.prevIncarnation),
     connectionNonce,
   ].join('\n')))
-}
-
-function signList(sk, tag, connectionNonce) {
-  return sign(sk, encodeUtf8([LIST_DOMAIN, tag, connectionNonce].join('\n')))
 }
 
 function signFetch(sk, tag, resourceTag, connectionNonce) {
@@ -143,6 +139,18 @@ async function subscribeWS(c, sk, tag) {
   c.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
   await c.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
   await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
+}
+
+// Read the objstore inventory by (re)subscribing: the `workspace-subscribed`
+// ack now folds in the resources snapshot (replaced the old `objstore-list`
+// round-trip). Returns the ack frame (with `.resources`); drains the
+// trailing `workspace-state` chain so it doesn't leak into a later recv().
+async function listViaSubscribe(c, sk, tag) {
+  const sig = await signSubscribe(sk, tag, null, c.connectionNonce)
+  c.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
+  const acked = await c.recv((m) => m.type === 'workspace-subscribed' && m.workspaceTag === tag)
+  await c.recv((m) => m.type === 'workspace-state' && m.workspaceTag === tag)
+  return acked
 }
 
 // Two-step PUT: WS objstore-put-begin → objstore-put-token, then
@@ -219,9 +227,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(ackBody.version, 1)
     assert.equal(ackBody.contentLength, payload.byteLength)
     // List returns it.
-    const listSig = await signList(sk, tag, c.connectionNonce)
-    c.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c, sk, tag)
     assert.equal(list.resources.length, 1)
     assert.equal(list.resources[0].resourceTag, 'r-1')
     assert.equal(list.resources[0].contentLength, payload.byteLength)
@@ -291,9 +297,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     await c1.recv((m) => m.type === 'objstore-deleted-ack')
     const c2 = await connect(serverUrl)
     await subscribeWS(c2, sk, tag)
-    const listSig = await signList(sk, tag, c2.connectionNonce)
-    c2.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c2.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c2, sk, tag)
     assert.equal(list.resources.length, 0)
     c1.ws.close(); c2.ws.close()
   })
@@ -362,9 +366,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     c2.ws.send(JSON.stringify({ type: 'objstore-delete', ...replayFields, signature: c1Sig }))
     await c2.expectSilent(200)
     // Resource still present.
-    const listSig = await signList(sk, tag, c2.connectionNonce)
-    c2.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c2.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c2, sk, tag)
     assert.equal(list.resources.length, 1, 'replayed delete must not drop the row')
     c1.ws.close(); c2.ws.close()
   })
@@ -392,12 +394,17 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     c1.ws.close(); c2.ws.close()
   })
 
-  it('drops a list with a different connection-nonce → cross-connection replay protection', async () => {
+  it('drops a subscribe with a different connection-nonce → cross-connection replay protection', async () => {
+    // The objstore inventory is now read via the `workspace-subscribe`
+    // handshake (the old `objstore-list` frame is gone). A subscribe
+    // signed against one connection's challenge nonce, replayed on
+    // another, must be rejected — otherwise a captured subscribe could
+    // attach a foreign socket as a peer and leak the inventory snapshot.
     const { sk, tag } = await makeKp()
     const c1 = await connect(serverUrl)
     const c2 = await connect(serverUrl)
-    const sig = await signList(sk, tag, c1.connectionNonce)
-    c2.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: sig }))
+    const sig = await signSubscribe(sk, tag, null, c1.connectionNonce)
+    c2.ws.send(JSON.stringify({ type: 'workspace-subscribe', workspaceTag: tag, from: null, signature: sig }))
     await c2.expectSilent(200)
     c1.ws.close(); c2.ws.close()
   })
@@ -630,9 +637,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
       // interleaving with stale `objstore-put` frames in the queue.
       await c.recv((m) => m.type === 'objstore-put' && m.resourceTag === name)
     }
-    const listSig = await signList(sk, tag, c.connectionNonce)
-    c.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c, sk, tag)
     assert.equal(list.resources.length, 3)
     const tags = list.resources.map((r) => r.resourceTag).toSorted()
     assert.deepEqual(tags, ['r-a', 'r-b', 'r-c'])
@@ -685,9 +690,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     await subscribeWS(c, skB, tagB)
     await putBlob(c, skA, tagA, 'r-shared-name', Buffer.from('A-bytes', 'utf8'), null, httpOrigin)
     await c.recv((m) => m.type === 'objstore-put' && m.workspaceTag === tagA)
-    const sigB = await signList(skB, tagB, c.connectionNonce)
-    c.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tagB, signature: sigB }))
-    const listB = await c.recv((m) => m.type === 'objstore-list-result' && m.workspaceTag === tagB)
+    const listB = await listViaSubscribe(c, skB, tagB)
     assert.equal(listB.resources.length, 0, 'tagB must not see tagA resources')
     // Fetch the same resource name under tagB → not-found.
     const fetched = await fetchBlob(c, skB, tagB, 'r-shared-name', httpOrigin)
@@ -697,7 +700,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
 
   it('resources persist across reconnects (same DB, fresh socket)', async () => {
     // Mirrors sync-server's "persists revisions across reconnects".
-    // The objstore-list response on the second connection must
+    // The subscribe-ack inventory on the second connection must
     // include the resource committed on the first; the byte stream
     // via REST should still return identical bytes.
     const { sk, tag } = await makeKp()
@@ -710,9 +713,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // Fresh socket — re-subscribe, list, fetch.
     const c2 = await connect(serverUrl)
     await subscribeWS(c2, sk, tag)
-    const listSig = await signList(sk, tag, c2.connectionNonce)
-    c2.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c2.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c2, sk, tag)
     assert.equal(list.resources.length, 1)
     assert.equal(list.resources[0].resourceTag, 'r-persist')
     assert.equal(list.resources[0].version, 1)
@@ -1226,9 +1227,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     assert.equal(conflict.action, 'delete')
     assert.equal(conflict.current.version, 1)
     // Row still there — the failed DELETE didn't drop it.
-    const listSig = await signList(sk, tag, c.connectionNonce)
-    c.ws.send(JSON.stringify({ type: 'objstore-list', workspaceTag: tag, signature: listSig }))
-    const list = await c.recv((m) => m.type === 'objstore-list-result')
+    const list = await listViaSubscribe(c, sk, tag)
     assert.equal(list.resources.length, 1)
     c.ws.close()
   })

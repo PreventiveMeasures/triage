@@ -124,14 +124,22 @@ let client = null
 function ensureClient(httpOrigin) {
   if (!client) {
     client = createObjstoreClient({
-      // `serverUrl` is a deps field for the private-transport
-      // fallback (tests via `createObjstoreSession`); the shared
-      // transport is what carries actual WebSocket traffic here.
-      // Pass empty string so the deps shape stays valid without
-      // pretending to drive the URL.
+      // `serverUrl` only matters when the client builds its own
+      // private transport (the path tests take when they pass no
+      // `transport`); here the shared transport carries all WebSocket
+      // traffic, so pass empty string to keep the deps shape valid
+      // without pretending to drive the URL.
       serverUrl: '',
       httpOrigin,
       transport: getSharedTransport(),
+      // Presence sends NO `workspace-subscribe` of its own (the objstore
+      // client has no subscribe path at all). It relies on triage-sync's
+      // single subscribe for the same tag on this shared socket (presence
+      // and sync open a workspace together, so sync always owns it). That
+      // one subscribe registers the socket for the tag's broadcasts —
+      // including objstore-put/-deleted — so ours would be a pure
+      // duplicate (and would trip triage-sync's continuity-break
+      // re-subscribe via the full-chain replay).
     })
   }
   return client
@@ -231,6 +239,16 @@ export function openWorkspace(workspaceId) {
   if (sessions.has(workspaceId)) return
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
+  // Couple this objstore session to a sync subscription up front: the
+  // objstore client never sends its own `workspace-subscribe`, so it
+  // rides triage-sync's. `ensureSubscription` opens (idempotently) the
+  // sync session that owns the subscribe and returns the token the
+  // objstore client requires — without it `c.openWorkspace` throws.
+  // Bail if the workspace can't be subscribed (unknown to sync): we
+  // must not open a presence session whose inventory nothing seeds and
+  // whose ops run against a tag nobody is subscribed to.
+  const subscription = triageSync.ensureSubscription(workspaceId)
+  if (!subscription) return
   // `fileTags` mirrors the objstore's HMAC tags for every fileName
   // the workspace knows locally; `bundleTags` does the same for the
   // workspace's claimed bundle integrities. `remoteTags` is the
@@ -301,7 +319,7 @@ export function openWorkspace(workspaceId) {
     if (!httpOrigin) return
     try {
       const c = ensureClient(httpOrigin)
-      const session = await c.openWorkspace(entry.keys)
+      const session = await c.openWorkspace(entry.keys, subscription)
       if (entry.disposed) {
         try { session.close() } catch {}
         return
@@ -496,13 +514,14 @@ onSyncHostInstalled((host) => {
     }
   })
 
-  // Workspace teardown — the per-switch caller (`ingest.js`) used to
-  // invoke `closeWorkspace` directly on every workspace transition;
-  // now sessions stay alive across switches and cleanup is event-
-  // driven. Fire on the workspaces-store delete so any presence
-  // session bound to a vanished id releases its transport acquire
-  // and zeroes its key material. Also drop the persisted tag→name
-  // cache — the workspace is gone, the mappings are dead weight.
+  // Workspace teardown — `ingest.js` closes a presence session in
+  // lockstep with its sync session on every workspace switch (presence
+  // ⊆ sync; see openWorkspace). This listener is the OTHER teardown
+  // trigger: a workspace removed from the store entirely. Fire on the
+  // workspaces-store delete so any presence session bound to a vanished
+  // id releases its transport acquire and zeroes its key material. Also
+  // drop the persisted tag→name cache — the workspace is gone, the
+  // mappings are dead weight.
   host.onWorkspaceDeleted((workspaceId) => {
     closeWorkspace(workspaceId)
     clearPresenceCache(workspaceId)

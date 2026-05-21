@@ -9,7 +9,6 @@ import { isValidIncarnation } from './store.ts'
 
 const OBJSTORE_PUT_DOMAIN = 'deepview-objstore.v1.put'
 const OBJSTORE_DELETE_DOMAIN = 'deepview-objstore.v1.delete'
-const OBJSTORE_LIST_DOMAIN = 'deepview-objstore.v1.list'
 const OBJSTORE_FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 
 // Wire shapes the verifiers accept. Fields land here post-
@@ -30,11 +29,6 @@ export type ObjstoreDeleteMsg = {
   resourceTag?: unknown
   prevVersion?: unknown
   prevIncarnation?: unknown
-  signature?: unknown
-}
-
-export type ObjstoreListMsg = {
-  workspaceTag?: unknown
   signature?: unknown
 }
 
@@ -88,14 +82,6 @@ function canonicalObjstoreDelete(msg: ObjstoreDeleteMsg, connectionNonce: string
     msg.resourceTag as string,
     intOrEmpty(msg.prevVersion),
     strOrEmpty(msg.prevIncarnation),
-    connectionNonce,
-  ].join('\n'))
-}
-
-function canonicalObjstoreList(msg: ObjstoreListMsg, connectionNonce: string): Uint8Array<ArrayBuffer> {
-  return encodeUtf8([
-    OBJSTORE_LIST_DOMAIN,
-    msg.workspaceTag as string,
     connectionNonce,
   ].join('\n'))
 }
@@ -170,10 +156,6 @@ export function verifyObjstoreDeleteSig(msg: ObjstoreDeleteMsg, connectionNonce:
   if (!isSafeIntOrNull(msg.prevVersion)) return Promise.resolve(false)
   if (!validPrevPair(msg.prevVersion, msg.prevIncarnation)) return Promise.resolve(false)
   return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreDelete(msg, nonce))
-}
-
-export function verifyObjstoreListSig(msg: ObjstoreListMsg, connectionNonce: unknown): Promise<boolean> {
-  return verifyObjstoreSig(msg, connectionNonce, (nonce) => canonicalObjstoreList(msg, nonce))
 }
 
 export function verifyObjstoreFetchSig(msg: ObjstoreFetchMsg, connectionNonce: unknown): Promise<boolean> {

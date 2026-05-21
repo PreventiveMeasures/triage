@@ -10,7 +10,8 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { after, before, describe, it } from 'node:test'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreSession } from './_objstore-session.js'
 import { deleteFile, listFiles, readFileBytes, saveFileBytes } from '../client/storage.js'
 import { triageSync } from '../client/sync/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
@@ -27,7 +28,35 @@ const {
 async function createWorkspaceWithReports(name, reports) {
   const ws = await createWorkspace(name)
   for (const r of reports) await setReportWorkspace(r, ws.id)
+  // Production parity: presence no longer sends its own
+  // `workspace-subscribe` — it rides triage-sync's single subscribe on
+  // the shared socket (presence + sync open a workspace together). Open
+  // a sync session and wait for it to subscribe so presence receives
+  // objstore-put/-deleted broadcasts. Teardown: the test's
+  // `deleteWorkspace` drops this session via host.onWorkspaceDeleted.
+  triageSync.openSession(ws.id)
+  await awaitSyncOnline()
   return ws
+}
+
+// Resolve once triage-sync reaches `online` (its session subscribed on
+// the shared socket). Tests run sequentially and each workspace is
+// deleted in its finally — which closes the sync session — so only one
+// session is open at a time and `online` reflects it.
+function awaitSyncOnline(timeoutMs = 5_000) {
+  return new Promise((resolve, reject) => {
+    let off = () => {}
+    const t = setTimeout(() => { off(); reject(new Error('awaitSyncOnline timeout')) }, timeoutMs)
+    const check = () => {
+      if (triageSync.status !== 'online') return
+      clearTimeout(t); off(); resolve()
+    }
+    // Register BEFORE the initial check so a transition landing in the
+    // gap can't be missed (`onStatusChange` only fires on transitions);
+    // then check immediately in case we're already online.
+    off = triageSync.onStatusChange(check)
+    check()
+  })
 }
 
 // Wait until `predicate()` returns truthy, polling on each
@@ -78,6 +107,47 @@ describe('client/sync/objstore-presence', () => {
 
   it('isInRemote returns false for any workspace that has not been opened', () => {
     assert.equal(isInRemote('nonexistent-ws-id', 'some-file.json'), false)
+  })
+
+  it('openWorkspace ensures a backing triage-sync subscription (presence ⊆ sync)', async () => {
+    // Presence never subscribes on its own — it rides triage-sync's
+    // single `workspace-subscribe`. Opening a presence session must
+    // therefore ensure a sync session exists for the tag (via
+    // `ensureSubscription`), so the objstore client never operates
+    // against a tag nothing is subscribed to. Without a pre-opened sync
+    // session, the presence open must create one synchronously.
+    const ws = await createWorkspace('presence-ensures-sync')
+    try {
+      assert.equal(triageSync.openSessions.some((s) => s.workspaceId === ws.id), false)
+      openWorkspace(ws.id)
+      assert.equal(
+        triageSync.openSessions.some((s) => s.workspaceId === ws.id), true,
+        'presence.openWorkspace must ensure a triage-sync session backs the tag',
+      )
+      await awaitSyncOnline()
+    } finally {
+      closeWorkspace(ws.id)
+      triageSync.closeSession(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('ensureSubscription opens a sync session and returns a token; null for an unknown workspace', async () => {
+    assert.equal(triageSync.ensureSubscription('no-such-workspace-id'), null)
+    const ws = await createWorkspace('ensure-sub')
+    try {
+      const sub = triageSync.ensureSubscription(ws.id)
+      assert.ok(sub, 'a known workspace yields a subscription token')
+      assert.equal(sub.workspaceId, ws.id)
+      assert.equal(triageSync.openSessions.some((s) => s.workspaceId === ws.id), true)
+      // Idempotent — a second call returns an equivalent token, no duplicate session.
+      const again = triageSync.ensureSubscription(ws.id)
+      assert.equal(again?.workspaceId, ws.id)
+      assert.equal(triageSync.openSessions.filter((s) => s.workspaceId === ws.id).length, 1)
+    } finally {
+      triageSync.closeSession(ws.id)
+      await deleteWorkspace(ws.id)
+    }
   })
 
   it('openWorkspace → empty remote → isInRemote stays false for known reports', async () => {
@@ -656,6 +726,11 @@ describe('client/sync/objstore-presence', () => {
   async function createWorkspaceWithBundles(name, bundles) {
     const ws = await createWorkspace(name)
     for (const b of bundles) await setBundleWorkspace(b, ws.id)
+    // Same as createWorkspaceWithReports: presence rides triage-sync's
+    // single subscribe on the shared socket, so open a sync session and
+    // wait for it to subscribe before the test drives broadcasts.
+    triageSync.openSession(ws.id)
+    await awaitSyncOnline()
     return ws
   }
 

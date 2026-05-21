@@ -12,7 +12,8 @@ import { after, before, describe, it } from 'node:test'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreSession } from './_objstore-session.js'
 import { bootServer } from './_helpers.js'
 
 // Create a fresh workspace's full key bundle. Generates 32 random
@@ -58,6 +59,36 @@ describe('client/objstore session', { concurrency: true }, () => {
     if (server) await server.teardown()
   })
 
+  it('openWorkspace refuses to open without a sync subscription token (enforced invariant)', async () => {
+    // The objstore client never sends its own `workspace-subscribe`; it
+    // rides triage-sync's. To make "objstore op against an unsubscribed
+    // tag" impossible to express, openWorkspace REQUIRES a
+    // WorkspaceSubscription token (minted by triageSync.ensureSubscription).
+    // A missing or malformed token is a caller logic error and throws
+    // before any socket work — so a presence session can never be opened
+    // for a tag with no backing sync subscribe.
+    const { keys } = await makeKeys()
+    const client = createObjstoreClient({ serverUrl, httpOrigin })
+    try {
+      await assert.rejects(() => client.openWorkspace(keys, null), /requires a WorkspaceSubscription/u)
+      await assert.rejects(() => client.openWorkspace(keys, {}), /requires a WorkspaceSubscription/u)
+      // A token bound to a DIFFERENT workspace is rejected — the tag
+      // must match these keys, so a token minted for workspace A can't
+      // open a session for B.
+      await assert.rejects(
+        () => client.openWorkspace(keys, { workspaceId: 'x', workspaceTag: 'some-other-tag', resources: Promise.resolve([]) }),
+        /different workspace/u,
+      )
+      // A well-formed token opens normally. `resources` is the inventory
+      // snapshot the subscriber would hand over (empty here — this raw
+      // client isn't driving a real subscribe); the session seeds from it.
+      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, workspaceTag: keys.workspaceTag, resources: Promise.resolve([]) })
+      assert.deepEqual(await session.list(), [])
+    } finally {
+      client.close()
+    }
+  })
+
   it('put → list → fetch → delete round-trip', async () => {
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
@@ -90,9 +121,9 @@ describe('client/objstore session', { concurrency: true }, () => {
 
   it('list returns opaque HMAC resourceTags (not plaintext fileNames)', async () => {
     // The server never sees the fileName — only the HMAC tag. This
-    // pins the privacy contract: a third party reading the
-    // workspace's `objstore-list-result` frame can't reverse-engineer
-    // which reports the workspace holds.
+    // pins the privacy contract: a third party reading the workspace's
+    // inventory snapshot (the `workspace-subscribed` `resources`) can't
+    // reverse-engineer which reports the workspace holds.
     const { keys } = await makeKeys()
     const session = await createObjstoreSession({ serverUrl, httpOrigin, keys })
     try {

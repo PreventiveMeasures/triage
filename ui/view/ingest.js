@@ -232,12 +232,16 @@ export async function switchToFile(name, content) {
   )
   for (const info of triageSync.openSessions) {
     if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
+      // Close BOTH planes in lockstep. An objstore presence session must
+      // never outlive its sync subscription: the objstore client rides
+      // triage-sync's `workspace-subscribe` (which carries the inventory
+      // snapshot and registers the socket for objstore-put/-deleted
+      // broadcasts), so a presence session kept warm past its sync
+      // session would, on the next reconnect, have no subscribe to seed
+      // its inventory or deliver broadcasts. Keeping presence ⊆ sync (at
+      // the cost of a cold cache on return visits) makes that impossible.
       triageSync.closeSession(info.workspaceId)
-      // Presence sessions stay alive across switches — keeping the
-      // remote-tag subscription open means a return-visit hits the
-      // warm cache instead of refetching every blob via
-      // `fetchByTag`. Workspace delete + privateKey rotation drive
-      // cleanup via listeners in `objstore-presence.js`.
+      closePresence(info.workspaceId)
     }
   }
   state.reports = []
@@ -343,11 +347,13 @@ export async function switchToWorkspace(workspaceId) {
   // workspace title. After the ingest loop below, we call
   // `triageSync.refreshSession(workspaceId)` to bring the session's
   // id-set up to date with the freshly-loaded state.reports.
-  // Presence sessions stay alive across switches per
-  // `objstore-presence.js`'s lifecycle.
+  // Close each other workspace's presence session in lockstep — an
+  // objstore presence session must never outlive its sync subscription
+  // (it rides triage-sync's `workspace-subscribe`), so presence ⊆ sync.
   for (const info of triageSync.openSessions) {
     if (info && info.workspaceId !== workspaceId) {
       triageSync.closeSession(info.workspaceId)
+      closePresence(info.workspaceId)
     }
   }
   // Same drop-out as switchToFile — opening a workspace lands in

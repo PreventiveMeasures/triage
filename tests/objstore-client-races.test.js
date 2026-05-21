@@ -22,7 +22,8 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Buffer } from 'node:buffer'
 
-import { createObjstoreClient, createObjstoreSession, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreSession } from './_objstore-session.js'
 import { createSocketTransport } from '../client/sync/socket-transport.ts'
 import { bootServer } from './_helpers.js'
 
@@ -755,7 +756,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const bTransport = createSocketTransport({ serverUrl })
     const bClient = createObjstoreClient({ serverUrl, httpOrigin, transport: bTransport })
     try {
-      const b = await bClient.openWorkspace(keys)
+      const b = await bClient.openWorkspace(keys, { workspaceId: keys.workspaceTag, workspaceTag: keys.workspaceTag, resources: Promise.resolve([]) })
       const a1 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v1'), prev: null })
       assert.equal(a1.ok, true)
       const a2 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v2-bytes'), prev: a1.meta })

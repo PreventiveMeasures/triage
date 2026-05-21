@@ -67,8 +67,9 @@ const SCHEMA = `
     ON workspace_object_staging (begun_at);
 `
 
-// One LIVE row, exactly the shape `objstore-list-result` carries on
-// the wire (minus `keyframe`-style server-only flags). `put_at` is a
+// One LIVE row, exactly the shape the `workspace-subscribed` ack's
+// `resources` array carries on the wire, minus `keyframe`-style
+// server-only flags. `put_at` is a
 // debug aid the wire format doesn't include — operators can inspect
 // it via the DB but the server never volunteers it.
 export type ObjectRow = {
@@ -323,9 +324,9 @@ function rowFromDb(r: DbRow): ObjectRow {
 
 // The live-row fields every objstore wire frame carries (list result,
 // fetch token, PUT broadcast). `putAt` is a server-only debug column
-// the wire never includes. One projection so the three emit sites
-// (handlers.ts handleList / handleFetch, rest.ts PUT broadcast) can't
-// drift on the shape.
+// the wire never includes. One projection so the emit sites
+// (sync-handlers.ts subscribe-ack `resources`, handlers.ts handleFetch,
+// rest.ts PUT broadcast) can't drift on the shape.
 export type ObjectMetaWire = {
   resourceTag: string; version: number; incarnation: string; contentHash: string; contentLength: number; signature: string
 }

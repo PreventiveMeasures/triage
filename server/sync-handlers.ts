@@ -34,6 +34,13 @@ export type SyncHandlersDeps = {
   requiresAuth: (socket: WebSocket) => boolean
   sendUnauthorized: (socket: WebSocket, ctx: UnauthorizedContext) => void
   workspaceExists: (tag: string) => Promise<boolean>
+  // Objstore inventory snapshot for a workspace tag, as wire rows. The
+  // `workspace-subscribed` ack carries it. Injected — the objstore store
+  // has its own richer `Handle`, so index.ts wires `listLive(
+  // objstoreHandle, tag).then(rows => rows.map(objectMetaWire))` rather
+  // than coupling this module to that store type. Returns [] for a
+  // triage-only tag.
+  objstoreResources: (tag: string) => Promise<object[]>
   debug: boolean
 }
 
@@ -46,7 +53,7 @@ export type SyncHandlers = {
 }
 
 export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
-  const { handle, send, broadcast, subscribe, getNonce, requiresAuth, sendUnauthorized, workspaceExists, debug } = deps
+  const { handle, send, broadcast, subscribe, getNonce, requiresAuth, sendUnauthorized, workspaceExists, objstoreResources, debug } = deps
 
   // Typed wrapper for the three `workspace-save-error` emit sites
   // (too-large at handleSave, stale-base after the catch-up, busy at
@@ -277,7 +284,18 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // a client that did gets one before the chain arrives. Lets the UI
     // surface a `connecting → online` transition based on real handshake
     // completion, not just socket state.
-    send(socket, { type: 'workspace-subscribed', workspaceTag: tag })
+    //
+    // The ack also carries the objstore inventory snapshot: the same
+    // subscribe that registers this socket for objstore-put / -deleted
+    // broadcasts seeds the client's initial inventory in one handshake.
+    // The client keeps it live thereafter from those broadcasts.
+    // Returns [] for a triage-only workspace. A failing inventory
+    // lookup must NOT sink the subscribe — degrade to an empty snapshot
+    // (broadcasts will fill it in) so the ack + chain still go out.
+    let resources: object[] = []
+    try { resources = await objstoreResources(tag) }
+    catch (err) { if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err) }
+    send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
     // `from` is the last revision id the client claims to have applied —
     // now a base64url string, not an integer. We send only revisions
     // after that. Client lying about `from` just means they get a
