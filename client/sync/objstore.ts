@@ -579,7 +579,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // WHATWG origin comparison so both fast-path and edge-case paths
   // (percent-encoding, Unicode, backslash normalisation) are covered.
   function buildObjstoreUrl(urlPath: string): string {
-    if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/.test(urlPath)) {
+    if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
       throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
     }
     const url = new URL(urlPath, deps.httpOrigin)
