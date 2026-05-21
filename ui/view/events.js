@@ -1125,7 +1125,7 @@ report.addEventListener('row-select', (e) => {
   const gid = e.detail?.gid
   if (!gid) return
   state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
-  render()
+  renderPreservingScrollOf('.findings-table-list')
 })
 
 // Kanban drag-and-drop. A `<finding-row class="kanban-card">` is
