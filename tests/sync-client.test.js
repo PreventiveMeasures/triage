@@ -3639,6 +3639,39 @@ describe('triage-sync client', () => {
     assert.equal(triageSync.persistenceDegraded, false, 'latch clears on subsequent successful write')
   })
 
+  it('a write failure RAISES the latch from a clean state (disk full now surfaces, not just stays)', async () => {
+    // The quota/vault-locked path is itself degraded persistence — the
+    // user's state isn't being saved and won't survive a reload. It now
+    // RAISES the latch (badge + dialog), where before a failed write
+    // from a clean state was silent (console.warn only).
+    triageSync.closeSession()
+    // Clean start: recognised (empty) blob; a successful write proves
+    // the latch is off to begin with.
+    localStorage.setItem('deepview.sync.sessions', JSON.stringify({ version: 1, sessions: {} }))
+    await hydrateSecureStorage()
+    await mutateAllSessions((all) => { all['probe-clean'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, false, 'pre-condition: latch off on a clean recognised blob')
+    // Patch setItem to throw on the sessions key (disk full) and mutate.
+    const origSetItem = localStorage.setItem
+    localStorage.setItem = function (k, v) {
+      if (k === 'deepview.sync.sessions') {
+        const err = new Error('quota exceeded (simulated)')
+        err.name = 'QuotaExceededError'
+        throw err
+      }
+      return origSetItem.call(this, k, v)
+    }
+    try {
+      await mutateAllSessions((all) => { all['probe-full'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+      assert.equal(triageSync.persistenceDegraded, true, 'failed write raises the latch from clean')
+    } finally {
+      localStorage.setItem = origSetItem
+    }
+    // Recovery: once writes succeed again, the latch clears.
+    await mutateAllSessions((all) => { all['probe-full2'] = { serverUrl: 'wss://probe', baseRevision: null, baseState: {} } })
+    assert.equal(triageSync.persistenceDegraded, false, 'latch clears once writes succeed again')
+  })
+
   it('persistenceDegraded latch syncs across tabs via the `storage` event', async () => {
     // Audit follow-up: with no cross-tab listener, tab-A's latch
     // wouldn't reflect tab-B clearing the blob. Now the global

@@ -44,9 +44,9 @@ export function setPersistenceDegraded(next: boolean): void {
   persistenceDegradedLatch = next
   if (next) {
     console.warn(
-      'triage-sync: persisted-sessions blob has an unrecognised version; skipping writes to avoid clobbering a future build\'s data. ' +
+      'triage-sync: can\'t persist the sessions blob — either it\'s an unrecognised future version (writes skipped to avoid clobbering a newer build\'s data) or the write itself failed (storage full / vault locked). ' +
       'Your in-memory triage state still works this session but will not persist across reload. ' +
-      'Clear localStorage[deepview.sync.sessions] to recover (note: same-tab DevTools removeItem doesn\'t fire the cross-tab `storage` event, so the badge clears on the NEXT successful save).',
+      'Free up storage and/or clear localStorage[deepview.sync.sessions]; the badge clears on the next successful save.',
     )
   } else {
     // `warn` rather than `info` so operators correlating support
@@ -209,15 +209,15 @@ export async function mutateAllSessions(mutator: SessionsMutator): Promise<void>
     const result = await mutator(all)
     if (result === false) return
     const wroteSuccessfully = await writeAllSessionsRaw(all)
-    // Clear the degraded latch ONLY on a confirmed successful
-    // write. A quota-exceeded / vault-locked write would silently
-    // fail (the catch in writeAllSessionsRaw logs but returns
-    // false) — if we cleared the latch unconditionally, the UI
-    // hint would disappear while persistence is still broken. The
-    // latch staying ON keeps the user informed that their state
-    // isn't being persisted. Audit follow-up to PR #80 cross-tab
-    // review.
-    if (wroteSuccessfully) setPersistenceDegraded(false)
+    // A confirmed write clears the latch; a swallowed write failure
+    // (QuotaExceededError "disk full" / vault-locked — the catch in
+    // writeAllSessionsRaw logs but returns false) RAISES it. Such a
+    // failure is itself degraded persistence: the user's state isn't
+    // being saved and won't survive a reload, with no other signal.
+    // This is the producer half that the hydrate handler's `empty`-
+    // case comment in triage-sync.ts already anticipated ("a
+    // pre-existing ON state from a failed write should persist…").
+    setPersistenceDegraded(!wroteSuccessfully)
   })
 }
 

@@ -25,6 +25,7 @@ import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './dialogs/leave-workspace-dialog.js'
 import { openWorkspaceShareLinkDialog } from './dialogs/workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './dialogs/delete-report-dialog.js'
+import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { openBundle } from './bundle-load.js'
 import { graph2 } from './graph/state.js'
@@ -895,6 +896,20 @@ function renderSyncStatus(status) {
   btn.hidden = false
   const s = status ?? triageSync.status
   btn.dataset.status = s
+  // `persistenceDegraded` is orthogonal to the connection status — the
+  // socket can be online while local writes are paused (a future-version
+  // sessions blob, quota-exceeded, or a locked vault). Surface it as an
+  // amber ring on the dot (visible even when collapsed) + a tooltip. The
+  // off→on edge also raises a one-shot dialog; see the
+  // onPersistenceDegraded subscription below.
+  const degraded = triageSync.persistenceDegraded
+  btn.toggleAttribute('data-degraded', degraded)
+  // Keep the label to the status word — the action row is tight (it
+  // wraps). The amber ring + this tooltip carry the degraded signal in
+  // the badge; the one-shot dialog explains it in full.
+  btn.title = degraded
+    ? 'Not saving to this browser right now (storage may be full, or another tab is on a newer version). Changes that haven’t synced could be lost on reload.'
+    : ''
   const label = btn.querySelector('.sync-label')
   if (label) label.textContent = SYNC_LABELS[s] ?? ''
 }
@@ -902,6 +917,34 @@ function renderSyncStatus(status) {
 // null pre-mount), so the subscription is safe to register at module
 // load; the initial paint happens in `mount()`.
 triageSync.onStatusChange(renderSyncStatus)
+// Reflect the persistence-degraded latch on the badge, and show a
+// one-shot explanatory dialog once per degraded episode. The latch
+// fires once on subscribe with the current state and then on every
+// transition; the client-sync passthrough defers this until the lazy
+// sync chunk loads, so the first fire lands after mount.
+//
+// `shownThisEpisode` makes it one-shot (not re-shown on unrelated
+// re-renders) and resets when the latch clears, so a fresh degradation
+// re-notifies. If the dialog can't open because another modal is up
+// (modal-conflict → resolves `{ shown: false }`), retry on a short
+// delay while still degraded — otherwise the notice would be skipped
+// for the whole episode (the amber badge still shows meanwhile).
+let degradedDialogInFlight = false
+let degradedShownThisEpisode = false
+async function showDegradedDialogOnce() {
+  if (!triageSync.persistenceDegraded || degradedShownThisEpisode || degradedDialogInFlight) return
+  degradedDialogInFlight = true
+  const { shown } = await openPersistenceDegradedDialog()
+  degradedDialogInFlight = false
+  if (shown) { degradedShownThisEpisode = true; return }
+  // Couldn't show (another modal was open). Retry while still degraded.
+  if (triageSync.persistenceDegraded) setTimeout(showDegradedDialogOnce, 1500)
+}
+triageSync.onPersistenceDegraded((degraded) => {
+  renderSyncStatus()
+  if (degraded) showDegradedDialogOnce()
+  else degradedShownThisEpisode = false
+})
 
 // Double-click a workspace row → inline rename. Replaces the label
 // span with an <input> on the fly; Enter or blur commits, Escape

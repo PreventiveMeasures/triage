@@ -522,6 +522,14 @@
   &[data-status='connecting'] .sync-dot { background: var(--medium); }
   &[data-status='offline']    .sync-dot { background: var(--critical); }
 }
+/* `persistenceDegraded` is orthogonal to the connection dot color — the
+   socket can be online (green dot) while local writes are paused. Ring
+   the dot amber so it reads as a warning in BOTH expanded and collapsed
+   mode (the label suffix + tooltip only show expanded). The status
+   color stays on the dot fill; this only adds the ring. */
+#sync-status[data-degraded] .sync-dot {
+  box-shadow: 0 0 0 2px var(--medium);
+}
 /* The bare `#sync-status` rule above carries (1,0,0) specificity
    which beats the user-agent's `[hidden] { display: none }`
    (0,1,0). Match the id + attribute (1,1,0) here so `btn.hidden =
