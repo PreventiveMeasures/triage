@@ -315,12 +315,11 @@ function buildPromoteStagingToLive(sdk: VercelBlobSdk, token: string): BlobBacke
       //
       // `allowOverwrite: true` because the content-addressed live
       // pathname `${tag}/${contentHash}.bin` can be (re)written by a
-      // retry of the same content or by a second resource committing
-      // byte-identical content. The destination bytes are identical
-      // by construction (the hash names them), so the overwrite is
-      // idempotent — never a clobber of DIFFERENT bytes. Without the
-      // flag, the SDK sends `x-allow-overwrite: 0` and Vercel rejects
-      // any such re-promote with BlobAccessError.
+      // retried or racing promote of the same blob. The destination
+      // bytes are identical by construction (the path IS the hash), so
+      // the overwrite is idempotent — never a clobber of DIFFERENT
+      // bytes. Without the flag, the SDK sends `x-allow-overwrite: 0`
+      // and Vercel rejects any such re-promote with BlobAccessError.
       await sdk.copy(from, to, {
         access: 'private',
         allowOverwrite: true,

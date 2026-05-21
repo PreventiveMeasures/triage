@@ -546,9 +546,11 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
 // IF ABSENT; a re-upload bumps the version IFF it still matches the
 // precondition we read. Exactly one of N racing commits wins the CAS;
 // the losers get `conflict` (with the current live row) and rebase.
-// Because the live blob is content-addressed, a losing racer's promote
-// only ever (idempotently) re-writes the SAME bytes the winner's row
-// names — there is no metadata-vs-bytes desync to guard against. The
+// Because each PUT is content-addressed at its OWN hash (distinct PUTs
+// get distinct hashes — random nonce per encrypt), N racing commits
+// promote to N DIFFERENT immutable paths: no promote clobbers another's
+// bytes, and a loser's blob is just left unreferenced for the GC. There
+// is no metadata-vs-bytes desync to guard against. The
 // CAS provides the commit's atomicity both within a process and across
 // replicas, so NO in-process lock is taken. A crash between the
 // promote and the CAS leaves the staging blob/row intact alongside (at
@@ -627,10 +629,12 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   // EACCES / ENOSPC / EIO / a racing abort that already unlinked
   // the staging file; Vercel: copy failure). 'io-error' is mapped
   // to HTTP 500 by the REST layer — it's a server-side fault, not
-  // a client-fixable one. Because the destination is the content
-  // hash, a racing commit promoting the same bytes (or a different
-  // resource committing identical content) lands at the SAME path —
-  // an idempotent re-write of identical bytes, never a clobber.
+  // a client-fixable one. Because the destination path IS the content
+  // hash, any write to it is byte-identical BY CONSTRUCTION, so a
+  // retried or racing promote to the same path is an idempotent
+  // rewrite, never a clobber. (Distinct PUTs get distinct hashes — a
+  // fresh random nonce per encrypt makes each ciphertext unique — so
+  // concurrent commits to the same resource write to DIFFERENT paths.)
   if (!await handle.blob.promoteStagingToLive(input.workspaceTag, input.stagingId, staging.content_hash)) {
     return { ok: false, reason: 'io-error' }
   }
@@ -692,10 +696,10 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
     // A racer won the CAS between our pre-check `getLive` and the
     // write. Re-read the live row so the caller can surface the
     // current version in the conflict (the client rebases off it).
-    // Our promoted blob is content-addressed: if the racer committed
-    // the SAME content its row already names our bytes; if different
-    // content, our bytes are simply an unreferenced blob the GC reaps.
-    // Either way there is no desync — just a conflict to rebase.
+    // Our just-promoted blob is now unreferenced — the winner's row
+    // names a different hash (distinct PUTs get distinct hashes), so the
+    // reaper's GC reclaims our blob once it's past the grace window. No
+    // desync — just a conflict to rebase.
     const current = await getLive(handle, input.workspaceTag, input.resourceTag)
     return { ok: false, reason: 'conflict', ...(current ? { conflict: current } : {}) }
   }
@@ -753,12 +757,15 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 //     the row; the other matches no row → re-read → `not-found`.
 //
 // On success we ONLY drop the live row — we do NOT unlink the live
-// blob. With content-addressing the blob at `${tag}/${hash}.bin` may
-// still be referenced by another resource (or a not-yet-cleaned older
-// version) that committed byte-identical content, so unlinking here
-// could pull bytes out from under a live row that names the same hash.
-// The reaper's GC unlinks the blob once no live row references its
-// hash AND it's past the grace window.
+// blob. Blob reclamation is deferred to the reaper's grace-window GC
+// (unlinks once no live row references the hash AND it's older than the
+// grace window) rather than done inline, so the drop stays lock-free
+// and can't race two things: a concurrent commit's promote→CAS window
+// (a just-promoted blob isn't referenced yet — the age grace protects
+// it) and an in-flight GET still streaming the bytes. NOT because the
+// hash might be shared — distinct PUTs get distinct hashes (random
+// nonce per encrypt → unique ciphertext), so the hash↔row mapping is
+// effectively 1:1; this delete simply orphans the blob for the GC.
 export async function deleteObject(
   handle: Handle, tag: string, resourceTag: string, prevVersion: number | null, prevIncarnation: string | null,
 ): Promise<DeleteResult> {

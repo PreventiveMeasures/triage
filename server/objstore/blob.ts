@@ -25,9 +25,11 @@
 // file (so "row says hash B, blob holds bytes A" is impossible). The
 // hash is workspace-namespaced under `${tag}/`, so this is never a
 // global content-addressed store. `unlinkLive` is therefore only ever
-// called by the reaper's GC (a live blob may be shared across resource
-// versions / resources via content dedup; commit + delete never unlink
-// it directly).
+// called by the reaper's GC — commit + delete never unlink a live blob
+// inline. Reclamation is deferred (not because a blob is shared — a
+// random nonce per encrypt makes each PUT's hash unique) so it can't
+// race a concurrent commit's promote→CAS window or an in-flight GET;
+// see the grace-window rationale in reaper.ts.
 //
 // Crash-safety contract every backend MUST preserve, so the reaper's
 // "stranded file, never row-points-at-nothing" guarantee holds:
@@ -113,10 +115,11 @@ export type BlobBackend = {
   // `${tag}/${contentHash}.bin`. Returns true on success, false on
   // any I/O error. The caller (commitPut) has already validated size;
   // this method just performs the bytes-side transition. Because the
-  // live address is the content hash, promoting the same bytes twice
-  // (a retry, or a different resource committing identical content)
-  // lands at the SAME path — an idempotent re-write of identical bytes,
-  // never a clobber of different bytes.
+  // live address IS the content hash, any write to that path is
+  // byte-identical by construction, so a retried or racing promote to
+  // the same path is an idempotent rewrite, never a clobber. (Distinct
+  // PUTs get distinct hashes — a random nonce per encrypt makes each
+  // ciphertext unique — so they write distinct paths.)
   //
   // Crash safety: implementations MUST ensure that a crash mid-
   // promotion leaves at most a stranded staging blob (reaper-
@@ -135,8 +138,9 @@ export type BlobBackend = {
   // on this for retry idempotence, and the reaper races against
   // concurrent operations on the same key. `unlinkLive` is called
   // ONLY by the reaper's GC (commit / delete never unlink a live blob
-  // directly — it may still be referenced by another resource via
-  // content dedup).
+  // inline — reclamation is deferred to the grace-window GC so it can't
+  // race a commit's promote→CAS window or an in-flight GET; not because
+  // the blob is shared — hashes are unique per PUT).
   unlinkStaging(tag: string, stagingId: string): Promise<void>
   unlinkLive(tag: string, contentHash: string): Promise<void>
 

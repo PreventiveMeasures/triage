@@ -599,8 +599,10 @@ never a row pointing at missing bytes:
 
 - PUT commit: `fsync(staging) → rename → fsync(parent dir) → DB version-CAS`.
 - DELETE: `DB row drop` — the now-unreferenced blob is GC'd by the
-  reaper, not unlinked inline (content dedup may share it across
-  resources).
+  reaper, not unlinked inline, so the drop can't race a concurrent
+  commit's promote→CAS window or an in-flight GET (the grace window is
+  the guard). Not a dedup concern: a random nonce per encrypt makes each
+  PUT's hash unique, so the hash↔row mapping is effectively 1:1.
 
 The reaper runs once at startup (synchronous, before the WS
 listener accepts traffic) and then every

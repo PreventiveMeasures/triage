@@ -52,8 +52,12 @@ type StagingRow = {
 //   - Live-set re-read just before unlink. A commit whose CAS landed
 //     after our initial per-tag snapshot but before this unlink is
 //     caught here — its row now references the hash, so we skip. The
-//     hash may be shared across resources via content dedup, so the
-//     test is "no live row references this hash", not "this resource".
+//     test is "no live row references this hash" (not "this resource")
+//     because the blob path carries only the hash — the reaper lists
+//     blobs by hash and can't know which resource wrote one. (Hashes
+//     are effectively unique per PUT — a random nonce per encrypt makes
+//     each ciphertext unique — so this is really "is this hash still
+//     some current version's", not a dedup/sharing check.)
 // A lock would not help here even if one existed: the commit path is
 // keyed on the resourceTag while a blob is named by its content hash,
 // so the two can't share a key. The grace window + re-read are the
