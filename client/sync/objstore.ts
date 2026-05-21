@@ -352,8 +352,27 @@ type SessionState = {
   closed: boolean
 }
 
+// Validates and resolves a server-supplied urlPath against a known-good
+// httpOrigin. Two gates:
+//   1. Regex: only the exact server route shape is accepted.
+//   2. WHATWG URL origin check: defense-in-depth against encoding tricks.
+// Exported via __test__ only — not a committed public API.
+function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
+  if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/u.test(urlPath)) {
+    throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
+  }
+  const expectedOrigin = new URL(httpOrigin).origin
+  const url = new URL(urlPath, expectedOrigin)
+  if (url.origin !== expectedOrigin) {
+    throw new TypeError(`objstore: urlPath origin mismatch — expected ${expectedOrigin}, got ${url.origin}`)
+  }
+  return url.href
+}
+export const __test__ = { validateObjstoreUrlPath }
+
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
+  const httpOriginParsed = new URL(deps.httpOrigin).origin
 
   // Shared WebSocket transport owns lifecycle, nonce, heartbeat,
   // and the `authenticate` flow. We register as a consumer and
@@ -571,6 +590,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     onDisconnected: onTransportDisconnected,
   })
 
+  const buildObjstoreUrl = (urlPath: string) => validateObjstoreUrlPath(urlPath, httpOriginParsed)
+
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
   async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
@@ -627,7 +648,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string') {
       throw new TypeError('objstore: malformed put-token (missing urlPath/token)')
     }
-    const res = await globalThis.fetch(deps.httpOrigin + reply['urlPath'], {
+    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
       method: 'PUT',
       headers: {
         // No explicit `content-length` — browser `fetch()` forbids
@@ -726,7 +747,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       throw new TypeError('objstore: malformed fetch-token (missing urlPath / token / metadata)')
     }
     const meta = toObjectMeta(reply)
-    const res = await globalThis.fetch(deps.httpOrigin + reply['urlPath'], {
+    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
       method: 'GET',
       headers: { 'authorization': `Bearer ${reply['token']}` },
     })
