@@ -19,6 +19,7 @@
 import type { WebSocket } from 'ws'
 import {
   type Handle,
+  type ObjectRow,
   MAX_CONTENT_LENGTH,
   beginPut,
   deleteObject,
@@ -147,9 +148,14 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   })
 }
 
-function conflictReply(action: 'put' | 'delete', tag: string, resourceTag: string, current: object | null): object {
+// `current` is the live `ObjectRow`, which carries the server-only
+// `putAt` debug column. Project it through `objectMetaWire` before it
+// reaches the wire so the conflict frame matches the fetch/list/PUT
+// frames and never leaks `putAt`. Typed `ObjectRow | null` so the
+// projection contract is checked rather than relying on `object`.
+function conflictReply(action: 'put' | 'delete', tag: string, resourceTag: string, current: ObjectRow | null): object {
   return current
-    ? { type: 'objstore-conflict', action, workspaceTag: tag, resourceTag, current }
+    ? { type: 'objstore-conflict', action, workspaceTag: tag, resourceTag, current: objectMetaWire(current) }
     : { type: 'objstore-conflict', action, workspaceTag: tag, resourceTag }
 }
 

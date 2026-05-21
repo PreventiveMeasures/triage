@@ -320,6 +320,15 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const conflict = await c.recv((m) => m.type === 'objstore-conflict')
     assert.equal(conflict.action, 'put')
     assert.equal(conflict.current.version, 1)
+    // `current` must be the `objectMetaWire` projection, never the raw
+    // `ObjectRow`: the server-only `putAt` debug column must not leak
+    // onto the wire. Pin the exact key set so a future regression that
+    // re-adds `putAt` (or any other column) is caught.
+    assert.equal('putAt' in conflict.current, false, 'PUT conflict.current must not leak server-only putAt')
+    assert.deepEqual(
+      Object.keys(conflict.current).sort(),
+      ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
+    )
     c.ws.close()
   })
 
@@ -1226,6 +1235,14 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     const conflict = await c.recv((m) => m.type === 'objstore-conflict' && m.resourceTag === 'r-no-null-delete')
     assert.equal(conflict.action, 'delete')
     assert.equal(conflict.current.version, 1)
+    // Same wire contract as the PUT-conflict path: the DELETE conflict
+    // frame echoes the live row through `objectMetaWire`, so the
+    // server-only `putAt` column must be absent here too.
+    assert.equal('putAt' in conflict.current, false, 'DELETE conflict.current must not leak server-only putAt')
+    assert.deepEqual(
+      Object.keys(conflict.current).sort(),
+      ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
+    )
     // Row still there — the failed DELETE didn't drop it.
     const list = await listViaSubscribe(c, sk, tag)
     assert.equal(list.resources.length, 1)
