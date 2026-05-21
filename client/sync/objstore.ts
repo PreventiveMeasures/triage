@@ -571,6 +571,25 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     onDisconnected: onTransportDisconnected,
   })
 
+  // Validate a server-supplied urlPath before concatenating it with
+  // httpOrigin. A `urlPath` like `@attacker.host/path` is valid in
+  // string terms but makes WHATWG URL parsing treat `httpOrigin` as
+  // userinfo, redirecting the request (and its bearer token) to an
+  // attacker-controlled host. Double-checked: regex gate first, then
+  // WHATWG origin comparison so both fast-path and edge-case paths
+  // (percent-encoding, Unicode, backslash normalisation) are covered.
+  function buildObjstoreUrl(urlPath: string): string {
+    if (!/^\/api\/objstore\/[\w-]+\/[\w-]+$/.test(urlPath)) {
+      throw new TypeError(`objstore: urlPath rejected (unexpected shape): ${JSON.stringify(urlPath)}`)
+    }
+    const url = new URL(urlPath, deps.httpOrigin)
+    const expectedOrigin = new URL(deps.httpOrigin).origin
+    if (url.origin !== expectedOrigin) {
+      throw new TypeError(`objstore: urlPath origin mismatch — expected ${expectedOrigin}, got ${url.origin}`)
+    }
+    return url.href
+  }
+
   // Wire-level PUT — takes a pre-computed resourceTag + ciphertext.
   // `put` (public) is the encrypting wrapper.
   async function _rawPut(state: SessionState, opts: { resourceTag: string; bytes: Uint8Array; prev: ObjstorePrev }): Promise<RawPutResult> {
@@ -627,7 +646,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (typeof reply['urlPath'] !== 'string' || typeof reply['token'] !== 'string') {
       throw new TypeError('objstore: malformed put-token (missing urlPath/token)')
     }
-    const res = await globalThis.fetch(deps.httpOrigin + reply['urlPath'], {
+    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
       method: 'PUT',
       headers: {
         // No explicit `content-length` — browser `fetch()` forbids
@@ -726,7 +745,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       throw new TypeError('objstore: malformed fetch-token (missing urlPath / token / metadata)')
     }
     const meta = toObjectMeta(reply)
-    const res = await globalThis.fetch(deps.httpOrigin + reply['urlPath'], {
+    const res = await globalThis.fetch(buildObjstoreUrl(reply['urlPath']), {
       method: 'GET',
       headers: { 'authorization': `Bearer ${reply['token']}` },
     })
