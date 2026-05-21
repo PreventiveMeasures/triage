@@ -72,10 +72,17 @@ describe('client/objstore session', { concurrency: true }, () => {
     try {
       await assert.rejects(() => client.openWorkspace(keys, null), /requires a WorkspaceSubscription/u)
       await assert.rejects(() => client.openWorkspace(keys, {}), /requires a WorkspaceSubscription/u)
+      // A token bound to a DIFFERENT workspace is rejected — the tag
+      // must match these keys, so a token minted for workspace A can't
+      // open a session for B.
+      await assert.rejects(
+        () => client.openWorkspace(keys, { workspaceId: 'x', workspaceTag: 'some-other-tag', resources: Promise.resolve([]) }),
+        /different workspace/u,
+      )
       // A well-formed token opens normally. `resources` is the inventory
       // snapshot the subscriber would hand over (empty here — this raw
       // client isn't driving a real subscribe); the session seeds from it.
-      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, resources: Promise.resolve([]) })
+      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, workspaceTag: keys.workspaceTag, resources: Promise.resolve([]) })
       assert.deepEqual(await session.list(), [])
     } finally {
       client.close()

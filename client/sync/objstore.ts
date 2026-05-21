@@ -265,8 +265,17 @@ export type ObjstoreSession = {
 // client seeds its inventory from this rather than racing to observe a
 // one-shot ack on the shared socket (which it may not even be listening
 // for yet). Resolves [] for a triage-only / empty workspace.
+//
+// `workspaceTag` binds the token to a specific workspace: `openWorkspace`
+// rejects a token whose tag doesn't match the session's keys, so a token
+// minted for workspace A can't be used to open a session for B. It's
+// `null` only while the minting session's key derivation is still in
+// flight (a fresh on-demand open) — in which case the binding can't be
+// checked and is skipped; the common path (sync session already open)
+// always carries it.
 export type WorkspaceSubscription = {
   readonly workspaceId: string
+  readonly workspaceTag: string | null
   readonly resources: Promise<readonly unknown[]>
 }
 
@@ -797,6 +806,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       throw new Error('objstore: openWorkspace requires a WorkspaceSubscription (triageSync.ensureSubscription) — the client must not open a session for a tag with no backing sync subscribe')
     }
     const workspaceTag = keys.workspaceTag
+    // Bind the token to these keys: a token minted for a different
+    // workspace must not open this session. Skipped only when the
+    // minting session's tag isn't derived yet (null) — see the type doc.
+    if (subscription.workspaceTag != null && subscription.workspaceTag !== workspaceTag) {
+      throw new Error('objstore: openWorkspace — WorkspaceSubscription is for a different workspace than these keys')
+    }
     if (sessionsByTag.has(workspaceTag)) {
       throw new Error(`objstore: workspace ${workspaceTag.slice(0, 8)}… is already open on this client`)
     }

@@ -234,11 +234,12 @@ export async function switchToFile(name, content) {
     if (info && !desiredWorkspaceIds.has(info.workspaceId)) {
       // Close BOTH planes in lockstep. An objstore presence session must
       // never outlive its sync subscription: the objstore client rides
-      // triage-sync's `workspace-subscribe`, so a presence session kept
-      // warm past its sync session would, on the next reconnect, send
-      // `objstore-list` against a tag nothing re-subscribes. Keeping
-      // presence ⊆ sync (at the cost of a cold cache on return visits)
-      // is the constraint that makes that impossible.
+      // triage-sync's `workspace-subscribe` (which carries the inventory
+      // snapshot and registers the socket for objstore-put/-deleted
+      // broadcasts), so a presence session kept warm past its sync
+      // session would, on the next reconnect, have no subscribe to seed
+      // its inventory or deliver broadcasts. Keeping presence ⊆ sync (at
+      // the cost of a cold cache on return visits) makes that impossible.
       triageSync.closeSession(info.workspaceId)
       closePresence(info.workspaceId)
     }

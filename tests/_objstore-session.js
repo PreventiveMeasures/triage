@@ -83,10 +83,14 @@ export async function createObjstoreSession(deps) {
     const nonce = transport.getNonce()
     if (!nonce) throw new Error('objstore test helper: socket not open for list')
     const sig = await signSubscribePayload(keys.signingKey, keys.workspaceTag, null, nonce)
-    const rows = new Promise((resolve) => { resourceWaiters.push(resolve) })
+    // Send FIRST, then register the waiter — a failed send must not
+    // leave a resolver queued (it would leak and later be resolved by an
+    // unrelated ack). The ack is a network round-trip, so registering
+    // synchronously right after the send still beats it.
     if (!transport.send({ type: 'workspace-subscribe', workspaceTag: keys.workspaceTag, from: null, signature: sig })) {
       throw new Error('objstore test helper: subscribe send failed for list')
     }
+    const rows = new Promise((resolve) => { resourceWaiters.push(resolve) })
     const resolved = await withTimeout(rows, timeoutMs, 'list re-subscribe ack')
     return resolved.map((r) => ({ resourceTag: r.resourceTag, version: r.version, incarnation: r.incarnation, contentLength: r.contentLength }))
   }
@@ -105,7 +109,7 @@ export async function createObjstoreSession(deps) {
     // above), so it mints its own subscription token for the client's
     // enforced `openWorkspace(keys, subscription)` API — `resources` is
     // the ack snapshot the client seeds its inventory from.
-    session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, resources: firstAck })
+    session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, workspaceTag: keys.workspaceTag, resources: firstAck })
     await withTimeout(firstAck, timeoutMs, 'workspace-subscribe ack')
   } catch (err) {
     try { rejectAck(err) } catch {}

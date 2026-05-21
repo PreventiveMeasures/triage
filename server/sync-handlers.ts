@@ -289,8 +289,12 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // subscribe that registers this socket for objstore-put / -deleted
     // broadcasts seeds the client's initial inventory in one handshake.
     // The client keeps it live thereafter from those broadcasts.
-    // Returns [] for a triage-only workspace.
-    const resources = await objstoreResources(tag)
+    // Returns [] for a triage-only workspace. A failing inventory
+    // lookup must NOT sink the subscribe — degrade to an empty snapshot
+    // (broadcasts will fill it in) so the ack + chain still go out.
+    let resources: object[] = []
+    try { resources = await objstoreResources(tag) }
+    catch (err) { if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err) }
     send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
     // `from` is the last revision id the client claims to have applied —
     // now a base64url string, not an integer. We send only revisions

@@ -471,6 +471,14 @@ function wipeSessionKey(session: Session): void {
   }
   session.signingKey = null
   session.verifyingKey = null
+  // Resolve any `ensureSubscription` callers still awaiting this
+  // session's inventory snapshot — no further ack is coming once it's
+  // torn down, so resolve with [] rather than leaving the token's
+  // `resources` promise (and the objstore `list()` awaiting it) to hang.
+  if (session.objstoreResourceWaiters.length > 0) {
+    const waiters = session.objstoreResourceWaiters.splice(0)
+    for (const w of waiters) { try { w([]) } catch {} }
+  }
 }
 
 // ─────────── pure state / changeset helpers ───────────
@@ -1817,14 +1825,17 @@ export const triageSync = {
   // (a peer may have put/deleted since our last ack). Folding it in here
   // lets the objstore client seed without racing to observe the ack on
   // the shared socket itself.
-  ensureSubscription(workspaceId: string): { workspaceId: string; resources: Promise<object[]> } | null {
+  ensureSubscription(workspaceId: string): { workspaceId: string; workspaceTag: string | null; resources: Promise<object[]> } | null {
     const existed = sessions.has(workspaceId)
     triageSync.openSession(workspaceId)
     const session = sessions.get(workspaceId)
     if (!session) return null
     const resources = new Promise<object[]>((resolve) => { session.objstoreResourceWaiters.push(resolve) })
     if (existed) trySendSubscribe(session, true)
-    return { workspaceId, resources }
+    // `workspaceTag` binds the token to a workspace so the objstore
+    // client can reject a mismatched token. It's null only for a
+    // brand-new session whose key derivation hasn't completed yet.
+    return { workspaceId, workspaceTag: session.workspaceTag, resources }
   },
 
   // Open a per-workspace session. Additive — calling with a fresh
