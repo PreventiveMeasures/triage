@@ -123,12 +123,15 @@ export async function assertDurableSyncCommit(sql: NeonSql): Promise<void> {
 // shape. No `STRICT` clause — Postgres columns are strictly typed
 // by default.
 const SCHEMA_PG = [
-  // `CHECK (keyframe IN (0, 1))` mirrors what SQLite's STRICT type
-  // affinity buys us implicitly — without it, a direct DB write of
-  // `keyframe = 2` would silently coerce to 0 in `mapRevisionRow`'s
-  // `=== 1` check, diverging from the signed canonical the row was
-  // hashed against. Same operator-attack vector the SQLite STRICT
-  // guard in db.ts catches.
+  // `CHECK (keyframe IN (0, 1))` is the value-domain guard: without
+  // it, a direct DB write of `keyframe = 2` would silently coerce to
+  // 0 in `mapRevisionRow`'s `=== 1` check, diverging from the signed
+  // canonical the row was hashed against. The SQLite path carries the
+  // identical CHECK (see `db.ts`) — note STRICT there enforces only
+  // the column TYPE (INTEGER), NOT this {0, 1} domain (`keyframe = 2`
+  // is a valid integer STRICT accepts), so BOTH backends need the
+  // explicit CHECK. Same operator-with-DB-write attack vector on both
+  // planes.
   `CREATE TABLE IF NOT EXISTS workspace_revision (
      workspace_tag TEXT NOT NULL,
      seq BIGINT NOT NULL,

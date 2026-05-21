@@ -63,23 +63,45 @@ import {
   LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, toSqlitePlaceholders,
 } from './db-revision-sql.ts'
 
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS workspace_revision (
+// `CHECK (keyframe IN (0, 1))` is the value-domain guard on the
+// keyframe column. STRICT (the table marker) enforces the column's
+// TYPE — an INTEGER stays an INTEGER — but NOT its value range:
+// `keyframe = 2` is a perfectly valid integer that STRICT accepts,
+// which `mapRevisionRow`'s `=== 1` check then silently coerces back to
+// 0. That divergence between the stored row and the signed canonical
+// (which only ever encodes 0 / 1) poisons chain-replay verifies for
+// any peer who recomputes — the same operator-with-direct-DB-write
+// attack vector the STRICT guard in `openDbInner` catches for the
+// column TYPE. The CHECK closes the value-domain half, giving SQLite
+// the protection the Neon schema's identical `CHECK (keyframe IN
+// (0, 1))` carries (see `db-neon.ts`).
+//
+// `WORKSPACE_REVISION_DEF` is the parenthesised column + constraint
+// body (plus the STRICT marker), shared by the initial `CREATE TABLE`
+// and the `migrateAddKeyframeCheck` rebuild below — so a table the
+// rebuild produces is byte-identical in shape to a freshly-created
+// one, and a future column edit can't drift the two apart.
+const WORKSPACE_REVISION_DEF = `(
     workspace_tag TEXT NOT NULL,
     seq INTEGER NOT NULL,
     id TEXT NOT NULL,
     base TEXT,
-    keyframe INTEGER NOT NULL DEFAULT 0,
+    keyframe INTEGER NOT NULL DEFAULT 0 CHECK (keyframe IN (0, 1)),
     nonce TEXT NOT NULL,
     ciphertext TEXT NOT NULL,
     signature TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     PRIMARY KEY (workspace_tag, seq),
     UNIQUE (workspace_tag, id)
-  ) STRICT;
+  ) STRICT`
 
-  CREATE INDEX IF NOT EXISTS workspace_revision_tag_id_idx
-    ON workspace_revision (workspace_tag, id);
+const WORKSPACE_REVISION_TAG_ID_INDEX = `CREATE INDEX IF NOT EXISTS workspace_revision_tag_id_idx
+    ON workspace_revision (workspace_tag, id)`
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS workspace_revision ${WORKSPACE_REVISION_DEF};
+
+  ${WORKSPACE_REVISION_TAG_ID_INDEX};
 `
 
 // Row shape returned by the chain queries. SQLite stores `keyframe`
@@ -236,7 +258,26 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
   // operator can act on it.
   const columns = db.prepare(`PRAGMA table_info(workspace_revision)`).all() as Array<{ name: string }>
   if (!columns.some((c) => c.name === 'keyframe')) {
-    db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0`)
+    // ADD COLUMN carries the CHECK so a legacy DB migrating up lands
+    // the value-domain guard alongside the column. Existing rows take
+    // the DEFAULT 0, which satisfies the CHECK, so the ALTER succeeds.
+    db.exec(`ALTER TABLE workspace_revision ADD COLUMN keyframe INTEGER NOT NULL DEFAULT 0 CHECK (keyframe IN (0, 1))`)
+  }
+  // Auto-migrate a pre-existing keyframe column that lacks the CHECK.
+  // `CREATE TABLE IF NOT EXISTS … CHECK` is a no-op when the table
+  // already exists, and SQLite cannot ALTER a CHECK onto an existing
+  // column, so a DB created before this CHECK existed keeps its
+  // unconstrained keyframe column — silently dropping the value-domain
+  // guard. The freshly-added ALTER column above already carries the
+  // CHECK, so only a genuinely pre-CHECK keyframe column reaches the
+  // rebuild. Detect it from the stored DDL (SQLite folds an
+  // ALTER-added column's CHECK back into the table's CREATE text, so
+  // this matches both creation paths) and rebuild the table in place.
+  const ddl = (db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'workspace_revision'`,
+  ).get() as { sql: string } | undefined)?.sql ?? ''
+  if (!/CHECK\s*\(\s*keyframe\s+IN\b/iu.test(ddl)) {
+    migrateAddKeyframeCheck(db)
   }
   // Prepare a chain SELECT (shared `$N` source → `?N`) and map each row
   // through the shared `mapRevisionRow` — same `AllStmt<…, RevisionRow>`
@@ -272,6 +313,44 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     close: async () => { db.close() },
   }
   return handle
+}
+
+// Rebuild `workspace_revision` in place to add the
+// `CHECK (keyframe IN (0, 1))` a pre-CHECK DB lacks. SQLite can't ALTER
+// a CHECK onto an existing column, so this runs the documented
+// create-new + copy + drop + rename rebuild, wrapped in ONE transaction
+// so a crash mid-rebuild rolls back to the original table rather than
+// losing it. No table in this DB file carries a foreign key referencing
+// workspace_revision (the objstore tables are independent), so the DROP
+// can't cascade and `foreign_keys` can stay ON. If any existing row
+// holds a keyframe outside {0, 1} — the exact poison the CHECK exists
+// to reject — the copy trips the new CHECK, the whole transaction rolls
+// back, and the original table survives intact; the violation surfaces
+// to the operator (openDb's catch closes the handle and rethrows)
+// rather than silently coercing or dropping the bad row. Reuses
+// `WORKSPACE_REVISION_DEF` so the rebuilt table matches a fresh one.
+function migrateAddKeyframeCheck(db: DatabaseSync): void {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`CREATE TABLE workspace_revision_new ${WORKSPACE_REVISION_DEF}`)
+    db.exec(
+      `INSERT INTO workspace_revision_new
+         (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+       SELECT workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at
+       FROM workspace_revision`,
+    )
+    db.exec('DROP TABLE workspace_revision')
+    db.exec('ALTER TABLE workspace_revision_new RENAME TO workspace_revision')
+    db.exec(WORKSPACE_REVISION_TAG_ID_INDEX)
+    db.exec('COMMIT')
+  } catch (err) {
+    // Best-effort rollback so the original table survives a failed
+    // rebuild (e.g. a poison keyframe row tripping the new CHECK). The
+    // ROLLBACK's own error is irrelevant — we always rethrow the
+    // original cause, which is what the operator needs to act on.
+    try { db.exec('ROLLBACK') } catch {}
+    throw err
+  }
 }
 
 export async function headFor(handle: Handle, tag: string): Promise<string | null> {

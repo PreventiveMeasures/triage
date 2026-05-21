@@ -829,3 +829,188 @@ describe('openDb — STRICT migration guard', () => {
     await cleanup()
   })
 })
+
+describe('openDb — keyframe CHECK constraint', () => {
+  // SQLite analogue of the Neon `keyframe CHECK` test. STRICT enforces
+  // the column TYPE but NOT its value domain — `keyframe = 2` is a
+  // valid integer STRICT accepts, which `mapRevisionRow`'s `=== 1`
+  // check then silently coerces to 0, diverging the stored row from the
+  // signed canonical (which only ever encodes 0 / 1). The CHECK closes
+  // that gap; these tests pin it across the fresh-create, pre-keyframe
+  // ALTER, and in-place rebuild paths.
+  it('rejects a direct write of keyframe outside {0, 1} (operator-write guard)', async () => {
+    const { handle, cleanup } = freshDb()
+    try {
+      assert.throws(
+        () => handle.db.prepare(`
+          INSERT INTO workspace_revision
+            (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run('tag-A', 1, 'bad-kf', null, 2, 'n', 'c', 's', Date.now()),
+        /CHECK constraint failed/u,
+      )
+      // The legitimate 0 / 1 values still insert.
+      handle.db.prepare(`
+        INSERT INTO workspace_revision
+          (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('tag-A', 1, 'ok-0', null, 0, 'n', 'c', 's', Date.now())
+      assert.equal(await revisionExists(handle, 'tag-A', 'ok-0'), true)
+    } finally { await cleanup() }
+  })
+
+  it('auto-migrates an existing STRICT keyframe column that lacks the CHECK (data preserved)', async () => {
+    // A DB created before the CHECK existed keeps its unconstrained
+    // keyframe column: `CREATE TABLE IF NOT EXISTS` is a no-op and
+    // SQLite can't ALTER a CHECK in. openDb rebuilds the table in place
+    // (create+copy+drop+rename) so existing rows survive and the CHECK
+    // becomes active. The seed is STRICT so it clears the STRICT guard
+    // and reaches the rebuild.
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-db-kfcheck-${++tmpCounter}-`))
+    const file = path.join(dir, 'data.db')
+    try {
+      const seed = new DatabaseSync(file)
+      seed.exec(`
+        CREATE TABLE workspace_revision (
+          workspace_tag TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          id TEXT NOT NULL,
+          base TEXT,
+          keyframe INTEGER NOT NULL DEFAULT 0,
+          nonce TEXT NOT NULL,
+          ciphertext TEXT NOT NULL,
+          signature TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workspace_tag, seq),
+          UNIQUE (workspace_tag, id)
+        ) STRICT;
+      `)
+      const ins = seed.prepare(`
+        INSERT INTO workspace_revision
+          (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      ins.run('tag-A', 1, 'r1', null, 0, 'n', 'c', 's', Date.now())
+      ins.run('tag-A', 2, 'kf', 'r1', 1, 'n', 'c', 's', Date.now())
+      seed.close()
+
+      const handle = openDb(file) // rebuilds the table WITH the CHECK
+      try {
+        // Existing rows (and their keyframe flags) survive the rebuild.
+        assert.equal(await revisionExists(handle, 'tag-A', 'r1'), true)
+        assert.equal(await revisionExists(handle, 'tag-A', 'kf'), true)
+        assert.equal(await headFor(handle, 'tag-A'), 'kf')
+
+        // The CHECK is now active — a direct keyframe=2 write is rejected.
+        assert.throws(
+          () => handle.db.prepare(`
+            INSERT INTO workspace_revision
+              (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run('tag-A', 3, 'bad-kf', 'kf', 2, 'n', 'c', 's', Date.now()),
+          /CHECK constraint failed/u,
+        )
+
+        // The tag/id index is recreated, and the DDL now carries the
+        // CHECK — so a subsequent openDb detects it and skips the rebuild.
+        const idx = handle.db.prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'workspace_revision_tag_id_idx'`,
+        ).get()
+        assert.ok(idx, 'tag/id index recreated after rebuild')
+        const ddl = handle.db.prepare(
+          `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'workspace_revision'`,
+        ).get().sql
+        assert.match(ddl, /CHECK\s*\(\s*keyframe\s+IN\b/u, 'rebuilt table carries the CHECK')
+
+        // The rebuilt table is fully functional — a normal gated commit
+        // threads onto the preserved head.
+        await commitRevision(handle, rev({ id: 'post', base: 'kf', keyframe: false }))
+        assert.equal(await headFor(handle, 'tag-A'), 'post')
+      } finally { await handle.close() }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('rebuild aborts and preserves the original table when a pre-CHECK row holds keyframe outside {0, 1}', () => {
+    // The poison the CHECK exists to reject is already in the table. The
+    // copy step trips the new CHECK, the rebuild transaction rolls back,
+    // and openDb surfaces the violation (closing its handle) rather than
+    // dropping or coercing the bad row — the original table is intact.
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-db-kfpoison-${++tmpCounter}-`))
+    const file = path.join(dir, 'data.db')
+    try {
+      const seed = new DatabaseSync(file)
+      seed.exec(`
+        CREATE TABLE workspace_revision (
+          workspace_tag TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          id TEXT NOT NULL,
+          base TEXT,
+          keyframe INTEGER NOT NULL DEFAULT 0,
+          nonce TEXT NOT NULL,
+          ciphertext TEXT NOT NULL,
+          signature TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workspace_tag, seq),
+          UNIQUE (workspace_tag, id)
+        ) STRICT;
+      `)
+      seed.prepare(`
+        INSERT INTO workspace_revision
+          (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('tag-A', 1, 'poison', null, 2, 'n', 'c', 's', Date.now())
+      seed.close()
+
+      assert.throws(() => openDb(file), /CHECK constraint failed/u)
+
+      // The original table survives the rolled-back rebuild: the poison
+      // row is still present and no half-built `_new` table leaks.
+      const check = new DatabaseSync(file)
+      try {
+        const row = check.prepare(`SELECT keyframe FROM workspace_revision WHERE id = 'poison'`).get()
+        assert.equal(row.keyframe, 2, 'original poison row preserved')
+        const leftover = check.prepare(
+          `SELECT name FROM sqlite_master WHERE name = 'workspace_revision_new'`,
+        ).get()
+        assert.equal(leftover, undefined, 'no half-built _new table leaks')
+      } finally { check.close() }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('the keyframe ALTER migration carries the CHECK forward', async () => {
+    // A pre-keyframe legacy DB gets the column added via ALTER; that
+    // ALTER includes the CHECK, so after migration a direct keyframe=2
+    // write is rejected exactly as on a fresh DB.
+    const dir = mkdtempSync(path.join(tmpdir(), `deepview-db-kfmig-${++tmpCounter}-`))
+    const file = path.join(dir, 'data.db')
+    try {
+      const seed = new DatabaseSync(file)
+      seed.exec(`
+        CREATE TABLE workspace_revision (
+          workspace_tag TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          id TEXT NOT NULL,
+          base TEXT,
+          nonce TEXT NOT NULL,
+          ciphertext TEXT NOT NULL,
+          signature TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workspace_tag, seq),
+          UNIQUE (workspace_tag, id)
+        ) STRICT;
+      `)
+      seed.close()
+      const handle = openDb(file) // ALTER adds keyframe WITH the CHECK
+      try {
+        assert.throws(
+          () => handle.db.prepare(`
+            INSERT INTO workspace_revision
+              (workspace_tag, seq, id, base, keyframe, nonce, ciphertext, signature, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run('tag-A', 1, 'bad-kf', null, 2, 'n', 'c', 's', Date.now()),
+          /CHECK constraint failed/u,
+        )
+      } finally { await handle.close() }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
