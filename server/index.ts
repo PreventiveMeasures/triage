@@ -85,7 +85,7 @@ import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { initObjstore } from './objstore/init.ts'
-import { type Handle as ObjstoreHandle, openObjstore } from './objstore/store.ts'
+import { type Handle as ObjstoreHandle, listLive, objectMetaWire, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
 
@@ -248,7 +248,13 @@ const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
 const getNonce = (socket: WebSocket): string | undefined => peers.get(socket)?.challenge
 const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
   handle, send, broadcast, subscribe, getNonce,
-  requiresAuth, sendUnauthorized, workspaceExists, debug: DEBUG,
+  requiresAuth, sendUnauthorized, workspaceExists,
+  // Folds the objstore inventory into the `workspace-subscribed` ack.
+  // The objstore store keeps its own richer `Handle`, so we wire the
+  // query here where both handles exist rather than coupling
+  // sync-handlers to the store type.
+  objstoreResources: async (tag) => (await listLive(objstoreHandle, tag)).map(objectMetaWire),
+  debug: DEBUG,
 })
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({

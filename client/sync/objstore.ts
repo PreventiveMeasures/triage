@@ -14,8 +14,10 @@
 //   `triageSync.ensureSubscription`) so a session can never be opened —
 //   and never send a request frame — for a tag with no backing sync
 //   subscribe. Request frames (`objstore-put-begin` / `-fetch` /
-//   `-delete` / `-list`) carry `workspaceTag` so replies route back to
-//   the right session. Broadcasts (`objstore-put`, `objstore-deleted`)
+//   `-delete`) carry `workspaceTag` so replies route back to the right
+//   session; the inventory snapshot rides the `workspace-subscribed`
+//   ack (no separate list request). Broadcasts (`objstore-put`,
+//   `objstore-deleted`)
 //   carry `workspaceTag` and fan out to the matching session's handlers.
 //
 // - **REST data plane**. PUT bytes via `fetch(httpOrigin + urlPath,
@@ -57,7 +59,6 @@ import {
   computeContentHash,
   signObjstoreDelete,
   signObjstoreFetch,
-  signObjstoreList,
   signObjstorePut,
 } from './objstore-crypto.ts'
 import {
@@ -87,10 +88,11 @@ export { type ObjstoreKeys, deriveObjstoreKeys } from './objstore-content-crypto
 // `{ ok: false, reason: 'unauthorized' }` as usual).
 export type ObjstoreAuthResolver = (context: { retry: boolean }) => Promise<string | null | undefined>
 
-// Server-emitted wire row shape. Returned by `_rawList`, embedded
-// in `_rawFetch`-token replies, and broadcast on `objstore-put`.
-// Internal — the public API surfaces `Listing` (just `{ version,
-// contentLength }` per fileName) and decrypted `FetchResult`.
+// Server-emitted wire row shape. Carried in the `workspace-subscribed`
+// ack's `resources` snapshot, embedded in `_rawFetch`-token replies,
+// and broadcast on `objstore-put`. Internal — the public API surfaces
+// `Listing` (just `{ version, contentLength }` per fileName) and
+// decrypted `FetchResult`.
 type ObjectMeta = {
   resourceTag: string
   version: number
@@ -249,13 +251,25 @@ export type ObjstoreSession = {
 // `workspace-subscribe` for a session's tag on the shared socket. The
 // objstore client never subscribes on its own (it rides triage-sync's
 // subscribe), so it must never open a session — and thus never send a
-// request frame (`objstore-list` / `-fetch` / `-put-begin` / `-delete`)
-// — for a tag nobody is subscribed to. `openWorkspace` REQUIRES one,
+// request frame (`-fetch` / `-put-begin` / `-delete`) or rely on the
+// subscribe-ack inventory — for a tag nobody is subscribed to.
+// `openWorkspace` REQUIRES one,
 // minted by `triageSync.ensureSubscription(workspaceId)`, which
 // guarantees a sync session (and hence its `workspace-subscribe`) is
 // established first. This makes "objstore op without a subscribe"
 // unrepresentable in the API rather than a latent client logic error.
-export type WorkspaceSubscription = { readonly workspaceId: string }
+//
+// The token also carries the objstore inventory snapshot from the
+// `workspace-subscribed` ack (the subscribe handshake replaced the old
+// `objstore-list` round-trip). triage-sync owns the subscribe and
+// receives the ack, so it hands the rows over here — the objstore
+// client seeds its inventory from this rather than racing to observe a
+// one-shot ack on the shared socket (which it may not even be listening
+// for yet). Resolves [] for a triage-only / empty workspace.
+export type WorkspaceSubscription = {
+  readonly workspaceId: string
+  readonly resources: Promise<readonly unknown[]>
+}
 
 // Public surface of the multiplexed client. Each `openWorkspace`
 // adds a session to the shared socket; `close()` tears the socket
@@ -315,6 +329,19 @@ type SessionState = {
   connectedPromise: Promise<void>
   resolveConnected: () => void
   rejectConnected: (err: Error) => void
+  // Live inventory keyed by resourceTag — the client's view of what the
+  // relay holds for this workspace. Seeded from the `workspace-subscribed`
+  // ack's `resources` snapshot (the subscribe handshake that replaced the
+  // old `objstore-list` round-trip), then kept current by this session's
+  // own put/delete results and by `objstore-put` / `-deleted` broadcasts.
+  // `list()` is a read of this map, not a wire request.
+  inventory: Map<string, { version: number; incarnation: string; contentLength: number }>
+  // Resolves once the inventory has been seeded at least once (the first
+  // `workspace-subscribed` for this tag). `list()` awaits it so an early
+  // read doesn't return an empty snapshot before the subscribe ack lands.
+  listedPromise: Promise<void>
+  resolveListed: () => void
+  rejectListed: (err: Error) => void
   closed: boolean
 }
 
@@ -361,6 +388,51 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // Pre-attach a catch so reconnect-time rejections don't spam
     // the console as unhandled — internal paths don't always await.
     state.connectedPromise.catch(() => {})
+  }
+
+  function makeListedDeferred(state: Partial<SessionState>): void {
+    state.listedPromise = new Promise<void>((resolve, reject) => {
+      state.resolveListed = resolve
+      state.rejectListed = reject
+    })
+    state.listedPromise.catch(() => {})
+  }
+
+  // Replace the session's inventory with a server snapshot (the
+  // `workspace-subscribed` resources). Also advances the rollback
+  // watermark per resource — a relay that promised v5 in the snapshot
+  // then serves v3 on FETCH hits assertFreshOrLater. Resolves the
+  // `listed` gate so a pending `list()` returns.
+  function seedInventory(state: SessionState, resources: ObjectMeta[]): void {
+    state.inventory.clear()
+    for (const m of resources) {
+      state.inventory.set(m.resourceTag, { version: m.version, incarnation: m.incarnation, contentLength: m.contentLength })
+      noteVersion(state, m.resourceTag, m.incarnation, m.version)
+    }
+    state.resolveListed()
+  }
+
+  // Narrow a wire `resources` field to ObjectMeta[] (drops malformed
+  // entries rather than throwing — a single bad row shouldn't sink the
+  // whole subscribe ack).
+  function parseResources(raw: unknown): ObjectMeta[] {
+    if (!Array.isArray(raw)) return []
+    const out: ObjectMeta[] = []
+    for (const entry of raw) {
+      if (isObjectMeta(entry as WireMessage | undefined)) out.push(toObjectMeta(entry as WireMessage))
+    }
+    return out
+  }
+
+  // Await the first inventory seed (the `workspace-subscribed` ack),
+  // bounded so a session whose tag is somehow never subscribed surfaces
+  // a timeout instead of hanging `list()` forever.
+  function awaitListed(state: SessionState): Promise<void> {
+    let t: ReturnType<typeof setTimeout>
+    return new Promise<void>((resolve, reject) => {
+      t = setTimeout(() => reject(new Error(`objstore: inventory not seeded (no subscribe ack) after ${timeoutMs}ms`)), timeoutMs)
+      state.listedPromise.then(resolve, reject)
+    }).finally(() => clearTimeout(t))
   }
 
   function recv(predicate: (m: WireMessage) => boolean): Promise<WireMessage> {
@@ -415,6 +487,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       // Advance the per-tag rollback watermark — a relay that promises
       // v5 in a broadcast then serves v3 on FETCH hits assertFreshOrLater.
       noteVersion(state, meta.resourceTag, meta.incarnation, meta.version)
+      // Keep the live inventory current so `list()` reflects peer puts.
+      state.inventory.set(meta.resourceTag, { version: meta.version, incarnation: meta.incarnation, contentLength: meta.contentLength })
       const putEvent = { resourceTag: meta.resourceTag, version: meta.version, contentLength: meta.contentLength }
       for (const h of state.putHandlers) { try { h(putEvent) } catch {} }
       return
@@ -426,20 +500,20 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       const version = msg['version']
       // Delete destroys the row server-side; the next PUT lands as
       // v1. Drop the watermark so the recreate isn't mis-classified
-      // as a rollback.
+      // as a rollback, and drop it from the live inventory.
       state.seenVersions.delete(tag)
+      state.inventory.delete(tag)
       const ev = { resourceTag: tag, version }
       for (const h of state.deletedHandlers) { try { h(ev) } catch {} }
       return
     }
 
     // Triage-sync frames share the socket (unified transport). Drop
-    // explicitly so they don't pile up in `queue`.
-    // `workspace-subscribed` is triage-sync's subscribe ack — the
-    // objstore client no longer subscribes (it rides that single
-    // subscribe), but the ack still lands on this shared consumer.
-    // `authenticated` is transport-internal-but-passed-through
-    // (triage-sync claims it as a deferred-send kicker).
+    // explicitly so they don't pile up in `queue`. `workspace-subscribed`
+    // is triage-sync's subscribe ack — we ride that subscribe and receive
+    // its `resources` inventory snapshot via the `WorkspaceSubscription`
+    // token (triage-sync hands it over), not by observing the ack here.
+    // `authenticated` is transport-internal-but-passed-through.
     if (msg.type === 'workspace-state' || msg.type === 'workspace-save-ack' || msg.type === 'workspace-save-error' || msg.type === 'workspace-subscribed' || msg.type === 'authenticated') return
 
     // Request-response correlation: first matching waiter wins,
@@ -698,28 +772,6 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     throw new Error(`objstore: delete-error reason='${String(reply['reason'])}'`)
   }
 
-  // Wire-level LIST. Returns raw ObjectMeta (with opaque resourceTag
-  // HMACs). `list` (public) downgrades to the small Listing shape.
-  async function _rawList(state: SessionState): Promise<ObjectMeta[]> {
-    await state.connectedPromise
-    if (state.closed) throw new Error('objstore: session closed')
-    const nonce = transport.getNonce()
-    if (!nonce) throw new Error('objstore: socket not open')
-    const signature = await signObjstoreList(state.signingKey, state.workspaceTag, nonce)
-    send({ type: 'objstore-list', workspaceTag: state.workspaceTag, signature })
-    const reply = await recv((m) => m.type === 'objstore-list-result' && m.workspaceTag === state.workspaceTag)
-    // Match fetch's strictness: any malformed wire shape is a protocol
-    // violation, not a "missing data" signal.
-    if (!Array.isArray(reply['resources'])) throw new TypeError('objstore: malformed list-result (resources not an array)')
-    const out: ObjectMeta[] = []
-    for (let i = 0; i < reply['resources'].length; i++) {
-      const entry = reply['resources'][i] as WireMessage | undefined
-      if (!isObjectMeta(entry)) throw new TypeError(`objstore: malformed list-result entry at index ${i}`)
-      out.push(toObjectMeta(entry))
-    }
-    return out
-  }
-
   // Reject a fetched object whose version is strictly lower than the
   // highest we've already seen FOR THE SAME INCARNATION. The Ed25519 PUT
   // signature is valid for ANY historical version, so without this
@@ -741,8 +793,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     // exist while a sync subscription backs its tag on the shared
     // socket. The token is minted by `triageSync.ensureSubscription`;
     // its absence means a caller tried to open objstore without first
-    // establishing the sync subscribe — the exact logic error
-    // (`objstore-list` for an unsubscribed tag) this guards against.
+    // establishing the sync subscribe — the exact logic error (an
+    // objstore op / inventory read for an unsubscribed tag) this guards.
     if (!subscription || typeof subscription.workspaceId !== 'string') {
       throw new Error('objstore: openWorkspace requires a WorkspaceSubscription (triageSync.ensureSubscription) — the client must not open a session for a tag with no backing sync subscribe')
     }
@@ -763,12 +815,25 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       putHandlers: new Set(),
       deletedHandlers: new Set(),
       seenVersions: new Map(),
+      inventory: new Map(),
       connected: false,
       closed: false,
     }
     makeConnectedDeferred(state)
+    makeListedDeferred(state)
     sessionsByTag.set(workspaceTag, state as SessionState)
     const full = state as SessionState
+
+    // Seed the inventory from the subscribe-ack snapshot triage-sync
+    // handed us in the token. Resolves the `listed` gate so `list()`
+    // returns; thereafter own puts/deletes + objstore-put/-deleted
+    // broadcasts keep the inventory live. Errors are swallowed — a seed
+    // that never arrives just leaves `list()` to time out.
+    void (async () => {
+      let rows: readonly unknown[]
+      try { rows = await subscription.resources } catch { return }
+      if (!full.closed) seedInventory(full, parseResources(rows))
+    })()
 
     // Acquire a transport reference — the transport opens the socket
     // on the first acquire and tears it down when the last release
@@ -826,6 +891,10 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // Re-seed the watermark from this incarnation's v1.
         if (prev == null) full.seenVersions.delete(resourceTag)
         noteVersion(full, resourceTag, raw.meta.incarnation, raw.meta.version)
+        // Reflect our own put in the live inventory immediately, so a
+        // `list()` right after a put sees it without waiting for the
+        // server's broadcast echo to round-trip.
+        full.inventory.set(resourceTag, { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength })
         return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
@@ -888,6 +957,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // Delete drops the server-side row; the next PUT under this
         // tag starts a new incarnation at v1.
         full.seenVersions.delete(resourceTag)
+        full.inventory.delete(resourceTag)
         return raw
       }
       if (raw.reason === 'not-found') return { ok: false, reason: 'not-found' }
@@ -901,9 +971,16 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
 
     async function list(): Promise<Listing[]> {
-      const entries = await _rawList(full)
-      for (const m of entries) noteVersion(full, m.resourceTag, m.incarnation, m.version)
-      return entries.map((m) => ({ resourceTag: m.resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength }))
+      // No wire request: the inventory is seeded from the subscribe-ack
+      // snapshot (handed over in the token) and kept live by this
+      // session's puts/deletes and by objstore-put/-deleted broadcasts.
+      // Await the first seed so an early read doesn't return empty before
+      // it lands.
+      await awaitListed(full)
+      if (full.closed) throw new Error('objstore: session closed')
+      return [...full.inventory.entries()].map(([resourceTag, m]) => ({
+        resourceTag, version: m.version, incarnation: m.incarnation, contentLength: m.contentLength,
+      }))
     }
 
     async function putBundle(opts: { integrity: string; name: string; content: Uint8Array; prev: ObjstorePrev }): Promise<PutResult> {
@@ -952,10 +1029,11 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         // workspace's content + tag key material.
         try { full.contentKey.fill(0) } catch {}
         try { full.tagKey.fill(0) } catch {}
-        // If a request happened to be awaiting connectedPromise at
-        // the moment of close, unblock it with an error so it doesn't
-        // hang past the session's lifetime.
+        // If a request happened to be awaiting connectedPromise /
+        // listedPromise at the moment of close, unblock it with an error
+        // so it doesn't hang past the session's lifetime.
         try { full.rejectConnected(new Error('objstore: session closed')) } catch {}
+        try { full.rejectListed(new Error('objstore: session closed')) } catch {}
         // Note: the server has no per-tag unsubscribe message, so
         // broadcasts for this workspaceTag may continue to arrive on
         // the shared socket. The dispatcher drops them silently
@@ -988,6 +1066,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       try { state.contentKey.fill(0) } catch {}
       try { state.tagKey.fill(0) } catch {}
       try { state.rejectConnected(new Error('objstore: client closed')) } catch {}
+      try { state.rejectListed(new Error('objstore: client closed')) } catch {}
     }
     sessionsByTag.clear()
     for (const handle of acquiresByTag.values()) handle.release()

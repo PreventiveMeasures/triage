@@ -11,7 +11,6 @@ import { encodeUtf8 } from '../../common/utf8.js'
 
 const PUT_DOMAIN = 'deepview-objstore.v1.put'
 const DELETE_DOMAIN = 'deepview-objstore.v1.delete'
-const LIST_DOMAIN = 'deepview-objstore.v1.list'
 const FETCH_DOMAIN = 'deepview-objstore.v1.fetch'
 
 // Fields the client passes to the canonical builders. `prevVersion`
@@ -83,10 +82,6 @@ export function canonicalObjstoreDelete(fields: ObjstoreDeleteFields, connection
   ].join('\n'))
 }
 
-export function canonicalObjstoreList(workspaceTag: string, connectionNonce: string): Uint8Array<ArrayBuffer> {
-  return encodeUtf8([LIST_DOMAIN, workspaceTag, connectionNonce].join('\n'))
-}
-
 export function canonicalObjstoreFetch(workspaceTag: string, resourceTag: string, connectionNonce: string): Uint8Array<ArrayBuffer> {
   return encodeUtf8([FETCH_DOMAIN, workspaceTag, resourceTag, connectionNonce].join('\n'))
 }
@@ -104,10 +99,6 @@ export function signObjstorePut(privateKey: CryptoKey, fields: ObjstorePutBeginF
 
 export function signObjstoreDelete(privateKey: CryptoKey, fields: ObjstoreDeleteFields, connectionNonce: string): Promise<string> {
   return signCanonical(privateKey, canonicalObjstoreDelete(fields, connectionNonce))
-}
-
-export function signObjstoreList(privateKey: CryptoKey, workspaceTag: string, connectionNonce: string): Promise<string> {
-  return signCanonical(privateKey, canonicalObjstoreList(workspaceTag, connectionNonce))
 }
 
 export function signObjstoreFetch(privateKey: CryptoKey, workspaceTag: string, resourceTag: string, connectionNonce: string): Promise<string> {

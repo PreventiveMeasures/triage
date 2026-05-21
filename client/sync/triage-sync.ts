@@ -156,6 +156,13 @@ type Session = {
   consecutiveFailures: number
   error: string | null
   keyDerivationGen?: number
+  // `ensureSubscription` callers waiting for the NEXT
+  // `workspace-subscribed` ack's objstore inventory snapshot. Each is
+  // resolved + cleared when that ack lands. We always wait for a fresh
+  // ack (forcing a re-subscribe for an already-open session) rather than
+  // caching, so the objstore presence layer seeds from the CURRENT
+  // server inventory — a peer may have changed it since our last ack.
+  objstoreResourceWaiters: Array<(rows: object[]) => void>
 }
 
 type StatusListener = (status: SyncStatus) => void
@@ -221,6 +228,11 @@ type WireMessage = {
   // has to round-trip through the wire-message shape.
   kind?: unknown
   resourceTag?: unknown
+  // `workspace-subscribed` folds in the objstore inventory snapshot
+  // (replaced the old `objstore-list` round-trip). We pass it through to
+  // the objstore presence layer via `ensureSubscription`; this module
+  // treats it as an opaque row array.
+  resources?: unknown
 }
 
 // Public sessionInfo shape — read-only inspection used by the UI
@@ -1392,6 +1404,13 @@ async function handleMessage(wire: WireMessage): Promise<void> {
     // out of `connecting`. The chain that follows arrives as
     // a separate `workspace-state` message.
     session.subscribeAcked = true
+    // The ack also folds in the objstore inventory snapshot (replaced
+    // the old `objstore-list` round-trip). Resolve any
+    // `ensureSubscription` callers waiting for it so the objstore
+    // presence layer seeds its inventory without observing this ack.
+    const rows = Array.isArray(wire.resources) ? wire.resources as object[] : []
+    const waiters = session.objstoreResourceWaiters.splice(0)
+    for (const w of waiters) { try { w(rows) } catch {} }
     emitStatusIfChanged()
   }
 }
@@ -1788,13 +1807,26 @@ export const triageSync = {
   // MUST pass into `objstoreClient.openWorkspace`. This is the seam
   // that couples every objstore session to a backing sync subscribe:
   // the objstore client never subscribes itself, so it refuses to open
-  // (and thus to send `objstore-list` / ops) without this proof. Idempotent
-  // (delegates to `openSession`). Returns null when the workspace is
-  // unknown (no session could be opened), so the caller skips opening
-  // an objstore session that nothing would subscribe.
-  ensureSubscription(workspaceId: string): { workspaceId: string } | null {
+  // (and thus to send ops) without this proof. Idempotent (delegates to
+  // `openSession`). Returns null when the workspace is unknown (no
+  // session could be opened), so the caller skips opening an objstore
+  // session that nothing would subscribe.
+  //
+  // The token's `resources` is the objstore inventory snapshot from the
+  // next `workspace-subscribed` ack — a FRESH one. A brand-new session's
+  // initial subscribe provides it; an already-open session is forced to
+  // re-subscribe so the snapshot reflects the CURRENT server inventory
+  // (a peer may have put/deleted since our last ack). Folding it in here
+  // lets the objstore client seed without racing to observe the ack on
+  // the shared socket itself.
+  ensureSubscription(workspaceId: string): { workspaceId: string; resources: Promise<object[]> } | null {
+    const existed = sessions.has(workspaceId)
     triageSync.openSession(workspaceId)
-    return sessions.has(workspaceId) ? { workspaceId } : null
+    const session = sessions.get(workspaceId)
+    if (!session) return null
+    const resources = new Promise<object[]>((resolve) => { session.objstoreResourceWaiters.push(resolve) })
+    if (existed) trySendSubscribe(session, true)
+    return { workspaceId, resources }
   },
 
   // Open a per-workspace session. Additive — calling with a fresh
@@ -1890,6 +1922,7 @@ export const triageSync = {
       // `'error'` so the UI can surface it. `dismissError()`
       // clears it and retries.
       error: null,
+      objstoreResourceWaiters: [],
     }
     sessions.set(workspaceId, newSession)
     kickKeyDerivation(newSession)

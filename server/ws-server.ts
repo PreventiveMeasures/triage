@@ -13,7 +13,7 @@ import { errMsg, errStack, randomId } from './util.ts'
 import type { SaveMsg, SubscribeMsg } from './sign.ts'
 import type { AuthenticateMsg } from './auth.ts'
 import type { ObjstoreHandlers } from './objstore/handlers.ts'
-import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstoreListMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
+import type { ObjstoreDeleteMsg, ObjstoreFetchMsg, ObjstorePutBeginMsg } from './objstore/sign.ts'
 
 // Wire-message envelope as it lands post-`JSON.parse`. Every field is
 // `unknown` until a handler narrows it; the type just documents the
@@ -184,7 +184,6 @@ export function installWsServer(deps: WsServerDeps): { heartbeatTimer: ReturnTyp
           // each field through their own validators on entry.
           else if (parsed.type === 'objstore-put-begin') await objstore.handlePutBegin(socket, parsed as ObjstorePutBeginMsg)
           else if (parsed.type === 'objstore-delete') await objstore.handleDelete(socket, parsed as ObjstoreDeleteMsg)
-          else if (parsed.type === 'objstore-list') await objstore.handleList(socket, parsed as ObjstoreListMsg)
           else if (parsed.type === 'objstore-fetch') await objstore.handleFetch(socket, parsed as ObjstoreFetchMsg)
         } catch (err) {
           // Forensic logging for unexpected throws — the handlers all

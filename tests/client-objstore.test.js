@@ -72,8 +72,10 @@ describe('client/objstore session', { concurrency: true }, () => {
     try {
       await assert.rejects(() => client.openWorkspace(keys, null), /requires a WorkspaceSubscription/u)
       await assert.rejects(() => client.openWorkspace(keys, {}), /requires a WorkspaceSubscription/u)
-      // A well-formed token opens normally.
-      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag })
+      // A well-formed token opens normally. `resources` is the inventory
+      // snapshot the subscriber would hand over (empty here — this raw
+      // client isn't driving a real subscribe); the session seeds from it.
+      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, resources: Promise.resolve([]) })
       assert.deepEqual(await session.list(), [])
     } finally {
       client.close()

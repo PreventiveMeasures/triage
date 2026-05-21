@@ -32,14 +32,25 @@ export async function createObjstoreSession(deps) {
       : { serverUrl: deps.serverUrl, authResolver: deps.authResolver },
   )
 
-  // Resolves on the first `workspace-subscribed` ack. Pre-attach a
-  // catch so an abandoned subscribe (e.g. server unreachable →
-  // openWorkspace rejects first) doesn't surface as an unhandled
-  // rejection.
+  // Resolves with the `workspace-subscribed` ack's `resources` snapshot
+  // (the inventory the subscribe handshake now folds in). Doubles as the
+  // `resources` half of the WorkspaceSubscription token the client's
+  // openWorkspace requires — this helper is the subscriber, so it owns
+  // both halves. Pre-attach a catch so an abandoned subscribe (e.g.
+  // server unreachable → openWorkspace rejects first) doesn't surface as
+  // an unhandled rejection.
   let resolveAck = () => {}
   let rejectAck = () => {}
   const firstAck = new Promise((resolve, reject) => { resolveAck = resolve; rejectAck = reject })
   firstAck.catch(() => {})
+
+  // One-shot resolvers awaiting the NEXT `workspace-subscribed` ack's
+  // resources — `list()` registers one then re-subscribes, so it returns
+  // an authoritative current server snapshot (the production client's
+  // `list()` is a live cache fed by broadcasts; tests that assert
+  // post-concurrency state want a fresh read, which re-subscribing gives
+  // now that `objstore-list` is gone).
+  const resourceWaiters = []
 
   // Drive the real subscribe handshake on every (re)connect. Stale-
   // tolerant: signing is async, so re-check (socket, nonce) before send.
@@ -55,10 +66,30 @@ export async function createObjstoreSession(deps) {
       })()
     },
     onMessage(msg) {
-      if (msg.type === 'workspace-subscribed' && msg.workspaceTag === keys.workspaceTag) resolveAck()
+      if (msg.type === 'workspace-subscribed' && msg.workspaceTag === keys.workspaceTag) {
+        const rows = Array.isArray(msg.resources) ? msg.resources : []
+        resolveAck(rows)
+        for (const w of resourceWaiters.splice(0)) w(rows)
+      }
     },
     onDisconnected() {},
   })
+
+  // Authoritative inventory read: re-subscribe and return the fresh
+  // `workspace-subscribed` snapshot (the handshake that replaced
+  // `objstore-list`). Mirrors the old `session.list()` "current server
+  // state" semantics that the concurrency tests rely on.
+  async function freshList() {
+    const nonce = transport.getNonce()
+    if (!nonce) throw new Error('objstore test helper: socket not open for list')
+    const sig = await signSubscribePayload(keys.signingKey, keys.workspaceTag, null, nonce)
+    const rows = new Promise((resolve) => { resourceWaiters.push(resolve) })
+    if (!transport.send({ type: 'workspace-subscribe', workspaceTag: keys.workspaceTag, from: null, signature: sig })) {
+      throw new Error('objstore test helper: subscribe send failed for list')
+    }
+    const resolved = await withTimeout(rows, timeoutMs, 'list re-subscribe ack')
+    return resolved.map((r) => ({ resourceTag: r.resourceTag, version: r.version, incarnation: r.incarnation, contentLength: r.contentLength }))
+  }
 
   const clientDeps = { serverUrl: deps.serverUrl, httpOrigin: deps.httpOrigin, transport }
   if (deps.requestTimeoutMs !== undefined) clientDeps.requestTimeoutMs = deps.requestTimeoutMs
@@ -72,8 +103,9 @@ export async function createObjstoreSession(deps) {
     // so a server that drops the subscribe doesn't hang the open.
     // This helper IS the subscriber (it drives the workspace-subscribe
     // above), so it mints its own subscription token for the client's
-    // enforced `openWorkspace(keys, subscription)` API.
-    session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag })
+    // enforced `openWorkspace(keys, subscription)` API — `resources` is
+    // the ack snapshot the client seeds its inventory from.
+    session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag, resources: firstAck })
     await withTimeout(firstAck, timeoutMs, 'workspace-subscribe ack')
   } catch (err) {
     try { rejectAck(err) } catch {}
@@ -86,6 +118,9 @@ export async function createObjstoreSession(deps) {
   const inner = session.close
   return {
     ...session,
+    // Override the client's live-cache `list()` with an authoritative
+    // re-subscribe read for tests (see freshList).
+    list: freshList,
     close() {
       try { inner() } catch {}
       try { consumer.remove() } catch {}
