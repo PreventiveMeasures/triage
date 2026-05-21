@@ -132,13 +132,14 @@ function ensureClient(httpOrigin) {
       serverUrl: '',
       httpOrigin,
       transport: getSharedTransport(),
-      // No `selfSubscribe`: presence sends NO `workspace-subscribe`. It
-      // relies on triage-sync's single subscribe for the same tag on
-      // this shared socket (presence and sync open a workspace together,
-      // so sync always owns it). That one subscribe registers the socket
-      // for the tag's broadcasts — including objstore-put/-deleted — so
-      // ours would be a pure duplicate (and would trip triage-sync's
-      // continuity-break re-subscribe via the full-chain replay).
+      // Presence sends NO `workspace-subscribe` of its own (the objstore
+      // client has no subscribe path at all). It relies on triage-sync's
+      // single subscribe for the same tag on this shared socket (presence
+      // and sync open a workspace together, so sync always owns it). That
+      // one subscribe registers the socket for the tag's broadcasts —
+      // including objstore-put/-deleted — so ours would be a pure
+      // duplicate (and would trip triage-sync's continuity-break
+      // re-subscribe via the full-chain replay).
     })
   }
   return client
