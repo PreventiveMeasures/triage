@@ -41,7 +41,7 @@ export function setTriageChangeNotifier(fn) {
 // id is treated as stable enough to round-trip.
 const TRIAGE_KEY = 'deepview.triage'
 // Synchronous "ahead-of-compress" snapshot — populated by saveTriage
-// before the async compressBrotli await, cleared after the
+// before the async compressDeflate await, cleared after the
 // compressed write lands. A tab crash mid-compress would otherwise
 // drop the user's edit (the in-memory state.* mutation is gone with
 // the process, the compressed key wasn't updated, and triageSync
@@ -57,12 +57,12 @@ const TRIAGE_PENDING_KEY = 'deepview.triage.pending'
 // orphans behind on a report that did carry uuids.
 export const SESSION_ID_RE = /^\d+$/u
 
-async function compressBrotli(bytes) {
+async function compressDeflate(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-async function decompressBrotli(bytes) {
+async function decompressDeflate(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
@@ -151,7 +151,7 @@ export function saveTriage() {
     if (json != null) {
       try {
         const bytes = encodeUtf8(json)
-        const compressed = await compressBrotli(bytes)
+        const compressed = await compressDeflate(bytes)
         // Envelope when the vault is unlocked. A vault that's
         // enabled but locked (no session key) skips the seal step,
         // saving as plaintext — the next saveTriage post-unlock
@@ -266,7 +266,7 @@ async function readTriageBlob() {
     }
     bytes = await openForTriage(bytes)
   }
-  const decompressed = await decompressBrotli(bytes)
+  const decompressed = await decompressDeflate(bytes)
   return JSON.parse(decodeUtf8(decompressed))
 }
 

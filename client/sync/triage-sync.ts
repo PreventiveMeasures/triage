@@ -1112,7 +1112,7 @@ async function applyOverlayAndPersist(
     // saveTriage await. Both writes land under separate localStorage
     // keys and there's no atomic cross-key write available, but
     // scheduling the lock acquire first gives the new baseRevision a
-    // head start over saveTriage's compressBrotli await — narrows the
+    // head start over saveTriage's compressDeflate await — narrows the
     // crash window during which a tab teardown leaves state.* fresh
     // but the persisted base stale (which on next reload would
     // recompute the changeset against an old baseState and replay

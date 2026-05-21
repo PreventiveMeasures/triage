@@ -1507,7 +1507,7 @@ describe('triage-sync client', () => {
     // "the membership-listener-driven save acked". `settledAfterAck`
     // alone is trivially true at this point — there's no save in
     // flight yet. The membership listener at triage-sync.ts goes
-    // through `await saveTriage()` (which awaits compressBrotli +
+    // through `await saveTriage()` (which awaits compressDeflate +
     // navigator.locks.request) BEFORE reaching `trySendSave`, so
     // `encrypting=false` is the default state observable on
     // `waitFor`'s sync first-predicate-check. Without this pin,
@@ -3379,7 +3379,7 @@ describe('triage-sync client', () => {
 
   it('persistSession reflects the post-rebase baseRevision (audit M2 round-6)', async () => {
     // Audit M2 round-6: applyOverlayAndPersist used to await
-    // saveTriage (which awaits compressBrotli) BEFORE kicking
+    // saveTriage (which awaits compressDeflate) BEFORE kicking
     // persistSession's lock-RMW. A tab teardown landing inside the
     // compress await would leave state.* updated (via saveTriage's
     // pending-key M3 mechanism) but the persisted base stale —
