@@ -326,7 +326,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // re-adds `putAt` (or any other column) is caught.
     assert.equal('putAt' in conflict.current, false, 'PUT conflict.current must not leak server-only putAt')
     assert.deepEqual(
-      Object.keys(conflict.current).sort(),
+      Object.keys(conflict.current).toSorted(),
       ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
     )
     c.ws.close()
@@ -1240,7 +1240,7 @@ describe('v1.objstore server (REST-primary)', { concurrency: true }, () => {
     // server-only `putAt` column must be absent here too.
     assert.equal('putAt' in conflict.current, false, 'DELETE conflict.current must not leak server-only putAt')
     assert.deepEqual(
-      Object.keys(conflict.current).sort(),
+      Object.keys(conflict.current).toSorted(),
       ['contentHash', 'contentLength', 'incarnation', 'resourceTag', 'signature', 'version'],
     )
     // Row still there — the failed DELETE didn't drop it.

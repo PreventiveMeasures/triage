@@ -19,8 +19,8 @@
 import type { WebSocket } from 'ws'
 import {
   type Handle,
-  type ObjectRow,
   MAX_CONTENT_LENGTH,
+  type ObjectRow,
   beginPut,
   deleteObject,
   getLive,
