@@ -85,6 +85,7 @@
     "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./tests/ ./common/ ./server/ ./client/ ./ui/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
+    "prepack": "node build.js build",
     "build": "node build.js build",
     "serve": "node build.js serve",
     "server": "node server/index.ts",
