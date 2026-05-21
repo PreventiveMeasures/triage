@@ -481,6 +481,11 @@
     background: transparent; border: 1px solid var(--border); color: var(--muted);
     border-radius: 4px; padding: .2rem .5rem;
     font-size: .72rem; font-family: inherit;
+    /* WCO: the sidebar is a drag surface (theme.css's body baseline,
+       which can't reach into this shadow root), so opt the action
+       buttons back out — otherwise clicks start a window drag instead
+       of activating the button. */
+    -webkit-app-region: no-drag; app-region: no-drag;
 
     &:hover { color: var(--text); border-color: var(--accent); }
     &.danger:hover { color: var(--critical); border-color: var(--critical); }
@@ -511,6 +516,13 @@
    gets relaxed for this button. */
 #sync-status {
   display: inline-flex; align-items: center; gap: .35rem;
+  /* Borderless until hovered — the dot + label already read as a
+     status; the frame is only a click affordance, so it appears on
+     hover. Overrides the shared `.sidebar-actions button` border; the
+     id-specific `:hover` re-asserts the accent frame over the bare
+     `border-color: transparent` above. */
+  border-color: transparent;
+  &:hover { border-color: var(--accent); }
 
   & .sync-dot {
     width: 8px; height: 8px; border-radius: 50%;
