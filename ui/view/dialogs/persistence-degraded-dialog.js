@@ -11,7 +11,7 @@
 // value is unused — callers fire-and-forget via
 // `openPersistenceDegradedDialog()`.
 import { html } from 'lit'
-import { AppDialog, openAppDialog } from './app-dialog.js'
+import { AppDialog } from './app-dialog.js'
 
 class PersistenceDegradedDialog extends AppDialog {
   // Focus the acknowledge button so Enter/Esc both just dismiss.
@@ -51,8 +51,21 @@ class PersistenceDegradedDialog extends AppDialog {
 
 customElements.define('persistence-degraded-dialog', PersistenceDegradedDialog)
 
-// Fire-and-forget. Resolves (to `true` on the button, `null` on
-// Esc/close) when dismissed; callers don't act on the value.
+// Own open helper rather than the shared `openAppDialog`, so we settle
+// on `modal-conflict` too: if another modal is already open when
+// persistence degrades, `AppDialog.firstUpdated`'s `showModal()` throws
+// and dispatches `modal-conflict` instead of `resolve`. The shared
+// helper only listens for `resolve`, so it would hang forever and leak
+// the element — which would also wedge the caller's "one dialog at a
+// time" guard, suppressing every later degradation notice. Resolve
+// (null on conflict, the dialog's detail otherwise) and remove the
+// element on BOTH paths so the promise always settles and cleans up.
 export function openPersistenceDegradedDialog() {
-  return openAppDialog('persistence-degraded-dialog')
+  return new Promise((resolve) => {
+    const el = document.createElement('persistence-degraded-dialog')
+    const settle = (detail) => { el.remove(); resolve(detail) }
+    el.addEventListener('resolve', (e) => settle(e.detail))
+    el.addEventListener('modal-conflict', () => settle(null))
+    document.body.append(el)
+  })
 }
