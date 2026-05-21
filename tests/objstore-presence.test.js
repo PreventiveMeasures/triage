@@ -103,6 +103,47 @@ describe('client/sync/objstore-presence', () => {
     assert.equal(isInRemote('nonexistent-ws-id', 'some-file.json'), false)
   })
 
+  it('openWorkspace ensures a backing triage-sync subscription (presence ⊆ sync)', async () => {
+    // Presence never subscribes on its own — it rides triage-sync's
+    // single `workspace-subscribe`. Opening a presence session must
+    // therefore ensure a sync session exists for the tag (via
+    // `ensureSubscription`), so the objstore client never `objstore-list`s
+    // against a tag nothing is subscribed to. Without a pre-opened sync
+    // session, the presence open must create one synchronously.
+    const ws = await createWorkspace('presence-ensures-sync')
+    try {
+      assert.equal(triageSync.openSessions.some((s) => s.workspaceId === ws.id), false)
+      openWorkspace(ws.id)
+      assert.equal(
+        triageSync.openSessions.some((s) => s.workspaceId === ws.id), true,
+        'presence.openWorkspace must ensure a triage-sync session backs the tag',
+      )
+      await awaitSyncOnline()
+    } finally {
+      closeWorkspace(ws.id)
+      triageSync.closeSession(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('ensureSubscription opens a sync session and returns a token; null for an unknown workspace', async () => {
+    assert.equal(triageSync.ensureSubscription('no-such-workspace-id'), null)
+    const ws = await createWorkspace('ensure-sub')
+    try {
+      const sub = triageSync.ensureSubscription(ws.id)
+      assert.ok(sub, 'a known workspace yields a subscription token')
+      assert.equal(sub.workspaceId, ws.id)
+      assert.equal(triageSync.openSessions.some((s) => s.workspaceId === ws.id), true)
+      // Idempotent — a second call returns an equivalent token, no duplicate session.
+      const again = triageSync.ensureSubscription(ws.id)
+      assert.equal(again?.workspaceId, ws.id)
+      assert.equal(triageSync.openSessions.filter((s) => s.workspaceId === ws.id).length, 1)
+    } finally {
+      triageSync.closeSession(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
   it('openWorkspace → empty remote → isInRemote stays false for known reports', async () => {
     const ws = await createWorkspaceWithReports('presence-empty', ['rep-1.json', 'rep-2.json'])
     try {

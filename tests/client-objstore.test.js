@@ -12,7 +12,7 @@ import { after, before, describe, it } from 'node:test'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
 
-import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
+import { createObjstoreClient, deriveObjstoreKeys } from '../client/sync/objstore.ts'
 import { createObjstoreSession } from './_objstore-session.js'
 import { bootServer } from './_helpers.js'
 
@@ -57,6 +57,27 @@ describe('client/objstore session', { concurrency: true }, () => {
 
   after(async () => {
     if (server) await server.teardown()
+  })
+
+  it('openWorkspace refuses to open without a sync subscription token (enforced invariant)', async () => {
+    // The objstore client never sends its own `workspace-subscribe`; it
+    // rides triage-sync's. To make "objstore op against an unsubscribed
+    // tag" impossible to express, openWorkspace REQUIRES a
+    // WorkspaceSubscription token (minted by triageSync.ensureSubscription).
+    // A missing or malformed token is a caller logic error and throws
+    // before any socket work — so a presence session can never be opened
+    // for a tag with no backing sync subscribe.
+    const { keys } = await makeKeys()
+    const client = createObjstoreClient({ serverUrl, httpOrigin })
+    try {
+      await assert.rejects(() => client.openWorkspace(keys, null), /requires a WorkspaceSubscription/u)
+      await assert.rejects(() => client.openWorkspace(keys, {}), /requires a WorkspaceSubscription/u)
+      // A well-formed token opens normally.
+      const session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag })
+      assert.deepEqual(await session.list(), [])
+    } finally {
+      client.close()
+    }
   })
 
   it('put → list → fetch → delete round-trip', async () => {

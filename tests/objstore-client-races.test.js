@@ -756,7 +756,7 @@ describe('objstore client/server races', { concurrency: true }, () => {
     const bTransport = createSocketTransport({ serverUrl })
     const bClient = createObjstoreClient({ serverUrl, httpOrigin, transport: bTransport })
     try {
-      const b = await bClient.openWorkspace(keys)
+      const b = await bClient.openWorkspace(keys, { workspaceId: keys.workspaceTag })
       const a1 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v1'), prev: null })
       assert.equal(a1.ok, true)
       const a2 = await a.put({ fileName: 'wm-inc.json', content: Buffer.from('I1-v2-bytes'), prev: a1.meta })

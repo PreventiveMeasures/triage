@@ -1782,6 +1782,21 @@ export const triageSync = {
     for (const session of sessions.values()) trySendSave(session)
   },
 
+  // Ensure a sync session — and therefore the single
+  // `workspace-subscribe` for this workspace's tag on the shared
+  // socket — exists, returning a token the objstore presence layer
+  // MUST pass into `objstoreClient.openWorkspace`. This is the seam
+  // that couples every objstore session to a backing sync subscribe:
+  // the objstore client never subscribes itself, so it refuses to open
+  // (and thus to send `objstore-list` / ops) without this proof. Idempotent
+  // (delegates to `openSession`). Returns null when the workspace is
+  // unknown (no session could be opened), so the caller skips opening
+  // an objstore session that nothing would subscribe.
+  ensureSubscription(workspaceId: string): { workspaceId: string } | null {
+    triageSync.openSession(workspaceId)
+    return sessions.has(workspaceId) ? { workspaceId } : null
+  },
+
   // Open a per-workspace session. Additive — calling with a fresh
   // `workspaceId` adds a second session multiplexed over the same
   // socket; calling with an already-open id is idempotent. The

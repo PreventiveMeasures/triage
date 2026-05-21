@@ -239,6 +239,16 @@ export function openWorkspace(workspaceId) {
   if (sessions.has(workspaceId)) return
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
+  // Couple this objstore session to a sync subscription up front: the
+  // objstore client never sends its own `workspace-subscribe`, so it
+  // rides triage-sync's. `ensureSubscription` opens (idempotently) the
+  // sync session that owns the subscribe and returns the token the
+  // objstore client requires — without it `c.openWorkspace` throws.
+  // Bail if the workspace can't be subscribed (unknown to sync): we
+  // must not open a presence session that would `objstore-list` against
+  // a tag nothing is subscribed to.
+  const subscription = triageSync.ensureSubscription(workspaceId)
+  if (!subscription) return
   // `fileTags` mirrors the objstore's HMAC tags for every fileName
   // the workspace knows locally; `bundleTags` does the same for the
   // workspace's claimed bundle integrities. `remoteTags` is the
@@ -309,7 +319,7 @@ export function openWorkspace(workspaceId) {
     if (!httpOrigin) return
     try {
       const c = ensureClient(httpOrigin)
-      const session = await c.openWorkspace(entry.keys)
+      const session = await c.openWorkspace(entry.keys, subscription)
       if (entry.disposed) {
         try { session.close() } catch {}
         return
@@ -504,13 +514,14 @@ onSyncHostInstalled((host) => {
     }
   })
 
-  // Workspace teardown — the per-switch caller (`ingest.js`) used to
-  // invoke `closeWorkspace` directly on every workspace transition;
-  // now sessions stay alive across switches and cleanup is event-
-  // driven. Fire on the workspaces-store delete so any presence
-  // session bound to a vanished id releases its transport acquire
-  // and zeroes its key material. Also drop the persisted tag→name
-  // cache — the workspace is gone, the mappings are dead weight.
+  // Workspace teardown — `ingest.js` closes a presence session in
+  // lockstep with its sync session on every workspace switch (presence
+  // ⊆ sync; see openWorkspace). This listener is the OTHER teardown
+  // trigger: a workspace removed from the store entirely. Fire on the
+  // workspaces-store delete so any presence session bound to a vanished
+  // id releases its transport acquire and zeroes its key material. Also
+  // drop the persisted tag→name cache — the workspace is gone, the
+  // mappings are dead weight.
   host.onWorkspaceDeleted((workspaceId) => {
     closeWorkspace(workspaceId)
     clearPresenceCache(workspaceId)

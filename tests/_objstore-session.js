@@ -70,7 +70,10 @@ export async function createObjstoreSession(deps) {
     // onConnected already sent the subscribe frame. Wait for the ack so
     // peer broadcasts are wired before the caller issues ops. Bounded
     // so a server that drops the subscribe doesn't hang the open.
-    session = await client.openWorkspace(keys)
+    // This helper IS the subscriber (it drives the workspace-subscribe
+    // above), so it mints its own subscription token for the client's
+    // enforced `openWorkspace(keys, subscription)` API.
+    session = await client.openWorkspace(keys, { workspaceId: keys.workspaceTag })
     await withTimeout(firstAck, timeoutMs, 'workspace-subscribe ack')
   } catch (err) {
     try { rejectAck(err) } catch {}

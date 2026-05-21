@@ -3,14 +3,17 @@
 //
 // - **WS control plane**. A single multiplexed WebSocket per client
 //   (`createObjstoreClient`) — every workspace the client opens
-//   (`client.openWorkspace(keys)`) shares the per-connection
-//   `challenge` nonce, bound into every signed request frame. The
-//   client does NOT send `workspace-subscribe` of its own: it rides
-//   triage-sync's single subscribe for the same workspace tag on the
-//   shared socket (the two always open a workspace together), which is
-//   what registers the socket for `objstore-put` / `-deleted`
-//   broadcasts; our nonce-signed requests only need the socket
-//   connected. Request frames (`objstore-put-begin` / `-fetch` /
+//   (`client.openWorkspace(keys, subscription)`) shares the
+//   per-connection `challenge` nonce, bound into every signed request
+//   frame. The client does NOT send `workspace-subscribe` of its own:
+//   it rides triage-sync's single subscribe for the same workspace tag
+//   on the shared socket, which is what registers the socket for
+//   `objstore-put` / `-deleted` broadcasts; our nonce-signed requests
+//   only need the socket connected. `openWorkspace` REQUIRES a
+//   `WorkspaceSubscription` token (minted by
+//   `triageSync.ensureSubscription`) so a session can never be opened —
+//   and never send a request frame — for a tag with no backing sync
+//   subscribe. Request frames (`objstore-put-begin` / `-fetch` /
 //   `-delete` / `-list`) carry `workspaceTag` so replies route back to
 //   the right session. Broadcasts (`objstore-put`, `objstore-deleted`)
 //   carry `workspaceTag` and fan out to the matching session's handlers.
@@ -242,11 +245,23 @@ export type ObjstoreSession = {
   close(): void
 }
 
+// Proof that an external subscriber — triage-sync — owns the single
+// `workspace-subscribe` for a session's tag on the shared socket. The
+// objstore client never subscribes on its own (it rides triage-sync's
+// subscribe), so it must never open a session — and thus never send a
+// request frame (`objstore-list` / `-fetch` / `-put-begin` / `-delete`)
+// — for a tag nobody is subscribed to. `openWorkspace` REQUIRES one,
+// minted by `triageSync.ensureSubscription(workspaceId)`, which
+// guarantees a sync session (and hence its `workspace-subscribe`) is
+// established first. This makes "objstore op without a subscribe"
+// unrepresentable in the API rather than a latent client logic error.
+export type WorkspaceSubscription = { readonly workspaceId: string }
+
 // Public surface of the multiplexed client. Each `openWorkspace`
 // adds a session to the shared socket; `close()` tears the socket
 // down and closes every open session.
 export type ObjstoreClient = {
-  openWorkspace(keys: ObjstoreKeys): Promise<ObjstoreSession>
+  openWorkspace(keys: ObjstoreKeys, subscription: WorkspaceSubscription): Promise<ObjstoreSession>
   close(): void
 }
 
@@ -720,8 +735,17 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     }
   }
 
-  async function openWorkspace(keys: ObjstoreKeys): Promise<ObjstoreSession> {
+  async function openWorkspace(keys: ObjstoreKeys, subscription: WorkspaceSubscription): Promise<ObjstoreSession> {
     if (clientClosed) throw new Error('objstore: client closed')
+    // Enforce the cross-layer invariant: an objstore session may only
+    // exist while a sync subscription backs its tag on the shared
+    // socket. The token is minted by `triageSync.ensureSubscription`;
+    // its absence means a caller tried to open objstore without first
+    // establishing the sync subscribe — the exact logic error
+    // (`objstore-list` for an unsubscribed tag) this guards against.
+    if (!subscription || typeof subscription.workspaceId !== 'string') {
+      throw new Error('objstore: openWorkspace requires a WorkspaceSubscription (triageSync.ensureSubscription) — the client must not open a session for a tag with no backing sync subscribe')
+    }
     const workspaceTag = keys.workspaceTag
     if (sessionsByTag.has(workspaceTag)) {
       throw new Error(`objstore: workspace ${workspaceTag.slice(0, 8)}… is already open on this client`)
