@@ -22,10 +22,14 @@ The server runs in one of **two deployment modes**, each pairing a
 metadata store with a byte (blob) store. The mode is chosen entirely by
 whether `DATABASE_URL` is set — there's no mix-and-match:
 
-| Mode                 | Metadata          | Blob bytes                  | Topology       |
-| -------------------- | ----------------- | --------------------------- | -------------- |
-| **SQLite** (default) | SQLite at `DB_PATH` | local FS at `OBJSTORE_DIR` | single-process |
-| **Neon**             | Neon Postgres     | Vercel Blob Private Storage | multi-replica  |
+| Mode                 | Metadata          | Blob bytes                  | Topology         |
+| -------------------- | ----------------- | --------------------------- | ---------------- |
+| **SQLite** (default) | SQLite at `DB_PATH` | local FS at `OBJSTORE_DIR` | single-process   |
+| **Neon**             | Neon Postgres     | Vercel Blob Private Storage | multi-instance\* |
+
+\* Storage (DB + bytes) is shared and consistent across instances, so you
+can run several behind a load balancer for HA. **Real-time WS broadcasts
+are not yet cross-instance**, though — see the caveat in the Neon section.
 
 | Env var                | Default               | Notes                                          |
 | ---------------------- | --------------------- | ---------------------------------------------- |
@@ -54,7 +58,7 @@ mode below.
 
 Neon Postgres for metadata + Vercel Blob Private Storage for the bytes —
 both serverless and HTTP-backed, so no shared filesystem is needed and the
-relay can run as multiple replicas behind a load balancer. Install the two
+relay can run as multiple instances behind a load balancer. Install the two
 optional drivers and set the required env vars:
 
 ```sh
@@ -87,8 +91,19 @@ server **fails fast at boot** if any required companion is missing:
 The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
 `autoInstallPeers: false`, so a SQLite deploy never installs them.
 
+> ⚠️ **Real-time broadcasts are per-instance today.** The WS fan-out is an
+> in-memory subscriber map (`server/hub.ts`), so it does not span
+> instances. Two clients on *different* instances each see their own
+> writes land durably (shared DB + blob storage stay consistent), but a
+> live `workspace-state` / `objstore` broadcast only reaches peers on the
+> *same* instance — a client on instance A won't get a real-time push for
+> a commit that landed via instance B until it resubscribes (reconnect /
+> refresh re-pulls the chain from the shared DB). For lossless real-time
+> sync across instances today, pin all peers of a workspace to one
+> instance with session affinity; cross-instance pub/sub is future work.
+
 <details>
-<summary>Neon latency &amp; multi-replica fork-safety</summary>
+<summary>Neon latency &amp; multi-instance fork-safety</summary>
 
 - **Latency.** Each save issues 3 pipelined HTTP round-trips to Neon
   (dup / head check + gated INSERT). At ~30–80 ms RTT that's ~90–240 ms
@@ -436,21 +451,26 @@ the same content-addressed path in both:
 
 ```
 workspace_object (
-  workspace_tag TEXT, resource_tag TEXT,
-  version INTEGER,            -- monotonic per (tag, resource)
-  content_hash TEXT, content_length INTEGER, signature TEXT, put_at INTEGER,
+  workspace_tag, resource_tag,
+  version,                    -- monotonic per (tag, resource)
+  content_hash, content_length, signature, put_at,
   PRIMARY KEY (workspace_tag, resource_tag)
-) STRICT
+)
 
 workspace_object_staging (
   workspace_tag, resource_tag, staging_id,
   prev_version, expected_length, content_hash, signature, begun_at,
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
-) STRICT
+)
 
 ${workspaceTag}/${contentHash}.bin           -- live (content-addressed)
 ${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 ```
+
+Same columns and constraints in both modes, with backend-native types:
+SQLite uses `STRICT` tables (`server/objstore/store.ts`); Neon uses
+Postgres types (`BIGINT`, etc.) plus explicit `CHECK` constraints to match
+what `STRICT` enforces (`server/objstore/store-neon.ts`).
 
 The byte path is `${OBJSTORE_DIR}/…` on the FS backend and a private
 Vercel Blob pathname on the Neon backend; consumers (`store`, `rest`,
@@ -495,9 +515,11 @@ workspace_revision (
 ) STRICT
 ```
 
-WAL mode + `synchronous = FULL`: concurrent readers, crash-safe writes,
-and an fsync per commit so the `workspace-save-ack` is a real durability
-promise.
+(SQLite DDL shown; Neon uses the same columns/constraints with Postgres
+types — `BIGINT` etc. — and no `STRICT`.) On SQLite, WAL mode +
+`synchronous = FULL` give concurrent readers, crash-safe writes, and an
+fsync per commit so the `workspace-save-ack` is a real durability promise;
+on Neon, durability is Postgres-native.
 
 `commitRevision` takes **no write lock** on either backend. Concurrent
 saves on one tag are kept fork-safe by a single gated INSERT whose
