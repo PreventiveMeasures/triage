@@ -50,6 +50,12 @@
     z-index: 250;
     box-sizing: border-box;
     pointer-events: none;
+    /* Mirror the in-shadow header's left inset (sidebar.css's WCO
+       block) so the wordmark clears the OS window controls — on macOS
+       they paint at the left (env(titlebar-area-x) wide), and without
+       this the duplicate brand renders underneath them and vanishes.
+       env-x is 0 on Windows/Linux, so .75rem wins there. */
+    padding-left: max(.75rem, env(titlebar-area-x, 0px));
   }
   /* Sidebar hides via `.empty` when there's nothing to show — no
      point pinning a drag strip above an empty column. Collapsed
