@@ -1620,30 +1620,28 @@ function renderImpl() {
    // a prior report can't keep findings hidden silently. Stats /
    // sorting / include-exclude always make sense, so no flags for
    // those.
-  // The slider only makes sense when every report contributing to
-  // the on-screen set carries confidence-bearing findings: a min>0
-  // would otherwise silently drop the no-confidence remainder. The
-  // gate is per-report, so one confidence-less report blocks the
-  // slider for the whole set — a single-file load reduces to "this
-  // report has confidence", and a workspace merge of mixed analyzers
-  // (one analyzer-native report with confidence + one DeepSec /
-  // Claude Security import without) keeps the slider hidden.
+  // The slider is safe to show only when every finding on screen has
+  // a defined spot on the 0–10 scale: either a real `confidence`, or
+  // the `critical: true` flag (the boolean — NOT severity 'critical')
+  // that matchesFilters treats as confidence=10, so it clears any min
+  // floor and is never silently dropped. Anything else (no confidence
+  // and not critical) vanishes the moment the user lifts min off 0,
+  // so a single such finding blocks the slider for the whole set — a
+  // workspace merge of mixed analyzers (one analyzer-native report
+  // with confidence + one DeepSec / Claude Security import without)
+  // stays gated for exactly that reason. The test is per-finding, not
+  // per-report: `critical` varies finding-to-finding, so a lone
+  // critical finding must not vouch for unscored, non-critical
+  // neighbours that would still be dropped.
   //
-  // The on-screen set is status-aware on every layout but kanban.
-  // Those show one triage bucket (state.shownTriage) at a time, so
-  // the gate is evaluated AFTER the status filter: viewing Untriaged
-  // with every untriaged finding scored shows the slider even when
-  // hidden buckets (fixed / ignored) hold unscored findings. A report
-  // with nothing in the current bucket contributes no visible finding
-  // and so can't be silently dropped — it's excluded from the gate
-  // rather than blocking it. Kanban shows all buckets at once and so
-  // gates across every report's full group set.
-  const confGroupsOf = (r) => isKanban
-    ? r.groups
-    : r.groups.filter((g) => groupState(g).commonTriage === state.shownTriage)
-  const confReports = state.reports.filter((r) => confGroupsOf(r).length > 0)
-  const hasAnyConfidence = confReports.length > 0
-    && confReports.every((r) => confGroupsOf(r).some((g) => g.some((f) => f.confidence !== undefined)))
+  // `allGroups` is already the on-screen set — the current
+  // state.shownTriage bucket on every layout but kanban (which shows
+  // all buckets at once) — so the gate is status-aware for free:
+  // viewing Untriaged with every untriaged finding scored shows the
+  // slider even when hidden buckets (fixed / ignored) hold unscored
+  // ones.
+  const hasAnyConfidence = allGroups.length > 0
+    && allGroups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
   // Repo URL input is useful only when at least one finding could
