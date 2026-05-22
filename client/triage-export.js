@@ -164,10 +164,28 @@ export async function applyTriageImport(payload, mode) {
   // over an encrypted slot. A raw localStorage RMW here would also
   // fail to decrypt under an enabled vault (current would parse to
   // `{}`, collapsing every mode into an overwrite).
-  await importRepoUrls(payload.repoUrls, mode)
+  //
+  // Best-effort, like `saveTriage` above (which swallows + warns on a
+  // failed write) and like the original repo-URL `try/catch`: the
+  // triage entries are already merged into `state.triage` and
+  // persisted by the time we get here, so a SECONDARY repo-URL write
+  // failure — e.g. a sibling tab locking the vault mid-import, making
+  // secure-storage refuse the plaintext write — must not surface as a
+  // blanket "Import failed" that contradicts the triage import that
+  // actually landed. Report it in the result instead of throwing.
+  let repoUrlsApplied = 0
+  let repoUrlError = null
+  try {
+    await importRepoUrls(payload.repoUrls, mode)
+    repoUrlsApplied = Object.keys(payload.repoUrls).length
+  } catch (err) {
+    console.warn('applyTriageImport: repo-URL import failed:', err)
+    repoUrlError = err
+  }
 
   return {
     triageEntries: Object.keys(imported).length,
-    repoUrls: Object.keys(payload.repoUrls).length,
+    repoUrls: repoUrlsApplied,
+    repoUrlError,
   }
 }

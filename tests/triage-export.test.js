@@ -249,6 +249,30 @@ describe('applyTriageImport: repo-URL merge through secure-storage', () => {
     assert.ok(hasEnvelopeMagic(Uint8Array.fromBase64(raw)), 'slot remains an encrypted envelope')
   })
 
+  it('reports a repo-URL write failure without throwing or losing the triage import', async () => {
+    // Enabled-but-locked vault: metadata present (isEncryptionEnabled
+    // → true) with no session key, so secure-storage refuses the
+    // plaintext write and importRepoUrls rejects. This mirrors a
+    // sibling tab locking the vault mid-import. The triage half has
+    // already merged + persisted, so applyTriageImport must NOT throw
+    // — it surfaces the repo-URL failure in the result instead.
+    globalThis.localStorage.setItem('deepview.passkey.v1', JSON.stringify({
+      enabled: true, credentialId: 'c', prfSalt: 's', userId: 'u',
+    }))
+
+    const result = await applyTriageImport({
+      triage: { [FINDING_A]: { color: 'green' } },
+      repoUrls: { 'r.json': 'https://imported.test/r' },
+    }, 'prefer-imported')
+
+    // Triage applied despite the repo-URL failure.
+    assert.equal(state.triage.get(FINDING_A)?.color, 'green')
+    assert.equal(result.triageEntries, 1)
+    // Repo URLs not applied; the error is reported, not thrown.
+    assert.equal(result.repoUrls, 0)
+    assert.ok(result.repoUrlError instanceof Error)
+  })
+
   it('refreshes state.repoUrl for the active report after import', async () => {
     // Point (b) of the audit: the in-tab cache (and the header chip)
     // must reflect an imported URL for the open report without a

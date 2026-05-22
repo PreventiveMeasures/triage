@@ -87,10 +87,18 @@ class TriageExportDialog extends AppDialog {
       // Re-render so adopted markers / triage states light up the
       // current view immediately. Bail-safe when nothing's loaded.
       renderApp()
-      this.status = {
-        kind: 'ok',
-        text: `Applied ${result.triageEntries} triage entries and ${result.repoUrls} repo URLs (${this.mode}).`,
-      }
+      // Triage import is authoritative; a repo-URL write failure
+      // (e.g. the vault got locked mid-import) is reported separately
+      // so the message reflects what actually persisted.
+      this.status = result.repoUrlError
+        ? {
+          kind: 'err',
+          text: `Applied ${result.triageEntries} triage entries (${this.mode}), but saving repo URLs failed: ${result.repoUrlError.message}`,
+        }
+        : {
+          kind: 'ok',
+          text: `Applied ${result.triageEntries} triage entries and ${result.repoUrls} repo URLs (${this.mode}).`,
+        }
       // Clear parsed so the file picker resets — user can pick
       // another file or close.
       this.parsed = null
