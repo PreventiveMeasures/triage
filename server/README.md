@@ -35,7 +35,7 @@ deployments. To use Neon instead, install the optional driver and point
 
 ```sh
 pnpm add @neondatabase/serverless
-DATABASE_URL=postgres://user:pass@…neon.tech/db pnpm server
+DATABASE_URL=postgres://user:pass@<project>.neon.tech/db pnpm server
 ```
 
 `DB_PATH` is ignored when `DATABASE_URL` is set. Both data planes (triage
@@ -295,30 +295,35 @@ Both routes match `/api/objstore/{workspaceTag}/{resourceTag}`; the token
 rides `Authorization: Bearer <token>`, never the URL (querystring tokens
 leak via access logs / referer).
 
+Every non-2xx response is a uniform JSON envelope `{ "error": <reason> }`
+(the reason word is shown below); the 409 envelope additionally carries
+`currentVersion` + `currentIncarnation` so the client can rebase.
+
 ```
 PUT  /api/objstore/{workspaceTag}/{resourceTag}
   Headers: Authorization: Bearer <put-token>
            Content-Length: <expectedLength>
            Content-Type:   application/octet-stream
   Body:    raw ciphertext (matches expectedLength exactly)
-  200 { version, contentHash, contentLength }   committed
-  400 length-mismatch    Content-Length ≠ token's expectedLength / size mismatch
-  400 aborted            pipe failure mid-body
-  401 unauthorized       missing / bad / expired token
-  405 method-not-allowed token op ≠ method
-  409 conflict           prev_version raced, or same token already in flight
-  410 gone               staging row dropped (TTL / abort / racing commit)
-  411 length-required    missing / non-int / > 100 MiB Content-Length
-  500 io-error|internal
+  200 { version, incarnation, contentHash, contentLength }   committed
+  400 { error: "length-mismatch" }    Content-Length ≠ token's expectedLength / size mismatch
+  400 { error: "aborted" }            pipe failure mid-body
+  401 { error: "unauthorized" }       missing / bad / expired token
+  405 { error: "method-not-allowed" } token op ≠ method
+  409 { error: "conflict", currentVersion, currentIncarnation }
+                                      prev_version raced, or same token already in flight
+  410 { error: "gone" }               staging row dropped (TTL / abort / racing commit)
+  411 { error: "length-required" }    missing / non-int / > 100 MiB Content-Length
+  500 { error: "io-error" | "internal" }
 
 GET  /api/objstore/{workspaceTag}/{resourceTag}
   Headers: Authorization: Bearer <get-token>
-  200 (application/octet-stream)   body = raw ciphertext
-  401 unauthorized
-  404 not-found          version mismatch / deleted
-  405 method-not-allowed
-  500 internal
-  503 unavailable        live row present, file missing / size diverged
+  200 (application/octet-stream)      body = raw ciphertext
+  401 { error: "unauthorized" }
+  404 { error: "not-found" }          version mismatch / deleted
+  405 { error: "method-not-allowed" }
+  500 { error: "internal" }
+  503 { error: "unavailable" }        live row present, file missing / size diverged
 ```
 
 Tokens are HMAC-SHA-256 over a JSON payload, base64url, dot-joined to the
