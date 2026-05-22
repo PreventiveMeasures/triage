@@ -1,128 +1,165 @@
 # DeepView triage-sync server
 
-A small WebSocket relay that lets DeepView clients sharing a
-workspace seed sync their per-finding triage (color, deleted,
-comment, fix) without trusting the server with the contents.
-Encryption + Ed25519 signing happens client-side; the server only
-sees opaque ciphertexts and routes them.
+A small WebSocket relay that lets DeepView clients sharing a workspace
+seed sync their per-finding triage (color, deleted, comment, fix) and
+exchange encrypted bundle/report blobs. Encryption + Ed25519 signing
+happen client-side; the server only stores opaque ciphertext and routes
+it. It can't read, forge, or re-attribute anything.
 
-## Run
+Requires **Node ≥ 24** (built-in `node:sqlite`, WebCrypto Ed25519, and
+native `.ts` execution — no flags).
 
-```
+## Quick start
+
+```sh
 pnpm install
-pnpm server                # listens on ws://127.0.0.1:8765/api/sync
-PORT=9000 pnpm server      # custom port
-DEBUG=1 pnpm server        # log every message
-DB_PATH=./mydb.db pnpm server
+pnpm server          # ws://127.0.0.1:8765/api/sync
 ```
 
-Defaults: `PORT=8765`, `HOST=127.0.0.1`, `DB_PATH=server/data/data.db`.
-By default, `OBJSTORE_DIR` stays next to `DB_PATH` (so
-`server/data/objstore` with the default DB path).
 The SQLite file is created on first run; nothing else is needed.
 
-### Storage backends
+| Env var        | Default                | Notes                                  |
+| -------------- | ---------------------- | -------------------------------------- |
+| `PORT`         | `8765`                 |                                        |
+| `HOST`         | `127.0.0.1`            |                                        |
+| `DB_PATH`      | `server/data/data.db`  | SQLite file (ignored when using Neon)  |
+| `OBJSTORE_DIR` | next to `DB_PATH`      | on-disk blob bytes                     |
+| `DATABASE_URL` | —                      | set to use Neon Postgres (see below)   |
+| `DEBUG`        | —                      | `DEBUG=1` logs every message           |
 
-Two interchangeable backends back the same wire protocol — pick one
-per deployment:
+## Using Neon Postgres
 
-- **SQLite (default).** Built into Node ≥ 24 via `node:sqlite` (the
-  whole project requires Node ≥ 24 — see below). No extra
-  dependency, single file at `DB_PATH`. Best for single-process
-  / single-machine deployments.
-- **Neon Postgres.** Set `DATABASE_URL` to a Neon connection string;
-  `DB_PATH` is ignored. Requires the optional peer dependency
-  `@neondatabase/serverless`:
+The default SQLite backend is best for single-process / single-machine
+deployments. To use Neon instead, install the optional driver and point
+`DATABASE_URL` at your connection string:
 
-  ```
-  pnpm add @neondatabase/serverless
-  DATABASE_URL=postgres://user:pass@…neon.tech/db pnpm server
-  ```
+```sh
+pnpm add @neondatabase/serverless
+DATABASE_URL=postgres://user:pass@<project>.neon.tech/db pnpm server
+```
 
-  Both planes (`workspace_revision` for triage-sync and the
-  `workspace_object` / `workspace_object_staging` tables for v1.objstore)
-  land in the same Neon database. The objstore's BYTES still live on
-  local disk under `OBJSTORE_DIR` — multi-MB blobs are not stored in
-  the database in either backend.
+`DB_PATH` is ignored when `DATABASE_URL` is set. Both data planes (triage
+revisions and object metadata) live in the same Neon database; blob
+**bytes** still live on local disk under `OBJSTORE_DIR` in either backend.
 
-The peer dep is marked `optional` in `package.json` and the
-`pnpm-workspace.yaml` sets `autoInstallPeers: false`, so a SQLite-only
-deployment doesn't install it.
+The driver is an `optional` peer dep and `pnpm-workspace.yaml` sets
+`autoInstallPeers: false`, so a SQLite-only deploy never installs it.
 
-> ⚠️ **The v1.objstore byte plane is single-process today.**
-> `OBJSTORE_DIR` is local to one process — a `PUT` on replica A
-> + `GET` on replica B would 503, and the reaper on replica A
-> cannot see replica B's files. The DB layer itself is
-> multi-process safe with NO write lock: `commitRevision` is a
-> single gated INSERT (`INSERT … SELECT COALESCE(MAX(seq),0)+1 …
-> WHERE NOT EXISTS(dup) AND head IS[ NOT DISTINCT FROM] base
-> RETURNING seq`) whose head-check and `MAX(seq)` read one
-> statement snapshot, and the `PRIMARY KEY (workspace_tag, seq)`
-> rejects any racer that computed the same seq — so a sibling
-> process / replica losing the race gets a clean `stale-base`
-> outcome (via the catch in `commitRevision`), never a silent
-> chain fork. (The Neon cross-replica leg of this argument is not
-> yet covered by an automated test — see the Neon note below.)
-> Full multi-process / multi-replica support of the BYTE plane
-> arrives when a shared object-storage backend (S3 or similar)
-> lands.
+<details>
+<summary>Neon caveats (latency &amp; multi-replica)</summary>
 
-> 📡 **Neon backend latency.** Every `commitRevision` issues 3
-> HTTP round-trips to Neon for the commit (dup check, head check,
-> and the gated INSERT, pipelined in one `sql.transaction`), plus
-> the recovery `revisionExists` + `headFor` only on a
-> unique-violation. At Neon's typical 30–80 ms HTTP RTT that's
-> ~90–240 ms per save vs sub-millisecond on SQLite. There is no
-> longer a per-`workspace_tag` write lock serialising commits —
-> concurrent saves on one tag are kept fork-safe by the gated
-> INSERT's single-statement snapshot + the `UNIQUE(tag, seq)` PK
-> rather than by serialisation, so per-tag throughput is bounded by
-> Postgres, not by an in-process queue. (The earlier "future
-> optimisation: single-round-trip insert" has landed — the dup /
-> head / seq logic is folded into the one gated INSERT.) Acceptable
-> for triage-edit cadence; size for it if you expect bursty writes.
-> NOTE: the cross-replica fork-safety of the lockless commit rests
-> on Postgres' READ-COMMITTED single-statement snapshot + the
-> `UNIQUE(tag, seq)` PK; the PGlite test backend is single-
-> connection and cannot empirically reproduce a cross-replica race,
-> so confirm this with a real-Postgres concurrency test before
-> relying on multi-replica writes in production.
+- **Latency.** Each save issues 3 pipelined HTTP round-trips to Neon
+  (dup / head check + gated INSERT). At ~30–80 ms RTT that's ~90–240 ms
+  per save vs sub-millisecond on SQLite. Fine for triage-edit cadence;
+  size for it if you expect bursty writes.
+- **Multi-replica writes.** `commitRevision` takes no write lock;
+  fork-safety rests on Postgres READ-COMMITTED single-statement snapshots
+  + the `UNIQUE(workspace_tag, seq)` PK. This is sound by construction but
+  not yet covered by an automated cross-replica test (the PGlite test
+  backend is single-connection). Confirm with a real-Postgres concurrency
+  test before relying on multi-replica writes in production.
+- **Blob byte plane is single-process today.** `OBJSTORE_DIR` is local to
+  one process, so a `PUT` on replica A + `GET` on replica B would 503.
+  The DB/metadata layer is multi-process safe; full multi-replica blob
+  support waits on a shared object store (S3 or similar).
+
+</details>
+
+## Authentication
+
+Every signed message is verified against the `workspaceTag` (= Ed25519
+public key) before any state mutation; invalid signatures are silently
+dropped. A seed holder retries; an attacker who only learned the tag
+can't get past verify. Save/subscribe and each objstore op use distinct
+signing-domain prefixes so a signature can't be replayed across message
+types or protocols.
+
+### Optional password gate
+
+The relay can gate **the first action against a never-before-seen
+workspace tag** behind a shared password. Copy the example config and set
+one:
+
+```sh
+cp server/config.example.json server/config.json
+```
+
+```json
+{ "password": "your-shared-secret" }
+```
+
+`config.json` is git-ignored. `null` (or a missing file) disables the
+gate — the default no-config behaviour. The gate only stops strangers
+from creating *new* workspaces on a shared relay; access to existing
+workspaces is the per-message signature, and subscribes are never gated.
+
+<details>
+<summary>Gate semantics, wire shape &amp; password comparison</summary>
+
+Fires on the first signed `workspace-save` / `objstore-put-begin` for a
+tag whose `workspace_revision` and `workspace_object` tables are both
+empty. Every other signed action bypasses it. `workspace-subscribe` is
+intentionally never gated — a subscribe to an unknown tag returns an
+empty chain, and there's nothing to leak by confirming absence.
+
+**Concurrent-creation race (accepted).** `workspaceExists` reads at a
+different moment than the commit, so under concurrent saves on a fresh
+tag an unauthenticated socket may observe "exists" (a peer's commit
+landed between check and commit) and skip the gate. Accepted: it still
+had to produce a valid signature (= holds the seed), so the worst case is
+"two authorised writers", not "stranger bypasses auth".
+
+Wire shape:
+
+```
+client → server  authenticate { password }
+server → client  authenticated {}                  // accepted
+server → client  unauthorized {                    // gate fired / rejected
+  kind,                                            //   'gated' | 'auth-failed'
+  workspaceTag?, base?, resourceTag?,
+}
+```
+
+Callers MUST switch on `kind`:
+- `gated` + `workspaceTag` + `base` — rejected `workspace-save`.
+- `gated` + `workspaceTag` + `resourceTag` — rejected `objstore-put-begin`.
+- `auth-failed` — wrong password; client prompts for a different one.
+
+Authorization is per-WebSocket (`WeakMap<WebSocket, boolean>`); a
+reconnect re-authenticates. The client caches the password (in memory,
+and encrypted in secure-storage when the passkey vault is on) so the user
+sees the prompt only once per page load / password change.
+
+Password comparison is HMAC-SHA-256 on both sides under a per-process
+random key (32 bytes minted at boot, never persisted) then
+`crypto.timingSafeEqual` on the two 32-byte digests — fixed-length inputs
+close the length-leak window, and any residual timing variance reveals
+only HMAC bytes useless without the per-process key.
+
+</details>
 
 ## URL layout
 
-The relay shares one `http.Server` for everything under `/api/*`,
-keeping the namespace reserved for backend traffic so a fronting
-proxy can route with a single location block (`/api/*` → relay,
-`/*` → static UI bundle, no upgrade-header gymnastics).
+One `http.Server` handles everything under `/api/*`, so a fronting proxy
+can route with a single location block (`/api/*` → relay, `/*` → static
+UI bundle).
 
-- `ws://${host}/api/sync` — WebSocket upgrade. Triage-sync wire
-  protocol (described below) flows over it.
-- Any other URL — `404 not-found` (JSON body). Future feature work
-  (e.g. a REST byte-transfer plane) lands under `/api/...` without
-  changing this contract.
-
-Requires Node ≥ 24 (uses the built-in `node:sqlite`, WebCrypto
-Ed25519, and `--experimental-strip-types` for the `.ts` sources —
-default-on in Node 23.6+, no flag needed in 24.x).
+- `ws://${host}/api/sync` — WebSocket upgrade; the triage-sync wire
+  protocol flows over it.
+- `/api/objstore/{workspaceTag}/{resourceTag}` — REST `PUT`/`GET` byte
+  transfer for the object store.
+- Any other URL — `404 not-found` (JSON body).
 
 ## Wire protocol
 
-All messages are JSON over WebSocket text frames. `nonce` /
-`ciphertext` / `signature` / `connectionNonce` fields are
-base64url. Binary frames are dropped.
+All WS messages are JSON over text frames; binary frames are dropped.
+`nonce` / `ciphertext` / `signature` / `connectionNonce` fields are
+base64url. The very first frame the server sends is a per-socket
+`challenge { nonce }` (16 random bytes) that the client must bind into
+every `workspace-subscribe` signature, blocking cross-connection replay.
 
-### Server → Client (handshake)
-
-The very first frame the server sends after `connection` is the
-per-socket challenge — the client has to bind it into every
-subsequent `workspace-subscribe` signature, blocking
-cross-connection replay of a captured subscribe frame:
-
-```
-challenge {
-  nonce                // base64url, 16 random bytes (128 bits)
-}
-```
+<details>
+<summary>Triage-sync messages</summary>
 
 ### Client → Server
 
@@ -142,235 +179,72 @@ workspace-subscribe {
   signature            // Ed25519 over (domain, tag, from, connectionNonce)
 }
 
-authenticate {
-  password             // UTF-8; gates "first action on a new workspace tag"
-}                      // when server/config.json sets one. See "Operator-
-                       // side password gate" below.
-
-ping                   // application-level liveness probe; no payload needed
+authenticate { password }   // see "Optional password gate"
+ping                        // application-level liveness probe
 ```
 
 ### Server → Client
 
 ```
 workspace-subscribed { workspaceTag, resources: [...] }
-                       // explicit handshake-complete ack, sent BEFORE the
-                       // initial chain — lets the UI flip
-                       // `connecting → online` only after the server
-                       // registered the peer. `resources` is the objstore
-                       // inventory snapshot (one row per live object:
-                       // resourceTag, version, incarnation, contentHash,
-                       // contentLength, signature) — folds in what was a
-                       // separate objstore listing request. `[]` for a
-                       // triage-only workspace.
+                       // handshake-complete ack, sent BEFORE the initial
+                       // chain — lets the UI flip connecting → online only
+                       // after the peer is registered. `resources` is the
+                       // objstore inventory snapshot (resourceTag, version,
+                       // incarnation, contentHash, contentLength, signature);
+                       // `[]` for a triage-only workspace.
 
 workspace-save-ack { workspaceTag, base, id }
                        // `id` is content-addressed (SHA-256 of canonical
-                       // bytes, base64url no padding) — same id the
-                       // client computes from its own canonical
+                       // bytes, base64url) — same id the client computes.
 
 workspace-save-error { workspaceTag, base, reason }
-                       // Explicit reject for a SIGNED save the server
-                       // chose not to commit. Sent AFTER sig verify, so
-                       // only a legit seed-holder receives it (shape /
-                       // sig attacks still drop silently). Current
-                       // reasons (see `common/save-error-reason.ts`):
-                       //   - `too-large` (ciphertext > 2 MiB) — hard
-                       //     error; retry won't help.
-                       //   - `busy` — per-socket inflight cap dropped
-                       //     the save; recoverable, client re-arms
-                       //     `pendingSave` for the next trigger.
-                       //   - `stale-base` — concurrent commit advanced
-                       //     the head; emitted AFTER the catch-up
-                       //     `workspace-state` so the client clears
-                       //     `pending` first via handleChain.
-                       // The `base` field echoes the save's base so the
-                       // client can attribute the error to the correct
-                       // pending save (mismatches are dropped).
+                       // Reject for a SIGNED save (sent AFTER sig verify, so
+                       // only a legit seed-holder sees it). Reasons (see
+                       // common/save-error-reason.ts):
+                       //   too-large  — ciphertext > 2 MiB; retry won't help.
+                       //   busy       — per-socket inflight cap; recoverable.
+                       //   stale-base — head advanced; emitted AFTER the
+                       //                catch-up workspace-state.
+                       // `base` echoes the save's base for attribution.
 
 workspace-state {
   workspaceTag,
-  revisions: [
-    { base, id, keyframe, nonce, ciphertext, signature },
-    ...
-  ]
+  revisions: [ { base, id, keyframe, nonce, ciphertext, signature }, ... ]
 }
 
-authenticated {}       // server accepted the password; per-socket flag
-                       // flips on, every subsequent action bypasses the
-                       // first-action gate
-
-unauthorized {         // gate fired OR `authenticate` was rejected.
-  kind,                // 'gated' | 'auth-failed' — explicit
-                       //   discriminator; callers MUST switch on it
-                       //   rather than infer from field presence.
-  workspaceTag?,       // present when kind='gated'; identifies which
-                       //   action was blocked:
-  base?,               //   + base       → workspace-save blocked
-  resourceTag?,        //   + resourceTag → objstore-put-begin blocked
-}                      // kind='auth-failed' carries no other fields.
-
-pong                   // reply to `ping`
+authenticated {}       // password accepted; per-socket flag flips on
+unauthorized { kind, workspaceTag?, base?, resourceTag? }   // see gate section
+pong                   // reply to ping
 ```
 
-`workspace-state` is used for: initial sync (after a subscribe),
-broadcast when another client commits a revision, and stale-base
-catch-up when a save's `base` doesn't match the workspace's head.
-For `from = null` (or an unknown id), the chain starts at the
-most recent keyframe so a fresh client doesn't replay history
-back to genesis.
+`workspace-state` carries: initial sync (after subscribe), broadcast when
+another client commits, and stale-base catch-up. For `from = null` (or an
+unknown id) the chain starts at the most recent keyframe, so a fresh
+client doesn't replay history back to genesis.
 
-## Authentication
-
-Every signed message is verified against the `workspaceTag` (=
-public key) before any state mutation. Invalid signatures are
-silently dropped — a holder of the workspace seed will retry, an
-attacker who only learned the tag can't get past the verify.
-
-Domain separation: the `save` and `subscribe` signing prefixes
-differ (`deepview-triage-sync.v1.save` vs
-`deepview-triage-sync.v1.subscribe`), so a captured save sig
-can't be replayed as a subscribe and vice versa.
-
-A save's signature does NOT auto-attach the sender as a
-subscriber (round-9 H1) — passive observers who captured a
-single valid save frame can't replay it from another connection
-to silently mirror future encrypted broadcasts.
-
-A subscribe's signature is bound to the per-socket
-`connectionNonce` (round-9 H2) — so a captured subscribe frame
-can't be replayed from a different TCP connection (the new
-connection's nonce is different; the canonical bytes differ;
-verify fails).
-
-### Operator-side password gate
-
-The relay optionally gates **the very first action against a
-never-before-seen workspace tag** behind a shared password set in
-`server/config.json`. Copy `server/config.example.json` to
-`server/config.json` and set:
-
-```json
-{ "password": "your-shared-secret" }
-```
-
-`server/config.json` is git-ignored; `config.example.json` is the
-documented shape. `password: null` (or a missing file) disables
-the gate, preserving the existing no-config behaviour.
-
-When configured, the gate fires on the first signed `workspace-save`
-or `objstore-put-begin` for a tag whose `workspace_revision` AND
-`workspace_object` tables are both empty. Every other signed action
-(subscribes, saves on an existing tag, all objstore operations on
-an existing tag) bypasses the gate entirely — access control for
-those is the per-message Ed25519 signature, exactly as before. The
-gate only stops a stranger from spinning up *new* workspaces on a
-shared relay.
-
-**`workspace-subscribe` is intentionally NOT gated**, even for a
-tag the server has never seen. A subscribe to an unknown tag
-returns an empty chain — there's nothing to leak, and gating it
-would force every reader to authenticate before they can confirm
-"this workspace has no data on this relay yet" (a fine state to
-read). The gate is for *creating* workspaces, not for *observing*
-their absence.
-
-**Concurrent-creation race (accepted).** `workspaceExists` reads
-at a different moment than the commit's gated INSERT (a plain
-TOCTOU — there is no lock spanning the two). Under concurrent saves
-on a fresh tag, an unauthenticated socket whose `workspaceExists`
-observes "true" (because an authenticated peer's commit landed
-between this socket's check and its commit) skips the gate and
-commits as the second writer. Accepted: the unauthenticated peer
-still had to produce a valid Ed25519 signature (= holds the
-workspace seed), so the worst case is "two concurrent writes both
-authorising" rather than "stranger bypasses auth". Tightening would
-require folding the gate into the commit statement itself and is
-not worth the layer crossing for this soft-policy guarantee.
-
-Wire shape:
-
-```
-client → server  authenticate { password }
-server → client  authenticated {}                       // password accepted
-server → client  unauthorized {                         // gate fired or
-  kind,                                                 //   authenticate
-  workspaceTag?, base?, resourceTag?,                   //   rejected; see
-}                                                       //   discriminator
-```
-
-The `unauthorized` frame carries an explicit `kind` discriminator
-— callers MUST switch on it rather than infer from the presence /
-absence of other fields:
-
-- `kind: 'gated'` + `workspaceTag` + `base` — the rejected
-  `workspace-save` (client uses this to clear the matching
-  `pending` slot before prompting).
-- `kind: 'gated'` + `workspaceTag` + `resourceTag` — the rejected
-  `objstore-put-begin`.
-- `kind: 'auth-failed'` — the response to an `authenticate` that
-  failed the password compare; the client distinguishes this from a
-  fresh gating event so it can prompt for a different password
-  rather than treat the frame as a new action block.
-
-Authorization is per-WebSocket (a `WeakMap<WebSocket, boolean>` on
-the server). A reconnect re-authenticates; the client caches the
-password in memory (and in secure-storage, encrypted when the
-passkey vault is enabled) so the resend is automatic and the user
-sees the prompt only once per page load + per password change.
-
-Password comparison runs HMAC-SHA-256 on both sides under a per-
-process random key (32 random bytes minted at boot, never persisted,
-never leaves the module), then `crypto.timingSafeEqual` on the two
-32-byte digests. Fixed-length inputs to `timingSafeEqual` close the
-length-leak window of a raw-bytes compare, and any residual timing
-variance reveals only HMAC bytes that are useless without the per-
-process key.
+</details>
 
 ## v1.objstore — bundle + report storage
 
-Two-plane protocol on the same listener:
+Two planes on the same listener:
 
 - **WS plane** — control + auth. Signed `objstore-put-begin` /
-  `objstore-fetch` requests mint short-TTL HMAC bearer tokens that
-  authorise a corresponding REST byte transfer. `objstore-delete` stays
-  fully on WS (no bytes involved). The inventory listing is not a
-  separate frame: the `workspace-subscribed` ack carries the current
-  `resources` snapshot (see triage-sync below). Same Ed25519
-  authentication as triage-sync (every signed message verified
-  against `workspaceTag`), separate domain prefixes
-  (`deepview-objstore.v1.{put,delete,fetch}`) so triage signatures
-  can't replay across protocols. Canonical signing payloads for each
-  message type are the source of truth in `server/objstore/sign.ts`
-  (`canonicalObjstorePut` / `canonicalObjstoreDelete` /
-  `canonicalObjstoreFetch`); the WIRE field
-  order below is JSON-keyed (order-irrelevant) but the SIGNED canonical
-  byte order differs and is fixed by the canonical builders.
-- **REST plane** — byte transfer. `PUT` and `GET` under
-  `/api/objstore/{workspaceTag}/{resourceTag}` with the WS-issued token
-  in `Authorization: Bearer …`. The HTTP server streams the body to
-  / from disk via `fs.createReadStream` / `createWriteStream`,
-  staying out of the WS message loop entirely.
+  `objstore-fetch` mint short-TTL HMAC bearer tokens that authorise a
+  matching REST byte transfer. `objstore-delete` stays fully on WS.
+- **REST plane** — byte transfer. `PUT`/`GET` under
+  `/api/objstore/{workspaceTag}/{resourceTag}` with the WS-issued token in
+  `Authorization: Bearer …`, streamed straight to / from disk.
 
-Two-plane separation is the win: a 50 MiB bundle upload doesn't
-head-of-line block heartbeats, peer broadcasts, or other workspaces'
-triage chains, and we don't pay the ~33% base64 overhead the WS
-text-frame path would impose.
+The split is the win: a 50 MiB upload doesn't head-of-line block
+heartbeats or other workspaces' triage chains, and avoids the ~33% base64
+overhead of a WS text frame. Unlike triage-sync there's **no history**
+(PUT upserts, DELETE drops the row), and upload/fetch are **manual** —
+broadcasts only carry metadata; bytes ride an explicit signed token +
+REST round-trip.
 
-The same broadcast subscriber set (peers attached via
-`workspace-subscribe`) receives `objstore-put` and `objstore-deleted`
-broadcasts after a successful REST commit / WS DELETE.
-
-Two semantic differences from triage-sync:
-
-- **No history.** PUT upserts; DELETE drops the row outright. New
-  subscribers receiving the live set never learn that a deleted
-  resource existed.
-- **Manual upload, manual fetch.** Broadcasts only carry metadata
-  (size, hash, signature); the bytes ride a separate signed token
-  + REST round-trip the user explicitly initiates.
-
-### WS messages
+<details>
+<summary>WS messages</summary>
 
 Client → server:
 
@@ -378,20 +252,13 @@ Client → server:
 objstore-put-begin {
   workspaceTag,         // base64url Ed25519 public key
   resourceTag,          // base64url, HMAC-derived per (tagKey, fileName)
-  prevVersion,          // integer or null — server's expected current version
+  prevVersion,          // integer or null — expected current version
   expectedLength,       // total ciphertext bytes (incl. AEAD nonce + tag)
   contentHash,          // base64url SHA-256 of the ciphertext bytes
   signature             // Ed25519 over the canonical PUT payload
 }
-
-objstore-delete {
-  workspaceTag, resourceTag, prevVersion, signature
-}
-
-objstore-fetch {
-  workspaceTag, resourceTag,
-  signature             // bound to per-socket connectionNonce
-}
+objstore-delete { workspaceTag, resourceTag, prevVersion, signature }
+objstore-fetch  { workspaceTag, resourceTag, signature }   // bound to connectionNonce
 ```
 
 Server → client:
@@ -399,86 +266,68 @@ Server → client:
 ```
 objstore-put-token    { workspaceTag, resourceTag, stagingId, urlPath,
                         token, expiresAt }
-                        // present the token at PUT urlPath to upload bytes
 objstore-fetch-token  { workspaceTag, resourceTag, version, contentHash,
-                        contentLength, signature,
-                        urlPath, token, expiresAt }
-                        // metadata + GET capability
+                        contentLength, signature, urlPath, token, expiresAt }
 objstore-fetch-not-found { workspaceTag, resourceTag }
-objstore-deleted-ack  { workspaceTag, resourceTag, deletedVersion }
-                        // deletedVersion=0 = no-op (already absent)
-objstore-put-error    { workspaceTag, resourceTag, reason }
-                        // reasons: `workspace-full` — the workspace
-                        // already holds MAX_RESOURCES_PER_WORKSPACE
-                        // (100) live rows and this is a NEW resource.
-                        // Re-uploads of an existing resourceTag aren't
-                        // capped. (See "Quotas" below.) Sent AFTER
-                        // sig verify, so only reaches a legit signer.
-objstore-delete-error { workspaceTag, resourceTag, reason }
-                        // current reasons: `not-found` — the resource
-                        // never existed and the caller passed a
-                        // non-null `prevVersion` (a null-prevVersion
-                        // delete of a missing resource is idempotent
-                        // success, not an error). Other reasons may
-                        // be added; the wire shape is stable. Sent
-                        // AFTER sig verify, same legit-signer-only
-                        // contract as `objstore-put-error`.
+objstore-deleted-ack  { workspaceTag, resourceTag, deletedVersion }   // 0 = no-op
+objstore-put-error    { workspaceTag, resourceTag, reason }   // workspace-full
+objstore-delete-error { workspaceTag, resourceTag, reason }   // not-found
 objstore-conflict     { action, workspaceTag, resourceTag, current? }
-                        // current echoes the server's live row when the
-                        // conflict is a version race; absent on the
-                        // never-existed-yet path
-                        // (The inventory listing isn't a reply here — the
-                        // `workspace-subscribed` ack carries the current
-                        // `resources` snapshot; see triage-sync.)
 
-// broadcasts to subscribed peers (PUT broadcast on REST commit;
-//                                 DELETE broadcast on WS handler):
+// broadcasts to subscribed peers:
 objstore-put          { workspaceTag, resourceTag, version, contentHash,
                         contentLength, signature }
 objstore-deleted      { workspaceTag, resourceTag, version }
 ```
 
-### REST endpoints
+Canonical signing payloads are the source of truth in
+`server/objstore/sign.ts` (`canonicalObjstorePut` / `…Delete` / `…Fetch`);
+JSON key order on the wire is irrelevant but the signed byte order is
+fixed by those builders. `*-error` / `*-conflict` frames are sent after
+sig verify, so only legit signers see them.
 
-Both routes match `/api/objstore/{workspaceTag}/{resourceTag}`. The
-token in `Authorization: Bearer <token>` carries the auth — the
-URL never includes it (querystring tokens leak through access logs
-and browser referer).
+</details>
+
+<details>
+<summary>REST endpoints &amp; tokens</summary>
+
+Both routes match `/api/objstore/{workspaceTag}/{resourceTag}`; the token
+rides `Authorization: Bearer <token>`, never the URL (querystring tokens
+leak via access logs / referer).
+
+Every non-2xx response is a uniform JSON envelope `{ "error": <reason> }`
+(the reason word is shown below); the 409 envelope additionally carries
+`currentVersion` + `currentIncarnation` so the client can rebase.
 
 ```
 PUT  /api/objstore/{workspaceTag}/{resourceTag}
-  Headers:    Authorization: Bearer <put-token>
-              Content-Length: <expectedLength>
-              Content-Type:   application/octet-stream
-  Body:       raw ciphertext bytes (matches expectedLength exactly)
-  Responses:
-    200 { version, contentHash, contentLength }    — committed
-    400 { error: "length-mismatch" }               — Content-Length ≠ token's expectedLength
-                                                     OR on-disk size mismatch after stream
-    400 { error: "aborted" }                       — pipe failure mid-body (client drop, overrun)
-    401 { error: "unauthorized" }                  — missing / bad / expired token
-    405 { error: "method-not-allowed" }            — token op ≠ method (put-token used as GET, etc.)
-    409 { error: "conflict" }                      — prev_version raced (peer commit / delete landed),
-                                                     OR a concurrent PUT replaying this same token is
-                                                     already in flight (single-writer `inFlightSids` guard)
-    410 { error: "gone" }                          — staging row dropped (TTL, abort, racing commit)
-    411 { error: "length-required" }               — missing / non-integer / > 100 MiB Content-Length
-    500 { error: "io-error" }                      — fsync / rename / parent-fsync / stat failure
-    500 { error: "internal" }                      — uncaught exception in the PUT handler
+  Headers: Authorization: Bearer <put-token>
+           Content-Length: <expectedLength>
+           Content-Type:   application/octet-stream
+  Body:    raw ciphertext (matches expectedLength exactly)
+  200 { version, incarnation, contentHash, contentLength }   committed
+  400 { error: "length-mismatch" }    Content-Length ≠ token's expectedLength / size mismatch
+  400 { error: "aborted" }            pipe failure mid-body
+  401 { error: "unauthorized" }       missing / bad / expired token
+  405 { error: "method-not-allowed" } token op ≠ method
+  409 { error: "conflict", currentVersion, currentIncarnation }
+                                      prev_version raced, or same token already in flight
+  410 { error: "gone" }               staging row dropped (TTL / abort / racing commit)
+  411 { error: "length-required" }    missing / non-int / > 100 MiB Content-Length
+  500 { error: "io-error" | "internal" }
 
 GET  /api/objstore/{workspaceTag}/{resourceTag}
-  Headers:    Authorization: Bearer <get-token>
-  Responses:
-    200 (Content-Type: application/octet-stream)   — body = raw ciphertext
-    401 { error: "unauthorized" }                  — missing / bad / expired token
-    404 { error: "not-found" }                     — version mismatch / resource deleted
-    405 { error: "method-not-allowed" }            — token op ≠ method
-    500 { error: "internal" }                      — uncaught exception in the GET handler
-    503 { error: "unavailable" }                   — live row present, file missing / size diverged
+  Headers: Authorization: Bearer <get-token>
+  200 (application/octet-stream)      body = raw ciphertext
+  401 { error: "unauthorized" }
+  404 { error: "not-found" }          version mismatch / deleted
+  405 { error: "method-not-allowed" }
+  500 { error: "internal" }
+  503 { error: "unavailable" }        live row present, file missing / size diverged
 ```
 
-Tokens are HMAC-SHA-256 over a JSON payload, base64url, dot-joined
-to the payload bytes:
+Tokens are HMAC-SHA-256 over a JSON payload, base64url, dot-joined to the
+payload bytes:
 
 ```
 PUT payload: { op: "put", tag, res, sid, len, exp }
@@ -486,206 +335,96 @@ GET payload: { op: "get", tag, res, ver, exp }
 token       = base64url(payload-json) + "." + base64url(hmac)
 ```
 
-The HMAC secret is a 32-byte random value minted at server start.
-Restart invalidates every outstanding token — fine, since TTLs are
-short (default 5 min) and clients re-handshake via WS.
+The HMAC secret is a 32-byte random value minted at start; restart
+invalidates outstanding tokens (TTL is short — 5 min default — and clients
+re-handshake over WS). PUT tokens are single-use (`commitPut` deletes the
+staging row keyed by `sid`, so a replay hits `410 Gone`); GET tokens are
+multi-use within TTL but only ever yield AEAD ciphertext.
 
-PUT tokens are single-use by construction: `commitPut` deletes the
-staging row keyed by `sid`, so a replayed PUT with the same token
-hits a missing staging row and returns `410 Gone`. GET tokens are
-multi-use within their TTL — the bytes are AEAD'd ciphertext the
-relay can't read; a leaked GET token + captured ciphertext gives
-no plaintext.
+</details>
 
-### Lifecycle (client UX contract)
+<details>
+<summary>Lifecycle (client UX contract)</summary>
 
-These rules are enforced by the client; the server is unaware of
-"local copies" and just serves the wire protocol. They're documented
-here so the client implementation has one source of truth.
+Enforced by the client; the server just serves the wire protocol.
+Documented here for a single source of truth.
 
-- **Upload is manual.** Client never auto-uploads on local change.
-  Two-step: signed WS `objstore-put-begin` → receive
-  `objstore-put-token` → HTTP `PUT` to `urlPath` with the bearer.
-  The 200 response body carries `{ version, contentHash }`; peers
-  see the metadata via the `objstore-put` WS broadcast.
-- **Fetch is manual.** Subscribers see metadata in
-  `objstore-put` broadcasts. To download: signed WS `objstore-fetch`
-  → receive `objstore-fetch-token` → HTTP `GET` to `urlPath` with
-  the bearer.
-- **Delete-from-server, when synced.** A client that holds a local
-  copy and wants to remove the resource sends `objstore-delete`,
-  waits for `objstore-deleted-ack` (success) or `objstore-conflict`
-  / `objstore-delete-error` (failure), and only on the success
-  path prunes its local cache. Optimistic local-prune before the
-  ack would lose data on rejection (version race, transport drop).
-  This rule applies only when the client is synced — when offline,
-  the "delete from server" affordance is gated off; pure local-copy
-  housekeeping is independent and not covered by the protocol.
-- **Delete-arrived-from-peer.** A client receiving an
-  `objstore-deleted` broadcast (or noticing a server-side absence
-  when it diffs the `workspace-subscribed` `resources` snapshot on a
-  reconnect) prompts the user when a
-  local copy exists: keep-and-optionally-reupload, or drop-local.
-  The "kept-local" decision is sticky — the dialog must not re-fire
-  on every reconnect once recorded.
-- **Re-upload after kept-local + delete.** Just another PUT.
-  `prevVersion` is `null` (the row is gone server-side); concurrent
-  re-uploads from multiple peers race on `prevVersion = null` and
-  resolve via the usual `objstore-conflict` echo.
+- **Upload is manual.** Signed `objstore-put-begin` → `objstore-put-token`
+  → HTTP `PUT`. The 200 body carries `{ version, contentHash }`; peers see
+  metadata via the `objstore-put` broadcast.
+- **Fetch is manual.** Signed `objstore-fetch` → `objstore-fetch-token` →
+  HTTP `GET`.
+- **Delete-from-server, when synced.** Send `objstore-delete`, wait for
+  `objstore-deleted-ack` (success) or `objstore-conflict` /
+  `objstore-delete-error` (failure), and only on success prune the local
+  cache. Gated off when offline.
+- **Delete-arrived-from-peer.** On an `objstore-deleted` broadcast (or a
+  diff of the `workspace-subscribed` snapshot on reconnect) with a local
+  copy present, prompt: keep-and-optionally-reupload, or drop-local. The
+  "kept-local" decision is sticky — the dialog must not re-fire every
+  reconnect.
+- **Re-upload after kept-local + delete.** Just another PUT with
+  `prevVersion = null`; concurrent re-uploads resolve via `objstore-conflict`.
 
-### Quotas
+</details>
 
-- **Per-workspace resource cap.** `MAX_RESOURCES_PER_WORKSPACE = 100`
-  live rows per `workspace_tag`. Enforced at `objstore-put-begin`
-  for NEW resources only — re-uploads of an existing `resourceTag`
-  (new version of the same row) never trip the cap. Rejection wire:
-  `objstore-put-error { reason: 'workspace-full' }`, sent post-sig
-  so only legit signers see it.
-- **Per-upload byte cap.** `MAX_CONTENT_LENGTH = 100 MiB`. Enforced
-  at both `objstore-put-begin` (rejects oversize `expectedLength`)
-  and at the REST PUT (`Content-Length` gate + on-disk stat after
-  upload). No per-workspace total-bytes cap yet — future work paired
-  with GitHub-auth-per-account quotas.
+<details>
+<summary>Quotas, truncation invariant &amp; storage layout</summary>
 
-### Truncation invariant
+**Quotas**
+- Per-workspace resource cap: `MAX_RESOURCES_PER_WORKSPACE = 100` live
+  rows per tag, enforced at `objstore-put-begin` for NEW resources only
+  (re-uploads of an existing resourceTag never trip it). Rejection:
+  `objstore-put-error { reason: 'workspace-full' }`.
+- Per-upload byte cap: `MAX_CONTENT_LENGTH = 100 MiB`, enforced at
+  `objstore-put-begin` and at the REST PUT (Content-Length + on-disk
+  stat). No per-workspace total-bytes cap yet.
 
-A partial / mid-aborted upload MUST NEVER become a live row. Enforced
-at three layers:
+**Truncation invariant.** A partial / aborted upload MUST NEVER become a
+live row. Three layers: (1) REST handler aborts on `received !== declared`
+→ 400; (2) post-upload `stat().size !== payload.len` → same; (3)
+`commitPut` re-stats under the per-resource lock before the rename.
+Retries get a fresh `stagingId`, so truncated bytes can never be renamed in.
 
-1. REST handler tracks `received` byte count; `received !== declared`
-   → 400 `length-mismatch`, staging row + file aborted.
-2. Post-upload `stat(stagingPath).size !== payload.len` → same abort.
-3. `commitPut` re-stats under the per-resource lock; mismatch → bail
-   BEFORE the rename. (Last line of defense — if layers 1+2 were ever
-   bypassed, this final check still gates the promotion.)
-
-Clients may retry a failed upload under the same `resourceTag`. The
-retry gets a fresh `stagingId` (server-generated, unique per begin),
-so its staging file path is distinct from the truncated original's.
-The truncated bytes can never appear in the live file: only the
-retry's complete, stat-verified bytes get renamed in.
-
-### Storage
-
-Two SQLite tables and a filesystem tree:
+**Storage.** Two SQLite tables + a filesystem tree:
 
 ```
 workspace_object (
-  workspace_tag  TEXT NOT NULL,
-  resource_tag   TEXT NOT NULL,
-  version        INTEGER NOT NULL,    -- monotonic per (tag, resource)
-  content_hash   TEXT NOT NULL,
-  content_length INTEGER NOT NULL,
-  signature      TEXT NOT NULL,
-  put_at         INTEGER NOT NULL,
+  workspace_tag TEXT, resource_tag TEXT,
+  version INTEGER,            -- monotonic per (tag, resource)
+  content_hash TEXT, content_length INTEGER, signature TEXT, put_at INTEGER,
   PRIMARY KEY (workspace_tag, resource_tag)
 ) STRICT
 
 workspace_object_staging (
   workspace_tag, resource_tag, staging_id,
-  prev_version, expected_length,
-  content_hash, signature, begun_at,
+  prev_version, expected_length, content_hash, signature, begun_at,
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
 ) STRICT
 
-${OBJSTORE_DIR}/${workspaceTag}/${contentHash}.bin          -- live (content-addressed)
+${OBJSTORE_DIR}/${workspaceTag}/${contentHash}.bin           -- live (content-addressed)
 ${OBJSTORE_DIR}/${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 ```
 
-Bytes live outside SQLite to keep the WAL out of the multi-MB
-bundle path. Live blobs are content-addressed: the filename is the
-content hash, so a hash names exactly one immutable byte-string and
-the row's `content_hash` literally names its blob — a metadata-vs-
-bytes desync is impossible, and commit is a plain version
-compare-and-set on the row (no lock). Ordering is asymmetric so a
-power-loss at the worst moment leaves at most a stranded,
-unreferenced blob (GC'd by the reaper once past the grace window),
-never a row pointing at missing bytes:
+Bytes live outside SQLite to keep the WAL out of the multi-MB path. Live
+blobs are content-addressed, so the row's `content_hash` literally names
+its file — a metadata-vs-bytes desync is impossible and commit is a plain
+version compare-and-set. Ordering is asymmetric so power-loss leaves at
+most a stranded blob (GC'd by the reaper), never a row pointing at missing
+bytes:
+- PUT: `fsync(staging) → rename → fsync(parent dir) → DB version-CAS`.
+- DELETE: `DB row drop`; the unreferenced blob is GC'd by the reaper (not
+  unlinked inline) so it can't race a commit or an in-flight GET.
 
-- PUT commit: `fsync(staging) → rename → fsync(parent dir) → DB version-CAS`.
-- DELETE: `DB row drop` — the now-unreferenced blob is GC'd by the
-  reaper, not unlinked inline, so the drop can't race a concurrent
-  commit's promote→CAS window or an in-flight GET (the grace window is
-  the guard). Not a dedup concern: a random nonce per encrypt makes each
-  PUT's hash unique, so the hash↔row mapping is effectively 1:1.
+The reaper runs once at startup (before accepting traffic) then every
+`OBJSTORE_REAP_INTERVAL_MS`. Stale staging rows and unreferenced live
+blobs expire after `STAGING_TTL_MS_DEFAULT` (1h) — the grace window that
+keeps a just-promoted blob from being collected mid-commit.
 
-The reaper runs once at startup (synchronous, before the WS
-listener accepts traffic) and then every
-`OBJSTORE_REAP_INTERVAL_MS`. Stale staging rows expire after
-`STAGING_TTL_MS_DEFAULT` (1h, comfortably over a 50 MiB upload on
-a slow line); an unreferenced live blob is GC'd once it's older than
-that same window (the grace that keeps a just-promoted blob from
-being collected mid-commit).
+</details>
 
-### What the server still CAN'T do
-
-- Decrypt or modify resource contents — the bytes are AEAD'd
-  client-side under a key derived from the workspace seed.
-- Forge writes — every PUT/DELETE requires a valid Ed25519
-  signature against the workspaceTag.
-- Promote / re-attribute a resource to a different `resourceTag` —
-  the tag is in the signed canonical, signed `contentHash` ties
-  the bytes to the announcement.
-- Replay a captured `workspace-subscribe` (the inventory snapshot's
-  carrier) / `objstore-fetch` from a different TCP connection — both
-  sigs bind the per-socket `connectionNonce`.
-
-## Transport backpressure
-
-Per-socket caps that protect the relay from a slow / blackholed /
-abusive peer; these are cross-protocol (triage-sync WS, objstore
-WS, and the objstore REST PUT). None of these is a security
-primitive (the per-message signature gate is); they bound resource
-use under hostile load.
-
-- **`MAX_BUFFERED_BYTES = 16 MiB`** per socket. Outbound bytes that
-  the `ws` library hasn't drained to the kernel yet accumulate in
-  `socket.bufferedAmount` — a slow peer on a high-volume workspace
-  can hold many MB of fan-out broadcasts in this buffer with no
-  backpressure on the broadcast loop. Sends past the cap
-  `socket.terminate()` the connection; the client reconnects and
-  catches up via the chain. Worst-case cluster memory:
-  `16 MiB × concurrent_sockets` (no per-process socket cap today;
-  relies on OS file-descriptor limits + the reverse proxy's
-  connection cap).
-- **`MAX_INFLIGHT_PER_SOCKET = 64`** per socket — async handlers
-  in flight. Each inbound frame spawns a tracked IIFE; an
-  authorised peer firing valid frames could otherwise grow the set
-  unbounded (slow SIGTERM drain, memory growth). Saves dropped at
-  the cap surface to the client as `workspace-save-error
-  { reason: 'busy' }` so the client's `pending` slot clears
-  immediately rather than waiting for the heartbeat. Configurable
-  via the `MAX_INFLIGHT_PER_SOCKET` env var (for tests that need
-  to exercise the cap deterministically; production deployments
-  rarely need to change it).
-- **REST PUT idle-body timeout = 30 s** — a slow-loris client
-  trickling bytes within `Content-Length` aborts after 30 s of
-  inactivity rather than holding the staging fd + `inFlightSids`
-  slot until the global staging TTL reaps it.
-
-## Error handling
-
-The socket is shared across every workspace open in the client.
-Per-message errors are scoped to a session; they DO NOT close the
-WS. Only transport-level failures trigger reconnects. Summary:
-
-| Failure mode | Server action | Socket | Client recovery |
-|---|---|---|---|
-| Bad signature on `workspace-save` / `workspace-subscribe` | Silent drop | Stays open | Legit signer retries; persistent bad-sig surfaces client-side as `'encrypt/sign failed: …'` after the IIFE's `maxConsecutiveFailures` (5). |
-| `workspace-save` with shape-invalid field (newline, non-base64 alphabet) | Silent drop | Stays open | Same as bad sig — silent (legit clients never produce these). |
-| `workspace-save` ciphertext &gt; 2 MiB (`MAX_CIPHERTEXT_LEN`) | Emits `workspace-save-error { reason: 'too-large' }` AFTER sig verify | Stays open | Client clears `pending`, sets `session.error`. Recovery via `dismissError(wsId)` or any of the lifecycle handlers (`setServerUrl`, `setEnabled(true)`, `setForcedOff(false)`) — those clear the error AND re-kick key derivation if the session never had usable keys. |
-| `workspace-save` dropped by per-socket inflight cap (see "Transport backpressure") | Emits `workspace-save-error { reason: 'busy' }` BEFORE the handler IIFE runs | Stays open | Client clears `pending` and re-arms `pendingSave` so the next natural trigger retries. Does NOT set `session.error` — recoverable. `'busy'` is in `RECOVERABLE_SAVE_ERROR_REASONS` (see `common/save-error-reason.ts`). |
-| `objstore-put-begin` exceeds the per-workspace `MAX_RESOURCES_PER_WORKSPACE` (100) cap for a NEW resource | Emits `objstore-put-error { reason: 'workspace-full' }` AFTER sig verify | Stays open | Re-uploads of existing resourceTags (new versions) still succeed; the cap is on the live row count only. |
-| `workspace-save` `base` doesn't match server head | Server sends `workspace-state` (catch-up chain) followed by `workspace-save-error { reason: 'stale-base' }` | Stays open | Client's `handleChain` clears `pending` first; the subsequent error frame's `handleSaveError` early-returns on missing pending. Recoverable (catch-up rebases the client). |
-| Total WS frame &gt; 4 MiB (`maxPayload`) | `ws` library closes with code 1009 | **Closed** | Client reconnects; on reconnect the same oversize state will retry, so this should not happen in practice — the 2 MiB ciphertext cap keeps frames well under 4 MiB. |
-| Heartbeat: client `ping` → no `pong` within timeout | n/a | **Closed by client** | Client reconnects (exponential backoff from 1 s). Per-session `pending`/`pendingSave`/`encrypting`/subscribed flags reset; `session.error` is preserved across reconnect. |
-| Graceful server shutdown (SIGTERM) | Sends close code 1001 "going away" to every client | **Closed by server** | Client reconnects per its backoff. |
-
-Server-side errors that prevent the relay from booting at all
-(invalid `PORT` env var, non-STRICT pre-existing `workspace_revision`
-table, etc.) fail loud at startup so the operator can act on them.
-
-## Storage
+<details>
+<summary>Triage-sync storage &amp; lockless commit</summary>
 
 Single table:
 
@@ -705,68 +444,77 @@ workspace_revision (
 ) STRICT
 ```
 
-WAL mode + `synchronous = FULL`: WAL gives concurrent readers and
-crash-safe writes; FULL fsyncs every commit so the
-`workspace-save-ack` the server returns is a real durability
-promise (a power loss between ack and the next WAL checkpoint
-under NORMAL would lose the row even though peers heard "this
-revision committed"). Round-9 M1.
+WAL mode + `synchronous = FULL`: concurrent readers, crash-safe writes,
+and an fsync per commit so the `workspace-save-ack` is a real durability
+promise.
 
-`commitRevision` takes NO write lock on either backend. Concurrent
-saves on one `workspace_tag` are kept fork-safe by the single gated
-INSERT: its head-check and `COALESCE(MAX(seq),0)+1` read ONE
-statement snapshot (synchronous `node:sqlite` on SQLite; Postgres
-READ-COMMITTED single-statement snapshot on Neon), so a racer is
-forced onto either the same `seq` — rejected by `PRIMARY KEY
-(workspace_tag, seq)` — or a head that no longer matches its base —
-gated out of inserting. Either way exactly one save commits and the
-loser gets `stale-base`.
+`commitRevision` takes **no write lock** on either backend. Concurrent
+saves on one tag are kept fork-safe by a single gated INSERT whose
+head-check and `COALESCE(MAX(seq),0)+1` read one statement snapshot, so a
+racer is forced onto either the same `seq` (rejected by the PK) or a
+no-longer-matching head (gated out). The loser gets `stale-base`. A
+UNIQUE-violation recovery branch (`catch` in `server/db.ts`) re-routes a
+PK/UNIQUE collision through `revisionExists` + `headFor`, emerging as
+`inserted` or `stale-base`, never a silent fork.
 
-The UNIQUE-violation recovery branch (see the `catch` block in
-`server/db.ts`) is the backstop for the PK / UNIQUE collision: when
-two connections' INSERTs race on the same `(workspace_tag, seq)` or
-`(workspace_tag, id)`, the loser's unique-violation is caught and
-re-routed through a `revisionExists` + `headFor` refetch — emerging
-as either `inserted` (the id IS the row we computed) or `stale-base`
-(a sibling landed a different id at our seq), never a silent fork.
+Coverage is asymmetric: SQLite lockless-commit fork-safety is fully
+covered by `tests/server-db.test.js`; Neon cross-replica safety rests on
+the READ-COMMITTED + `UNIQUE(tag, seq)` argument but isn't empirically
+tested (PGlite is single-connection) — see the Neon caveats above.
 
-Coverage is asymmetric, and worth stating plainly:
+</details>
 
-- **SQLite** lockless-commit fork-safety is fully covered — the
-  no-fork concurrency tests in `tests/server-db.test.js` (two / N
-  concurrent same-base, mixed, chainFrom-during-commits) pass
-  UNCHANGED with no lock present, and `node:sqlite`'s synchronous
-  single-statement execution guarantees the one-snapshot property.
-- **Neon cross-replica** fork-safety rests on the Postgres
-  READ-COMMITTED single-statement-snapshot + `UNIQUE(tag, seq)`
-  argument above. The PGlite test backend is single-connection, so
-  it confirms commit-outcome + recovery parity but CANNOT
-  empirically reproduce two replicas racing on one database. Add a
-  real-Postgres concurrency test (two pooled connections racing
-  same-base commits) to confirm this before relying on multi-replica
-  writes in production.
+## Transport backpressure
 
-## What the server CAN'T do
+Per-socket caps that bound resource use under hostile load (not security
+primitives — the per-message signature is). Cross-protocol.
 
-- Decrypt, modify, or examine triage values — `nonce` and
-  `ciphertext` are opaque.
-- Forge writes — saves require a valid Ed25519 signature.
-- Re-attribute a revision to a different `base` or flip its
-  `keyframe` flag — both are bound into the signed canonical, and
-  the AAD on the ciphertext binds the changeset to its
-  `(workspaceTag, base)` context.
-- Promote a revision to a different `id` — `id` is the SHA-256
-  of the same canonical bytes the signature covered.
-- Replay a captured subscribe from a different connection — the
-  per-socket `connectionNonce` is bound into the canonical, and
-  every fresh accept gets a fresh nonce.
+- **`MAX_BUFFERED_BYTES = 16 MiB`** per socket of undrained outbound
+  bytes; past the cap the socket is terminated and the client reconnects +
+  catches up via the chain.
+- **`MAX_INFLIGHT_PER_SOCKET = 64`** in-flight async handlers; saves
+  dropped at the cap surface as `workspace-save-error { reason: 'busy' }`.
+  Configurable via env var (mostly for tests).
+- **REST PUT idle-body timeout = 30 s** — aborts a slow-loris trickle
+  rather than holding the staging fd until the staging TTL reaps it.
 
-## What the server CAN do
+<details>
+<summary>Per-message error handling matrix</summary>
 
-- Drop / reorder / delay messages (denial of service).
-- Observe traffic patterns (size, timing, edit cadence per tag).
-- Synthesise garbage revisions; clients reject them on signature
-  verification (per-revision skip + advance, not a full resync).
+The socket is shared across every open workspace. Per-message errors are
+session-scoped and DO NOT close the WS; only transport failures reconnect.
+
+| Failure mode | Server action | Socket | Client recovery |
+|---|---|---|---|
+| Bad signature on save / subscribe | Silent drop | Open | Legit signer retries; persistent bad-sig surfaces as `'encrypt/sign failed: …'` after `maxConsecutiveFailures` (5). |
+| Shape-invalid save field (newline, non-base64) | Silent drop | Open | Same as bad sig — legit clients never produce these. |
+| Save ciphertext > 2 MiB (`MAX_CIPHERTEXT_LEN`) | `workspace-save-error { too-large }` after sig verify | Open | Client clears `pending`, sets `session.error`; cleared via `dismissError` / lifecycle handlers. |
+| Save dropped by inflight cap | `workspace-save-error { busy }` before the handler IIFE | Open | Client clears `pending`, re-arms `pendingSave`; no `session.error` (recoverable). |
+| Save `base` ≠ server head | `workspace-state` catch-up then `workspace-save-error { stale-base }` | Open | `handleChain` clears `pending` first; recoverable (catch-up rebases). |
+| `objstore-put-begin` over the 100-resource cap (new resource) | `objstore-put-error { workspace-full }` after sig verify | Open | Re-uploads of existing resourceTags still succeed. |
+| Total WS frame > 4 MiB (`maxPayload`) | `ws` closes with 1009 | **Closed** | Reconnects; shouldn't happen given the 2 MiB ciphertext cap. |
+| Heartbeat: `ping` → no `pong` in timeout | n/a | **Closed by client** | Reconnects (backoff from 1 s); session flags reset, `session.error` preserved. |
+| Graceful shutdown (SIGTERM) | Close 1001 "going away" | **Closed by server** | Reconnects per backoff. |
+
+Boot-blocking errors (invalid `PORT`, a non-STRICT pre-existing
+`workspace_revision` table, etc.) fail loud at startup.
+
+</details>
+
+## What the server can &amp; can't do
+
+The server stores and routes opaque ciphertext. It **can't** decrypt or
+modify triage values / blob contents, forge writes (every save / PUT /
+DELETE needs a valid Ed25519 signature), re-attribute a revision to a
+different `base`/`keyframe`/`id` or a blob to a different `resourceTag`
+(all bound into the signed canonical + content hash), or replay a captured
+subscribe / fetch from another connection (both bind the per-socket
+`connectionNonce`).
+
+It **can**, as any relay: drop / reorder / delay messages (DoS), observe
+traffic patterns (size, timing, edit cadence per tag), and synthesise
+garbage revisions — which clients reject on signature verification (skip +
+advance, not a full resync).
 
 ## License
 
