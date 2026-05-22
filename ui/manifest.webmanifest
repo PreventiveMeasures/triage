@@ -1,6 +1,6 @@
 {
   "id": "/",
-  "name": "DeepView Results Viewer",
+  "name": "DeepView",
   "short_name": "DeepView",
   "description": "Local-first viewer for deepview analyzer results — drop a JSON report and explore findings without uploading anywhere.",
   "start_url": "/",
