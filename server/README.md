@@ -453,13 +453,16 @@ the same content-addressed path in both:
 workspace_object (
   workspace_tag, resource_tag,
   version,                    -- monotonic per (tag, resource)
+  incarnation,                -- minted per lineage; lets the commit CAS
+                              --   tell a recreated row from a stale prev
   content_hash, content_length, signature, put_at,
   PRIMARY KEY (workspace_tag, resource_tag)
 )
 
 workspace_object_staging (
   workspace_tag, resource_tag, staging_id,
-  prev_version, expected_length, content_hash, signature, begun_at,
+  prev_version, prev_incarnation,   -- expected-live precondition
+  expected_length, content_hash, signature, begun_at,
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
 )
 
