@@ -41,7 +41,7 @@ are not yet cross-instance**, though — see the caveat in the Neon section.
 | `DATABASE_URL`         | —                     | set → Neon mode (Postgres connection string)   |
 | `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
 | `OBJSTORE_TOKEN_SECRET`| —                     | Neon mode, **required** — shared HMAC secret    |
-| `TRUST_PROXY`          | —                     | Neon mode behind a proxy — set `1` (see below) |
+| `TRUST_PROXY`          | on for loopback `HOST` | any non-loopback bind behind a proxy — set `1` (see below) |
 
 ## SQLite mode (default)
 
@@ -51,10 +51,10 @@ deployments. `pnpm server` gives you this out of the box.
 
 This mode is **single-process**: `OBJSTORE_DIR` is a local directory, so a
 `PUT` on one process and a `GET` on another wouldn't see the same bytes.
-Run exactly one server instance. For a multi-replica deployment, use Neon
+Run exactly one server instance. For a multi-instance deployment, use Neon
 mode below.
 
-## Neon mode (multi-replica)
+## Neon mode (multi-instance)
 
 Neon Postgres for metadata + Vercel Blob Private Storage for the bytes —
 both serverless and HTTP-backed, so no shared filesystem is needed and the
@@ -75,18 +75,22 @@ When `DATABASE_URL` is set, `DB_PATH` / `OBJSTORE_DIR` are ignored and the
 server **fails fast at boot** if any required companion is missing:
 
 - **`BLOB_READ_WRITE_TOKEN`** — the Vercel Blob R/W token. Local-FS bytes
-  can't back a multi-replica deployment (one replica's writes wouldn't be
+  can't back a multi-instance deployment (one instance's writes wouldn't be
   visible to another), so this is mandatory. All blobs are written with
   `access: 'private'`; the URL alone never fetches them.
 - **`OBJSTORE_TOKEN_SECRET`** — a shared HMAC secret (base64, 32 bytes) so
-  the short-TTL REST bearer tokens minted on one replica validate on any
-  other. Without a shared secret each replica would mint per-process
-  secrets and cross-replica byte transfers would 401.
-- **`TRUST_PROXY=1`** — required when `HOST` is non-loopback (i.e. behind a
-  load balancer / TLS terminator) so the same-origin gate honours
-  `X-Forwarded-Host` / `-Proto` instead of the internal container
-  hostname; otherwise every browser request 403s. Set `TRUST_PROXY=0` only
-  if you genuinely terminate TLS in the container with no proxy.
+  the short-TTL REST bearer tokens minted on one instance validate on any
+  other. Without a shared secret each instance would mint per-process
+  secrets and cross-instance byte transfers would 401.
+- **`TRUST_PROXY=1`** — make the same-origin gate honour `X-Forwarded-Host`
+  / `-Proto` instead of the internal container hostname; otherwise every
+  browser request behind a load balancer / TLS terminator 403s. This isn't
+  Neon-specific — the gate (`server/origin.ts`) defaults on for a loopback
+  `HOST` and off otherwise in *any* mode, so a SQLite deploy on a public
+  bind behind a proxy needs it too. Neon mode just additionally **fails
+  fast at boot** when it's missing on a non-loopback `HOST` (a SQLite
+  deploy would instead silently 403). Set `TRUST_PROXY=0` only if you
+  genuinely terminate TLS in the container with no proxy.
 
 The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
 `autoInstallPeers: false`, so a SQLite deploy never installs them.
@@ -114,7 +118,7 @@ The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
   + the `UNIQUE(workspace_tag, seq)` PK. This is sound by construction but
   not yet covered by an automated cross-replica test (the PGlite test
   backend is single-connection). Confirm with a real-Postgres concurrency
-  test before relying on multi-replica writes in production.
+  test before relying on multi-instance writes in production.
 - **Blob crash-safety.** The Vercel backend mirrors the FS ordering via
   copy + delete instead of fsync + rename: `put(staging) → copy(→ live) →
   DB version-CAS → del(staging)`. A crash at the worst moment leaves at
@@ -470,10 +474,12 @@ ${workspaceTag}/${contentHash}.bin           -- live (content-addressed)
 ${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 ```
 
-Same columns and constraints in both modes, with backend-native types:
-SQLite uses `STRICT` tables (`server/objstore/store.ts`); Neon uses
-Postgres types (`BIGINT`, etc.) plus explicit `CHECK` constraints to match
-what `STRICT` enforces (`server/objstore/store-neon.ts`).
+Same columns, primary keys, and value-domain `CHECK` constraints
+(`version >= 0`, `content_length >= 0`, …) in both modes. The difference
+is type enforcement: SQLite adds `STRICT` for column types
+(`server/objstore/store.ts`), while Neon relies on native Postgres types
+(`BIGINT`, etc.) and carries the same `CHECK`s
+(`server/objstore/store-neon.ts`).
 
 The byte path is `${OBJSTORE_DIR}/…` on the FS backend and a private
 Vercel Blob pathname on the Neon backend; consumers (`store`, `rest`,
