@@ -13,21 +13,43 @@ import { beforeEach, describe, it } from 'node:test'
 
 await import('./_polyfills.js')
 
-const { state, REPO_URLS_KEY } = await import('../client/state.ts')
+const { state, REPO_URLS_KEY, loadRepoUrlFor, saveRepoUrlFor } = await import('../client/state.ts')
 const {
   applyTriageImport,
   buildTriageExportPayload,
   parseTriageExportGzip,
 } = await import('../client/triage-export.js')
 const { patchEntry, setReportIgnored, isReportIgnored } = await import('../client/triage-entry.ts')
+const { hasEnvelopeMagic } = await import('../client/passkey-crypto.ts')
+const vault = await import('../client/passkey-vault.js')
+const secureStorage = await import('../client/secure-storage.js')
+const { setItem: setSecureItem } = secureStorage
 
 function clearState() {
   state.triage.clear()
+  state.currentFile = null
+  state.repoUrl = ''
+  state.repoEditing = false
   globalThis.localStorage.clear()
+  // The secure-storage cache + vault session key are module-level and
+  // outlive a single test. Reset both so each test starts with an
+  // empty (plaintext, vault-disabled) store rather than inheriting a
+  // sibling test's cached URLs or injected session key.
+  secureStorage.__test__.reset()
+  vault.__test__.reset()
 }
 
 const FINDING_A = '00000000-0000-4000-8000-00000000000a'
 const FINDING_B = '00000000-0000-4000-8000-00000000000b'
+
+// Simulate an unlocked vault: inject a deterministic content key so
+// secure-storage's persist seals envelopes and hydrate decrypts them
+// (mirrors passkey-vault.test.js's `injectKey`).
+async function injectSessionKey() {
+  const { deriveContentKey, importContentKey } = await import('../client/passkey-crypto.ts')
+  const raw = await deriveContentKey(new Uint8Array(32).fill(42))
+  vault.__test__.setSessionKeyForTesting(await importContentKey(raw))
+}
 
 describe('buildTriageExportPayload', () => {
   beforeEach(clearState)
@@ -51,8 +73,31 @@ describe('buildTriageExportPayload', () => {
     assert.deepEqual(payload.triage[FINDING_A].ignoredReports.toSorted(), ['r1.json', 'r2.json'].toSorted())
   })
 
-  it('reads repoUrls from localStorage', () => {
-    globalThis.localStorage.setItem(REPO_URLS_KEY, JSON.stringify({ 'r.json': 'https://example.test/repo' }))
+  it('reads repoUrls through secure-storage', async () => {
+    await setSecureItem(REPO_URLS_KEY, JSON.stringify({ 'r.json': 'https://example.test/repo' }))
+    const payload = buildTriageExportPayload()
+    assert.deepEqual(payload.repoUrls, { 'r.json': 'https://example.test/repo' })
+  })
+})
+
+describe('buildTriageExportPayload: encrypted vault (secure-storage routing)', () => {
+  beforeEach(clearState)
+
+  it('exports the decrypted URLs when the slot holds an envelope', async () => {
+    // Reproduce the data-loss bug: with the vault unlocked, the
+    // repo-URL slot in localStorage holds a base64 encrypted envelope,
+    // not JSON. The pre-fix raw `JSON.parse(localStorage…)` threw and
+    // swallowed the error, exporting an empty map. The fix reads the
+    // decrypted value from the secure-storage cache instead.
+    await injectSessionKey()
+    await setSecureItem(REPO_URLS_KEY, JSON.stringify({ 'r.json': 'https://example.test/repo' }))
+
+    // Confirm the at-rest form really is an opaque envelope (so a raw
+    // read would have failed) — this is what makes the test faithful.
+    const raw = globalThis.localStorage.getItem(REPO_URLS_KEY)
+    assert.ok(!raw.startsWith('{'), 'slot is not plaintext JSON')
+    assert.ok(hasEnvelopeMagic(Uint8Array.fromBase64(raw)), 'slot holds an encrypted envelope')
+
     const payload = buildTriageExportPayload()
     assert.deepEqual(payload.repoUrls, { 'r.json': 'https://example.test/repo' })
   })
@@ -141,7 +186,105 @@ describe('applyTriageImport: shape validation (audit round-14 TE-1)', () => {
     // FINDING_A pre-existing, FINDING_B newly imported.
     assert.equal(state.triage.get(FINDING_A)?.color, 'red', 'pre-existing mark survives in prefer-imported merge')
     assert.equal(state.triage.get(FINDING_B)?.color, 'green')
-    assert.equal(JSON.parse(globalThis.localStorage.getItem(REPO_URLS_KEY))['r.json'], 'https://example.test')
+    assert.equal(loadRepoUrlFor('r.json'), 'https://example.test')
+  })
+})
+
+describe('applyTriageImport: repo-URL merge through secure-storage', () => {
+  beforeEach(clearState)
+
+  it('prefer-current preserves pre-existing URLs (plaintext)', async () => {
+    saveRepoUrlFor('r.json', 'https://current.test/r')
+    await applyTriageImport({
+      triage: {},
+      repoUrls: { 'r.json': 'https://imported.test/r', 's.json': 'https://imported.test/s' },
+    }, 'prefer-current')
+    // Existing key wins; new key is filled in.
+    assert.equal(loadRepoUrlFor('r.json'), 'https://current.test/r')
+    assert.equal(loadRepoUrlFor('s.json'), 'https://imported.test/s')
+  })
+
+  it('prefer-imported overwrites on collision but keeps current-only keys', async () => {
+    saveRepoUrlFor('r.json', 'https://current.test/r')
+    saveRepoUrlFor('keep.json', 'https://current.test/keep')
+    await applyTriageImport({
+      triage: {},
+      repoUrls: { 'r.json': 'https://imported.test/r' },
+    }, 'prefer-imported')
+    assert.equal(loadRepoUrlFor('r.json'), 'https://imported.test/r')
+    assert.equal(loadRepoUrlFor('keep.json'), 'https://current.test/keep')
+  })
+
+  it('replace drops every current URL', async () => {
+    saveRepoUrlFor('old.json', 'https://current.test/old')
+    await applyTriageImport({
+      triage: {},
+      repoUrls: { 'new.json': 'https://imported.test/new' },
+    }, 'replace')
+    assert.equal(loadRepoUrlFor('old.json'), '')
+    assert.equal(loadRepoUrlFor('new.json'), 'https://imported.test/new')
+  })
+
+  it('prefer-current preserves URLs and stays encrypted under an unlocked vault', async () => {
+    // The headline bug: pre-fix, the raw read of the encrypted slot
+    // parsed to `{}`, so EVERY mode (including prefer-current)
+    // degenerated into an overwrite that wiped the user's URLs — and
+    // the raw write put plaintext over the encrypted slot. Verify the
+    // existing URL survives, the new one merges, and the slot is still
+    // a sealed envelope afterward.
+    await injectSessionKey()
+    await setSecureItem(REPO_URLS_KEY, JSON.stringify({ 'r.json': 'https://current.test/r' }))
+
+    await applyTriageImport({
+      triage: {},
+      repoUrls: { 'r.json': 'https://imported.test/r', 's.json': 'https://imported.test/s' },
+    }, 'prefer-current')
+
+    // prefer-current: existing wins, new key filled.
+    assert.equal(loadRepoUrlFor('r.json'), 'https://current.test/r')
+    assert.equal(loadRepoUrlFor('s.json'), 'https://imported.test/s')
+
+    // Still encrypted at rest — no plaintext leak over the slot.
+    const raw = globalThis.localStorage.getItem(REPO_URLS_KEY)
+    assert.ok(hasEnvelopeMagic(Uint8Array.fromBase64(raw)), 'slot remains an encrypted envelope')
+  })
+
+  it('reports a repo-URL write failure without throwing or losing the triage import', async () => {
+    // Enabled-but-locked vault: metadata present (isEncryptionEnabled
+    // → true) with no session key, so secure-storage refuses the
+    // plaintext write and importRepoUrls rejects. This mirrors a
+    // sibling tab locking the vault mid-import. The triage half has
+    // already merged + persisted, so applyTriageImport must NOT throw
+    // — it surfaces the repo-URL failure in the result instead.
+    globalThis.localStorage.setItem('deepview.passkey.v1', JSON.stringify({
+      enabled: true, credentialId: 'c', prfSalt: 's', userId: 'u',
+    }))
+
+    const result = await applyTriageImport({
+      triage: { [FINDING_A]: { color: 'green' } },
+      repoUrls: { 'r.json': 'https://imported.test/r' },
+    }, 'prefer-imported')
+
+    // Triage applied despite the repo-URL failure.
+    assert.equal(state.triage.get(FINDING_A)?.color, 'green')
+    assert.equal(result.triageEntries, 1)
+    // Repo URLs not applied; the error is reported, not thrown.
+    assert.equal(result.repoUrls, 0)
+    assert.ok(result.repoUrlError instanceof Error)
+  })
+
+  it('refreshes state.repoUrl for the active report after import', async () => {
+    // Point (b) of the audit: the in-tab cache (and the header chip)
+    // must reflect an imported URL for the open report without a
+    // reload. mutateSecureItem updates the cache; importRepoUrls then
+    // re-derives state.repoUrl from it.
+    state.currentFile = 'r.json'
+    state.repoUrl = ''
+    await applyTriageImport({
+      triage: {},
+      repoUrls: { 'r.json': 'https://imported.test/r' },
+    }, 'prefer-current')
+    assert.equal(state.repoUrl, 'https://imported.test/r')
   })
 })
 

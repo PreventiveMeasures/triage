@@ -1,6 +1,6 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
 import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
-import { REPO_URLS_KEY, state } from './state.ts'
+import { importRepoUrls, readRepoUrlMap, state } from './state.ts'
 import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
 
 // Pure-logic side of the global triage backup. The DOM-touching
@@ -18,14 +18,17 @@ import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage
 const EXPORT_VERSION = 1
 
 // Build the export payload object. Reads from in-memory `state.*`
-// for triage (mirroring `saveTriage`'s session-id filter) and
-// from localStorage for repo URLs (the latter is the source of
+// for triage (mirroring `saveTriage`'s session-id filter) and the
+// repo-URL map from secure-storage (the latter is the source of
 // truth — `state.repoUrl` only holds the active report's URL).
+// `readRepoUrlMap` reads through the secure-storage cache, NOT raw
+// localStorage: under an enabled vault the slot holds an encrypted
+// envelope that `JSON.parse` can't read, so a raw read would export
+// an empty map and silently lose every URL.
 export function buildTriageExportPayload() {
   const entries = buildPersistedTriageEntries()
 
-  let repoUrls = {}
-  try { repoUrls = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch {}
+  const repoUrls = readRepoUrlMap()
 
   return {
     version: EXPORT_VERSION,
@@ -76,7 +79,8 @@ export async function parseTriageExportGzip(file) {
   return payload
 }
 
-// Apply an imported payload to the in-memory state + localStorage.
+// Apply an imported payload to the in-memory state + persisted
+// stores (triage via `saveTriage`, repo URLs via secure-storage).
 // `mode` is one of:
 //   * 'replace'         — drop every persisted-id entry first,
 //                         then install the imported set verbatim.
@@ -152,18 +156,36 @@ export async function applyTriageImport(payload, mode) {
 
   await saveTriage()
 
-  // Repo URLs — read current map fresh, merge per mode, write
-  // back. The keys are OPFS report names; values are URLs.
-  let current = {}
-  try { current = JSON.parse(localStorage.getItem(REPO_URLS_KEY) || '{}') } catch {}
-  let merged
-  if (mode === 'replace') merged = { ...payload.repoUrls }
-  else if (mode === 'prefer-imported') merged = { ...current, ...payload.repoUrls }
-  else merged = { ...payload.repoUrls, ...current }
-  try { localStorage.setItem(REPO_URLS_KEY, JSON.stringify(merged)) } catch {}
+  // Repo URLs — merge per mode through secure-storage's per-key Web
+  // Lock (the keys are OPFS report names; values are URLs). The
+  // entire read-modify-write happens inside the lock with a fresh
+  // in-lock hydrate of the decrypted disk view, so this can't clobber
+  // a concurrent cross-tab `saveRepoUrlFor` and never writes plaintext
+  // over an encrypted slot. A raw localStorage RMW here would also
+  // fail to decrypt under an enabled vault (current would parse to
+  // `{}`, collapsing every mode into an overwrite).
+  //
+  // Best-effort, like `saveTriage` above (which swallows + warns on a
+  // failed write) and like the original repo-URL `try/catch`: the
+  // triage entries are already merged into `state.triage` and
+  // persisted by the time we get here, so a SECONDARY repo-URL write
+  // failure — e.g. a sibling tab locking the vault mid-import, making
+  // secure-storage refuse the plaintext write — must not surface as a
+  // blanket "Import failed" that contradicts the triage import that
+  // actually landed. Report it in the result instead of throwing.
+  let repoUrlsApplied = 0
+  let repoUrlError = null
+  try {
+    await importRepoUrls(payload.repoUrls, mode)
+    repoUrlsApplied = Object.keys(payload.repoUrls).length
+  } catch (err) {
+    console.warn('applyTriageImport: repo-URL import failed:', err)
+    repoUrlError = err
+  }
 
   return {
     triageEntries: Object.keys(imported).length,
-    repoUrls: Object.keys(payload.repoUrls).length,
+    repoUrls: repoUrlsApplied,
+    repoUrlError,
   }
 }

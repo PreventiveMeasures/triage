@@ -126,7 +126,7 @@ function parseRepoUrlMap(raw: string | null): Record<string, string> {
     return {}
   } catch { return {} }
 }
-function readRepoUrlMap(): Record<string, string> {
+export function readRepoUrlMap(): Record<string, string> {
   return parseRepoUrlMap(getSecureItem(REPO_URLS_KEY))
 }
 export function loadRepoUrlFor(name: string | null | undefined): string {
@@ -165,6 +165,42 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
     else delete diskMap[name]
     return JSON.stringify(diskMap)
   }).catch((err: unknown) => console.warn('saveRepoUrlFor cross-tab merge:', err))
+}
+
+// Bulk merge an imported repo-URL map (triage backup restore) into
+// the stored map. Routed through the same secure-storage contract as
+// `saveRepoUrlFor`, NOT raw localStorage: under an enabled vault the
+// slot holds an encrypted envelope, so a raw `getItem` + `JSON.parse`
+// throws and silently drops every URL; a raw `setItem` writes
+// plaintext over the encrypted slot and leaves the in-tab cache
+// stale. `mutateSecureItem` acquires the per-key Web Lock, hydrates
+// the freshest (decrypted) disk view inside the lock, applies the
+// per-mode merge, and re-seals — giving the same cross-tab
+// last-writer-wins-at-the-entry-level guarantee, so a concurrent
+// `saveRepoUrlFor` from another tab isn't clobbered. Merge modes
+// mirror the triage merge in `applyTriageImport`:
+//   * 'replace'         — install the imported map verbatim.
+//   * 'prefer-imported' — imported value wins on key collision.
+//   * 'prefer-current'  — current value wins (only fills gaps).
+export async function importRepoUrls(
+  imported: Record<string, string>,
+  mode: 'replace' | 'prefer-imported' | 'prefer-current',
+): Promise<void> {
+  await mutateSecureItem(REPO_URLS_KEY, (currentFromDisk) => {
+    const current = parseRepoUrlMap(currentFromDisk)
+    const merged =
+      mode === 'replace' ? { ...imported }
+      : mode === 'prefer-imported' ? { ...current, ...imported }
+      : { ...imported, ...current }
+    return JSON.stringify(merged)
+  })
+  // `mutateSecureItem`'s in-lock `setItem` refreshes the cache that
+  // `loadRepoUrlFor` reads, but `state.repoUrl` (the active report's
+  // header chip) is only re-derived on file switch or storage event.
+  // Refresh it here so the chip reflects an imported URL for the
+  // currently-open report without a reload. Bails when the user is
+  // mid-edit (see `propagateRepoUrlChangesFromStorage`).
+  propagateRepoUrlChangesFromStorage()
 }
 
 // Centralised mutable view state. Every module that reads or writes
