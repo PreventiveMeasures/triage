@@ -17,6 +17,7 @@ import { buildBundleDetails } from './bundle-load.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { render } from './render.js'
+import { report } from './dom.js'
 
 // integrity → { sources: Map<file, content> | null, loading: bool, error: string | null }
 const sourcesCache = new Map()
@@ -74,6 +75,16 @@ async function loadSources(integrity) {
   // robustly resolves both cases.
   state.focusCodeTick++
   queueMicrotask(render)
+  // Scroll the active code line into view after the render above
+  // commits it to the DOM. setFocusGid attempts this scroll
+  // immediately after its own render(), but on a cache miss the
+  // code panel isn't painted yet and the element doesn't exist.
+  // Queuing a second microtask here (FIFO after the render above)
+  // retries the scroll once the content has actually landed.
+  queueMicrotask(() => {
+    const codeLine = report.querySelector('.focus-code-line-active')
+    if (codeLine) codeLine.scrollIntoView({ block: 'center', behavior: 'instant' })
+  })
 }
 
 // Resolve a finding to its bundle source. Returns:
