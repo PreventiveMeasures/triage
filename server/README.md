@@ -18,35 +18,96 @@ pnpm server          # ws://127.0.0.1:8765/api/sync
 
 The SQLite file is created on first run; nothing else is needed.
 
-| Env var        | Default                | Notes                                  |
-| -------------- | ---------------------- | -------------------------------------- |
-| `PORT`         | `8765`                 |                                        |
-| `HOST`         | `127.0.0.1`            |                                        |
-| `DB_PATH`      | `server/data/data.db`  | SQLite file (ignored when using Neon)  |
-| `OBJSTORE_DIR` | next to `DB_PATH`      | on-disk blob bytes                     |
-| `DATABASE_URL` | —                      | set to use Neon Postgres (see below)   |
-| `DEBUG`        | —                      | `DEBUG=1` logs every message           |
+The server runs in one of **two deployment modes**, each pairing a
+metadata store with a byte (blob) store. The mode is chosen entirely by
+whether `DATABASE_URL` is set — there's no mix-and-match:
 
-## Using Neon Postgres
+| Mode                 | Metadata          | Blob bytes                  | Topology         |
+| -------------------- | ----------------- | --------------------------- | ---------------- |
+| **SQLite** (default) | SQLite at `DB_PATH` | local FS at `OBJSTORE_DIR` | single-process   |
+| **Neon**             | Neon Postgres     | Vercel Blob Private Storage | multi-instance\* |
 
-The default SQLite backend is best for single-process / single-machine
-deployments. To use Neon instead, install the optional driver and point
-`DATABASE_URL` at your connection string:
+\* Storage (DB + bytes) is shared and consistent across instances, so you
+can run several behind a load balancer for HA. **Real-time WS broadcasts
+are not yet cross-instance**, though — see the caveat in the Neon section.
+
+| Env var                | Default               | Notes                                          |
+| ---------------------- | --------------------- | ---------------------------------------------- |
+| `PORT`                 | `8765`                |                                                |
+| `HOST`                 | `127.0.0.1`           |                                                |
+| `DEBUG`                | —                     | `DEBUG=1` logs every message                   |
+| `DB_PATH`              | `server/data/data.db` | SQLite mode only                               |
+| `OBJSTORE_DIR`         | next to `DB_PATH`     | SQLite mode only — on-disk blob bytes          |
+| `DATABASE_URL`         | —                     | set → Neon mode (Postgres connection string)   |
+| `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
+| `OBJSTORE_TOKEN_SECRET`| —                     | Neon mode, **required** — shared HMAC secret    |
+| `TRUST_PROXY`          | on for loopback `HOST` | any non-loopback bind behind a proxy — set `1` (see below) |
+
+## SQLite mode (default)
+
+SQLite for metadata + local filesystem for blob bytes. No extra
+dependencies, no config — best for single-process / single-machine
+deployments. `pnpm server` gives you this out of the box.
+
+This mode is **single-process**: `OBJSTORE_DIR` is a local directory, so a
+`PUT` on one process and a `GET` on another wouldn't see the same bytes.
+Run exactly one server instance. For a multi-instance deployment, use Neon
+mode below.
+
+## Neon mode (multi-instance)
+
+Neon Postgres for metadata + Vercel Blob Private Storage for the bytes —
+both serverless and HTTP-backed, so no shared filesystem is needed and the
+relay can run as multiple instances behind a load balancer. Install the two
+optional drivers and set the required env vars:
 
 ```sh
-pnpm add @neondatabase/serverless
-DATABASE_URL=postgres://user:pass@<project>.neon.tech/db pnpm server
+pnpm add @neondatabase/serverless @vercel/blob
+
+DATABASE_URL=postgres://user:pass@<project>.neon.tech/db \
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_xxx \
+OBJSTORE_TOKEN_SECRET=$(node -e 'console.log(require("crypto").randomBytes(32).toString("base64"))') \
+TRUST_PROXY=1 HOST=0.0.0.0 \
+  pnpm server
 ```
 
-`DB_PATH` is ignored when `DATABASE_URL` is set. Both data planes (triage
-revisions and object metadata) live in the same Neon database; blob
-**bytes** still live on local disk under `OBJSTORE_DIR` in either backend.
+When `DATABASE_URL` is set, `DB_PATH` / `OBJSTORE_DIR` are ignored and the
+server **fails fast at boot** if any required companion is missing:
 
-The driver is an `optional` peer dep and `pnpm-workspace.yaml` sets
-`autoInstallPeers: false`, so a SQLite-only deploy never installs it.
+- **`BLOB_READ_WRITE_TOKEN`** — the Vercel Blob R/W token. Local-FS bytes
+  can't back a multi-instance deployment (one instance's writes wouldn't be
+  visible to another), so this is mandatory. All blobs are written with
+  `access: 'private'`; the URL alone never fetches them.
+- **`OBJSTORE_TOKEN_SECRET`** — a shared HMAC secret (base64, 32 bytes) so
+  the short-TTL REST bearer tokens minted on one instance validate on any
+  other. Without a shared secret each instance would mint per-process
+  secrets and cross-instance byte transfers would 401.
+- **`TRUST_PROXY=1`** — make the same-origin gate honour `X-Forwarded-Host`
+  / `-Proto` instead of the internal container hostname; otherwise every
+  browser request behind a load balancer / TLS terminator 403s. This isn't
+  Neon-specific — the gate (`server/origin.ts`) defaults on for a loopback
+  `HOST` and off otherwise in *any* mode, so a SQLite deploy on a public
+  bind behind a proxy needs it too. Neon mode just additionally **fails
+  fast at boot** when it's missing on a non-loopback `HOST` (a SQLite
+  deploy would instead silently 403). Set `TRUST_PROXY=0` only if you
+  genuinely terminate TLS in the container with no proxy.
+
+The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
+`autoInstallPeers: false`, so a SQLite deploy never installs them.
+
+> ⚠️ **Real-time broadcasts are per-instance today.** The WS fan-out is an
+> in-memory subscriber map (`server/hub.ts`), so it does not span
+> instances. Two clients on *different* instances each see their own
+> writes land durably (shared DB + blob storage stay consistent), but a
+> live `workspace-state` / `objstore` broadcast only reaches peers on the
+> *same* instance — a client on instance A won't get a real-time push for
+> a commit that landed via instance B until it resubscribes (reconnect /
+> refresh re-pulls the chain from the shared DB). For lossless real-time
+> sync across instances today, pin all peers of a workspace to one
+> instance with session affinity; cross-instance pub/sub is future work.
 
 <details>
-<summary>Neon caveats (latency &amp; multi-replica)</summary>
+<summary>Neon latency &amp; multi-instance fork-safety</summary>
 
 - **Latency.** Each save issues 3 pipelined HTTP round-trips to Neon
   (dup / head check + gated INSERT). At ~30–80 ms RTT that's ~90–240 ms
@@ -57,11 +118,12 @@ The driver is an `optional` peer dep and `pnpm-workspace.yaml` sets
   + the `UNIQUE(workspace_tag, seq)` PK. This is sound by construction but
   not yet covered by an automated cross-replica test (the PGlite test
   backend is single-connection). Confirm with a real-Postgres concurrency
-  test before relying on multi-replica writes in production.
-- **Blob byte plane is single-process today.** `OBJSTORE_DIR` is local to
-  one process, so a `PUT` on replica A + `GET` on replica B would 503.
-  The DB/metadata layer is multi-process safe; full multi-replica blob
-  support waits on a shared object store (S3 or similar).
+  test before relying on multi-instance writes in production.
+- **Blob crash-safety.** The Vercel backend mirrors the FS ordering via
+  copy + delete instead of fsync + rename: `put(staging) → copy(→ live) →
+  DB version-CAS → del(staging)`. A crash at the worst moment leaves at
+  most a stranded blob (reaper-GC'd past the grace window), never a row
+  pointing at missing bytes.
 
 </details>
 
@@ -234,7 +296,8 @@ Two planes on the same listener:
   matching REST byte transfer. `objstore-delete` stays fully on WS.
 - **REST plane** — byte transfer. `PUT`/`GET` under
   `/api/objstore/{workspaceTag}/{resourceTag}` with the WS-issued token in
-  `Authorization: Bearer …`, streamed straight to / from disk.
+  `Authorization: Bearer …`, streamed straight to / from the blob backend
+  (local FS or Vercel Blob).
 
 The split is the win: a 50 MiB upload doesn't head-of-line block
 heartbeats or other workspaces' triage chains, and avoids the ~33% base64
@@ -386,33 +449,50 @@ live row. Three layers: (1) REST handler aborts on `received !== declared`
 `commitPut` re-stats under the per-resource lock before the rename.
 Retries get a fresh `stagingId`, so truncated bytes can never be renamed in.
 
-**Storage.** Two SQLite tables + a filesystem tree:
+**Storage.** Metadata lives in two tables (SQLite or Neon Postgres);
+bytes live in a separate blob backend (local FS or Vercel Blob), keyed by
+the same content-addressed path in both:
 
 ```
 workspace_object (
-  workspace_tag TEXT, resource_tag TEXT,
-  version INTEGER,            -- monotonic per (tag, resource)
-  content_hash TEXT, content_length INTEGER, signature TEXT, put_at INTEGER,
+  workspace_tag, resource_tag,
+  version,                    -- monotonic per (tag, resource)
+  incarnation,                -- minted per lineage; lets the commit CAS
+                              --   tell a recreated row from a stale prev
+  content_hash, content_length, signature, put_at,
   PRIMARY KEY (workspace_tag, resource_tag)
-) STRICT
+)
 
 workspace_object_staging (
   workspace_tag, resource_tag, staging_id,
-  prev_version, expected_length, content_hash, signature, begun_at,
+  prev_version, prev_incarnation,   -- expected-live precondition
+  expected_length, content_hash, signature, begun_at,
   PRIMARY KEY (workspace_tag, resource_tag, staging_id)
-) STRICT
+)
 
-${OBJSTORE_DIR}/${workspaceTag}/${contentHash}.bin           -- live (content-addressed)
-${OBJSTORE_DIR}/${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
+${workspaceTag}/${contentHash}.bin           -- live (content-addressed)
+${workspaceTag}/.staging/${stagingId}.bin    -- in-flight
 ```
 
-Bytes live outside SQLite to keep the WAL out of the multi-MB path. Live
-blobs are content-addressed, so the row's `content_hash` literally names
-its file — a metadata-vs-bytes desync is impossible and commit is a plain
-version compare-and-set. Ordering is asymmetric so power-loss leaves at
-most a stranded blob (GC'd by the reaper), never a row pointing at missing
-bytes:
-- PUT: `fsync(staging) → rename → fsync(parent dir) → DB version-CAS`.
+Same columns, primary keys, and value-domain `CHECK` constraints
+(`version >= 0`, `content_length >= 0`, …) in both modes. The difference
+is type enforcement: SQLite adds `STRICT` for column types
+(`server/objstore/store.ts`), while Neon relies on native Postgres types
+(`BIGINT`, etc.) and carries the same `CHECK`s
+(`server/objstore/store-neon.ts`).
+
+The byte path is `${OBJSTORE_DIR}/…` on the FS backend and a private
+Vercel Blob pathname on the Neon backend; consumers (`store`, `rest`,
+`reaper`) go through a backend-agnostic `BlobBackend` interface
+(`server/objstore/blob.ts`). Bytes live outside the metadata store to keep
+multi-MB blobs off the DB path. Live blobs are content-addressed, so the
+row's `content_hash` literally names its blob — a metadata-vs-bytes desync
+is impossible and commit is a plain version compare-and-set. Ordering is
+asymmetric so a crash leaves at most a stranded blob (GC'd by the reaper),
+never a row pointing at missing bytes:
+- PUT: durable staging bytes → promote to live → DB version-CAS. FS does
+  this with `fsync → rename → fsync(parent)`; Vercel with atomic
+  `copy → del(staging)`.
 - DELETE: `DB row drop`; the unreferenced blob is GC'd by the reaper (not
   unlinked inline) so it can't race a commit or an in-flight GET.
 
@@ -444,9 +524,11 @@ workspace_revision (
 ) STRICT
 ```
 
-WAL mode + `synchronous = FULL`: concurrent readers, crash-safe writes,
-and an fsync per commit so the `workspace-save-ack` is a real durability
-promise.
+(SQLite DDL shown; Neon uses the same columns/constraints with Postgres
+types — `BIGINT` etc. — and no `STRICT`.) On SQLite, WAL mode +
+`synchronous = FULL` give concurrent readers, crash-safe writes, and an
+fsync per commit so the `workspace-save-ack` is a real durability promise;
+on Neon, durability is Postgres-native.
 
 `commitRevision` takes **no write lock** on either backend. Concurrent
 saves on one tag are kept fork-safe by a single gated INSERT whose
