@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/PreventiveMeasures/triage.git"
+    "url": "git+https://github.com/PreventiveMeasures/triage.git"
   },
   "bugs": {
     "url": "https://github.com/PreventiveMeasures/triage/issues"
@@ -29,7 +29,7 @@
     "#client/sync-host.js": "./client/sync-host.js"
   },
   "bin": {
-    "triage-server": "./server/index.ts"
+    "triage-server": "server/index.ts"
   },
   "files": [
     "server/auth.ts",
