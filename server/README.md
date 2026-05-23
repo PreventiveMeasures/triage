@@ -122,13 +122,21 @@ Payload-size budget. Postgres caps `NOTIFY` payloads at ~8 KB
 size-unbounded paths and the receiver re-fetches the row from the
 shared DB:
 
-- `rev` (revision committed) — `{tag, id}`; receiver SELECTs the row
-  from `workspace_revision` and broadcasts `workspace-state`.
-- `objput` (objstore PUT committed) — `{tag, resourceTag}`; receiver
-  SELECTs from `workspace_object` and broadcasts `objstore-put`.
-- `objdel` (objstore DELETE committed) — `{tag, resourceTag, version}`
-  inline; the row is gone from `workspace_object` post-commit, so the
-  bus payload IS the wire data and no fetch happens.
+Bus envelopes are JSON; the field names below are the LITERAL keys in
+the `pg_notify` payload (kept short to stay well clear of the ~8 KB
+budget). Each envelope also carries a per-process `sender` for the
+own-publish self-filter.
+
+- `rev` (revision committed) — `{kind:"rev", tag, id}`; receiver
+  SELECTs the row from `workspace_revision` by `(tag, id)` and
+  broadcasts `workspace-state`.
+- `objput` (objstore PUT committed) — `{kind:"objput", tag, res}`
+  (`res` = resourceTag); receiver SELECTs from `workspace_object` by
+  `(tag, res)` and broadcasts `objstore-put`.
+- `objdel` (objstore DELETE committed) — `{kind:"objdel", tag, res, ver}`
+  (`res` = resourceTag, `ver` = version); inline — the row is gone
+  from `workspace_object` post-commit, so the bus payload IS the wire
+  data and no fetch happens.
 
 The bus is best-effort fan-out, not a durability layer. A dropped
 publish only means peers on *other* instances miss the live push for

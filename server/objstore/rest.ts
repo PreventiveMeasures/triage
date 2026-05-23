@@ -297,8 +297,11 @@ async function handleRestPutBody(
     // (tag, resourceTag); peers on other instances re-fetch the live
     // row from workspace_object to compose their local broadcast. The
     // committed row is durable by here (commitPut's version-CAS already
-    // landed), so the receiver's SELECT is guaranteed to find it (or a
-    // STRICTLY newer version, which is also a valid broadcast). SQLite
+    // landed), so the receiver typically sees either THIS version or a
+    // STRICTLY newer one (also a valid broadcast — clients are
+    // idempotent on (resourceTag, version)). The receiver is allowed
+    // to find no live row at all if a subsequent delete races the
+    // notification; bus-receiver.ts drops that case silently. SQLite
     // mode publishes to a no-op.
     deps.publishObjPut(route.tag, route.resourceTag)
     if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)

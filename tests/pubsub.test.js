@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import { after, describe, it } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 
-import { createNeonPubSub, createNoopPubSub } from '../server/pubsub.ts'
+import { CHANNEL, createNeonPubSub, createNoopPubSub } from '../server/pubsub.ts'
 
 // One PGlite instance per file — same rationale as `_neon-pglite.js`
 // (WASM init cost). Each test holds its own Client adapter, so two
@@ -34,19 +34,33 @@ after(async () => {
 // surface the pubsub touches. Returns a *factory* matching
 // `NeonPubSubDeps.newClient` — one PGlite-backed Client per call so
 // every connect+listen builds its own subscription.
-function makeFakeClientFactory({ failConnects = 0, onConnect = null } = {}) {
+//
+// Options:
+//   `failConnects`     — first N connects throw before any succeed
+//                        (exercises the reconnect backoff).
+//   `hangConnect`      — connect Promise never resolves until `end()`
+//                        is called (simulates a Neon WS blackhole; the
+//                        connect Promise rejects via the abort path).
+function makeFakeClientFactory({ failConnects = 0, onConnect = null, hangConnect = false } = {}) {
   let connectsLeft = failConnects
   return () => {
     const pg = sharedInstance()
     let notifListener = null
     let errListener = null
     let unsub = null
+    // The hung-connect path: stash the in-flight connect's reject so
+    // a subsequent `end()` can abort it. Mirrors what a real Client
+    // does internally when the underlying WS is torn down mid-handshake.
+    let abortConnect = null
     return {
-      // eslint-disable-next-line require-await
       connect: async () => {
         if (connectsLeft > 0) {
           connectsLeft -= 1
           throw new Error(`fake connect failure #${connectsLeft + 1}`)
+        }
+        if (hangConnect) {
+          await new Promise((_resolve, reject) => { abortConnect = reject })
+          return  // unreachable in practice
         }
         if (onConnect) await onConnect()
       },
@@ -67,6 +81,10 @@ function makeFakeClientFactory({ failConnects = 0, onConnect = null } = {}) {
         return await pg.query(text, params)
       },
       end: async () => {
+        // Abort a hung connect (if any) — real Client's `end()` rejects
+        // in-flight queries; mirror that here so `stop()`'s cancel path
+        // is exercised by the test.
+        if (abortConnect) { abortConnect(new Error('client end()')); abortConnect = null }
         if (unsub) { try { await unsub() } catch {} }
         notifListener = null
         errListener = null
@@ -138,7 +156,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
       const pg = sharedInstance()
       await pg.query(
         `SELECT pg_notify($1, $2)`,
-        ['triage_bus', JSON.stringify({ sender: 'foreign', kind: 'rev', tag: 'tag-A', id: 'id-1' })],
+        [CHANNEL, JSON.stringify({ sender: 'foreign', kind: 'rev', tag: 'tag-A', id: 'id-1' })],
       )
       await waitFor(() => seen.length === 1)
       assert.deepEqual(seen, [{ kind: 'rev', tag: 'tag-A', id: 'id-1' }])
@@ -173,7 +191,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
     await ps.start((msg) => { seen.push(msg); return Promise.resolve() })
     try {
       const pg = sharedInstance()
-      const send = (envelope) => pg.query(`SELECT pg_notify($1, $2)`, ['triage_bus', JSON.stringify(envelope)])
+      const send = (envelope) => pg.query(`SELECT pg_notify($1, $2)`, [CHANNEL, JSON.stringify(envelope)])
       // Valid: one of each kind, foreign sender so they pass the filter.
       await send({ sender: 'fA', kind: 'rev', tag: 't', id: 'r1' })
       await send({ sender: 'fA', kind: 'objput', tag: 't', res: 'p1' })
@@ -188,7 +206,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
       await send({ sender: 'fA', kind: 'objdel', tag: 't', res: 'r', ver: 1.5 }) // non-int
       await send({ sender: 'fA', kind: 'unknown', tag: 't' })         // unknown kind
       // Also send a non-JSON payload (parseBusMessage guards via try/catch).
-      await pg.query(`SELECT pg_notify($1, $2)`, ['triage_bus', 'not-json'])
+      await pg.query(`SELECT pg_notify($1, $2)`, [CHANNEL, 'not-json'])
       await waitFor(() => seen.length === 3)
       // Give the loop a few more ticks so any spurious dispatch would surface.
       await new Promise((resolve) => { setTimeout(resolve, 30) })
@@ -214,7 +232,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
       const pg = sharedInstance()
       await pg.query(
         `SELECT pg_notify($1, $2)`,
-        ['triage_bus', JSON.stringify({ sender: 'remote', kind: 'rev', tag: 't', id: 'after-retry' })],
+        [CHANNEL, JSON.stringify({ sender: 'remote', kind: 'rev', tag: 't', id: 'after-retry' })],
       )
       await waitFor(() => seen.length === 1)
       assert.deepEqual(seen[0], { kind: 'rev', tag: 't', id: 'after-retry' })
@@ -239,7 +257,8 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
   it("stop is safe to call even when start hasn't resolved", async () => {
     // SIGTERM during the initial connect attempt: stop must not block
     // on the in-flight connect, and must close cleanly so the process
-    // exits.
+    // exits. The fake's `connect()` resolves promptly here; the
+    // hung-connect case is pinned by the next test.
     const ps = createNeonPubSub({
       newClient: makeFakeClientFactory(),
       debug: false,
@@ -248,6 +267,62 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
     const startPromise = ps.start(() => Promise.resolve()).catch(() => {})
     await ps.stop()
     await startPromise
+  })
+
+  it('stop unblocks a hung `c.connect()` by ending the in-flight client', async () => {
+    // Neon WS blackhole during handshake: `c.connect()` never
+    // resolves. Without `tryConnect`'s eager `state.client = c`
+    // assignment + `stop()`'s `c.end()` call, `stop()` would await
+    // `state.connectAttempt` forever and SIGTERM would hang. Stage
+    // a hung connect, then assert `stop()` returns promptly (the
+    // fake `end()` rejects the connect Promise, the catch path
+    // unwinds, connectAttempt resolves).
+    const ps = createNeonPubSub({
+      newClient: makeFakeClientFactory({ hangConnect: true }),
+      debug: false,
+    })
+    const startPromise = ps.start(() => Promise.resolve()).catch(() => {})
+    // Let the connect Promise be created + state.client assigned.
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    const t0 = Date.now()
+    await ps.stop()
+    const elapsed = Date.now() - t0
+    assert.ok(elapsed < 500, `stop should not hang on a stuck connect; took ${elapsed}ms`)
+    await startPromise
+  })
+
+  it('stop drains in-flight handler promises before returning', async () => {
+    // `onBusMessage` hits the DB (`handle.revisionById.get` /
+    // `getLive`); the lifecycle teardown runs `pubsub.stop()` and THEN
+    // `handle.close()` (see closeDb in server/index.ts). Without the
+    // pendingHandlers drain, a handler mid-DB-query would race the
+    // close and throw. Stage a slow handler and assert `stop()` waits
+    // for it.
+    const ps = createNeonPubSub({
+      newClient: makeFakeClientFactory(),
+      debug: false,
+    })
+    let handlerCompleted = false
+    await ps.start(() => new Promise((resolve) => {
+      setTimeout(() => { handlerCompleted = true; resolve() }, 100)
+    }))
+    try {
+      // Foreign-sender publish so the dispatch fires (own-sender
+      // would be self-filtered).
+      const pg = sharedInstance()
+      await pg.query(
+        `SELECT pg_notify($1, $2)`,
+        [CHANNEL, JSON.stringify({ sender: 'remote', kind: 'rev', tag: 't', id: 'slow' })],
+      )
+      // Wait for the dispatch to fire and the handler to start. PGlite
+      // notification dispatch is async — give it a tick. Once the
+      // pendingHandlers set has an entry, the handler is in flight.
+      await new Promise((resolve) => { setTimeout(resolve, 30) })
+      assert.equal(handlerCompleted, false, 'handler must still be in flight')
+    } finally {
+      await ps.stop()
+      assert.equal(handlerCompleted, true, 'stop() must await in-flight handlers')
+    }
   })
 
   it('stop kicks the reconnect-backoff sleep out promptly (no `capMs` stall on SIGTERM)', async () => {

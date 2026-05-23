@@ -37,8 +37,9 @@ import { errStack } from './util.ts'
 // on the `kind` field. Single LISTEN keeps the Client wiring trivial and
 // avoids a `kind`-per-channel decision tree. Channel name doubles as the
 // SQL identifier we LISTEN on, so it MUST stay a valid Postgres
-// identifier (no quoting / special chars).
-const CHANNEL = 'triage_bus'
+// identifier (no quoting / special chars). Exported so tests stay in
+// sync with the production channel name (one constant, one source).
+export const CHANNEL = 'triage_bus'
 
 // Sender id is a per-process random value stamped into every outbound
 // payload so the LISTENing connection on the SAME process can skip its
@@ -132,6 +133,18 @@ type NeonState = {
   baseMs: number
   capMs: number
   senderId: string
+  // The current Client. Assigned EARLY in `tryConnect` (before
+  // `c.connect()` is awaited) so two invariants hold even mid-handshake:
+  //   (a) `c.once('error', ...)`'s `state.client === c` gate passes for
+  //       errors that fire during the initial handshake (otherwise an
+  //       error event before LISTEN succeeds is silently ignored, with
+  //       no reconnect scheduled).
+  //   (b) `stop()` can read `state.client` and call `c.end()` to abort
+  //       an in-flight `await c.connect()` / `await c.query('LISTEN …')`
+  //       — without this, a network blackhole during handshake makes
+  //       SIGTERM hang indefinitely on the connect await.
+  // Cleared by `tryConnect`'s catch on failure, and by `stop()` /
+  // `reconnect()` when they replace the client.
   client: NeonClient | null
   handler: BusHandler | null
   stopped: boolean
@@ -146,6 +159,12 @@ type NeonState = {
   // loop out IMMEDIATELY rather than waiting up to `capMs` (30 s
   // default) for the timer to fire. Cleared when the sleep returns.
   cancelSleep: (() => void) | null
+  // In-flight bus-message handler promises. `dispatchNotification`
+  // fires handlers fire-and-forget, but `stop()` awaits this set before
+  // returning so the lifecycle's `handle.close()` (which runs after
+  // `pubsub.stop()` — see closeDb in server/index.ts) can't race a
+  // handler mid-`handle.revisionById.get` / `getLive`.
+  pendingHandlers: Set<Promise<void>>
 }
 
 // Notification dispatch — closes over `state.senderId` and
@@ -166,27 +185,44 @@ function dispatchNotification(state: NeonState, n: { channel: string; payload?: 
   // notification dispatch (which would queue further notifications
   // behind it). Errors are logged but don't kill the loop — a missed
   // broadcast surfaces to clients on reconnect via the chain re-pull.
-  void fn(msg).catch((err) => { console.warn('pubsub: handler error:', errStack(err)) })
+  //
+  // The promise is also tracked in `state.pendingHandlers` so `stop()`
+  // can drain in-flight handlers BEFORE the lifecycle teardown closes
+  // the DB handle. Without the tracking, `onBusMessage`'s DB queries
+  // (`handle.revisionById.get` / `getLive`) could race
+  // `handle.close()` and throw inside a half-settled handler.
+  const promise: Promise<void> = fn(msg).catch((err) => {
+    console.warn('pubsub: handler error:', errStack(err))
+  }).finally(() => { state.pendingHandlers.delete(promise) })
+  state.pendingHandlers.add(promise)
 }
 
-// Single connect attempt. Resolves with the connected+listening Client
-// or rejects on transport / LISTEN failure (the half-connected client
-// is `end()`-ed before the rejection escapes).
-async function tryConnect(state: NeonState): Promise<NeonClient> {
+// Single connect attempt. Resolves once LISTEN is registered, or
+// rejects on transport / LISTEN failure. Assigns `state.client = c`
+// EAGERLY (before `c.connect()` is awaited) for the two invariants
+// documented on `NeonState.client`: the error handler's equality gate
+// must work mid-handshake, and `stop()` must be able to abort a hung
+// connect by reading `state.client?.end()`.
+async function tryConnect(state: NeonState): Promise<void> {
   const c = state.newClient()
+  state.client = c
   try {
     await c.connect()
     c.on('notification', (n) => dispatchNotification(state, n))
     // Transport-level error → reconnect trigger. Defer to a microtask
     // so the current notification (if any) finishes before we replace
-    // the client.
+    // the client. The `state.client === c` gate skips stale error
+    // events from PREVIOUS clients we've already torn down.
     c.once?.('error', (err: Error) => {
       if (state.debug) console.warn('pubsub: client error:', errStack(err))
       queueMicrotask(() => { if (state.client === c) void reconnect(state) })
     })
     await c.query(`LISTEN ${CHANNEL}`)
-    return c
   } catch (err) {
+    // Clear `state.client` only if it still points at OUR client (a
+    // racing `stop()` may have already null'd it and ended the
+    // half-connected socket — don't clobber that).
+    if (state.client === c) state.client = null
     try { await c.end() } catch {}
     throw err
   }
@@ -194,11 +230,14 @@ async function tryConnect(state: NeonState): Promise<NeonClient> {
 
 // Outer (re)connect loop. Exits silently on `state.stopped`; otherwise
 // retries with exponential backoff after a connect / LISTEN failure.
+// `tryConnect` assigns `state.client` itself (see the eager-assign
+// rationale on `NeonState.client`), so this loop only counts attempts
+// and runs the backoff sleep.
 async function connectAndListen(state: NeonState): Promise<void> {
   // oxlint-disable-next-line no-unmodified-loop-condition
   while (!state.stopped) {
     try {
-      state.client = await tryConnect(state)
+      await tryConnect(state)
       state.attempt = 0
       if (state.debug) console.log(`pubsub: LISTEN ${CHANNEL} (sender ${state.senderId})`)
       return
@@ -265,6 +304,7 @@ export function createNeonPubSub(deps: NeonPubSubDeps): PubSub {
     senderId: newSenderId(),
     client: null, handler: null, stopped: false,
     connectAttempt: null, attempt: 0, cancelSleep: null,
+    pendingHandlers: new Set(),
   }
   return {
     start: async (onMessage) => {
@@ -275,19 +315,35 @@ export function createNeonPubSub(deps: NeonPubSubDeps): PubSub {
     publish: (msg) => publish(state, msg),
     stop: async () => {
       state.stopped = true
+      // Null `handler` BEFORE the awaits so any notification that
+      // sneaks in (between `c.end()` and the socket actually closing)
+      // sees no handler and drops in `dispatchNotification`.
       state.handler = null
       // Kick the loop out of its backoff sleep IMMEDIATELY rather than
       // letting `stop()` block for up to `capMs` (30 s default) on the
       // timer. The loop's `if (state.stopped) return` runs on the next
       // turn and exits cleanly.
       state.cancelSleep?.()
-      // Wait for any in-flight (re)connect to settle so we don't end()
-      // a client mid-handshake. The loop exits at its `if (stopped)`
-      // check; we then close whatever client landed.
-      if (state.connectAttempt) { try { await state.connectAttempt } catch {} }
+      // End the current client to abort an in-flight handshake (cancels
+      // a hung `await c.connect()` / `await c.query('LISTEN …')` so
+      // `stop()` doesn't hang on a Neon WS blackhole) OR close an
+      // established LISTEN session. With `tryConnect`'s eager assign,
+      // `state.client` covers both cases via the same field.
       const c = state.client
       state.client = null
       if (c) { try { await c.end() } catch {} }
+      // Now wait for the (now-aborted-if-applicable) connect attempt to
+      // unwind through its catch and resolve.
+      if (state.connectAttempt) { try { await state.connectAttempt } catch {} }
+      // Drain in-flight bus-message handlers BEFORE returning. The
+      // lifecycle teardown runs `pubsub.stop()` and THEN
+      // `handle.close()` (see closeDb in server/index.ts); a handler
+      // still in `handle.revisionById.get` / `getLive` would otherwise
+      // throw against a closed DB. `allSettled` so one handler's
+      // rejection doesn't abort the drain.
+      if (state.pendingHandlers.size > 0) {
+        await Promise.allSettled([...state.pendingHandlers])
+      }
     },
   }
 }
