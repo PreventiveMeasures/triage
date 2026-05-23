@@ -46,7 +46,8 @@ import type { AllStmt, GetStmt, RunStmt } from './db-stmt.ts'
 import { type CommitResult, type Handle, type RevisionInsert, type RevisionRow, isUniqueViolation } from './db.ts'
 import {
   CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_PG, HEAD_FOR_SQL,
-  LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, num, numOrNull,
+  LAST_KEYFRAME_SEQ_SQL, REVISION_BY_ID_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL,
+  mapRevisionRow, num, numOrNull,
 } from './db-revision-sql.ts'
 
 // `num` / `numOrNull` (safe-integer BIGINT coercion) live in the shared
@@ -218,6 +219,14 @@ function buildRevisionExists(sql: NeonSql): GetStmt<[string, string], unknown> {
   return getRowStmt(sql, REVISION_EXISTS_SQL)
 }
 
+function buildRevisionById(sql: NeonSql): GetStmt<[string, string], RevisionRow> {
+  return { get: async (tag, id) => {
+    const rows = await sql(REVISION_BY_ID_SQL, [tag, id]) as Array<Record<string, unknown>>
+    const r = rows[0]
+    return r ? mapRevisionRow(r) : undefined
+  } }
+}
+
 // Atomic commit of a single revision (Neon backend). Wraps the
 // dup-check, head-check and gated INSERT in one pipelined
 // transaction — NO commit-time advisory lock. Cross-replica
@@ -359,6 +368,7 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
     chainAfterSeq: buildChainSeq(sql, CHAIN_AFTER_SQL),
     chainFromSeq: buildChainSeq(sql, CHAIN_FROM_SQL),
     revisionExists: buildRevisionExists(sql),
+    revisionById: buildRevisionById(sql),
     tryCommit: tryCommitNeon(sql),
     // The serverless HTTP client is stateless — no socket to close.
     // Async no-op so shutdown's `handle.close()` works uniformly

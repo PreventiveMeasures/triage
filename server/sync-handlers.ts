@@ -29,6 +29,13 @@ export type SyncHandlersDeps = {
   handle: Handle
   send: (socket: WebSocket, msg: object) => void
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
+  // Cross-instance pub/sub for live broadcasts. Fired alongside the
+  // local `broadcast` after a successful commit so peers on OTHER
+  // server instances see the new revision in real time. Carries only
+  // `(tag, revisionId)` — the receiver re-fetches the row from
+  // workspace_revision because the ciphertext can exceed the bus's
+  // payload budget. Optional: a SQLite deployment passes a no-op.
+  publishRevision: (tag: string, revisionId: string) => void
   subscribe: (socket: WebSocket, tag: string) => void
   getNonce: (socket: WebSocket) => string | undefined
   requiresAuth: (socket: WebSocket) => boolean
@@ -53,7 +60,7 @@ export type SyncHandlers = {
 }
 
 export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
-  const { handle, send, broadcast, subscribe, getNonce, requiresAuth, sendUnauthorized, workspaceExists, objstoreResources, debug } = deps
+  const { handle, send, broadcast, publishRevision, subscribe, getNonce, requiresAuth, sendUnauthorized, workspaceExists, objstoreResources, debug } = deps
 
   // Typed wrapper for the three `workspace-save-error` emit sites
   // (too-large at handleSave, stale-base after the catch-up, busy at
@@ -242,6 +249,15 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
         signature: msg.signature,
       }],
     }, socket)
+    // Cross-instance fan-out. The bus payload carries only the revision
+    // id — peers on OTHER instances re-fetch the row from
+    // workspace_revision to compose their local `workspace-state`. Sized
+    // for the bus's 8 KB payload budget, which can't carry a 2 MiB
+    // ciphertext. SQLite mode passes a no-op; Neon mode publishes via
+    // pg_notify. Best-effort: a dropped publish only means peers on
+    // other instances miss the live push, but they still catch up via
+    // the shared DB on their next subscribe / reconnect.
+    publishRevision(tag, id)
   }
 
   async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<void> {

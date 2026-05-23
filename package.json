@@ -57,6 +57,7 @@
     "server/objstore/tokens.ts",
     "server/origin.ts",
     "server/peer.ts",
+    "server/pubsub.ts",
     "server/sign.ts",
     "server/static.ts",
     "server/sync-handlers.ts",

@@ -45,6 +45,12 @@ export type ObjstoreDeps = {
   secret: TokenSecret
   send: (socket: WebSocket, msg: object) => void
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
+  // Cross-instance pub/sub for objstore-deleted. Fired alongside the
+  // local `broadcast` after a successful delete so peers on OTHER
+  // server instances see the version drop in real time. Carries the
+  // full (tag, resourceTag, version) tuple inline — the workspace_object
+  // row is gone post-delete, so the bus payload IS the wire data.
+  publishObjDeleted: (tag: string, resourceTag: string, version: number) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
   // Auth gate for the FIRST put-begin against a never-before-seen
@@ -188,6 +194,12 @@ async function handleDelete(deps: ObjstoreDeps, socket: WebSocket, msg: Objstore
   // `onDeleted` lets `session.onDeleted` fire for the session's
   // own deletes — pinned by `tests/objstore-client-races.test.js`.
   deps.broadcast(tag, { type: 'objstore-deleted', workspaceTag: tag, resourceTag, version: result.deletedVersion }, null)
+  // Cross-instance fan-out (Neon mode). The workspace_object row is
+  // gone post-delete so the bus payload carries (tag, resourceTag,
+  // version) inline; the receiver builds its `objstore-deleted`
+  // broadcast directly from the bus envelope. SQLite mode publishes
+  // to a no-op.
+  deps.publishObjDeleted(tag, resourceTag, result.deletedVersion)
   if (deps.debug) console.log(`objstore delete → ${debugTag(tag)}/${resourceTag.slice(0, 8)}…`)
 }
 

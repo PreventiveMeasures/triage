@@ -61,6 +61,13 @@ export type ObjstoreRestDeps = {
   handle: Handle
   secret: TokenSecret
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
+  // Cross-instance pub/sub for objstore-put. Fired alongside the local
+  // `broadcast` after a successful commitPut so peers on OTHER server
+  // instances see the new version in real time. Carries only
+  // `(tag, resourceTag)` — receivers re-fetch the live row from
+  // workspace_object for the full metadata (version, hash, length,
+  // signature). SQLite mode passes a no-op.
+  publishObjPut: (tag: string, resourceTag: string) => void
   debug: boolean
 }
 
@@ -286,6 +293,14 @@ async function handleRestPutBody(
       workspaceTag: route.tag,
       ...objectMetaWire(row),
     }, null)
+    // Cross-instance fan-out (Neon mode). The bus payload carries only
+    // (tag, resourceTag); peers on other instances re-fetch the live
+    // row from workspace_object to compose their local broadcast. The
+    // committed row is durable by here (commitPut's version-CAS already
+    // landed), so the receiver's SELECT is guaranteed to find it (or a
+    // STRICTLY newer version, which is also a valid broadcast). SQLite
+    // mode publishes to a no-op.
+    deps.publishObjPut(route.tag, route.resourceTag)
     if (deps.debug) console.log(`objstore put → ${route.tag.slice(0, 12)}…/${route.resourceTag.slice(0, 8)}… v${row.version}`)
   } finally {
     // Release the slot on every exit (success, commit failure, pipeline

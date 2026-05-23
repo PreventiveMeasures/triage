@@ -25,11 +25,13 @@ whether `DATABASE_URL` is set — there's no mix-and-match:
 | Mode                 | Metadata          | Blob bytes                  | Topology         |
 | -------------------- | ----------------- | --------------------------- | ---------------- |
 | **SQLite** (default) | SQLite at `DB_PATH` | local FS at `OBJSTORE_DIR` | single-process   |
-| **Neon**             | Neon Postgres     | Vercel Blob Private Storage | multi-instance\* |
+| **Neon**             | Neon Postgres     | Vercel Blob Private Storage | multi-instance   |
 
-\* Storage (DB + bytes) is shared and consistent across instances, so you
-can run several behind a load balancer for HA. **Real-time WS broadcasts
-are not yet cross-instance**, though — see the caveat in the Neon section.
+Neon mode shares its DB + bytes consistently across instances, AND
+cross-instance real-time broadcasts ride a dedicated Postgres
+LISTEN/NOTIFY bus — a commit landing on instance A reaches subscribers
+on instance B with the same latency the hub gives same-instance peers.
+See the "Cross-instance broadcasts" detail in the Neon section.
 
 | Env var                | Default               | Notes                                          |
 | ---------------------- | --------------------- | ---------------------------------------------- |
@@ -95,16 +97,45 @@ server **fails fast at boot** if any required companion is missing:
 The drivers are `optional` peer deps and `pnpm-workspace.yaml` sets
 `autoInstallPeers: false`, so a SQLite deploy never installs them.
 
-> ⚠️ **Real-time broadcasts are per-instance today.** The WS fan-out is an
-> in-memory subscriber map (`server/hub.ts`), so it does not span
-> instances. Two clients on *different* instances each see their own
-> writes land durably (shared DB + blob storage stay consistent), but a
-> live `workspace-state` / `objstore` broadcast only reaches peers on the
-> *same* instance — a client on instance A won't get a real-time push for
-> a commit that landed via instance B until it resubscribes (reconnect /
-> refresh re-pulls the chain from the shared DB). For lossless real-time
-> sync across instances today, pin all peers of a workspace to one
-> instance with session affinity; cross-instance pub/sub is future work.
+### Cross-instance broadcasts (Postgres LISTEN/NOTIFY)
+
+The WS fan-out is still an in-memory subscriber map (`server/hub.ts`),
+but Neon mode wires a Postgres LISTEN/NOTIFY bus
+(`server/pubsub.ts`) alongside it so live broadcasts reach peers on
+*other* instances too. Each commit fans out twice: locally over the
+in-memory subscriber map, then onto the bus; the receiving instance
+re-fans-out into its own subscriber map. A client on instance A sees
+a real-time `workspace-state` push for a commit that landed via
+instance B — no reconnect, no chain re-pull on the hot path.
+
+The bus uses one dedicated long-lived `Client` (WebSocket-based) per
+instance from `@neondatabase/serverless`. The HTTP `neon()` callable
+the queries flow over is stateless and can't `LISTEN`; the Client
+form is session-bound. Per-process random sender ids let an instance
+skip its own notifications (Postgres delivers `NOTIFY` back to
+publishers that `LISTEN` on the same channel).
+
+Payload-size budget. Postgres caps `NOTIFY` payloads at ~8 KB
+(`NAMEDATALEN`-derived, not raisable on a managed endpoint), but the
+`workspace-state` envelope carries a ciphertext up to
+`MAX_CIPHERTEXT_LEN` (2 MiB). The bus therefore ships *hints* for the
+size-unbounded paths and the receiver re-fetches the row from the
+shared DB:
+
+- `rev` (revision committed) — `{tag, id}`; receiver SELECTs the row
+  from `workspace_revision` and broadcasts `workspace-state`.
+- `objput` (objstore PUT committed) — `{tag, resourceTag}`; receiver
+  SELECTs from `workspace_object` and broadcasts `objstore-put`.
+- `objdel` (objstore DELETE committed) — `{tag, resourceTag, version}`
+  inline; the row is gone from `workspace_object` post-commit, so the
+  bus payload IS the wire data and no fetch happens.
+
+The bus is best-effort fan-out, not a durability layer. A dropped
+publish only means peers on *other* instances miss the live push for
+that one event — they still catch up via the shared DB (chain re-pull)
+on their next subscribe / reconnect. Transient transport failures
+reconnect with exponential backoff; publishes during the down window
+drop on the floor.
 
 <details>
 <summary>Neon latency &amp; multi-instance fork-safety</summary>
