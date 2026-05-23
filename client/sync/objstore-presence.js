@@ -882,18 +882,42 @@ export function remoteBundleName(workspaceId, integrity) {
 // discovery picks up the existing in-flight promise.
 async function ensureRemoteNames(entry) {
   if (!entry.session || entry.disposed) return
+  // Live workspace membership — drives the "skip only if attached"
+  // check below. Hot path on every workspace open, so pull the
+  // arrays once per pass.
+  const liveWs = listWorkspaces().find((w) => w.id === entry.workspaceId)
+  const liveReports = new Set(liveWs?.reports ?? [])
+  const liveBundles = new Set(liveWs?.bundles ?? [])
   const pending = []
   for (const tag of entry.remoteTags) {
-    if (entry.remoteNameByTag.has(tag)) continue
-    // Bundles: skip only when we ALSO know the user-friendly name.
-    // For attached bundles with no local OPFS metadata (synthetic
-    // integrities, or a bundle whose `_meta.json` entry was lost),
-    // the openWorkspace boot fills `remoteBundleByTag` but not
-    // `remoteBundleNameByIntegrity` — still fetch so the download
-    // dialog has a meaningful label instead of an integrity prefix.
+    // Skip the discovery `fetchByTag` only when the cached
+    // name / integrity is ALSO claimed by the live workspace. A
+    // cached entry without a matching workspace claim means one of:
+    //   - the user did a local-only delete (cache pin survived the
+    //     OPFS removal; without the membership check the file would
+    //     stay invisible forever even with the peer copy still in
+    //     remote), or
+    //   - a sibling tab / prior session discovered the name via
+    //     fetchByTag (populating `remoteNameByTag` / `remoteBundleByTag`
+    //     + persisting the pin) but never reached
+    //     `maybeAutoDownload(Bundle)`.
+    // In both cases we re-run the fetch + auto-attach chain so the
+    // workspace converges on the remote inventory.
+    //
+    // For bundles the additional `remoteBundleNameByIntegrity.has`
+    // guard stays — without a known user-friendly name the download
+    // dialog renders an integrity prefix instead of a label, so we
+    // still want the fetch even when the workspace claims the
+    // integrity. The drag-out path (`<detach-bundle-dialog>` in
+    // sidebar.js) now drops the source workspace's remote tag, so
+    // a dragged-out bundle's tag won't be in `remoteTags` on the
+    // next open — there's no scenario where a cached-but-unclaimed
+    // bundle re-attaches against the user's drag-out intent.
+    if (entry.remoteNameByTag.has(tag)
+        && liveReports.has(entry.remoteNameByTag.get(tag))) continue
     if (entry.remoteBundleByTag.has(tag)) {
       const integrity = entry.remoteBundleByTag.get(tag)
-      if (entry.remoteBundleNameByIntegrity.has(integrity)) continue
+      if (entry.remoteBundleNameByIntegrity.has(integrity) && liveBundles.has(integrity)) continue
     }
     let p = entry.inFlight.get(tag)
     if (!p) {
@@ -1521,11 +1545,12 @@ export async function fetchBundleFromRemote(workspaceId, integrity) {
 // `fetchByTag` discovery.
 //
 // Used by the local Delete dialog (when the user explicitly deletes
-// a bundle from remote) — bundle membership detach during workspace
-// leave / drag-out does NOT touch remote (vs. reports, which DO drop
-// remote on drag-out); bundle bytes are content-addressed and may be
-// shared across workspaces, so dropping them from one workspace's
-// remote could orphan another workspace that hadn't yet downloaded.
+// a bundle from remote) AND by the bundle drag-out path in
+// `sidebar.js` (gated by `<detach-bundle-dialog>` so the user
+// confirms the remote-side fan-out before drag-out commits). Each
+// workspace has its own per-bundle tag (HMAC under the workspace
+// key), so dropping THIS workspace's tag leaves any other
+// workspace's separate upload of the same integrity intact.
 export async function deleteBundleFromRemote(workspaceId, integrity) {
   let openedHere = false
   if (!sessions.has(workspaceId)) {

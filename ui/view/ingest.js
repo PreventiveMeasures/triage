@@ -1,6 +1,6 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteFile, deleteWorkspace, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
-import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
+import { analyzeContent, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
@@ -609,7 +609,20 @@ export async function switchToWorkspace(workspaceId) {
 // reachable from a kept report, keep-vs-wipe radio when orphans
 // exist). The default 'keep' is the no-op path and is what the
 // dialog resolves with when there are no orphans to ask about.
-export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null } = {}) {
+//
+// `deleteFromRemoteWorkspaceIds` — every workspace whose remote
+// inventory holds the report. The sidebar gathers all owning
+// workspaces (a report can be attached to many under the multi-
+// workspace membership model) and filters by `isInRemoteOrCached`,
+// which checks both live sessions AND the persisted cache. Fan
+// the per-workspace `deletePresence` calls out; each is wrapped in
+// try/catch so a network blip on workspace N doesn't strand local
+// bytes + the trailing workspaces' remote tags in a half-deleted
+// state. Conflict/error is logged but never aborts the local
+// cleanup — leaving local bytes intact while peers carry partial
+// remote state is worse than "remote not fully cleaned, retry
+// later by re-deleting".
+export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspaceIds = [] } = {}) {
   if (!state.currentFile) return
   // Bump the load generation AND capture it. The bump alone (pre-
   // fix) gated other in-flight switchTo*/ingestReport calls from
@@ -635,21 +648,23 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   // module review.
   removeCount(name)
   saveRepoUrlFor(name, '')
-  // Delete the remote copy FIRST. Doing the remote delete after
-  // the local one would leave a window where the next `openWorkspace`
-  // auto-download could re-pull the report (the remote tag is still
-  // there); ordering remote-first closes that window.
-  //
-  // Throw on `conflict` — the row is still in remote and a peer
-  // would otherwise auto-download it back the moment we proceed
-  // with the local delete (matching the "next openWorkspace would
-  // resurrect" guard this code is here to provide). `not-found`
-  // is fine (nothing to remove). Review r3242639305.
-  if (deleteFromRemote) {
-    const remoteResult = await deletePresence(deleteFromRemote, name)
-    if (isStaleLoad(gen)) return
-    if (remoteResult && remoteResult.ok === false && remoteResult.reason !== 'not-found') {
-      throw new Error(`Failed to delete '${name}' from remote: ${remoteResult.reason}`)
+  // Fan the remote delete out across every owning workspace's
+  // remote. Doing the remote deletes BEFORE the local one closes
+  // the window where the next `openWorkspace(W)` auto-download
+  // could re-pull the report through that workspace's tag.
+  // Each call is wrapped — `not-found` is fine (idempotent on a
+  // workspace whose tag was already dropped by a peer), other
+  // errors get a console.warn but don't abort the loop or block
+  // the local delete.
+  for (const wsId of deleteFromRemoteWorkspaceIds) {
+    try {
+      const remoteResult = await deletePresence(wsId, name)
+      if (isStaleLoad(gen)) return
+      if (remoteResult && remoteResult.ok === false && remoteResult.reason !== 'not-found') {
+        console.warn(`Failed to delete '${name}' from workspace ${wsId} remote: ${remoteResult.reason}`)
+      }
+    } catch (err) {
+      console.warn(`Failed to delete '${name}' from workspace ${wsId} remote:`, err)
     }
   }
   await deleteFile(name)
@@ -749,6 +764,73 @@ export async function goHome() {
     }
   }
   clearActiveView()
+  await renderSidebar()
+}
+
+// Bundle counterpart of `deleteCurrent` — drives the sidebar's
+// "Delete current" button when the bundles view's `selectedBundle`
+// is what's active. Removes the OPFS bytes (via `deleteBundle`),
+// detaches the integrity from every workspace's `bundles` list
+// (via `setBundleWorkspace(integrity, null)`), prunes the
+// cross-bundle SHA-512 hash index so the finding-card "Code →"
+// lookup stops surfacing the gone bundle, drops the panel
+// selection + persisted last-view pointer, refreshes
+// `state.bundles`, and repaints both the main view and the sidebar.
+//
+// `deleteFromRemoteWorkspaceIds` — array of workspace ids whose
+// remote objstore inventory should also drop this bundle. The
+// sidebar caller gathers every owning workspace whose remote
+// holds the integrity (live session OR persisted cache, via
+// `isBundleInRemoteOrCached`). Each per-workspace
+// `deleteBundleFromRemote` runs FIRST so the bundle's tag is
+// dropped from remote before we clear the local bytes; each call
+// is wrapped so a network blip on one workspace doesn't strand
+// local bytes + the trailing workspaces' tags in a half-deleted
+// state. Same shape + rationale as `deleteCurrent` for reports.
+//
+// Concurrency: `++loadGen` + `isStaleLoad(gen)` mirrors
+// `deleteCurrent` — a switchToWorkspace landing during one of the
+// awaits below would otherwise clobber the freshly-built view via
+// the trailing `state.bundles = await listBundles()` + `render()`.
+export async function deleteCurrentBundle({ deleteFromRemoteWorkspaceIds = [] } = {}) {
+  if (!state.selectedBundle) return
+  const gen = ++loadGen
+  const integrity = state.selectedBundle
+  for (const wsId of deleteFromRemoteWorkspaceIds) {
+    try {
+      const result = await deleteBundleFromRemote(wsId, integrity)
+      if (isStaleLoad(gen)) return
+      if (result && result.ok === false && result.reason !== 'not-found') {
+        console.warn(`Failed to delete bundle from workspace ${wsId} remote: ${result.reason}`)
+      }
+    } catch (err) {
+      console.warn(`Failed to delete bundle from workspace ${wsId} remote:`, err)
+    }
+  }
+  await deleteBundle(integrity)
+  if (isStaleLoad(gen)) return
+  await setBundleWorkspace(integrity, null)
+  if (isStaleLoad(gen)) return
+  state.selectedBundle = null
+  state.bundleDetails = null
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
+  // Only clear LAST_FILE_KEY when it actually pointed at this
+  // bundle — workspace pointers (`ws:<id>`) and report filenames
+  // share the same slot, so an unconditional clear would dump the
+  // user back to the empty drop zone on reload after deleting a
+  // bundle from a workspace view. `persistLastBundle` writes
+  // `b:<integrity>` (optionally suffixed with ` <tab>`); match the
+  // prefix to keep unrelated pointers intact.
+  const lastFile = getSecureItem(LAST_FILE_KEY)
+  if (typeof lastFile === 'string'
+      && (lastFile === `b:${integrity}` || lastFile.startsWith(`b:${integrity} `))) {
+    removeSecureItem(LAST_FILE_KEY)
+  }
+  dropBundleFromHashIndex(integrity)
+  state.bundles = await listBundles()
+  if (isStaleLoad(gen)) return
+  render()
   await renderSidebar()
 }
 

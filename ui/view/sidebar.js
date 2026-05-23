@@ -2,7 +2,7 @@ import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, getCount, getPackagesIndex, getRepositoriesIndex, listBundles, listFiles, listWorkspaces, migrateLegacyFilenames, onVaultStateChange, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, state } from '#client/index.js'
-import { deleteFromRemote as deleteRemote, isInRemote, loadSync, triageSync } from './client-sync.js'
+import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, triageSync } from './client-sync.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle } from './encryption-toggle.js'
@@ -18,13 +18,16 @@ import { render } from './render.js'
 let hostEl = null
 let root = null
 let fileList = null
-import { deleteCurrent, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
+import { deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
 import { openLeaveWorkspaceDialog } from './dialogs/leave-workspace-dialog.js'
 import { openWorkspaceShareLinkDialog } from './dialogs/workspace-share-link-dialog.js'
 import { openDeleteReportDialog } from './dialogs/delete-report-dialog.js'
+import { openDeleteBundleDialog } from './dialogs/delete-bundle-dialog.js'
+import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
+import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
@@ -495,8 +498,15 @@ export async function renderSidebar() {
   renderViewButton('#show-packages-btn', countLoadedPackages(), 'packages')
   renderViewButton('#show-repositories-btn', countLoadedRepositories(), 'repositories')
 
+  // `#delete-current` targets whichever artifact is currently
+  // active: the selected bundle in the bundles view, otherwise the
+  // open report. Disabled when neither is in play. The click
+  // delegate below dispatches on the same pair.
   const deleteBtn = root.querySelector('#delete-current')
-  if (deleteBtn) deleteBtn.disabled = !state.currentFile
+  if (deleteBtn) {
+    const bundleActive = state.currentView === 'bundles' && state.selectedBundle
+    deleteBtn.disabled = !state.currentFile && !bundleActive
+  }
 
   // Sync button visibility tracks workspace state (non-empty
   // workspaces) — re-evaluate on every sidebar render so adding
@@ -708,6 +718,47 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#delete-current')) {
+    // Bundle path first: the bundles view's selected bundle takes
+    // precedence over `state.currentFile` (a stale report selection
+    // can survive a view switch). The button is disabled when
+    // neither is in play, but the closest() match could still fire
+    // on a synthesized event.
+    if (state.currentView === 'bundles' && state.selectedBundle) {
+      const integrity = state.selectedBundle
+      const friendly = (state.bundles ?? []).find((b) => b.integrity === integrity)?.name ?? integrity
+      // A bundle can be claimed by multiple workspaces (content-
+      // addressed, so the same integrity may be attached to N
+      // workspaces). Walk the membership list and ask each owning
+      // workspace's presence layer whether it has the bundle in
+      // remote — `isBundleInRemoteOrCached` consults BOTH the live
+      // session AND the persisted presence cache, so workspaces
+      // whose session isn't currently open (sync disabled, never
+      // navigated to, mid-boot) still get picked up. Without the
+      // cache fallback the closed workspaces' remote tags would
+      // survive the delete and resurrect on the next open via
+      // `ensureRemoteNames`' membership-aware fallthrough.
+      const remoteWorkspaceIds = listWorkspaces()
+        .filter((w) => Array.isArray(w.bundles) && w.bundles.includes(integrity))
+        .filter((w) => isBundleInRemoteOrCached(w.id, integrity))
+        .map((w) => w.id)
+      const { confirmed } = await openDeleteBundleDialog({
+        name: friendly,
+        inRemote: remoteWorkspaceIds.length > 0,
+      })
+      if (!confirmed) return
+      // The selection may have changed under us (cross-tab switch,
+      // sibling-tab delete) while the dialog was open. Bail rather
+      // than dropping whatever bundle just slid into place — the
+      // user confirmed deletion of the bundle shown in the dialog.
+      if (state.selectedBundle !== integrity) {
+        alert(`Active bundle changed during confirmation; aborting delete of "${friendly}".`)
+        return
+      }
+      try {
+        await deleteCurrentBundle({ deleteFromRemoteWorkspaceIds: remoteWorkspaceIds })
+      } catch (err) { alert(`Failed to delete bundle: ${err.message}`) }
+      return
+    }
     // No active file → nothing to delete; the button is also
     // disabled at render time, but the closest() match could
     // still fire on a synthesized event.
@@ -728,14 +779,21 @@ async function onSidebarClick(e) {
       alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
       return
     }
-    // Workspace + remote presence for the deletion dialog: if
-    // the report is in this workspace's remote objstore inventory
-    // we surface a notice + auto-elect to delete it there too,
-    // because a local-only delete would race the next workspace
-    // open's auto-download and resurrect the file.
-    const owningWorkspace = listWorkspaces().find((w) => Array.isArray(w.reports) && w.reports.includes(name))
-    const inRemote = owningWorkspace ? isInRemote(owningWorkspace.id, name) : false
-    const { confirmed, triage, deleteFromRemote } = await openDeleteReportDialog({ name, triageImpact, inRemote })
+    // Workspace + remote presence for the deletion dialog. A
+    // report can be a member of multiple workspaces (additive add
+    // via drag-into-workspace); fan the remote-delete out to every
+    // owning workspace whose remote actually holds the report.
+    // `isInRemoteOrCached` checks both the live session AND the
+    // persisted cache, so closed / mid-boot workspaces are still
+    // included — without that fallback their remote tag survives
+    // the delete and resurrects on the next open via
+    // `ensureRemoteNames`' membership-aware fallthrough.
+    const remoteWorkspaceIds = listWorkspaces()
+      .filter((w) => Array.isArray(w.reports) && w.reports.includes(name))
+      .filter((w) => isInRemoteOrCached(w.id, name))
+      .map((w) => w.id)
+    const inRemote = remoteWorkspaceIds.length > 0
+    const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact, inRemote })
     if (!confirmed) return
     // Round-1 review #3: the active file may have changed under
     // us (cross-tab switch / sibling-tab delete) while the
@@ -746,7 +804,7 @@ async function onSidebarClick(e) {
       alert(`Active report changed during confirmation; aborting delete of "${name}".`)
       return
     }
-    try { await deleteCurrent({ triage, deleteFromRemote: deleteFromRemote ? owningWorkspace?.id : null }) }
+    try { await deleteCurrent({ triage, deleteFromRemoteWorkspaceIds: remoteWorkspaceIds }) }
     catch (err) { alert(`Failed to delete report: ${err.message}`) }
     return
   }
@@ -1163,12 +1221,25 @@ async function onSidebarDrop(e) {
     if (!integrity) return
     // Same additive-add + scoped-remove shape as the report path
     // below — multi-workspace membership applies to bundles too.
-    // Note: unlike the report path we DON'T call any remote-delete
-    // here; bundles are content-addressed and may be shared across
-    // workspaces / devices, so dragging a bundle out of one
-    // workspace must not drop the remote copy. Explicit deletion
-    // lives on the bundle row's Delete affordance, not as a side
-    // effect of drag-out.
+    // When the source workspace has the bundle in its remote
+    // inventory, prompt the user via `<detach-bundle-dialog>` and
+    // — on confirm — drop the source's remote tag too. This makes
+    // bundle drag-out symmetric with the report drag-out: both
+    // remove the source workspace's remote copy on detach. Cancel
+    // aborts the drag entirely (no detach, no remote touch). When
+    // the bundle is NOT in the source's remote there's nothing
+    // destructive to confirm, so skip the dialog.
+    if (sourceWsId && sourceWsId !== targetId && isBundleInRemoteOrCached(sourceWsId, integrity)) {
+      const friendly = (state.bundles ?? []).find((b) => b.integrity === integrity)?.name ?? integrity
+      const sourceWs = listWorkspaces().find((w) => w.id === sourceWsId)
+      const { confirmed } = await openDetachBundleDialog({
+        name: friendly,
+        workspaceName: sourceWs?.name ?? '',
+      })
+      if (!confirmed) return
+      try { await deleteBundleFromRemote(sourceWsId, integrity) }
+      catch (err) { console.warn(`Failed to remove '${friendly}' from source workspace ${sourceWsId} remote:`, err) }
+    }
     if (targetId) await addBundleToWorkspace(integrity, targetId)
     if (sourceWsId && sourceWsId !== targetId) await removeBundleFromWorkspace(integrity, sourceWsId)
     renderSidebar()
@@ -1183,13 +1254,24 @@ async function onSidebarDrop(e) {
   // workspace has its own objstore tag (HMAC per workspace key), so
   // a deleteRemote(source) leaves other workspaces' uploads alone.
   //
-  // `deleteRemote` opens the source workspace's presence session
-  // on demand if it isn't already active (review r3251765881) —
-  // a synchronous `isInRemote` pre-check would silently no-op
-  // when dragging from a non-active workspace. The remote
-  // delete is idempotent on missing rows, so issuing it for a
-  // file that wasn't in remote is a free no-op.
-  if (sourceWsId && sourceWsId !== targetId) {
+  // When the source has a remote copy the user gets an explicit
+  // `<detach-report-dialog>` confirmation before we touch remote —
+  // symmetric with the bundle drag-out path. Reports without a
+  // remote copy in the source skip the dialog (nothing destructive
+  // to confirm). `isInRemoteOrCached` consults both the live
+  // session AND the persisted cache, so a source workspace that's
+  // mid-boot (session.list still in flight) or closed entirely
+  // still surfaces the dialog — without the cache fallback those
+  // cases would silently bypass the confirmation, the membership
+  // detach would land, and the next open would resurrect the file
+  // via `maybeAutoDownload`.
+  if (sourceWsId && sourceWsId !== targetId && isInRemoteOrCached(sourceWsId, filename)) {
+    const sourceWs = listWorkspaces().find((w) => w.id === sourceWsId)
+    const { confirmed } = await openDetachReportDialog({
+      name: filename,
+      workspaceName: sourceWs?.name ?? '',
+    })
+    if (!confirmed) return
     try { await deleteRemote(sourceWsId, filename) }
     catch (err) { console.warn(`Failed to remove '${filename}' from source workspace ${sourceWsId} remote:`, err) }
   }

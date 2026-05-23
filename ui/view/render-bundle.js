@@ -1559,9 +1559,12 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
 // then the integrity in small monospace below so the user can
 // distinguish two drops with the same name. Clicking a row opens
 // a right-side details panel (parsed for .map sourcemaps; basic
-// meta for .stasis bundles); each row also carries a Delete button.
-// events.js's data-select-bundle / data-delete-bundle handlers key
-// off the integrity (the canonical id in storage.js).
+// meta for .stasis bundles). Deletion is driven from the sidebar's
+// "Delete current" button against the selected bundle (so the
+// confirmation dialog matches the report-delete path); no per-row
+// delete affordance lives here.
+// events.js's data-select-bundle handler keys off the integrity
+// (the canonical id in storage.js).
 export function renderBundlesList(bundles) {
   const selected = state.selectedBundle
   const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
@@ -1601,12 +1604,6 @@ export function renderBundlesList(bundles) {
               data-bundle-row-code=${integrity}
               aria-label=${`Open ${name} in the code explorer`}
             >Code →</button>
-            <button
-              type="button"
-              class="bundles-delete"
-              data-delete-bundle=${integrity}
-              aria-label=${`Delete ${name}`}
-            ><svg class="trash-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M5 4l.7 9h4.6L11 4"/></svg><span>Delete</span></button>
           </li>`
         })}
       </ul>
