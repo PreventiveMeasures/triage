@@ -1298,6 +1298,13 @@ function renderBundleSlide(entry) {
         <div class="bundles-slide-name">${entry.name}</div>
       </div>
       <div class="bundles-slide-tabs" role="tablist">
+        ${hasIssues ? html`<button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
+          data-bundle-tab="issues"
+          aria-selected=${String(tab === 'issues')}
+          role="tab"
+        >Issues</button>` : nothing}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}
@@ -1319,13 +1326,6 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'graph')}
           role="tab"
         >Graph</button>
-        ${hasIssues ? html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
-          data-bundle-tab="issues"
-          aria-selected=${String(tab === 'issues')}
-          role="tab"
-        >Issues</button>` : nothing}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'code' })}
