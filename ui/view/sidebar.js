@@ -18,7 +18,7 @@ import { render } from './render.js'
 let hostEl = null
 let root = null
 let fileList = null
-import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
+import { deleteCurrent, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
@@ -527,6 +527,16 @@ onVaultStateChange(() => { renderSidebar() })
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 async function onSidebarClick(e) {
+  // DeepView brand → drop back to the empty welcome screen so the
+  // user can re-read the supported-formats list (or just start
+  // over). Non-destructive — `goHome` only clears in-memory
+  // selection + secure-storage's last-file pointer; OPFS files
+  // and triage stay intact. The WCO duplicate header (light DOM)
+  // has its own listener in view.js for the same data-action.
+  if (e.target.closest('[data-action="go-home"]')) {
+    goHome()
+    return
+  }
   // Per-bundle row in the expanded Bundles section — selects that
   // bundle and switches to the bundles view. Mirrors the
   // data-select-bundle handler in events.js (per-row setup must
@@ -1233,8 +1243,10 @@ class AppSidebar extends LitElement {
     return html`
       <div class="sidebar-header">
         <h2 class="brand">
-          <span class="brand-name">DeepView</span>
-          <span class="brand-tag">dev</span>
+          <button class="brand-button" type="button" data-action="go-home" title="DeepView home — supported formats">
+            <span class="brand-name">DeepView</span>
+            <span class="brand-tag">dev</span>
+          </button>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
         <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">

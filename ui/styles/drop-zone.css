@@ -23,6 +23,7 @@
 
 .drop-prompt {
   text-align: center; color: var(--muted);
+  max-width: 540px;
 
   & h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
   & p { font-size: .95rem; }
@@ -35,3 +36,61 @@
     text-underline-offset: 2px;
   }
 }
+
+/* Supported-formats showcase — sits under the prompt copy on the
+   empty-state drop zone so the user knows what shapes the app
+   recognises before they go hunting for a file. Three sections
+   (Reports / Bundles / Workspaces) laid out as auto-fit columns:
+   they wrap into a single column on narrow viewports without
+   needing a media query. Each row carries a 20px brand sticker
+   (matching the sidebar's row icons, just sized up for a calmer
+   target hit) and the analyzer's display name. The list is
+   purely informational — pointer events stay on the parent
+   drop-zone so a click anywhere still opens the file picker. */
+.drop-supported {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1.25rem 1.5rem;
+  margin-top: 1.75rem;
+  text-align: left;
+  pointer-events: none;
+}
+
+.drop-supported-section {
+  & h2 {
+    font-size: .7rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: .55rem;
+    padding-bottom: .35rem;
+    border-bottom: 1px solid var(--border);
+  }
+  & ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+  }
+  & li {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    color: var(--text);
+    font-size: .9rem;
+  }
+}
+
+.drop-supported-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+
+  & .file-icon { color: var(--muted); }
+}
+
+.drop-supported-label { line-height: 1; }

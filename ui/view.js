@@ -18,7 +18,7 @@ import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
-import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { BUNDLE_TABS, LAST_FILE_KEY, goHome, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
 import { graph2 } from './view/graph/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
@@ -52,6 +52,16 @@ import './view/brotli-decompress.js'
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
 // loaded → drop zone stays visible.
+// WCO duplicate brand → home. The in-shadow `.brand` is handled
+// by the sidebar's own click delegate (see view/sidebar.js); this
+// listener is the light-DOM counterpart for the body-level
+// duplicate `.sidebar-header-wco` that paints over the sidebar in
+// PWA window-controls-overlay mode. Both carry
+// `data-action="go-home"`, so the dispatch is identical.
+document.querySelector('.sidebar-header-wco')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-action="go-home"]')) goHome()
+})
+
 // Wire the UI's render() into triage-sync so a remote update
 // repaints the view. The client/ layer doesn't import from ui/, so
 // this hook bridges the two.

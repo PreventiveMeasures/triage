@@ -700,6 +700,59 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   await renderSidebar()
 }
 
+// Drop back to the empty drop-zone screen without touching any
+// stored data — non-destructive counterpart to `deleteCurrent`'s
+// tail. The DeepView brand (in-shadow header + WCO duplicate)
+// routes here so clicking the wordmark always lands the user
+// on the supported-formats welcome surface, regardless of which
+// report / workspace / bundle is currently open. Mirrors the
+// state-reset block from `deleteCurrent` but skips OPFS / remote
+// / triage GC — the file the user came from stays exactly as it
+// was so they can pick it back up from the sidebar.
+export async function goHome() {
+  // Bump the load generation so any in-flight switchTo* /
+  // ingestReport bails before pushing into the cleared state.
+  // Mirrors the guard pattern in `deleteCurrent` / `leaveWorkspace`.
+  ++loadGen
+  // Close any open per-workspace sync sessions tied to the active
+  // view — a single-file view of a workspace member or a
+  // merged-workspace view both open sessions in `switchToFile` /
+  // `switchToWorkspace`; without closing them here, returning home
+  // would leave triage-sync echoing edits to a chain that no view
+  // is consuming.
+  for (const info of triageSync.openSessions) {
+    if (info) {
+      triageSync.closeSession(info.workspaceId)
+      closePresence(info.workspaceId)
+    }
+  }
+  state.currentFile = null
+  state.currentWorkspace = null
+  state.selectedBundle = null
+  state.bundleDetails = null
+  state.bundleSourceFile = null
+  state.bundleSourceFindingIdx = null
+  state.reports = []
+  state.repoUrl = ''
+  state.repoEditing = false
+  state.shownTriage = null
+  state.currentView = 'findings'
+  graph2.selected = null
+  graph2.focusedPkg = null
+  graph2.layoutCache = null
+  graph2.solo = null
+  graph2.hidden.clear()
+  graph2.pathFilter = ''
+  cleanupGraph2()
+  removeSecureItem(LAST_FILE_KEY)
+  report.classList.remove('active')
+  litRender(nothing, report)
+  dropZone.classList.remove('hidden')
+  document.title = 'deepview results'
+  document.body.classList.remove('show-print-btn')
+  await renderSidebar()
+}
+
 // Leave a workspace from THIS browser. Always drops the workspace
 // entry in localStorage and the persisted triage base (the latter
 // via triage-sync's `onWorkspaceDeleted` listener); what happens
