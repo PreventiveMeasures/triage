@@ -576,13 +576,13 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         <header class="bundles-overview-col-head">
           Files <span class="bundles-overview-col-count">${sources.length}</span>
         </header>
-        <div class="bundles-overview-col-body">${filesTpl}</div>
+        <div class="bundles-overview-col-body bundles-overview-col-body--list">${filesTpl}</div>
       </section>
       ${reports.length > 0 ? html`<section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           Reports <span class="bundles-overview-col-count">${reports.length}</span>
         </header>
-        <div class="bundles-overview-col-body">${reportsTpl}</div>
+        <div class="bundles-overview-col-body bundles-overview-col-body--list">${reportsTpl}</div>
       </section>` : nothing}
     </div>
   </div>`

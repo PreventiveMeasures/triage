@@ -494,18 +494,18 @@
   font-variant-numeric: tabular-nums;
 }
 .bundles-overview-col-body {
-  /* Split the horizontal inset between the column body and each
-     row — half on each side. Both layers visible: the column
-     padding gives the rows a small margin from the column border,
-     and the matching row horizontal padding makes the hover-tint
-     background hug the content with the same gap. */
-  padding: .25rem .175rem;
+  padding: .55rem;
   overflow-y: auto;
   overscroll-behavior: none;
   scrollbar-gutter: stable;
   flex: 1;
   min-height: 0;
 }
+/* Files / Reports columns use a tighter inset than Packages — the
+   rows themselves carry half of the horizontal padding so the
+   hover-tint background frames the content with the same gap on
+   each side instead of stacking with the column body's inset. */
+.bundles-overview-col-body--list { padding: .25rem .175rem; }
 .bundles-overview-col-empty {
   margin: 0;
   color: var(--muted);
