@@ -463,7 +463,15 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
     .toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
 
   const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i] }))
-  const distTpl = renderBundleSizeDistribution(distItems)
+  // `renderBundleSizeDistribution` returns `nothing` when no source
+  // carries a positive byte size (common for stasis bundles without
+  // inline `sourcesContent`). Mirror the Files / Reports column
+  // empty-state so the Packages column doesn't render as a card
+  // with a header and a yawning blank body.
+  const distContent = renderBundleSizeDistribution(distItems)
+  const distTpl = distContent === nothing
+    ? html`<p class="bundles-overview-col-empty">No size information for this bundle's sources.</p>`
+    : distContent
 
   // Issue summary — total findings across the bundle's matched
   // files, broken down by severity (same chip palette the Files
@@ -1280,31 +1288,29 @@ function renderBundleSlide(entry) {
   const tab = state.bundleDetailsTab
   const overviewActive = tab === 'overview' || tab === 'packages'
     || tab === 'files' || tab === 'reports'
-  // Hide the Issues tab when this bundle has zero matched findings —
-  // there's nothing to switch to. The "Issues →" jump from the
-  // Overview tab's panel is gated on the same predicate via the
-  // top-level tab strip, so the entry stays consistent.
-  let hasIssues = false
-  if (state.bundleDetails?.fileHashes) {
-    const matches = bundleFindingsByFile(state.bundleDetails.fileHashes, 'issues')
-    for (const findings of matches.values()) {
-      if (findings.length > 0) { hasIssues = true; break }
-    }
-  }
+  // Issues is always in the tab strip — the body's empty state
+  // ("No issues match this bundle's files.") covers the no-match
+  // case, and keeping the button stable avoids two prior bugs:
+  // (1) a layout shift mid-parse when `state.bundleDetails.fileHashes`
+  // becomes non-null and the button stamps in as the leftmost tab,
+  // pushing every other tab right (and stealing in-flight clicks);
+  // (2) an orphan tab state where a persisted `b:<integrity> issues`
+  // selection paints the issues body but the matching tab button is
+  // hidden, leaving the user with no visible escape hatch.
   return html`<div class="bundles-view bundles-slide-view">
     <header class="bundles-slide-bar">
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name">${entry.name}</div>
+        <div class="bundles-slide-name" data-tooltip=${`${entry.name}\n${entry.integrity}`}>${entry.name}</div>
       </div>
       <div class="bundles-slide-tabs" role="tablist">
-        ${hasIssues ? html`<button
+        <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
           data-bundle-tab="issues"
           aria-selected=${String(tab === 'issues')}
           role="tab"
-        >Issues</button>` : nothing}
+        >Issues</button>
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}

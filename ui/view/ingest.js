@@ -38,9 +38,11 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // off this list. 'overview' is the default and is omitted from the
 // LAST_FILE_KEY suffix; an unrecognised value on restore falls back
 // to 'overview'. The legacy values 'packages' / 'files' / 'reports'
-// represent the Overview tab's nested selection — kept in the set so
-// older persisted suffixes ('b:<integrity> files') still round-trip
-// through to the right nested view.
+// used to drive nested sub-tabs inside the Overview panel (now
+// three side-by-side columns); kept in the set so an older
+// persisted suffix like `b:<integrity> files` still validates and
+// the `overviewActive` predicate in render-bundle.js routes it to
+// the Overview tab on boot.
 export const BUNDLE_TABS = new Set(['overview', 'packages', 'files', 'reports', 'graph', 'treemap', 'issues', 'code', 'terminal'])
 
 // Persist a bundle selection to LAST_FILE_KEY, encoding the active

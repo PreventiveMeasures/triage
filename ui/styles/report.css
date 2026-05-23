@@ -1133,6 +1133,13 @@
     padding: .75rem;
     color: var(--muted);
     font-size: .78rem;
+    /* `details.error` is unbounded — a verbose `JSON.parse`
+       SyntaxError on a malformed `.map` can easily push past the
+       viewport. The outer `.bundles-slide-body-overview` is
+       `overflow: hidden`, so scroll has to live on the
+       placeholder itself. */
+    overflow-y: auto;
+    min-height: 0;
   }
   & .bundles-overview-placeholder.is-error { color: var(--critical); }
 
@@ -1158,7 +1165,12 @@
     list-style: none; padding: 0;
     margin: .5rem 0 0;
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1.5fr) max-content max-content;
+    /* Wider package name column + narrower bar than before — the
+       Packages section sits in a third of the Overview surface
+       now, so the name column needs more of the available width
+       (long monospace identifiers like `@aws-sdk/...` overflow
+       very quickly) and the per-row size bar can be thinner. */
+    grid-template-columns: max-content minmax(0, 2fr) minmax(0, 1fr) max-content max-content;
     gap: .25rem .5rem;
     align-items: center;
     font-size: .72rem;
@@ -1175,6 +1187,12 @@
   & .bundles-dist-pkg {
     color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* `min-width: 0` lets the grid track's `minmax(0, …)` actually
+       shrink the item — without it the long-package-name intrinsic
+       width wins and the trailing size / percent columns get
+       pushed off the right edge of the narrow Overview Packages
+       column. The ellipsis below was already in place. */
+    min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   & .bundles-dist-bar-row {
@@ -1200,23 +1218,18 @@
      path on the left, byte size on the right; ellipsis-clipped
      paths so the row doesn't grow horizontally. */
   & .bundles-sources-list {
-    list-style: none; margin: .25rem 0 0; padding: 0;
-    border-top: 1px solid var(--border);
+    list-style: none; margin: 0; padding: 0;
 
-    & li {
-      border-bottom: 1px solid var(--border);
-      &:last-child { border-bottom: none; }
-    }
     /* Whole-row click target — opens the bundle source viewer.
-       Reset native button chrome so it reads as a list row, not a
-       button; hover lifts the row tone slightly so the click
-       affordance stays visible without dominating the panel. */
+       No per-row borders (those add visual weight without payoff
+       in the narrow Overview column); the hover-tint background is
+       what marks the row as clickable. */
     & .bundles-source-row {
       display: flex; align-items: center; gap: .5rem;
       width: 100%;
-      padding: .25rem;
+      padding: .2rem .35rem;
       background: transparent;
-      border: 0;
+      border: 0; border-radius: 3px;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .72rem;
@@ -1242,15 +1255,16 @@
      ornament. The button is full-row width so the click target
      spans the whole row. */
   & .bundles-reports-list {
-    list-style: none; margin: .25rem 0 0; padding: 0;
-    display: flex; flex-direction: column; gap: .25rem;
+    list-style: none; margin: 0; padding: 0;
 
     & li { padding: 0; }
+    /* No per-row border; the hover-tint background marks the
+       clickable row, same idiom as the Files list above. */
     & .bundles-report-chip {
       display: flex; align-items: center; gap: .4rem;
       width: 100%;
-      padding: .35rem .5rem; height: auto;
-      border: 1px solid var(--border); border-radius: 4px;
+      padding: .2rem .35rem; height: auto;
+      border: 0; border-radius: 3px;
       background: transparent;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1259,7 +1273,7 @@
       text-align: left;
     }
     & .bundles-report-chip:hover {
-      border-color: var(--accent, #2563eb);
+      background: var(--surface);
     }
     & .bundles-report-chip .report-chip-label {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

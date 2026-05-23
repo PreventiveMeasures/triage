@@ -255,9 +255,12 @@ async function continueBoot() {
       // so we can synchronously check membership; missing entries
       // (deleted in another tab between sessions) silently fall
       // through to the empty drop-zone state. A space-delimited
-      // suffix encodes the active sub-tab (terminal / graph /
-      // issues / code / files / reports); an unknown / missing
-      // suffix defaults to the packages tab.
+      // suffix encodes the active tab (terminal / treemap / graph /
+      // issues / code, plus the legacy nested-overview values
+      // packages / files / reports kept for back-compat — see the
+      // `overviewActive` predicate in render-bundle.js for how
+      // they route to the Overview tab); an unknown / missing
+      // suffix defaults to the Overview tab.
       const rest = last.slice(2)
       const spaceIdx = rest.indexOf(' ')
       const integrity = spaceIdx >= 0 ? rest.slice(0, spaceIdx) : rest

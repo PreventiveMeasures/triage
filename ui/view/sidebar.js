@@ -33,6 +33,12 @@ import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle } from './bundle-load.js'
 import { graph2 } from './graph/state.js'
+import { hideTooltip, installGlobalTooltipListener, scheduleTooltip } from './tooltip.js'
+
+// Boot-time install — the document-level handler for any
+// light-DOM `[data-tooltip]` element. Sidebar items live in the
+// shadow root so they wire their own scoped listener below.
+installGlobalTooltipListener()
 
 // Distinct package count across every report the OPFS finding
 // index has scanned (NOT just state.reports — Packages aggregates
@@ -235,7 +241,7 @@ function bundleItemTemplate(bundle, opts = {}) {
     data-bundle-integrity=${integrity}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${name}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
+  ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
 }
 
 // Row for a workspace-claimed bundle whose bytes aren't on this device
@@ -835,48 +841,43 @@ async function onSidebarClick(e) {
   }
 }
 
-// Instant tooltip for truncated sidebar names. A single shared element
-// is appended to <body> and repositioned on each hover, replacing the
-// native title-attribute tooltip which has a browser-imposed delay.
-// Only appears when the .file-label text is actually truncated
-// (scrollWidth > clientWidth), so non-truncated names stay quiet.
-const _sidebarTip = document.createElement('div')
-_sidebarTip.id = 'sidebar-tooltip'
-document.body.append(_sidebarTip)
-
-let _tipTarget = null
-let _tipTimer = null
-
-function _showSidebarTip(el) {
-  _sidebarTip.textContent = el.dataset.tooltip
-  const rect = el.getBoundingClientRect()
-  _sidebarTip.style.top = `${Math.round(rect.top + rect.height / 2)}px`
-  _sidebarTip.style.left = `${Math.round(rect.right + 8)}px`
-  _sidebarTip.classList.add('visible')
-  _tipTarget = el
-}
-
-function _hideSidebarTip() {
-  clearTimeout(_tipTimer)
-  _tipTimer = null
-  _sidebarTip.classList.remove('visible')
-  _tipTarget = null
-}
-
+// Sidebar tooltip wiring — same styled tooltip element the rest of
+// the app uses (via `view/tooltip.js`). The mouseover listener
+// lives inside the shadow root (events don't reach the document-
+// level global handler with their original target across the shadow
+// boundary), so we drive show / hide directly here.
+//
+// Gate: when the tooltip text is just the label text (the common
+// case for short report filenames), suppress the tooltip when the
+// label actually fits its slot — non-truncated rows stay quiet.
+// When the tooltip carries MORE than the label (e.g. bundle rows
+// where the tooltip is `name\nintegrity`), show on hover regardless
+// of truncation so the integrity stays discoverable.
 function onFileListMouseover(e) {
   const el = e.target.closest('[data-tooltip]')
-  if (el === _tipTarget) return
-  _hideSidebarTip()
-  if (!el) return
-  const label = el.querySelector('.file-label')
-  if (label && label.scrollWidth <= label.clientWidth) return
-  _tipTimer = setTimeout(() => { _showSidebarTip(el) }, 100)
+  if (!el) { hideTooltip(); return }
+  scheduleTooltip(el, {
+    gate: (node) => {
+      const label = node.querySelector('.file-label')
+      if (!label) return true
+      const tipText = node.dataset.tooltip ?? ''
+      // Tooltip differs from label → always show.
+      if (tipText !== label.textContent) return true
+      // Tooltip is the label text → only show when truncated.
+      return label.scrollWidth > label.clientWidth
+    },
+  })
 }
 
 function onFileListMouseout(e) {
-  if (!_tipTarget && !_tipTimer) return
-  if (_tipTarget && _tipTarget.contains(e.relatedTarget)) return
-  _hideSidebarTip()
+  // Don't hide when the cursor moves within the SAME `[data-tooltip]`
+  // element (e.g. button → its child span). Mouseout bubbles for
+  // every inner element, but we only care when the cursor actually
+  // leaves the row that owns the tooltip.
+  const fromRow = e.target.closest('[data-tooltip]')
+  const toRow = e.relatedTarget?.closest?.('[data-tooltip]') ?? null
+  if (fromRow && fromRow === toRow) return
+  hideTooltip()
 }
 
 function onSearchInput(e) {

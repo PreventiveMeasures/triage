@@ -1471,12 +1471,13 @@ function renderImpl() {
         slot = document.querySelector('#bundles-slot')
       }
       if (slot) litRender(renderBundlesList(state.bundles), slot)
-      // Bundle graph tab — populate the slot left by
-      // renderBundleSourcesPanel with the same renderGraph2Layout
-      // the findings tab uses, fed bundle-synthesised graph data
-      // (no findings yet — wired up in a follow-up). The two
-      // refresh helpers fill the right-panel slots; attaching the
-      // canvas wires hover / click / pan / zoom onto the new DOM.
+      // Bundle graph tab — populate the slot emitted by
+      // `renderBundleSlide`'s `choose(tab, ...)` ladder (in
+      // render-bundle.js) with the same renderGraph2Layout the
+      // findings tab uses, fed bundle-synthesised graph data. The
+      // two refresh helpers fill the right-panel slots; attaching
+      // the canvas wires hover / click / pan / zoom onto the new
+      // DOM.
       if (
         state.selectedBundle &&
         state.bundleDetailsTab === 'graph' &&
