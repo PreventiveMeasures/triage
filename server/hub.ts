@@ -26,10 +26,10 @@ export type Hub = {
   // stringify-once, terminate-on-overflow) are unchanged.
   broadcast(tag: string, msg: object, except: WebSocket | null): void
   // Broadcasts an ALREADY-SERIALISED payload to every local subscriber
-  // for `tag`. Used by the pubsub bus receiver (server/pubsub.ts +
-  // server/index.ts) to relay a remote-instance event into this
-  // instance's fan-out. No `except`: the originator is on a different
-  // instance by construction.
+  // for `tag`. Used by the pubsub bus receiver
+  // (server/bus-receiver.ts, wired up from server/index.ts) to relay
+  // a remote-instance event into this instance's fan-out. No `except`:
+  // the originator is on a different instance by construction.
   broadcastLocalRaw(tag: string, payload: string): void
 }
 
