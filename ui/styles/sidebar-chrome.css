@@ -21,7 +21,6 @@
   white-space: pre;
   z-index: 200;
   box-shadow: var(--shadow-glass);
-  transform: translateY(-50%);
   opacity: 0;
   transition: opacity .08s;
 
