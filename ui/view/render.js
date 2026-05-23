@@ -12,7 +12,7 @@ import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLi
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
-import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings } from './file-counts.js'
+import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
@@ -54,7 +54,13 @@ import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 //     reachable through imports. Off by default so the canvas
 //     focuses on issue-bearing code.
 export function buildGraph2Data() {
-  const treeData = state.reports[0]?.tree
+  // Merge the per-report trees so a workspace canvas spans every
+  // loaded report. Using `state.reports[0].tree` alone dropped
+  // every file (and edge) that lived in the 2nd+ reports, even
+  // though their findings were already merged in via flatMap
+  // below — so the graph silently rendered only the first
+  // report's slice of the workspace.
+  const treeData = mergeReportsTree(state.reports)
   if (!treeData) return null
   const allFiles = Object.keys(treeData)
   const allGroups = state.reports.flatMap((r) => r.groups)
@@ -1715,7 +1721,11 @@ function renderImpl() {
   // toggle). Files is gated on a tree-bearing report with >1 file;
   // a single-file tree adds no navigation value. Stale state on a
   // report swap (or workspace switch) auto-falls back to findings.
-  const treeData = state.reports[0]?.tree
+  // `treeData` merges across every loaded report so a workspace
+  // with N reports surfaces the union of their files / edges —
+  // matches the findings merge above and the canvas merge inside
+  // buildGraph2Data.
+  const treeData = mergeReportsTree(state.reports)
   const treeFileCount = treeData ? Object.keys(treeData).length : 0
   const treeAvailable = treeFileCount > 1
   if (!treeAvailable && state.currentView === 'files') state.currentView = 'findings'
