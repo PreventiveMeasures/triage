@@ -494,7 +494,11 @@
   font-variant-numeric: tabular-nums;
 }
 .bundles-overview-col-body {
-  padding: .55rem;
+  /* Tight column-body inset — the rows themselves drop their own
+     horizontal padding so the only inset between a row's content
+     and the column border is this value (combined inner+outer
+     was too generous, see the column-padding feedback). */
+  padding: .25rem .35rem;
   overflow-y: auto;
   overscroll-behavior: none;
   scrollbar-gutter: stable;
@@ -1257,7 +1261,10 @@
     & .bundles-source-row {
       display: flex; align-items: center; gap: .5rem;
       width: 100%;
-      padding: 0 .35rem;
+      /* Vertical padding 0 + no horizontal padding — the column
+         body owns the inset (see `.bundles-overview-col-body`).
+         Combined inner + outer padding was too generous. */
+      padding: 0;
       background: transparent;
       border: 0; border-radius: 3px;
       color: var(--text);
@@ -1294,7 +1301,7 @@
     & .bundles-report-chip {
       display: flex; align-items: center; gap: .4rem;
       width: 100%;
-      padding: 0 .35rem; height: auto;
+      padding: 0; height: auto;
       border: 0; border-radius: 3px;
       background: transparent;
       color: var(--text);
