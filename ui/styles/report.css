@@ -1129,9 +1129,12 @@
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
   }
-  & .bundles-detail-loading,
-  & .bundles-detail-stasis { color: var(--muted); font-size: .78rem; padding: .5rem 0; }
-  & .bundles-detail-error { color: var(--critical); font-size: .78rem; padding: .5rem 0; }
+  & .bundles-overview-placeholder {
+    padding: .75rem;
+    color: var(--muted);
+    font-size: .78rem;
+  }
+  & .bundles-overview-placeholder.is-error { color: var(--critical); }
 
   /* Per-package size distribution chart — stacked bar at the top
      showing each package's share of the total bundle, then a

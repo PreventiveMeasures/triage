@@ -1591,11 +1591,22 @@ function renderBundleDetails(entry, details) {
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
       : nothing}
   </dl>`
+  // Loading / error / un-parsed states share the same `.bundles-overview`
+  // shell as the parsed-content branch so the Overview body's flex
+  // layout + summary padding apply consistently — without the wrapper
+  // the body is `display: flex; overflow: hidden;` with no padding
+  // and a bare `<dl>` lands flush against the panel edge.
   if (!details || details.integrity !== entry.integrity) {
-    return html`${meta}<div class="bundles-detail-loading">Loading…</div>`
+    return html`<div class="bundles-overview">
+      <div class="bundles-overview-summary">${meta}</div>
+      <div class="bundles-overview-placeholder">Loading…</div>
+    </div>`
   }
   if (details.error) {
-    return html`${meta}<div class="bundles-detail-error">Failed to parse: ${details.error}</div>`
+    return html`<div class="bundles-overview">
+      <div class="bundles-overview-summary">${meta}</div>
+      <div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>
+    </div>`
   }
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
@@ -1647,6 +1658,10 @@ function renderBundleDetails(entry, details) {
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to
-  // the metadata block above plus a generic "not parsed" line.
-  return html`${meta}<div class="bundles-detail-stasis">Bundle contents not parsed.</div>`
+  // the metadata block above plus a generic "not parsed" line,
+  // wrapped in the same shell so layout is consistent.
+  return html`<div class="bundles-overview">
+    <div class="bundles-overview-summary">${meta}</div>
+    <div class="bundles-overview-placeholder">Bundle contents not parsed.</div>
+  </div>`
 }
