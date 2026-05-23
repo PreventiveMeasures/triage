@@ -42,10 +42,15 @@ class ImportConflictDialog extends AppDialog {
     this.reportName = ''
     this.workspaceNames = []
     this.existingNames = new Set()
-    // Default to Replace — that's the most common intent for a
-    // re-drop of the same filename (the user is updating the report).
-    // The Cancel button still requires an explicit click, so an
-    // accidental Enter from the Replace radio is the worst case.
+    // Default radio to Replace — that's the most common intent for
+    // a re-drop of the same filename (the user is updating the
+    // report). This is just the radio's pre-selected option, NOT
+    // the action a stray Enter triggers: `focusInitial()` puts
+    // initial focus on the Cancel button (matches
+    // delete-report-dialog) so an accidental Enter dismisses the
+    // dialog without writing anything. The user has to either
+    // shift focus to the Confirm button or click it to actually
+    // Replace.
     this._choice = 'replace'
     // Caller-seeded via the `openImportConflictDialog` wrapper so
     // the input shows the non-colliding suggestion on the FIRST
