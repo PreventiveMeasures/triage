@@ -18,7 +18,7 @@ import { sidebar } from './view/dom.js'
 import { attachSharedWorkspace, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { renderSidebar } from './view/sidebar.js'
-import { BUNDLE_TABS, LAST_FILE_KEY, goHome, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { BUNDLE_TABS, LAST_FILE_KEY, switchToFile, switchToWorkspace } from './view/ingest.js'
 import { openBundle } from './view/bundle-load.js'
 import { graph2 } from './view/graph/state.js'
 import { installHydrationConflictResolver } from './view/hydration-conflict.js'
@@ -57,16 +57,6 @@ import './view/drop-supported-icons.js'
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
 // loaded → drop zone stays visible.
-// WCO duplicate brand → home. Direct click listener on the
-// button itself (mirrors `encryption-toggle.js`'s `initEncryption
-// Toggle` pattern for the in-shadow lock icon, which works in WCO
-// with the same `parent: drag, child: no-drag` CSS split — see
-// `styles/sidebar-chrome.css` @media WCO). The in-shadow brand
-// in the sidebar is handled by `view/sidebar.js`'s shadow click
-// delegate; this is the light-DOM counterpart for the duplicate.
-document.querySelector('.sidebar-header-wco [data-action="go-home"]')
-  ?.addEventListener('click', goHome)
-
 // Wire the UI's render() into triage-sync so a remote update
 // repaints the view. The client/ layer doesn't import from ui/, so
 // this hook bridges the two.

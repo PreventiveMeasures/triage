@@ -62,9 +62,9 @@
      sits outside as a sibling so the row's whitespace stays
      non-interactive. `data-action="go-home"` is wired in
      sidebar.js's click delegate. Transparent + no border so the
-     button reads as plain text; on hover the wordmark drifts a
-     hair toward the accent blue (no background change) so the
-     interactivity is there but never flashes. */
+     button reads as plain text with no hover paint at all. The
+     `app-region: no-drag` opt-out for WCO mode lives in the
+     @media block below, mirroring `#encryption-toggle`. */
   & .brand-button {
     background: transparent; border: 0;
     padding: 0; margin: 0;
@@ -72,9 +72,6 @@
     color: inherit;
     border-radius: 4px;
 
-    &:hover .brand-name {
-      color: color-mix(in srgb, var(--text) 80%, var(--accent));
-    }
     &:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -99,12 +96,10 @@
    hide the OS-controls landing surface, which would visually
    strand the close button.
 
-   The body-level duplicate header (`.sidebar-header-wco`) +
-   its `body:has(app-sidebar…)` width coordination live in
-   styles/sidebar-chrome.css — they're light-DOM siblings of the
-   host, outside this shadow tree. Here we only hide the in-shadow
-   header's brand so the duplicate shows on top without two brands
-   stacking. */
+   Both the brand wordmark AND the lock icon opt out of the drag
+   region (same `app-region: no-drag` pattern), so a click on
+   either fires normally while the surrounding strip drags the
+   window. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   /* The whole sidebar inherits drag from body's WCO baseline in
@@ -119,6 +114,7 @@
     -webkit-app-region: drag;
     app-region: drag;
 
+    & .brand-button,
     & #encryption-toggle {
       -webkit-app-region: no-drag;
       app-region: no-drag;
@@ -126,11 +122,6 @@
 
     & #sidebar-toggle { display: none; }
   }
-
-  /* Hide ONLY the in-shadow header's brand (visibility, so the
-     flex layout next to the lock stays intact); the light-DOM
-     duplicate in sidebar-chrome.css paints the brand on top. */
-  .sidebar-header .brand { visibility: hidden; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 

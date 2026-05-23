@@ -36,32 +36,12 @@
   </svg>
 </button>
 
-<!-- WCO duplicate of the sidebar-header. Hidden by default; shown
-     via CSS only when `@media (display-mode: window-controls-overlay)`
-     matches. Lives outside #sidebar so it escapes #sidebar's stacking
-     context (which is trapped under the page-level fixed backdrops
-     by the sidebar's own backdrop-filter). Only the brand is
-     duplicated — the interactive buttons (sidebar-toggle,
-     encryption-toggle) stay single-instance in the in-sidebar
-     header. The drag-handle / OS-controls-landing strip is what
-     this duplicate exists to provide; the actual lock + hamburger
-     buttons are still functional through the regular sidebar
-     header (visible underneath since both occupy the same column
-     position). The brand-button opts back into pointer events
-     (parent has pointer-events:none so the lock + hamburger
-     underneath stay reachable) and the no-drag app-region so the
-     OS doesn't eat the click as a window drag. aria-hidden on the
-     parent keeps screen readers from announcing "DeepView" twice
-     — the in-shadow header carries the canonical landmark. -->
-<div class="sidebar-header sidebar-header-wco" aria-hidden="true">
-  <h2 class="brand">
-    <button class="brand-button" type="button" data-action="go-home" tabindex="-1">
-      <span class="brand-name">DeepView</span>
-    </button>
-    <span class="brand-tag">dev</span>
-  </h2>
-</div>
-
+<!-- App sidebar — Lit component, owns its own shadow-DOM chrome
+     (brand header, search input, file list, sync button). The
+     brand wordmark inside is the click target that routes to
+     `goHome` via the sidebar's own click delegate; in WCO PWA
+     mode the same brand is what the OS controls strip overlays
+     onto (no light-DOM duplicate needed). -->
 <app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
 
 <main id="main-content">
