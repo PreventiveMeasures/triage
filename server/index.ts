@@ -81,6 +81,7 @@ import { createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
 import { WS_UPGRADE_PATH, createHttpServer } from './http.ts'
 import { installWsServer } from './ws-server.ts'
+import { SSE_OPEN_PATH, installSseServer } from './sse-server.ts'
 import { createLifecycle } from './lifecycle.ts'
 import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
@@ -337,12 +338,46 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 // every server object exists.
 const { track, isShuttingDown, install: installLifecycle } = createLifecycle()
 
-// HTTP plane: REST byte-transfer routing + the WS upgrade gate (see
-// ./http.ts). Built after the lifecycle state above because the REST
-// shutdown gate reads `shuttingDown` and the request drain uses
-// `track`. The WS connection handler is wired on `wss` below.
+// Shared per-connection dispatch surface. Both the WS plane
+// (installWsServer below) and the SSE+POST fallback (installSseServer
+// below) drive `setupPeerConnection` with this; one Peer per accepted
+// connection, one message-handler tree.
+const peerConnectionDeps = {
+  peers, send, unsubscribeAll,
+  handleSave, handleSubscribe, handleAuthenticate, sendSaveError, objstore,
+  track, isShuttingDown,
+  maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET,
+  debug: DEBUG,
+}
+
+// SSE+POST fallback transport (see ./sse-server.ts). The WS upgrade is
+// the preferred path; clients fall back to SSE when `new WebSocket(…)`
+// fails to open (corporate proxies that strip the Upgrade header,
+// hostile network middleboxes, etc.). Same protocol on the wire — only
+// the byte transport differs.
+const sseServer = installSseServer({
+  peerDeps: peerConnectionDeps, isShuttingDown,
+  // Same cap shape as `wss` (no explicit per-process cap; OS FD limits
+  // are the upstream bound). 1024 leaves room above the typical web
+  // session count without being a soft DoS hammer.
+  maxSessions: 1024,
+  // Mirror the WS `maxPayload` so the SSE plane can't accept frames
+  // the WS plane would reject.
+  maxBodyBytes: 4 * 1024 * 1024,
+  // 90s idle ceiling. The client's JSON ping/pong is 15s; this is ~6
+  // missed pings before we close — well past any transient network
+  // hiccup, much shorter than the kernel's hours-long TCP keepalive.
+  sessionIdleMs: 90_000,
+  debug: DEBUG,
+})
+
+// HTTP plane: REST byte-transfer routing + SSE fallback + the WS
+// upgrade gate (see ./http.ts). Built after the lifecycle state above
+// because the REST shutdown gate reads `shuttingDown` and the request
+// drain uses `track`. The WS connection handler is wired on `wss`
+// below.
 const httpServer = createHttpServer({
-  wss, restDeps: objstoreRestDeps, isOriginAllowed,
+  wss, restDeps: objstoreRestDeps, sseServer, isOriginAllowed,
   isShuttingDown, track,
   restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
 })
@@ -351,11 +386,8 @@ const httpServer = createHttpServer({
 // sweep (see ./ws-server.ts). Returns the heartbeat timer so shutdown
 // can clear it.
 const { heartbeatTimer } = installWsServer({
-  wss, peers, send, unsubscribeAll,
-  handleSave, handleSubscribe, handleAuthenticate, sendSaveError, objstore,
-  track, isShuttingDown,
-  maxInflightPerSocket: MAX_INFLIGHT_PER_SOCKET, heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-  debug: DEBUG,
+  wss, heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+  ...peerConnectionDeps,
 })
 
 httpServer.on('listening', () => {
@@ -371,7 +403,7 @@ httpServer.on('listening', () => {
   // doesn't claim a misleading DB_PATH under Neon, or a misleading
   // OBJSTORE_DIR under Vercel Blob.
   const dbBanner = NEON_URL ? 'db: neon-postgres' : `db: ${DB_PATH}`
-  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
+  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} (sse fallback http://${HOST}:${boundPort}${SSE_OPEN_PATH}) http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
 // Cross-instance bus receiver (see ./bus-receiver.ts): a remote NOTIFY
@@ -414,6 +446,7 @@ const closeDb = async (): Promise<void> => {
 // and the heartbeat timer all exist.
 installLifecycle({
   httpServer, wss, heartbeatTimer, stopReaper,
+  sseSessions: sseServer.sessions,
   closeDb,
 })
 
