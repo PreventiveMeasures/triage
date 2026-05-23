@@ -33,6 +33,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { BUNDLE_ICON_SVG } from './icons.js'
 import { findingsForFileHash, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix } from './format.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
@@ -497,16 +498,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   }
   const reports = [...reportCounts.keys()].toSorted()
 
-  // Overview's nested Packages / Files / Reports selection — the
-  // top-level Graph / Issues / Code tabs in `renderBundleSlide`
-  // handle the other views, so this strip stays focused on the
-  // metadata-adjacent slices. Default to Packages; treat anything
-  // outside the nested set (including the canonical 'overview')
-  // as 'packages' so a fresh open paints the per-package size
-  // visualization rather than an empty Files list.
-  let activeTab = 'packages'
-  if (state.bundleDetailsTab === 'files') activeTab = 'files'
-  else if (state.bundleDetailsTab === 'reports' && reports.length > 0) activeTab = 'reports'
   const issueChips = SEVERITIES
     .filter((s) => issueSummary[s] > 0)
     .map((s) => html`<span class=${`tree-count-chip ${s}`}>${issueSummary[s]} ${s.replaceAll('_', ' ')}</span>`)
@@ -528,7 +519,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         </button>
       </li>`
     })}
-  </ul>` : nothing
+  </ul>` : html`<p class="bundles-overview-col-empty">No source files in this bundle.</p>`
   // Reports list — same brand-sticker chip the Issues tab uses on
   // each row, sized up so it reads as a list rather than a row
   // affordance. data-bundle-issue-report wires into the existing
@@ -544,41 +535,49 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
         </button>
       </li>`
     })}
-  </ul>` : nothing
+  </ul>` : html`<p class="bundles-overview-col-empty">No matching reports indexed yet.</p>`
 
-  return html`${meta}
-    <dl class="bundles-detail-meta">
-      ${extras}
-      <dt>Sources</dt><dd>${sources.length}</dd>
-      ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
-    </dl>
-    ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
-    <div class="bundles-tabs" role="tablist">
-      <button
-        type="button"
-        class=${classMap({ 'bundles-tab': true, active: activeTab === 'packages' })}
-        data-bundle-tab="packages"
-        aria-selected=${String(activeTab === 'packages')}
-        role="tab"
-      >Packages (${packages.size})</button>
-      <button
-        type="button"
-        class=${classMap({ 'bundles-tab': true, active: activeTab === 'files' })}
-        data-bundle-tab="files"
-        aria-selected=${String(activeTab === 'files')}
-        role="tab"
-      >Files (${sources.length})</button>
-      ${reports.length > 0 ? html`<button
-        type="button"
-        class=${classMap({ 'bundles-tab': true, active: activeTab === 'reports' })}
-        data-bundle-tab="reports"
-        aria-selected=${String(activeTab === 'reports')}
-        role="tab"
-      >Reports (${reports.length})</button>` : nothing}
+  // Overview body — metadata block on top, three side-by-side
+  // columns (Packages / Files / Reports) below. Each column has its
+  // own header + scroll container so a 2000-file bundle doesn't
+  // stretch the meta block off-screen. The Reports column only
+  // renders when at least one OPFS report carries findings that
+  // match the bundle's files (no point in a column with a single
+  // empty-state line when the bundle's just sitting there waiting
+  // for an analyzer dump). The outer wrapper is a flex column so
+  // the columns row takes the remaining height after the meta /
+  // chips, and CSS handles the per-column scroll.
+  return html`<div class="bundles-overview">
+    <div class="bundles-overview-summary">
+      ${meta}
+      <dl class="bundles-detail-meta">
+        ${extras}
+        <dt>Sources</dt><dd>${sources.length}</dd>
+        ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
+      </dl>
+      ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     </div>
-    ${activeTab === 'files' ? filesTpl
-      : activeTab === 'reports' ? reportsTpl
-      : distTpl}`
+    <div class="bundles-overview-columns">
+      <section class="bundles-overview-col">
+        <header class="bundles-overview-col-head">
+          Packages <span class="bundles-overview-col-count">${packages.size}</span>
+        </header>
+        <div class="bundles-overview-col-body">${distTpl}</div>
+      </section>
+      <section class="bundles-overview-col">
+        <header class="bundles-overview-col-head">
+          Files <span class="bundles-overview-col-count">${sources.length}</span>
+        </header>
+        <div class="bundles-overview-col-body">${filesTpl}</div>
+      </section>
+      ${reports.length > 0 ? html`<section class="bundles-overview-col">
+        <header class="bundles-overview-col-head">
+          Reports <span class="bundles-overview-col-count">${reports.length}</span>
+        </header>
+        <div class="bundles-overview-col-body">${reportsTpl}</div>
+      </section>` : nothing}
+    </div>
+  </div>`
 }
 
 // Full-width "slide" view for the Graph and Issues tabs. The
@@ -1294,17 +1293,11 @@ function renderBundleSlide(entry) {
   }
   return html`<div class="bundles-view bundles-slide-view">
     <header class="bundles-slide-bar">
+      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
         <div class="bundles-slide-name">${entry.name}</div>
       </div>
       <div class="bundles-slide-tabs" role="tablist">
-        <button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: overviewActive })}
-          data-bundle-tab="overview"
-          aria-selected=${String(overviewActive)}
-          role="tab"
-        >Overview</button>
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}
@@ -1340,6 +1333,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'code')}
           role="tab"
         >Code</button>
+        <button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: overviewActive })}
+          data-bundle-tab="overview"
+          aria-selected=${String(overviewActive)}
+          role="tab"
+        >Overview</button>
       </div>
     </header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>

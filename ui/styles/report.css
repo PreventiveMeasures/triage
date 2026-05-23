@@ -372,6 +372,12 @@
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
 }
 
+.bundles-slide-icon {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center;
+  color: var(--muted);
+}
+.bundles-slide-icon > svg { display: block; }
 .bundles-slide-title {
   flex: 1; min-width: 0;
 }
@@ -399,19 +405,78 @@
   overflow: hidden;
 }
 
-/* Overview tab — metadata block + nested Packages / Files / Reports.
-   Gets the same padded scroll container the old right-side details
-   panel used (when Overview was rendered as `.bundles-details-body`),
-   so the metadata + lists read the same regardless of which surface
-   they're on. The other slide tabs (Graph, Terminal, Issues, Code,
-   Treemap) keep the edge-to-edge body — each owns its own internal
-   layout. */
+/* Overview tab — metadata block on top, three side-by-side
+   independently-scrollable columns (Packages / Files / Reports)
+   below. The body itself is a non-scrolling flex column; the
+   columns row owns the remaining height and each column's body
+   scrolls internally. The other slide tabs (Graph, Terminal,
+   Issues, Code, Treemap) keep the edge-to-edge body — each owns
+   its own internal layout. */
 .bundles-slide-body-overview {
+  display: flex;
+  flex-direction: column;
+  font-size: .78rem;
+  overflow: hidden;
+}
+.bundles-overview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.bundles-overview-summary {
+  padding: .75rem .75rem 0;
+  flex-shrink: 0;
+}
+.bundles-overview-columns {
+  display: flex;
+  gap: .75rem;
   padding: .75rem;
+  flex: 1;
+  min-height: 0;
+}
+.bundles-overview-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.bundles-overview-col-head {
+  padding: .4rem .55rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.bundles-overview-col-count {
+  color: var(--text);
+  font-weight: 600;
+  font-size: .72rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.bundles-overview-col-body {
+  padding: .55rem;
   overflow-y: auto;
   overscroll-behavior: none;
   scrollbar-gutter: stable;
+  flex: 1;
+  min-height: 0;
+}
+.bundles-overview-col-empty {
+  margin: 0;
+  color: var(--muted);
   font-size: .78rem;
+  font-style: italic;
 }
 
 .bundles-slide-body > .bundle-graph-slot,
