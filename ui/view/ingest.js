@@ -259,6 +259,12 @@ export async function addFiles(files) {
   // dropped files within ONE addFiles call see each other (e.g. a
   // CSV that derives two .codex files with the same name as an
   // existing entry would otherwise miss the second collision).
+  // Re-listed after `importWorkspaceFromGzip` below since that
+  // branch saves bundled reports through `applyWorkspaceImport`
+  // (which we can't reach into to update `existingNames`) — without
+  // the re-list, a workspace import dropped alongside a regular
+  // report of the same name would let the second drop silently
+  // overwrite the workspace-import's just-saved copy.
   const existingNames = new Set(await listFiles())
   for (const file of files) {
     try {
@@ -271,6 +277,19 @@ export async function addFiles(files) {
       const lower = stripDownloadDup(file.name.toLowerCase())
       if (lower.endsWith('.gz') || lower.endsWith('.deepview-workspace.enc')) {
         await importWorkspaceFromGzip(file)
+        // Workspace import persists every bundled report via
+        // `saveFile` inside `applyWorkspaceImport`. Refresh the
+        // existing-names set so a later file in this same drop
+        // (regular report whose name happens to match one of the
+        // imported workspace's reports) hits the conflict path
+        // instead of silently overwriting.
+        try {
+          const refreshed = await listFiles()
+          existingNames.clear()
+          for (const n of refreshed) existingNames.add(n)
+        } catch (err) {
+          console.warn('Import: failed to refresh existingNames after workspace import:', err)
+        }
         continue
       }
       // Bundle drops (sourcemap / stasis) — archive in the bundles
