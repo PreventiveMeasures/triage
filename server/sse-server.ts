@@ -260,17 +260,23 @@ export function installSseServer(deps: SseServerDeps): SseServer {
       // session is closed), mint a fresh one — the response stream
       // carries the new id as the first `session` event so the client
       // switches over on the next POST.
+      //
+      // Attach-then-write ordering: attachResponse runs FIRST and only
+      // on success do we writeSseHeaders. If attachResponse returns
+      // false (today only when the session transitions out of OPEN
+      // between the lookup and the attach — a future backpressure /
+      // takeover-rate path could surface that legitimately) we fall
+      // through to createSession with `res` still header-virgin, so
+      // the new session can writeSseHeaders without ERR_HTTP_HEADERS_SENT.
       let session: SseSession | null = null
       let sid: string | null = null
       if (sidFromUrl) {
         const existing = sessions.get(sidFromUrl)
-        if (existing && existing.readyState === existing.OPEN) {
+        if (existing && existing.readyState === existing.OPEN && existing.attachResponse(res)) {
           writeSseHeaders(res)
-          if (existing.attachResponse(res)) {
-            session = existing
-            sid = sidFromUrl
-            armIdleTimer(sid, session)
-          }
+          session = existing
+          sid = sidFromUrl
+          armIdleTimer(sid, session)
         }
       }
       if (!session) {
@@ -322,9 +328,16 @@ export function installSseServer(deps: SseServerDeps): SseServer {
 }
 
 // Bare-bones query parse for `id=<base64url>`. Avoids URLSearchParams
-// (which decodes percent-escapes) — the session id is always a 22-char
-// base64url string from `randomId()`, no escapes possible. Returns
-// null on missing / malformed.
+// (which decodes percent-escapes) — `randomId()` mints a 22-char
+// base64url string, and the client echoes it back unchanged, so no
+// escapes are possible on the legitimate path. The {1,64} bound is a
+// deliberately lenient sanity gate: anything outside the base64url
+// alphabet is rejected (and a missing id is treated as "no id"); a
+// client that sent a sid this regex doesn't recognise just gets a
+// fresh session minted by createSession, no failure mode. The wide
+// length window means a future randomId-length change here doesn't
+// silently break old clients that round-trip a longer or shorter
+// token. Returns null on missing / malformed.
 function parseSidQuery(query: string | undefined): string | null {
   if (typeof query !== 'string') return null
   for (const part of query.split('&')) {
