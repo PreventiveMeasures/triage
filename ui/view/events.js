@@ -134,7 +134,7 @@ report.addEventListener('click', (e) => {
     // the bundles view (the slide renders the source inline);
     // flip the tab back to the default so the modal surfaces
     // even if the user happens to be parked on Code right now.
-    if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'packages'
+    if (state.bundleDetailsTab === 'code') state.bundleDetailsTab = 'overview'
     // After the modal lands in the DOM, scroll its line-row for
     // this finding into view at the top of the viewport. Same
     // shape the Code-search hits use.
@@ -166,52 +166,6 @@ report.addEventListener('click', (e) => {
       await openBundle(integrity)
       scrollToFindingLine()
     })()
-    return
-  }
-  const codeBundle = e.target.closest('[data-bundle-row-code]')
-  if (codeBundle) {
-    const integrity = codeBundle.dataset.bundleRowCode
-    // Same state setup as data-select-bundle below; the only
-    // difference is `bundleDetailsTab = 'code'` (drop the user
-    // straight onto the code tab) and the cache short-circuit
-    // when bundleDetails is already loaded for this integrity
-    // (clicking Code → on the already-open bundle shouldn't
-    // re-parse the snapshot).
-    state.selectedBundle = integrity
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    state.bundleDetailsTab = 'code'
-    graph2.showAll = true
-    state.shownTriage = null
-    persistLastBundle(integrity, 'code')
-    if (state.bundleDetails?.integrity === integrity) {
-      // Already parsed — just paint the new tab choice.
-      render()
-      renderSidebar()
-      return
-    }
-    state.bundleDetails = null
-    render()
-    renderSidebar()
-    openBundle(integrity)
-    return
-  }
-  // Bundles list — close-details button on the right panel. Same
-  // shape as the findings table's data-table-deselect hook.
-  if (e.target.closest('[data-deselect-bundle]')) {
-    state.selectedBundle = null
-    state.bundleDetails = null
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    render()
-    // Drop the sidebar's per-row highlight now that no bundle is
-    // selected — otherwise the deselected row would still read as
-    // "current" until the next sidebar re-render.
-    renderSidebar()
     return
   }
   // Packages list — row select. Mirrors the bundles select pattern;
@@ -396,16 +350,15 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Bundle details — tab switch. Packages / Files / Reports
-  // render in the regular details panel next to the bundles list;
-  // Terminal / Graph / Issues / Code open the full-width slide
-  // layout (bundles list + details both step aside). State is
-  // purely UI; the parsed bundleDetails stays cached so flipping
-  // tabs is paint-only.
+  // Bundle view — top tab switch. The strip carries Issues,
+  // Terminal, Treemap, Graph, Code, Overview. State is purely UI;
+  // the parsed bundleDetails stays cached so flipping tabs is
+  // paint-only (except Graph / Terminal which re-mount their
+  // canvas / terminal slot in render.js).
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'packages' || tab === 'files' || tab === 'reports' || tab === 'graph' || tab === 'treemap' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
+    if (tab === 'overview' || tab === 'graph' || tab === 'treemap' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
@@ -421,21 +374,6 @@ report.addEventListener('click', (e) => {
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
     }
-    return
-  }
-  // Slide back button — drops out of the Graph / Issues / Code
-  // slide back to the bundles list + details. Defaults to the
-  // Packages sub-tab so the panel paints meaningfully on the
-  // way out. Same source-viewer reset as the tab switch above.
-  if (e.target.closest('[data-action="bundle-slide-back"]')) {
-    if (state.bundleDetailsTab === 'graph') cleanupGraph2()
-    state.bundleDetailsTab = 'packages'
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    if (state.selectedBundle) persistLastBundle(state.selectedBundle)
-    render()
     return
   }
   // Bundle Issues row — report chip click. Each chip carries the
@@ -558,55 +496,6 @@ report.addEventListener('click', (e) => {
         if (row) row.scrollIntoView({ block, behavior: 'smooth' })
       })
     }
-    return
-  }
-  // Bundles list — row select. Opens the right-side details panel,
-  // then asynchronously reads + parses the bundle (.map gets
-  // sourcemap fields surfaced; .stasis falls back to metadata-only).
-  // The first render() shows a Loading… placeholder; once the
-  // async load resolves, render() repaints with the parsed data.
-  // Stale resolves (the user clicked another row in the meantime)
-  // are dropped via the `state.selectedBundle === integrity` check.
-  const selBundle = e.target.closest('[data-select-bundle]')
-  if (selBundle) {
-    const integrity = selBundle.dataset.selectBundle
-    if (state.selectedBundle === integrity) return
-    state.selectedBundle = integrity
-    persistLastBundle(integrity)
-    state.bundleDetails = null
-    state.bundleSourceFile = null
-    state.bundleSourceFindingIdx = null
-    state.bundleCodeSearchQuery = ''
-    state.bundleCodeSearchMode = 'files'
-    // Reset to the Packages tab when a different bundle opens —
-    // the user shouldn't carry the prior bundle's tab choice into
-    // the new one (especially when one had >5 packages and the
-    // other doesn't, so tabs aren't even rendered).
-    state.bundleDetailsTab = 'packages'
-    // Default "All files" to ON for the bundle graph: the user
-    // expects to see the whole bundle inventory first, then
-    // optionally narrow it down to issue-bearing files + their
-    // deps via the toggle. The setting persists for the duration
-    // of this bundle's session; opening a different bundle resets.
-    graph2.showAll = true
-    // Default the triage view to live (non-triaged) when opening
-    // a bundle. The setting is shared with the findings tab, so
-    // a user who left findings in Deleted view would otherwise
-    // land here filtered to deletions only — confusing in a
-    // bundle context where they expect to see active issues
-    // first.
-    state.shownTriage = null
-    render()
-    // Re-render the sidebar too so the bundles section's per-row
-    // `.current` highlight follows the main-pane selection.
-    renderSidebar()
-    // Async open pipeline (read bytes, parse, set bundleDetails,
-    // kick file hashes, kick the cross-report findings indexer)
-    // lives in view/bundle-load.js — shared with the Code →
-    // shortcut above and the bundle-only drop branch in
-    // ingest.js. Stale resolves drop via state.selectedBundle
-    // checks inside that helper.
-    openBundle(integrity)
     return
   }
   // Files toggle (page header, right of the repo chip). On/off

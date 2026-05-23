@@ -425,8 +425,6 @@ body.show-print-btn #download-btn { display: flex; }
   .findings-content,
   .tree-view,
   .tree-view-table,
-  .bundles-list,
-  .bundles-details,
   .packages-list,
   .packages-details,
   .bundles-slide-body {
@@ -457,7 +455,6 @@ body.show-print-btn #download-btn { display: flex; }
   [draggable='true'],
   [contenteditable],
   .mono,
-  [data-select-bundle],
   [data-select-package],
   [data-select-repository],
   [data-tree-select] {

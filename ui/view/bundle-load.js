@@ -1,12 +1,13 @@
-// Shared async open-bundle pipeline. The bundles list row click
-// (`data-select-bundle`), the Code → shortcut
-// (`data-bundle-row-code`), and the bundle-only drop branch in
-// `ingest.js` all need the same readBundle → branch by extension
-// → JSON.parse / brotliDecompress → set bundleDetails + render
-// → kick the SHA-512 file-hash index → kick the findings index
-// flow. Three near-identical copies used to live across
-// `events.js` + `ingest.js`; consolidating here means the next
-// fix to e.g. error handling lands in one place.
+// Shared async open-bundle pipeline. The sidebar bundle row
+// click (`.file-item[data-bundle-integrity]` in sidebar.js), the
+// finding-card "Code →" shortcut (`data-finding-code-bundle` in
+// events.js), and the bundle-only drop branch in `ingest.js` all
+// need the same readBundle → branch by extension → JSON.parse /
+// brotliDecompress → set bundleDetails + render → kick the
+// SHA-512 file-hash index → kick the findings index flow.
+// Three near-identical copies used to live across the bundles
+// list + sidebar + ingest paths; consolidating here means the
+// next fix to e.g. error handling lands in one place.
 import { Bundle } from '@exodus/stasis/bundle'
 import { ensureBundleFindingsIndexed, hasBundleFileHashes, readBundle, recordBundleFileHashes, state } from '#client/index.js'
 import { decodeUtf8 } from '../../common/utf8.js'

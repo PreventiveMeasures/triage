@@ -1,13 +1,13 @@
-/* Light-DOM sidebar chrome that can't live inside the `<app-sidebar>`
-   shadow root, because the element itself is outside it:
-
-   `#sidebar-tooltip` — the instant hover tooltip for truncated
-   file names. A single element appended to `<body>` (so it
-   escapes the sidebar's `overflow: hidden`) and repositioned per
-   hover; sidebar.js owns its show/hide. */
-
-/* ── Truncated-name hover tooltip (appended to <body>) ─────────── */
-#sidebar-tooltip {
+/* Light-DOM tooltip chrome — a single shared element appended to
+   <body> by `view/tooltip.js`. Consumers (sidebar, bundle view, …)
+   call `showTooltip(el)` / `hideTooltip()` on hover and the
+   `[data-tooltip]` attribute drives the text. Lives outside any
+   view's shadow root so it escapes `overflow: hidden`. Replaces
+   the native `title=` browser tooltip — that one reads as a
+   webpage (delayed, OS chrome) and we want an instant in-app
+   affordance instead.
+   Pre-rename historical name: `#sidebar-tooltip`. */
+#styled-tooltip {
   position: fixed;
   background: rgb(28 28 28 / .95);
   backdrop-filter: var(--glass-blur);
@@ -21,13 +21,12 @@
   white-space: pre;
   z-index: 200;
   box-shadow: var(--shadow-glass);
-  transform: translateY(-50%);
   opacity: 0;
   transition: opacity .08s;
 
   &.visible { opacity: 1; }
 }
 
-body.theme-light #sidebar-tooltip {
+body.theme-light #styled-tooltip {
   background: rgb(246 248 250 / .96);
 }
