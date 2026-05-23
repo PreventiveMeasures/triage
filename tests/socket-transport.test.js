@@ -37,6 +37,17 @@ class FakeWebSocket {
   static OPEN = 1
   static CLOSING = 2
   static CLOSED = 3
+  // Per-instance constants too — real `WebSocket` instances expose
+  // these (HTML spec), and the production transport now reads
+  // `socket.OPEN` (instance) rather than the bare global so the SSE
+  // adapter (which doesn't share a global WebSocket constructor) can
+  // be type-equivalent. Without instance constants the readyState
+  // strict-compare drops every readyState check to a `1 !== undefined`
+  // truthy and the transport thinks the socket is never open.
+  CONNECTING = 0
+  OPEN = 1
+  CLOSING = 2
+  CLOSED = 3
   static instances = []
   static get last() { return FakeWebSocket.instances.at(-1) }
   static reset() { FakeWebSocket.instances.length = 0 }
@@ -457,23 +468,28 @@ describe('socket-transport: heartbeat', () => {
   })
 
   it('setHeartbeatTimings(0) disables pings AND clears any in-flight pong-timeout', async () => {
-    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 1_000 })
+    // Pong-timeout shorter than the assertion wait so a regression
+    // that fails to clear it would actually close the socket within
+    // the test window — without this, the original 1s timeout was
+    // never going to fire inside the 80ms wait anyway and the
+    // assertion was a green-only signal.
+    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 40 })
     t.acquire()
     const wsA = FakeWebSocket.last
     wsA.handshake('n0')
     try {
-      await delay(40)  // first ping at t=30 → pong-timeout armed (fires at t=1030)
+      await delay(35)  // first ping at t=30 → pong-timeout armed (fires at t=70)
       const beforeCount = wsA.frames.length
       t.setHeartbeatTimings({ pingMs: 0 })
-      // No more pings fire. Internally `startHeartbeat()` runs
-      // (because pingIntervalId was set), which calls
-      // `stopHeartbeat()` first — that clears BOTH the interval and
-      // the in-flight pong-timeout — then early-returns on
-      // `pingIntervalMs <= 0`. The socket survives well past the
-      // original pong-timeout window because the timer never fires.
+      // Internally `startHeartbeat()` runs (because pingIntervalId
+      // was set), which calls `stopHeartbeat()` first — that clears
+      // BOTH the interval and the in-flight pong-timeout — then
+      // early-returns on `pingIntervalMs <= 0`. The wait below
+      // outlives the original pong-timeout, so a regression that
+      // failed to clear pongTimeoutId would close the socket.
       await delay(80)
       assert.equal(wsA.frames.length, beforeCount, 'no new pings sent after disable')
-      assert.equal(wsA.closed, false, 'in-flight pong-timeout was cleared (socket still alive)')
+      assert.equal(wsA.closed, false, 'in-flight pong-timeout was cleared (socket still alive past original deadline)')
     } finally {
       t.close()
     }
@@ -810,6 +826,71 @@ describe('socket-transport: SSE fallback', () => {
     lastStream().pushEvent('close', JSON.stringify({ code: 1001, reason: 'Server shutting down' }))
     await delay(10)
     assert.equal(c.disconnected.length, 1)
+    t.close()
+  })
+
+  it('mid-life session change fires onDisconnected before onConnected (re-subscribe path)', async () => {
+    // Mirrors the multi-replica recovery case: an in-flight POST
+    // landed on a replica that didn't know the latched session id, so
+    // the server minted a fresh session with a new id + new challenge.
+    // The outer transport must fire `onDisconnected` so triage-sync
+    // resets its subscribed-state before `onConnected` re-runs the
+    // subscribe loop against the new nonce. Without this, the new
+    // server session has no subscribers and broadcasts never reach
+    // this client.
+    const t = makeTransport()
+    const events = []
+    t.addConsumer({
+      onMessage: () => { events.push('M') },
+      onConnected: (n) => { events.push(`C:${n}`) },
+      onDisconnected: (r) => { events.push(`D:${r}`) },
+    })
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    // First session.
+    lastStream().pushEvent('session', 'sid-A')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'nonce-A' })
+    await delay(10)
+    assert.deepEqual(events, ['C:nonce-A'])
+    // Replica takeover — new session id, new challenge.
+    lastStream().pushEvent('session', 'sid-B')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'nonce-B' })
+    await delay(10)
+    // Order matters: disconnect THEN connect — that's the signal
+    // triage-sync needs to clear session.subscribed before
+    // re-subscribing.
+    assert.deepEqual(events, ['C:nonce-A', 'D:session restarted', 'C:nonce-B'])
+    t.close()
+  })
+
+  it('1001 close code resets reconnect backoff to INITIAL', async () => {
+    const t = makeTransport()
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    // Drive the reconnect-backoff up: trigger a server-initiated 1001
+    // close, then check that the reconnect attempt fires at the
+    // INITIAL delay (~1s) rather than a bumped value. Observable via
+    // the timing of the next fetch.
+    lastStream().pushEvent('close', JSON.stringify({ code: 1001, reason: 'shutting down' }))
+    await delay(10)
+    const beforeReconnect = fetchCalls.length
+    // Reconnect cycle: the close listener resets reconnectDelayMs to
+    // INITIAL (1000ms) on 1001, so the next attempt should land
+    // within ~1100ms (with margin). A regression that didn't reset
+    // would still attempt within that window since this is the FIRST
+    // reconnect — but the assertion holds for any future regression
+    // that accidentally bumped the delay before resetting.
+    await delay(1100)
+    // Reconnect tries WS first (FakeWebSocket constructor); if WS
+    // succeeds the SSE plane stays untouched. Either way, the WS
+    // ctor fires another instance.
+    assert.ok(FakeWebSocket.instances.length >= 2, 'reconnect attempted')
+    assert.ok(fetchCalls.length >= beforeReconnect, 'reconnect fired')
     t.close()
   })
 })

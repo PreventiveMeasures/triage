@@ -224,6 +224,19 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     })
     req.on('end', () => {
       if (aborted) return
+      // Re-check shutdown: the entry gate at handlePost runs at request
+      // arrival, but the body read is async — a slow upload that
+      // started pre-SIGTERM can fire 'end' AFTER the lifecycle's
+      // sseSessions() close-loop has already iterated, and createSession
+      // would otherwise add a NEW session post-iteration that only
+      // gets force-killed by the terminate-grace timer (no graceful
+      // event:close frame). Bail with 503 so the client distinguishes
+      // shutdown from a transport error and short-circuits backoff.
+      if (isShuttingDown()) {
+        res.writeHead(503, { 'content-type': 'application/json', 'connection': 'close' })
+        res.end(JSON.stringify({ error: 'shutting-down' }))
+        return
+      }
       let body: SseBody = {}
       if (chunks.length > 0) {
         try {
@@ -287,7 +300,10 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     const [path, query] = req.url.split('?', 2)
     if (path !== SSE_OPEN_PATH) return false
     if (req.method !== 'POST') {
-      res.writeHead(405, { 'content-type': 'application/json', 'allow': 'POST' })
+      // `connection: close` so a probing client (e.g. accidental GET)
+      // can't pipeline N more 405s on the same keep-alive socket.
+      // Sibling 503 paths set this for the same reason.
+      res.writeHead(405, { 'content-type': 'application/json', 'allow': 'POST', 'connection': 'close' })
       res.end(JSON.stringify({ error: 'method-not-allowed' }))
       return true
     }

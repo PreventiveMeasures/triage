@@ -76,6 +76,17 @@ export function createAuth(deps: {
   }
   function handleAuthenticate(socket: WebSocket, msg: AuthenticateMsg): void {
     if (typeof msg.password !== 'string' || msg.password.length === 0 || msg.password.length > MAX_AUTH_PASSWORD_LEN) return
+    // Already-authorized short-circuit. The SSE plane carries
+    // `body.password` on every POST (sse-server.ts:dispatchBody
+    // synthesises a fresh `authenticate` frame each time), so re-
+    // emitting `authenticated` per POST would chatter the wire AND
+    // re-fire triage-sync's `authenticated` consumer hook (its "kick
+    // deferred sends" path) on every flush. The wire signal is needed
+    // exactly once per `unauthorized → authorized` transition; after
+    // that, the client already knows. WS plane unaffected (sends
+    // authenticate at most once per socket per the runAuthFlow guard
+    // in client/sync/socket-transport.ts).
+    if (isAuthorized(socket)) return
     // No-config short-circuit: when not gating, treat any authenticate
     // as success so a client can cache + replay its password on
     // reconnect even against an un-gated server (wire shape stays

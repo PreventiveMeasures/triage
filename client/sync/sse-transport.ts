@@ -144,9 +144,16 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // POST's response stream stays attached server-side until the new
   // POST arrives, so broadcasts flow on it during the wait.
   private inFlightPost: Promise<void> | null = null
-  // AbortController for the currently-reading response stream so we
-  // can tear it down on `close()` without leaving a stranded fetch.
-  private currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  // Every reader currently draining a POST response. A new POST opens
+  // its own reader; the *previous* reader keeps draining (the server
+  // end()s its response on takeover, so it EOFs naturally). On
+  // shutdown we cancel them ALL so a hung response can't keep firing
+  // MessageEvents past CLOSED.
+  private readonly activeReaders = new Set<ReadableStreamDefaultReader<Uint8Array>>()
+  // AbortController shared by every in-flight fetch — abort()'d on
+  // shutdown so a hung POST (headers never arriving) tears down with
+  // the rest of the transport instead of leaving a stranded socket.
+  private readonly fetchAbort = new AbortController()
   // EventTarget surface for the outer transport's
   // `addEventListener('open' / 'message' / 'close' / 'error', …)`.
   // The first `session` event flips us from CONNECTING → OPEN.
@@ -244,10 +251,16 @@ export class SseTransport extends EventTarget implements WebSocketLike {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
           credentials: 'same-origin',
+          // signal so shutdown() can abort an in-flight fetch whose
+          // headers never arrive — otherwise a hung server keeps the
+          // socket pinned past close().
+          signal: this.fetchAbort.signal,
         })
       } catch (err) {
-        // Network failure → tear the channel down. Outer transport's
-        // reconnect loop will retry (with WS first).
+        // Network failure (or shutdown aborted us) → tear the channel
+        // down. Outer transport's reconnect loop will retry (with WS
+        // first). Suppress the warn when we aborted ourselves — that
+        // path is already noisy enough at the close-event site.
         if (this.readyState !== SseTransport.CLOSED) {
           console.warn('sse-transport: POST failed:', err)
         }
@@ -279,20 +292,35 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // Reads one POST's response body, parses SSE events, dispatches them.
   // Multiple consumeStream invocations may be running in parallel (the
   // previous POST's reader still draining while the new one starts) —
-  // each owns its own parser + reader, no shared state.
+  // each owns its own parser + reader, registered in `activeReaders`
+  // so shutdown can cancel them all.
   private async consumeStream(stream: ReadableStream<Uint8Array>): Promise<void> {
     const reader = stream.getReader()
-    // Track only the latest reader for the close() teardown — letting
-    // the older one drain naturally is fine (server end()s it).
-    this.currentReader = reader
+    this.activeReaders.add(reader)
     const parser = new SseParser()
     const decoder = new TextDecoder()
     try {
       for (;;) {
         const { value, done } = await reader.read()
         if (done) break
+        // Skip dispatch if the transport tore down while we awaited —
+        // protects consumers from a post-shutdown phantom-connected
+        // frame surfacing through their `onMessage` handler.
+        if (this.readyState === SseTransport.CLOSED) return
         const events = parser.parse(decoder.decode(value, { stream: true }))
         for (const ev of events) this.dispatchEvent_(ev)
+      }
+      // Flush any partial UTF-8 sequence still buffered in the
+      // TextDecoder. `decoder.decode()` with no args switches off
+      // stream mode and emits U+FFFD for incomplete tail bytes (instead
+      // of silently dropping them), which then runs through the parser
+      // in case the tail completes a `data:` line for an event whose
+      // `\n\n` terminator was the last bytes of the stream.
+      if (this.readyState !== SseTransport.CLOSED) {
+        const tail = decoder.decode()
+        if (tail.length > 0) {
+          for (const ev of parser.parse(tail)) this.dispatchEvent_(ev)
+        }
       }
     } catch (err) {
       if (this.readyState !== SseTransport.CLOSED) {
@@ -300,17 +328,23 @@ export class SseTransport extends EventTarget implements WebSocketLike {
         this.shutdown()
       }
     } finally {
-      if (this.currentReader === reader) this.currentReader = null
+      this.activeReaders.delete(reader)
       try { reader.releaseLock() } catch {}
     }
   }
 
   // Routes a single SSE event. `session` updates the continuation
   // token (and on the first one, flips us OPEN + fires `open`). `close`
-  // is the server-initiated graceful-shutdown signal. Default-named
-  // `message` events are forwarded to the outer transport.
+  // is the server-initiated graceful-shutdown signal carrying
+  // `{code, reason}`. Default-named `message` events are forwarded to
+  // the outer transport.
   private dispatchEvent_(ev: { event: string; data: string }): void {
     if (ev.event === 'session') {
+      // Only update if still in a state that can use the token. A
+      // post-shutdown 'session' from a stale reader has no caller for
+      // the new id and could leak it through a future reuse of the
+      // SseTransport instance.
+      if (this.readyState === SseTransport.CLOSED) return
       this.sessionId = ev.data
       if (this.readyState === SseTransport.CONNECTING) {
         this.readyState = SseTransport.OPEN
@@ -319,26 +353,46 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       return
     }
     if (ev.event === 'close') {
-      // Server-initiated close (graceful shutdown). Tear down without
-      // resending the close on the outer transport — `shutdown` fires
-      // it once.
-      this.shutdown()
+      // Server-initiated close (graceful shutdown) — payload carries
+      // `{code, reason}`. Forward both via the close Event so the
+      // outer socket-transport can short-circuit reconnect backoff on
+      // 1001 (parity with the WS 1001 path).
+      let code: number | undefined
+      let reason: string | undefined
+      try {
+        const parsed = JSON.parse(ev.data) as { code?: unknown; reason?: unknown }
+        if (typeof parsed.code === 'number') code = parsed.code
+        if (typeof parsed.reason === 'string') reason = parsed.reason
+      } catch {}
+      this.shutdown(code, reason)
       return
     }
     if (ev.event === '' || ev.event === 'message') {
+      if (this.readyState !== SseTransport.OPEN) return
       this.dispatchEvent(new MessageEvent('message', { data: ev.data }))
     }
   }
 
-  private shutdown(): void {
+  // `code` / `reason` propagate to the dispatched close event so the
+  // outer transport can read them (parity with WebSocket CloseEvent).
+  // Plain-Event fallback when `CloseEvent` isn't available (Node test
+  // environments without it) — we attach the fields directly so the
+  // outer's `ev.code` read works either way.
+  private shutdown(code?: number, reason?: string): void {
     if (this.readyState === SseTransport.CLOSED) return
     this.readyState = SseTransport.CLOSING
     if (this.flushTimer != null) { clearTimeout(this.flushTimer); this.flushTimer = null }
-    if (this.currentReader) {
-      try { this.currentReader.cancel().catch(() => {}) } catch {}
-      this.currentReader = null
+    // Abort the in-flight fetch (if any), then cancel every active
+    // reader so a stuck stream can't keep firing past CLOSED.
+    try { this.fetchAbort.abort() } catch {}
+    for (const reader of this.activeReaders) {
+      try { reader.cancel().catch(() => {}) } catch {}
     }
+    this.activeReaders.clear()
     this.readyState = SseTransport.CLOSED
-    this.dispatchEvent(new Event('close'))
+    const event: Event & { code?: number; reason?: string } = new Event('close')
+    if (code != null) event.code = code
+    if (reason != null) event.reason = reason
+    this.dispatchEvent(event)
   }
 }

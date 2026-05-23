@@ -342,6 +342,27 @@ describe('SSE+POST transport', { concurrency: false }, () => {
     session.close()
   })
 
+  it('client disconnect frees the session id (no leak)', async () => {
+    // Indirect leak detection: a closed session's id can be re-bound
+    // by a new POST → server mints a fresh session (with a new id),
+    // which only happens if the old session was actually dropped
+    // from the sessions Map. Pre-fix, sessions piled up and an idle
+    // client whose response dropped would leak its slot.
+    const session = await openSession(httpOrigin)
+    const oldSid = session.sid
+    session.close()
+    // Wait for the server-side close handler to fire and dropSession
+    // to run (the response 'close' event is async).
+    await new Promise((r) => { setTimeout(r, 100) })
+    // POST with the (now-dead) old sid: server should mint a fresh
+    // session and announce a new id.
+    const res = await postSse(httpOrigin, {}, oldSid)
+    const read = readSse(res)
+    const sessionEv = await read.recvEvent((e) => e.event === 'session')
+    assert.notEqual(sessionEv.data, oldSid, 'fresh id minted after disconnect')
+    read.cancel()
+  })
+
   it('password field on POST silently authenticates against a password-gated server', async () => {
     // Pre-write a password-gated config, then boot a server pointing
     // at it. The config-path env var is honoured by server/config.ts;
@@ -363,6 +384,45 @@ describe('SSE+POST transport', { concurrency: false }, () => {
       const auth = await read.recvFrame((m) => m.type === 'authenticated' || m.type === 'unauthorized')
       assert.equal(auth.type, 'authenticated')
       read.cancel()
+    } finally {
+      await gated.teardown()
+      try { rmSync(dir, { recursive: true, force: true }) } catch {}
+    }
+  })
+
+  it('authenticate short-circuits once authorized: a second POST with the same password does not re-emit', async () => {
+    // The SSE client caches password and rides body.password on
+    // EVERY POST. Without the server-side short-circuit, each POST
+    // would re-emit `authenticated` and re-fire triage-sync's
+    // 'kick deferred sends' consumer hook — chatter the wire and
+    // wasted work. The short-circuit lets the wire signal fire
+    // exactly once per `unauthorized → authorized` transition.
+    const path = await import('node:path')
+    const fs = await import('node:fs')
+    const { mkdtempSync, rmSync } = fs
+    const os = await import('node:os')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'sse-auth-shortcircuit-'))
+    const cfg = path.join(dir, 'config.json')
+    fs.writeFileSync(cfg, JSON.stringify({ password: 'secret' }))
+    const gated = await bootServer({ dir, env: { CONFIG_PATH: cfg } })
+    try {
+      // First POST authenticates; capture sid + receive `authenticated`.
+      const r1 = await postSse(gated.httpOrigin, { password: 'secret' })
+      const read1 = readSse(r1)
+      const sidEv = await read1.recvEvent((e) => e.event === 'session')
+      const sid = sidEv.data
+      await read1.recvFrame((m) => m.type === 'challenge')
+      await read1.recvFrame((m) => m.type === 'authenticated')
+      // Second POST against the SAME sid with the same password.
+      // No new `authenticated` should arrive — but a `pong` (from a
+      // ping frame) MUST still flow, so we use that as a positive
+      // signal that the dispatcher is alive on this continuation.
+      const r2 = await postSse(gated.httpOrigin, { password: 'secret', frames: [{ type: 'ping' }] }, sid)
+      const read2 = readSse(r2)
+      const pong = await read2.recvFrame((m) => m.type === 'pong' || m.type === 'authenticated')
+      assert.equal(pong.type, 'pong', 'pong arrives without a re-emitted authenticated')
+      read1.cancel()
+      read2.cancel()
     } finally {
       await gated.teardown()
       try { rmSync(dir, { recursive: true, force: true }) } catch {}

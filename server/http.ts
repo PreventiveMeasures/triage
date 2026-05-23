@@ -11,7 +11,7 @@ import { Buffer } from 'node:buffer'
 import { fileURLToPath } from 'node:url'
 import type { WebSocketServer } from 'ws'
 import { type ObjstoreRestDeps, handleRest, matchRoute } from './objstore/rest.ts'
-import type { SseServer } from './sse-server.ts'
+import { SSE_OPEN_PATH, type SseServer } from './sse-server.ts'
 import { loadStatic } from './static.ts'
 import { errStack } from './util.ts'
 
@@ -60,7 +60,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
     // WS upgrade and REST plane). The sseServer.handle() function
     // returns true iff it matched and consumed the request; on false
     // we fall through to the REST / static / 404 ladder below.
-    if (typeof req.url === 'string' && req.url.split('?', 1)[0] === '/api/sync/sse') {
+    if (typeof req.url === 'string' && req.url.split('?', 1)[0] === SSE_OPEN_PATH) {
       if (!isOriginAllowed(req)) {
         res.writeHead(403, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: 'origin-denied' }))

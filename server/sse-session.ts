@@ -57,8 +57,10 @@ export class SseSession extends EventEmitter {
   // Wire the close / error events on a freshly-attached response. The
   // close event only matters for the *current* response — a previous
   // response's close (after it was swapped out) is not a session-level
-  // signal. Tracked via the `res === this.currentRes` guard inside the
-  // handler.
+  // signal. Same guard applies to error: a TCP-level error during
+  // res.end() flush on a swapped-out response would otherwise emit a
+  // spurious session 'error' that operators read as a real transport
+  // failure on a healthy session.
   private wireResponse(res: ServerResponse): void {
     res.on('close', () => {
       // Only the *current* response's close terminates the session. A
@@ -70,7 +72,13 @@ export class SseSession extends EventEmitter {
       this.currentRes = null
       this.emit('close')
     })
-    res.on('error', (err: Error) => { this.emit('error', err) })
+    res.on('error', (err: Error) => {
+      // Same identity guard as close: drained-out previous responses
+      // may emit RST/EPIPE during flush and we don't want those to
+      // pseudo-fail the healthy session that's now on a new response.
+      if (res !== this.currentRes) return
+      this.emit('error', err)
+    })
   }
 
   // Swap in a new response (the latest POST's body). The previous
@@ -133,6 +141,16 @@ export class SseSession extends EventEmitter {
   // we emit a structured `close` event with the WS-style `{ code,
   // reason }` payload — the client's transport reads it and bypasses
   // its reconnect backoff (parity with the WS 1001 path).
+  //
+  // emit('close') is fired EXPLICITLY here, not via the res.on('close')
+  // listener: that listener short-circuits on `readyState === CLOSED`
+  // (so a later async res-close after we've flipped state doesn't
+  // double-emit), which means without the explicit emit here neither
+  // sse-server's dropSession cleanup nor setupPeerConnection's
+  // unsubscribeAll/peers.delete would run on any server-initiated
+  // teardown — sessions / hub.subscribers / idleTimers would leak per
+  // close. The wireResponse guard then ensures the later async fire
+  // is a no-op.
   close(code?: number, reason?: string): void {
     if (this.readyState === SseSession.CLOSED) return
     const res = this.currentRes
@@ -143,17 +161,22 @@ export class SseSession extends EventEmitter {
     if (res) { try { res.end() } catch {} }
     this.currentRes = null
     this.readyState = SseSession.CLOSED
+    this.emit('close')
   }
 
   // Force-tear without flushing — mirrors `ws.terminate()`. Hub's
   // backpressure path and the lifecycle's terminate-grace timer call
-  // this to drop unresponsive peers.
+  // this to drop unresponsive peers. Same explicit `emit('close')`
+  // story as close() above — without it, the wireResponse guard would
+  // swallow the later async res-close and the cleanup callbacks
+  // (dropSession, peers.delete, unsubscribeAll) would never run.
   terminate(): void {
     if (this.readyState === SseSession.CLOSED) return
     this.readyState = SseSession.CLOSED
     const res = this.currentRes
     this.currentRes = null
     if (res) { try { res.destroy() } catch {} }
+    this.emit('close')
   }
 
   // The heartbeat sweep ping()s every WS client to detect dead sockets
