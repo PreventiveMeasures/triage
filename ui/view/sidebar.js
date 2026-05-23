@@ -1245,8 +1245,8 @@ class AppSidebar extends LitElement {
         <h2 class="brand">
           <button class="brand-button" type="button" data-action="go-home" title="DeepView home — supported formats">
             <span class="brand-name">DeepView</span>
-            <span class="brand-tag">dev</span>
           </button>
+          <span class="brand-tag">dev</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
         <button id="sidebar-toggle" type="button" title="toggle sidebar" aria-label="toggle sidebar">

@@ -25,7 +25,17 @@
   text-align: center; color: var(--muted);
   max-width: 540px;
 
-  & h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
+  /* Lead paragraph — slightly larger + brighter than the action
+     line below so it reads as the headline copy now that the old
+     `<h1>deepview results viewer</h1>` is gone. Calmer than a
+     heading would be (no bold, no size jump), but distinguishable
+     from the "drop / click / pick" instruction line that follows. */
+  & .drop-prompt-intro {
+    color: var(--text);
+    font-size: 1.05rem;
+    line-height: 1.45;
+    margin-bottom: .5rem;
+  }
   & p { font-size: .95rem; }
   /* "click to browse" inline accent — makes the click
      affordance pop out of the otherwise muted prompt copy so

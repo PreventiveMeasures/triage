@@ -23,31 +23,28 @@
 
   & .brand {
     flex: 1; min-width: 0;
-    font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
-  }
-  /* The brand-button opts back into pointer events (its parent
-     `.sidebar-header-wco` has `pointer-events: none` so the lock +
-     hamburger underneath stay reachable) and `app-region: no-drag`
-     so the OS doesn't eat the click as a window-move gesture.
-     Same data-action and visual treatment as the in-shadow
-     duplicate in sidebar.css — view.js's click listener routes
-     this one to `goHome`. */
-  & .brand-button {
     display: flex; align-items: baseline; gap: .4rem;
-    width: 100%;
+    font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
+    white-space: nowrap; overflow: hidden;
+  }
+  /* Only the wordmark itself is the click target — the `dev` tag
+     sits as a sibling, kept under the parent's `pointer-events:
+     none` so the trailing whitespace still drags the window. The
+     button opts back into pointer events AND `app-region: no-drag`
+     so a click on the wordmark goes to view.js's listener instead
+     of being eaten by the OS as a window-move gesture. Same
+     visual treatment as the in-shadow copy in sidebar.css. */
+  & .brand-button {
     background: transparent; border: 0;
-    padding: 0; margin: 0;
+    padding: 1px 4px; margin: -1px -4px;
     font: inherit;
     color: inherit;
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap; overflow: hidden;
     border-radius: 4px;
     pointer-events: auto;
     -webkit-app-region: no-drag;
     app-region: no-drag;
 
-    &:hover .brand-name { color: var(--accent); }
+    &:hover { background: rgb(from var(--text) r g b / .04); }
     &:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
