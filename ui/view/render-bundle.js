@@ -416,7 +416,7 @@ function renderBundleSizeDistribution(items) {
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
         class="bundles-dist-seg"
         style=${styleMap({ flexGrow: size, background: pkgColor(pkg) })}
-        data-tooltip=${`${pkg}: ${formatBytes(size)}`}
+        data-tooltip=${pkg === '__own__' ? nothing : `${pkg}: ${formatBytes(size)}`}
       ></span>`)}
     </div>
     <ul class="bundles-dist-list">
@@ -426,7 +426,7 @@ function renderBundleSizeDistribution(items) {
         const c = pkgColor(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
-          <span class="bundles-dist-pkg" data-tooltip=${pkg}>${label}</span>
+          <span class="bundles-dist-pkg" data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>
           <span class="bundles-dist-bar-row" aria-hidden="true">
             <span class="bundles-dist-bar-fill" style=${styleMap({ width: `${pct}%`, background: c })}></span>
           </span>
