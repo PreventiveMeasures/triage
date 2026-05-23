@@ -245,8 +245,32 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
       debug: false,
     })
     // Don't await start — schedule it and stop in parallel.
-    const startPromise = ps.start(async () => {}).catch(() => {})
+    const startPromise = ps.start(() => Promise.resolve()).catch(() => {})
     await ps.stop()
+    await startPromise
+  })
+
+  it('stop kicks the reconnect-backoff sleep out promptly (no `capMs` stall on SIGTERM)', async () => {
+    // The reconnect loop parks in `cancellableSleep(state, delay)`
+    // between failed connects. Without the cancel hook a SIGTERM
+    // mid-backoff would stall shutdown for up to `capMs` (30 s default)
+    // waiting on the timer. Stage 5 connect failures with a 10-second
+    // floor and assert stop returns in well under the floor.
+    const ps = createNeonPubSub({
+      newClient: makeFakeClientFactory({ failConnects: 5 }),
+      debug: false,
+      reconnectBaseMs: 10_000,    // first delay = 10s, well above the
+      reconnectCapMs: 10_000,     // ~1s budget below
+    })
+    const startPromise = ps.start(() => Promise.resolve()).catch(() => {})
+    // Wait for the loop to enter its first sleep (one failed connect
+    // attempt → sleeping for ~10s). 50ms is plenty for the awaits
+    // around `c.connect()` + `c.end()` to settle.
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+    const t0 = Date.now()
+    await ps.stop()
+    const elapsed = Date.now() - t0
+    assert.ok(elapsed < 1_000, `stop should not stall on the backoff sleep; took ${elapsed}ms`)
     await startPromise
   })
 })

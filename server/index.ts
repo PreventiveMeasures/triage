@@ -258,7 +258,7 @@ if (NEON_URL) {
   // Dynamic import: the Client export lives in the same optional peer
   // dep as the HTTP `neon()` callable (see ./neon-driver.ts), but the
   // dep itself is only present on a Neon-mode deploy. The wrapper path
-  // also lets tests swap in a PGlite-backed shim (`server/pubsub.test.js`).
+  // also lets tests swap in a PGlite-backed shim (`tests/pubsub.test.js`).
   const mod = (await import('./neon-driver.ts')) as unknown as { Client?: NeonClientCtor }
   if (!mod.Client) {
     console.error('DATABASE_URL is set but the @neondatabase/serverless Client export is not available.')
@@ -422,13 +422,16 @@ async function onBusMessage(msg: BusMessage): Promise<void> {
   }))
 }
 
-// Kick off the LISTEN loop. Wrapped in a `.catch` because `pubsub.start`
-// resolves only after the first successful connect; transient bus
-// outages reconnect transparently in the background (see ./pubsub.ts),
-// but a startup connect that throws (e.g. invalid DATABASE_URL) should
-// be logged loudly rather than swallowed by the noop SQLite path. The
-// SQLite no-op resolves immediately.
-await pubsub.start(onBusMessage).catch((err) => {
+// Kick off the LISTEN loop in the background. `pubsub.start` resolves
+// only after the FIRST successful connect, and the internal reconnect
+// loop retries indefinitely on transport / LISTEN failure — awaiting
+// it here would convert a transient Neon WS hiccup at boot into a
+// server that never binds (and a `.catch` that never runs). Instead
+// the server binds immediately and the bus comes up async; publishes
+// during the down window drop silently (best-effort semantics
+// documented in pubsub.ts). The SQLite no-op resolves immediately,
+// so the behaviour is identical in that mode.
+void pubsub.start(onBusMessage).catch((err) => {
   console.warn('pubsub: startup error:', errStack(err))
 })
 

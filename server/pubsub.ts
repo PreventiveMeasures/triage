@@ -141,6 +141,11 @@ type NeonState = {
   connectAttempt: Promise<void> | null
   // Reconnect retry counter, reset to 0 after a successful LISTEN.
   attempt: number
+  // Set while the loop is parked in `await sleep(delay)` during a
+  // reconnect backoff. `stop()` calls it (if present) to kick the
+  // loop out IMMEDIATELY rather than waiting up to `capMs` (30 s
+  // default) for the timer to fire. Cleared when the sleep returns.
+  cancelSleep: (() => void) | null
 }
 
 // Notification dispatch — closes over `state.senderId` and
@@ -202,9 +207,33 @@ async function connectAndListen(state: NeonState): Promise<void> {
       state.attempt += 1
       const delay = Math.min(state.capMs, state.baseMs * 2 ** Math.min(state.attempt - 1, 8))
       console.warn(`pubsub: connect failed (attempt ${state.attempt}), retrying in ${delay}ms:`, errStack(err))
-      await sleep(delay)
+      await cancellableSleep(state, delay)
     }
   }
+}
+
+// Sleep that `stop()` can wake up. Without the cancel hook, a SIGTERM
+// landing mid-backoff would stall shutdown for up to `capMs` (30 s
+// default) waiting on the timer. We stash the cancel callback on the
+// shared state object so `stop()` can fire it; the loop's
+// `if (state.stopped) return` then exits on the next turn. The
+// `settled` flag guards against a race between the timer firing and
+// `stop()` racing the same wake-up (Promise resolves are idempotent
+// at the runtime layer, but oxlint's `no-multiple-resolved` rule is
+// stricter and the guard documents the mutual exclusion explicitly).
+function cancellableSleep(state: NeonState, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      state.cancelSleep = null
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    timer.unref?.()
+    state.cancelSleep = () => { clearTimeout(timer); finish() }
+  })
 }
 
 async function reconnect(state: NeonState): Promise<void> {
@@ -235,7 +264,7 @@ export function createNeonPubSub(deps: NeonPubSubDeps): PubSub {
     capMs: deps.reconnectCapMs ?? 30_000,
     senderId: newSenderId(),
     client: null, handler: null, stopped: false,
-    connectAttempt: null, attempt: 0,
+    connectAttempt: null, attempt: 0, cancelSleep: null,
   }
   return {
     start: async (onMessage) => {
@@ -247,6 +276,11 @@ export function createNeonPubSub(deps: NeonPubSubDeps): PubSub {
     stop: async () => {
       state.stopped = true
       state.handler = null
+      // Kick the loop out of its backoff sleep IMMEDIATELY rather than
+      // letting `stop()` block for up to `capMs` (30 s default) on the
+      // timer. The loop's `if (state.stopped) return` runs on the next
+      // turn and exits cleanly.
+      state.cancelSleep?.()
       // Wait for any in-flight (re)connect to settle so we don't end()
       // a client mid-handshake. The loop exits at its `if (stopped)`
       // check; we then close whatever client landed.
@@ -305,8 +339,4 @@ function parseBusMessage(raw: Record<string, unknown>): BusMessage | null {
     return { kind: 'objdel', tag, res, ver }
   }
   return null
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => { setTimeout(resolve, ms).unref?.() })
 }
