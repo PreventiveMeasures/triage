@@ -303,6 +303,98 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
+  it('reconnect after a missed Replace: boot-divergence loop fetches the new bytes', async () => {
+    // Regression for the offline-then-reconnect bug: the live
+    // `onPut` path catches puts that land DURING this client's
+    // session, but a Replace that committed while we were
+    // disconnected only shows up as a version delta between the
+    // freshly-fetched remote inventory and the locally-persisted
+    // baseline. Without the boot-divergence sweep, the reconnected
+    // session would attach to the workspace via maybeAutoDownload's
+    // "exists locally" branch (because the v1 bytes are still on
+    // disk) and never overwrite — local stays at v1 while every
+    // future joiner reads v2 from the relay.
+    const ws = await createWorkspaceWithReports('presence-reconnect-replace', [])
+    const fileName = 'reconnect-target.json'
+    const v1Text = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'v1' }],
+    })
+    const v2Text = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'v2-OFFLINE-REPLACE' }],
+    })
+    const v1Bytes = await gzipBytes(encodeUtf8(v1Text))
+    const v2Bytes = await gzipBytes(encodeUtf8(v2Text))
+    let v1Put
+    try {
+      // --- Online phase: receive peer's initial put as auto-download. ---
+      // No local file before peer's put → maybeAutoDownload takes the
+      // "new file" branch (save + analyzeContent gate) which sets the
+      // `localVersions` baseline AND persists it via savePresenceCache.
+      // That baseline is what survives the close+reopen below and lets
+      // the boot-divergence loop fire on reconnect.
+      openWorkspace(ws.id)
+      let peer = await openPeerSession(ws)
+      try {
+        v1Put = await peer.put({ fileName, content: v1Bytes, prev: null })
+        assert.equal(v1Put.ok, true)
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < 5_000) {
+          const fsList = await listFiles()
+          if (fsList.includes(fileName)) break
+          await new Promise((resolve) => { setTimeout(resolve, 50) })
+        }
+        const fsList = await listFiles()
+        assert.ok(fsList.includes(fileName), 'maybeAutoDownload should persist v1 to OPFS')
+        const localAfterV1 = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+        assert.equal(localAfterV1, v1Text, 'local should equal v1 after auto-download')
+      } finally { peer.close() }
+
+      // --- Go offline: close both presence and the underlying sync
+      // session, mirroring what `ingest.js`'s leaveWorkspace /
+      // switchToWorkspace path does. The relay sees us unsubscribe and
+      // stops broadcasting to this client for the duration. The
+      // persisted localStorage cache survives — that's the
+      // baseline the reconnect uses. ---
+      closeWorkspace(ws.id)
+      triageSync.closeSession(ws.id)
+
+      // --- Peer replaces while we're offline. The put commits at v2
+      // on the server; we receive nothing because we're unsubscribed. ---
+      peer = await openPeerSession(ws)
+      try {
+        const v2Put = await peer.put({ fileName, content: v2Bytes, prev: v1Put.meta })
+        assert.equal(v2Put.ok, true, `offline-window peer put failed: ${JSON.stringify(v2Put)}`)
+        assert.equal(v2Put.meta.version, 2)
+      } finally { peer.close() }
+
+      // --- Reconnect. Re-opening triage-sync re-subscribes (the relay
+      // sends a fresh subscribe-ack carrying the current v2 inventory),
+      // and openWorkspace rebuilds the presence session which seeds
+      // remoteVersions from that fresh ack. The boot-divergence loop
+      // then sees localVersions[tag]=1 < remoteVersions[tag]=2 and
+      // routes through `maybeApplyRemoteReplace` to overwrite local. ---
+      triageSync.openSession(ws.id)
+      await awaitSyncOnline()
+      openWorkspace(ws.id)
+      const startedAt = Date.now()
+      let finalText = ''
+      while (Date.now() - startedAt < 5_000) {
+        try {
+          finalText = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+          if (finalText === v2Text) break
+        } catch {}
+        await new Promise((resolve) => { setTimeout(resolve, 50) })
+      }
+      assert.equal(finalText, v2Text, 'local must catch up to v2 after reconnect')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
+    }
+  })
+
   it('peer Replace with non-recognized content is refused (forgery defence)', async () => {
     // analyzeContent gate on the replace-refetch path. A workspace
     // member could PUT arbitrary gzipped bytes under an existing
