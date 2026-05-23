@@ -262,7 +262,7 @@ async function continueBoot() {
       const spaceIdx = rest.indexOf(' ')
       const integrity = spaceIdx >= 0 ? rest.slice(0, spaceIdx) : rest
       const savedTab = spaceIdx >= 0 ? rest.slice(spaceIdx + 1) : ''
-      const tab = BUNDLE_TABS.has(savedTab) ? savedTab : 'packages'
+      const tab = BUNDLE_TABS.has(savedTab) ? savedTab : 'overview'
       if ((state.bundles ?? []).some((b) => b.integrity === integrity)) {
         state.currentView = 'bundles'
         state.selectedBundle = integrity

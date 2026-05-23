@@ -372,32 +372,13 @@
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
 }
 
-.bundles-slide-back {
-  flex-shrink: 0;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: .25rem .55rem;
-  font-family: inherit;
-  font-size: .8rem;
-  &:hover { border-color: var(--accent); color: var(--accent); }
-}
-
 .bundles-slide-title {
   flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
 }
 .bundles-slide-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .85rem;
   color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.bundles-slide-integrity {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .65rem;
-  color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -416,6 +397,21 @@
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
   overflow: hidden;
+}
+
+/* Overview tab — metadata block + nested Packages / Files / Reports.
+   Gets the same padded scroll container the old right-side details
+   panel used (when Overview was rendered as `.bundles-details-body`),
+   so the metadata + lists read the same regardless of which surface
+   they're on. The other slide tabs (Graph, Terminal, Issues, Code,
+   Treemap) keep the edge-to-edge body — each owns its own internal
+   layout. */
+.bundles-slide-body-overview {
+  padding: .75rem;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
+  font-size: .78rem;
 }
 
 .bundles-slide-body > .bundle-graph-slot,
@@ -1018,124 +1014,18 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  &.with-details { max-width: 2000px; }
 
-  /* Single-column when nothing's open; two-column grid when the
-     details panel is up. Same 3fr / 2fr split + max-widths the
-     findings-table-layout uses, so the visual rhythm carries
-     across views. flex: 1 + min-height: 0 so the grid takes the
-     available vertical space and the columns can scroll. */
-  & .bundles-layout {
-    display: grid;
-    grid-template-columns: 1fr;
-    /* `minmax(0, 1fr)` (not the implicit `auto`) so the row never
-       grows past the grid container's bounded height — without it
-       a long list pushes the row past the viewport and the page
-       scrolls instead of the list. Combined with `max-height: 100%`
-       on the list below, the list stays content-sized when short
-       and scrolls internally when tall. */
-    grid-template-rows: minmax(0, 1fr);
-    gap: 1rem;
-    flex: 1;
-    min-height: 0;
-    /* Items default to start so the LEFT list column sizes to its
-       content (not a tall, mostly-empty bordered shell). The
-       details column overrides via `align-self: stretch` below so
-       it can fill the available height and scroll internally. */
-    align-items: start;
-
-    &.open {
-      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    }
-    & .bundles-list {
-      margin-top: 0; max-width: 1200px; min-height: 0; max-height: 100%;
-      overflow-y: auto; overscroll-behavior: none; scrollbar-gutter: stable;
-      -webkit-app-region: no-drag; app-region: no-drag;
-    }
-    &.open .bundles-details {
-      max-width: 800px;
-      /* Stretch only the details column so the panel fills the
-         viewport's remaining height; the body's own overflow-y
-         handles internal scroll. The list stays at its content
-         height per the grid's `align-items: start` above. */
-      align-self: stretch;
-      max-height: 100%;
-    }
-    /* Graph mode hides the list so the graph2-layout can use the
-       full bundles-view width. The detail panel takes the whole
-       row and uncaps its max-width. */
-    &.graph-mode {
-      grid-template-columns: 1fr;
-    }
-    &.graph-mode > .bundles-list { display: none; }
-    &.graph-mode > .bundles-details { max-width: none; }
-  }
-
-  /* Right-side details panel — surface card with a header bar
-     (label + close ✕) and a scrollable body. Same chrome as the
-     findings-table details, scaled to bundle metadata. */
-  & .bundles-details {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: var(--shadow-glass);
-    display: flex; flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-  & .bundles-details-bar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: .55rem .75rem;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  /* Issue summary above the panel tabs — chips identical to the
-     tree-view Files tab's count chips so a user moving between the
-     two views reads them as the same data. Hidden when no
-     findings have matched yet (hashes still computing, or none
-     of the indexed reports cover this bundle). */
+  /* Issue summary above the Overview tab's nested Packages / Files /
+     Reports strip — chips identical to the tree-view Files tab's
+     count chips so a user moving between the two views reads them as
+     the same data. Hidden when no findings have matched yet (hashes
+     still computing, or none of the indexed reports cover this
+     bundle). */
   & .bundles-issue-summary {
     display: flex;
     flex-wrap: wrap;
     gap: .25rem;
     margin: 0 0 .5rem;
-  }
-
-  & .bundles-details-label {
-    color: var(--muted);
-    font-size: .68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .12em;
-  }
-  & .bundles-details-close {
-    background: transparent; color: var(--muted);
-    border: 0; border-radius: 4px;
-    width: 22px; height: 22px;
-    display: grid; place-items: center;
-    padding: 0;
-    font-size: 1rem; line-height: 1;
-    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-  }
-  & .bundles-details-body {
-    padding: .75rem;
-    overflow-y: auto;
-    overscroll-behavior: none;
-    -webkit-app-region: no-drag; app-region: no-drag;
-    scrollbar-gutter: stable;
-    flex: 1;
-    min-height: 0;
-    font-size: .78rem;
-  }
-
-  /* Graph tab — let the graph2-layout (which is itself a flex
-     `flex: 1` child of the body) actually receive the available
-     height. Drop the body's own padding + overflow so the graph
-     grid fills edge-to-edge inside the panel. */
-  &.graph-mode .bundles-details-body {
-    padding: 0;
-    overflow: hidden;
-    display: flex;
   }
   /* Issues / report-chip rules for the bundle Issues tab live at
      top level (below this block) so the package Issues slide,
@@ -1320,67 +1210,15 @@
     & .bundles-report-chip .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
   }
 
-  & .bundles-list {
-    list-style: none;
+  /* Empty placeholder rendered when no bundle is selected — the
+     sidebar holds the bundle list, so the main pane just nudges
+     the user there. */
+  &.bundles-view-empty { justify-content: center; }
+  & .bundles-empty-hint {
+    color: var(--muted);
+    font-size: .85rem;
+    text-align: center;
     margin: 0;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
-    overflow: hidden;
-
-    & li {
-      display: flex; align-items: center; gap: .75rem;
-      padding: .4rem .75rem;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-      transition: background .12s;
-
-      &:hover { background: rgb(from var(--text) r g b / .04); }
-      /* See `.packages-list li` — first/last rows inherit the
-         parent's corner radius so a `.selected` outline traces
-         the rounded clip instead of a square inside it. */
-      &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
-      &:last-child {
-        border-bottom: none;
-        border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
-      }
-      &.selected {
-        background: rgb(from var(--text) r g b / .06);
-        outline: 1px solid var(--accent);
-        outline-offset: -1px;
-      }
-    }
-    /* Two-line text block: name (primary, monospace .78rem) on top,
-       sha512 integrity (secondary, smaller, muted) below. The
-       integrity line is ellipsis-clipped — full string sits in the
-       title attribute for hover discoverability. */
-    & .bundles-row-text {
-      flex: 1; min-width: 0;
-      display: flex; flex-direction: column;
-    }
-    & .bundles-name {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .78rem;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    & .bundles-integrity {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .65rem;
-      color: var(--muted);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    /* Code shortcut — hairline outline, accent hover hue
-       matches the Code-tab affordance elsewhere in the UI. */
-    & .bundles-row-action {
-      flex-shrink: 0;
-      background: var(--bg); color: var(--text);
-      border: 1px solid var(--border); border-radius: 4px;
-      padding: .2rem .55rem;
-      font-family: inherit; font-size: .72rem;
-      transition: border-color .12s, color .12s;
-      &:hover { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
-    }
   }
 }
 

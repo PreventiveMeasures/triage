@@ -252,11 +252,14 @@ export const state: State = store<State>({
   // .map) and stay cached on this slot until selection changes.
   selectedBundle: null,
   bundleDetails: null,
-  // Active tab in the bundle details panel — only used when the
-  // open bundle has > 5 packages and the panel splits the per-
-  // package size visualization from the flat file list across two
-  // tabs. Reset to 'packages' when selectedBundle changes.
-  bundleDetailsTab: 'packages',
+  // Active tab in the bundle view's tab strip: 'overview' (the
+  // metadata + Packages / Files / Reports nested view), 'terminal',
+  // 'treemap', 'graph', 'issues', or 'code'. The nested-overview
+  // selection rides the same field with the legacy values
+  // 'packages' / 'files' / 'reports' so the existing persistence
+  // (LAST_FILE_KEY suffix) round-trips without migration. Reset to
+  // 'overview' when selectedBundle changes.
+  bundleDetailsTab: 'overview',
   // Packages view selection — the package name (string) of the open
   // row, null when no detail panel is up. Mirrors the selectedBundle
   // pattern: clicking a row sets it; the deselect button clears it.

@@ -573,7 +573,7 @@ async function onSidebarClick(e) {
     state.bundleSourceFindingIdx = null
     state.bundleCodeSearchQuery = ''
     state.bundleCodeSearchMode = 'files'
-    state.bundleDetailsTab = 'packages'
+    state.bundleDetailsTab = 'overview'
     graph2.showAll = true
     state.shownTriage = null
     persistLastBundle(integrity)

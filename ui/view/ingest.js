@@ -32,19 +32,23 @@ const META_FIELDS = ['type', 'model', 'think', 'effort', 'exportsMode']
 // active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
 // current selection at a time, last-clicked wins.
 export const LAST_FILE_KEY = 'deepview.lastFile'
-// Sub-tabs in the bundles details panel — the tab strip rendered by
-// render-bundle.js, the data-bundle-tab click handler in events.js,
-// and the boot-time restore in view.js all key off this list.
-// 'packages' is the default and is omitted from the LAST_FILE_KEY
-// suffix; an unrecognised value on restore falls back to 'packages'.
-export const BUNDLE_TABS = new Set(['packages', 'files', 'reports', 'graph', 'treemap', 'issues', 'code', 'terminal'])
+// Tabs in the bundle view's tab strip — the strip rendered by
+// `renderBundleSlide` in render-bundle.js, the data-bundle-tab click
+// handler in events.js, and the boot-time restore in view.js all key
+// off this list. 'overview' is the default and is omitted from the
+// LAST_FILE_KEY suffix; an unrecognised value on restore falls back
+// to 'overview'. The legacy values 'packages' / 'files' / 'reports'
+// represent the Overview tab's nested selection — kept in the set so
+// older persisted suffixes ('b:<integrity> files') still round-trip
+// through to the right nested view.
+export const BUNDLE_TABS = new Set(['overview', 'packages', 'files', 'reports', 'graph', 'treemap', 'issues', 'code', 'terminal'])
 
 // Persist a bundle selection to LAST_FILE_KEY, encoding the active
-// sub-tab as `b:<integrity> <tab>`. The default 'packages' tab is
-// dropped from the suffix so the round-trip lands on a clean
-// `b:<integrity>` when nothing further is meaningful.
-export function persistLastBundle(integrity, tab = 'packages') {
-  const suffix = tab && tab !== 'packages' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''
+// tab as `b:<integrity> <tab>`. The default 'overview' tab is dropped
+// from the suffix so the round-trip lands on a clean `b:<integrity>`
+// when nothing further is meaningful.
+export function persistLastBundle(integrity, tab = 'overview') {
+  const suffix = tab && tab !== 'overview' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''
   setSecureItem(LAST_FILE_KEY, `b:${integrity}${suffix}`).catch(() => {})
 }
 
@@ -360,7 +364,7 @@ export async function addFiles(files) {
     state.currentView = 'bundles'
     state.selectedBundle = lastBundleIntegrity
     state.bundleDetails = null
-    state.bundleDetailsTab = 'packages'
+    state.bundleDetailsTab = 'overview'
     state.bundleSourceFile = null
     state.bundleSourceFindingIdx = null
     state.bundleCodeSearchQuery = ''
