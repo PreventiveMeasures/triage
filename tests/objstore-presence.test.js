@@ -12,7 +12,9 @@ import { after, before, describe, it } from 'node:test'
 
 import { deriveObjstoreKeys } from '../client/sync/objstore.ts'
 import { createObjstoreSession } from './_objstore-session.js'
-import { deleteFile, listFiles, readFileBytes, saveFileBytes } from '../client/storage.js'
+import { gunzipBytes, gzipBytes } from '../common/gzip.js'
+import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
+import { deleteFile, listFiles, readFile, readFileBytes, saveFileBytes } from '../client/storage.js'
 import { triageSync } from '../client/sync/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
 import { bootServer } from './_helpers.js'
@@ -223,6 +225,123 @@ describe('client/sync/objstore-presence', () => {
       putFile('nonexistent-ws', 'no-file.json', Buffer.from('x')),
       /is not open/u,
     )
+  })
+
+  it('peer Replace (version bump under existing tag) re-fetches and overwrites local bytes', async () => {
+    // Regression for the silent-divergence bug: under the old onPut
+    // handler an existing peer who already held the file saw the
+    // resourceTag stay in remoteTags and the cached fileName stay
+    // valid, so `ensureRemoteNames` skipped the fetch entirely.
+    // Local bytes kept the OLD content while a fresh joiner pulled
+    // the NEW content via the discovery path — peers silently
+    // diverged. With the version-bump detection in place, an
+    // existing peer's onPut for a known tag should force a fetch
+    // and overwrite when the version strictly advances.
+    const ws = await createWorkspaceWithReports('presence-replace', [])
+    const fileName = 'replace-me.json'
+    // saveFile / readFileBytes round-trip gives us the on-disk
+    // gzipped representation — same shape the upload pipeline ships
+    // to the relay, and what maybeApplyRemoteReplace will gunzip
+    // back out at the receiving end.
+    const v1Text = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'v1' }],
+    })
+    const v2Text = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'v2-NEW' }],
+    })
+    const v1Bytes = await gzipBytes(encodeUtf8(v1Text))
+    const v2Bytes = await gzipBytes(encodeUtf8(v2Text))
+    // Seed the local copy at v1 so the initial peer put hits the
+    // "exists locally" branch of maybeAutoDownload (which attaches
+    // to the workspace and DOES NOT overwrite — matches the
+    // pre-existing behaviour we keep).
+    await saveFileBytes(fileName, v1Bytes)
+    try {
+      openWorkspace(ws.id)
+      const peer = await openPeerSession(ws)
+      try {
+        const v1Put = await peer.put({ fileName, content: v1Bytes, prev: null })
+        assert.equal(v1Put.ok, true)
+        // Wait for the initial broadcast to attach our local copy
+        // to the workspace.
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < 5_000) {
+          const refreshed = listWorkspaces().find((w) => w.id === ws.id)
+          if (refreshed?.reports?.includes(fileName)) break
+          await new Promise((resolve) => { setTimeout(resolve, 50) })
+        }
+        const afterAttach = listWorkspaces().find((w) => w.id === ws.id)
+        assert.ok(afterAttach?.reports?.includes(fileName), 'workspace should claim the local-and-remote file')
+        // Local bytes are still v1 — the initial broadcast doesn't
+        // overwrite (matches the existing "local bytes win" rule
+        // on the no-version-bump branch).
+        const beforeReplace = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+        assert.equal(beforeReplace, v1Text, 'local at v1 before peer Replace')
+        // Peer Replace: same fileName + same workspace, bumped to v2.
+        const v2Put = await peer.put({ fileName, content: v2Bytes, prev: v1Put.meta })
+        assert.equal(v2Put.ok, true, `peer Replace failed: ${JSON.stringify(v2Put)}`)
+        assert.equal(v2Put.meta.version, 2)
+        // The replace-refetch path is async (fetchByTag → gunzip →
+        // analyze → saveFileBytes). Poll readFile until the cached
+        // text flips to v2 — the cache is evicted by saveFileBytes,
+        // so each readFile re-pulls the freshest bytes from disk.
+        const replaceStartedAt = Date.now()
+        let finalText = beforeReplace
+        while (Date.now() - replaceStartedAt < 5_000) {
+          finalText = await readFile(fileName)
+          if (finalText === v2Text) break
+          await new Promise((resolve) => { setTimeout(resolve, 50) })
+        }
+        assert.equal(finalText, v2Text, 'local bytes must track the peer\'s Replace')
+      } finally { peer.close() }
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
+    }
+  })
+
+  it('peer Replace with non-recognized content is refused (forgery defence)', async () => {
+    // analyzeContent gate on the replace-refetch path. A workspace
+    // member could PUT arbitrary gzipped bytes under an existing
+    // tag; if those bytes don't parse as a recognized report, the
+    // local copy must NOT be overwritten — same trust posture as
+    // the new-file maybeAutoDownload branch.
+    const ws = await createWorkspaceWithReports('presence-replace-forgery', [])
+    const fileName = 'replace-forgery.json'
+    const v1Text = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'good v1' }],
+    })
+    const v1Bytes = await gzipBytes(encodeUtf8(v1Text))
+    const garbageBytes = await gzipBytes(encodeUtf8('this is not a recognised report payload'))
+    await saveFileBytes(fileName, v1Bytes)
+    try {
+      openWorkspace(ws.id)
+      const peer = await openPeerSession(ws)
+      try {
+        const v1Put = await peer.put({ fileName, content: v1Bytes, prev: null })
+        assert.equal(v1Put.ok, true)
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < 5_000) {
+          const refreshed = listWorkspaces().find((w) => w.id === ws.id)
+          if (refreshed?.reports?.includes(fileName)) break
+          await new Promise((resolve) => { setTimeout(resolve, 50) })
+        }
+        const v2Put = await peer.put({ fileName, content: garbageBytes, prev: v1Put.meta })
+        assert.equal(v2Put.ok, true)
+        // Give the replace-refetch a moment to run (and refuse).
+        await new Promise((resolve) => { setTimeout(resolve, 400) })
+        const local = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+        assert.equal(local, v1Text, 'local good copy must survive a forgery-shaped peer Replace')
+      } finally { peer.close() }
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
+    }
   })
 
   it('remoteCount + remoteFileNames discover names from a peer-PUT inventory', async () => {

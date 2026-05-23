@@ -81,9 +81,19 @@ triageSync.onStatusChange(render)
 // from secure-storage which is empty until hydrate runs in
 // continueBoot). So an auto-download can never land while the
 // vault is enabled-but-locked.
-onAutoDownloaded(async (workspaceId) => {
+onAutoDownloaded(async (workspaceId, fileName) => {
   if (state.currentWorkspace === workspaceId) {
     await switchToWorkspace(workspaceId)
+  } else if (state.currentFile && state.currentFile === fileName) {
+    // Single-file view of the auto-downloaded report. Originally
+    // this listener only fired for net-new downloads (a peer
+    // uploaded a file we didn't have, so we couldn't be looking
+    // at it) and the `state.currentFile` branch wasn't needed.
+    // The replace-refetch path in objstore-presence.js now reuses
+    // the same listener for in-place updates, where the active
+    // single-file view CAN match — reload it so the user sees the
+    // peer's new bytes without a manual navigate.
+    await switchToFile(fileName)
   } else {
     await renderSidebar()
   }

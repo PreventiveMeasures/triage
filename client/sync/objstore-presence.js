@@ -268,6 +268,16 @@ export function openWorkspace(workspaceId) {
     remoteNameByTag: new Map(),
     remoteBundleByTag: new Map(),
     remoteBundleNameByIntegrity: new Map(),
+    // `resourceTag → version` for every remote resource we know
+    // about. Populated from `session.list()` at boot, kept in sync
+    // by `onPut` (peer / sibling-tab writes) and by `putFile` /
+    // `putBundleToRemote` after a successful local put. Drives the
+    // version-bump detection in the `onPut` handler so a Replace
+    // under an existing tag (same fileName, new content) forces
+    // peers to re-download the bytes — the prior behavior treated
+    // every onPut for a known tag as a no-op, leaving peers stuck
+    // on the old content while new joiners fetched the fresh blob.
+    remoteVersions: new Map(),
     inFlight: new Map(),
     err: null, disposed: false, ready: null,
   }
@@ -327,7 +337,14 @@ export function openWorkspace(workspaceId) {
       entry.session = session
       const items = await session.list()
       if (entry.disposed) return
-      for (const item of items) entry.remoteTags.add(item.resourceTag)
+      for (const item of items) {
+        entry.remoteTags.add(item.resourceTag)
+        // Seed the version baseline so a later `onPut` for any of
+        // these tags can detect whether the broadcast bumps the
+        // version (replace) or arrives at parity (a self-echo
+        // overlapping the boot list).
+        entry.remoteVersions.set(item.resourceTag, item.version)
+      }
       // Populate reverse maps from the two cheap sources before
       // `ensureRemoteNames` falls back to `fetchByTag`:
       //   (a) attached local reports/bundles (we know tag→name
@@ -386,15 +403,41 @@ export function openWorkspace(workspaceId) {
       // Live updates — peer (or same-user-other-tab) puts / deletes
       // flow through workspace-subscribed broadcasts; flipping the
       // cached set re-renders the badge in place.
-      session.onPut(({ resourceTag }) => {
+      session.onPut(({ resourceTag, version }) => {
+        const previousVersion = entry.remoteVersions.get(resourceTag)
+        const isReplace = entry.remoteTags.has(resourceTag)
+          && typeof previousVersion === 'number'
+          && version > previousVersion
         entry.remoteTags.add(resourceTag)
+        entry.remoteVersions.set(resourceTag, version)
         notify()
+        if (isReplace) {
+          // A workspace member overwrote this resource. The prior
+          // behaviour treated every onPut as either "new tag → run
+          // discovery" or "known tag → no-op", so a Replace landed
+          // on disk for new joiners (who would auto-download from
+          // scratch) but stayed invisible to existing peers — their
+          // local bytes kept the OLD content while the workspace
+          // badge claimed cloud-sync. Re-fetch the new blob and
+          // overwrite local under content validation; bundles are
+          // content-addressed and a "replace under the same
+          // integrity" would be byte-identical, so the helper
+          // skips that case.
+          maybeApplyRemoteReplace(entry, resourceTag).catch(() => {})
+          return
+        }
         // Kick a fetchByTag for the new tag so its name lands in
         // the cache; another notify will fire when it resolves.
         ensureRemoteNames(entry)
       })
       session.onDeleted(({ resourceTag }) => {
         entry.remoteTags.delete(resourceTag)
+        // Drop the version too — a future Put at the same tag is a
+        // brand-new resource (the incarnation changes inside the
+        // session even when the version restarts), so leaving the
+        // stale version pinned would let the next onPut's
+        // version-bump comparison mis-fire as a Replace.
+        entry.remoteVersions.delete(resourceTag)
         const name = entry.remoteNameByTag.get(resourceTag)
         entry.remoteNameByTag.delete(resourceTag)
         // Re-resolve the workspace's live `reports` / `bundles` at
@@ -938,6 +981,78 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
   }
 }
 
+// Fan-out for a peer's Replace under an existing resourceTag.
+// Triggered from the `onPut` handler when the broadcast version
+// strictly exceeds the previously-known version (a self-echo where
+// `putFile` already advanced `remoteVersions` to the new value
+// hits the parity branch and is skipped here). Three outcomes:
+//
+//   1. The fetchByTag returns a bundle. Bundles are content-
+//      addressed by sha512, so a "replace" under the same
+//      integrity is byte-identical and there's nothing for us to
+//      apply locally — bail silently. (A genuinely different
+//      bundle would land under a different integrity → different
+//      tag → flow through the `ensureRemoteNames` /
+//      `maybeAutoDownloadBundle` branch instead.)
+//   2. Content fails the `analyzeContent` gate — refuse to
+//      overwrite local with bytes that don't parse as a report.
+//      Mirrors the forgery defence in `maybeAutoDownload`.
+//   3. Validated report bytes: persist via `saveFileBytes`
+//      (which evicts the in-memory text cache so a subsequent
+//      readFile re-reads from disk), refresh the cached count,
+//      then notify autoDownloadListeners so the UI bridge reloads
+//      the active view if it was showing this file.
+//
+// Workspace attach is intentionally NOT touched here — the tag
+// already existed in `remoteTags`, so the workspace's `reports`
+// list either already lists this fileName or never will from this
+// path (callers who want to attach on receipt of a peer upload go
+// through `maybeAutoDownload`, which the new-tag branch of
+// `onPut` still routes to).
+async function maybeApplyRemoteReplace(entry, tag) {
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  let got
+  try { got = await entry.session.fetchByTag(tag) }
+  catch (err) {
+    console.warn(`replace-refetch: fetchByTag failed for tag in workspace "${entry.workspaceId}":`, err)
+    return
+  }
+  if (!got || entry.disposed || !entry.remoteTags.has(tag)) return
+  if (got.kind === 'bundle') return
+  const fileName = got.fileName
+  const bytes = got.content
+  let text
+  try { text = decodeUtf8(await gunzipBytes(bytes)) }
+  catch (err) {
+    console.warn(`replace-refetch: gunzip/decode of "${fileName}" failed (likely forged peer payload):`, err)
+    return
+  }
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  const result = analyzeContent(text)
+  if (!result.recognized) {
+    console.warn(`replace-refetch: peer-uploaded replacement for "${fileName}" did not analyze as a recognized report — refusing to overwrite local copy`)
+    return
+  }
+  try {
+    await saveFileBytes(fileName, bytes)
+    if (entry.disposed) return
+    setCount(fileName, result.count, result.source)
+  } catch (err) {
+    console.warn(`replace-refetch: saveFileBytes failed for "${fileName}":`, err)
+    return
+  }
+  if (entry.disposed) return
+  // Reuse the existing auto-download bridge — the UI listener
+  // already reloads `state.currentWorkspace` and renders the
+  // sidebar; this PR's matching change in `ui/view.js` extends it
+  // to also reload `state.currentFile` so a single-file view of
+  // the replaced report flips to the new bytes without a manual
+  // navigate.
+  for (const cb of autoDownloadListeners) {
+    try { cb(entry.workspaceId, fileName) } catch {}
+  }
+}
+
 // Auto-download counterpart for bundles. Sibling of
 // `maybeAutoDownload` (reports), with three key differences:
 //   1. Bundles are content-addressed (sha512), so we re-hash the
@@ -1083,7 +1198,22 @@ export async function putFile(workspaceId, fileName, content) {
   // issued an extra `list()` per upload to compute prevVersion;
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
-  return await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
+  const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
+  // Advance the local version baseline so the matching `onPut`
+  // self-echo (which arrives over the subscription with the same
+  // version) hits the parity branch and skips the replace-refetch.
+  // Without this, every replace would round-trip the just-uploaded
+  // bytes back to ourselves (harmless but wasteful — the fetched
+  // content is byte-identical to what we just wrote).
+  if (result.ok && entry.keys && !entry.disposed) {
+    try {
+      const tag = entry.fileTags.get(fileName)
+        ?? await computeResourceTag(entry.keys.tagKey, fileName)
+      entry.fileTags.set(fileName, tag)
+      entry.remoteVersions.set(tag, result.meta.version)
+    } catch {}
+  }
+  return result
 }
 
 // Delete `fileName`'s remote copy. The objstore `delete` is gated
@@ -1149,6 +1279,7 @@ export async function deleteFromRemote(workspaceId, fileName) {
       // race-restore the file via maybeAutoDownload.
       entry.remoteTags.delete(tag)
       entry.remoteNameByTag.delete(tag)
+      entry.remoteVersions.delete(tag)
       notify()
     }
     return result
