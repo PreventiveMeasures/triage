@@ -1250,18 +1250,20 @@
     list-style: none; margin: 0; padding: 0;
 
     /* Whole-row click target — opens the bundle source viewer.
-       No per-row borders (those add visual weight without payoff
-       in the narrow Overview column); the hover-tint background is
-       what marks the row as clickable. */
+       No per-row borders + tight vertical padding (matching the
+       Packages dist-list row idiom — 0 vertical, gap handled by
+       line-height); the hover-tint background marks the row as
+       clickable. */
     & .bundles-source-row {
       display: flex; align-items: center; gap: .5rem;
       width: 100%;
-      padding: .2rem .35rem;
+      padding: 0 .35rem;
       background: transparent;
       border: 0; border-radius: 3px;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .72rem;
+      line-height: 1.4;
       text-align: left;
     }
     & .bundles-source-row:hover {
@@ -1287,17 +1289,18 @@
     list-style: none; margin: 0; padding: 0;
 
     & li { padding: 0; }
-    /* No per-row border; the hover-tint background marks the
-       clickable row, same idiom as the Files list above. */
+    /* Match the compact row idiom — 0 vertical padding, hover-tint
+       only, font sized to match Files / Packages. */
     & .bundles-report-chip {
       display: flex; align-items: center; gap: .4rem;
       width: 100%;
-      padding: .2rem .35rem; height: auto;
+      padding: 0 .35rem; height: auto;
       border: 0; border-radius: 3px;
       background: transparent;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .78rem;
+      font-size: .72rem;
+      line-height: 1.4;
       max-width: none;
       text-align: left;
     }

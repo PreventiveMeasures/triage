@@ -416,7 +416,7 @@ function renderBundleSizeDistribution(items) {
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
         class="bundles-dist-seg"
         style=${styleMap({ flexGrow: size, background: pkgColor(pkg) })}
-        title=${`${pkg}: ${formatBytes(size)}`}
+        data-tooltip=${`${pkg}: ${formatBytes(size)}`}
       ></span>`)}
     </div>
     <ul class="bundles-dist-list">
@@ -426,7 +426,7 @@ function renderBundleSizeDistribution(items) {
         const c = pkgColor(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
-          <span class="bundles-dist-pkg" title=${pkg}>${label}</span>
+          <span class="bundles-dist-pkg" data-tooltip=${pkg}>${label}</span>
           <span class="bundles-dist-bar-row" aria-hidden="true">
             <span class="bundles-dist-bar-fill" style=${styleMap({ width: `${pct}%`, background: c })}></span>
           </span>
@@ -521,7 +521,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       const bareSrc = stripped[i]
       const size = sizes[i]
       return html`<li>
-        <button type="button" class="bundles-source-row" data-bundle-view-source=${src} title=${src}>
+        <button type="button" class="bundles-source-row" data-bundle-view-source=${src} data-tooltip=${src}>
           <span class="bundles-source-path">${bareSrc}</span>
           ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}
         </button>
@@ -537,7 +537,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
       const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
       const count = reportCounts.get(name) ?? 0
       return html`<li>
-        <button type="button" class="report-chip bundles-report-chip" title=${name} data-bundle-issue-report=${name}>
+        <button type="button" class="report-chip bundles-report-chip" data-tooltip=${name} data-bundle-issue-report=${name}>
           ${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span>
           <span class="bundles-report-count">${count} ${count === 1 ? 'issue' : 'issues'}</span>
         </button>
@@ -1301,7 +1301,7 @@ function renderBundleSlide(entry) {
     <header class="bundles-slide-bar">
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name" data-tooltip=${`${entry.name}\n${entry.integrity}`}>${entry.name}</div>
+        <div class="bundles-slide-name">${entry.name}</div>
       </div>
       <div class="bundles-slide-tabs" role="tablist">
         <button
