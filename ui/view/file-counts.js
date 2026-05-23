@@ -40,6 +40,38 @@ export function computeFindingCountsByFile(allGroups) {
   return counts
 }
 
+// Combine the per-report tree blobs from a workspace into a single
+// unified file → {imports, size, …} map. Each report carries its
+// own analyzer-emitted tree; workspace-level views (graph canvas,
+// Files tab) want the union so every report's files and import
+// edges are represented, not just the first. Files that appear in
+// more than one report merge their imports lists (deduped); the
+// first report wins on other entry fields, with later reports
+// back-filling a missing `size`. Findings already merge across
+// reports via `state.reports.flatMap(r => r.groups)` — this is the
+// matching merge on the tree side. Returns null when no report
+// carries tree data so callers fall back to a tree-less layout.
+export function mergeReportsTree(reports) {
+  let merged = null
+  for (const r of reports) {
+    if (!r?.tree) continue
+    if (!merged) merged = {}
+    for (const file of Object.keys(r.tree)) {
+      const entry = r.tree[file]
+      if (!merged[file]) {
+        merged[file] = { ...entry, imports: [...(entry.imports ?? [])] }
+        continue
+      }
+      const seen = new Set(merged[file].imports)
+      for (const imp of entry.imports ?? []) {
+        if (!seen.has(imp)) { seen.add(imp); merged[file].imports.push(imp) }
+      }
+      if (merged[file].size == null && entry.size != null) merged[file].size = entry.size
+    }
+  }
+  return merged
+}
+
 // Transitive subtree finding counts: for each file, sum of own
 // counts across every file reachable through its `imports`
 // (recursively), excluding the file itself. Cycles handled by a
