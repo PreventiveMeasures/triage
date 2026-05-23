@@ -140,12 +140,31 @@ async function importReportContent({ name, content, existingNames }) {
   // Read the existing bytes through the regular text path so the
   // comparison is on the LOGICAL report content (decompressed,
   // envelope-peeled) — not the on-disk gzipped representation.
-  // A missing-file race (sibling-tab delete between our listFiles
-  // snapshot and this read) collapses to "no collision", which is
-  // safe: saveFile below will create the entry.
+  //
+  // Distinguish three failure modes:
+  //  - sibling-tab delete (file vanished between snapshot and read)
+  //    → treat as "no collision": save the new bytes under the now-
+  //    free name. Detected as either OPFS `NotFoundError` or the
+  //    storage.js localStorage fallback's `File not found:` Error.
+  //  - vault locked at rest — readFile throws `storage: vault
+  //    locked, cannot decrypt ...`. We MUST NOT collapse this to
+  //    "no collision" and silently overwrite an existing encrypted
+  //    file with the dropped plaintext bytes (that would replace
+  //    real content the user can't currently see). Propagate so
+  //    addFiles' catch surfaces the error in the standard alert
+  //    path; the user can unlock and re-drop.
+  //  - any other unexpected read failure — same propagation as
+  //    vault-locked: don't pretend the file is gone.
   let existing
   try { existing = await readFile(name) }
-  catch { existing = null }
+  catch (err) {
+    const missing = (err instanceof DOMException && err.name === 'NotFoundError')
+      || (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
+    if (!missing) throw err
+    await saveFile(name, content)
+    existingNames.add(name)
+    return { name, content }
+  }
   if (existing === content) return { name, content }
   // Build the workspace context for the dialog's upload warning.
   // A report can sit in multiple workspaces (additive membership),

@@ -80,8 +80,7 @@ class ImportConflictDialog extends AppDialog {
   _onConfirm = () => {
     if (this._choice === 'rename') {
       const trimmed = (this._newName ?? '').trim()
-      if (!trimmed || trimmed === this.reportName) return
-      if (this.existingNames.has(trimmed)) return
+      if (!this._isRenameValid(trimmed)) return
       this._finish({ action: 'rename', newName: trimmed })
       return
     }
@@ -96,8 +95,14 @@ class ImportConflictDialog extends AppDialog {
     const label = n === 1
       ? html`workspace <strong>"${this.workspaceNames[0]}"</strong>`
       : html`<strong>${n}</strong> workspaces (${this.workspaceNames.join(', ')})`
+    // "When sync is online" rather than a flat "will be re-uploaded"
+    // — `uploadReportToWorkspaces` rides the lazy sync wrapper, which
+    // no-ops when the user has sync disabled or hasn't loaded the
+    // sync chunk yet. The local overwrite happens unconditionally;
+    // the upload doesn't. Phrasing this conditionally avoids
+    // promising a cloud update we can't always deliver.
     return html`<span class="lwd-option-hint">
-      The local file will be overwritten and re-uploaded to ${label} so the cloud copy matches.
+      The local file will be overwritten. When sync is online, the new bytes are also uploaded to ${label} so the cloud copy matches.
     </span>`
   }
 
@@ -108,22 +113,49 @@ class ImportConflictDialog extends AppDialog {
     if (trimmed === this.reportName) {
       return html`<p class="lwd-rename-error">Pick a name different from the original.</p>`
     }
+    // `saveFile` rejects NUL outright (the `\0` byte is the separator
+    // inside `state.ignoredIds` keys and would split entries at the
+    // wrong byte); slashes break OPFS keys. Surface these inline so the
+    // user doesn't pick an invalid name, hit Confirm, and get the
+    // generic `Failed to load: ...` alert from the addFiles fallback.
+    if (trimmed.includes('\0')) {
+      return html`<p class="lwd-rename-error">The new name cannot contain a NUL byte.</p>`
+    }
+    if (trimmed.includes('/') || trimmed.includes('\\')) {
+      return html`<p class="lwd-rename-error">The new name cannot contain "/" or "\\".</p>`
+    }
     if (this.existingNames.has(trimmed)) {
       return html`<p class="lwd-rename-error">A file named "${trimmed}" already exists — pick something else.</p>`
     }
     return nothing
   }
 
+  // Match the validation rules above. Used by `render` to drive the
+  // Confirm button's disabled state and by `_onConfirm` to short-
+  // circuit a stray Enter on an invalid candidate.
+  _isRenameValid(trimmed) {
+    return trimmed.length > 0
+      && trimmed !== this.reportName
+      && !trimmed.includes('\0')
+      && !trimmed.includes('/')
+      && !trimmed.includes('\\')
+      && !this.existingNames.has(trimmed)
+  }
+
   render() {
     const renameSelected = this._choice === 'rename'
     const trimmed = (this._newName ?? '').trim()
-    const renameValid = renameSelected
-      && trimmed.length > 0
-      && trimmed !== this.reportName
-      && !this.existingNames.has(trimmed)
-    const confirmDisabled = renameSelected && !renameValid
+    const confirmDisabled = renameSelected && !this._isRenameValid(trimmed)
     const confirmLabel = renameSelected ? 'Rename' : 'Replace'
     const confirmClass = renameSelected ? 'primary' : 'danger'
+    // Renaming saves under a fresh filename — that name has no
+    // workspace attachment, even if the colliding original was
+    // listed in one. Spell that out next to the input so the user
+    // isn't surprised when the renamed copy doesn't show up under
+    // the workspace's reports.
+    const renameHint = this.workspaceNames.length > 0
+      ? html`<span class="lwd-option-hint">Saved as an unfiled report — the renamed copy isn't added to any workspace.</span>`
+      : nothing
     return html`<dialog @close=${this._onClose}>
       <header>
         <h3>Import conflict</h3>
@@ -166,6 +198,7 @@ class ImportConflictDialog extends AppDialog {
               @keydown=${this._onNewNameKeydown}
               @focus=${() => { this._choice = 'rename' }}
             >
+            ${renameHint}
             ${renameSelected ? this._renameValidationTpl(trimmed) : nothing}
           </span>
         </label>

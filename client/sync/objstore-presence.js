@@ -335,15 +335,34 @@ export function openWorkspace(workspaceId) {
         return
       }
       entry.session = session
+      // Register broadcast handlers BEFORE the boot list() so peer
+      // puts / deletes that land while the list+populate pass is
+      // running are caught instead of falling on the floor (the
+      // objstore client drops unsubscribed broadcasts with no
+      // replay — see `objstore.ts:onTransportMessage`). The
+      // handlers' own `remoteVersions` lookups tolerate the empty
+      // pre-list state: `previousVersion === undefined` makes
+      // `isReplace` false and the broadcast routes through the
+      // new-tag discovery branch.
+      registerBroadcastHandlers()
       const items = await session.list()
       if (entry.disposed) return
       for (const item of items) {
         entry.remoteTags.add(item.resourceTag)
-        // Seed the version baseline so a later `onPut` for any of
-        // these tags can detect whether the broadcast bumps the
-        // version (replace) or arrives at parity (a self-echo
-        // overlapping the boot list).
-        entry.remoteVersions.set(item.resourceTag, item.version)
+        // MAX semantics so a broadcast that landed between our
+        // handler registration and this populate loop (and already
+        // bumped remoteVersions to a higher value) can't be
+        // clobbered by the stale value the boot list captured.
+        // Without this guard, a broadcast V+1 arriving mid-boot
+        // would set remoteVersions=V+1 via onPut, and then this
+        // loop would reset it to V from the slightly-older list
+        // snapshot — the next broadcast V+2 would compare V+2 > V
+        // (correctly fire) but a no-version-bump broadcast V+1
+        // echo would compare V+1 > V (mis-fire as a replace).
+        const previous = entry.remoteVersions.get(item.resourceTag)
+        if (previous === undefined || item.version > previous) {
+          entry.remoteVersions.set(item.resourceTag, item.version)
+        }
       }
       // Populate reverse maps from the two cheap sources before
       // `ensureRemoteNames` falls back to `fetchByTag`:
@@ -400,82 +419,103 @@ export function openWorkspace(workspaceId) {
       // locally still adds to `fileTags` so isInRemote can answer
       // on subsequent fetches.
       ensureRemoteNames(entry)
-      // Live updates — peer (or same-user-other-tab) puts / deletes
-      // flow through workspace-subscribed broadcasts; flipping the
-      // cached set re-renders the badge in place.
-      session.onPut(({ resourceTag, version }) => {
-        const previousVersion = entry.remoteVersions.get(resourceTag)
-        const isReplace = entry.remoteTags.has(resourceTag)
-          && typeof previousVersion === 'number'
-          && version > previousVersion
-        entry.remoteTags.add(resourceTag)
-        entry.remoteVersions.set(resourceTag, version)
-        notify()
-        if (isReplace) {
-          // A workspace member overwrote this resource. The prior
-          // behaviour treated every onPut as either "new tag → run
-          // discovery" or "known tag → no-op", so a Replace landed
-          // on disk for new joiners (who would auto-download from
-          // scratch) but stayed invisible to existing peers — their
-          // local bytes kept the OLD content while the workspace
-          // badge claimed cloud-sync. Re-fetch the new blob and
-          // overwrite local under content validation; bundles are
-          // content-addressed and a "replace under the same
-          // integrity" would be byte-identical, so the helper
-          // skips that case.
-          maybeApplyRemoteReplace(entry, resourceTag).catch(() => {})
-          return
-        }
-        // Kick a fetchByTag for the new tag so its name lands in
-        // the cache; another notify will fire when it resolves.
-        ensureRemoteNames(entry)
-      })
-      session.onDeleted(({ resourceTag }) => {
-        entry.remoteTags.delete(resourceTag)
-        // Drop the version too — a future Put at the same tag is a
-        // brand-new resource (the incarnation changes inside the
-        // session even when the version restarts), so leaving the
-        // stale version pinned would let the next onPut's
-        // version-bump comparison mis-fire as a Replace.
-        entry.remoteVersions.delete(resourceTag)
-        const name = entry.remoteNameByTag.get(resourceTag)
-        entry.remoteNameByTag.delete(resourceTag)
-        // Re-resolve the workspace's live `reports` / `bundles` at
-        // each broadcast instead of reading the closure-captured `ws`.
-        // The boot-time snapshot would miss any identifier the user
-        // attached AFTER openWorkspace (via drag-drop, import, or
-        // auto-download from another peer), and an onDeleted for
-        // that fresh identifier would incorrectly drop its tag from
-        // the local fileTags / bundleTags cache. Cost: one
-        // localStorage parse (`listWorkspaces`) plus the
-        // `savePresenceCache` write at the tail of this handler —
-        // a peer-side bulk delete therefore drives N synchronous
-        // localStorage writes. Acceptable for the typical
-        // single-resource delete; a debounce is a follow-up if a
-        // workspace-wipe scenario becomes common.
-        const live = listWorkspaces().find((w) => w.id === workspaceId)
-        const liveReports = live?.reports ?? []
-        const liveBundles = live?.bundles ?? []
-        // Drop fileTags only for names we ONLY learned via remote
-        // discovery — if the workspace claims the name, the local
-        // owner is keeping the tag fresh.
-        if (name && !liveReports.includes(name)) entry.fileTags.delete(name)
-        // Mirror the cleanup for bundles.
-        const integrity = entry.remoteBundleByTag.get(resourceTag)
-        entry.remoteBundleByTag.delete(resourceTag)
-        if (integrity) {
-          entry.remoteBundleNameByIntegrity.delete(integrity)
-          if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
-        }
-        // Persist the post-delete state so the dropped tag doesn't
-        // resurrect from cache on the next page refresh.
-        savePresenceCache(workspaceId, entry)
-        notify()
-      })
     } catch (err) {
       entry.err = err
     }
   })()
+  // Hoisted out of the boot IIFE so it can register handlers
+  // BEFORE `await session.list()` resolves. Without that ordering,
+  // a peer broadcast that lands while we're still populating
+  // `remoteVersions` from the boot inventory is delivered to the
+  // session's empty `putHandlers` set and lost (per
+  // `objstore.ts:onTransportMessage`'s no-replay contract). With
+  // the handlers registered first, the broadcast routes through
+  // the per-tag dispatch below: an unknown tag falls into
+  // discovery (matching the new-tag branch), and a tag whose
+  // version exceeds whatever the boot list has set so far flows
+  // through the replace-refetch path.
+  // Closed over the outer `entry` / the session captured from
+  // `entry.session` at call-time and `workspaceId` from openWorkspace's
+  // signature. Hoisted only to express the "register-before-list"
+  // ordering above with a single name; no parameters since the
+  // closure already has everything.
+  function registerBroadcastHandlers() {
+    const session = entry.session
+    session.onPut(({ resourceTag, version }) => {
+      const previousVersion = entry.remoteVersions.get(resourceTag)
+      const isReplace = entry.remoteTags.has(resourceTag)
+        && typeof previousVersion === 'number'
+        && version > previousVersion
+      entry.remoteTags.add(resourceTag)
+      // MAX semantics: a broadcast V+2 that arrives while we're
+      // mid-boot must not be overwritten by a list() snapshot at
+      // V+1 if the loop runs after — see the boot-loop comment.
+      if (previousVersion === undefined || version > previousVersion) {
+        entry.remoteVersions.set(resourceTag, version)
+      }
+      notify()
+      if (isReplace) {
+        // A workspace member overwrote this resource. The prior
+        // behaviour treated every onPut as either "new tag → run
+        // discovery" or "known tag → no-op", so a Replace landed
+        // on disk for new joiners (who would auto-download from
+        // scratch) but stayed invisible to existing peers — their
+        // local bytes kept the OLD content while the workspace
+        // badge claimed cloud-sync. Re-fetch the new blob and
+        // overwrite local under content validation; bundles are
+        // content-addressed and a "replace under the same
+        // integrity" would be byte-identical, so the helper
+        // skips that case.
+        maybeApplyRemoteReplace(entry, resourceTag).catch(() => {})
+        return
+      }
+      // Kick a fetchByTag for the new tag so its name lands in
+      // the cache; another notify will fire when it resolves.
+      ensureRemoteNames(entry)
+    })
+    session.onDeleted(({ resourceTag }) => {
+      entry.remoteTags.delete(resourceTag)
+      // Drop the version too — a future Put at the same tag is a
+      // brand-new resource (the incarnation changes inside the
+      // session even when the version restarts), so leaving the
+      // stale version pinned would let the next onPut's
+      // version-bump comparison mis-fire as a Replace.
+      entry.remoteVersions.delete(resourceTag)
+      const name = entry.remoteNameByTag.get(resourceTag)
+      entry.remoteNameByTag.delete(resourceTag)
+      // Re-resolve the workspace's live `reports` / `bundles` at
+      // each broadcast instead of reading the closure-captured `ws`.
+      // The boot-time snapshot would miss any identifier the user
+      // attached AFTER openWorkspace (via drag-drop, import, or
+      // auto-download from another peer), and an onDeleted for
+      // that fresh identifier would incorrectly drop its tag from
+      // the local fileTags / bundleTags cache. Cost: one
+      // localStorage parse (`listWorkspaces`) plus the
+      // `savePresenceCache` write at the tail of this handler —
+      // a peer-side bulk delete therefore drives N synchronous
+      // localStorage writes. Acceptable for the typical
+      // single-resource delete; a debounce is a follow-up if a
+      // workspace-wipe scenario becomes common.
+      const live = listWorkspaces().find((w) => w.id === workspaceId)
+      const liveReports = live?.reports ?? []
+      const liveBundles = live?.bundles ?? []
+      // Drop fileTags only for names we ONLY learned via remote
+      // discovery — if the workspace claims the name, the local
+      // owner is keeping the tag fresh.
+      if (name && !liveReports.includes(name)) entry.fileTags.delete(name)
+      // Mirror the cleanup for bundles.
+      const integrity = entry.remoteBundleByTag.get(resourceTag)
+      entry.remoteBundleByTag.delete(resourceTag)
+      if (integrity) {
+        entry.remoteBundleNameByIntegrity.delete(integrity)
+        if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
+      }
+      // Persist the post-delete state so the dropped tag doesn't
+      // resurrect from cache on the next page refresh.
+      savePresenceCache(workspaceId, entry)
+      notify()
+    })
+  }
   // Swallow the boot rejection on the saved promise so callers
   // (putFile) can `await entry.ready` without an unhandled
   // rejection when the connection fails. The `err` field carries
@@ -1199,12 +1239,17 @@ export async function putFile(workspaceId, fileName, content) {
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
   const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
-  // Advance the local version baseline so the matching `onPut`
-  // self-echo (which arrives over the subscription with the same
-  // version) hits the parity branch and skips the replace-refetch.
-  // Without this, every replace would round-trip the just-uploaded
-  // bytes back to ourselves (harmless but wasteful — the fetched
-  // content is byte-identical to what we just wrote).
+  // Advance the local version baseline so a sibling tab in this
+  // same browser (sharing the relay subscription) sees the matching
+  // broadcast hit the parity branch instead of round-tripping the
+  // bytes back through the replace-refetch path. The originating
+  // socket is excluded from the relay's broadcast fan-out, so a
+  // SINGLE-tab `putFile` doesn't actually receive an echo for its
+  // OWN put — the suppression matters for: (a) sibling tabs that
+  // ride the same subscription via the workspace-subscribed seed
+  // and would otherwise download bytes they already have on disk,
+  // and (b) the rare boot-overlap where the broadcast for our just-
+  // committed put races our boot `list()` populate loop.
   if (result.ok && entry.keys && !entry.disposed) {
     try {
       const tag = entry.fileTags.get(fileName)
