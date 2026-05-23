@@ -33,6 +33,7 @@
   },
   "files": [
     "server/auth.ts",
+    "server/bus-receiver.ts",
     "server/config.ts",
     "server/db-neon.ts",
     "server/db-revision-sql.ts",
@@ -57,6 +58,7 @@
     "server/objstore/tokens.ts",
     "server/origin.ts",
     "server/peer.ts",
+    "server/pubsub.ts",
     "server/sign.ts",
     "server/static.ts",
     "server/sync-handlers.ts",

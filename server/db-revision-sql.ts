@@ -108,6 +108,15 @@ export const CHAIN_FROM_SQL =
   FROM workspace_revision WHERE workspace_tag = $1 AND seq >= $2 ORDER BY seq ASC`
 export const REVISION_EXISTS_SQL =
   `SELECT 1 AS one FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`
+// Fetch a single revision row by content-addressed id. The cross-instance
+// pubsub (server/pubsub.ts) NOTIFY payload carries only `(tag, revisionId)`
+// because the full `workspace-state` broadcast envelope is bounded by
+// `MAX_CIPHERTEXT_LEN` (2 MiB) and Postgres NOTIFY caps payloads at ~8 KB.
+// The receiver re-fetches the row from this shared table to construct the
+// wire broadcast for its local peers.
+export const REVISION_BY_ID_SQL =
+  `SELECT base, id, keyframe, nonce, ciphertext, signature
+  FROM workspace_revision WHERE workspace_tag = $1 AND id = $2`
 
 // The gated commit INSERT, in `$N` form. One statement folds the
 // dup-check, the head-equals-base check, the server-assigned seq

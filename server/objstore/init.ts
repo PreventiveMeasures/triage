@@ -20,6 +20,11 @@ export type ObjstoreInitDeps = {
   reapIntervalMs: number
   send: (socket: WebSocket, msg: object) => void
   broadcast: (tag: string, msg: object, except: WebSocket | null) => void
+  // Cross-instance pub/sub publishers. SQLite mode passes no-ops; Neon
+  // mode passes Postgres LISTEN/NOTIFY-backed implementations. See
+  // server/pubsub.ts for the bus design.
+  publishObjPut: (tag: string, resourceTag: string) => void
+  publishObjDeleted: (tag: string, resourceTag: string, version: number) => void
   getNonce: (socket: WebSocket) => string | undefined
   debug: boolean
   // Auth gate for the FIRST objstore-put-begin against a workspace
@@ -56,12 +61,13 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   const handlers = createObjstoreHandlers({
     handle, secret,
     send: deps.send, broadcast: deps.broadcast,
+    publishObjDeleted: deps.publishObjDeleted,
     getNonce: deps.getNonce, debug: deps.debug,
     ...(deps.authGate ? { authGate: deps.authGate } : {}),
     ...(deps.sendUnauthorized ? { sendUnauthorized: deps.sendUnauthorized } : {}),
   })
   const restDeps: ObjstoreRestDeps = {
-    handle, secret, broadcast: deps.broadcast, debug: deps.debug,
+    handle, secret, broadcast: deps.broadcast, publishObjPut: deps.publishObjPut, debug: deps.debug,
   }
   // Re-entrancy guard for periodic + startup sweeps. Kicking the
   // startup sweep through the same `enqueueSweep` path means the

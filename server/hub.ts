@@ -19,8 +19,18 @@ export type Hub = {
   // `except: null` is the REST-originated path — byte transfer landed
   // via HTTP, not a particular WS socket, so it hits every subscriber.
   // WS-originated broadcasts pass the originator so it doesn't see its
-  // own message echoed back.
+  // own message echoed back. Local-only: callers that ALSO want a
+  // cross-instance fan-out are expected to publish to the pubsub bus
+  // alongside this call (server/pubsub.ts). The hub deliberately stays
+  // ignorant of the bus so its transport invariants (backpressure cap,
+  // stringify-once, terminate-on-overflow) are unchanged.
   broadcast(tag: string, msg: object, except: WebSocket | null): void
+  // Broadcasts an ALREADY-SERIALISED payload to every local subscriber
+  // for `tag`. Used by the pubsub bus receiver
+  // (server/bus-receiver.ts, wired up from server/index.ts) to relay
+  // a remote-instance event into this instance's fan-out. No `except`:
+  // the originator is on a different instance by construction.
+  broadcastLocalRaw(tag: string, payload: string): void
 }
 
 export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number; debug: boolean }): Hub {
@@ -82,6 +92,16 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
     // catch-up with a multi-MB ciphertext × N subscribers, per-recipient
     // JSON.stringify would dominate CPU; this is the cheap win.
     const payload = JSON.stringify(msg)
+    fanOut(set, payload, except)
+  }
+
+  function broadcastLocalRaw(tag: string, payload: string): void {
+    const set = subscribers.get(tag)
+    if (!set) return
+    fanOut(set, payload, null)
+  }
+
+  function fanOut(set: Set<WebSocket>, payload: string, except: WebSocket | null): void {
     // Snapshot before iterating — `send`'s try/catch swallows
     // socket.send errors, but a socket transitioning to CLOSED
     // mid-broadcast triggers `unsubscribeAll` from the 'close' handler,
@@ -94,5 +114,5 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
     }
   }
 
-  return { subscribe, unsubscribeAll, send, sendRaw, broadcast }
+  return { subscribe, unsubscribeAll, send, sendRaw, broadcast, broadcastLocalRaw }
 }

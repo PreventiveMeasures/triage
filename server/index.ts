@@ -73,7 +73,7 @@
 // and would not reject the attaching socket.
 
 import { type WebSocket, WebSocketServer } from 'ws'
-import { errMsg } from './util.ts'
+import { errMsg, errStack } from './util.ts'
 import type { PeerRegistry } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from './origin.ts'
 import { createHub } from './hub.ts'
@@ -89,6 +89,11 @@ import { initObjstore } from './objstore/init.ts'
 import { type Handle as ObjstoreHandle, listLive, objectMetaWire, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
+import {
+  type NeonClientCtor, type PubSub,
+  createNeonPubSub, createNoopPubSub,
+} from './pubsub.ts'
+import { createBusReceiver } from './bus-receiver.ts'
 
 // All external inputs (env vars + optional config.json) are parsed
 // and validated in ./config.ts. Destructure into the existing
@@ -235,7 +240,39 @@ async function workspaceExists(tag: string): Promise<boolean> {
 // broadcast (see ./hub.ts). Destructure into the existing names so the
 // handlers / dispatcher / objstore wiring below read unchanged.
 const hub = createHub({ peers, maxBufferedBytes: MAX_BUFFERED_BYTES, debug: DEBUG })
-const { send, broadcast, subscribe, unsubscribeAll } = hub
+const { send, broadcast, subscribe, unsubscribeAll, broadcastLocalRaw } = hub
+
+// Cross-instance pub/sub for live broadcasts (see ./pubsub.ts). SQLite
+// mode is single-process by construction so it gets a no-op; Neon mode
+// uses Postgres LISTEN/NOTIFY on a dedicated long-lived Client
+// connection (separate from the HTTP `neon()` callable the queries flow
+// over — LISTEN needs a session-bound socket, the HTTP path is
+// stateless). The bus carries lookup hints, not the full wire payload:
+// the `workspace-state` broadcast's ciphertext alone can exceed the
+// ~8 KB NOTIFY payload cap, so the receiver re-fetches from the shared
+// DB to construct the wire frame. The bus is best-effort fan-out, not a
+// durability layer — the DB itself is the source of truth, and a
+// dropped publish only means peers on other instances miss the live
+// push (they still catch up via the chain on their next subscribe).
+let pubsub: PubSub = createNoopPubSub()
+if (NEON_URL) {
+  // Dynamic import: the Client export lives in the same optional peer
+  // dep as the HTTP `neon()` callable (see ./neon-driver.ts), but the
+  // dep itself is only present on a Neon-mode deploy. The wrapper path
+  // also lets tests swap in a PGlite-backed shim (`tests/pubsub.test.js`).
+  const mod = (await import('./neon-driver.ts')) as unknown as { Client?: NeonClientCtor }
+  if (!mod.Client) {
+    console.error('DATABASE_URL is set but the @neondatabase/serverless Client export is not available.')
+    console.error('Cross-instance broadcasts require the WebSocket-based Client (the HTTP `neon()` callable cannot LISTEN).')
+    console.error('Reinstall the peer dep: pnpm add @neondatabase/serverless')
+    process.exit(1)
+  }
+  const NeonClientImpl = mod.Client
+  pubsub = createNeonPubSub({
+    newClient: () => new NeonClientImpl(NEON_URL),
+    debug: DEBUG,
+  })
+}
 
 // Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
 // handshake. Destructure into the existing names for the wiring below.
@@ -247,8 +284,18 @@ const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
 // wiring below; `sendSaveError` is reused by the dispatcher's `busy`
 // inflight-cap NACK path.
 const getNonce = (socket: WebSocket): string | undefined => peers.get(socket)?.challenge
+const publishRevision = (tag: string, revisionId: string): void => {
+  pubsub.publish({ kind: 'rev', tag, id: revisionId })
+}
+const publishObjPut = (tag: string, resourceTag: string): void => {
+  pubsub.publish({ kind: 'objput', tag, res: resourceTag })
+}
+const publishObjDeleted = (tag: string, resourceTag: string, version: number): void => {
+  pubsub.publish({ kind: 'objdel', tag, res: resourceTag, ver: version })
+}
+
 const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
-  handle, send, broadcast, subscribe, getNonce,
+  handle, send, broadcast, publishRevision, subscribe, getNonce,
   requiresAuth, sendUnauthorized, workspaceExists,
   // Folds the objstore inventory into the `workspace-subscribed` ack.
   // The objstore store keeps its own richer `Handle`, so we wire the
@@ -260,7 +307,8 @@ const { handleSave, handleSubscribe, sendSaveError } = createSyncHandlers({
 
 const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
-  send, broadcast, getNonce, debug: DEBUG,
+  send, broadcast, publishObjPut, publishObjDeleted,
+  getNonce, debug: DEBUG,
   // Auth gate for the FIRST objstore-put-begin against a workspace
   // that doesn't yet exist on the server. Mirrors handleSave's gate
   // below; handlers.ts calls this AFTER sig verify so the
@@ -326,9 +374,37 @@ httpServer.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
+// Cross-instance bus receiver (see ./bus-receiver.ts): a remote NOTIFY
+// lands here, we re-fetch any data the bus payload only hinted at,
+// then broadcast to local peers via `broadcastLocalRaw`. Extracted so
+// the rev / objput / objdel mapping (including the keyframe boolean
+// coercion and the `objectMetaWire` shape) is testable without the
+// full server bring-up.
+const onBusMessage = createBusReceiver({
+  handle, objstoreHandle, broadcastLocalRaw, debug: DEBUG,
+})
+
+// Kick off the LISTEN loop in the background. `pubsub.start` resolves
+// only after the FIRST successful connect, and the internal reconnect
+// loop retries indefinitely on transport / LISTEN failure — awaiting
+// it here would convert a transient Neon WS hiccup at boot into a
+// server that never binds (and a `.catch` that never runs). Instead
+// the server binds immediately and the bus comes up async; publishes
+// during the down window drop silently (best-effort semantics
+// documented in pubsub.ts). The SQLite no-op resolves immediately,
+// so the behaviour is identical in that mode.
+void pubsub.start(onBusMessage).catch((err) => {
+  console.warn('pubsub: startup error:', errStack(err))
+})
+
 // App-specific shutdown step (run after the in-flight drain), wired
 // into the lifecycle teardown below.
 const closeDb = async (): Promise<void> => {
+  // Stop the bus first so a publish from a still-draining handler
+  // can't fire into a half-closed Client. The in-flight drain runs
+  // before this (see lifecycle.ts), so by here all `broadcast` →
+  // `publish*` calls are settled.
+  try { await pubsub.stop() } catch (err) { console.warn('pubsub close error:', errMsg(err)) }
   // objstoreHandle has no close(): SQLite shares this DatabaseSync and
   // Neon has no persistent connection; `handle.close()` covers both.
   try { await handle.close() } catch (err) { console.warn('DB close error:', errMsg(err)) }

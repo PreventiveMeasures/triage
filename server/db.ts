@@ -60,7 +60,8 @@ import { dirname } from 'node:path'
 import { type AllStmt, type GetStmt, wrapAll, wrapGet } from './db-stmt.ts'
 import {
   CHAIN_AFTER_SQL, CHAIN_ALL_SQL, CHAIN_FROM_SQL, GATED_INSERT_SQL_SQLITE, HEAD_FOR_SQL,
-  LAST_KEYFRAME_SEQ_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL, mapRevisionRow, toSqlitePlaceholders,
+  LAST_KEYFRAME_SEQ_SQL, REVISION_BY_ID_SQL, REVISION_EXISTS_SQL, SEQ_OF_ID_SQL,
+  mapRevisionRow, toSqlitePlaceholders,
 } from './db-revision-sql.ts'
 
 // `CHECK (keyframe IN (0, 1))` is the value-domain guard on the
@@ -181,6 +182,10 @@ export type Handle = {
   chainAfterSeq: AllStmt<[string, number], RevisionRow>
   chainFromSeq: AllStmt<[string, number], RevisionRow>
   revisionExists: GetStmt<[string, string], unknown>
+  // Single-revision fetch by content-addressed id. The cross-instance
+  // pubsub receiver uses this to assemble a `workspace-state` from a
+  // NOTIFY hint (see `server/pubsub.ts`).
+  revisionById: GetStmt<[string, string], RevisionRow>
   gatedInsert?: GetStmt<[string, string, string | null, number, string, string, string, number], { seq: number }>
   tryCommit: (input: RevisionInsert) => Promise<CommitResult>
   close: () => Promise<void>
@@ -288,6 +293,17 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     const raw = wrapAll<P, Record<string, unknown>>(db.prepare(toSqlitePlaceholders(query)))
     return { all: async (...args: P) => (await raw.all(...args)).map(mapRevisionRow) }
   }
+  // Reuses `wrapGet` for the prepared statement, then maps the row
+  // through the shared coercion so the returned shape matches `chainFrom`.
+  const revisionByIdStmt: GetStmt<[string, string], RevisionRow> = (() => {
+    const raw = wrapGet<[string, string], Record<string, unknown>>(
+      db.prepare(toSqlitePlaceholders(REVISION_BY_ID_SQL)),
+    )
+    return { get: async (tag, id) => {
+      const row = await raw.get(tag, id)
+      return row ? mapRevisionRow(row) : undefined
+    } }
+  })()
   const handle: SqliteHandle = {
     db,
     headFor: wrapGet<[string], { id: string }>(db.prepare(toSqlitePlaceholders(HEAD_FOR_SQL))),
@@ -297,6 +313,7 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     chainAfterSeq: chainStmt<[string, number]>(CHAIN_AFTER_SQL),
     chainFromSeq: chainStmt<[string, number]>(CHAIN_FROM_SQL),
     revisionExists: wrapGet<[string, string], unknown>(db.prepare(toSqlitePlaceholders(REVISION_EXISTS_SQL))),
+    revisionById: revisionByIdStmt,
     // SQLite null-safe equality is `IS`; the numbered `?N` form (with
     // reuse) maps `$1`/`$2`/`$3` to repeated positional binds. `RETURNING
     // seq` works in node:sqlite (see objstore's `insertLiveIfAbsent`).
