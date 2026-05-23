@@ -78,6 +78,17 @@ function loadPresenceCache(workspaceId) {
       names: obj.names && typeof obj.names === 'object' ? obj.names : {},
       bundles: obj.bundles && typeof obj.bundles === 'object' ? obj.bundles : {},
       bundleNames: obj.bundleNames && typeof obj.bundleNames === 'object' ? obj.bundleNames : {},
+      // `tag → version` of the local on-disk bytes we last committed
+      // for that tag (via putFile success, maybeAutoDownload save,
+      // or maybeApplyRemoteReplace save). Drives the boot-time
+      // divergence check: when remote shows a version strictly
+      // greater than the local one, a peer Replace landed while we
+      // were offline and we must re-fetch on reconnect. Defaults
+      // to an empty object for legacy cache rows (entries without
+      // this field) so a fresh-from-disk session simply has no
+      // divergence baseline to compare against — same effect as
+      // the pre-fix behaviour for those rows.
+      localVersions: obj.localVersions && typeof obj.localVersions === 'object' ? obj.localVersions : {},
     }
   } catch { return null }
 }
@@ -87,6 +98,7 @@ function savePresenceCache(workspaceId, entry) {
       names: Object.fromEntries(entry.remoteNameByTag),
       bundles: Object.fromEntries(entry.remoteBundleByTag),
       bundleNames: Object.fromEntries(entry.remoteBundleNameByIntegrity),
+      localVersions: Object.fromEntries(entry.localVersions),
     }
     localStorage.setItem(presenceCacheKey(workspaceId), JSON.stringify(payload))
   } catch (err) {
@@ -268,6 +280,30 @@ export function openWorkspace(workspaceId) {
     remoteNameByTag: new Map(),
     remoteBundleByTag: new Map(),
     remoteBundleNameByIntegrity: new Map(),
+    // `resourceTag → version` for every remote resource we know
+    // about. Populated from `session.list()` at boot, kept in sync
+    // by `onPut` (peer / sibling-tab writes) and by `putFile` /
+    // `putBundleToRemote` after a successful local put. Drives the
+    // version-bump detection in the `onPut` handler so a Replace
+    // under an existing tag (same fileName, new content) forces
+    // peers to re-download the bytes — the prior behavior treated
+    // every onPut for a known tag as a no-op, leaving peers stuck
+    // on the old content while new joiners fetched the fresh blob.
+    remoteVersions: new Map(),
+    // `resourceTag → version` of the bytes WE last committed to
+    // local OPFS. Set whenever we successfully write a report's
+    // bytes through `saveFileBytes` (via maybeAutoDownload's
+    // new-file save, maybeApplyRemoteReplace's overwrite, or
+    // putFile's own success). Hydrated from the persisted presence
+    // cache at boot so a reconnect can compare against
+    // `remoteVersions` and re-fetch any tag the cloud advanced
+    // past our local baseline while this client was offline.
+    // Tags with no entry are conservatively left alone at boot —
+    // a never-uploaded local file (no localVersions baseline)
+    // shouldn't get clobbered by a peer's first put with the same
+    // name. See the boot-divergence loop below for the full
+    // discrimination matrix.
+    localVersions: new Map(),
     inFlight: new Map(),
     err: null, disposed: false, ready: null,
   }
@@ -325,9 +361,35 @@ export function openWorkspace(workspaceId) {
         return
       }
       entry.session = session
+      // Register broadcast handlers BEFORE the boot list() so peer
+      // puts / deletes that land while the list+populate pass is
+      // running are caught instead of falling on the floor (the
+      // objstore client drops unsubscribed broadcasts with no
+      // replay — see `objstore.ts:onTransportMessage`). The
+      // handlers' own `remoteVersions` lookups tolerate the empty
+      // pre-list state: `previousVersion === undefined` makes
+      // `isReplace` false and the broadcast routes through the
+      // new-tag discovery branch.
+      registerBroadcastHandlers()
       const items = await session.list()
       if (entry.disposed) return
-      for (const item of items) entry.remoteTags.add(item.resourceTag)
+      for (const item of items) {
+        entry.remoteTags.add(item.resourceTag)
+        // MAX semantics so a broadcast that landed between our
+        // handler registration and this populate loop (and already
+        // bumped remoteVersions to a higher value) can't be
+        // clobbered by the stale value the boot list captured.
+        // Without this guard, a broadcast V+1 arriving mid-boot
+        // would set remoteVersions=V+1 via onPut, and then this
+        // loop would reset it to V from the slightly-older list
+        // snapshot — the next broadcast V+2 would compare V+2 > V
+        // (correctly fire) but a no-version-bump broadcast V+1
+        // echo would compare V+1 > V (mis-fire as a replace).
+        const previous = entry.remoteVersions.get(item.resourceTag)
+        if (previous === undefined || item.version > previous) {
+          entry.remoteVersions.set(item.resourceTag, item.version)
+        }
+      }
       // Populate reverse maps from the two cheap sources before
       // `ensureRemoteNames` falls back to `fetchByTag`:
       //   (a) attached local reports/bundles (we know tag→name
@@ -339,6 +401,20 @@ export function openWorkspace(workspaceId) {
       // `remoteFileNames` / `remoteBundleIntegrities`.
       const cached = loadPresenceCache(workspaceId)
       let cacheMutated = false
+      // Hydrate `localVersions` from the persisted cache BEFORE the
+      // divergence loop below. The values reflect what we last
+      // committed to OPFS for each tag (set on every successful
+      // save in maybeAutoDownload / maybeApplyRemoteReplace /
+      // putFile). Tags whose remote row disappeared since last
+      // session are pruned in the same pass — leaving stale
+      // entries pinned would inflate the cache forever as tags
+      // get deleted on the server.
+      if (cached && cached.localVersions) {
+        for (const tag of entry.remoteTags) {
+          const v = cached.localVersions[tag]
+          if (typeof v === 'number') entry.localVersions.set(tag, v)
+        }
+      }
       for (const tag of entry.remoteTags) {
         const attachedName = attachedTagToName.get(tag)
         if (attachedName !== undefined && !entry.remoteNameByTag.has(tag)) {
@@ -383,56 +459,135 @@ export function openWorkspace(workspaceId) {
       // locally still adds to `fileTags` so isInRemote can answer
       // on subsequent fetches.
       ensureRemoteNames(entry)
-      // Live updates — peer (or same-user-other-tab) puts / deletes
-      // flow through workspace-subscribed broadcasts; flipping the
-      // cached set re-renders the badge in place.
-      session.onPut(({ resourceTag }) => {
-        entry.remoteTags.add(resourceTag)
-        notify()
-        // Kick a fetchByTag for the new tag so its name lands in
-        // the cache; another notify will fire when it resolves.
-        ensureRemoteNames(entry)
-      })
-      session.onDeleted(({ resourceTag }) => {
-        entry.remoteTags.delete(resourceTag)
-        const name = entry.remoteNameByTag.get(resourceTag)
-        entry.remoteNameByTag.delete(resourceTag)
-        // Re-resolve the workspace's live `reports` / `bundles` at
-        // each broadcast instead of reading the closure-captured `ws`.
-        // The boot-time snapshot would miss any identifier the user
-        // attached AFTER openWorkspace (via drag-drop, import, or
-        // auto-download from another peer), and an onDeleted for
-        // that fresh identifier would incorrectly drop its tag from
-        // the local fileTags / bundleTags cache. Cost: one
-        // localStorage parse (`listWorkspaces`) plus the
-        // `savePresenceCache` write at the tail of this handler —
-        // a peer-side bulk delete therefore drives N synchronous
-        // localStorage writes. Acceptable for the typical
-        // single-resource delete; a debounce is a follow-up if a
-        // workspace-wipe scenario becomes common.
-        const live = listWorkspaces().find((w) => w.id === workspaceId)
-        const liveReports = live?.reports ?? []
-        const liveBundles = live?.bundles ?? []
-        // Drop fileTags only for names we ONLY learned via remote
-        // discovery — if the workspace claims the name, the local
-        // owner is keeping the tag fresh.
-        if (name && !liveReports.includes(name)) entry.fileTags.delete(name)
-        // Mirror the cleanup for bundles.
-        const integrity = entry.remoteBundleByTag.get(resourceTag)
-        entry.remoteBundleByTag.delete(resourceTag)
-        if (integrity) {
-          entry.remoteBundleNameByIntegrity.delete(integrity)
-          if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
+      // Reconnect-divergence sweep: while this client was offline a
+      // peer may have replaced one or more reports. The live `onPut`
+      // path catches puts during this session, but a put that
+      // committed BEFORE our `session.list()` only shows up as a
+      // version delta between local and remote. For each tag where
+      // we have a confirmed local-version baseline (we previously
+      // downloaded or uploaded the bytes ourselves) AND the remote
+      // version is strictly higher, re-fetch through the same
+      // `maybeApplyRemoteReplace` path the live broadcast uses —
+      // it gunzips, validates with `analyzeContent`, and overwrites
+      // local under the same forgery posture.
+      //
+      // Tags WITHOUT a localVersion baseline are skipped: those are
+      // either (a) freshly-discovered peer-only files (the
+      // `ensureRemoteNames` discovery path handles them via
+      // `maybeAutoDownload`'s new-file branch), or (b) local files
+      // attached via drag-drop that the user never uploaded or
+      // downloaded — overwriting those with whatever a peer
+      // happens to have under the matching name would silently
+      // discard the user's bytes.
+      for (const tag of entry.remoteTags) {
+        const localVer = entry.localVersions.get(tag)
+        const remoteVer = entry.remoteVersions.get(tag)
+        if (typeof localVer !== 'number' || typeof remoteVer !== 'number') continue
+        if (remoteVer > localVer) {
+          maybeApplyRemoteReplace(entry, tag).catch(() => {})
         }
-        // Persist the post-delete state so the dropped tag doesn't
-        // resurrect from cache on the next page refresh.
-        savePresenceCache(workspaceId, entry)
-        notify()
-      })
+      }
     } catch (err) {
       entry.err = err
     }
   })()
+  // Hoisted out of the boot IIFE so it can register handlers
+  // BEFORE `await session.list()` resolves. Without that ordering,
+  // a peer broadcast that lands while we're still populating
+  // `remoteVersions` from the boot inventory is delivered to the
+  // session's empty `putHandlers` set and lost (per
+  // `objstore.ts:onTransportMessage`'s no-replay contract). With
+  // the handlers registered first, the broadcast routes through
+  // the per-tag dispatch below: an unknown tag falls into
+  // discovery (matching the new-tag branch), and a tag whose
+  // version exceeds whatever the boot list has set so far flows
+  // through the replace-refetch path.
+  // Closed over the outer `entry` / the session captured from
+  // `entry.session` at call-time and `workspaceId` from openWorkspace's
+  // signature. Hoisted only to express the "register-before-list"
+  // ordering above with a single name; no parameters since the
+  // closure already has everything.
+  function registerBroadcastHandlers() {
+    const session = entry.session
+    session.onPut(({ resourceTag, version }) => {
+      const previousVersion = entry.remoteVersions.get(resourceTag)
+      const isReplace = entry.remoteTags.has(resourceTag)
+        && typeof previousVersion === 'number'
+        && version > previousVersion
+      entry.remoteTags.add(resourceTag)
+      // MAX semantics: a broadcast V+2 that arrives while we're
+      // mid-boot must not be overwritten by a list() snapshot at
+      // V+1 if the loop runs after — see the boot-loop comment.
+      if (previousVersion === undefined || version > previousVersion) {
+        entry.remoteVersions.set(resourceTag, version)
+      }
+      notify()
+      if (isReplace) {
+        // A workspace member overwrote this resource. The prior
+        // behaviour treated every onPut as either "new tag → run
+        // discovery" or "known tag → no-op", so a Replace landed
+        // on disk for new joiners (who would auto-download from
+        // scratch) but stayed invisible to existing peers — their
+        // local bytes kept the OLD content while the workspace
+        // badge claimed cloud-sync. Re-fetch the new blob and
+        // overwrite local under content validation; bundles are
+        // content-addressed and a "replace under the same
+        // integrity" would be byte-identical, so the helper
+        // skips that case.
+        maybeApplyRemoteReplace(entry, resourceTag).catch(() => {})
+        return
+      }
+      // Kick a fetchByTag for the new tag so its name lands in
+      // the cache; another notify will fire when it resolves.
+      ensureRemoteNames(entry)
+    })
+    session.onDeleted(({ resourceTag }) => {
+      entry.remoteTags.delete(resourceTag)
+      // Drop the version too — a future Put at the same tag is a
+      // brand-new resource (the incarnation changes inside the
+      // session even when the version restarts), so leaving the
+      // stale version pinned would let the next onPut's
+      // version-bump comparison mis-fire as a Replace.
+      entry.remoteVersions.delete(resourceTag)
+      // Same reasoning for the local baseline: a deletion + recreate
+      // at the same tag is a brand-new resource, so the prior
+      // local-version pin should not survive the delete.
+      entry.localVersions.delete(resourceTag)
+      const name = entry.remoteNameByTag.get(resourceTag)
+      entry.remoteNameByTag.delete(resourceTag)
+      // Re-resolve the workspace's live `reports` / `bundles` at
+      // each broadcast instead of reading the closure-captured `ws`.
+      // The boot-time snapshot would miss any identifier the user
+      // attached AFTER openWorkspace (via drag-drop, import, or
+      // auto-download from another peer), and an onDeleted for
+      // that fresh identifier would incorrectly drop its tag from
+      // the local fileTags / bundleTags cache. Cost: one
+      // localStorage parse (`listWorkspaces`) plus the
+      // `savePresenceCache` write at the tail of this handler —
+      // a peer-side bulk delete therefore drives N synchronous
+      // localStorage writes. Acceptable for the typical
+      // single-resource delete; a debounce is a follow-up if a
+      // workspace-wipe scenario becomes common.
+      const live = listWorkspaces().find((w) => w.id === workspaceId)
+      const liveReports = live?.reports ?? []
+      const liveBundles = live?.bundles ?? []
+      // Drop fileTags only for names we ONLY learned via remote
+      // discovery — if the workspace claims the name, the local
+      // owner is keeping the tag fresh.
+      if (name && !liveReports.includes(name)) entry.fileTags.delete(name)
+      // Mirror the cleanup for bundles.
+      const integrity = entry.remoteBundleByTag.get(resourceTag)
+      entry.remoteBundleByTag.delete(resourceTag)
+      if (integrity) {
+        entry.remoteBundleNameByIntegrity.delete(integrity)
+        if (!liveBundles.includes(integrity)) entry.bundleTags.delete(integrity)
+      }
+      // Persist the post-delete state so the dropped tag doesn't
+      // resurrect from cache on the next page refresh.
+      savePresenceCache(workspaceId, entry)
+      notify()
+    })
+  }
   // Swallow the boot rejection on the saved promise so callers
   // (putFile) can `await entry.ready` without an unhandled
   // rejection when the connection fails. The `err` field carries
@@ -916,12 +1071,21 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     await saveFileBytes(fileName, bytes)
     if (entry.disposed || !entry.remoteTags.has(tag)) return
     setCount(fileName, result.count, result.source)
+    // Record the local baseline. Once these bytes are on disk under
+    // this tag's current remote version, a future reconnect can
+    // compare local vs remote and detect a Replace that landed
+    // while this client was offline (the boot-divergence loop in
+    // `openWorkspace`). Persisted to localStorage via the next
+    // `savePresenceCache` write so the baseline survives reloads.
+    const v = entry.remoteVersions.get(tag)
+    if (typeof v === 'number') entry.localVersions.set(tag, v)
     // Final re-check before the membership-mutate await — matches
     // the branch-2 guard. setCount is synchronous so the only
     // checkpoint that could race is the addReportToWorkspace lock-
     // acquisition itself.
     if (!entry.remoteTags.has(tag)) return
     await addReportToWorkspace(fileName, entry.workspaceId)
+    savePresenceCache(entry.workspaceId, entry)
   } catch (err) {
     // OPFS quota-exceeded or workspace-blob lock failure. The user
     // sees nothing — bytes were decrypted and validated but never
@@ -933,6 +1097,85 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     return
   }
   if (entry.disposed) return
+  for (const cb of autoDownloadListeners) {
+    try { cb(entry.workspaceId, fileName) } catch {}
+  }
+}
+
+// Fan-out for a peer's Replace under an existing resourceTag.
+// Triggered from the `onPut` handler when the broadcast version
+// strictly exceeds the previously-known version (a self-echo where
+// `putFile` already advanced `remoteVersions` to the new value
+// hits the parity branch and is skipped here). Three outcomes:
+//
+//   1. The fetchByTag returns a bundle. Bundles are content-
+//      addressed by sha512, so a "replace" under the same
+//      integrity is byte-identical and there's nothing for us to
+//      apply locally — bail silently. (A genuinely different
+//      bundle would land under a different integrity → different
+//      tag → flow through the `ensureRemoteNames` /
+//      `maybeAutoDownloadBundle` branch instead.)
+//   2. Content fails the `analyzeContent` gate — refuse to
+//      overwrite local with bytes that don't parse as a report.
+//      Mirrors the forgery defence in `maybeAutoDownload`.
+//   3. Validated report bytes: persist via `saveFileBytes`
+//      (which evicts the in-memory text cache so a subsequent
+//      readFile re-reads from disk), refresh the cached count,
+//      then notify autoDownloadListeners so the UI bridge reloads
+//      the active view if it was showing this file.
+//
+// Workspace attach is intentionally NOT touched here — the tag
+// already existed in `remoteTags`, so the workspace's `reports`
+// list either already lists this fileName or never will from this
+// path (callers who want to attach on receipt of a peer upload go
+// through `maybeAutoDownload`, which the new-tag branch of
+// `onPut` still routes to).
+async function maybeApplyRemoteReplace(entry, tag) {
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  let got
+  try { got = await entry.session.fetchByTag(tag) }
+  catch (err) {
+    console.warn(`replace-refetch: fetchByTag failed for tag in workspace "${entry.workspaceId}":`, err)
+    return
+  }
+  if (!got || entry.disposed || !entry.remoteTags.has(tag)) return
+  if (got.kind === 'bundle') return
+  const fileName = got.fileName
+  const bytes = got.content
+  let text
+  try { text = decodeUtf8(await gunzipBytes(bytes)) }
+  catch (err) {
+    console.warn(`replace-refetch: gunzip/decode of "${fileName}" failed (likely forged peer payload):`, err)
+    return
+  }
+  if (entry.disposed || !entry.remoteTags.has(tag)) return
+  const result = analyzeContent(text)
+  if (!result.recognized) {
+    console.warn(`replace-refetch: peer-uploaded replacement for "${fileName}" did not analyze as a recognized report — refusing to overwrite local copy`)
+    return
+  }
+  try {
+    await saveFileBytes(fileName, bytes)
+    if (entry.disposed) return
+    setCount(fileName, result.count, result.source)
+    // Pin the local baseline to the version we just persisted —
+    // `got.version` is what `session.fetchByTag` reported for these
+    // bytes, which may have advanced past `entry.remoteVersions[tag]`
+    // if an even-newer broadcast landed mid-fetch. Using `got.version`
+    // keeps the local baseline truthful to what's actually on disk.
+    if (typeof got.version === 'number') entry.localVersions.set(tag, got.version)
+    savePresenceCache(entry.workspaceId, entry)
+  } catch (err) {
+    console.warn(`replace-refetch: saveFileBytes failed for "${fileName}":`, err)
+    return
+  }
+  if (entry.disposed) return
+  // Reuse the existing auto-download bridge — the UI listener
+  // already reloads `state.currentWorkspace` and renders the
+  // sidebar; this PR's matching change in `ui/view.js` extends it
+  // to also reload `state.currentFile` so a single-file view of
+  // the replaced report flips to the new bytes without a manual
+  // navigate.
   for (const cb of autoDownloadListeners) {
     try { cb(entry.workspaceId, fileName) } catch {}
   }
@@ -1083,7 +1326,35 @@ export async function putFile(workspaceId, fileName, content) {
   // issued an extra `list()` per upload to compute prevVersion;
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
-  return await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
+  const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
+  // Advance the local version baseline so the matching `onPut`
+  // self-echo (the relay broadcasts with `except: null`, see
+  // `server/objstore/handlers.ts:190` / `server/objstore/rest.ts`
+  // — the originator IS included in the fan-out) hits the parity
+  // branch and skips the replace-refetch. Without this, every
+  // `putFile` would round-trip the just-uploaded bytes back to
+  // ourselves through `maybeApplyRemoteReplace` (harmless but
+  // wasteful — the fetched content is byte-identical to what we
+  // just wrote). Also seeds `localVersions` so a future reconnect's
+  // boot-divergence loop correctly recognises this version as
+  // already on disk.
+  if (result.ok && entry.keys && !entry.disposed) {
+    try {
+      const tag = entry.fileTags.get(fileName)
+        ?? await computeResourceTag(entry.keys.tagKey, fileName)
+      entry.fileTags.set(fileName, tag)
+      entry.remoteVersions.set(tag, result.meta.version)
+      // Local OPFS now holds the bytes for this version (the caller
+      // wrote them via saveFile before calling putFile), so the
+      // baseline tracks the put. This is what makes a future
+      // reconnect's boot-divergence loop correctly skip the
+      // version we already have — without it, every reconnect
+      // would re-fetch each report we ever uploaded.
+      entry.localVersions.set(tag, result.meta.version)
+      savePresenceCache(entry.workspaceId, entry)
+    } catch {}
+  }
+  return result
 }
 
 // Delete `fileName`'s remote copy. The objstore `delete` is gated
@@ -1149,6 +1420,8 @@ export async function deleteFromRemote(workspaceId, fileName) {
       // race-restore the file via maybeAutoDownload.
       entry.remoteTags.delete(tag)
       entry.remoteNameByTag.delete(tag)
+      entry.remoteVersions.delete(tag)
+      entry.localVersions.delete(tag)
       notify()
     }
     return result
