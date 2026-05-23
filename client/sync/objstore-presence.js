@@ -1327,17 +1327,17 @@ export async function putFile(workspaceId, fileName, content) {
   // skipping it removes a round-trip and races (cf. review
   // r3242197772).
   const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
-  // Advance the local version baseline so a sibling tab in this
-  // same browser (sharing the relay subscription) sees the matching
-  // broadcast hit the parity branch instead of round-tripping the
-  // bytes back through the replace-refetch path. The originating
-  // socket is excluded from the relay's broadcast fan-out, so a
-  // SINGLE-tab `putFile` doesn't actually receive an echo for its
-  // OWN put — the suppression matters for: (a) sibling tabs that
-  // ride the same subscription via the workspace-subscribed seed
-  // and would otherwise download bytes they already have on disk,
-  // and (b) the rare boot-overlap where the broadcast for our just-
-  // committed put races our boot `list()` populate loop.
+  // Advance the local version baseline so the matching `onPut`
+  // self-echo (the relay broadcasts with `except: null`, see
+  // `server/objstore/handlers.ts:190` / `server/objstore/rest.ts`
+  // — the originator IS included in the fan-out) hits the parity
+  // branch and skips the replace-refetch. Without this, every
+  // `putFile` would round-trip the just-uploaded bytes back to
+  // ourselves through `maybeApplyRemoteReplace` (harmless but
+  // wasteful — the fetched content is byte-identical to what we
+  // just wrote). Also seeds `localVersions` so a future reconnect's
+  // boot-divergence loop correctly recognises this version as
+  // already on disk.
   if (result.ok && entry.keys && !entry.disposed) {
     try {
       const tag = entry.fileTags.get(fileName)

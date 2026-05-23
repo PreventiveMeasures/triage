@@ -207,10 +207,14 @@ async function importReportContent({ name, content, existingNames }) {
 // demand (mirrors `deleteFromRemote`'s lazy-open pattern: the user
 // may not have navigated to all of these workspaces this session,
 // but the cloud copies still need to track the local replace).
-// `putFile` triggers the sync chunk load via callIfWanted when the
-// user has sync enabled; if sync is off the call no-ops and the
-// remote stays at the OLD content until the user enables sync and
-// re-uploads.
+// Both `openPresence` and `putFile` route through the lazy sync
+// wrapper in `client-sync.js`; the wrappers share a memoised chunk
+// load, so we MUST `await openPresence` before `putFile` — the
+// underlying `putFile` reads `sessions.get(workspaceId)` and
+// throws "Workspace … is not open" if the openPresence-side
+// `sessions.set` hasn't run yet. Awaiting also catches a chunk-
+// load rejection here so it doesn't bubble as an unhandled
+// promise rejection.
 async function uploadReportToWorkspaces(name, workspaces) {
   let bytes
   try {
@@ -221,7 +225,7 @@ async function uploadReportToWorkspaces(name, workspaces) {
   }
   for (const ws of workspaces) {
     try {
-      openPresence(ws.id)
+      await openPresence(ws.id)
       const result = await putFile(ws.id, name, bytes)
       if (result && result.ok === false) {
         console.warn(`Import: failed to upload "${name}" to workspace "${ws.name}" (${ws.id}): ${result.reason ?? 'unknown'}`)

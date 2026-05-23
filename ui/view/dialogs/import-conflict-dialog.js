@@ -17,7 +17,7 @@
 // shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
 // with the `.lwd-*` list-dialog layer added on top.
 import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog, openAppDialog } from './app-dialog.js'
+import { AppDialog } from './app-dialog.js'
 import listCSS from './dialog-list.css'
 
 class ImportConflictDialog extends AppDialog {
@@ -230,13 +230,36 @@ customElements.define('import-conflict-dialog', ImportConflictDialog)
 // seeding it inside the element (e.g. via `beforeOpen`) would leave
 // the input empty for one frame between the initial paint and the
 // post-firstUpdated re-render.
+//
+// Custom open helper rather than the shared `openAppDialog`: this
+// dialog can be invoked from `addFiles` while another modal is
+// already showing (e.g. the first-import passkey prompt, or a
+// workspace-import unlock dialog left up by an earlier drag). The
+// shared helper only listens for `resolve`, so a `modal-conflict`
+// from `AppDialog.firstUpdated` would leave the element parked on
+// `<body>` and the promise unresolved — the import flow would hang
+// forever. Listening for `modal-conflict` and collapsing to a
+// cancel result keeps the flow non-blocking; the user can re-drop
+// the file once the blocking modal is gone.
 export function openImportConflictDialog({ name, workspaceNames, existingNames } = {}) {
   const existing = existingNames instanceof Set ? existingNames : new Set(existingNames ?? [])
-  return openAppDialog('import-conflict-dialog', {
-    reportName: name ?? '',
-    workspaceNames: Array.isArray(workspaceNames) ? workspaceNames : [],
-    existingNames: existing,
-    _newName: suggestUniqueName(name ?? '', existing),
+  return new Promise((resolve) => {
+    const el = document.createElement('import-conflict-dialog')
+    Object.assign(el, {
+      reportName: name ?? '',
+      workspaceNames: Array.isArray(workspaceNames) ? workspaceNames : [],
+      existingNames: existing,
+      _newName: suggestUniqueName(name ?? '', existing),
+    })
+    el.addEventListener('resolve', (e) => {
+      el.remove()
+      resolve(e.detail)
+    })
+    el.addEventListener('modal-conflict', () => {
+      el.remove()
+      resolve({ action: 'cancel' })
+    })
+    document.body.append(el)
   })
 }
 
