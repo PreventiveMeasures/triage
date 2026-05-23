@@ -55,7 +55,7 @@
      — the in-shadow header carries the canonical landmark. -->
 <div class="sidebar-header sidebar-header-wco" aria-hidden="true">
   <h2 class="brand">
-    <button class="brand-button" type="button" data-action="go-home" title="DeepView home — supported formats" tabindex="-1">
+    <button class="brand-button" type="button" data-action="go-home" tabindex="-1">
       <span class="brand-name">DeepView</span>
     </button>
     <span class="brand-tag">dev</span>
@@ -65,10 +65,10 @@
 <app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
 
 <main id="main-content">
-  <div id="drop-zone" role="button" tabindex="0" aria-label="Drop reports here or click to browse for files">
+  <div id="drop-zone" aria-label="Drop reports here">
     <div class="drop-prompt">
       <p class="drop-prompt-intro">Browse, search, and triage findings from your code-security analyzers and source bundles — all locally in your browser, with optional cross-device sync.</p>
-      <p>Drop a file here, <span class="drop-prompt-action">click to browse</span>, or pick one from the sidebar.</p>
+      <p>Drop a file here, <button type="button" class="drop-prompt-action">click to browse</button>, or pick one from the sidebar.</p>
       <div class="drop-supported" aria-label="Supported formats">
         <section class="drop-supported-section">
           <h2>Reports</h2>

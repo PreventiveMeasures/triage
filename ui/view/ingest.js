@@ -1128,12 +1128,15 @@ dropZone.addEventListener('drop', (e) => {
   addFiles(e.dataTransfer.files)
 })
 
-// Click-to-browse: clicking anywhere on the drop zone (or
-// activating it with Enter / Space when it's keyboard-focused —
-// the host element carries `role="button" tabindex="0"`) opens
-// a native file picker. Routes the chosen files through the same
-// `addFiles` pipeline as a drop, so the JSON / markdown / CSV /
-// .gz / bundle classification all reuses the existing routing.
+// Click-to-browse: only the inline `<button class="drop-prompt-action">`
+// inside the prompt copy opens the native file picker — clicking on
+// the empty surface around the prompt no longer triggers anything
+// (which lets WCO mode pick the surrounding space up as a window
+// drag handle via body's `app-region: drag` baseline, and avoids the
+// "huge button, tiny visual affordance" feel the previous
+// role="button" drop-zone had). The button gets the affordance and
+// keyboard handling for free; routes the chosen files through the
+// same `addFiles` pipeline as a drop.
 //
 // The `<input type="file">` is created lazily on first activation
 // and parked on document.body — keeping it out of index.html
@@ -1158,10 +1161,8 @@ function openFilePicker() {
   }
   filePickerInput.click()
 }
-dropZone.addEventListener('click', openFilePicker)
-dropZone.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault()
-    openFilePicker()
-  }
+// Event-delegate via the drop-zone so the listener survives Lit
+// re-renders if the prompt template ever moves into a component.
+dropZone.addEventListener('click', (e) => {
+  if (e.target.closest('.drop-prompt-action')) openFilePicker()
 })

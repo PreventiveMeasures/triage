@@ -28,19 +28,19 @@
     white-space: nowrap; overflow: hidden;
   }
   /* Only the wordmark itself is the click target — the `dev` tag
-     sits as a sibling, kept under the parent's `pointer-events:
-     none` so the trailing whitespace still drags the window. The
-     button opts back into pointer events AND `app-region: no-drag`
-     so a click on the wordmark goes to view.js's listener instead
-     of being eaten by the OS as a window-move gesture. Same
-     visual treatment as the in-shadow copy in sidebar.css. */
+     sits as a sibling. The button opts into `app-region: no-drag`
+     so the OS doesn't eat the click as a window-move gesture;
+     the WCO @media block below also narrows the duplicate to
+     fit-content so the in-shadow lock + hamburger sitting at the
+     right end of the column stay reachable directly (no more
+     `pointer-events: none` fall-through). Visual treatment
+     matches the in-shadow copy in sidebar.css. */
   & .brand-button {
     background: transparent; border: 0;
     padding: 0; margin: 0;
     font: inherit;
     color: inherit;
     border-radius: 4px;
-    pointer-events: auto;
     -webkit-app-region: no-drag;
     app-region: no-drag;
 
@@ -65,23 +65,30 @@
      page-level backdrops; the in-shadow header hides ONLY its brand
      (see sidebar.css's WCO block) so the flex layout next to the
      lock stays intact. Position: fixed + high z-index puts this copy
-     above the page backdrops; pointer-events: none lets clicks fall
-     through to the in-shadow lock underneath. The duplicate also
-     carries `app-region: drag` so the OS hit-test treats this layer
-     as the drag region directly instead of falling through to the
-     in-shadow header below — without it, clicks on the visible
-     brand-button were being eaten as window drags because Chromium's
-     drag-region hit-test follows pointer-events and lands on the
-     in-shadow header's drag region. The brand-button overrides to
-     `no-drag` so the wordmark click still fires. */
+     above the page backdrops.
+     The duplicate is sized to fit-content (rather than the full
+     260px sidebar column) so the in-shadow lock + hamburger sitting
+     at the right end of the column remain directly reachable —
+     previously the duplicate spanned the full column with
+     `pointer-events: none` to let clicks fall through, but that
+     made Chromium's OS-level drag-region hit-test fall through to
+     the in-shadow header's `app-region: drag` and eat the brand
+     button's click as a window-move gesture. Narrowing the
+     duplicate lets us drop `pointer-events: none` and the
+     brand-button just works as a normal child.
+     The duplicate itself is still `app-region: drag` so the empty
+     padding area inside it (between the OS controls and the
+     wordmark on macOS) drags the window; the brand-button is
+     `app-region: no-drag` (in the non-media block above) so the
+     wordmark click fires. */
   .sidebar-header-wco {
     display: flex;
     position: fixed;
     top: 0; left: 0;
-    width: 260px;
+    width: max-content;
+    max-width: 260px;
     z-index: 250;
     box-sizing: border-box;
-    pointer-events: none;
     -webkit-app-region: drag;
     app-region: drag;
     /* Mirror the in-shadow header's left inset (sidebar.css's WCO

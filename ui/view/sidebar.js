@@ -1243,7 +1243,7 @@ class AppSidebar extends LitElement {
     return html`
       <div class="sidebar-header">
         <h2 class="brand">
-          <button class="brand-button" type="button" data-action="go-home" title="DeepView home — supported formats">
+          <button class="brand-button" type="button" data-action="go-home">
             <span class="brand-name">DeepView</span>
           </button>
           <span class="brand-tag">dev</span>
