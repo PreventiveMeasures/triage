@@ -24,12 +24,6 @@
   #report { max-width: none; padding: 0; }
   header h1 { font-size: 1.2rem; }
 
-  /* WCO mode duplicates the sidebar brand into a `.sidebar-header-wco`
-     strip so the OS-controls strip has a paint surface (see index.html
-     for the rationale). On paper there is no OS-controls strip, so the
-     duplicate is just a stray title above the report — drop it. */
-  .sidebar-header-wco { display: none !important; }
-
   /* Standalone-mode PWA paints a 1px border across the top of
      #main-content to mirror the sidebar→main divider (theme.css under
      `(display-mode: standalone)`). On paper there's no sidebar to

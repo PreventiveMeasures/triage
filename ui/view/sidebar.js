@@ -532,8 +532,7 @@ async function onSidebarClick(e) {
   // user can re-read the supported-formats list (or just start
   // over). Non-destructive — `goHome` only clears in-memory
   // selection + secure-storage's last-file pointer; OPFS files
-  // and triage stay intact. The WCO duplicate header (light DOM)
-  // has its own listener in view.js for the same data-action.
+  // and triage stay intact.
   if (e.target.closest('[data-action="go-home"]')) {
     goHome()
     return

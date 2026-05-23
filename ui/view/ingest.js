@@ -702,13 +702,13 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
 
 // Drop back to the empty drop-zone screen without touching any
 // stored data — non-destructive counterpart to `deleteCurrent`'s
-// tail. The DeepView brand (in-shadow header + WCO duplicate)
-// routes here so clicking the wordmark always lands the user
-// on the supported-formats welcome surface, regardless of which
-// report / workspace / bundle is currently open. Mirrors the
-// state-reset block from `deleteCurrent` but skips OPFS / remote
-// / triage GC — the file the user came from stays exactly as it
-// was so they can pick it back up from the sidebar.
+// tail. The DeepView brand in the sidebar header routes here so
+// clicking the wordmark always lands the user on the supported-
+// formats welcome surface, regardless of which report / workspace
+// / bundle is currently open. Mirrors the state-reset block from
+// `deleteCurrent` but skips OPFS / remote / triage GC — the file
+// the user came from stays exactly as it was so they can pick it
+// back up from the sidebar.
 export async function goHome() {
   // Bump the load generation so any in-flight switchTo* /
   // ingestReport bails before pushing into the cleared state.
