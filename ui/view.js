@@ -57,32 +57,15 @@ import './view/drop-supported-icons.js'
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file
 // loaded → drop zone stays visible.
-// WCO duplicate brand → home. The in-shadow `.brand` is handled
-// by the sidebar's own click delegate (see view/sidebar.js); this
-// listener is the light-DOM counterpart for the body-level
-// duplicate `.sidebar-header-wco` that paints over the sidebar in
-// PWA window-controls-overlay mode. Both carry
-// `data-action="go-home"`, so the dispatch is identical.
-//
-// Delegated at the document level (rather than on the duplicate
-// itself) so the click reaches us regardless of how Chromium
-// routes events for elements inside the titlebar area in WCO
-// mode. Also listening on `mousedown` because Chromium's WCO
-// drag-region hit-test can swallow the synthetic `click` even
-// when the element is `app-region: no-drag`; mousedown fires
-// reliably (the OS sees the press before it decides whether to
-// drag). A 250 ms debounce guard stops the same gesture from
-// double-firing when both events do reach us in plain modes.
-let lastBrandHit = 0
-function onBrandHit(e) {
-  if (!e.target.closest('.sidebar-header-wco [data-action="go-home"]')) return
-  const now = Date.now()
-  if (now - lastBrandHit < 250) return
-  lastBrandHit = now
-  goHome()
-}
-document.addEventListener('click', onBrandHit)
-document.addEventListener('mousedown', onBrandHit)
+// WCO duplicate brand → home. Direct click listener on the
+// button itself (mirrors `encryption-toggle.js`'s `initEncryption
+// Toggle` pattern for the in-shadow lock icon, which works in WCO
+// with the same `parent: drag, child: no-drag` CSS split — see
+// `styles/sidebar-chrome.css` @media WCO). The in-shadow brand
+// in the sidebar is handled by `view/sidebar.js`'s shadow click
+// delegate; this is the light-DOM counterpart for the duplicate.
+document.querySelector('.sidebar-header-wco [data-action="go-home"]')
+  ?.addEventListener('click', goHome)
 
 // Wire the UI's render() into triage-sync so a remote update
 // repaints the view. The client/ layer doesn't import from ui/, so

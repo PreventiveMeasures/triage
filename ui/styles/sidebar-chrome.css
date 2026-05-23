@@ -29,21 +29,17 @@
     user-select: none;
   }
   /* Only the wordmark itself is the click target — the `dev` tag
-     sits as a sibling. The button opts into `app-region: no-drag`
-     so the OS doesn't eat the click as a window-move gesture;
-     the WCO @media block below also narrows the duplicate to
-     fit-content so the in-shadow lock + hamburger sitting at the
-     right end of the column stay reachable directly (no more
-     `pointer-events: none` fall-through). Visual treatment
-     matches the in-shadow copy in sidebar.css. */
+     sits as a sibling. The @media block below adds the explicit
+     `app-region: no-drag` inside an explicit `app-region: drag`
+     parent (mirroring the in-shadow lock icon's working setup —
+     see sidebar.css's WCO block). Visual treatment matches the
+     in-shadow copy in sidebar.css. */
   & .brand-button {
     background: transparent; border: 0;
     padding: 0; margin: 0;
     font: inherit;
     color: inherit;
     border-radius: 4px;
-    -webkit-app-region: no-drag;
-    app-region: no-drag;
 
     &:hover .brand-name {
       color: color-mix(in srgb, var(--text) 80%, var(--accent));
@@ -69,23 +65,15 @@
      above the page backdrops.
      The duplicate is sized to fit-content (rather than the full
      260px sidebar column) so the in-shadow lock + hamburger sitting
-     at the right end of the column remain directly reachable —
-     previously the duplicate spanned the full column with
-     `pointer-events: none` to let clicks fall through, but that
-     made Chromium's OS-level drag-region hit-test fall through to
-     the in-shadow header's `app-region: drag` and eat the brand
-     button's click as a window-move gesture. Narrowing the
-     duplicate lets us drop `pointer-events: none` and the
-     brand-button just works as a normal child.
-     No explicit `app-region: drag` on the duplicate itself —
-     Chromium has been observed to favour an ancestor's explicit
-     `drag` over a descendant's explicit `no-drag` when both are
-     set, so we leave the duplicate at the initial `none` and let
-     the body's WCO drag baseline (theme.css) reach through.
-     The brand-button still carries `app-region: no-drag` so the
-     wordmark click fires; the empty padding area (and the strip
-     between the wordmark and the lock) is drag-region via the
-     body baseline. */
+     at the right end of the column remain directly reachable.
+     The app-region split is the SAME as the in-shadow lock icon's
+     working setup (see sidebar.css @media WCO): the duplicate
+     itself is `app-region: drag` (so empty padding around the
+     wordmark drags the window), and the brand-button inside is
+     `app-region: no-drag` (so a click on the wordmark fires
+     normally instead of starting a window-move). Both rules MUST
+     be inside the @media block — Chromium's drag-region hit-test
+     pairs them at that scope. */
   .sidebar-header-wco {
     display: flex;
     position: fixed;
@@ -94,6 +82,14 @@
     max-width: 260px;
     z-index: 250;
     box-sizing: border-box;
+    -webkit-app-region: drag;
+    app-region: drag;
+
+    & .brand-button {
+      -webkit-app-region: no-drag;
+      app-region: no-drag;
+    }
+
     /* Mirror the in-shadow header's left inset (sidebar.css's WCO
        block) so the wordmark clears the OS window controls — on macOS
        they paint at the left (env(titlebar-area-x) wide), and without
