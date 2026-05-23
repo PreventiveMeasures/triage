@@ -16,10 +16,13 @@
 //       Response:
 //         200 OK, content-type: text/event-stream
 //         First frame on a *fresh* session is an SSE event named
-//         `session` whose data is JSON `{ id, nonce }` — the
-//         continuation token + per-session challenge nonce. Subsequent
-//         frames are default-named SSE messages carrying the WS
-//         protocol's JSON envelopes.
+//         `session` whose data is the raw continuation-token string
+//         (22-char base64url, from `randomId()`). The per-session
+//         challenge nonce is delivered separately on the next default-
+//         named `data:` event as the standard protocol `challenge`
+//         frame, so the SSE plane uses the SAME nonce-handshake the WS
+//         plane does. Subsequent frames are default-named SSE messages
+//         carrying the WS protocol's JSON envelopes.
 //
 // Continuation: each POST replaces the previous POST's response as the
 // session's downstream channel. If the `?id=<sid>` in the URL matches
@@ -97,10 +100,13 @@ type SseBody = {
 export function installSseServer(deps: SseServerDeps): SseServer {
   const { peerDeps, isShuttingDown, maxSessions, maxBodyBytes, sessionIdleMs, debug } = deps
 
-  // Active SSE sessions, keyed by the random session id the GET path
-  // mints and the POST path looks up. Bounded by `maxSessions` — over
-  // the cap, new POSTs get a 503. POSTs against an unknown id are not
-  // 404'd — they mint a fresh session instead (multi-replica recovery).
+  // Active SSE sessions, keyed by the random session id `createSession`
+  // mints on the first POST that lacks a `?id=` (or whose id this
+  // replica doesn't recognise) and that subsequent POSTs echo back to
+  // continue the session. Bounded by `maxSessions` — over the cap, new
+  // POSTs get a 503. POSTs against an unknown id are NOT 404'd — they
+  // mint a fresh session instead, so a multi-replica deployment doesn't
+  // require sticky LB routing to recover.
   const sessions = new Map<string, SseSession>()
   // Per-session idle timer handle. Reset on every inbound POST; fires
   // after `sessionIdleMs` of silence to close a stranded session.

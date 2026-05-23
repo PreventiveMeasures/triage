@@ -60,6 +60,8 @@
     "server/peer.ts",
     "server/pubsub.ts",
     "server/sign.ts",
+    "server/sse-server.ts",
+    "server/sse-session.ts",
     "server/static.ts",
     "server/sync-handlers.ts",
     "server/util.ts",

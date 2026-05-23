@@ -66,12 +66,13 @@ export function createHttpServer(deps: HttpServerDeps): Server {
         res.end(JSON.stringify({ error: 'origin-denied' }))
         return
       }
-      // sseServer.handle owns its own shutdown / cap / 503 / 404
-      // ladder; tracking is needed because the SSE GET response is
-      // long-lived, but the shutdown gate inside sseServer prevents
-      // accepting new opens once shuttingDown latches, so the
-      // outstanding ones drain via the lifecycle's wss.clients-style
-      // close loop.
+      // sseServer.handle owns its own shutdown / cap / 503 ladder.
+      // Each POST's response stays open as the session's downstream
+      // channel until the next POST takes over — the response is
+      // long-lived even though the request is one-shot — and the
+      // shutdown gate inside sseServer prevents accepting new POSTs
+      // once shuttingDown latches, so outstanding sessions drain via
+      // the lifecycle's sseSessions() close loop.
       if (sseServer.handle(req, res)) return
     }
     if (matchRoute(req.url) != null) {
