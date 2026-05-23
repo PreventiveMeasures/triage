@@ -1,6 +1,7 @@
 import { render as litRender, nothing } from 'lit'
-import { analyzeContent, deleteFile, deleteWorkspace, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
-import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, triageSync } from './client-sync.js'
+import { analyzeContent, deleteFile, deleteWorkspace, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
+import { closeWorkspace as closePresence, deleteFromRemote as deletePresence, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
+import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
 import { resetFilters } from './filters.js'
@@ -101,6 +102,117 @@ function stripDownloadDup(name) {
   return name.replace(/ \(\d+\)(?=\.[^.]*$)/u, '')
 }
 
+// Persist a single dropped report's content to OPFS, asking the user
+// what to do when a file of the same name already exists. The
+// callers (`addFiles` directly + its CSV branch) loop over every
+// drop and feed the per-report bytes through here so the conflict
+// dialog runs uniformly for both JSON / markdown drops and the
+// CSV-derived `.codex` scans.
+//
+// Conflict resolution rules (the user-visible spec):
+//   1. name doesn't exist locally → save it, navigate to it.
+//   2. name exists AND content is byte-identical to the existing
+//      file → skip the save entirely, just navigate (no spurious
+//      OPFS write, no cloud re-upload, no sidebar reflow).
+//   3. name exists with DIFFERENT content → open the conflict
+//      dialog. The user picks:
+//        - Replace: overwrite the local file. If the report belongs
+//          to one or more workspaces, also push the new bytes to
+//          each workspace's remote inventory so the cloud copy
+//          tracks the local one (the dialog spells this out).
+//        - Rename: save under a different name (the dialog
+//          live-validates the candidate against `existingNames` so
+//          the rename can't loop into another collision).
+//        - Cancel: skip this report — returns null so the caller
+//          doesn't navigate to it or stamp a count for it.
+//
+// Returns `{ name, content }` of the report that landed (which may
+// be the renamed name, or the original name on a replace / no-op),
+// or `null` when the user cancelled. `existingNames` is updated in
+// place so a follow-up file in the same drop sees the just-imported
+// names without re-listing OPFS.
+async function importReportContent({ name, content, existingNames }) {
+  if (!existingNames.has(name)) {
+    await saveFile(name, content)
+    existingNames.add(name)
+    return { name, content }
+  }
+  // Read the existing bytes through the regular text path so the
+  // comparison is on the LOGICAL report content (decompressed,
+  // envelope-peeled) — not the on-disk gzipped representation.
+  // A missing-file race (sibling-tab delete between our listFiles
+  // snapshot and this read) collapses to "no collision", which is
+  // safe: saveFile below will create the entry.
+  let existing
+  try { existing = await readFile(name) }
+  catch { existing = null }
+  if (existing === content) return { name, content }
+  // Build the workspace context for the dialog's upload warning.
+  // A report can sit in multiple workspaces (additive membership),
+  // so collect every workspace that lists this name — the dialog
+  // copy adapts to the count, and the replace branch uploads to
+  // each one.
+  const workspaces = listWorkspaces().filter(
+    (w) => Array.isArray(w.reports) && w.reports.includes(name),
+  )
+  const decision = await openImportConflictDialog({
+    name,
+    workspaceNames: workspaces.map((w) => w.name),
+    existingNames,
+  })
+  if (decision.action === 'cancel') return null
+  if (decision.action === 'rename') {
+    const newName = decision.newName
+    await saveFile(newName, content)
+    existingNames.add(newName)
+    return { name: newName, content }
+  }
+  // Replace: write the new bytes first so the cloud-side upload
+  // reads the freshly-saved on-disk form. Re-uploading the same
+  // name to the workspace's objstore replaces the encrypted blob
+  // there; the put goes through the unified retryOnConflict helper
+  // inside putFile, so the optimistic-concurrency dance is handled
+  // for us. Failures land in the console — sync is best-effort here
+  // (the dialog already warned that this would touch remote, but
+  // the local replace already happened and a transient network
+  // failure shouldn't undo it).
+  await saveFile(name, content)
+  if (workspaces.length > 0) {
+    await uploadReportToWorkspaces(name, workspaces)
+  }
+  return { name, content }
+}
+
+// Best-effort push of a freshly-replaced report to every workspace
+// that lists it. Each workspace gets its presence session opened on
+// demand (mirrors `deleteFromRemote`'s lazy-open pattern: the user
+// may not have navigated to all of these workspaces this session,
+// but the cloud copies still need to track the local replace).
+// `putFile` triggers the sync chunk load via callIfWanted when the
+// user has sync enabled; if sync is off the call no-ops and the
+// remote stays at the OLD content until the user enables sync and
+// re-uploads.
+async function uploadReportToWorkspaces(name, workspaces) {
+  let bytes
+  try {
+    bytes = await readFileBytes(name)
+  } catch (err) {
+    console.warn(`Import: failed to read freshly-saved "${name}" for cloud sync:`, err)
+    return
+  }
+  for (const ws of workspaces) {
+    try {
+      openPresence(ws.id)
+      const result = await putFile(ws.id, name, bytes)
+      if (result && result.ok === false) {
+        console.warn(`Import: failed to upload "${name}" to workspace "${ws.name}" (${ws.id}): ${result.reason ?? 'unknown'}`)
+      }
+    } catch (err) {
+      console.warn(`Import: failed to upload "${name}" to workspace "${ws.name}" (${ws.id}):`, err)
+    }
+  }
+}
+
 export async function addFiles(files) {
   // First-import nudge: ask once whether to enable passkey
   // encryption before this drop's files hit disk, so that an
@@ -118,6 +230,13 @@ export async function addFiles(files) {
   // surface as soon as the matching bundle lands, without the
   // user having to manually open it.
   const newBundleIntegrities = new Set()
+  // Snapshot of OPFS report names taken once per drop, then kept in
+  // lock-step as `importReportContent` saves new files. Drives the
+  // conflict check inside `importReportContent` so back-to-back
+  // dropped files within ONE addFiles call see each other (e.g. a
+  // CSV that derives two .codex files with the same name as an
+  // existing entry would otherwise miss the second collision).
+  const existingNames = new Set(await listFiles())
   for (const file of files) {
     try {
       // Route plaintext gzip and encrypted bundles to workspace import
@@ -150,10 +269,11 @@ export async function addFiles(files) {
         for (const { displayName, data } of scans) {
           const codexName = displayName.replaceAll('/', '__') + '.codex'
           const json = JSON.stringify(data)
-          await saveFile(codexName, json)
           const { count, source } = analyzeContent(json)
-          setCount(codexName, count, source)
-          last = { name: codexName, content: json }
+          const imported = await importReportContent({ name: codexName, content: json, existingNames })
+          if (!imported) continue
+          setCount(imported.name, count, source)
+          last = { name: imported.name, content: imported.content }
         }
       } else {
         // Validate before persisting — analyzeContent recognises
@@ -164,10 +284,10 @@ export async function addFiles(files) {
         if (!result.recognized) {
           throw new Error('not a recognized DeepView, DeepSec, Claude Security, or Codex report')
         }
-        // The original drop name (and its extension) is preserved.
-        await saveFile(file.name, content)
-        setCount(file.name, result.count, result.source)
-        last = { name: file.name, content }
+        const imported = await importReportContent({ name: file.name, content, existingNames })
+        if (!imported) continue
+        setCount(imported.name, result.count, result.source)
+        last = { name: imported.name, content: imported.content }
       }
     } catch (err) {
       alert(`Failed to load ${file.name}: ${err.message}`)

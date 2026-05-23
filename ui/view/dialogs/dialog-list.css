@@ -65,3 +65,11 @@
   & li + li { margin-top: .2rem; }
   & strong { color: var(--text); font-weight: 600; }
 }
+/* Inline name field under the Rename radio in <import-conflict-dialog>.
+   Tightens the .nwd-input spacing so it sits inside the radio's text
+   column rather than spanning the full dialog width. */
+.lwd-rename-input { margin-top: .2rem; }
+.lwd-rename-error {
+  margin: .25rem 0 0;
+  color: var(--critical, #f87171); font-size: .72rem; line-height: 1.35;
+}
