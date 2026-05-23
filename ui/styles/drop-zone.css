@@ -114,7 +114,11 @@
   height: 20px;
   flex-shrink: 0;
 
-  & .file-icon { color: var(--muted); }
+  /* The icons are reused from the sidebar's 14px row glyphs (see
+     view/drop-supported-icons.js); rescale to 20px here so the
+     supported-formats rows breathe a bit more than the dense
+     sidebar list does. */
+  & .file-icon { width: 20px; height: 20px; color: var(--muted); }
 }
 
 .drop-supported-label { line-height: 1; }

@@ -48,6 +48,11 @@ import './view/api.js'
 // own side-effect block kicks the detect+register pass at boot;
 // nothing else needs to call into it just to trigger setup.
 import './view/brotli-decompress.js'
+// Side-effect import — paints the empty drop-zone's
+// supported-formats list with the same SVG glyphs the sidebar
+// uses for its file / bundle / workspace rows. Runs once on
+// import; the icons are static HTML afterwards.
+import './view/drop-supported-icons.js'
 
 // On boot: restore the sidebar collapse state, render the file list,
 // and switch to the last-viewed file if it's still around. No file

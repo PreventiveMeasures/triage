@@ -26,6 +26,7 @@
     display: flex; align-items: baseline; gap: .4rem;
     font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
     white-space: nowrap; overflow: hidden;
+    user-select: none;
   }
   /* Only the wordmark itself is the click target — the `dev` tag
      sits as a sibling. The button opts into `app-region: no-drag`
