@@ -1595,11 +1595,13 @@ function renderBundleDetails(entry, details) {
   // shell as the parsed-content branch so the Overview body's flex
   // layout + summary padding apply consistently — without the wrapper
   // the body is `display: flex; overflow: hidden;` with no padding
-  // and a bare `<dl>` lands flush against the panel edge.
+  // and a bare `<dl>` lands flush against the panel edge. The
+  // loading branch shows just the metadata (name + integrity are
+  // already known); a "Loading…" placeholder flickered too briefly
+  // to be useful and pushed the columns down on every open.
   if (!details || details.integrity !== entry.integrity) {
     return html`<div class="bundles-overview">
       <div class="bundles-overview-summary">${meta}</div>
-      <div class="bundles-overview-placeholder">Loading…</div>
     </div>`
   }
   if (details.error) {
