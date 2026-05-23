@@ -774,7 +774,7 @@ function triageSelectorTemplate(triageCounts) {
 }
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, kanbanMode } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -806,7 +806,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <span class="sort-wrapper">
         <select id="sort-select" class="sort-select" aria-label="Sort findings">
           ${sortOpt('severity', 'Severity ↓')}
-          ${sortOpt('file', 'File ↑')}
+          ${showFileSort ? sortOpt('file', 'File ↑') : nothing}
           ${showConfidence ? html`${sortOpt('confidence-desc', 'Confidence ↓')}${sortOpt('confidence-asc', 'Confidence ↑')}` : nothing}
           ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
         </select>
@@ -1651,6 +1651,13 @@ function renderImpl() {
     && allGroups.every((g) => g.every((f) => f.confidence !== undefined || f.critical === true))
   const hasAnyPriority = mergedGroups.some((g) => g.some((f) => f.priority !== undefined))
   const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
+  // File sort is only meaningful across multiple files — a single-file
+  // dataset would have nothing to reorder at the file level, so drop
+  // the option from the dropdown and guard against a stale selection
+  // below (matches the confidence / priority drops).
+  const findingFiles = new Set()
+  for (const g of mergedGroups) for (const f of g) findingFiles.add(f.file)
+  const hasMultipleFiles = findingFiles.size > 1
   // Repo URL input is useful only when at least one finding could
   // benefit from it: non-node_modules AND no per-finding repo.github.
   const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
@@ -1712,6 +1719,7 @@ function renderImpl() {
   if (!hasAnyPriority && (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc')) {
     state.sortBy = 'severity'
   }
+  if (!hasMultipleFiles && state.sortBy === 'file') state.sortBy = 'severity'
 
   const filtered = applySorting(applyFilters(allGroups))
 
@@ -1826,6 +1834,7 @@ function renderImpl() {
       showConfidence: hasAnyConfidence,
       showPriority: hasAnyPriority,
       showGraphMode: treeAvailable,
+      showFileSort: hasMultipleFiles,
       kanbanMode: isKanban,
     }, analyzerOptions)
 
