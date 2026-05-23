@@ -695,7 +695,7 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
   // the next render() walking a stale part-cache.
   litRender(nothing, report)
   dropZone.classList.remove('hidden')
-  document.title = 'deepview results'
+  document.title = 'DeepView'
   document.body.classList.remove('show-print-btn')
   await renderSidebar()
 }
@@ -748,7 +748,7 @@ export async function goHome() {
   report.classList.remove('active')
   litRender(nothing, report)
   dropZone.classList.remove('hidden')
-  document.title = 'deepview results'
+  document.title = 'DeepView'
   document.body.classList.remove('show-print-btn')
   await renderSidebar()
 }
@@ -855,7 +855,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
     report.classList.remove('active')
     litRender(nothing, report)
     dropZone.classList.remove('hidden')
-    document.title = 'deepview results'
+    document.title = 'DeepView'
     document.body.classList.remove('show-print-btn')
   }
   // Finally drop the workspace entry. Fires `onWorkspaceDeleted`,

@@ -77,11 +77,15 @@
      button's click as a window-move gesture. Narrowing the
      duplicate lets us drop `pointer-events: none` and the
      brand-button just works as a normal child.
-     The duplicate itself is still `app-region: drag` so the empty
-     padding area inside it (between the OS controls and the
-     wordmark on macOS) drags the window; the brand-button is
-     `app-region: no-drag` (in the non-media block above) so the
-     wordmark click fires. */
+     No explicit `app-region: drag` on the duplicate itself —
+     Chromium has been observed to favour an ancestor's explicit
+     `drag` over a descendant's explicit `no-drag` when both are
+     set, so we leave the duplicate at the initial `none` and let
+     the body's WCO drag baseline (theme.css) reach through.
+     The brand-button still carries `app-region: no-drag` so the
+     wordmark click fires; the empty padding area (and the strip
+     between the wordmark and the lock) is drag-region via the
+     body baseline. */
   .sidebar-header-wco {
     display: flex;
     position: fixed;
@@ -90,8 +94,6 @@
     max-width: 260px;
     z-index: 250;
     box-sizing: border-box;
-    -webkit-app-region: drag;
-    app-region: drag;
     /* Mirror the in-shadow header's left inset (sidebar.css's WCO
        block) so the wordmark clears the OS window controls — on macOS
        they paint at the left (env(titlebar-area-x) wide), and without

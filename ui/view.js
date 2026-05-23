@@ -63,9 +63,26 @@ import './view/drop-supported-icons.js'
 // duplicate `.sidebar-header-wco` that paints over the sidebar in
 // PWA window-controls-overlay mode. Both carry
 // `data-action="go-home"`, so the dispatch is identical.
-document.querySelector('.sidebar-header-wco')?.addEventListener('click', (e) => {
-  if (e.target.closest('[data-action="go-home"]')) goHome()
-})
+//
+// Delegated at the document level (rather than on the duplicate
+// itself) so the click reaches us regardless of how Chromium
+// routes events for elements inside the titlebar area in WCO
+// mode. Also listening on `mousedown` because Chromium's WCO
+// drag-region hit-test can swallow the synthetic `click` even
+// when the element is `app-region: no-drag`; mousedown fires
+// reliably (the OS sees the press before it decides whether to
+// drag). A 250 ms debounce guard stops the same gesture from
+// double-firing when both events do reach us in plain modes.
+let lastBrandHit = 0
+function onBrandHit(e) {
+  if (!e.target.closest('.sidebar-header-wco [data-action="go-home"]')) return
+  const now = Date.now()
+  if (now - lastBrandHit < 250) return
+  lastBrandHit = now
+  goHome()
+}
+document.addEventListener('click', onBrandHit)
+document.addEventListener('mousedown', onBrandHit)
 
 // Wire the UI's render() into triage-sync so a remote update
 // repaints the view. The client/ layer doesn't import from ui/, so
