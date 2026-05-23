@@ -1532,7 +1532,7 @@ function renderImpl() {
       }
       report.classList.add('active')
       dropZone.classList.add('hidden')
-      document.title = 'DeepView results — bundles'
+      document.title = 'DeepView — bundles'
       return
     }
   }
@@ -1549,7 +1549,7 @@ function renderImpl() {
     if (slot) litRender(renderPackagesView(), slot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
-    document.title = 'DeepView results — packages'
+    document.title = 'DeepView — packages'
     return
   }
   // Repositories view — same pattern as Packages (cross-report
@@ -1566,7 +1566,7 @@ function renderImpl() {
     if (slot) litRender(renderRepositoriesView(), slot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
-    document.title = 'DeepView results — repositories'
+    document.title = 'DeepView — repositories'
     return
   }
   if (state.reports.length === 0) return
@@ -1751,7 +1751,7 @@ function renderImpl() {
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
     report.classList.add('active')
     dropZone.classList.add('hidden')
-    document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+    document.title = `DeepView — ${typeLabel || 'no analyzer'}`
     return
   }
 
@@ -1989,7 +1989,7 @@ function renderImpl() {
   }
   report.classList.add('active')
   dropZone.classList.add('hidden')
-  document.title = `DeepView results — ${typeLabel || 'no analyzer'}`
+  document.title = `DeepView — ${typeLabel || 'no analyzer'}`
 }
 
 // Re-render while preserving focus + caret position on a text input —

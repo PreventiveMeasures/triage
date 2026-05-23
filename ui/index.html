@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; manifest-src 'self'; form-action 'none'; connect-src 'self'">
-<title>deepview results</title>
+<title>DeepView</title>
 <link rel="icon" href="./icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./icon.svg" />
 <link rel="manifest" href="./manifest.webmanifest" />
@@ -36,32 +36,48 @@
   </svg>
 </button>
 
-<!-- WCO duplicate of the sidebar-header. Hidden by default; shown
-     via CSS only when `@media (display-mode: window-controls-overlay)`
-     matches. Lives outside #sidebar so it escapes #sidebar's stacking
-     context (which is trapped under the page-level fixed backdrops
-     by the sidebar's own backdrop-filter). Only the brand is
-     duplicated — the interactive buttons (sidebar-toggle,
-     encryption-toggle) stay single-instance in the in-sidebar
-     header. The drag-handle / OS-controls-landing strip is what
-     this duplicate exists to provide; the actual lock + hamburger
-     buttons are still functional through the regular sidebar
-     header (visible underneath since both occupy the same column
-     position). -->
-<div class="sidebar-header sidebar-header-wco" aria-hidden="true">
-  <h2 class="brand">
-    <span class="brand-name">DeepView</span>
-    <span class="brand-tag">dev</span>
-  </h2>
-</div>
-
+<!-- App sidebar — Lit component, owns its own shadow-DOM chrome
+     (brand header, search input, file list, sync button). The
+     brand wordmark inside is the click target that routes to
+     `goHome` via the sidebar's own click delegate; in WCO PWA
+     mode the same brand is what the OS controls strip overlays
+     onto (no light-DOM duplicate needed). -->
 <app-sidebar role="complementary" aria-label="Reports and workspaces"></app-sidebar>
 
 <main id="main-content">
-  <div id="drop-zone" role="button" tabindex="0" aria-label="Drop reports here or click to browse for files">
+  <div id="drop-zone" aria-label="Drop reports here">
     <div class="drop-prompt">
-      <h1>deepview results viewer</h1>
-      <p>Drop a JSON results file here, <span class="drop-prompt-action">click to browse</span>, or pick one from the sidebar</p>
+      <p class="drop-prompt-intro">Browse, search, and triage findings from your code-security analyzers and source bundles — all locally in your browser, with optional cross-device sync.</p>
+      <p>Drop a file here, <button type="button" class="drop-prompt-action">click to browse</button>, or pick one from the sidebar.</p>
+      <!-- Supported-formats list — each row's icon placeholder is
+           filled at boot by view/drop-supported-icons.js with the
+           same SVG markup the sidebar uses for its file / bundle /
+           workspace rows (see view/file-display.js + view/icons.js
+           for the source of truth). `data-icon` keys the lookup. -->
+      <div class="drop-supported" aria-label="Supported formats">
+        <section class="drop-supported-section">
+          <h2>Reports</h2>
+          <ul>
+            <li><span class="drop-supported-icon" data-icon="default" aria-hidden="true"></span><span class="drop-supported-label">DeepView</span></li>
+            <li><span class="drop-supported-icon" data-icon="claude-security" aria-hidden="true"></span><span class="drop-supported-label">Claude Security</span></li>
+            <li><span class="drop-supported-icon" data-icon="codex-security" aria-hidden="true"></span><span class="drop-supported-label">Codex Security</span></li>
+            <li><span class="drop-supported-icon" data-icon="deepsec" aria-hidden="true"></span><span class="drop-supported-label">DeepSec</span></li>
+          </ul>
+        </section>
+        <section class="drop-supported-section">
+          <h2>Bundles</h2>
+          <ul>
+            <li><span class="drop-supported-icon" data-icon="bundle" aria-hidden="true"></span><span class="drop-supported-label">Stasis</span></li>
+            <li><span class="drop-supported-icon" data-icon="bundle" aria-hidden="true"></span><span class="drop-supported-label">Sourcemaps</span></li>
+          </ul>
+        </section>
+        <section class="drop-supported-section">
+          <h2>Workspaces</h2>
+          <ul>
+            <li><span class="drop-supported-icon" data-icon="workspace" aria-hidden="true"></span><span class="drop-supported-label">Workspace exports</span></li>
+          </ul>
+        </section>
+      </div>
     </div>
   </div>
   <div id="report"></div>

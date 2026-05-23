@@ -1,37 +1,124 @@
 #drop-zone {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   flex: 1; padding: 2rem;
-  /* Drop zone doubles as a click-to-browse target — the
-     accent-highlighted "click to browse" span in `.drop-prompt`
-     signals that the whole surface is interactive without
-     painting a full-viewport highlight on mouse hover (the prior
-     `:hover` background read as too eager on idle mouse-over).
-     `:focus-visible` still paints an accent ring when the zone
-     is reached via keyboard (role="button" + tabindex="0") so
-     the Enter / Space activator is discoverable. The
-     pre-existing `.hover` class is the dragover affordance —
-     same surface tint, different trigger. */
+  /* The drop zone itself is no longer a click target — only the
+     inline `.drop-prompt-action` button inside the prompt copy
+     opens the file picker. The surface still accepts file drops
+     (HTML5 drop events) and shows a `.hover` tint during dragover.
+     In WCO mode the empty surface inherits `app-region: drag`
+     from body's WCO baseline (theme.css), so it doubles as a
+     window drag handle without an explicit @media rule here. */
   transition: background .12s ease-out;
 
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -8px;
-  }
   &.hover { background: var(--surface-active); }
   &.hidden { display: none; }
 }
 
 .drop-prompt {
   text-align: center; color: var(--muted);
+  max-width: 600px;
 
-  & h1 { font-size: 1.4rem; margin-bottom: .5rem; color: var(--text); }
+  /* Lead paragraph — slightly larger + brighter than the action
+     line below so it reads as the headline copy now that the old
+     `<h1>deepview results viewer</h1>` is gone. Calmer than a
+     heading would be (no bold, no size jump), but distinguishable
+     from the "drop / click / pick" instruction line that follows. */
+  & .drop-prompt-intro {
+    color: var(--text);
+    font-size: 1.05rem;
+    line-height: 1.45;
+    margin-bottom: .5rem;
+  }
   & p { font-size: .95rem; }
-  /* "click to browse" inline accent — makes the click
-     affordance pop out of the otherwise muted prompt copy so
-     the user sees it before scanning the rest of the line. */
-  & .drop-prompt-action {
-    color: var(--accent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
+}
+
+/* "click to browse" — inline button that opens the file picker.
+   Painted as plain accent-colored text so it sits inline with the
+   surrounding prompt sentence without breaking the line; no
+   underline, no cursor change, no border. The body-level
+   `[role='button']:active { opacity: .7 }` rule from theme.css
+   gets overridden so the text doesn't visibly fade during a click
+   (one-character-tall opacity flash on inline text reads as
+   broken, not as feedback). Hover bumps the text toward the
+   primary accent stop for a faint cue. */
+.drop-prompt-action {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: inherit;
+
+  &:hover {
+    color: color-mix(in srgb, var(--accent) 80%, var(--text));
+  }
+  &:active { opacity: 1; }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 }
+
+/* Supported-formats showcase — sits under the prompt copy on the
+   empty-state drop zone so the user knows what shapes the app
+   recognises before they go hunting for a file. Three sections
+   (Reports / Bundles / Workspaces) laid out as auto-fit columns:
+   they wrap into a single column on narrow viewports without
+   needing a media query. Each row carries a 20px brand sticker
+   (matching the sidebar's row icons, just sized up for a calmer
+   target hit) and the analyzer's display name. The list is
+   purely informational — no click affordance, pointer events
+   stay none so a stray click doesn't try to do anything. */
+.drop-supported {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1.25rem 1.5rem;
+  margin-top: 1.75rem;
+  text-align: left;
+  pointer-events: none;
+}
+
+.drop-supported-section {
+  & h2 {
+    font-size: .7rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: .55rem;
+    padding-bottom: .35rem;
+    border-bottom: 1px solid var(--border);
+  }
+  & ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+  }
+  & li {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    color: var(--text);
+    font-size: .9rem;
+  }
+}
+
+.drop-supported-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+
+  /* The icons are reused from the sidebar's 14px row glyphs (see
+     view/drop-supported-icons.js); rescale to 20px here so the
+     supported-formats rows breathe a bit more than the dense
+     sidebar list does. */
+  & .file-icon { width: 20px; height: 20px; color: var(--muted); }
+}
+
+.drop-supported-label { line-height: 1; }

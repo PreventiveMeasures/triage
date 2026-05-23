@@ -18,7 +18,7 @@ import { render } from './render.js'
 let hostEl = null
 let root = null
 let fileList = null
-import { deleteCurrent, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
+import { deleteCurrent, goHome, leaveWorkspace, persistLastBundle, switchToFile, switchToWorkspace } from './ingest.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openNewWorkspaceDialog } from './dialogs/new-workspace-dialog.js'
@@ -27,6 +27,7 @@ import { openWorkspaceShareLinkDialog } from './dialogs/workspace-share-link-dia
 import { openDeleteReportDialog } from './dialogs/delete-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
+import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle } from './bundle-load.js'
 import { graph2 } from './graph/state.js'
 
@@ -200,13 +201,11 @@ function bundlesHeaderTemplate(count) {
   </li>`
 }
 
-// Generic bundle glyph — a 3D box / package outline. Stroke-based
-// (uses currentColor) rather than the `.file-icon.brand-*` filled
-// stickers that mark report buckets, so bundles read as a distinct
-// kind of artifact in the same column. Sized to match the other
-// 14px row icons; picks up `--muted` / `--text` through the shared
-// `.file-icon` rule in sidebar.css.
-const BUNDLE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 2 5v6l6 3 6-3V5L8 2Z"/><path d="M2 5l6 3 6-3"/><path d="M8 8v6"/></svg>`
+// Generic bundle glyph. Source markup lives in `view/icons.js` so
+// the same SVG paints both sidebar rows and the drop-zone's
+// supported-formats list; wrap once with `unsafeHTML` so consumers
+// can drop `${BUNDLE_ICON}` into their templates as before.
+const BUNDLE_ICON = html`${unsafeHTML(BUNDLE_ICON_SVG)}`
 
 // Single bundle row under the always-expanded Bundles header.
 // `.current` lights up when this bundle is the open selection in the
@@ -257,7 +256,9 @@ function missingBundleItemTemplate(integrity, workspaceId) {
   ><span class="file-name"><span class="file-icon" aria-hidden="true">?</span><span class="file-label"><em>missing · ${shortPrefix}…</em></span></span></li>`
 }
 
-const WORKSPACE_ICON = html`<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>`
+// Workspace glyph — see `BUNDLE_ICON` above for the SVG-source
+// rationale; wrapped once at module load with `unsafeHTML`.
+const WORKSPACE_ICON = html`${unsafeHTML(WORKSPACE_ICON_SVG)}`
 // Download glyph used by the per-workspace export button — a
 // downward arrow over a tray. Sized to match the "+" affordance in
 // the section header.
@@ -527,6 +528,15 @@ onVaultStateChange(() => { renderSidebar() })
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 async function onSidebarClick(e) {
+  // DeepView brand → drop back to the empty welcome screen so the
+  // user can re-read the supported-formats list (or just start
+  // over). Non-destructive — `goHome` only clears in-memory
+  // selection + secure-storage's last-file pointer; OPFS files
+  // and triage stay intact.
+  if (e.target.closest('[data-action="go-home"]')) {
+    await goHome()
+    return
+  }
   // Per-bundle row in the expanded Bundles section — selects that
   // bundle and switches to the bundles view. Mirrors the
   // data-select-bundle handler in events.js (per-row setup must
@@ -1233,7 +1243,9 @@ class AppSidebar extends LitElement {
     return html`
       <div class="sidebar-header">
         <h2 class="brand">
-          <span class="brand-name">DeepView</span>
+          <button class="brand-button" type="button" data-action="go-home">
+            <span class="brand-name">DeepView</span>
+          </button>
           <span class="brand-tag">dev</span>
         </h2>
         <button id="encryption-toggle" type="button" hidden></button>
