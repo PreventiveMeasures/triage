@@ -534,7 +534,7 @@ async function onSidebarClick(e) {
   // selection + secure-storage's last-file pointer; OPFS files
   // and triage stay intact.
   if (e.target.closest('[data-action="go-home"]')) {
-    goHome()
+    await goHome()
     return
   }
   // Per-bundle row in the expanded Bundles section — selects that

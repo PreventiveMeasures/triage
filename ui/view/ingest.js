@@ -669,63 +669,30 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemote = null }
     if (isStaleLoad(gen)) return
   }
   // Final stale-check guarding the unguarded-tail mutation block.
-  // Pre-fix the block below (state.* + graph2.* + cleanupGraph2 +
-  // localStorage.removeItem + litRender) ran whenever the previous
+  // Pre-fix `clearActiveView()` ran whenever the previous
   // gate passed, even though no await separates them — but a
   // switchTo*'s `++loadGen` is synchronous and can happen between
   // any two JS statements. Re-check here so a brand-new view
   // doesn't have its `state.reports` cleared / `graph2` torn down
   // out from under it. Audit follow-up: PR-73 cross-module review.
   if (isStaleLoad(gen)) return
-  state.currentFile = null
-  state.reports = []
-  state.repoUrl = ''
-  graph2.selected = null
-  graph2.focusedPkg = null
-  graph2.layoutCache = null
-  graph2.solo = null
-  graph2.hidden.clear()
-  graph2.pathFilter = ''
-  cleanupGraph2()
-  removeSecureItem(LAST_FILE_KEY)
-  report.classList.remove('active')
-  // Drop the rendered findings via Lit so any cached parts on
-  // #report (slot-reuse holds them across renders) get cleaned up
-  // alongside the DOM. A bare `report.innerHTML = ''` would leave
-  // the next render() walking a stale part-cache.
-  litRender(nothing, report)
-  dropZone.classList.remove('hidden')
-  document.title = 'DeepView'
-  document.body.classList.remove('show-print-btn')
+  clearActiveView()
   await renderSidebar()
 }
 
-// Drop back to the empty drop-zone screen without touching any
-// stored data — non-destructive counterpart to `deleteCurrent`'s
-// tail. The DeepView brand in the sidebar header routes here so
-// clicking the wordmark always lands the user on the supported-
-// formats welcome surface, regardless of which report / workspace
-// / bundle is currently open. Mirrors the state-reset block from
-// `deleteCurrent` but skips OPFS / remote / triage GC — the file
-// the user came from stays exactly as it was so they can pick it
-// back up from the sidebar.
-export async function goHome() {
-  // Bump the load generation so any in-flight switchTo* /
-  // ingestReport bails before pushing into the cleared state.
-  // Mirrors the guard pattern in `deleteCurrent` / `leaveWorkspace`.
-  ++loadGen
-  // Close any open per-workspace sync sessions tied to the active
-  // view — a single-file view of a workspace member or a
-  // merged-workspace view both open sessions in `switchToFile` /
-  // `switchToWorkspace`; without closing them here, returning home
-  // would leave triage-sync echoing edits to a chain that no view
-  // is consuming.
-  for (const info of triageSync.openSessions) {
-    if (info) {
-      triageSync.closeSession(info.workspaceId)
-      closePresence(info.workspaceId)
-    }
-  }
+// Shared empty-state reset — clears every piece of in-memory
+// view state (selections, reports, graph2, repo-url) and
+// repaints `#report` / `#drop-zone` / `<title>` / the show-
+// print-btn body class so the user lands on the empty welcome
+// surface. `goHome`, `deleteCurrent`'s tail, and
+// `leaveWorkspace`'s active-view branch all go through here so
+// the three paths can't drift apart.
+//
+// Does NOT bump `loadGen` or close sync sessions — those are
+// caller concerns (each path has its own ordering constraints
+// with the OPFS / triage / remote operations that surround the
+// reset).
+function clearActiveView() {
   state.currentFile = null
   state.currentWorkspace = null
   state.selectedBundle = null
@@ -746,10 +713,42 @@ export async function goHome() {
   cleanupGraph2()
   removeSecureItem(LAST_FILE_KEY)
   report.classList.remove('active')
+  // Drop the rendered findings via Lit so any cached parts on
+  // #report (slot-reuse holds them across renders) get cleaned up
+  // alongside the DOM. A bare `report.innerHTML = ''` would leave
+  // the next render() walking a stale part-cache.
   litRender(nothing, report)
   dropZone.classList.remove('hidden')
   document.title = 'DeepView'
   document.body.classList.remove('show-print-btn')
+}
+
+// Drop back to the empty drop-zone screen without touching any
+// stored data — non-destructive counterpart to `deleteCurrent`'s
+// tail. The DeepView brand in the sidebar header routes here so
+// clicking the wordmark always lands the user on the supported-
+// formats welcome surface, regardless of which report / workspace
+// / bundle is currently open. Skips OPFS / remote / triage GC —
+// the file the user came from stays exactly as it was so they
+// can pick it back up from the sidebar.
+export async function goHome() {
+  // Bump the load generation so any in-flight switchTo* /
+  // ingestReport bails before pushing into the cleared state.
+  // Mirrors the guard pattern in `deleteCurrent` / `leaveWorkspace`.
+  ++loadGen
+  // Close any open per-workspace sync sessions tied to the active
+  // view — a single-file view of a workspace member or a
+  // merged-workspace view both open sessions in `switchToFile` /
+  // `switchToWorkspace`; without closing them here, returning home
+  // would leave triage-sync echoing edits to a chain that no view
+  // is consuming.
+  for (const info of triageSync.openSessions) {
+    if (info) {
+      triageSync.closeSession(info.workspaceId)
+      closePresence(info.workspaceId)
+    }
+  }
+  clearActiveView()
   await renderSidebar()
 }
 
@@ -839,25 +838,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
   const wasActiveFile = mode === 'delete'
     && state.currentFile != null
     && reports.includes(state.currentFile)
-  if (wasActiveWorkspace || wasActiveFile) {
-    state.currentFile = null
-    state.currentWorkspace = null
-    state.reports = []
-    state.repoUrl = ''
-    graph2.selected = null
-    graph2.focusedPkg = null
-    graph2.layoutCache = null
-    graph2.solo = null
-    graph2.hidden.clear()
-    graph2.pathFilter = ''
-    cleanupGraph2()
-    removeSecureItem(LAST_FILE_KEY)
-    report.classList.remove('active')
-    litRender(nothing, report)
-    dropZone.classList.remove('hidden')
-    document.title = 'DeepView'
-    document.body.classList.remove('show-print-btn')
-  }
+  if (wasActiveWorkspace || wasActiveFile) clearActiveView()
   // Finally drop the workspace entry. Fires `onWorkspaceDeleted`,
   // which is where the persisted triage base for this workspace
   // gets wiped (see triage-sync.ts). No server message is sent —
