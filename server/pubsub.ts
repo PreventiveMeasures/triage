@@ -134,11 +134,13 @@ type NeonState = {
   capMs: number
   senderId: string
   // The current Client. Assigned EARLY in `tryConnect` (before
-  // `c.connect()` is awaited) so two invariants hold even mid-handshake:
-  //   (a) `c.once('error', ...)`'s `state.client === c` gate passes for
-  //       errors that fire during the initial handshake (otherwise an
-  //       error event before LISTEN succeeds is silently ignored, with
-  //       no reconnect scheduled).
+  // `c.connect()` is awaited) so two invariants hold:
+  //   (a) `c.once('error', ...)`'s `state.client === c` gate passes
+  //       for errors that fire between `c.connect()` resolving and
+  //       `c.query('LISTEN …')` resolving (the error listener can
+  //       only attach AFTER connect returns, so errors strictly
+  //       DURING connect are still observed via the connect Promise
+  //       rejecting — the gate matters for the LISTEN window).
   //   (b) `stop()` can read `state.client` and call `c.end()` to abort
   //       an in-flight `await c.connect()` / `await c.query('LISTEN …')`
   //       — without this, a network blackhole during handshake makes
@@ -221,7 +223,11 @@ async function tryConnect(state: NeonState): Promise<void> {
   } catch (err) {
     // Clear `state.client` only if it still points at OUR client (a
     // racing `stop()` may have already null'd it and ended the
-    // half-connected socket — don't clobber that).
+    // half-connected socket — don't clobber that). The `c.end()`
+    // below may be a redundant second call in that race (stop already
+    // ended it); pg-style Client.end() is idempotent so the second
+    // call is a harmless no-op. The try/catch additionally absorbs
+    // any rejection from end() itself.
     if (state.client === c) state.client = null
     try { await c.end() } catch {}
     throw err
