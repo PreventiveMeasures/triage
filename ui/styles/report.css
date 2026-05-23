@@ -494,63 +494,52 @@
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* Search bar — three-mode toggle (Files / Code / Issues) above
-   a single text input. Mode picks what gets filtered; query
-   shared so the user can pivot between modes against the same
-   string. The wrap is a horizontal strip just below the rail
-   header / prefix row. */
+/* Search bar — a single bordered chrome strip with a lens icon
+   on the left, the query input flexing to fill, and the
+   Files / Code / Issues mode toggles as icon buttons pinned to
+   the right edge. Mode picks what gets filtered; query is
+   shared across modes so the user can pivot between them against
+   the same string. Mirrors the sidebar's "Search reports" chrome
+   (`<div class="sidebar-search">`) so the two strips read as the
+   same affordance in different contexts. */
 .bundle-code-search {
-  border-bottom: 1px solid var(--border);
-  padding: .35rem .5rem .5rem;
-  display: flex; flex-direction: column;
-  gap: .35rem;
+  margin: .35rem .5rem;
+  padding: 0 .2rem 0 .45rem;
+  display: flex; align-items: center;
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border); border-radius: 5px;
+  transition: background .12s, border-color .12s;
+
+  /* `:has(input:focus)` instead of `:focus-within` — the latter
+     would also fire when tabbing onto a trailing mode button,
+     dragging the accent ring onto the chrome for a button focus
+     that has nothing to do with the input. */
+  &:has(input:focus) {
+    border-color: var(--accent, #2563eb);
+    background: rgb(from var(--text) r g b / .06);
+  }
 }
-.bundle-code-search-modes {
-  display: flex;
-  gap: .25rem;
-}
-.bundle-code-search-mode {
-  flex: 1;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--muted);
-  font: inherit;
-  font-size: .68rem;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  padding: .2rem .35rem;
-}
-.bundle-code-search-mode:hover { border-color: var(--accent, #2563eb); color: var(--text); }
-.bundle-code-search-mode.active {
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--accent, #2563eb);
-}
-.bundle-code-search-input-wrap {
-  position: relative;
+.bundle-code-search-icon {
+  flex-shrink: 0;
+  color: var(--muted); pointer-events: none;
+  margin-right: .35rem;
 }
 .bundle-code-search-input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  flex: 1; min-width: 0;
+  padding: .3rem 0;
+  background: transparent;
   color: var(--text);
-  font: inherit;
-  font-size: .78rem;
-  /* Right padding leaves room for the absolutely-positioned
-     `.bundle-code-search-clear` button when a query is set;
-     when no query is set the button isn't rendered, but the
-     padding stays so the input width doesn't jump on first
-     keystroke. */
-  padding: .25rem 1.4rem .25rem .4rem;
-  box-sizing: border-box;
+  border: 0; outline: none;
+  font: inherit; font-size: .78rem;
+
+  &::placeholder { color: var(--muted); }
+  &:focus::placeholder { color: transparent; }
+  /* Hide the native search-clear ✕ — the custom button below
+     gives us a consistent look across browsers. */
+  &::-webkit-search-cancel-button { display: none; }
 }
-.bundle-code-search-input:focus { outline: none; border-color: var(--accent, #2563eb); }
 .bundle-code-search-clear {
-  position: absolute;
-  top: 50%; right: .25rem;
-  transform: translateY(-50%);
+  flex-shrink: 0;
   width: 1rem; height: 1rem;
   display: grid; place-items: center;
   padding: 0;
@@ -558,8 +547,42 @@
   border: 0; border-radius: 2px;
   color: var(--muted);
   font: inherit; font-size: .9rem; line-height: 1;
+  margin-right: .15rem;
 }
 .bundle-code-search-clear:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+
+/* Mode-toggle icon buttons — Files / Code / Issues. Pinned to
+   the search row's right edge in a tablist span; the inner span
+   exists so `role="tablist"` doesn't sit on the outer container
+   alongside the lens icon + input (those aren't tabs and
+   screen-reader announcements would get confused). */
+.bundle-code-search-modes {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center;
+  margin-left: .25rem;
+}
+/* Borderless icon chrome (the search-row border already frames
+   them); only the background tint + color move on hover / active.
+   Same shape + recolor as the sidebar's `.sidebar-view-btn`. */
+.bundle-code-search-mode {
+  flex-shrink: 0;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 3px;
+  padding: 0;
+  transition: background .12s, color .12s;
+
+  & + & { margin-left: 2px; }
+
+  & svg { width: 13px; height: 13px; }
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+  &.active {
+    color: var(--accent, #2563eb);
+    background: rgb(from var(--text) r g b / .10);
+  }
+}
 
 .bundle-code-search-empty,
 .bundle-code-search-hint {
