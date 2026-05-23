@@ -1191,4 +1191,124 @@ describe('client/sync/objstore-presence', () => {
       await deleteWorkspace(ws.id)
     }
   })
+
+  // -----------------------------------------------------------------
+  // ensureRemoteNames membership-aware skip: a cached `tag → name`
+  // (or `tag → integrity`) only blocks the discovery `fetchByTag`
+  // when the live workspace actually claims it. A cached entry the
+  // workspace doesn't claim — local-only delete, sibling-tab
+  // discovery that never auto-attached, or a peer-uploaded copy
+  // under a different name — falls through to `fetchByTag` →
+  // `maybeAutoDownload(Bundle)` so the workspace converges on the
+  // remote inventory. This subsumes the previous
+  // `dropFileFromPresenceCaches` / `dropBundleFromPresenceCaches`
+  // cleanup helpers (no longer needed).
+  // -----------------------------------------------------------------
+
+  it('ensureRemoteNames re-discovers a report when a cached name is NOT in workspace.reports', async () => {
+    // The user-reported repro: the presence cache pins a tag → name
+    // from a prior session's fetchByTag (e.g., a sibling tab
+    // discovered the name but `maybeAutoDownload` never ran for it,
+    // or a local-only delete dropped the workspace claim while the
+    // cache pin survived). A `workspace-subscribed` ack on the next
+    // open then carries the tag, but the old "skip if cached"
+    // shortcut in `ensureRemoteNames` left the file undownloaded
+    // forever — workspace.reports never grew the entry back.
+    //
+    // Construct that exact state manually: pre-seed the persisted
+    // cache with a tag → name pin for a peer-uploaded file we DON'T
+    // claim. Then open the workspace and assert the file is
+    // auto-downloaded + attached anyway.
+    const ws = await createWorkspaceWithReports('ensure-rediscovers-report', [])
+    const fileName = 'sibling-discovered.json'
+    const reportText = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'sib' }],
+    })
+    const reportBytes = await gzipBytes(encodeUtf8(reportText))
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        const put = await peer.put({ fileName, content: reportBytes, prev: null })
+        assert.equal(put.ok, true)
+      } finally { peer.close() }
+      // Pre-seed the persisted presence cache to simulate "we knew
+      // the name from a prior session but never auto-attached". Mirror
+      // exactly the shape the `workspace-subscribed` boot path expects.
+      const { computeResourceTag } = await import('../client/sync/objstore-content-crypto.ts')
+      const keys = await deriveObjstoreKeys(ws.privateKey, ws.id)
+      const fileTag = await computeResourceTag(keys.tagKey, fileName)
+      localStorage.setItem(`deepview.objstore-presence.${ws.id}`, JSON.stringify({
+        names: { [fileTag]: fileName },
+        bundles: {},
+        bundleNames: {},
+        // No localVersions entry — we never saved the bytes locally.
+        localVersions: {},
+      }))
+      // Open the workspace. With the old "skip if cached" shortcut
+      // the file would stay invisible (cache pin says we know the
+      // name → skip → `maybeAutoDownload` never runs). The
+      // membership-aware skip falls through because workspace.reports
+      // doesn't claim it → fetchByTag → maybeAutoDownload → attach.
+      openWorkspace(ws.id)
+      await awaitPresence(() => {
+        const live = listWorkspaces().find((w) => w.id === ws.id)
+        return live?.reports?.includes(fileName) ?? false
+      }, 'sibling-discovered file attaches via membership-aware ensureRemoteNames')
+      const filesOnDisk = await listFiles()
+      assert.ok(filesOnDisk.includes(fileName),
+        `OPFS must hold ${fileName} after the rediscovery save`)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      try { await deleteFile(fileName) } catch {}
+    }
+  })
+
+  it('ensureRemoteNames re-fetches a bundle when a cached integrity is NOT in workspace.bundles', async () => {
+    // Bundle counterpart of the rediscovery test. The full re-attach
+    // round-trip requires OPFS (`maybeAutoDownloadBundle` calls
+    // `saveBundle`, which is OPFS-only with no localStorage
+    // fallback), so we assert the skip-predicate behaviour at the
+    // discovery layer: with the old "skip if cached" shortcut the
+    // discovery never even calls `fetchByTag` for a cached-but-
+    // unclaimed integrity, so the workspace stays inconsistent with
+    // remote. The membership-aware skip falls through and calls
+    // `fetchByTag` — observable via `entry.remoteBundleByTag` being
+    // re-populated after a forced detach + reopen.
+    const { computeSha512Integrity } = await import('../common/integrity.js')
+    const bundleBytes = Buffer.from('rediscover-bundle-bytes')
+    const integrity = await computeSha512Integrity(bundleBytes)
+    const ws = await createWorkspaceWithBundles('ensure-rediscovers-bundle', [integrity])
+    try {
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.putBundle({ integrity, name: 'pkg.js', content: bundleBytes, prev: null })
+      } finally { peer.close() }
+      openWorkspace(ws.id)
+      // Wait until the cache pins the integrity (the boot's attached-
+      // tag pass + the broadcast handler both contribute here).
+      await awaitPresence(() => isBundleInRemote(ws.id, integrity), 'integrity in remote')
+      // Detach without touching remote — mirrors the "we used to
+      // have it attached, then dropped the claim locally" scenario.
+      // The persisted cache still pins the integrity.
+      await setBundleWorkspace(integrity, null)
+      // Reopen. The membership-aware skip sees workspace.bundles
+      // doesn't claim the integrity and falls through to
+      // `fetchByTag`. With OPFS unavailable in tests, the eventual
+      // saveBundle would fail, but `fetchByTag` resolves regardless
+      // and re-populates `remoteBundleByTag`. We assert THAT step
+      // happened — the old "skip if cached" code would never have
+      // fetched, so `discoverRemoteBundleIntegrities` would resolve
+      // without the integrity instead of with it.
+      closeWorkspace(ws.id)
+      openWorkspace(ws.id)
+      const integrities = await discoverRemoteBundleIntegrities(ws.id)
+      assert.ok(integrities.includes(integrity),
+        `membership-aware skip must run fetchByTag for cached-but-unclaimed integrity; got ${JSON.stringify(integrities)}`)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
 })

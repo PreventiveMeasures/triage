@@ -8,6 +8,7 @@
 
 export {
   closeWorkspace,
+  deleteBundleFromRemote,
   deleteFromRemote,
   discoverRemoteBundleIntegrities,
   discoverRemoteFileNames,

@@ -1,4 +1,4 @@
-import { VIEW_MODE_KEY, deleteBundle, dropBundleFromHashIndex, getPackagesIndex, isReportIgnored, listBundles, patchEntry, removeSecureItem, saveRepoUrlFor, saveTriage, setBundleWorkspace, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
+import { VIEW_MODE_KEY, getPackagesIndex, isReportIgnored, patchEntry, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex } from '#client/index.js'
 import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, findingReport, groupState, tabKey } from './group.js'
@@ -81,7 +81,7 @@ function renderPreservingScrollOf(selector) {
 }
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { LAST_FILE_KEY, persistLastBundle, switchToFile } from './ingest.js'
+import { persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 
@@ -196,52 +196,6 @@ report.addEventListener('click', (e) => {
     render()
     renderSidebar()
     openBundle(integrity)
-    return
-  }
-  // Bundles list — per-row delete button (`data-delete-bundle=<integrity>`).
-  // The dataset value is the SHA-512 integrity (the canonical id);
-  // `state.bundles` carries the user-friendly name for the confirm
-  // prompt. Drops the OPFS entry + meta record, refreshes
-  // state.bundles, and re-renders both the main view (row goes) and
-  // the sidebar (count drops, header hides at zero). Confirm because
-  // OPFS removes are not recoverable from the in-app UI. Listed
-  // BEFORE the row-select handler so a click on Delete doesn't
-  // also open the details panel for the row about to disappear.
-  const delBundle = e.target.closest('[data-delete-bundle]')
-  if (delBundle) {
-    const integrity = delBundle.dataset.deleteBundle
-    const friendly = (state.bundles ?? []).find((b) => b.integrity === integrity)?.name ?? integrity
-    if (!confirm(`Delete bundle "${friendly}"?`)) return
-    ;(async () => {
-      await deleteBundle(integrity)
-      // Detach from any owning workspace's `bundles` list — mirrors
-      // the `setReportWorkspace(name, null)` call in `deleteCurrent`.
-      // Without this, the integrity stays in the workspace JSON until
-      // a later setBundleWorkspace call rewrites the list. The sidebar
-      // renders defensively against missing entries (as a muted
-      // "missing bundle" row), but leaving a dangling pointer would
-      // surface that row for a bundle the user explicitly deleted —
-      // surprising and useless. The detach call cleans the JSON.
-      await setBundleWorkspace(integrity, null)
-      // Drop the open panel if it was pointing at the deleted row.
-      // Also clear the persisted last-view pointer when it was
-      // pinned to this bundle so a reload doesn't try to restore a
-      // bundle we just dropped from OPFS. Mirrors deleteCurrent's
-      // `removeSecureItem(LAST_FILE_KEY)` for files.
-      if (state.selectedBundle === integrity) {
-        state.selectedBundle = null
-        state.bundleDetails = null
-        state.bundleSourceFile = null
-        state.bundleSourceFindingIdx = null
-        removeSecureItem(LAST_FILE_KEY)
-      }
-      // Prune the cross-bundle hash index so the finding-card's
-      // "Code →" lookup stops surfacing this bundle as a match.
-      dropBundleFromHashIndex(integrity)
-      state.bundles = await listBundles()
-      render()
-      await renderSidebar()
-    })()
     return
   }
   // Bundles list — close-details button on the right panel. Same

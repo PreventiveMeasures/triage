@@ -119,6 +119,48 @@ export function isInRemote(workspaceId, fileName) {
 export function isBundleInRemote(workspaceId, integrity) {
   return realModule ? realModule.isBundleInRemote(workspaceId, integrity) : false
 }
+// `isInRemoteOrCached` / `isBundleInRemoteOrCached` — like the
+// stubs above but ALSO consult the persisted localStorage presence
+// cache. Used by the delete + drag-out paths that decide whether a
+// workspace's remote tag needs dropping; the live `isInRemote` /
+// `isBundleInRemote` return false for workspaces whose presence
+// session isn't currently in the in-memory sessions Map (sync
+// disabled at boot, workspace never opened this session, or the
+// workspace is still mid-boot before `session.list()` resolves).
+// Without the cache fallback those closed/booting workspaces would
+// be silently excluded from the delete fanout and the file/bundle
+// would resurrect via `maybeAutoDownload(Bundle)` on the next open.
+//
+// Cache key shape and field names mirror `savePresenceCache` in
+// `client/sync/objstore-presence.js` — keep this prefix and the
+// `{ names, bundles }` schema in sync if the writer changes.
+const PRESENCE_CACHE_PREFIX = 'deepview.objstore-presence.'
+function readPresenceCache(workspaceId) {
+  try {
+    const raw = localStorage.getItem(PRESENCE_CACHE_PREFIX + workspaceId)
+    if (!raw) return null
+    const obj = JSON.parse(raw)
+    return obj && typeof obj === 'object' ? obj : null
+  } catch { return null }
+}
+export function isInRemoteOrCached(workspaceId, fileName) {
+  if (realModule && realModule.isInRemote(workspaceId, fileName)) return true
+  const cache = readPresenceCache(workspaceId)
+  if (!cache || typeof cache.names !== 'object') return false
+  for (const name of Object.values(cache.names)) {
+    if (name === fileName) return true
+  }
+  return false
+}
+export function isBundleInRemoteOrCached(workspaceId, integrity) {
+  if (realModule && realModule.isBundleInRemote(workspaceId, integrity)) return true
+  const cache = readPresenceCache(workspaceId)
+  if (!cache || typeof cache.bundles !== 'object') return false
+  for (const integ of Object.values(cache.bundles)) {
+    if (integ === integrity) return true
+  }
+  return false
+}
 export function remoteCount(workspaceId) {
   return realModule ? realModule.remoteCount(workspaceId) : 0
 }
@@ -186,6 +228,7 @@ export function fetchBundleFromRemote(...args) { return callIfWanted('fetchBundl
 export function putFile(...args) { return callIfWanted('putFile', args) }
 export function putBundleToRemote(...args) { return callIfWanted('putBundleToRemote', args) }
 export function deleteFromRemote(...args) { return callIfWanted('deleteFromRemote', args) }
+export function deleteBundleFromRemote(...args) { return callIfWanted('deleteBundleFromRemote', args) }
 export function openWorkspace(...args) { return callIfWanted('openWorkspace', args) }
 export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
 export function discoverRemoteFileNames(...args) { return callIfWanted('discoverRemoteFileNames', args) }
