@@ -36,7 +36,7 @@
      visual treatment as the in-shadow copy in sidebar.css. */
   & .brand-button {
     background: transparent; border: 0;
-    padding: 1px 4px; margin: -1px -4px;
+    padding: 0; margin: 0;
     font: inherit;
     color: inherit;
     border-radius: 4px;
@@ -44,7 +44,9 @@
     -webkit-app-region: no-drag;
     app-region: no-drag;
 
-    &:hover { background: rgb(from var(--text) r g b / .04); }
+    &:hover .brand-name {
+      color: color-mix(in srgb, var(--text) 80%, var(--accent));
+    }
     &:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -64,8 +66,14 @@
      (see sidebar.css's WCO block) so the flex layout next to the
      lock stays intact. Position: fixed + high z-index puts this copy
      above the page backdrops; pointer-events: none lets clicks fall
-     through to the in-shadow lock underneath. The OS handles drag at
-     the compositor level via theme.css's body app-region. */
+     through to the in-shadow lock underneath. The duplicate also
+     carries `app-region: drag` so the OS hit-test treats this layer
+     as the drag region directly instead of falling through to the
+     in-shadow header below — without it, clicks on the visible
+     brand-button were being eaten as window drags because Chromium's
+     drag-region hit-test follows pointer-events and lands on the
+     in-shadow header's drag region. The brand-button overrides to
+     `no-drag` so the wordmark click still fires. */
   .sidebar-header-wco {
     display: flex;
     position: fixed;
@@ -74,6 +82,8 @@
     z-index: 250;
     box-sizing: border-box;
     pointer-events: none;
+    -webkit-app-region: drag;
+    app-region: drag;
     /* Mirror the in-shadow header's left inset (sidebar.css's WCO
        block) so the wordmark clears the OS window controls — on macOS
        they paint at the left (env(titlebar-area-x) wide), and without

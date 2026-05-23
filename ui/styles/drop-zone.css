@@ -23,7 +23,7 @@
 
 .drop-prompt {
   text-align: center; color: var(--muted);
-  max-width: 540px;
+  max-width: 600px;
 
   /* Lead paragraph — slightly larger + brighter than the action
      line below so it reads as the headline copy now that the old
@@ -104,3 +104,30 @@
 }
 
 .drop-supported-label { line-height: 1; }
+
+/* WCO mode — the drop-zone occupies the entire main column, so it
+   doubles as a window drag handle: anywhere outside the inline
+   "click to browse" affordance dispatches as a window-move
+   gesture, leaving the wordmark-style accent span as the only
+   surface that opens the file picker.
+   File-drops keep working because the HTML5 drag-and-drop API is
+   a separate hit-test from app-region — drop targets fire even
+   inside drag regions. The whole `.drop-prompt` (intro paragraph,
+   instructional line, supported-formats list) stays draggable so
+   the user can grab the window from any of the visible text.
+   `.drop-prompt-action` opts back into no-drag so its underlined
+   "click to browse" still triggers the picker via the
+   #drop-zone click delegate. */
+/* stylelint-disable media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  #drop-zone {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .drop-prompt-action {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+    cursor: pointer;
+  }
+}
+/* stylelint-enable media-feature-name-value-no-unknown */

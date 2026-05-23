@@ -61,16 +61,19 @@
      sits outside as a sibling so the row's whitespace stays
      non-interactive. `data-action="go-home"` is wired in
      sidebar.js's click delegate. Transparent + no border so the
-     button reads as plain text; an almost-imperceptible hover
-     tint hints at interactivity without flashing the brand. */
+     button reads as plain text; on hover the wordmark drifts a
+     hair toward the accent blue (no background change) so the
+     interactivity is there but never flashes. */
   & .brand-button {
     background: transparent; border: 0;
-    padding: 1px 4px; margin: -1px -4px;
+    padding: 0; margin: 0;
     font: inherit;
     color: inherit;
     border-radius: 4px;
 
-    &:hover { background: rgb(from var(--text) r g b / .04); }
+    &:hover .brand-name {
+      color: color-mix(in srgb, var(--text) 80%, var(--accent));
+    }
     &:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
