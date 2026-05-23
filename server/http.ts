@@ -1,8 +1,9 @@
 // HTTP plane: the REST byte-transfer routing (`/api/objstore/...`), the
-// static UI bundle, and the WebSocket upgrade gate. Built once at boot
-// with the WS server plus the lifecycle hooks it needs (`track` to
-// drain in-flight requests on shutdown, `isShuttingDown` to gate new
-// ones). The WS *connection* handler is wired on `wss` separately in
+// static UI bundle, the SSE+POST fallback transport for the sync
+// protocol, and the WebSocket upgrade gate. Built once at boot with
+// the WS server plus the lifecycle hooks it needs (`track` to drain
+// in-flight requests on shutdown, `isShuttingDown` to gate new ones).
+// The WS *connection* handler is wired on `wss` separately in
 // index.ts; this module only owns the upgrade handshake.
 
 import { type IncomingMessage as HttpRequest, type Server, type ServerResponse, createServer } from 'node:http'
@@ -10,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import { fileURLToPath } from 'node:url'
 import type { WebSocketServer } from 'ws'
 import { type ObjstoreRestDeps, handleRest, matchRoute } from './objstore/rest.ts'
+import type { SseServer } from './sse-server.ts'
 import { loadStatic } from './static.ts'
 import { errStack } from './util.ts'
 
@@ -31,6 +33,11 @@ type HasHeaders = { headers: HttpRequest['headers'] }
 export type HttpServerDeps = {
   wss: WebSocketServer
   restDeps: ObjstoreRestDeps
+  // SSE+POST fallback. Owns its own session map + lifecycle; we just
+  // give it first crack at requests that match `SSE_OPEN_PATH`. Same
+  // same-origin / shutdown gates run BEFORE the dispatch so the SSE
+  // plane inherits them.
+  sseServer: SseServer
   isOriginAllowed: (req: HasHeaders) => boolean
   isShuttingDown: () => boolean
   track: (promise: Promise<unknown>) => void
@@ -39,7 +46,7 @@ export type HttpServerDeps = {
 }
 
 export function createHttpServer(deps: HttpServerDeps): Server {
-  const { wss, restDeps, isOriginAllowed, isShuttingDown, track, restPutIdleTimeoutMs, debug } = deps
+  const { wss, restDeps, sseServer, isOriginAllowed, isShuttingDown, track, restPutIdleTimeoutMs, debug } = deps
   // Static-file plane (see ./static.ts). The directory is the
   // `build.js build` output sibling to this file; the loader handles
   // enumeration, pre-compression, and ETag derivation. Plugged in after
@@ -47,6 +54,26 @@ export function createHttpServer(deps: HttpServerDeps): Server {
   const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)))
 
   const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
+    // SSE+POST fallback plane. Same-origin gate first (Origin header
+    // is set by the browser on cross-origin EventSource + fetch, so
+    // a hostile origin would surface here just like it does on the
+    // WS upgrade and REST plane). The sseServer.handle() function
+    // returns true iff it matched and consumed the request; on false
+    // we fall through to the REST / static / 404 ladder below.
+    if (typeof req.url === 'string' && req.url.split('?', 1)[0] === '/api/sync/sse') {
+      if (!isOriginAllowed(req)) {
+        res.writeHead(403, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'origin-denied' }))
+        return
+      }
+      // sseServer.handle owns its own shutdown / cap / 503 / 404
+      // ladder; tracking is needed because the SSE GET response is
+      // long-lived, but the shutdown gate inside sseServer prevents
+      // accepting new opens once shuttingDown latches, so the
+      // outstanding ones drain via the lifecycle's wss.clients-style
+      // close loop.
+      if (sseServer.handle(req, res)) return
+    }
     if (matchRoute(req.url) != null) {
       // Shutdown gate. The WS plane gates new messages on `shuttingDown`;
       // REST handlers go through a separate path and must mirror it.

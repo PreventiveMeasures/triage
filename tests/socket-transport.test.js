@@ -603,6 +603,217 @@ describe('socket-transport: misc invariants', () => {
   })
 })
 
+// ─────────── SSE fallback ───────────
+//
+// The `SseTransport` adapter (client/sync/sse-transport.ts) issues
+// `fetch` POSTs and reads the streaming `text/event-stream` response
+// bodies. These tests intercept `fetch` and feed a synthetic
+// `ReadableStream` so each test can drive frames at SSE granularity
+// without a real server.
+
+// Build a manually-controllable ReadableStream<Uint8Array>. `push` adds
+// SSE-encoded bytes for the reader; `close` ends the stream (the
+// adapter sees done=true, equivalent to the server end()ing the
+// response on takeover).
+function makeStream() {
+  let controller
+  const stream = new ReadableStream({
+    start(c) { controller = c },
+  })
+  const encoder = new TextEncoder()
+  return {
+    stream,
+    push(text) { controller.enqueue(encoder.encode(text)) },
+    pushEvent(event, data) {
+      const lines = data.split('\n').map((l) => `data: ${l}`).join('\n')
+      controller.enqueue(encoder.encode(`event: ${event}\n${lines}\n\n`))
+    },
+    pushMessage(obj) {
+      const data = typeof obj === 'string' ? obj : JSON.stringify(obj)
+      const lines = data.split('\n').map((l) => `data: ${l}`).join('\n')
+      controller.enqueue(encoder.encode(`${lines}\n\n`))
+    },
+    close() { try { controller.close() } catch {} },
+    error(err) { try { controller.error(err) } catch {} },
+  }
+}
+
+describe('socket-transport: SSE fallback', () => {
+  let originalFetch
+  let fetchCalls
+  let nextResponse  // queued response factories: () => { streamCtl, response }
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch
+    fetchCalls = []
+    nextResponse = []
+    globalThis.fetch = (url, opts) => {
+      fetchCalls.push({ url, opts })
+      const factory = nextResponse.shift() ?? (() => {
+        const s = makeStream()
+        return { streamCtl: s, response: { ok: true, status: 200, statusText: 'OK', body: s.stream } }
+      })
+      const made = factory()
+      // Capture the latest stream controller so the test can drive it.
+      globalThis.__sseStreams = (globalThis.__sseStreams ?? [])
+      globalThis.__sseStreams.push(made.streamCtl)
+      return Promise.resolve(made.response)
+    }
+    globalThis.__sseStreams = []
+  })
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    delete globalThis.__sseStreams
+  })
+
+  function lastStream() {
+    return globalThis.__sseStreams.at(-1)
+  }
+  // Wait for at least N fetch calls (the SSE transport debounces
+  // outbound frames into a 100ms batched POST; tests need to wait for
+  // the timer to fire).
+  async function awaitFetch(n, timeoutMs = 1_000) {
+    const start = Date.now()
+    while (fetchCalls.length < n && Date.now() - start < timeoutMs) {
+      await delay(10)
+    }
+    return fetchCalls.length >= n
+  }
+
+  it('WS close-before-open triggers an SSE POST', async () => {
+    const t = makeTransport()
+    t.acquire()
+    assert.equal(FakeWebSocket.instances.length, 1, 'WS attempted first')
+    assert.equal(fetchCalls.length, 0, 'no SSE POST yet')
+    FakeWebSocket.last.simulateClose()
+    // The constructor schedules an immediate flush (0ms) — wait one tick.
+    assert.ok(await awaitFetch(1), 'SSE POST issued')
+    assert.equal(fetchCalls[0].url, 'http://test.invalid/api/sync/sse')
+    assert.equal(fetchCalls[0].opts.method, 'POST')
+    t.close()
+  })
+
+  it('SSE session+challenge drive the same onConnected/onMessage path as WS', async () => {
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    // Server pushes session id event, then challenge, then a state.
+    lastStream().pushEvent('session', 'sid-abc')
+    await delay(10)
+    lastStream().pushMessage({ type: 'challenge', nonce: 'sse-nonce' })
+    await delay(10)
+    assert.deepEqual(c.connected, ['sse-nonce'])
+    assert.equal(t.getNonce(), 'sse-nonce')
+    lastStream().pushMessage({ type: 'workspace-state', workspaceTag: 't' })
+    await delay(10)
+    assert.equal(c.messages.length, 1)
+    assert.equal(c.messages[0].type, 'workspace-state')
+    t.close()
+  })
+
+  it('cached authenticate password rides as body.password on every POST', async () => {
+    const t = makeTransport()
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-xyz')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n0' })
+    await delay(10)
+    await setCachedSyncPassword('p1')
+    const p = t.runAuthFlow()
+    // The 100ms debounce window means the password POST takes ~100ms.
+    assert.ok(await awaitFetch(2, 500))
+    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse?id=sid-xyz')
+    const body = JSON.parse(fetchCalls[1].opts.body)
+    assert.equal(body.password, 'p1', 'password rides on the body')
+    // The authenticate frame itself is intercepted (not sent on the
+    // wire) — only password + frames go out. No `frames` field.
+    assert.equal(body.frames, undefined, 'no synthetic frames')
+    lastStream().pushMessage({ type: 'authenticated' })
+    await delay(10)
+    assert.equal(await p, true)
+    t.close()
+  })
+
+  it('a fresh session event replaces the id and re-fires onConnected with the new nonce', async () => {
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    // First session.
+    lastStream().pushEvent('session', 'sid-A')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'nonce-A' })
+    await delay(10)
+    // Trigger an outbound send so the test can observe the next POST's URL.
+    t.send({ type: 'ping' })
+    assert.ok(await awaitFetch(2, 500))
+    assert.equal(fetchCalls[1].url, 'http://test.invalid/api/sync/sse?id=sid-A',
+      'continuation POST echoes the latched sid')
+    // Simulate a different replica picking up the session — server
+    // emits a fresh `session` event with a NEW id + a new challenge.
+    lastStream().pushEvent('session', 'sid-B')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'nonce-B' })
+    await delay(10)
+    assert.deepEqual(c.connected, ['nonce-A', 'nonce-B'])
+    assert.equal(t.getNonce(), 'nonce-B')
+    // Next POST should carry the new id.
+    t.send({ type: 'ping' })
+    assert.ok(await awaitFetch(3, 500))
+    assert.equal(fetchCalls[2].url, 'http://test.invalid/api/sync/sse?id=sid-B',
+      'next POST switches to the new sid')
+    t.close()
+  })
+
+  it('outbound frames coalesce within the 100ms debounce window', async () => {
+    const t = makeTransport()
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    // Fire 3 sends within the debounce window — should produce ONE POST.
+    t.send({ type: 'ping' })
+    t.send({ type: 'ping' })
+    t.send({ type: 'ping' })
+    assert.ok(await awaitFetch(2, 500))
+    const body = JSON.parse(fetchCalls[1].opts.body)
+    assert.equal(body.frames.length, 3, 'three frames batched into one POST')
+    t.close()
+  })
+
+  it('SSE fallback does NOT engage on a successful WS open', () => {
+    const t = makeTransport()
+    t.acquire()
+    FakeWebSocket.last.handshake('n0')
+    assert.equal(fetchCalls.length, 0, 'no SSE POST issued')
+    FakeWebSocket.last.simulateClose()
+    t.close()
+  })
+
+  it('server-initiated close event (graceful shutdown) tears the transport down', async () => {
+    const t = makeTransport()
+    const c = recordingConsumer()
+    t.addConsumer(c)
+    t.acquire()
+    FakeWebSocket.last.simulateClose()
+    assert.ok(await awaitFetch(1))
+    lastStream().pushEvent('session', 'sid-x')
+    lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
+    await delay(10)
+    // Server emits the structured close event (1001).
+    lastStream().pushEvent('close', JSON.stringify({ code: 1001, reason: 'Server shutting down' }))
+    await delay(10)
+    assert.equal(c.disconnected.length, 1)
+    t.close()
+  })
+})
+
 // ─────────── auth flow ───────────
 
 describe('socket-transport: auth flow', () => {

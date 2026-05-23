@@ -7,6 +7,7 @@
 
 import type { Server } from 'node:http'
 import type { WebSocketServer } from 'ws'
+import type { SseSession } from './sse-session.ts'
 import { errStack } from './util.ts'
 
 export type ShutdownDeps = {
@@ -15,6 +16,11 @@ export type ShutdownDeps = {
   heartbeatTimer: ReturnType<typeof setInterval>
   // Stops the periodic reaper AND awaits any in-flight sweep.
   stopReaper: () => Promise<void>
+  // Live SSE+POST session iterator (mirrors `wss.clients` for the SSE
+  // fallback transport). Walked alongside `wss.clients` to send the
+  // 1001 close frame and apply the terminate-grace timer to both
+  // transports uniformly.
+  sseSessions: () => Iterable<SseSession>
   // App-specific teardown, run AFTER the in-flight drain: close the DB.
   // Swallows its own errors (a failed close shouldn't abort the exit).
   closeDb: () => Promise<void>
@@ -51,7 +57,7 @@ export function createLifecycle(): Lifecycle {
   let pendingExitCode = 0
 
   function install(deps: ShutdownDeps): void {
-    const { httpServer, wss, heartbeatTimer, stopReaper, closeDb } = deps
+    const { httpServer, wss, heartbeatTimer, stopReaper, sseSessions, closeDb } = deps
 
     async function shutdown(exitCode: number = 0): Promise<void> {
       // Re-entry: don't restart the teardown, but escalate the pending
@@ -78,6 +84,13 @@ export function createLifecycle(): Lifecycle {
       for (const socket of wss.clients) {
         try { socket.close(1001, 'Server shutting down') } catch {}
       }
+      // Same close frame on every SSE+POST session — the adapter
+      // translates `close(1001, …)` into a structured `event: close`
+      // record on the SSE stream so the client transport can read the
+      // code and skip its reconnect backoff (parity with the WS path).
+      for (const session of sseSessions()) {
+        try { session.close(1001, 'Server shutting down') } catch {}
+      }
       // Force-terminate any client that doesn't ack the close frame
       // within a short grace window. `wss.close()` waits for every client
       // to emit `'close'`, and `ws` only TCP-RSTs unresponsive peers
@@ -90,6 +103,15 @@ export function createLifecycle(): Lifecycle {
           const rs = socket.readyState
           if (rs === socket.OPEN || rs === socket.CLOSING) {
             try { socket.terminate() } catch {}
+          }
+        }
+        // SSE sessions are tracked separately from `wss.clients`; apply
+        // the same terminate-grace policy so a stranded SSE response
+        // can't pin the HTTP keep-alive shutdown branch below.
+        for (const session of sseSessions()) {
+          const rs = session.readyState
+          if (rs === session.OPEN || rs === session.CLOSING) {
+            try { session.terminate() } catch {}
           }
         }
         // Same grace for HTTP keep-alive sockets that didn't respect the

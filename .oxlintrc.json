@@ -70,7 +70,8 @@
       ],
       "rules": {
         "max-lines-per-function": "off",
-        "max-lines": "off"
+        "max-lines": "off",
+        "max-classes-per-file": "off"
       }
     },
     {
@@ -92,10 +93,27 @@
     {
       "files": [
         "server/sync-handlers.ts",
+        "server/sse-server.ts",
         "server/ws-server.ts"
       ],
       "rules": {
         "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
+        "server/sse-session.ts"
+      ],
+      "rules": {
+        "unicorn/prefer-event-target": "off"
+      }
+    },
+    {
+      "files": [
+        "client/sync/sse-transport.ts"
+      ],
+      "rules": {
+        "max-classes-per-file": "off"
       }
     },
     {
