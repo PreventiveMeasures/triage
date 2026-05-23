@@ -1514,6 +1514,18 @@
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
   }
+  /* Drop #report's bottom padding for table / list / grouped
+     findings views so the scroll area runs to the bottom edge.
+     The visual bottom gap lives INSIDE the scroll instead — list
+     and grouped pick it up from the last .flat-group / .file-group
+     margin-bottom (findings.css); table gets it from a
+     padding-bottom on .findings-table-list (findings.css). Graph,
+     kanban and focus keep #report's padding-bottom because their
+     panels paint right up to the edge of the scroll area and need
+     the breathing room outside. */
+  #report:has(> .findings-content:not(.with-graph, .with-kanban, .with-focus)) {
+    padding-bottom: 0;
+  }
 }
 
 /* Focus view-mode — the general `.findings-content:not(.with-

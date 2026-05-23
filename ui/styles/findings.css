@@ -120,6 +120,11 @@
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
+    /* Bottom gap lives inside the scroller — #report's own
+       padding-bottom is zeroed for table / list / grouped modes
+       (see report.css). List / grouped get the same gap from the
+       last .flat-group / .file-group's margin-bottom. */
+    padding-bottom: 1rem;
   }
 }
 /* Details panel = its own glass card. Sticky so it follows the
