@@ -86,13 +86,14 @@ import { loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { initObjstore } from './objstore/init.ts'
-import { type Handle as ObjstoreHandle, getLive, listLive, objectMetaWire, openObjstore } from './objstore/store.ts'
+import { type Handle as ObjstoreHandle, listLive, objectMetaWire, openObjstore } from './objstore/store.ts'
 import { openNeonObjstore } from './objstore/store-neon.ts'
 import { openVercelBlobBackend } from './objstore/blob-vercel.ts'
 import {
-  type BusMessage, type NeonClientCtor, type PubSub,
+  type NeonClientCtor, type PubSub,
   createNeonPubSub, createNoopPubSub,
 } from './pubsub.ts'
+import { createBusReceiver } from './bus-receiver.ts'
 
 // All external inputs (env vars + optional config.json) are parsed
 // and validated in ./config.ts. Destructure into the existing
@@ -373,54 +374,15 @@ httpServer.on('listening', () => {
   console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
 })
 
-// Cross-instance bus receiver: a remote NOTIFY lands here, we re-fetch
-// any data the bus payload only hinted at, then broadcast to local
-// peers via `broadcastLocalRaw` (no `except` — the originator is on a
-// DIFFERENT instance by construction). The receive→fetch→broadcast
-// path mirrors the publisher's commit→broadcast→publish order, just
-// shifted by the bus round-trip.
-async function onBusMessage(msg: BusMessage): Promise<void> {
-  if (msg.kind === 'rev') {
-    const row = await handle.revisionById.get(msg.tag, msg.id)
-    if (!row) {
-      if (DEBUG) console.warn(`pubsub: revision ${msg.id.slice(0, 8)}… not found for ${msg.tag.slice(0, 12)}…`)
-      return
-    }
-    broadcastLocalRaw(msg.tag, JSON.stringify({
-      type: 'workspace-state',
-      workspaceTag: msg.tag,
-      // Mirror `chainForWire`'s strict-boolean coercion in
-      // ./sync-handlers.ts — the DB stores `keyframe` as an integer
-      // 0/1 but the wire contract uses strict `=== true`.
-      revisions: [{ ...row, keyframe: row.keyframe === 1 }],
-    }))
-    return
-  }
-  if (msg.kind === 'objput') {
-    const row = await getLive(objstoreHandle, msg.tag, msg.res)
-    if (!row) {
-      // Possible after a remote put → remote delete sequence where
-      // both NOTIFYs landed by the time we processed the put. The
-      // subsequent objdel NOTIFY will (or has) drive the right
-      // broadcast — skip silently.
-      if (DEBUG) console.warn(`pubsub: objput ${msg.res.slice(0, 8)}… missing for ${msg.tag.slice(0, 12)}…`)
-      return
-    }
-    broadcastLocalRaw(msg.tag, JSON.stringify({
-      type: 'objstore-put',
-      workspaceTag: msg.tag,
-      ...objectMetaWire(row),
-    }))
-    return
-  }
-  // objdel
-  broadcastLocalRaw(msg.tag, JSON.stringify({
-    type: 'objstore-deleted',
-    workspaceTag: msg.tag,
-    resourceTag: msg.res,
-    version: msg.ver,
-  }))
-}
+// Cross-instance bus receiver (see ./bus-receiver.ts): a remote NOTIFY
+// lands here, we re-fetch any data the bus payload only hinted at,
+// then broadcast to local peers via `broadcastLocalRaw`. Extracted so
+// the rev / objput / objdel mapping (including the keyframe boolean
+// coercion and the `objectMetaWire` shape) is testable without the
+// full server bring-up.
+const onBusMessage = createBusReceiver({
+  handle, objstoreHandle, broadcastLocalRaw, debug: DEBUG,
+})
 
 // Kick off the LISTEN loop in the background. `pubsub.start` resolves
 // only after the FIRST successful connect, and the internal reconnect

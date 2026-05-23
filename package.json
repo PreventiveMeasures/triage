@@ -33,6 +33,7 @@
   },
   "files": [
     "server/auth.ts",
+    "server/bus-receiver.ts",
     "server/config.ts",
     "server/db-neon.ts",
     "server/db-revision-sql.ts",
