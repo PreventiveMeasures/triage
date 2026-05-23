@@ -253,8 +253,7 @@ function triageMenuTemplate(group, title, context = null) {
   const ACTION_LABELS = { fixed: 'Fixed', invalid: 'Invalid', deleted: 'Delete', ignored: 'Ignore' }
   const inTriageView = Boolean(state.shownTriage)
   const buttonLabel = inTriageView ? STATE_LABELS[state.shownTriage] : null
-  // Action order: triage states first (Fixed / Invalid / Delete),
-  // then Ignore.
+  // Action order: Fixed / Invalid / Ignore / Delete.
   //
   // Focus-view variant always shows all four states as toggleable
   // chips with the currently-active state marked `.active` (visually
@@ -269,7 +268,7 @@ function triageMenuTemplate(group, title, context = null) {
   // the action list — that pattern reads better as a popover menu
   // where seeing the active bucket in the list (without a "press"
   // affordance) would be confusing.
-  const ALL_ACTIONS = ['fixed', 'invalid', 'deleted', 'ignored']
+  const ALL_ACTIONS = ['fixed', 'invalid', 'ignored', 'deleted']
   const isFocus = context === 'focus'
   let actions
   if (isFocus) {

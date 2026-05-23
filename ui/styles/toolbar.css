@@ -155,7 +155,7 @@
 }
 .toolbar .trash-btn { margin-left: auto; }
 
-/* Triage state selector — Fixed / Invalid / Deleted / Ignored
+/* Triage state selector — Fixed / Invalid / Ignored / Deleted
    buttons that replace the prior single Trash button. Visible
    buttons follow the bucket counts; the active one (matching
    state.shownTriage) takes the bucket's accent color. Lives at the

@@ -192,8 +192,8 @@
 }
 
 /* ── Kanban view ────────────────────────────────────────────────────
-   One column per triage bucket (Active / Fixed / Invalid / Deleted /
-   Ignored). The board fills the entire viewport height (via the
+   One column per triage bucket (Active / Fixed / Invalid / Ignored /
+   Deleted). The board fills the entire viewport height (via the
    `.findings-content.with-kanban` flex chain below) and only the
    column bodies scroll. The wrapper drops its max-width cap so the
    five columns lay out edge-to-edge; columns overflow horizontally

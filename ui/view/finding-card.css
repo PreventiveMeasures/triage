@@ -432,7 +432,7 @@
    workbench rather than a list row:
      1. The triage menu's chevron button is hidden and the popover
         content is inlined into the action strip, so Fixed /
-        Invalid / Delete / Ignore each become a one-click button
+        Invalid / Ignore / Delete each become a one-click button
         instead of a dropdown. The popover element is forced out
         of its `display: none` resting state via `display: flex`,
         positioned statically (`position: revert`) so it lays out

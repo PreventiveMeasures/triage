@@ -752,7 +752,7 @@ function triageFilterTemplate(colorCounts) {
 // state.shownTriage; the live view (no triage filter) is just the
 // "all unset" mode reached by clicking the active button again.
 function triageSelectorTemplate(triageCounts) {
-  const states = ['fixed', 'invalid', 'deleted', 'ignored']
+  const states = ['fixed', 'invalid', 'ignored', 'deleted']
   const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
   if (total === 0 && !state.shownTriage) return nothing
   return html`<div class="triage-selector" role="group" aria-label="Triage view">
@@ -1265,8 +1265,8 @@ function findingsBodyTemplate(filtered) {
       { key: 'untriaged', label: 'Untriaged', target: 'untriaged' },
       { key: 'fixed',     label: 'Fixed',     target: 'fixed' },
       { key: 'invalid',   label: 'Invalid',   target: 'invalid' },
-      { key: 'deleted',   label: 'Deleted',   target: 'deleted' },
       { key: 'ignored',   label: 'Ignored',   target: 'ignored' },
+      { key: 'deleted',   label: 'Deleted',   target: 'deleted' },
     ]
     const buckets = new Map(columns.map((c) => [c.key, []]))
     for (const g of filtered) {
@@ -1940,7 +1940,7 @@ function renderImpl() {
       ></view-mode-buttons>`
       // Triage bucket counts across every loaded report's groups —
       // the findings-tab graph's topbar uses this for its triage
-      // selector (Fixed / Invalid / Deleted / Ignored). Computed
+      // selector (Fixed / Invalid / Ignored / Deleted). Computed
       // here (in the main bundle) rather than inside
       // `renderTopBar` so the lazy `ui/graph.js` bundle stays free
       // of `groupState` / `state` imports.
@@ -1954,7 +1954,7 @@ function renderImpl() {
       const options = {
         extraTopRow: viewModeRow,
         triageCounts: findingsTriageCounts,
-        triageStates: ['fixed', 'invalid', 'deleted', 'ignored'],
+        triageStates: ['fixed', 'invalid', 'ignored', 'deleted'],
         shownTriage: state.shownTriage,
       }
       // First open of the graph view-mode kicks the dynamic

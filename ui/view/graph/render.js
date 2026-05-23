@@ -81,14 +81,15 @@ export function renderTopBar(graph, options) {
   const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
   // Triage state selector — replaces the prior single Trash button.
-  // Buttons (Fixed / Invalid / Deleted, plus Ignored in the
-  // findings-tab graph) carry data-triage-show for the events.js
-  // delegate (state.shownTriage flip + canvas teardown). The
-  // bundle path passes precomputed counts without `ignored`
-  // (ignore is per-report and intentionally absent from the bundle
-  // selector since the bundle aggregates findings across reports);
-  // the findings-tab path passes counts including `ignored` so its
-  // selector renders the fourth button when applicable. Caller is
+  // Buttons (Fixed / Invalid / Deleted at the bundle level; the
+  // findings-tab graph inserts Ignored between Invalid and Deleted)
+  // carry data-triage-show for the events.js delegate
+  // (state.shownTriage flip + canvas teardown). The bundle path
+  // passes precomputed counts without `ignored` (ignore is per-report
+  // and intentionally absent from the bundle selector since the
+  // bundle aggregates findings across reports); the findings-tab
+  // path passes counts including `ignored` so its selector renders
+  // the fourth button when applicable. Caller is
   // also responsible for `shownTriage` (mirrors `state.shownTriage`)
   // so this template stays uncoupled from the global state shape.
   const triageTotal = triageStates.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
