@@ -1230,7 +1230,7 @@ function renderBundleCodeView(details) {
           type="text"
           class="bundle-code-search-input"
           id="bundle-code-search-input"
-          placeholder=${searchMode === 'files' ? 'filter files…' : searchMode === 'code' ? 'search code…' : 'search issues…'}
+          placeholder=${searchMode === 'files' ? 'Filter files…' : searchMode === 'code' ? 'Search code…' : 'Search issues…'}
           .value=${live(query)}
         >
         ${query
