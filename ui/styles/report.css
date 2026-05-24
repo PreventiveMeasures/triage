@@ -2272,3 +2272,283 @@ body.report-fullscreen {
   animation-duration: 90ms;
   animation-timing-function: linear;
 }
+
+/* Advisories tab body — bundle slide. Stasis bundles carry per-
+   module name+version, so the tab fans out a bulk lookup against
+   the npm registry's advisory endpoint (relayed through
+   /api/npm-advisories) and renders one section per affected
+   package. Severity chips reuse the same palette as the rest of
+   the report so a "critical" advisory reads the same red as a
+   critical finding. */
+.bundles-slide-body > .bundle-advisories {
+  padding: .75rem;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  -webkit-app-region: no-drag; app-region: no-drag;
+  scrollbar-gutter: stable;
+}
+/* First-visit consent prompt — centred card with explanation,
+   primary Confirm button, and a trailing "preference is saved"
+   note. Replaces the data body until the user opts in. */
+.bundles-slide-body > .bundle-advisories-consent {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+.bundle-advisories-consent-card {
+  max-width: 32rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .75rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: center;
+  /* Chrome UI, not user-authored content — disable selection on
+     the explanatory copy so a double-click / drag-select doesn't
+     blue-bar the surrounding text. The mono spans (the proxy host
+     + the registry host) stay selectable below — those are real
+     facts a privacy-conscious user may want to copy to verify the
+     destination. */
+  user-select: none;
+}
+.bundle-advisories-consent-card .mono {
+  user-select: text;
+}
+.bundle-advisories-consent-text {
+  margin: 0;
+  color: var(--text);
+  font-size: .82rem;
+  line-height: 1.5;
+}
+.bundle-advisories-consent-text .mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .78rem;
+}
+.bundle-advisories-consent-btn {
+  padding: .4rem 1.25rem;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent, #58a6ff);
+  color: #fff;
+  font-size: .85rem;
+  font-weight: 600;
+}
+.bundle-advisories-consent-btn:hover { filter: brightness(1.08); }
+.bundle-advisories-consent-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: .7rem;
+}
+.bundle-advisories-summary {
+  color: var(--muted);
+  font-size: .72rem;
+  margin-bottom: .5rem;
+  /* Chrome line ("N advisories across M of K packages") — derived
+     counts, not user-authored content. user-select: none keeps a
+     drag-select on the row list from picking the summary line up
+     into the clipboard. */
+  user-select: none;
+}
+.bundle-advisories-empty {
+  color: var(--muted);
+  font-size: .78rem;
+  padding: .75rem;
+}
+.bundle-advisories-empty.is-error {
+  color: var(--critical);
+}
+.bundle-advisories-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 1rem;
+}
+.bundle-advisories-section {
+  display: flex; flex-direction: column;
+  gap: .25rem;
+}
+.bundle-advisories-section-header {
+  display: flex; align-items: baseline; gap: .5rem;
+  padding: .25rem .35rem;
+  border-bottom: 1px solid var(--border);
+}
+.bundle-advisories-section-name {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.bundle-advisories-section-versions {
+  display: inline-flex; flex-wrap: wrap; gap: .25rem;
+}
+.bundle-advisories-version-chip {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .68rem;
+  padding: .05rem .35rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+}
+.bundle-advisories-section-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .68rem;
+}
+.bundle-advisories-rows {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: .25rem;
+}
+.bundle-advisory-row {
+  display: flex; align-items: flex-start; gap: .65rem;
+  padding: .25rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+/* Left rail — severity badge stacked above the CVSS score. The
+   rail is fixed-width-ish (centred to the widest chip) so the body
+   column on the right aligns across rows regardless of which row
+   has a CVSS score. */
+.bundle-advisory-rail {
+  flex-shrink: 0;
+  display: flex; flex-direction: column;
+  align-items: center;
+  gap: .25rem;
+  min-width: 4.5rem;
+  padding-top: .1rem;
+}
+.bundle-advisory-severity {
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: .6rem;
+  font-weight: 700;
+  padding: .15rem .4rem;
+  border-radius: 3px;
+  color: #000;
+
+  &.sev-critical { background: var(--critical); color: #fff; }
+  &.sev-high     { background: var(--high); }
+  &.sev-moderate { background: var(--medium); }
+  &.sev-low      { background: var(--low); }
+  &.sev-info     { background: var(--info); color: #fff; }
+}
+.bundle-advisory-cvss-score {
+  color: var(--muted);
+  font-size: .62rem;
+  letter-spacing: .02em;
+}
+.bundle-advisory-body {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  gap: .2rem;
+}
+/* Title row — title flexes to fill, GHSA chip pinned to the right
+   via margin-left:auto so the chip stays aligned to the row's
+   right edge regardless of title length. align-items:baseline keeps
+   the GHSA's monospace baseline lined up with the title. */
+.bundle-advisory-header {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+}
+.bundle-advisory-title {
+  flex: 1; min-width: 0;
+  color: var(--text);
+  font-size: .82rem;
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Two-row body — meta chips on the left, CVSS vector mirroring
+   the GHSA chip's right alignment on the second row so the right
+   column reads as a tidy stack ([GHSA ↗] / [CVSS:3.1/AV:N/…]).
+   `align-items: baseline` keeps the meta text and the vector mono
+   on the same typographic baseline. */
+.bundle-advisory-subrow {
+  display: flex;
+  align-items: baseline;
+  gap: .75rem;
+}
+.bundle-advisory-meta {
+  flex: 1; min-width: 0;
+  color: var(--muted);
+  font-size: .7rem;
+  display: flex; flex-wrap: wrap; gap: .65rem;
+  align-items: baseline;
+}
+.bundle-advisory-meta .mono {
+  /* Tighter mono inside the meta chips so the digits don't
+     dominate the otherwise-prose tone of the row. */
+  font-size: .68rem;
+}
+/* Push CWEs away from the Affected chip so the row reads as
+   two distinct facts rather than a run-on phrase. Same spacing
+   as the GHSA chip's distance from the title above for vertical
+   rhythm consistency. */
+.bundle-advisory-cwes {
+  margin-left: 1.25rem;
+}
+/* GHSA chip pinned to the right of the title row. No border (the
+   external-link arrow already marks it as an actionable cross-link
+   to GitHub). `cursor: default` on the chip body overrides the
+   UA's `cursor: pointer` for `<a>` — the arrow icon is the
+   click-affordance signal. The id text inside is selectable so
+   it copies cleanly into a clipboard for filing internal tickets;
+   the icon switches the cursor back to a pointer locally to hint
+   at the clickable target. */
+.bundle-advisory-ghsa {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .7rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  cursor: default;
+  user-select: text;
+}
+a.bundle-advisory-ghsa:hover {
+  color: var(--accent, #60a5fa);
+}
+.bundle-advisory-ghsa-icon {
+  flex-shrink: 0;
+  opacity: .75;
+  /* Icon is not text — keep it out of any text-selection that
+     starts on the GHSA id beside it. */
+  user-select: none;
+}
+a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
+/* CWE links — plain inline text, no external-link arrow (the
+   CWE list reads as a comma-separated phrase, and a row of
+   arrows next to each id would be visual noise). Selectable
+   like the GHSA id so the literal `CWE-908` is copyable. */
+.bundle-advisory-cwe {
+  color: var(--muted);
+  text-decoration: none;
+  user-select: text;
+  cursor: default;
+}
+.bundle-advisory-cwe:hover {
+  color: var(--accent, #60a5fa);
+}
+/* CVSS vector sits in the right column of the body's second row,
+   mirroring the GHSA chip's position in the first row. Right-
+   aligned so its tail anchors to the same edge as the GHSA chip
+   above it, mono so AV/AC/PR segments align across advisories.
+   `white-space: nowrap` keeps the vector on one line; if the
+   container is narrow, the surrounding flex layout lets it shrink
+   and ellipsis. */
+.bundle-advisory-cvss-vector {
+  flex-shrink: 1; min-width: 0;
+  text-align: right;
+  color: var(--muted);
+  font-size: .65rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

@@ -37,13 +37,11 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // handler in events.js, and the boot-time restore in view.js all key
 // off this list. 'overview' is the default and is omitted from the
 // LAST_FILE_KEY suffix; an unrecognised value on restore falls back
-// to 'overview'. The legacy values 'packages' / 'files' / 'reports'
-// used to drive nested sub-tabs inside the Overview panel (now
-// three side-by-side columns); kept in the set so an older
-// persisted suffix like `b:<integrity> files` still validates and
-// the `overviewActive` predicate in render-bundle.js routes it to
-// the Overview tab on boot.
-export const BUNDLE_TABS = new Set(['overview', 'packages', 'files', 'reports', 'graph', 'treemap', 'issues', 'code', 'terminal'])
+// to 'overview', which gives a clean restore for older persisted
+// suffixes that named the long-removed nested-overview values
+// 'packages' / 'files' / 'reports' (no migration needed — they
+// just miss the set and fall back).
+export const BUNDLE_TABS = new Set(['overview', 'graph', 'treemap', 'advisories', 'issues', 'code', 'terminal'])
 
 // Persist a bundle selection to LAST_FILE_KEY, encoding the active
 // tab as `b:<integrity> <tab>`. The default 'overview' tab is dropped
@@ -88,7 +86,7 @@ const isStaleLoad = (captured) => captured !== loadGen
 // that. Both markers are filename-based; ingest doesn't validate
 // the shape — bundles are archived as-is so the analyzer pipeline
 // can consume them later.
-function bundleKind(name) {
+export function bundleKind(name) {
   const lower = stripDownloadDup(name.toLowerCase())
   if (lower.endsWith('.map')) return 'sourcemap'
   if (lower === 'stasis.code.br' || lower.endsWith('.stasis.code.br')) return 'stasis'

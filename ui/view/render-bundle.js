@@ -44,6 +44,7 @@ import { computeTransitiveCounts } from './file-counts.js'
 import { pkgColor } from './graph/utils.js'
 import { graph2 } from './graph/state.js'
 import { loadedGraphMod } from './graph-attach.js'
+import { ensureBundleAdvisories, renderBundleAdvisoriesTab, showAdvisoriesTab } from './render-bundle-advisories.js'
 // `render` is the orchestrator over in `render.js`; bundle code
 // calls it back after async source-highlight completes so the
 // next render() pass picks up the cached HTML. Module-level
@@ -1279,15 +1280,39 @@ function renderBundleCodeView(details) {
 // views.
 //
 // `state.bundleDetailsTab` carries the active tab. 'overview' is
-// the canonical Overview value; the legacy 'packages' / 'files' /
-// 'reports' values from older persisted LAST_FILE_KEY suffixes
-// also map to Overview (with the matching nested selection inside
-// `renderBundleSourcesPanel`), so a saved bundle view restores
-// without migration.
+// the canonical Overview value; older persisted suffixes that named
+// the long-removed nested-overview tabs ('packages' / 'files' /
+// 'reports') fail BUNDLE_TABS validation in view.js's boot restore
+// and fall back to 'overview' there — no migration needed.
 function renderBundleSlide(entry) {
+  // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
+  // non-stasis bundles hide immediately, stasis bundles stay
+  // optimistically visible across the parse window so a switch
+  // between two stasis bundles doesn't flicker the tab away mid-
+  // load, and v0 stasis bundles hide post-parse once we've
+  // confirmed there's no version metadata. The tab is rendered as
+  // the LEFTMOST entry on purpose, so the post-parse stamp-in for
+  // a fresh stasis bundle pushes the other tabs right rather than
+  // landing in their middle — no in-flight click theft.
+  const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails)
+  // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
+  // 'overview' when the tab button is hidden (sourcemap bundle,
+  // post-parse v0 stasis, or a persisted state carried over from
+  // another bundle). `showAdvisoriesTab` returns true through the
+  // parse window for stasis-by-filename bundles, so this coercion
+  // doesn't fire prematurely on a stasis → stasis navigation.
+  if (state.bundleDetailsTab === 'advisories' && !showAdvisories) {
+    state.bundleDetailsTab = 'overview'
+  }
   const tab = state.bundleDetailsTab
-  const overviewActive = tab === 'overview' || tab === 'packages'
-    || tab === 'files' || tab === 'reports'
+  const overviewActive = tab === 'overview'
+  // Kick the fetch lazily — only once the user has actually clicked
+  // into the Advisories tab AND granted consent. The cache is
+  // module-scoped (keyed by integrity); a re-render with the entry
+  // already cached is a no-op.
+  if (tab === 'advisories' && showAdvisories) {
+    ensureBundleAdvisories(state.bundleDetails, render).catch(() => {})
+  }
   // Issues is always in the tab strip — the body's empty state
   // ("No issues match this bundle's files.") covers the no-match
   // case, and keeping the button stable avoids two prior bugs:
@@ -1304,6 +1329,13 @@ function renderBundleSlide(entry) {
         <div class="bundles-slide-name">${entry.name}</div>
       </div>
       <div class="bundles-slide-tabs" role="tablist">
+        ${showAdvisories ? html`<button
+          type="button"
+          class=${classMap({ 'bundles-tab': true, active: tab === 'advisories' })}
+          data-bundle-tab="advisories"
+          aria-selected=${String(tab === 'advisories')}
+          role="tab"
+        >Advisories</button>` : nothing}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
@@ -1357,6 +1389,7 @@ function renderBundleSlide(entry) {
             ['treemap', () => html`<bundle-treemap .details=${state.bundleDetails}></bundle-treemap>`],
             ['code', () => renderBundleCodeView(state.bundleDetails)],
             ['issues', () => renderBundleIssuesList(state.bundleDetails)],
+            ['advisories', () => renderBundleAdvisoriesTab(state.bundleDetails)],
           ])}
     </div>
   </div>`

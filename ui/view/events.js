@@ -5,6 +5,7 @@ import { activeTabFor, findGroupById, findingReport, groupState, tabKey } from '
 import { resetFilters } from './filters.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
+import { grantAdvisoriesProxyConsent } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
 import { downloadReportsAsMarkdown } from './markdown-export.js'
@@ -81,7 +82,7 @@ function renderPreservingScrollOf(selector) {
 }
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { persistLastBundle, switchToFile } from './ingest.js'
+import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 
@@ -358,7 +359,7 @@ report.addEventListener('click', (e) => {
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (tab === 'overview' || tab === 'graph' || tab === 'treemap' || tab === 'issues' || tab === 'code' || tab === 'terminal') {
+    if (BUNDLE_TABS.has(tab)) {
       // Tear down the canvas when leaving Graph so its rAF /
       // observers stop. attachGraph2Interaction will re-wire on
       // re-entry.
@@ -374,6 +375,15 @@ report.addEventListener('click', (e) => {
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
       render()
     }
+    return
+  }
+  // Advisories tab — first-visit consent confirm. Writes the
+  // localStorage flag + re-renders; the Advisories body's
+  // ensureBundleAdvisories call then sees hasConsent() = true on
+  // the next pass and kicks the fetch.
+  if (e.target.closest('[data-advisories-consent]')) {
+    grantAdvisoriesProxyConsent()
+    render()
     return
   }
   // Bundle Issues row — report chip click. Each chip carries the
