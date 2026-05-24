@@ -27,7 +27,7 @@
 //   * `color-toggle(detail.color)` — fired when a button is
 //     clicked. The host adds/removes the value from
 //     `state.filterColors` and re-renders.
-import { LitElement, html } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 
 const COLORS = [
   ['none', 'none', 'unmarked'],
@@ -63,6 +63,12 @@ class TriageFilter extends LitElement {
 
   render() {
     const selected = new Set(this.selected)
+    // Hide the whole pill when there is nothing to filter from — no
+    // color (including `none`) has any count and nothing is active.
+    // Mirrors `<severity-chips>`'s empty-set guard so an empty
+    // toolbar row stays clean of placeholder chrome.
+    const hasAnything = COLORS.some(([color]) => (this.counts[color] ?? 0) || selected.has(color))
+    if (!hasAnything) return nothing
     return html`<div class="triage-filter" role="group" aria-label="Filter by mark color">
       ${COLORS.map(([color, tdClass, label]) => {
         const count = this.counts[color] ?? 0

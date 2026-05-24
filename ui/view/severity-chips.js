@@ -27,7 +27,7 @@
 //     re-render) vs. `graph2.selectedSeverities` (kind="graph" —
 //     surgical canvas redraw + chip property update only, no full
 //     re-render).
-import { LitElement, html } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 
 const TIERS = [
@@ -66,15 +66,18 @@ class SeverityChips extends LitElement {
 
   render() {
     const selected = new Set(this.selected)
+    // Keep selected zero-count chips visible so the user can always
+    // untoggle them — useful in the graph-tab usage where a severity
+    // filter can outlive its data (toggling a severity off in the
+    // canvas, then having the underlying graph data change).
+    const visibleTiers = TIERS.filter(([sev]) => (this.counts[sev] ?? 0) || selected.has(sev))
+    // Hide the whole wrapper when no tiers are visible — otherwise
+    // the bordered `.sev-chips` shell collapses to a thin vertical
+    // line next to the next toolbar control (visible glitch).
+    if (visibleTiers.length === 0) return nothing
     return html`<div class="sev-chips" role="group" aria-label="Filter by severity">
-      ${TIERS.map(([sev, label]) => {
+      ${visibleTiers.map(([sev, label]) => {
         const count = this.counts[sev] ?? 0
-        // Keep selected zero-count chips visible so the user can
-        // always untoggle them — useful in the graph-tab usage where
-        // a severity filter can outlive its data (toggling a
-        // severity off in the canvas, then having the underlying
-        // graph data change).
-        if (!count && !selected.has(sev)) return null
         const active = selected.has(sev)
         return html`<button
           type="button"

@@ -723,7 +723,14 @@ function resolveWorkspaceContext() {
 // and dispatch `severity-toggle` / `color-toggle` events; events.js
 // has the matching handlers. The CSS still lives in toolbar.css
 // (the components render to light DOM so those rules apply).
+// Gating the templates at the call site (rather than only relying on
+// the components' internal empty-set guards) keeps an empty
+// `<severity-chips>` / `<triage-filter>` from sitting in the toolbar's
+// flex row as a zero-content item that would still claim a `gap`
+// slot between its visible neighbours.
 function severityChipsTemplate(counts) {
+  const hasAny = Object.values(counts).some((n) => n > 0) || state.filterSeverities.size > 0
+  if (!hasAny) return nothing
   return html`<severity-chips
     counts=${JSON.stringify(counts)}
     selected=${JSON.stringify([...state.filterSeverities])}
@@ -731,6 +738,8 @@ function severityChipsTemplate(counts) {
 }
 
 function triageFilterTemplate(colorCounts) {
+  const hasAny = Object.values(colorCounts).some((n) => n > 0) || state.filterColors.size > 0
+  if (!hasAny) return nothing
   return html`<triage-filter
     counts=${JSON.stringify(colorCounts)}
     selected=${JSON.stringify([...state.filterColors])}
@@ -1833,12 +1842,21 @@ function renderImpl() {
     // user-controlled analyzer-type strings) flows through Lit's
     // auto-escape rather than a hand-rolled `esc()`. Empty template
     // when none of the empty-state branches matches.
+    //
+    // The last branch splits on whether the report contained any
+    // findings at all: an empty report reads as "No X issues found"
+    // (clean baseline), but a report whose findings have all been
+    // moved to a triage bucket reads as "All X issues triaged" so
+    // the user knows they cleared the queue rather than mistaking it
+    // for a no-op load.
     if (state.shownTriage && allGroups.length === 0) {
       emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No ${state.shownTriage} findings.</p>`
     } else if (filtered.length === 0 && allGroups.length > 0) {
       emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
     } else if (allGroups.length === 0) {
-      emptyStateTpl = html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
+      emptyStateTpl = mergedGroups.length > 0
+        ? html`<p style="color:var(--green)">All ${typeLabel} issues triaged.</p>`
+        : html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
     }
 
     pendingTableItems = null
