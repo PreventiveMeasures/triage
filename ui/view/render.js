@@ -17,6 +17,7 @@ import { renderTreeView } from './render-files.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
+import { attachPierreTree } from './pierre-tree-attach.js'
 import { packageOf } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
@@ -1545,6 +1546,21 @@ function renderImpl() {
       ) {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
+      }
+      // Code tab, Files mode — lazy-load `ui/pierre-trees.js`
+      // into the file-tree slot emitted by
+      // `renderBundleCodeFilesPanel`. The slot only exists when
+      // the Code tab is active AND `searchMode === 'files'`, so
+      // the unconditional query here is a no-op (and the attach
+      // is a cheap module-cache hit) when either branch shifts.
+      if (
+        state.selectedBundle &&
+        state.bundleDetailsTab === 'code' &&
+        state.bundleDetails &&
+        (state.bundleDetails.json || state.bundleDetails.bundle)
+      ) {
+        const pierreSlot = document.querySelector('#bundle-pierre-tree-slot')
+        if (pierreSlot) attachPierreTree(pierreSlot, state.bundleDetails, render)
       }
       report.classList.add('active')
       dropZone.classList.add('hidden')

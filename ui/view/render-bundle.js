@@ -209,7 +209,7 @@ export function countBundleTriageBuckets(details) {
 //              removal" but the bundle is still affected today.
 //              Invalid / deleted dismiss the issue entirely so we
 //              drop them from the bundle list.
-function bundleFindingsByFile(fileHashes, mode = 'graph') {
+export function bundleFindingsByFile(fileHashes, mode = 'graph') {
   if (!fileHashes || fileHashes.size === 0) return new Map()
   const result = new Map()
   for (const [file, hash] of fileHashes) {
@@ -809,183 +809,19 @@ export function renderBundleSourceModal() {
   </div>`
 }
 
-// Build a directory tree from a flat list of paths so the Code
-// slide's left rail can render as nested `<details>` elements.
-// Each tree node is `{ name, files: Map<basename, fullpath>,
-// dirs: Map<dirname, node> }`. Files are placed under their
-// immediate parent; dirs are nested by every '/'-separated
-// segment of the prefix. Returns the root node; callers walk
-// dirs first (sorted), then files (sorted).
-function buildBundleSourceTree(paths) {
-  const root = { name: '', files: new Map(), dirs: new Map() }
-  for (const p of paths) {
-    const parts = p.split('/')
-    let node = root
-    for (let i = 0; i < parts.length - 1; i++) {
-      const seg = parts[i]
-      let child = node.dirs.get(seg)
-      if (!child) {
-        child = { name: seg, files: new Map(), dirs: new Map() }
-        node.dirs.set(seg, child)
-      }
-      node = child
-    }
-    node.files.set(parts.at(-1), p)
-  }
-  return root
-}
-
-// User-driven open/close overrides for the Code slide's tree
-// rail, keyed by full dir path. The default `?open=` formula
-// (root + ancestors of currentPath = open, rest = closed) is
-// what we'd write in a fresh render; this Map records the
-// user's deliberate toggles on top of that, so a filter-typing
-// pass — which forces every dir open via `expandAll` — doesn't
-// erase the user's pre-filter state when the filter clears.
-//
-// Updated only on `<summary>` click, which the browser also
-// dispatches for keyboard activation (Enter / Space). Lit's own
-// `?open=` writes don't fire a click, so they never touch this
-// Map; the toggle event would, which is why we don't listen on
-// that side.
-//
-// Cleared when `state.selectedBundle` changes — paths from one
-// bundle don't carry meaning into another.
-const _bundleTreeUserOpen = new Map()
-let _bundleTreeMapBundle = null
-
-// Recursive directory + file rendering for the Code slide's tree
-// rail. Open the first level by default; deeper levels collapse
-// so the user can drill in. Selected file gets a `current` class
-// for the highlight strip; the click target is the data-bundle-
-// view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
-  const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
-  const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
-  // Auto-open dirs that contain the currently selected file so
-  // the tree spotlights it on slide-open.
-  const containsCurrent = (n) => {
-    if (!currentPath) return false
-    for (const p of n.files.values()) if (p === currentPath) return true
-    for (const d of n.dirs.values()) if (containsCurrent(d)) return true
-    return false
-  }
-  // `repeat` keyed by the dir / file path so Lit reuses existing
-  // `<details>` when the user types in the search box and the
-  // filtered tree rebuilds. The `?open=` formula layers three
-  // signals:
-  //   1. `expandAll` (filter-active) wins — the user typed a
-  //      filter and expects to see every match, even ones in
-  //      dirs they had previously closed.
-  //   2. The user's explicit toggles — captured below by the
-  //      `<summary>` click handler — win over the default. This
-  //      is what restores the pre-filter tree state when the
-  //      user clears the search box: dirs the user had open
-  //      stay open, dirs they hadn't touched go back to default.
-  //   3. The default — root open, ancestors of currentPath open,
-  //      everything else closed.
-  // Lit's part-cache short-circuits when the computed value
-  // matches the last committed one, so renders that don't change
-  // anyone's effective state issue zero attribute writes.
-  const computeOpen = (childPath, child) => {
-    if (expandAll) return true
-    if (_bundleTreeUserOpen.has(childPath)) return _bundleTreeUserOpen.get(childPath)
-    return depth === 0 || containsCurrent(child)
-  }
-  // Click on `<summary>` toggles the parent `<details>`; the
-  // browser fires a click for both mouse and keyboard activation
-  // (Enter / Space on a focused summary). Record the upcoming
-  // open state — the click handler runs before the default
-  // action, so `parentElement.open` is the OLD value here. A
-  // separate `@toggle` listener would also catch Lit's own
-  // attribute writes (expandAll renders), which we explicitly
-  // do NOT want to record; clicks side-step that entirely.
-  const onSummaryClick = (childPath) => (e) => {
-    _bundleTreeUserOpen.set(childPath, !e.currentTarget.parentElement.open)
-  }
-  return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
-    ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
-      const childPath = parentPath ? `${parentPath}/${name}` : name
-      return html`<li class="bundle-code-tree-dir">
-        <details ?open=${computeOpen(childPath, child)}>
-          <summary @click=${onSummaryClick(childPath)}>${name}</summary>
-          ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath, expandAll)}
-        </details>
-      </li>`
-    })}
-    ${repeat(files, ([, full]) => full, ([name, full]) => {
-      // Per-file issue chip — tiny pill with the count, colored by
-      // the worst severity present on the file. Skipped when the
-      // file has no matched findings (keeps clean files quiet).
-      const findings = issueIndex?.get(full)
-      const sev = findings && findings.length > 0 ? _topSeverityOf(findings) : null
-      const count = findings?.length ?? 0
-      return html`<li class="bundle-code-tree-file">
-        <button
-          type="button"
-          class=${classMap({ 'bundle-code-tree-link': true, current: full === currentPath })}
-          data-bundle-view-source=${full}
-          title=${full}
-        >
-          <span class="bundle-code-tree-name">${name}</span>
-          ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
-        </button>
-      </li>`
-    })}
-  </ul>`
-}
-
-// Files-mode result pane — the directory tree, optionally
-// filtered to paths matching `query` (case-insensitive
-// substring on the prefix-stripped path the user actually sees
-// in the rail). Empty query renders the full tree. The filtered
-// tree is rebuilt from scratch (rather than hiding nodes) so the
-// auto-open `containsCurrent` logic in renderBundleSourceTree
-// falls out naturally on hits.
-function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '') {
-  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
-  const q = query.toLowerCase()
-  // Walk the (already-remapped) tree to collect every full path
-  // whose prefix-stripped form contains the query. Matching
-  // against the stripped form keeps the filter UX consistent
-  // with what the rail prefix label promises ("paths under here
-  // are RELATIVE to <prefix>").
-  const matches = []
-  const collect = (n) => {
-    for (const [, child] of n.dirs) collect(child)
-    for (const [, full] of n.files) {
-      const view = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full
-      if (view.toLowerCase().includes(q)) matches.push(full)
-    }
-  }
-  collect(tree)
-  if (matches.length === 0) {
-    return html`<div class="bundle-code-search-empty">No files match.</div>`
-  }
-  // Build a fresh tree from the STRIPPED forms of the matches so
-  // the visual hierarchy doesn't waste rows on a shared prefix
-  // that's already shown above the rail. Files at the leaves are
-  // remapped back to original paths so the click delegate's
-  // `data-bundle-view-source=${full}` resolves against
-  // `sources` (which keys by the original path).
-  const stripped = prefix
-    ? matches.map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p))
-    : matches
-  const strippedToOrig = new Map()
-  for (let i = 0; i < matches.length; i++) strippedToOrig.set(stripped[i], matches[i])
-  const filtered = buildBundleSourceTree(stripped)
-  const remap = (n) => {
-    const remappedFiles = new Map()
-    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
-    n.files = remappedFiles
-    for (const d of n.dirs.values()) remap(d)
-  }
-  remap(filtered)
-  // expandAll: filtered tree only contains matches; every dir
-  // exists because something inside it matched, so opening them
-  // all means the user sees every hit at a glance instead of
-  // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, '', true)
+// Files-mode result pane — emits the slot div that
+// `ui/view/pierre-tree-attach.js` populates with the lazy-loaded
+// `<pierre-tree>` element. Path derivation (prefix strip,
+// stripped→original remap, per-file issue-count decorations) and
+// search-query handoff happen inside the attach helper, so this
+// template stays a placeholder with no inputs: the attach call
+// reads `state.bundleDetails`, `state.bundleSourceFile`, and
+// `state.bundleCodeSearchQuery` directly. Filter UX still flows
+// through the existing search input — non-empty queries arrive
+// at `<pierre-tree>` via its `query` setter, which routes to the
+// tree's built-in search session.
+function renderBundleCodeFilesPanel() {
+  return html`<div id="bundle-pierre-tree-slot" class="bundle-pierre-tree-slot"></div>`
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1138,34 +974,13 @@ function renderBundleCodeView(details) {
   if (sources.size === 0) {
     return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
   }
-  // Drop the user-toggled tree state when the open bundle
-  // changes — paths from one bundle don't carry meaning into
-  // another (and same-named paths between bundles probably
-  // aren't intended to share open state).
-  if (_bundleTreeMapBundle !== state.selectedBundle) {
-    _bundleTreeUserOpen.clear()
-    _bundleTreeMapBundle = state.selectedBundle
-  }
+  // Files-mode tree lives in the lazy-loaded `<pierre-tree>`
+  // element (see `ui/view/pierre-tree-attach.js`); the panel's
+  // own derivation here only needs the common prefix label and
+  // total path count for the rail header. Path → tree handoff is
+  // done inside the attach helper, which reads state directly.
   const allPaths = [...sources.keys()].toSorted()
-  const { prefix, stripped } = stripCommonPathPrefix(allPaths)
-  // Tree built from STRIPPED paths so the visual hierarchy
-  // doesn't waste horizontal space on a shared root prefix.
-  // Stripped → original mapping lets the click handlers (and
-  // sources.get) recover the full key.
-  const strippedToOrig = new Map()
-  for (let i = 0; i < allPaths.length; i++) strippedToOrig.set(stripped[i], allPaths[i])
-  // Build a tree node whose file values are ORIGINAL paths so the
-  // tree-link buttons can hand them to data-bundle-view-source
-  // directly. We feed buildBundleSourceTree stripped-keyed paths
-  // and remap files at the leaves.
-  const tree = buildBundleSourceTree(stripped)
-  const remap = (n) => {
-    const remappedFiles = new Map()
-    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
-    n.files = remappedFiles
-    for (const d of n.dirs.values()) remap(d)
-  }
-  remap(tree)
+  const { prefix } = stripCommonPathPrefix(allPaths)
   const path = state.bundleSourceFile
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -1246,7 +1061,7 @@ function renderBundleCodeView(details) {
       </div>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
-          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)],
+          ['files', () => renderBundleCodeFilesPanel()],
           ['code', () => renderBundleCodeContentResults(sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
         ])}

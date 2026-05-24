@@ -830,80 +830,31 @@
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
 }
-/* Tree — nested `<details>` elements for dirs, buttons for
-   files. Compact monospace; selected file picks up an accent
-   strip on the left edge. */
-.bundle-code-tree {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 .6rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .72rem;
+/* File tree slot — populated post-render by
+   `pierre-tree-attach.js` with a `<pierre-tree>` custom element
+   (lazy-loaded `@pierre/trees`). The tree virtualizes rows
+   against its container's measured height, so the slot needs an
+   explicit height; we drop the rail-body's padding + overflow
+   when the slot is its child so the tree owns the full rail
+   height and its own scrollbar (rather than stacking the rail's
+   on top of the tree's). `:has()` keeps the override scoped to
+   Files mode — Code / Issues modes paint into the same body
+   without the slot and keep the original padded-block layout. */
+.bundle-code-rail-body:has(.bundle-pierre-tree-slot) {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.bundle-code-tree.root { padding-left: 0; }
-.bundle-code-tree-dir > details > summary {
-  padding: .15rem 0 .15rem .25rem;
-  color: var(--text);
-  user-select: none;
-  list-style: none;
+.bundle-pierre-tree-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: block;
 }
-.bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
-.bundle-code-tree-dir > details > summary::before {
-  content: '▸ ';
-  color: var(--muted);
-}
-.bundle-code-tree-dir > details[open] > summary::before { content: '▾ '; }
-.bundle-code-tree-file { padding: 0; }
-.bundle-code-tree-link {
-  display: flex; align-items: center; gap: .35rem;
+.bundle-pierre-tree-slot pierre-tree {
+  display: block;
   width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: .15rem .25rem .15rem .9rem;
-  color: var(--muted);
-  font: inherit;
-  border-radius: 3px;
-}
-.bundle-code-tree-link:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-/* Selection — solid accent-tinted background. Avoids the
-   inset box-shadow strip the prior version used; that strip
-   picked up the button's border-radius and rendered as a
-   curved sliver at the top/bottom. A flat tint reads as a
-   single highlighted row without the visual artefact. */
-.bundle-code-tree-link.current {
-  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
-  color: var(--text);
-}
-.bundle-code-tree-name {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Per-file issue count chip — small severity-tinted pill on the
-   row's right edge. Compact: dark text on the severity color
-   (mirrors the .badge palette) so the count reads at a glance
-   without dominating the row. */
-.bundle-code-tree-count {
-  flex-shrink: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .6rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  padding: 0 .3rem;
-  min-width: 1.25rem;
-  text-align: center;
-  border-radius: 7px;
-  color: #000;
-  &.sev-critical      { background: var(--critical); }
-  &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
-  &.sev-high_bug      { background: var(--high-bug); }
-  &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
+  height: 100%;
 }
 
 /* Right column — header (selected file path) + body (source +
