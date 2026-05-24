@@ -30,3 +30,13 @@
 body.theme-light #styled-tooltip {
   background: rgb(246 248 250 / .96);
 }
+
+/* Pink theme — mirrors the light override but pulls the fill from
+   the pink surface palette so the tooltip reads as part of the
+   themed chrome rather than the default dark slab. Alpha bumped
+   to .96 (vs --surface's .72) for the same reason as the light
+   override: tooltips need to stay legible over arbitrary backdrops
+   without leaning entirely on the backdrop-filter blur. */
+body.theme-pink #styled-tooltip {
+  background: rgb(255 224 240 / .96);
+}

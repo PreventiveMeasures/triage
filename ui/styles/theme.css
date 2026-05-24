@@ -1,12 +1,16 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* Default = dark. The light theme is opt-in via `body.theme-light` —
-   set by view/theme.js from a localStorage flag. We deliberately do
-   NOT honor `prefers-color-scheme`: dark-by-default is part of the
-   product's identity (the report viewer is meant to feel like an IDE
-   panel, not a document). The graph-tab canvas stays dark in both
-   modes — colors there are baked into draw calls, not CSS, and the
-   canvas reads as a stand-alone visualization regardless.
+/* Default = dark. Other themes are opt-in via `body.theme-${name}`,
+   set by view/theme.js from a localStorage flag. The `<theme-toggle>`
+   button cycles between dark and light only; `green` and `pink` are
+   reachable from the console via `DeepView.setTheme(name)` (see
+   view/api.js). We deliberately do NOT honor `prefers-color-scheme`:
+   dark-by-default is part of the product's identity (the report
+   viewer is meant to feel like an IDE panel, not a document). The
+   graph-tab canvas has its own per-theme palette baked into
+   view/graph/canvas.js (a CSS-var round-trip per draw frame would
+   cost too much); pink + light land on the light canvas palette,
+   dark + green on the dark one.
 
    Matte-glass aesthetic: the body holds a soft multi-color radial
    gradient (per-theme stops via --gradient-stop-*); chrome panels use
@@ -101,13 +105,22 @@
      the `--accent` swap below. */
   accent-color: var(--accent);
 
-  /* Tell the UA to render unstyled native chrome (scrollbars,
-     `<select>` popups, etc.) in dark mode. Without this Chromium
-     defaults to a light-themed scrollbar even on a dark page, so
-     containers that don't set their own `scrollbar-color` (e.g.
-     the bundle code-view's file tree) show as a bright bar over
-     dark surface. body.theme-light flips it below. */
+  /* Tell the UA to render unstyled native chrome (`<select>` popups,
+     date pickers, etc.) in dark mode. Scrollbars are handled
+     explicitly below via `scrollbar-color`; without `color-scheme`
+     other UA widgets would still default to a light treatment.
+     body.theme-light flips it below. */
   color-scheme: dark;
+
+  /* Global scrollbar tint — every scrollbar on the page inherits
+     these unless a descendant rule overrides them. The thumb pulls
+     from `--border`, which each theme retunes, so the page-level
+     scrollbar picks up the green wash in `theme-green`, the pink
+     wash in `theme-pink`, etc. The per-component overrides in
+     styles/findings.css are now redundant (they re-state the same
+     `var(--border) transparent` value) but harmless. */
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
 }
 
 body.theme-light {
@@ -165,6 +178,106 @@ body.theme-light {
      in-graph tree-count-chip / tt-chip variants stay on the dark
      palette (graph view doesn't follow the theme). */
   & .tree-view .tree-count-chip.low { color: #fff; }
+}
+
+/* Green — easter-egg theme reachable only via
+   `DeepView.setTheme('green')`. Same dark-mode structural pattern
+   as the default (color-scheme: dark, dark-text-friendly mark-bgs
+   inherited from :root), but the text + accent + body gradient all
+   retune to the classic terminal-green palette so the whole page
+   reads as a Matrix-style shell — chrome panels, links, badges and
+   the body blob halos all pick up the green via the shared vars.
+   The font-family + text-shadow swap below leans further into the
+   shell aesthetic: every label / paragraph / heading shifts to a
+   mono stack and picks up a subtle phosphor glow. Code blocks
+   (which already declare their own mono family) are unaffected. */
+body.theme-green {
+  color-scheme: dark;
+  --bg: #050a05;
+  --theme-bar: #0a140a;
+  --surface: rgb(15 30 15 / .78);
+  --border: #1a3a1a;
+  --text: #41ff41;
+  --muted: #4dac4d;
+  --accent: #0f6;
+  --critical: #ff5a3d;
+  --high: #ffa030;
+  --medium: #ffd34a;
+  --low: #4dac4d;
+  --green: #00ff41;
+  --high-bug: #b58148;
+  --bug: #6a7a6a;
+  --info: #56c3ff;
+  --surface-active: #15301a;
+  --gradient-stop-a: rgb(0 255 65 / .08);
+  --gradient-stop-b: rgb(0 255 100 / .05);
+  --gradient-stop-c: rgb(0 200 60 / .04);
+  --shadow-glass: 0 1px 2px rgb(0 0 0 / .35);
+  --graph-canvas-bg: #020802;
+  --graph-hover-bg: rgb(0 255 65 / .06);
+  --graph-divider: rgb(65 255 65 / .25);
+  /* Mono stack. ui-monospace picks the platform's preferred mono
+     (SF Mono on macOS, Cascadia on Windows, Ubuntu Mono on Linux);
+     the fallbacks cover older browsers. Overrides the body rule
+     below via specificity (`body.theme-green` > `body`). */
+  font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Source Code Pro', Menlo, Consolas, monospace;
+  /* Phosphor glow — kept low-opacity / small-radius so the text
+     stays sharp at small sizes; at higher values it smears the
+     glyph edges and hurts readability. Inherits everywhere, so
+     headings + body text + chrome labels all pick it up. */
+  text-shadow: 0 0 6px rgb(0 255 65 / .25);
+}
+
+/* Pink — easter-egg theme reachable only via
+   `DeepView.setTheme('pink')`. Mirrors the light-theme structural
+   pattern (color-scheme: light, pastel mark-bgs sized for dark text)
+   but warmed all the way through: every neutral picks up a magenta
+   tilt and the body gradient stops shift to hot-pink / fuchsia /
+   blush so the glass panels frost a pink wash. */
+body.theme-pink {
+  color-scheme: light;
+  --bg: #ffebf4;
+  --theme-bar: #ffe4ee;
+  --surface: rgb(255 224 240 / .72);
+  --border: #ffb3d6;
+  --text: #5c0040;
+  --muted: #a13a72;
+  --accent: #ff1a85;
+  --critical: #cf222e;
+  --high: #bc4c00;
+  --medium: #f0c040;
+  --low: #a13a72;
+  --green: #1d8c3c;
+  --high-bug: #a85a14;
+  --bug: #8c5e6c;
+  --info: #218bff;
+  --surface-active: #ffd1e8;
+  --gradient-stop-a: rgb(255 105 180 / .14);
+  --gradient-stop-b: rgb(255 20 147 / .08);
+  --gradient-stop-c: rgb(255 192 203 / .06);
+  --shadow-glass: 0 1px 2px rgb(0 0 0 / .04);
+  --graph-canvas-bg: #fff0f7;
+  --graph-hover-bg: rgb(0 0 0 / .04);
+  --graph-divider: rgb(208 132 178 / .5);
+  /* Same retint reason as `body.theme-light`: text turned dark so
+     the dark mark-bg palette from :root would swallow it; pastels
+     keep the row tint readable. */
+  --mark-red-bg: #ffc1bd;   --mark-red-tab-border: #ff8182;
+  --mark-blue-bg: #a5d6ff;  --mark-blue-tab-border: #54aeff;
+  --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
+  --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
+  --badge-low-text: #fff;
+  /* Pink leans into the playful palette with Comic Sans — same
+     specificity trick as `body.theme-green`'s mono override (a
+     `body.theme-*` selector beats the bare `body` font-family rule
+     further down). Inherits across the shadow boundary into every
+     custom element that doesn't set its own font-family; the
+     sidebar's per-row mono overrides need their own opt-out
+     because they re-declare font-family on a specific descendant —
+     see view/sidebar.css's `:host-context(body.theme-pink)` block.
+     Code blocks, badges, monospace IDs etc. all set their own
+     family so they're unaffected. */
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive;
 }
 
 body {

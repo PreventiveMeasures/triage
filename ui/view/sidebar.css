@@ -401,6 +401,11 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .76rem;
+    /* Pin to the line-box the default mono font + .76rem produces
+       (14.5px). Pink theme drops the mono override and inherits
+       Comic Sans, whose taller intrinsic metrics ballooned the row
+       to 17px — explicit line-height holds the rhythm steady. */
+    line-height: 14.5px;
   }
 }
 
@@ -464,7 +469,27 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .76rem;
+    /* Pin to the line-box the default mono font + .76rem produces
+       (14.5px). Pink theme drops the mono override and inherits
+       Comic Sans, whose taller intrinsic metrics ballooned the row
+       to 17px — explicit line-height holds the rhythm steady. */
+    line-height: 14.5px;
   }
+}
+
+/* Pink theme — drop the per-row mono overrides so the sidebar
+   inherits the body font (Comic Sans, set on `body.theme-pink` in
+   styles/theme.css). `:host-context` walks across the shadow
+   boundary so a `body.theme-pink` ancestor in light DOM still gates
+   these rules from inside the sidebar's shadow stylesheet. The
+   selectors mirror the three mono declarations above (rename
+   input, file label, bundle-missing label) so specificity wins
+   over the originals; everything else in the sidebar already used
+   `font: inherit` and just picks up the body font automatically. */
+:host-context(body.theme-pink) .workspace-rename-input,
+:host-context(body.theme-pink) .file-item button.file-name .file-label,
+:host-context(body.theme-pink) .file-item.bundle-missing .file-label {
+  font-family: inherit;
 }
 
 /* Drag-and-drop visuals — assigning a report to a workspace by
