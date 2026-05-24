@@ -164,22 +164,22 @@ function fileItemTemplate(n, opts = {}) {
   ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
-function groupHeaderTemplate(label, count, opts = {}) {
+function groupHeaderTemplate(label, opts = {}) {
   const cls = `file-group-header${opts.dropTarget ? ' default-reports' : ''}`
   return html`<li
     class=${cls}
     data-default-reports=${opts.dropTarget ? 'true' : nothing}
-  ><span class="group-label">${label}</span>${count > 0 ? html`<span class="group-count">${count}</span>` : nothing}</li>`
+  ><span class="group-label">${label}</span></li>`
 }
 
 // Workspaces section header — same chrome as a regular bucket header,
-// but the right slot carries a plus button instead of a count chip.
+// but the right slot carries a plus button.
 // `data-action="new-workspace"` is what the sidebar click delegate
 // dispatches on; the chip's title gives the affordance a tooltip
 // mirroring the "Delete current" button below.
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
-function workspaceHeaderTemplate(count) {
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button><span class="group-count">${count}</span></span></li>`
+function workspaceHeaderTemplate() {
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
 }
 
 // Packages + Repositories live as compact icon buttons to the right of
@@ -284,16 +284,10 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
-function workspaceItemTemplate(w, presentCount, missingCount = 0) {
+function workspaceItemTemplate(w) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
-  // Count chip shows the count of locally-resolvable items
-  // (reports-on-disk + bundles-on-disk). Missing bundles are surfaced
-  // as a parenthetical "+N" suffix when present, so the badge reads
-  // "5 +2" — five items the user can act on, two pointers to bundles
-  // they don't have. Without the split, a 1-present / 4-missing
-  // workspace would advertise "5" while only 1 row is interactive.
   // Clicking the workspace's main button loads every report in the
   // workspace into a single merged view (handled by the `.file-item`
   // click delegate against the dataset.workspaceId). The
@@ -317,17 +311,7 @@ function workspaceItemTemplate(w, presentCount, missingCount = 0) {
   // (TBD) — we don't park a placeholder trash icon here because
   // that misreads as "Delete is the same action as Leave, just
   // greyed out".
-  // When `presentCount === 0 && missingCount > 0`, show just "+N"
-  // instead of "0 +N" — the leading zero reads as "0 items, plus 2"
-  // which is mildly confusing when the workspace has no interactive
-  // rows at all. The hover title still carries the precise count.
-  const missingTitle = `${missingCount} bundle pointer${missingCount === 1 ? '' : 's'} not present on this device`
-  const countLabel = missingCount > 0
-    ? (presentCount > 0
-      ? html`${presentCount}<span class="workspace-count-missing" title=${missingTitle}> +${missingCount}</span>`
-      : html`<span class="workspace-count-missing" title=${missingTitle}>+${missingCount}</span>`)
-    : html`${presentCount}`
-  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>${presentCount > 0 || missingCount > 0 ? html`<span class="file-count workspace-count">${countLabel}</span>` : nothing}</li>`
+  return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
 }
 
 function matchesSearch(name) {
@@ -455,7 +439,7 @@ export async function renderSidebar() {
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
-    ${workspaceHeaderTemplate(visibleWorkspaces.length)}
+    ${workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
       // Resolve bundle integrities to their metadata + filter by search.
@@ -477,9 +461,8 @@ export async function renderSidebar() {
           missingBundles.push(integ)
         }
       }
-      const presentCount = visibleReports.length + presentBundles.length
       return html`
-        ${workspaceItemTemplate(w, presentCount, missingBundles.length)}
+        ${workspaceItemTemplate(w)}
         ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
         ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
         ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
@@ -490,7 +473,7 @@ export async function renderSidebar() {
       const isDefault = g === 'default'
       if (list.length === 0 && !(isDefault && isDraggingReport)) return null
       return html`
-        ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, list.length, { dropTarget: isDefault })}
+        ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, { dropTarget: isDefault })}
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}

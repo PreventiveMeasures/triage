@@ -318,10 +318,10 @@
   width: 18px; height: 18px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid transparent; border-radius: 4px;
   padding: 0;
 
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
+  &:hover { color: var(--text); border-color: var(--accent); }
 }
 
 /* Workspace row layout: name (flex-fill) | hover-revealed export
