@@ -270,7 +270,7 @@
      same container so it doesn't drag either; trade-off for
      reliable scroll.) */
   -webkit-app-region: no-drag; app-region: no-drag;
-  padding: 0 .35rem .25rem; margin: 0;
+  padding: 0 .35rem .25rem 0; margin: 0;
   /* Thin scrollbar that doesn't fight the glass surface. */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
@@ -380,8 +380,24 @@
    hover / current to read as a card-like pill. */
 .file-item {
   list-style: none;
+  position: relative;
 
   &.hidden { display: none; }
+}
+
+/* Active-row indicator — small accent chip flush against the sidebar's
+   left edge, rounded on the right side so it reads as "tucked under"
+   the row. Hover state intentionally leaves it off; the chip is the
+   selection cue, not a hover affordance. */
+.file-item.current::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 18px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  pointer-events: none;
 }
 
 .file-item button.file-name {
@@ -389,7 +405,7 @@
   width: 100%; box-sizing: border-box;
   padding: .2rem .3rem .2rem .45rem;
   background: transparent; color: var(--text);
-  border: 1px solid transparent; border-radius: 5px;
+  border: 1px solid transparent; border-radius: 0 5px 5px 0;
   font-family: inherit; font-size: .78rem;
   text-align: left;
 
@@ -441,9 +457,6 @@
    themes. */
 .file-item.indented button.file-name {
   padding-left: 1.3rem;
-}
-.file-item.indented {
-  position: relative;
 }
 .file-item.indented::before {
   content: ''; position: absolute;

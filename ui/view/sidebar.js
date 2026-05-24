@@ -196,7 +196,7 @@ function renderViewButton(id, count, viewName) {
   if (badge) badge.textContent = String(count)
 }
 
-function bundlesHeaderTemplate(count) {
+function bundlesHeaderTemplate() {
   // Plain label — not a navigation target. The section is an
   // always-expanded category for bundles that don't belong to any
   // workspace, so there's nothing for a click to switch to.
@@ -206,7 +206,7 @@ function bundlesHeaderTemplate(count) {
   // is dragged outside any workspace block; the drop handler then
   // routes to setBundleWorkspace(integrity, null).
   return html`<li class="file-group-header bundles-header" data-default-bundles="true">
-    <span class="group-label">Bundles</span>${count > 0 ? html`<span class="group-count">${count}</span>` : nothing}
+    <span class="group-label">Bundles</span>
   </li>`
 }
 
@@ -477,7 +477,7 @@ export async function renderSidebar() {
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}
-    ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate(unfiledBundles.length) : null}
+    ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate() : null}
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
 
