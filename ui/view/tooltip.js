@@ -18,11 +18,14 @@
 // only shows when the row's label is actually truncated (skip when
 // the label fits) while the bundle view shows unconditionally.
 //
-// Placement: below the mouse cursor. The previous right-of-element
-// anchor pushed tooltips off the right edge for any row near the
-// viewport right, and overlapped the next column inside the bundle
-// Overview grid. Below-cursor naturally stays within the column the
-// user is hovering and clamps to the viewport on the horizontal axis.
+// Placement: 'cursor' (default) anchors the tooltip's top edge to
+// `mouseY + CURSOR_GAP_PX` and clamps horizontally to stay in the
+// viewport — natural for in-column rows where right-of-element
+// would overlap the next column. 'right' anchors the tooltip to
+// the right edge of the hovered element, vertically centered —
+// used by the sidebar where rows are pinned to the left side of
+// the viewport and the tooltip lands in the empty main-content
+// gutter to the right.
 
 let tipEl
 function ensureEl() {
@@ -37,9 +40,10 @@ let currentTarget = null
 let showTimer = null
 
 // Last known cursor position — captured by the passive mousemove
-// listener below. The tooltip anchors to this on show so the popup
-// follows the cursor's location at the moment the show fires (after
-// the SHOW_DELAY_MS hover delay), not the element's geometry.
+// listener below. The default 'cursor' placement anchors to this so
+// the popup follows the cursor's location at the moment the show
+// fires (after the SHOW_DELAY_MS hover delay), not the element's
+// geometry.
 let lastClientX = 0
 let lastClientY = 0
 let mouseTracked = false
@@ -57,31 +61,41 @@ const SHOW_DELAY_MS = 100
 // Vertical offset between the cursor and the top of the tooltip.
 // Just enough to clear the cursor sprite without feeling detached.
 const CURSOR_GAP_PX = 14
+// Horizontal gap from the element's right edge in 'right' placement.
+const RIGHT_GAP_PX = 8
 // Horizontal margin reserved between the tooltip and the viewport
 // edge when clamping.
 const VIEWPORT_MARGIN_PX = 8
 
-export function showTooltip(el) {
+export function showTooltip(el, { placement = 'cursor' } = {}) {
   const node = ensureEl()
   if (currentTarget === el) return
   const text = el.dataset.tooltip ?? ''
   if (!text) return
   node.textContent = text
-  // Position below the cursor's last known location. Measure the
-  // tooltip's width first so we can clamp horizontally — without
-  // the clamp, hovering an element near the right edge of the
-  // viewport (or near the right edge of a narrow column) would
-  // push the tooltip past the right edge.
-  //
-  // The tooltip is `position: fixed`, so clientX / clientY are the
-  // right anchor frame (no scroll offset needed).
-  node.style.top = `${lastClientY + CURSOR_GAP_PX}px`
-  node.style.left = '0px'
+  if (placement === 'right') {
+    // Anchor to the element's right edge, vertically centered on
+    // its midline. Used by the sidebar — rows sit at the left side
+    // of the viewport so there's always room to the right.
+    const rect = el.getBoundingClientRect()
+    node.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+    node.style.left = `${Math.round(rect.right + RIGHT_GAP_PX)}px`
+    node.style.transform = 'translateY(-50%)'
+  } else {
+    // 'cursor' (default) — anchor below the cursor's last known
+    // location, then clamp horizontally so the right edge stays
+    // inside the viewport. Tooltip is `position: fixed`, so
+    // clientX / clientY are the right anchor frame.
+    node.style.transform = 'none'
+    node.style.top = `${lastClientY + CURSOR_GAP_PX}px`
+    node.style.left = '0px'
+    node.classList.add('visible')
+    const tipW = node.offsetWidth
+    const maxLeft = window.innerWidth - tipW - VIEWPORT_MARGIN_PX
+    const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(lastClientX, maxLeft))
+    node.style.left = `${Math.round(left)}px`
+  }
   node.classList.add('visible')
-  const tipW = node.offsetWidth
-  const maxLeft = window.innerWidth - tipW - VIEWPORT_MARGIN_PX
-  const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(lastClientX, maxLeft))
-  node.style.left = `${Math.round(left)}px`
   currentTarget = el
 }
 
@@ -94,10 +108,11 @@ export function hideTooltip() {
 
 // Pluggable show predicate. Called pre-display; return false to
 // suppress (e.g., sidebar's truncation gate). Default: always show.
-export function scheduleTooltip(el, { gate } = {}) {
+// `placement` is forwarded to `showTooltip` when the timer fires.
+export function scheduleTooltip(el, { gate, placement } = {}) {
   if (gate && !gate(el)) return
   clearTimeout(showTimer)
-  showTimer = setTimeout(() => { showTooltip(el) }, SHOW_DELAY_MS)
+  showTimer = setTimeout(() => { showTooltip(el, { placement }) }, SHOW_DELAY_MS)
 }
 
 // Document-level handler — wires once at boot, covers every
@@ -120,3 +135,4 @@ export function installGlobalTooltipListener() {
     hideTooltip()
   })
 }
+

@@ -857,6 +857,11 @@ function onFileListMouseover(e) {
   const el = e.target.closest('[data-tooltip]')
   if (!el) { hideTooltip(); return }
   scheduleTooltip(el, {
+    // Sidebar rows sit on the left edge of the viewport, so anchor
+    // the tooltip to the row's right side (vertically centered).
+    // The default cursor-anchored placement is for in-column lists
+    // in the main pane.
+    placement: 'right',
     gate: (node) => {
       const label = node.querySelector('.file-label')
       if (!label) return true
