@@ -292,7 +292,7 @@
    first surviving header is whichever bucket happens to be top. */
 .file-group-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: .45rem .35rem .2rem;
+  padding: .45rem .35rem .2rem .55rem;
   font-size: .62rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: .12em;
   color: var(--muted);
@@ -403,7 +403,7 @@
 .file-item button.file-name {
   display: flex; align-items: center; gap: .5rem;
   width: 100%; box-sizing: border-box;
-  padding: .2rem .3rem .2rem .45rem;
+  padding: .2rem .3rem .2rem .55rem;
   background: transparent; color: var(--text);
   border: 1px solid transparent; border-radius: 0 5px 5px 0;
   font-family: inherit; font-size: .78rem;
