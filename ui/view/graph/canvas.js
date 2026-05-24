@@ -65,10 +65,39 @@ const G2_THEMES = {
     labelHover: 'rgba(20, 25, 35, 0.95)',
     labelSelected: '#000',
   },
+  // Pink mirrors light — the package palette, label colours, edge
+  // hue and select ring all already read well on a soft pink wash —
+  // but pulls the canvas fill toward the body's pink so the graph
+  // surface doesn't read as a grey island inside the pink chrome.
+  // Same hue/saturation as --bg (HSL ≈330° 100%) but one step
+  // lighter (97% vs the body's 96%) so the canvas reads as a
+  // lifted panel sitting above the page.
+  pink: {
+    bg: '#fff0f7',
+    grid: 'rgba(0, 0, 0, 0.04)',
+    selectRing: '#0969da',
+    edgeIntra: 'rgba(50, 70, 100, ALPHA)',
+    hubRing: 'rgba(0, 0, 0, ALPHA)',
+    labelFill: 'rgba(40, 50, 70, 0.85)',
+    labelShadow: 'rgba(255, 255, 255, 0.95)',
+    labelOutline: 'rgba(255, 255, 255, 0.9)',
+    labelDefault: 'rgba(50, 60, 80, 0.85)',
+    labelHover: 'rgba(20, 25, 35, 0.95)',
+    labelSelected: '#000',
+  },
 }
 
 function currentTheme() {
-  return document.body.classList.contains('theme-light') ? G2_THEMES.light : G2_THEMES.dark
+  // Each named light-style theme picks its own G2_THEMES entry so
+  // the canvas fill matches the surrounding page chrome. Anything
+  // unmatched (default dark, theme-green) falls through to dark.
+  // The body-class observer in attachGraph2Interaction requestDraws
+  // on any class swap, so swapping themes via DeepView.setTheme
+  // repaints the canvas with the new palette.
+  const c = document.body.classList
+  if (c.contains('theme-pink')) return G2_THEMES.pink
+  if (c.contains('theme-light')) return G2_THEMES.light
+  return G2_THEMES.dark
 }
 
 // 0..1 → 2-digit hex alpha — appended to a 6-digit hex color so we

@@ -2,6 +2,7 @@ import { patchEntry, saveTriage, state } from '#client/index.js'
 import { triageSync } from './client-sync.js'
 import { render } from './render.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
+import { getTheme, setTheme, themes } from './theme.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups
@@ -127,6 +128,16 @@ window.DeepView = {
   get currentWorkspace() { return state.currentWorkspace },
 
   triage,
+
+  // Theme switcher. The `<theme-toggle>` chrome button only ever
+  // cycles between 'dark' and 'light'; the full `themes` list also
+  // includes the 'green' / 'pink' easter-egg themes that are
+  // reachable only through `setTheme(name)` here. Persists to
+  // localStorage and re-paints the WCO title-bar via the meta
+  // theme-color tag. Throws TypeError on an unknown name.
+  themes,
+  setTheme,
+  get theme() { return getTheme() },
 
   // WebSocket sync for triage data — disabled until a server URL is
   // set. Sends/receives `{ type: 'triage-update', changes: [{ id,

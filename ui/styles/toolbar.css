@@ -241,7 +241,7 @@ view-mode-buttons { display: contents; }
     padding: 0 .55rem;
     display: inline-flex; align-items: center;
     transition: background .12s, color .12s;
-    font-family: inherit; font-size: .8rem;
+    font-family: inherit; font-size: .75rem;
 
     &:not(:last-child) { border-right: 1px solid var(--border); }
     &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
