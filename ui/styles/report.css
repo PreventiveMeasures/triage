@@ -378,6 +378,17 @@
   color: var(--muted);
 }
 .bundles-slide-icon > svg { display: block; }
+.bundles-slide-back {
+  flex-shrink: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .25rem .55rem;
+  font-family: inherit;
+  font-size: .8rem;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}
 .bundles-slide-title {
   flex: 1; min-width: 0;
 }
@@ -385,6 +396,12 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .85rem;
   color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundles-slide-integrity {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .65rem;
+  color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
