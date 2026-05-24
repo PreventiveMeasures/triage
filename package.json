@@ -44,6 +44,7 @@
     "server/index.ts",
     "server/lifecycle.ts",
     "server/neon-driver.ts",
+    "server/npm-proxy.ts",
     "server/objstore/blob-fs.ts",
     "server/objstore/blob-vercel.ts",
     "server/objstore/blob.ts",

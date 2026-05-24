@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import type { WebSocketServer } from 'ws'
 import { type ObjstoreRestDeps, handleRest, matchRoute } from './objstore/rest.ts'
 import { SSE_OPEN_PATH, type SseServer } from './sse-server.ts'
+import { dispatchNpmAdvisories } from './npm-proxy.ts'
 import { loadStatic } from './static.ts'
 import { errStack } from './util.ts'
 
@@ -75,6 +76,13 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       // the lifecycle's sseSessions() close loop.
       if (sseServer.handle(req, res)) return
     }
+    // npm advisories proxy — same-origin + shutdown gates live in the
+    // helper so this dispatcher stays compact. `dispatchNpmAdvisories`
+    // returns the in-flight promise (or null when the route didn't
+    // match); the lifecycle's `track` awaits it so SIGTERM drains
+    // outstanding upstream fetches.
+    const npmP = dispatchNpmAdvisories(req, res, { isOriginAllowed, isShuttingDown, debug })
+    if (npmP) { track(npmP); return }
     if (matchRoute(req.url) != null) {
       // Shutdown gate. The WS plane gates new messages on `shuttingDown`;
       // REST handlers go through a separate path and must mirror it.
