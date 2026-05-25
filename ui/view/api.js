@@ -2,6 +2,7 @@ import { patchEntry, saveTriage, state } from '#client/index.js'
 import { triageSync } from './client-sync.js'
 import { render } from './render.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
+import { getMergedGroups } from './group.js'
 import { getTheme, setTheme, themes } from './theme.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
@@ -119,8 +120,8 @@ window.DeepView = {
   // current shape. Returns shallow copies — mutating the returned
   // arrays doesn't touch `state`.
   get reports() { return state.reports.slice() },
-  get groups() { return state.reports.flatMap((r) => r.groups) },
-  get findings() { return state.reports.flatMap((r) => r.groups.flat()) },
+  get groups() { return getMergedGroups() },
+  get findings() { return getMergedGroups().flat() },
 
   // Identifies the active load: one of these is set when something
   // is open, both null on the empty drop-zone screen.

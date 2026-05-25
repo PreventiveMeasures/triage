@@ -126,9 +126,90 @@ export function groupState(group) {
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
 
-export function findGroupById(gid) {
-  for (const r of state.reports) {
-    for (const g of r.groups) if (groupKey(g) === gid) return g
+// Flatten every loaded report's groups into the workspace overall
+// list, applying `state.workspaceMerges` so groups bound together by
+// a cross-report dedup hint render as a single super-group. Each
+// merge instruction is a Set of finding ids in the order the source
+// combined entry listed them — that order is the canonical one (the
+// upstream dedup pass deliberately picked a primary), so the
+// assembled super-group sorts its members by merge-instruction
+// order, falling back to load order for anything no instruction
+// mentioned (e.g. a member of a multi-finding source group the
+// merge only named once). Per-report `state.reports[*].groups` is
+// untouched — single-report views and per-report iteration keep
+// their original shape; only the merged display uses this view.
+export function getMergedGroups() {
+  const allGroups = state.reports.flatMap((r) => r.groups)
+  const merges = state.workspaceMerges
+  if (!merges || merges.length === 0) return allGroups
+  const parent = allGroups.map((_, i) => i)
+  const find = (i) => {
+    let r = i
+    while (parent[r] !== r) r = parent[r]
+    while (parent[i] !== r) { const next = parent[i]; parent[i] = r; i = next }
+    return r
   }
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
+  const idToIdx = new Map()
+  for (let i = 0; i < allGroups.length; i++) {
+    for (const f of allGroups[i]) if (f.id) idToIdx.set(f.id, i)
+  }
+  for (const merge of merges) {
+    let first = -1
+    for (const id of merge) {
+      const idx = idToIdx.get(id)
+      if (idx === undefined) continue
+      if (first === -1) first = idx
+      else union(first, idx)
+    }
+  }
+  // Walk allGroups in order; first hit on each root opens its slot in
+  // the output (so the merged super-group lands at the position of
+  // its earliest member). Members are then ordered by merge-instruction
+  // order — first-recorded instruction wins; ids no instruction names
+  // get appended in load order.
+  const seenRoots = new Set()
+  const merged = []
+  for (let i = 0; i < allGroups.length; i++) {
+    const root = find(i)
+    if (seenRoots.has(root)) continue
+    seenRoots.add(root)
+    const findings = []
+    for (let j = i; j < allGroups.length; j++) {
+      if (find(j) === root) findings.push(...allGroups[j])
+    }
+    const idSet = new Set(findings.map((f) => f.id).filter(Boolean))
+    const canonical = []
+    const placed = new Set()
+    for (const merge of merges) {
+      for (const id of merge) {
+        if (placed.has(id)) continue
+        if (idSet.has(id)) { canonical.push(id); placed.add(id) }
+      }
+    }
+    if (canonical.length === 0) {
+      merged.push(findings)
+      continue
+    }
+    const byId = new Map()
+    for (const f of findings) {
+      if (f.id && !byId.has(f.id)) byId.set(f.id, f)
+    }
+    const used = new Set()
+    const ordered = []
+    for (const id of canonical) {
+      const f = byId.get(id)
+      if (f) { ordered.push(f); used.add(f) }
+    }
+    for (const f of findings) {
+      if (!used.has(f)) ordered.push(f)
+    }
+    merged.push(ordered)
+  }
+  return merged
+}
+
+export function findGroupById(gid) {
+  for (const g of getMergedGroups()) if (groupKey(g) === gid) return g
   return null
 }
