@@ -188,13 +188,18 @@
 .triage-state-btn.active.triage-state-invalid { color: var(--muted); }
 .triage-state-btn.active.triage-state-ignored { color: var(--accent, #2563eb); }
 
-/* `<view-mode-buttons>` styles live outside `.toolbar` so the same
-   chrome lands wherever the component is mounted — the findings
-   toolbar AND the Files-tab `.tree-toolbar`. `display: contents`
-   on the host flattens it out of layout so the icon group becomes
-   a direct flex item of whichever toolbar row wraps it, picking
-   up its `gap` alongside the sort dropdown and filter chips. */
-view-mode-buttons { display: contents; }
+/* `<view-mode-buttons>` and `<triage-selector>` styles live outside
+   `.toolbar` so the same chrome lands wherever the components are
+   mounted — the findings toolbar, the Files-tab `.tree-toolbar`, the
+   graph topbar, the Packages / Repositories toolbars. `display:
+   contents` on the host flattens it out of layout so the wrapper
+   div becomes a direct flex item of whichever toolbar row wraps it,
+   picking up its `gap` alongside the sort dropdown and filter chips.
+   `<triage-selector>` additionally needs this so the host (which
+   may resolve to `nothing` when there is no bucket to switch to)
+   doesn't claim a flex slot. */
+view-mode-buttons,
+triage-selector { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

@@ -44,7 +44,6 @@ export function renderTopBar(graph, options) {
   const hideAllFiles = options.hideAllFiles ?? false
   const triageCounts = options.triageCounts ?? { fixed: 0, invalid: 0, deleted: 0 }
   const triageStates = options.triageStates ?? ['fixed', 'invalid', 'deleted']
-  const shownTriage = options.shownTriage ?? null
   // Severity highlight pills — same tier set as the findings
   // tab (critical, high, medium, low, high_bug, bug,
   // informational from format.js's SEVERITIES). Skip tiers
@@ -80,32 +79,15 @@ export function renderTopBar(graph, options) {
   }
   const hasAnyColor = COLORS.some((c) => colorCounts[c] > 0 || graph2.selectedColors.has(c))
 
-  // Triage state selector — replaces the prior single Trash button.
-  // Buttons (Fixed / Invalid / Deleted, plus Ignored in the
-  // findings-tab graph) carry data-triage-show for the events.js
-  // delegate (state.shownTriage flip + canvas teardown). The
-  // bundle path passes precomputed counts without `ignored`
-  // (ignore is per-report and intentionally absent from the bundle
-  // selector since the bundle aggregates findings across reports);
-  // the findings-tab path passes counts including `ignored` so its
-  // selector renders the fourth button when applicable. Caller is
-  // also responsible for `shownTriage` (mirrors `state.shownTriage`)
-  // so this template stays uncoupled from the global state shape.
-  const triageTotal = triageStates.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
-  const triageBtn = (triageTotal > 0 || shownTriage) ? html`<div class="triage-selector graph2-triage-selector" role="group" aria-label="Triage view">
-    ${triageStates.map((s) => {
-      const n = triageCounts[s] ?? 0
-      const active = shownTriage === s
-      if (n === 0 && !active) return null
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
-        data-triage-show=${s}
-        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
-        aria-pressed=${String(active)}
-      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
-    })}
-  </div>` : null
+  // Triage state selector — `<triage-selector variant="graph">`. The
+  // bundle path passes `triageStates = ['fixed', 'invalid', 'deleted']`
+  // (no Ignored; ignore is per-report and the bundle aggregates across
+  // reports); the findings-tab path passes all four. The component
+  // reads `state.shownTriage` itself and handles its own visibility.
+  // `variant="graph"` adds `.graph2-triage-selector` to the inner
+  // wrapper so events.js's click delegate routes through the canvas-
+  // teardown path instead of plain render().
+  const triageBtn = html`<triage-selector variant="graph" .counts=${triageCounts} .states=${triageStates}></triage-selector>`
 
   // "All files" controls the FILE SET, not just rendering —
   // flipping it rebuilds the graph (different nodes, different

@@ -257,34 +257,16 @@ function packagesToolbarTemplate(triageCounts) {
       <option value="reports-desc">Reports ↓</option>
       <option value="name-asc">Name A→Z</option>
     </select></span>
-    ${packagesTriageSelectorTemplate(triageCounts)}
+    <triage-selector variant="packages" .counts=${triageCounts} .states=${PACKAGES_TRIAGE_STATES}></triage-selector>
   </div>`
 }
 
-// Triage selector for the Packages page — same shape the bundle
-// graph topbar uses (Fixed / Invalid / Deleted, no Ignored
-// because ignore is per-report and treated as untriaged here).
-// Hidden when every bucket is empty AND we're in the live view —
-// nothing to switch to.
-function packagesTriageSelectorTemplate(triageCounts) {
-  const states = ['fixed', 'invalid', 'deleted']
-  const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
-  if (total === 0 && !state.shownTriage) return nothing
-  return html`<div class="triage-selector packages-triage-selector" role="group" aria-label="Triage view">
-    ${states.map((s) => {
-      const n = triageCounts[s] ?? 0
-      const active = state.shownTriage === s
-      if (n === 0 && !active) return nothing
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
-        data-triage-show=${s}
-        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
-        aria-pressed=${String(active)}
-      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
-    })}
-  </div>`
-}
+// Packages page triage selector now lives in `<triage-selector
+// variant="packages">` (see view/triage-selector.js). The 3-bucket
+// state list (no `ignored` — that's per-report and treated as
+// untriaged in this view) is the only thing the call site has to
+// pass; everything else is handled by the component.
+const PACKAGES_TRIAGE_STATES = ['fixed', 'invalid', 'deleted']
 
 // In-place sort by the user-selected key. Every option falls back
 // to alphabetical name ordering on ties so the list stays stable

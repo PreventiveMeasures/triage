@@ -138,29 +138,15 @@ function repositoriesToolbarTemplate(triageCounts) {
       <option value="reports-desc">Reports ↓</option>
       <option value="name-asc">Name A→Z</option>
     </select></span>
-    ${repositoriesTriageSelectorTemplate(triageCounts)}
+    <triage-selector variant="packages" .counts=${triageCounts} .states=${REPOSITORIES_TRIAGE_STATES}></triage-selector>
   </div>`
 }
 
-function repositoriesTriageSelectorTemplate(triageCounts) {
-  const states = ['fixed', 'invalid', 'deleted']
-  const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
-  if (total === 0 && !state.shownTriage) return nothing
-  return html`<div class="triage-selector packages-triage-selector" role="group" aria-label="Triage view">
-    ${states.map((s) => {
-      const n = triageCounts[s] ?? 0
-      const active = state.shownTriage === s
-      if (n === 0 && !active) return nothing
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
-        data-triage-show=${s}
-        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
-        aria-pressed=${String(active)}
-      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
-    })}
-  </div>`
-}
+// Repositories page triage selector now lives in `<triage-selector
+// variant="packages">` (see view/triage-selector.js). Reuses the
+// packages variant — same 3-bucket state list, same marker class
+// (`.packages-triage-selector`) so events.js's click routing applies.
+const REPOSITORIES_TRIAGE_STATES = ['fixed', 'invalid', 'deleted']
 
 function sortRepositories(arr, sortBy) {
   const cmp = sortBy === 'name-asc'

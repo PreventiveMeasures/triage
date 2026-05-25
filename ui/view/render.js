@@ -750,35 +750,10 @@ function triageFilterTemplate(colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-// Triage state selector — replaces the prior single Trash button.
-// Renders as 3 buttons (Fixed / Invalid / Deleted) showing each
-// bucket's count; the active one toggles back to the live view.
-// Hidden entirely when every bucket is empty AND the user isn't
-// already in a triage view (nothing to switch to). Each button
-// carries data-triage-show=<state> so events.js can flip
-// state.shownTriage; the live view (no triage filter) is just the
-// "all unset" mode reached by clicking the active button again.
-function triageSelectorTemplate(triageCounts) {
-  const states = ['fixed', 'invalid', 'deleted', 'ignored']
-  const total = states.reduce((n, s) => n + (triageCounts[s] ?? 0), 0)
-  if (total === 0 && !state.shownTriage) return nothing
-  return html`<div class="triage-selector" role="group" aria-label="Triage view">
-    ${states.map((s) => {
-      const n = triageCounts[s] ?? 0
-      const active = state.shownTriage === s
-      // Show bucket buttons only when the bucket has entries OR is
-      // the currently-active view (so the user can toggle back).
-      if (n === 0 && !active) return nothing
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
-        data-triage-show=${s}
-        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
-        aria-pressed=${String(active)}
-      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
-    })}
-  </div>`
-}
+// Triage state selector now lives in `<triage-selector>` (see
+// view/triage-selector.js). The component reads `state.shownTriage`
+// directly via StateElement and decides its own visibility — the
+// host can drop it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode } = flags
@@ -844,7 +819,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
             aria-label="Confidence range"></range-slider>
           <conf-range-mirror id="conf-range-vals" class="conf-vals" for="conf-range" .low=${state.filterConfMin} .high=${state.filterConfMax}></conf-range-mirror>
         </div>` : nothing}
-      ${kanbanMode ? nothing : triageSelectorTemplate(triageCounts)}
+      ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
          field, all inline so they read as one composable filter strip.
@@ -1511,17 +1486,15 @@ function renderImpl() {
             // so the toggle would have nothing to filter against).
             const hideAllFiles = !prep.hasEdges
             const triageCounts = countBundleTriageBuckets(state.bundleDetails)
-            // Pass `state.shownTriage` through as an option (the
-            // graph render code doesn't import the client `state`
-            // shape itself — keeps the lazy `ui/graph.js` bundle
-            // free of secure-storage / workspaces / etc.). The
-            // bundle path always uses the 3-bucket triage selector
-            // (no `ignored` — that's a per-report concern).
+            // The triage selector inside the bundle graph topbar
+            // reads `state.shownTriage` directly (via
+            // `<triage-selector>`); the bundle path always uses the
+            // 3-bucket form (no `ignored` — that's a per-report
+            // concern).
             const options = {
               hideAllFiles,
               triageCounts,
               triageStates: ['fixed', 'invalid', 'deleted'],
-              shownTriage: state.shownTriage,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
@@ -1983,7 +1956,6 @@ function renderImpl() {
         extraTopRow: viewModeRow,
         triageCounts: findingsTriageCounts,
         triageStates: ['fixed', 'invalid', 'deleted', 'ignored'],
-        shownTriage: state.shownTriage,
       }
       // First open of the graph view-mode kicks the dynamic
       // import of `ui/graph.js`; subsequent opens reuse the
