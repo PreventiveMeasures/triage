@@ -8,7 +8,7 @@ import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, remoteBundleName, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, configureDepsDir, fileLink, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
+import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
@@ -990,7 +990,7 @@ function kanbanCardTemplate(g, opts = {}) {
   const { variant = 'kanban', active = false } = opts
   const groupSt = groupState(g)
   const activeTab = activeTabFor(g)
-  const title = firstLine(stripExportMarker(activeTab.description, activeTab.exportName)) || '(untitled finding)'
+  const title = firstLine(stripExportMarker(activeTab.description, activeTab)) || '(untitled finding)'
   const isKanban = variant === 'kanban'
   const classes = {
     'kanban-card': true,
@@ -1367,11 +1367,12 @@ function findingsBodyTemplate(filtered) {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback ?? state.repoUrl)
     const meta = formatRunMeta(p)
+    const displayName = findingDisplayName(p)
     return html`<div class="flat-group">
       <div class="flat-group-loc">
         <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback ?? state.repoUrl)}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
-        ${p.exportName ? html`<span class="meta">${p.exportName}</span>` : nothing}
+        ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${findingCardPlaceholder(g, true)}
