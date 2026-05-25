@@ -80,6 +80,16 @@ function renderPreservingScrollOf(selector) {
   const after = document.querySelector(selector)
   if (after) after.scrollTop = top
 }
+
+// Row-internal interactions (tab switch, triage popover action, mark-color,
+// comment / fix dialog save, details-panel close) all re-render the page
+// after mutating per-tab state. In table mode that subtree lives inside
+// `<finding-table>`, so a bare render() resets scrollTop on
+// `.findings-table-list`. Call this instead.
+function renderPreservingTableScroll() {
+  if (state.viewMode === 'table') renderPreservingScrollOf('.findings-table-list')
+  else render()
+}
 import { openBundle } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
@@ -708,7 +718,7 @@ report.addEventListener('click', (e) => {
     const gid = findingEl.dataset.gid
     const tid = tabEl.dataset.tid
     state.activeTabByGroup.set(gid, tid)
-    render()
+    renderPreservingTableScroll()
     return
   }
   // Triage menu action — clicked option inside the native
@@ -759,7 +769,7 @@ report.addEventListener('click', (e) => {
     }
     try { popover.hidePopover() } catch {}
     saveTriage()
-    render()
+    renderPreservingTableScroll()
     return
   }
   // Comment button — open the multi-line <comment-dialog> with
@@ -783,7 +793,7 @@ report.addEventListener('click', (e) => {
       if (next === null) return null
       patchEntry(state.triage, activeKey, { comment: next || undefined })
       saveTriage()
-      render()
+      renderPreservingTableScroll()
       return null
     }).catch(() => {})
     return
@@ -862,7 +872,7 @@ report.addEventListener('click', (e) => {
       if (next === null) return null
       patchEntry(state.triage, activeKey, { fix: next || undefined })
       saveTriage()
-      render()
+      renderPreservingTableScroll()
       return null
     }).catch(() => {})
     return
@@ -907,7 +917,7 @@ report.addEventListener('click', (e) => {
   // re-renders so the list expands back to full width.
   if (e.target.closest('[data-table-deselect]')) {
     state.tableSelectedGid = null
-    render()
+    renderPreservingTableScroll()
     return
   }
   // Files-tab table view: row click toggles the file selection
@@ -978,7 +988,7 @@ report.addEventListener('row-select', (e) => {
   const gid = e.detail?.gid
   if (!gid) return
   state.tableSelectedGid = state.tableSelectedGid === gid ? null : gid
-  renderPreservingScrollOf('.findings-table-list')
+  renderPreservingTableScroll()
 })
 
 // Kanban drag-and-drop. A `<finding-row class="kanban-card">` is
@@ -1417,7 +1427,7 @@ report.addEventListener('mark-color', (e) => {
   if (current === color) patchEntry(state.triage, activeKey, { color: undefined })
   else patchEntry(state.triage, activeKey, { color })
   saveTriage()
-  render()
+  renderPreservingTableScroll()
 })
 
 // Print button — fixed top-right icon, lives OUTSIDE #report (see
