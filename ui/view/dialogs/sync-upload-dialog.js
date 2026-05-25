@@ -112,6 +112,10 @@ class SyncUploadDialog extends AppDialog {
       <header><h3>Upload to remote</h3></header>
       <p class="lwd-body">${intro}</p>
       ${list}
+      <p class="nwd-note">
+        End-to-end encrypted with the workspace key — only workspace
+        members can decrypt the uploaded content.
+      </p>
       ${this._errorsSection()}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
