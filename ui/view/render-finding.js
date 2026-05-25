@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, state } from '#client/index.js'
-import { commitUrl, fileUrl, formatRunMeta, isHttpUrl, stripExportMarker } from './format.js'
+import { commitUrl, fileUrl, findingDisplayName, formatRunMeta, isHttpUrl, stripExportMarker } from './format.js'
 import { activeTabFor, groupKey, groupState, isIgnored, sortTabs, tabKey } from './group.js'
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
@@ -397,7 +397,8 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   // the file here because there's no surrounding header above; list /
   // grouped modes hide the `.line-row` via `:host([in-group])` since
   // `.flat-group-loc` / `.file-header` already paint the same info
-  // above the card. exportName joins with a comma when present.
+  // above the card. exportName (or `exportName.methodName` when the
+  // finding carries both) joins with a comma when present.
   const url = fileUrl(f.file, f.repo?.github, f._repoFallback ?? state.repoUrl)
   const lineNum = parseInt(f.line, 10)
   const hasLine = Number.isFinite(lineNum)
@@ -405,9 +406,9 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const locLink = url
     ? html`<a href=${hasLine ? `${url}#L${lineNum}` : url} target="_blank" rel="noopener">${locText}</a>`
     : locText
-  const exportName = f.exportName ?? ''
-  const lineRowMain = exportName
-    ? html`<span class="line-num">${locLink}, ${exportName}</span>`
+  const exportLabel = findingDisplayName(f)
+  const lineRowMain = exportLabel
+    ? html`<span class="line-num">${locLink}, ${exportLabel}</span>`
     : html`<span class="line-num">${locLink}</span>`
   const meta = formatRunMeta(f)
   // npm chip in the focused finding view's line-row — surfaces the
@@ -453,7 +454,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       >Code</button>`
     }
   }
-  const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f.exportName))
+  const { title: descTitle, body: descBody } = splitDescription(stripExportMarker(f.description, f))
   return html`<div class=${classMap({ 'tab-body': true, active: isActive })} data-tid=${key}>
     ${total > 1 ? html`<div class="print-case-label">${idx + 1} of ${total}</div>` : nothing}
     <div class="finding-left">
@@ -471,8 +472,8 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       </div>
       ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}
       ${descBody ? html`<div class="desc">${renderHighlighted(descBody)}</div>` : nothing}
-      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f.exportName))}</div>` : nothing}
-      ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f.exportName))}</div>` : nothing}
+      ${f.recommendation ? html`<div class="recommendation">Recommendation: ${renderHighlighted(stripExportMarker(f.recommendation, f))}</div>` : nothing}
+      ${f.confidenceReason ? html`<div class="conf-reason">${renderHighlighted(stripExportMarker(f.confidenceReason, f))}</div>` : nothing}
       ${comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${comment}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
@@ -579,9 +580,10 @@ export function tableRowInnerTemplate(g) {
   const activeKey = tabKey(active)
   const f = active
 
-  const title = firstLine(stripExportMarker(f.description, f.exportName))
+  const title = firstLine(stripExportMarker(f.description, f))
   const typeLabel = formatRunMeta(f)
-  const exportPart = f.exportName ? `, ${f.exportName}` : ''
+  const exportLabel = findingDisplayName(f)
+  const exportPart = exportLabel ? `, ${exportLabel}` : ''
 
   return html`
     <div class="row-score">

@@ -1,6 +1,6 @@
 import { state } from '#client/index.js'
 import { downloadBlob } from './dom.js'
-import { commonPrefix, stripExportMarker } from './format.js'
+import { commonPrefix, findingDisplayName, stripExportMarker } from './format.js'
 import { isIgnored, tabKey } from './group.js'
 
 // Markdown serializer for the "download report" toolbar button —
@@ -47,10 +47,11 @@ function findingToMarkdown(f) {
   const ignored = isIgnored(f)
   const color = entry?.color
   const comment = entry?.comment ?? ''
-  const description = stripExportMarker(f.description ?? '', f.exportName)
+  const description = stripExportMarker(f.description ?? '', f)
+  const displayName = findingDisplayName(f)
 
-  const heading = f.exportName
-    ? `### ${locationStr(f)} - ${f.exportName}`
+  const heading = displayName
+    ? `### ${locationStr(f)} - ${displayName}`
     : `### ${locationStr(f)}`
   const lines = [heading, '']
 
@@ -69,15 +70,15 @@ function findingToMarkdown(f) {
     lines.push('')
   }
   if (f.recommendation) {
-    lines.push(`**Recommendation:** ${stripExportMarker(f.recommendation, f.exportName).trim()}`)
+    lines.push(`**Recommendation:** ${stripExportMarker(f.recommendation, f).trim()}`)
     lines.push('')
   }
   if (f.confidenceReason) {
-    lines.push(`**Confidence reason:** ${stripExportMarker(f.confidenceReason, f.exportName).trim()}`)
+    lines.push(`**Confidence reason:** ${stripExportMarker(f.confidenceReason, f).trim()}`)
     lines.push('')
   }
   if (f.fix) {
-    lines.push(`**Fix:** ${stripExportMarker(f.fix, f.exportName).trim()}`)
+    lines.push(`**Fix:** ${stripExportMarker(f.fix, f).trim()}`)
     lines.push('')
   }
   if (comment) {

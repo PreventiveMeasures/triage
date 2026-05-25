@@ -113,17 +113,36 @@ export function stripPackagePrefix(file) {
 }
 
 // Strip `[export: <name>]` markers from prose when they match the
-// finding's own `exportName`. Isolate-mode injects these markers into
-// every finding/CRITICAL line of a merged per-file response so the
-// merge stays traceable to individual exports (see src/isolate.js),
-// but once post-process has lifted the name out into `f.exportName`
-// the inline marker just duplicates metadata already on the finding.
-// Markers whose name does NOT match `f.exportName` are left alone —
-// they're still useful context (e.g. "this export affects <other>").
-export function stripExportMarker(text, exportName) {
-  if (!exportName || !text) return text
-  const escaped = exportName.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  return text.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
+// finding's own `exportName` or `methodName`. Isolate-mode injects
+// these markers into every finding/CRITICAL line of a merged per-file
+// response so the merge stays traceable to individual exports (see
+// src/isolate.js), but once post-process has lifted the name out into
+// `f.exportName` / `f.methodName` the inline marker just duplicates
+// metadata already on the finding. Markers whose name does NOT match
+// either field are left alone — they're still useful context (e.g.
+// "this export affects <other>").
+export function stripExportMarker(text, f) {
+  if (!text) return text
+  const names = [f?.exportName, f?.methodName].filter(Boolean)
+  if (names.length === 0) return text
+  let result = text
+  for (const name of names) {
+    const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    result = result.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
+  }
+  return result
+}
+
+// User-visible label for a finding's export/method location. When a
+// finding carries both `exportName` and `methodName` and they differ,
+// the label joins them as `exportName.methodName` (a class export with
+// a specific method). Matching values collapse to one. Returns '' when
+// neither is set.
+export function findingDisplayName(f) {
+  const e = f?.exportName
+  const m = f?.methodName
+  if (e && m && e !== m) return `${e}.${m}`
+  return e || m || ''
 }
 
 // Searchable text for `state.filterInclude`. Joins the user-visible
