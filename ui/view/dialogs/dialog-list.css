@@ -65,6 +65,19 @@
   & li + li { margin-top: .2rem; }
   & strong { color: var(--text); font-weight: 600; }
 }
+/* Inline kind chip after a bundle filename in the sync-upload /
+   sync-download item lists, so bundles read as distinct from
+   reports in mixed lists. */
+.lwd-kind-tag {
+  display: inline-block; vertical-align: middle;
+  margin-left: .3rem;
+  padding: 0 .35rem;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: rgb(from var(--text) r g b / .04);
+  color: var(--muted);
+  font-size: .62rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+}
 /* Inline name field under the Rename radio in <import-conflict-dialog>.
    Tightens the .nwd-input spacing so it sits inside the radio's text
    column rather than spanning the full dialog width. */
