@@ -135,13 +135,13 @@ export function renderTopBar(graph, options) {
     </div>` : null}
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${hasAnyVisible ? html`<severity-chips
-      counts=${JSON.stringify(issueCounts)}
-      selected=${JSON.stringify([...graph2.selectedSeverities])}
+      .counts=${issueCounts}
+      .selected=${[...graph2.selectedSeverities]}
       kind="graph"
     ></severity-chips>` : null}
     ${hasAnyColor ? html`<triage-filter
-      counts=${JSON.stringify(colorCounts)}
-      selected=${JSON.stringify([...graph2.selectedColors])}
+      .counts=${colorCounts}
+      .selected=${[...graph2.selectedColors]}
       kind="graph"
     ></triage-filter>` : null}
     <!-- Path / package substring filter — same .toolbar-search shell

@@ -7,18 +7,33 @@
 // Replaces the inline `severityChipsHtml(counts)` builder in
 // render.js. Was a string-concatenated block of ~20 lines that
 // interpolated counts and per-tier classes; making it a component
-// gives it its own scope for the click handler, lets the host pass
-// props instead of having the function read `state.filterSeverities`
-// directly, and keeps the rendered chips consistent with the
-// per-tier styling that lives in toolbar.css's `.sev-chip` block.
+// scopes the click handler, keeps the rendered chips consistent
+// with the per-tier styling in toolbar.css's `.sev-chip` block, and
+// (for the findings kind) lets the active highlight self-sync via
+// StateElement instead of riding on a parent-passed prop.
 //
-// Properties (decoded from attributes so the host can render this
-// element into innerHTML without a follow-up property assignment):
-//   * `counts` — JSON object `{ critical, high, medium, low,
-//     high_bug, bug, informational }`. Tiers with `0` (or missing)
-//     are skipped.
-//   * `selected` — JSON array of currently-active tier names.
-//     Empty array = no filter (all chips read as inactive).
+// Reactivity (kind="findings"): extends StateElement, so reads of
+// `state.filterSeverities` inside render() are auto-tracked and
+// the chips re-highlight without the host re-passing `selected`.
+// Counts still come in via the `counts` property because computing
+// them requires the filter pipeline output the parent already has.
+//
+// Reactivity (kind="graph"): `graph2.*` lives outside the
+// `store()`-wrapped state, so its reads aren't tracked by
+// observer-util. The graph topbar keeps passing `selected` via Lit
+// property binding and events.js's severity-toggle handler pushes a
+// fresh array into `el.selected` on every toggle — both paths drive
+// updates through Lit's property setter, not the autorun. DO NOT
+// drop the explicit `el.selected = [...]` push in events.js thinking
+// StateElement will pick it up; for the graph kind, it won't.
+//
+// Properties (`attribute: false` — passed by reference via Lit's
+// `.prop=${...}` property binding; no attribute reflection):
+//   * `counts`   — `{ critical, high, medium, low, high_bug, bug,
+//                  informational }`. Tiers with `0` (or missing)
+//                  are skipped.
+//   * `selected` — array of currently-active tier names; consulted
+//                  only when kind="graph".
 //
 // Events (bubble + composed:true):
 //   * `severity-toggle(detail.severity, detail.kind)` — fired when a
@@ -27,8 +42,10 @@
 //     re-render) vs. `graph2.selectedSeverities` (kind="graph" —
 //     surgical canvas redraw + chip property update only, no full
 //     re-render).
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
+import { StateElement } from '@rray/frontend/state-element'
+import { state } from '#client/index.js'
 
 const TIERS = [
   ['critical',      'Critical'],
@@ -40,10 +57,10 @@ const TIERS = [
   ['informational', 'Info'],
 ]
 
-class SeverityChips extends LitElement {
+class SeverityChips extends StateElement {
   static properties = {
-    counts:   { type: Object },
-    selected: { type: Array },
+    counts:   { attribute: false },
+    selected: { attribute: false },
     // Identifies which state slot the host is wiring up — see the
     // `severity-toggle` description above. Default 'findings'.
     kind:     { type: String },
@@ -65,7 +82,12 @@ class SeverityChips extends LitElement {
   }
 
   render() {
-    const selected = new Set(this.selected)
+    // Findings kind reads state directly via StateElement's autorun;
+    // graph kind keeps using the `selected` prop because graph2 lives
+    // outside the observable store. See module header.
+    const selected = this.kind === 'graph'
+      ? new Set(this.selected)
+      : state.filterSeverities
     // Keep selected zero-count chips visible so the user can always
     // untoggle them — useful in the graph-tab usage where a severity
     // filter can outlive its data (toggling a severity off in the

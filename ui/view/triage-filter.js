@@ -27,14 +27,19 @@
 //
 // Reactivity (kind="graph"): `graph2.*` lives outside the
 // `store()`-wrapped state, so its reads aren't tracked by
-// observer-util. The graph topbar keeps passing `selected` as a
-// JSON prop and the render path picks that up via the explicit
-// `kind === 'graph'` branch below.
+// observer-util. The graph topbar keeps passing `selected` via Lit
+// property binding and events.js's color-toggle handler pushes a
+// fresh array into `el.selected` on every toggle — both paths drive
+// updates through Lit's property setter, not the autorun. DO NOT
+// drop the explicit `el.selected = [...]` push in events.js thinking
+// StateElement will pick it up; for the graph kind, it won't.
 //
-// Properties:
-//   * `counts`   — JSON object `{ none, red, blue, green, gray }`.
-//   * `selected` — JSON array of currently-active color names
-//                  (only consulted when kind="graph").
+// Properties (`attribute: false` — passed by reference via Lit's
+// `.prop=${...}` property binding; no attribute reflection):
+//   * `counts`   — `{ none, red, blue, green, gray }` (per-color
+//                  totals from the parent's filter pipeline).
+//   * `selected` — array of currently-active color names; consulted
+//                  only when kind="graph".
 //
 // Events (bubble + composed:true):
 //   * `color-toggle(detail.color)` — fired when a button is
@@ -54,8 +59,8 @@ const COLORS = [
 
 class TriageFilter extends StateElement {
   static properties = {
-    counts:   { type: Object },
-    selected: { type: Array },
+    counts:   { attribute: false },
+    selected: { attribute: false },
     // Identifies which state slot the host wires up — events.js
     // routes 'graph' to graph2.selectedColors (surgical canvas
     // redraw) vs the default findings-tab state.filterColors

@@ -718,31 +718,30 @@ function resolveWorkspaceContext() {
 // extra summary just duplicates them.
 // Severity / mark-color filter strips — these used to be string-
 // concatenated blocks here that interpolated counts + active state.
-// Both moved to Lit components (`<severity-chips>`,
-// `<triage-filter>`) which take the data as JSON-encoded attributes
-// and dispatch `severity-toggle` / `color-toggle` events; events.js
-// has the matching handlers. The CSS still lives in toolbar.css
-// (the components render to light DOM so those rules apply).
-// Gating the templates at the call site (rather than only relying on
-// the components' internal empty-set guards) keeps an empty
-// `<severity-chips>` / `<triage-filter>` from sitting in the toolbar's
-// flex row as a zero-content item that would still claim a `gap`
-// slot between its visible neighbours.
+// Both moved to StateElement components (`<severity-chips>`,
+// `<triage-filter>`) that read the active filter set from `state`
+// via observer-util's autorun. Counts arrive via Lit property
+// binding (the parent already has the filter-pipeline output in
+// hand). The CSS still lives in toolbar.css (the components render
+// to light DOM so those rules apply). Gating the templates at the
+// call site (rather than only relying on the components' internal
+// empty-set guards) keeps an empty `<severity-chips>` /
+// `<triage-filter>` from sitting in the toolbar's flex row as a
+// zero-content item that would still claim a `gap` slot between its
+// visible neighbours.
 function severityChipsTemplate(counts) {
   const hasAny = Object.values(counts).some((n) => n > 0) || state.filterSeverities.size > 0
   if (!hasAny) return nothing
-  return html`<severity-chips
-    counts=${JSON.stringify(counts)}
-    selected=${JSON.stringify([...state.filterSeverities])}
-  ></severity-chips>`
+  // Property binding (`.counts=`) — `<severity-chips>` extends
+  // StateElement and reads `state.filterSeverities` directly for
+  // the findings kind, so no `selected` prop is needed here.
+  return html`<severity-chips .counts=${counts}></severity-chips>`
 }
 
 function triageFilterTemplate(colorCounts) {
   const hasAny = Object.values(colorCounts).some((n) => n > 0) || state.filterColors.size > 0
   if (!hasAny) return nothing
-  // No `selected` attribute — `<triage-filter>` extends StateElement
-  // and reads `state.filterColors` directly for the findings kind.
-  return html`<triage-filter counts=${JSON.stringify(colorCounts)}></triage-filter>`
+  return html`<triage-filter .counts=${colorCounts}></triage-filter>`
 }
 
 // `flags` carries per-render applicability: when no finding in the
