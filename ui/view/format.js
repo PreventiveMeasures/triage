@@ -121,6 +121,13 @@ export function stripPackagePrefix(file) {
 // metadata already on the finding. Markers whose name does NOT match
 // either field are left alone — they're still useful context (e.g.
 // "this export affects <other>").
+//
+// Also strips a leading `` (`<name>`): `` or `(<name>): `` prefix from
+// the text when the parenthesised name matches one of the fields —
+// same rationale, the parenthesised lead-in is auto-injected and
+// duplicates the field already on the finding. Run AFTER the
+// `[export:]` pass so a `[export: <name>] (<name>): …` opener
+// collapses fully.
 export function stripExportMarker(text, f) {
   if (!text) return text
   const names = [f?.exportName, f?.methodName].filter(Boolean)
@@ -129,6 +136,10 @@ export function stripExportMarker(text, f) {
   for (const name of names) {
     const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
     result = result.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
+  }
+  for (const name of names) {
+    const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    result = result.replace(new RegExp(`^\\(\`?${escaped}\`?\\): `, 'u'), '')
   }
   return result
 }
