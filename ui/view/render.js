@@ -9,7 +9,7 @@ import { listBundles, listWorkspaces, state } from '#client/index.js'
 import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, remoteBundleName, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
-import { activeTabFor, groupKey, groupState, primaryTab, tabKey } from './group.js'
+import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -63,7 +63,7 @@ export function buildGraph2Data() {
   const treeData = mergeReportsTree(state.reports)
   if (!treeData) return null
   const allFiles = Object.keys(treeData)
-  const allGroups = state.reports.flatMap((r) => r.groups)
+  const allGroups = getMergedGroups()
   // Filter to live (default) or deleted (trash mode) groups
   // BEFORE counting per-file findings, so the layout, statistics,
   // and severity-row counts all reflect the active tab's split.
@@ -386,11 +386,9 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   let statusBarTpl = nothing
   if (totalCount > 0) {
     const sevCounts = {}
-    for (const r of state.reports) {
-      for (const g of r.groups) {
-        const sev = primaryTab(g).severity
-        if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
-      }
+    for (const g of getMergedGroups()) {
+      const sev = primaryTab(g).severity
+      if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
     }
     const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
     if (presentSevs.length > 0) {
@@ -1595,7 +1593,7 @@ function renderImpl() {
   // doesn't branch on shape. The trash-view split happens here, not in
   // applyFilters, so the "X of Y" counter and severity stats reflect
   // the set currently being viewed (live groups, or the trash).
-  const mergedGroups = state.reports.flatMap((r) => r.groups)
+  const mergedGroups = getMergedGroups()
   // Per-bucket counts drive the toolbar's triage-state segmented
   // selector. Conflict groups stay in the "live" bucket (their
   // commonTriage is null) regardless of which states their member
@@ -1976,11 +1974,9 @@ function renderImpl() {
       // `renderTopBar` so the lazy `ui/graph.js` bundle stays free
       // of `groupState` / `state` imports.
       const findingsTriageCounts = { fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
-      for (const r of state.reports) {
-        for (const g of r.groups) {
-          const t = groupState(g).commonTriage
-          if (t) findingsTriageCounts[t]++
-        }
+      for (const g of getMergedGroups()) {
+        const t = groupState(g).commonTriage
+        if (t) findingsTriageCounts[t]++
       }
       const options = {
         extraTopRow: viewModeRow,

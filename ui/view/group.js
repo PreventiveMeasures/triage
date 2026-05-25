@@ -126,9 +126,59 @@ export function groupState(group) {
 export function isGroupDeleted(group) { return groupState(group).isDeleted }
 export function groupTriage(group) { return groupState(group).commonTriage }
 
-export function findGroupById(gid) {
-  for (const r of state.reports) {
-    for (const g of r.groups) if (groupKey(g) === gid) return g
+// Flatten every loaded report's groups into the workspace overall
+// list, applying `state.workspaceMerges` so groups bound together by
+// a cross-report dedup hint render as a single super-group. Each
+// merge instruction is a Set of finding ids; groups whose members
+// touch the same instruction get union-found into one. Per-report
+// `state.reports[*].groups` is untouched — single-report views (and
+// any per-report iteration) keep their original shape; only the
+// merged display uses this view.
+export function getMergedGroups() {
+  const allGroups = state.reports.flatMap((r) => r.groups)
+  const merges = state.workspaceMerges
+  if (!merges || merges.length === 0) return allGroups
+  const parent = allGroups.map((_, i) => i)
+  const find = (i) => {
+    let r = i
+    while (parent[r] !== r) r = parent[r]
+    while (parent[i] !== r) { const next = parent[i]; parent[i] = r; i = next }
+    return r
   }
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
+  const idToIdx = new Map()
+  for (let i = 0; i < allGroups.length; i++) {
+    for (const f of allGroups[i]) if (f.id) idToIdx.set(f.id, i)
+  }
+  for (const merge of merges) {
+    let first = -1
+    for (const id of merge) {
+      const idx = idToIdx.get(id)
+      if (idx === undefined) continue
+      if (first === -1) first = idx
+      else union(first, idx)
+    }
+  }
+  // Preserve first-seen order: walk allGroups in order, and only emit
+  // a super-group the first time we hit one of its members. Roots are
+  // remapped to that first index so downstream `groupKey` reads from
+  // the original primary member of the group.
+  const seenRoots = new Set()
+  const merged = []
+  for (let i = 0; i < allGroups.length; i++) {
+    const root = find(i)
+    if (seenRoots.has(root)) continue
+    seenRoots.add(root)
+    const members = []
+    for (let j = i; j < allGroups.length; j++) {
+      if (find(j) === root) members.push(...allGroups[j])
+    }
+    merged.push(members)
+  }
+  return merged
+}
+
+export function findGroupById(gid) {
+  for (const g of getMergedGroups()) if (groupKey(g) === gid) return g
   return null
 }

@@ -431,6 +431,7 @@ export async function switchToFile(name, content) {
     }
   }
   state.reports = []
+  state.workspaceMerges = []
   state.currentFile = name
   state.currentWorkspace = null
   // Switching to a regular report drops out of the bundles or
@@ -548,6 +549,7 @@ export async function switchToWorkspace(workspaceId) {
     state.currentView = 'findings'
   }
   state.reports = []
+  state.workspaceMerges = []
   state.currentFile = null
   state.currentWorkspace = workspaceId
   state.repoUrl = ''
@@ -739,6 +741,7 @@ function clearActiveView() {
   state.bundleSourceFile = null
   state.bundleSourceFindingIdx = null
   state.reports = []
+  state.workspaceMerges = []
   state.repoUrl = ''
   state.repoEditing = false
   state.shownTriage = null
@@ -1002,10 +1005,21 @@ export async function ingestReport(name, content, gen = null) {
     // overlap is enough to conclude "already loaded" (groups don't
     // split / reshape across reloads). Findings without an id (legacy
     // JSON or pre-uuid exports) can't be deduped and always pass through.
+    // `idToGroupKey` lets the dupe branch tell apart "the same group
+    // already loaded" (single key matched) from "this entry binds
+    // multiple existing groups together as one finding" (>1 keys
+    // matched) — the latter is recorded as a workspace-level merge so
+    // the dedup hint isn't lost when we drop the entry.
     const seenIds = new Set()
-    for (const r of state.reports) {
-      for (const g of r.groups) {
-        for (const f of g) if (f.id) seenIds.add(f.id)
+    const idToGroupKey = new Map()
+    for (let ri = 0; ri < state.reports.length; ri++) {
+      const r = state.reports[ri]
+      for (let gi = 0; gi < r.groups.length; gi++) {
+        const g = r.groups[gi]
+        const key = `${ri}:${gi}`
+        for (const f of g) {
+          if (f.id) { seenIds.add(f.id); idToGroupKey.set(f.id, key) }
+        }
       }
     }
     // Derive deterministic ids for any finding that doesn't already
@@ -1036,7 +1050,25 @@ export async function ingestReport(name, content, gen = null) {
       const members = toGroup(entry)
       if (members.length === 0) continue
       const anyDupe = members.some((f) => f.id && seenIds.has(f.id))
-      if (anyDupe) { dupeCount++; continue }
+      if (anyDupe) {
+        // Cross-report dedup hint: a dropped entry whose seen-id
+        // members map to >1 distinct existing groups is the upstream
+        // pass saying "these prior findings are the same one". Record
+        // the member ids so the workspace merged view can union those
+        // groups (see `getMergedGroups` in group.js); without this
+        // the merge intent is lost along with the dropped entry, and
+        // the workspace view keeps showing them as separate cards.
+        const seenMembers = members.filter((f) => f.id && seenIds.has(f.id))
+        const matchedGroupKeys = new Set()
+        for (const f of seenMembers) {
+          const k = idToGroupKey.get(f.id)
+          if (k !== undefined) matchedGroupKeys.add(k)
+        }
+        if (matchedGroupKeys.size > 1) {
+          state.workspaceMerges.push(new Set(seenMembers.map((f) => f.id)))
+        }
+        dupeCount++; continue
+      }
       // Stamp a session-local `_id` on each member as a fallback key
       // for findings that lack the exporter-provided uuid `id`.
       // `tabKey(f)` prefers `f.id` (persistent) and falls back to

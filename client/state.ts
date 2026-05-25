@@ -35,6 +35,7 @@ export type TriageEntry = {
 // without forcing every caller to change in this PR.
 export interface State {
   reports: unknown[]
+  workspaceMerges: Array<Set<string>>
   currentFile: string | null
   currentWorkspace: string | null
   currentView: CurrentView
@@ -221,6 +222,16 @@ export const state: State = store<State>({
   // (the print pipeline still merges that way). The renderer is shape-
   // agnostic.
   reports: [],
+  // Cross-report duplicate-merge instructions populated at ingest:
+  // when a new report's entry is dropped as a duplicate (every member
+  // id already seen) and those member ids span multiple existing
+  // groups, the entry's member ids are recorded here as a Set. The
+  // workspace overall view (`getMergedGroups` in ui/view/group.js)
+  // union-finds groups whose findings share an instruction set so a
+  // report whose only contribution is "these prior findings are the
+  // same" still merges them in the merged display, instead of being
+  // silently dropped along with the dedup hint.
+  workspaceMerges: [],
   // Currently-displayed OPFS basename, or null when nothing is loaded
   // (drop zone visible). Tracked separately from `reports` so the
   // sidebar can highlight the active file even before render finishes.
