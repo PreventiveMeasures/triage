@@ -3,7 +3,7 @@ import { report } from './dom.js'
 import { commonPrefix } from './format.js'
 import { activeTabFor, findGroupById, findingReport, groupState, tabKey } from './group.js'
 import { resetFilters } from './filters.js'
-import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render, renderKeepFocus } from './render.js'
+import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
@@ -409,18 +409,11 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  // [×] clear button next to the bundle code search input.
-  // Drops the query and rerenders the rail; the input's `live`
-  // value binding picks up the empty string and the panel falls
-  // back to the unfiltered tree (Files mode) or the search-hint
-  // placeholder (Code / Issues modes).
-  if (e.target.closest('[data-bundle-search-clear]')) {
-    if (state.bundleCodeSearchQuery !== '') {
-      state.bundleCodeSearchQuery = ''
-      render()
-    }
-    return
-  }
+  // [×] clear button next to the bundle code search input now lives
+  // inside `<bundle-code-search>`; it dispatches the same
+  // `search-input` CustomEvent the typed-input path uses with
+  // `value: ""`, so the listener registered with the other search-
+  // input branches handles both flows uniformly.
   // Bundle source viewer — open / close. Close fires when the click
   // lands directly on the backdrop (NOT a descendant — clicks inside
   // the modal body shouldn't dismiss) or on any element carrying
@@ -1568,10 +1561,6 @@ report.addEventListener('input', (e) => {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
   }
-  else if (id === 'bundle-code-search-input') {
-    state.bundleCodeSearchQuery = val
-    renderKeepFocus(id)
-  }
 })
 // `<toolbar-search>` dispatches this on native input from the findings
 // toolbar / Files tab search field. Routes to `state.filterInclude` or
@@ -1592,6 +1581,8 @@ report.addEventListener('search-input', (e) => {
     state.packagesSearchQuery = value
   } else if (kind === 'repositories') {
     state.repositoriesSearchQuery = value
+  } else if (kind === 'bundle-code') {
+    state.bundleCodeSearchQuery = value
   } else {
     return
   }

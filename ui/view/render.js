@@ -1348,9 +1348,9 @@ function mountBundleSourceOverlay() {
 
 // Wraps a real view switch in `document.startViewTransition` for a
 // crossfade. In-place re-renders ('findings' with new filters)
-// stay synchronous so callers like `renderKeepFocus` — which reads
-// the new DOM right after `render()` returns — keep working. The
-// initial paint isn't animated (`prev` is null on first call).
+// stay synchronous so callers that read the new DOM right after
+// `render()` returns keep working. The initial paint isn't
+// animated (`prev` is null on first call).
 let prevPaintedView = null
 
 export function render() {
@@ -1952,16 +1952,4 @@ function renderImpl() {
   report.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `DeepView — ${typeLabel || 'no analyzer'}`
-}
-
-// Re-render while preserving focus + caret position on a text input —
-// used by the "Include" / "Exclude" / "Repo" inputs whose every
-// keystroke triggers a render. Without this, focus would jump out of
-// the box mid-typing because the input element gets recreated.
-export function renderKeepFocus(inputId) {
-  const prev = document.querySelector(`#${inputId}`)
-  const pos = prev ? prev.selectionStart : 0
-  render()
-  const el = document.querySelector(`#${inputId}`)
-  if (el) { el.focus(); el.setSelectionRange(pos, pos) }
 }

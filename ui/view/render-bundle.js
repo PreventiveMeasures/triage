@@ -28,7 +28,6 @@
 import { html, nothing } from 'lit'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -1212,26 +1211,7 @@ function renderBundleCodeView(details) {
       </div>
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
       <div class="bundle-code-search">
-        <svg class="bundle-code-search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <circle cx="6.5" cy="6.5" r="4.5"/>
-          <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
-        </svg>
-        <input
-          type="text"
-          class="bundle-code-search-input"
-          id="bundle-code-search-input"
-          placeholder=${searchMode === 'files' ? 'Filter files…' : searchMode === 'code' ? 'Search code…' : 'Search issues…'}
-          .value=${live(query)}
-        >
-        ${query
-          ? html`<button
-              type="button"
-              class="bundle-code-search-clear"
-              data-bundle-search-clear
-              title="Clear search"
-              aria-label="Clear search"
-            >×</button>`
-          : nothing}
+        <bundle-code-search></bundle-code-search>
         <span class="bundle-code-search-modes" role="tablist">
           ${searchModes.map((m) => html`<button
             type="button"
