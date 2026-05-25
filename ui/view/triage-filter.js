@@ -7,27 +7,42 @@
 //
 // Replaces the inline `triageFilterHtml(colorCounts)` builder in
 // render.js. Was a string-concatenated block that interpolated
-// counts and per-color classes; making it a component lets the
-// host pass props instead of having the function reach into
-// `state.filterColors`, and keeps the rendered chips consistent
-// with the per-color styling that lives in toolbar.css's
-// `.triage-filter` block.
+// counts and per-color classes; making it a component scopes the
+// click handler, keeps the rendered chips consistent with the
+// per-color styling in toolbar.css's `.triage-filter` block, and
+// (for the findings kind) lets the active highlight self-sync via
+// StateElement instead of riding on a parent-passed prop.
 //
 // Tooltips intentionally name the color only — these dots are
 // user-assigned during triage and the meaning is whatever the user
 // wants, so the chrome doesn't presume "confirmed", "needs review",
 // etc.
 //
-// Properties (decoded from attributes so the host can render this
-// element into innerHTML without a follow-up property assignment):
-//   * `counts` — JSON object `{ none, red, blue, green, gray }`.
-//   * `selected` — JSON array of currently-active color names.
+// Reactivity (kind="findings"): extends StateElement, so reads of
+// `state.filterColors` inside render() are auto-tracked and the
+// chips re-highlight without the host re-passing a `selected`
+// prop. Counts still come in via the `counts` attribute because
+// computing them requires the filter pipeline output the parent
+// already has in hand.
+//
+// Reactivity (kind="graph"): `graph2.*` lives outside the
+// `store()`-wrapped state, so its reads aren't tracked by
+// observer-util. The graph topbar keeps passing `selected` as a
+// JSON prop and the render path picks that up via the explicit
+// `kind === 'graph'` branch below.
+//
+// Properties:
+//   * `counts`   — JSON object `{ none, red, blue, green, gray }`.
+//   * `selected` — JSON array of currently-active color names
+//                  (only consulted when kind="graph").
 //
 // Events (bubble + composed:true):
 //   * `color-toggle(detail.color)` — fired when a button is
 //     clicked. The host adds/removes the value from
 //     `state.filterColors` and re-renders.
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing } from 'lit'
+import { StateElement } from '@rray/frontend/state-element'
+import { state } from '#client/index.js'
 
 const COLORS = [
   ['none', 'none', 'unmarked'],
@@ -37,7 +52,7 @@ const COLORS = [
   ['gray', 'x',    'gray'],
 ]
 
-class TriageFilter extends LitElement {
+class TriageFilter extends StateElement {
   static properties = {
     counts:   { type: Object },
     selected: { type: Array },
@@ -62,7 +77,12 @@ class TriageFilter extends LitElement {
   }
 
   render() {
-    const selected = new Set(this.selected)
+    // Findings kind reads state directly via StateElement's autorun;
+    // graph kind keeps using the `selected` prop because graph2 lives
+    // outside the observable store. See module header.
+    const selected = this.kind === 'graph'
+      ? new Set(this.selected)
+      : state.filterColors
     // Hide the whole pill when there is nothing to filter from — no
     // color (including `none`) has any count and nothing is active.
     // Mirrors `<severity-chips>`'s empty-set guard so an empty

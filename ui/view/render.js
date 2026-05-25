@@ -740,10 +740,9 @@ function severityChipsTemplate(counts) {
 function triageFilterTemplate(colorCounts) {
   const hasAny = Object.values(colorCounts).some((n) => n > 0) || state.filterColors.size > 0
   if (!hasAny) return nothing
-  return html`<triage-filter
-    counts=${JSON.stringify(colorCounts)}
-    selected=${JSON.stringify([...state.filterColors])}
-  ></triage-filter>`
+  // No `selected` attribute — `<triage-filter>` extends StateElement
+  // and reads `state.filterColors` directly for the findings kind.
+  return html`<triage-filter counts=${JSON.stringify(colorCounts)}></triage-filter>`
 }
 
 // `flags` carries per-render applicability: when no finding in the
@@ -804,7 +803,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       <!-- View mode leads the row — <view-mode-buttons> renders the
            table / list / grouped icon group; immediately followed by
            the Sort dropdown with no separator between them. -->
-      <view-mode-buttons mode=${state.viewMode} modes=${viewModes}></view-mode-buttons>
+      <view-mode-buttons modes=${viewModes}></view-mode-buttons>
       <!-- Sort dropdown — bare select (no Sort: label preceding it).
            The selected option's text already advertises what it sorts
            by, plus a ↓ / ↑ arrow showing direction. Class
@@ -1966,7 +1965,6 @@ function renderImpl() {
     const graphSlot = document.querySelector('#findings-graph-slot')
     if (graphSlot) {
       const viewModeRow = html`<view-mode-buttons
-        mode=${state.viewMode}
         modes="table,list,grouped,focus,kanban,graph"
       ></view-mode-buttons>`
       // Triage bucket counts across every loaded report's groups —

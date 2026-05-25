@@ -65,7 +65,7 @@ export function renderTreeView(treeData, findingCounts) {
   }
 
   const toolbar = html`<div class="tree-toolbar">
-    <view-mode-buttons mode=${state.filesViewMode} modes="table,list" kind="files"></view-mode-buttons>
+    <view-mode-buttons modes="table,list" kind="files"></view-mode-buttons>
     <div class="search-row">
       <div class="toolbar-search">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">

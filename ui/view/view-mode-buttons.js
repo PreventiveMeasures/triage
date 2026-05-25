@@ -13,14 +13,20 @@
 // gives the host one event to listen to instead of one selector
 // per click delegation chain.
 //
-// Properties:
-//   * `mode` — current `state.viewMode` (`table` | `list` | `grouped` | `focus` | `kanban` | `graph`).
+// Self-syncs against the global state store via StateElement:
+// reads of `state.viewMode` (or `state.filesViewMode` when
+// `kind="files"`) inside render() are auto-tracked, so flipping
+// the active button doesn't require the parent to pass an updated
+// `mode` prop. The host just emits `<view-mode-buttons></view-mode-buttons>`
+// and the highlight follows the state mutation on its own.
 //
 // Events (bubble + composed:true):
 //   * `view-mode-change(detail.mode)` — fired on click. The host
 //     persists the value to localStorage and re-renders.
-import { LitElement, html } from 'lit'
+import { html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
+import { StateElement } from '@rray/frontend/state-element'
+import { state } from '#client/index.js'
 
 const VIEW_ICONS = {
   // table   — gridded cell layout
@@ -94,18 +100,17 @@ const VIEW_TITLES = {
 
 const MODES = ['table', 'list', 'grouped', 'focus', 'kanban', 'graph']
 
-class ViewModeButtons extends LitElement {
+class ViewModeButtons extends StateElement {
   static properties = {
-    mode: { type: String },
     // Comma-separated subset of MODES to expose. Default = all
     // three (table / list / grouped) for the findings tab; the
     // Files tab passes "table,list" since the grouped layout
     // doesn't apply there.
     modes: { type: String },
-    // Identifies which state slot the host is wiring up. The
-    // `view-mode-change` event carries this in its detail so the
-    // events.js delegate routes to `state.viewMode` (default,
-    // findings) vs. `state.filesViewMode` (kind="files").
+    // Identifies which state slot the host is wiring up — drives
+    // both which state slice the active highlight reads from
+    // (`state.viewMode` vs `state.filesViewMode`) AND which slot
+    // the `view-mode-change` event detail asks events.js to write.
     kind: { type: String },
   }
 
@@ -116,12 +121,15 @@ class ViewModeButtons extends LitElement {
 
   constructor() {
     super()
-    this.mode = 'table'
     this.modes = MODES.join(',')
     this.kind = 'findings'
   }
 
   render() {
+    // Reads `state.viewMode` / `state.filesViewMode` via StateElement's
+    // autorun wrapper — mutating the slot in events.js triggers a
+    // targeted re-render of just this element, no `mode` prop needed.
+    const current = this.kind === 'files' ? state.filesViewMode : state.viewMode
     const allowed = this.modes.split(',').map((s) => s.trim()).filter((s) => MODES.includes(s))
     const list = allowed.length > 0 ? allowed : MODES
     // No leading "View:" label — the per-button SVG icons + their
@@ -131,17 +139,17 @@ class ViewModeButtons extends LitElement {
     return html`<div class="view-mode-group" role="group" aria-label="View mode">
         ${list.map((m) => html`<button
           type="button"
-          class=${classMap({ 'view-mode-btn': true, active: this.mode === m })}
+          class=${classMap({ 'view-mode-btn': true, active: current === m })}
           title=${VIEW_TITLES[m]}
           aria-label=${VIEW_TITLES[m]}
-          aria-pressed=${String(this.mode === m)}
-          @click=${() => this._select(m)}
+          aria-pressed=${String(current === m)}
+          @click=${() => this._select(m, current)}
         >${VIEW_ICONS[m]}</button>`)}
       </div>`
   }
 
-  _select(mode) {
-    if (mode === this.mode) return
+  _select(mode, current) {
+    if (mode === current) return
     this.dispatchEvent(new CustomEvent('view-mode-change', {
       detail: { mode, kind: this.kind },
       bubbles: true,
