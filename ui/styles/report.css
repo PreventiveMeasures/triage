@@ -614,12 +614,12 @@
    the same string. Mirrors the sidebar's "Search reports" chrome
    (`<div class="sidebar-search">`) so the two strips read as the
    same affordance in different contexts. */
-/* `<bundle-code-search>` host element flattens out of the flex
-   layout so its inner SVG / input / clear button become direct flex
-   items of the wrapper alongside the sibling `.bundle-code-search-modes`
-   tab strip. Same pattern as the toolbar component hosts (see
-   toolbar.css). */
-bundle-code-search { display: contents; }
+/* `<bundle-code-search>` + `<bundle-search-modes>` host elements
+   flatten out of the flex layout so their inner contents become
+   direct flex items of the `.bundle-code-search` wrapper. Same
+   pattern as the toolbar component hosts (see toolbar.css). */
+bundle-code-search,
+bundle-search-modes { display: contents; }
 
 .bundle-code-search {
   margin: .35rem .5rem;

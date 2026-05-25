@@ -65,31 +65,8 @@ import { render } from './render.js'
 // each chip click, and the lazy module rebuilds the graph there.
 let _currentBundlePrep = null
 
-// Bundle code-view search-mode toggles — icon glyphs for the
-// Files / Code / Issues buttons that sit inside the search row.
-// Same `viewBox="0 0 16 16"` + `currentColor` stroke/fill pattern
-// the sidebar's view buttons use, so the active/hover recolor
-// rules in report.css can drive them via `color` alone.
-const SEARCH_MODE_ICONS = {
-  // files  — folder/tree glyph (same shape family as the sidebar's
-  // packages button) for the file-tree filter mode.
-  files: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M2 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5Z"/>
-  </svg>`,
-  // code   — angle brackets, the universal "code" marker, used to
-  // signal the full-text source-content search mode.
-  code: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M5.5 4.5L2 8l3.5 3.5"/>
-    <path d="M10.5 4.5L14 8l-3.5 3.5"/>
-  </svg>`,
-  // issues — circle with an exclamation, matching the warning idiom
-  // used elsewhere for findings/severity.
-  issues: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-    <circle cx="8" cy="8" r="6"/>
-    <path d="M8 4.8v3.6" stroke-linecap="round"/>
-    <circle cx="8" cy="11" r=".7" fill="currentColor" stroke="none"/>
-  </svg>`,
-}
+// SEARCH_MODE_ICONS moved into `<bundle-search-modes>` (see
+// view/bundle-search-modes.js) along with the toggle template.
 
 // File → set of resolved import paths. The stasis Bundle exposes
 // imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
@@ -1212,17 +1189,7 @@ function renderBundleCodeView(details) {
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
       <div class="bundle-code-search">
         <bundle-code-search></bundle-code-search>
-        <span class="bundle-code-search-modes" role="tablist">
-          ${searchModes.map((m) => html`<button
-            type="button"
-            class=${classMap({ 'bundle-code-search-mode': true, active: searchMode === m })}
-            data-bundle-search-mode=${m}
-            role="tab"
-            aria-selected=${String(searchMode === m)}
-            title=${m === 'files' ? 'Filter files' : m === 'code' ? 'Search code' : 'Search issues'}
-            aria-label=${m === 'files' ? 'Filter files' : m === 'code' ? 'Search code' : 'Search issues'}
-          >${SEARCH_MODE_ICONS[m]}</button>`)}
-        </span>
+        <bundle-search-modes .modes=${searchModes}></bundle-search-modes>
       </div>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [

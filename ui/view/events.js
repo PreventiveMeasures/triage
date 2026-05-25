@@ -396,19 +396,12 @@ report.addEventListener('click', (e) => {
     if (name) switchToFile(name)
     return
   }
-  // Code slide search-mode tab — flips the rail between Files /
-  // Code / Issues. Doesn't clear the query so the user can pivot
-  // between modes against the same string. Renders via the
-  // shared bundles render path.
-  const codeSearchMode = e.target.closest('[data-bundle-search-mode]')
-  if (codeSearchMode) {
-    const mode = codeSearchMode.dataset.bundleSearchMode
-    if (mode === 'files' || mode === 'code' || mode === 'issues') {
-      state.bundleCodeSearchMode = mode
-      render()
-    }
-    return
-  }
+  // Bundle code-rail search-mode tabs (Files / Code / Issues) are
+  // dispatched as `bundle-search-mode-change` CustomEvents by
+  // `<bundle-search-modes>` — handled by the listener registered
+  // below (search "bundle-search-mode-change"). Clicking a tab
+  // doesn't clear the query so the user can pivot between modes
+  // against the same string.
   // [×] clear button next to the bundle code search input now lives
   // inside `<bundle-code-search>`; it dispatches the same
   // `search-input` CustomEvent the typed-input path uses with
@@ -1515,6 +1508,15 @@ document.querySelector('#download-btn').addEventListener('click', () => {
 // in the generic toolbar `change` listener for it.
 report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.value
+  render()
+})
+// `<bundle-search-modes>` dispatches this when a Files / Code /
+// Issues tab is clicked in the bundle code rail's search row.
+// Replaces the prior `[data-bundle-search-mode]` click delegate.
+report.addEventListener('bundle-search-mode-change', (e) => {
+  const mode = e.detail?.mode
+  if (mode !== 'files' && mode !== 'code' && mode !== 'issues') return
+  state.bundleCodeSearchMode = mode
   render()
 })
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
