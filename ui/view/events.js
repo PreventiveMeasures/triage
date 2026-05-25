@@ -1517,9 +1517,6 @@ document.querySelector('#download-btn').addEventListener('click', () => {
   downloadReportsAsMarkdown(state.reports)
 })
 
-report.addEventListener('change', (e) => {
-  if (e.target.id === 'sort-select') { state.sortBy = e.target.value; render() }
-})
 // `<analyzer-select>` dispatches this on native change; it owns its
 // `<select>` element so events.js no longer needs an id-keyed branch
 // in the generic toolbar `change` listener for it.
@@ -1527,11 +1524,14 @@ report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.value
   render()
 })
-// `<entity-sort>` dispatches this for the Packages / Repositories page
-// toolbars; routes to `state.${kind}SortBy` based on the kind.
+// `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
+// "packages"|"repositories") both dispatch this on native change.
+// Routes to the matching state slot.
 report.addEventListener('sort-change', (e) => {
   const { kind, value } = e.detail
-  if (kind === 'packages') {
+  if (kind === 'findings') {
+    state.sortBy = value
+  } else if (kind === 'packages') {
     state.packagesSortBy = value
   } else if (kind === 'repositories') {
     state.repositoriesSortBy = value

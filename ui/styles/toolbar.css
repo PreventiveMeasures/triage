@@ -203,7 +203,8 @@ triage-selector,
 slide-triage-tabs,
 source-filter,
 analyzer-select,
-entity-sort { display: contents; }
+entity-sort,
+findings-sort { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

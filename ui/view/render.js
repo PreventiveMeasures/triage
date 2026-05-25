@@ -758,7 +758,6 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   // the graph2 canvas — see the findings-graph slot in render()
   // below.
   const viewModes = showGraphMode ? 'table,list,grouped,focus,kanban,graph' : 'table,list,grouped,focus,kanban'
-  const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
 
   return html`<div class="toolbar">
     <div class="toolbar-row">
@@ -766,21 +765,15 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            table / list / grouped icon group; immediately followed by
            the Sort dropdown with no separator between them. -->
       <view-mode-buttons modes=${viewModes}></view-mode-buttons>
-      <!-- Sort dropdown — bare select (no Sort: label preceding it).
-           The selected option's text already advertises what it sorts
-           by, plus a ↓ / ↑ arrow showing direction. Class
-           sort-select lets toolbar.css give the button a touch more
-           padding than the generic toolbar select. The .sort-wrapper
-           around it carries the custom chevron via ::after (pseudo-
-           elements don't render on bare <select> in any browser). -->
-      <span class="sort-wrapper">
-        <select id="sort-select" class="sort-select" aria-label="Sort findings">
-          ${sortOpt('severity', 'Severity ↓')}
-          ${showFileSort ? sortOpt('file', 'File ↑') : nothing}
-          ${showConfidence ? html`${sortOpt('confidence-desc', 'Confidence ↓')}${sortOpt('confidence-asc', 'Confidence ↑')}` : nothing}
-          ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
-        </select>
-      </span>
+      <!-- Sort dropdown — findings-sort owns the native select +
+           the conditional option list. Flags arrive as boolean
+           attributes; the component reads state.sortBy via
+           StateElement and dispatches sort-change on change. -->
+      <findings-sort
+        ?show-file=${showFileSort}
+        ?show-confidence=${showConfidence}
+        ?show-priority=${showPriority}
+      ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
         <div class="conf-filter">
