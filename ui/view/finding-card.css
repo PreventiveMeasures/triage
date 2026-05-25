@@ -637,6 +637,13 @@
     margin-top: .5rem; padding-top: .5rem;
     border-top: 1px dashed #999;
   }
+  /* On screen, the .flat-group-loc header above the card stands in for
+     the in-body .line-row (file/line/meta), so :host([in-group])
+     suppresses the duplicate. In print, every tab body stacks — but
+     that header only reflects the active tab, so duplicates past the
+     first would otherwise lose their per-run file/line/meta. Re-show
+     the in-body row on every tab body after the first to restore it. */
+  :host([in-group]) .tab-body + .tab-body .line-row { display: flex; }
   .print-case-label {
     display: block;
     grid-column: 1 / -1;
