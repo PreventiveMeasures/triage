@@ -129,11 +129,15 @@ export function groupTriage(group) { return groupState(group).commonTriage }
 // Flatten every loaded report's groups into the workspace overall
 // list, applying `state.workspaceMerges` so groups bound together by
 // a cross-report dedup hint render as a single super-group. Each
-// merge instruction is a Set of finding ids; groups whose members
-// touch the same instruction get union-found into one. Per-report
-// `state.reports[*].groups` is untouched — single-report views (and
-// any per-report iteration) keep their original shape; only the
-// merged display uses this view.
+// merge instruction is a Set of finding ids in the order the source
+// combined entry listed them — that order is the canonical one (the
+// upstream dedup pass deliberately picked a primary), so the
+// assembled super-group sorts its members by merge-instruction
+// order, falling back to load order for anything no instruction
+// mentioned (e.g. a member of a multi-finding source group the
+// merge only named once). Per-report `state.reports[*].groups` is
+// untouched — single-report views and per-report iteration keep
+// their original shape; only the merged display uses this view.
 export function getMergedGroups() {
   const allGroups = state.reports.flatMap((r) => r.groups)
   const merges = state.workspaceMerges
@@ -159,21 +163,48 @@ export function getMergedGroups() {
       else union(first, idx)
     }
   }
-  // Preserve first-seen order: walk allGroups in order, and only emit
-  // a super-group the first time we hit one of its members. Roots are
-  // remapped to that first index so downstream `groupKey` reads from
-  // the original primary member of the group.
+  // Walk allGroups in order; first hit on each root opens its slot in
+  // the output (so the merged super-group lands at the position of
+  // its earliest member). Members are then ordered by merge-instruction
+  // order — first-recorded instruction wins; ids no instruction names
+  // get appended in load order.
   const seenRoots = new Set()
   const merged = []
   for (let i = 0; i < allGroups.length; i++) {
     const root = find(i)
     if (seenRoots.has(root)) continue
     seenRoots.add(root)
-    const members = []
+    const findings = []
     for (let j = i; j < allGroups.length; j++) {
-      if (find(j) === root) members.push(...allGroups[j])
+      if (find(j) === root) findings.push(...allGroups[j])
     }
-    merged.push(members)
+    const idSet = new Set(findings.map((f) => f.id).filter(Boolean))
+    const canonical = []
+    const placed = new Set()
+    for (const merge of merges) {
+      for (const id of merge) {
+        if (placed.has(id)) continue
+        if (idSet.has(id)) { canonical.push(id); placed.add(id) }
+      }
+    }
+    if (canonical.length === 0) {
+      merged.push(findings)
+      continue
+    }
+    const byId = new Map()
+    for (const f of findings) {
+      if (f.id && !byId.has(f.id)) byId.set(f.id, f)
+    }
+    const used = new Set()
+    const ordered = []
+    for (const id of canonical) {
+      const f = byId.get(id)
+      if (f) { ordered.push(f); used.add(f) }
+    }
+    for (const f of findings) {
+      if (!used.has(f)) ordered.push(f)
+    }
+    merged.push(ordered)
   }
   return merged
 }

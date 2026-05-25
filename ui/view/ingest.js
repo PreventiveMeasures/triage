@@ -1049,25 +1049,34 @@ export async function ingestReport(name, content, gen = null) {
     for (const entry of rawEntries) {
       const members = toGroup(entry)
       if (members.length === 0) continue
-      const anyDupe = members.some((f) => f.id && seenIds.has(f.id))
-      if (anyDupe) {
-        // Cross-report dedup hint: a dropped entry whose seen-id
-        // members map to >1 distinct existing groups is the upstream
-        // pass saying "these prior findings are the same one". Record
-        // the member ids so the workspace merged view can union those
-        // groups (see `getMergedGroups` in group.js); without this
-        // the merge intent is lost along with the dropped entry, and
-        // the workspace view keeps showing them as separate cards.
-        const seenMembers = members.filter((f) => f.id && seenIds.has(f.id))
-        const matchedGroupKeys = new Set()
-        for (const f of seenMembers) {
-          const k = idToGroupKey.get(f.id)
-          if (k !== undefined) matchedGroupKeys.add(k)
-        }
+      // Partition members by whether their id was already seen across
+      // prior reports + earlier entries in this one. Three branches:
+      //   1. all-new       → push as a fresh group (no merge)
+      //   2. all-seen      → drop the entry; record a cross-report merge
+      //                      when it binds >1 distinct existing groups,
+      //                      so the dedup hint isn't lost with the drop
+      //   3. partial-seen  → stamp the new members as a fresh group AND
+      //                      record a merge with all member ids, so the
+      //                      load-order case (combined entry arrives
+      //                      between the two singletons it merges) still
+      //                      collapses to one super-group in the view
+      // Recorded merges always carry every id from the entry in source-
+      // array order; `getMergedGroups` uses that to order the merged
+      // super-group, so the combined entry's [A, B] beats any incidental
+      // load-order [B, A].
+      const seenMembers = members.filter((f) => f.id && seenIds.has(f.id))
+      const newMembers = members.filter((f) => !f.id || !seenIds.has(f.id))
+      const matchedGroupKeys = new Set()
+      for (const f of seenMembers) {
+        const k = idToGroupKey.get(f.id)
+        if (k !== undefined) matchedGroupKeys.add(k)
+      }
+      const entryMergeIds = members.filter((f) => f.id).map((f) => f.id)
+      if (newMembers.length === 0) {
         if (matchedGroupKeys.size > 1) {
-          state.workspaceMerges.push(new Set(seenMembers.map((f) => f.id)))
+          state.workspaceMerges.push(new Set(entryMergeIds))
         }
-        dupeCount++; continue
+        dupeCount += seenMembers.length; continue
       }
       // Stamp a session-local `_id` on each member as a fallback key
       // for findings that lack the exporter-provided uuid `id`.
@@ -1097,7 +1106,7 @@ export async function ingestReport(name, content, gen = null) {
       // is a category label for the file as a whole, not a
       // per-finding analyzer descriptor.
       const stamped = []
-      for (const f of members) {
+      for (const f of newMembers) {
         if (f.id) seenIds.add(f.id)
         // `_bundleHashes` is the report-level array of integrities
         // the analyzer was run against. Stamped per-finding so the
@@ -1127,6 +1136,30 @@ export async function ingestReport(name, content, gen = null) {
         // bucket has a stable sentinel).
         filled._analyzer = data.source ?? (filled.type ?? null)
         stamped.push(filled)
+      }
+      // Stamp the new members' group key so a later partial-dupe entry
+      // in this same report sees them as a distinct group from any
+      // previously-loaded one. Reads `groups.length` BEFORE the push so
+      // the key matches the slot the array is about to receive. The
+      // `state.reports.length` prefix is the eventual index of THIS
+      // report once it's pushed at the end of the function — this
+      // works only because the seed loop above (idToGroupKey
+      // population) walks `ri < state.reports.length` against the
+      // pre-push length, so this report's own index can't already
+      // collide in the map. If a future refactor pushes the report
+      // shell early (e.g. for streaming), snapshot the index once
+      // before this entry loop instead of re-reading per iteration.
+      if (seenMembers.length > 0) {
+        // Partial-dupe: count the seen members as dropped duplicates
+        // (we only stamp the new ones below) and tie the freshly-
+        // stamped new group to the existing groups holding the seen
+        // members via a workspace merge.
+        dupeCount += seenMembers.length
+        state.workspaceMerges.push(new Set(entryMergeIds))
+      }
+      const newGroupKey = `${state.reports.length}:${groups.length}`
+      for (const f of newMembers) {
+        if (f.id) idToGroupKey.set(f.id, newGroupKey)
       }
       groups.push(stamped)
     }
