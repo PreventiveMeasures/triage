@@ -1521,9 +1521,15 @@ report.addEventListener('change', (e) => {
   const id = e.target.id
   const val = e.target.value
   if (id === 'sort-select') { state.sortBy = val; render() }
-  else if (id === 'analyzer-select') { state.filterAnalyzer = val; render() }
   else if (id === 'packages-sort-select') { state.packagesSortBy = val; render() }
   else if (id === 'repositories-sort-select') { state.repositoriesSortBy = val; render() }
+})
+// `<analyzer-select>` dispatches this on native change; it owns its
+// `<select>` element so events.js no longer needs an id-keyed branch
+// in the generic toolbar `change` listener for it.
+report.addEventListener('analyzer-change', (e) => {
+  state.filterAnalyzer = e.detail.value
+  render()
 })
 
 // Confidence range slider. `range-change` fires on release and

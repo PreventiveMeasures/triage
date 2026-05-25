@@ -11,6 +11,7 @@ import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
 import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
+import { ANALYZER_LABELS } from './analyzer-select.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
@@ -173,24 +174,6 @@ const SOURCE_TITLES = {
   'codex-security': 'Codex Security findings',
   'deepsec': 'DeepSec findings',
 }
-
-// Friendly labels for the analyzer-filter dropdown options. Source-
-// marked imports surface as the upstream product name (matching how
-// SOURCE_TITLES names them in the page header); native analyzer
-// strings (security / correctness / etc.) pass through as-is. The
-// missing-analyzer bucket gets `(none)` rather than the bare word
-// `null` so a finding whose literal analyzer string is `"null"`
-// (a valid name) stays distinguishable in the dropdown.
-const ANALYZER_LABELS = {
-  'claude-security': 'Claude Security',
-  'codex-security': 'Codex Security',
-  'deepsec': 'DeepSec',
-}
-function analyzerLabel(a) {
-  if (a == null) return '(none)'
-  return ANALYZER_LABELS[a] ?? a
-}
-
 
 // Build the repo-chip element for the page header. The actual visual
 // (three modes — editable+collapsed, editable+expanded, read-only)
@@ -840,25 +823,12 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            with a legitimate analyzer literally named "null"
            (a valid analyzer name), which would otherwise resolve to
            the same <option value="null"> and be indistinguishable in
-           the dropdown. Friendly labels for the source-marked
-           imports (DeepSec / Codex Security / Claude Security) come
-           from ANALYZER_LABELS. Shares the sort dropdown's wrapper
-           styling so the two pills line up. The select.value is
-           bound through live() so a report switch that clears
-           state.filterAnalyzer (resetFilters / stale-filter guard)
-           actually updates the visible selection — without it, Lit
-           setting selected attributes on the existing options does
-           not move the browser-native select.value, so the dropdown
-           reads as the old choice while the filter applies All. -->
-      ${analyzerOptions.length > 1 ? html`<span class="sort-wrapper">
-        <select id="analyzer-select" class="sort-select" aria-label="Filter by analyzer" .value=${live(state.filterAnalyzer)}>
-          <option value="">All analyzers</option>
-          ${analyzerOptions.map((a) => {
-            const value = a == null ? NULL_ANALYZER_SENTINEL : a
-            return html`<option value=${value}>${analyzerLabel(a)}</option>`
-          })}
-        </select>
-      </span>` : nothing}
+           the dropdown. Component owns its select + the friendly
+           ANALYZER_LABELS lookup; reads state.filterAnalyzer itself
+           via StateElement and uses live() so stale-filter clears in
+           the parent's pipeline actually update the visible
+           selection. -->
+      ${analyzerOptions.length > 1 ? html`<analyzer-select .options=${analyzerOptions}></analyzer-select>` : nothing}
       ${triageFilterTemplate(colorCounts)}
       <!-- Search field + result count grouped into a single flex item
            so they wrap as a unit — when the row is too narrow to keep

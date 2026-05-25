@@ -201,7 +201,8 @@
 view-mode-buttons,
 triage-selector,
 slide-triage-tabs,
-source-filter { display: contents; }
+source-filter,
+analyzer-select { display: contents; }
 
 .view-mode-group {
   display: inline-flex;
