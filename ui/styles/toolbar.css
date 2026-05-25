@@ -205,7 +205,8 @@ source-filter,
 analyzer-select,
 entity-sort,
 findings-sort,
-toolbar-search { display: contents; }
+toolbar-search,
+entity-search { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

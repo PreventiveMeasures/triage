@@ -1572,14 +1572,6 @@ report.addEventListener('input', (e) => {
     state.bundleCodeSearchQuery = val
     renderKeepFocus(id)
   }
-  else if (id === 'packages-search-input') {
-    state.packagesSearchQuery = val
-    renderKeepFocus(id)
-  }
-  else if (id === 'repositories-search-input') {
-    state.repositoriesSearchQuery = val
-    renderKeepFocus(id)
-  }
 })
 // `<toolbar-search>` dispatches this on native input from the findings
 // toolbar / Files tab search field. Routes to `state.filterInclude` or
@@ -1596,6 +1588,10 @@ report.addEventListener('search-input', (e) => {
     state.filterInclude = value
   } else if (kind === 'files') {
     state.filesSearch = value
+  } else if (kind === 'packages') {
+    state.packagesSearchQuery = value
+  } else if (kind === 'repositories') {
+    state.repositoriesSearchQuery = value
   } else {
     return
   }

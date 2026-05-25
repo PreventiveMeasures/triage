@@ -18,7 +18,6 @@
 // drill-ins (same `bundle-issues-*` class names, same row shape).
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -243,14 +242,7 @@ function keyForVisibleRow(row) {
 // so the page header reads as a single horizontal control row.
 function packagesToolbarTemplate(triageCounts) {
   return html`<div class="packages-toolbar">
-    <input
-      type="search"
-      id="packages-search-input"
-      class="packages-search"
-      placeholder="Filter packages…"
-      aria-label="Filter packages"
-      .value=${live(state.packagesSearchQuery)}
-    >
+    <entity-search kind="packages"></entity-search>
     <entity-sort kind="packages"></entity-sort>
     <triage-selector variant="packages" .counts=${triageCounts} .states=${PACKAGES_TRIAGE_STATES}></triage-selector>
   </div>`

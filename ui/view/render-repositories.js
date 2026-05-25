@@ -21,7 +21,6 @@
 // consistent across all three drill-ins.
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -124,14 +123,7 @@ export function renderRepositoriesView() {
 
 function repositoriesToolbarTemplate(triageCounts) {
   return html`<div class="packages-toolbar">
-    <input
-      type="search"
-      id="repositories-search-input"
-      class="packages-search"
-      placeholder="Filter repositories…"
-      aria-label="Filter repositories"
-      .value=${live(state.repositoriesSearchQuery)}
-    >
+    <entity-search kind="repositories"></entity-search>
     <entity-sort kind="repositories"></entity-sort>
     <triage-selector variant="packages" .counts=${triageCounts} .states=${REPOSITORIES_TRIAGE_STATES}></triage-selector>
   </div>`
