@@ -204,7 +204,8 @@ slide-triage-tabs,
 source-filter,
 analyzer-select,
 entity-sort,
-findings-sort { display: contents; }
+findings-sort,
+toolbar-search { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

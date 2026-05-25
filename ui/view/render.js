@@ -1,6 +1,5 @@
 import { html, render as litRender, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -832,17 +831,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            breakpoints under @media (max-width: 1200px) and
            .findings-content.with-details. -->
       <div class="search-row">
-        <div class="toolbar-search">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7"/>
-            <path d="m20 20-3.5-3.5"/>
-          </svg>
-          <input
-            type="text"
-            id="filter-search"
-            .value=${live(state.filterInclude)}
-            placeholder="Search findings…">
-        </div>
+        <toolbar-search kind="findings"></toolbar-search>
         <span class="result-count">${filteredCount} of ${allCount}</span>
       </div>
     </div>

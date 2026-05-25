@@ -88,17 +88,7 @@ export function renderTreeView(treeData, findingCounts) {
   const toolbar = html`<div class="tree-toolbar">
     <view-mode-buttons modes="table,list" kind="files"></view-mode-buttons>
     <div class="search-row">
-      <div class="toolbar-search">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="7"/>
-          <path d="m20 20-3.5-3.5"/>
-        </svg>
-        <input
-          type="text"
-          id="filter-files-search"
-          .value=${state.filesSearch}
-          placeholder="Search files…">
-      </div>
+      <toolbar-search kind="files"></toolbar-search>
       <span class="result-count">${files.length} of ${allFiles.length}</span>
     </div>
   </div>`

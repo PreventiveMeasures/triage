@@ -1564,9 +1564,7 @@ report.addEventListener('input', (e) => {
   const src = e.composedPath()[0]
   const id = src?.id
   const val = src?.value
-  if (id === 'filter-search') { state.filterInclude = val; renderKeepFocus(id) }
-  else if (id === 'filter-files-search') { state.filesSearch = val; renderKeepFocus(id) }
-  else if (id === 'g2-path-filter') {
+  if (id === 'g2-path-filter') {
     graph2.pathFilter = val
     graph2.graphState?.requestDraw?.()
   }
@@ -1582,6 +1580,26 @@ report.addEventListener('input', (e) => {
     state.repositoriesSearchQuery = val
     renderKeepFocus(id)
   }
+})
+// `<toolbar-search>` dispatches this on native input from the findings
+// toolbar / Files tab search field. Routes to `state.filterInclude` or
+// `state.filesSearch` based on `kind`. Plain render() suffices for
+// focus / cursor preservation: Lit reuses the same `<input>` element
+// across re-renders (parent diff + component autorun both diff against
+// the same template position) and the user's caret survives the
+// no-op DOM write `live()` performs once the typed value already
+// matches state.
+report.addEventListener('search-input', (e) => {
+  if (!e.detail) return
+  const { kind, value } = e.detail
+  if (kind === 'findings') {
+    state.filterInclude = value
+  } else if (kind === 'files') {
+    state.filesSearch = value
+  } else {
+    return
+  }
+  render()
 })
 
 // `<severity-chips>` / `<triage-filter>` events. Each component
