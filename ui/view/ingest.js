@@ -1,6 +1,6 @@
 import { render as litRender, nothing } from 'lit'
 import { analyzeContent, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, getSecureItem, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, triageLoadPromise } from '#client/index.js'
-import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
+import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
 import { dropZone, report } from './dom.js'
 import { toGroup } from './group.js'
@@ -120,10 +120,15 @@ function stripDownloadDup(name) {
 //      OPFS write, no cloud re-upload, no sidebar reflow).
 //   3. name exists with DIFFERENT content → open the conflict
 //      dialog. The user picks:
-//        - Replace: overwrite the local file. If the report belongs
-//          to one or more workspaces, also push the new bytes to
-//          each workspace's remote inventory so the cloud copy
-//          tracks the local one (the dialog spells this out).
+//        - Replace: overwrite the local file. Push the new bytes to
+//          every workspace whose remote inventory ALREADY carries
+//          this report (live session or persisted presence cache),
+//          so the cloud copy tracks the local one. Workspaces that
+//          list the report locally but never uploaded it are left
+//          alone — re-uploading would open a presence session to a
+//          server we may never have authenticated against, which
+//          would surprise the user with a password prompt for what
+//          they think of as a local-only report.
 //        - Rename: save under a different name (the dialog
 //          live-validates the candidate against `existingNames` so
 //          the rename can't loop into another collision).
@@ -172,15 +177,24 @@ async function importReportContent({ name, content, existingNames }) {
   if (existing === content) return { name, content }
   // Build the workspace context for the dialog's upload warning.
   // A report can sit in multiple workspaces (additive membership),
-  // so collect every workspace that lists this name — the dialog
-  // copy adapts to the count, and the replace branch uploads to
-  // each one.
+  // so collect every workspace that lists this name, then narrow
+  // to those whose remote inventory ALREADY holds it (live session
+  // or persisted presence cache). A workspace that lists the
+  // report locally but has never uploaded it is not eligible — the
+  // upload below would otherwise open a presence session to that
+  // workspace's server, which on a never-authenticated relay would
+  // surface as a password prompt the user didn't ask for. The
+  // dialog copy keys off this filtered list, so the warning only
+  // mentions workspaces an upload would actually touch.
   const workspaces = listWorkspaces().filter(
     (w) => Array.isArray(w.reports) && w.reports.includes(name),
   )
+  const uploadableWorkspaces = workspaces.filter(
+    (w) => isInRemoteOrCached(w.id, name),
+  )
   const decision = await openImportConflictDialog({
     name,
-    workspaceNames: workspaces.map((w) => w.name),
+    workspaceNames: uploadableWorkspaces.map((w) => w.name),
     existingNames,
   })
   if (decision.action === 'cancel') return null
@@ -200,14 +214,20 @@ async function importReportContent({ name, content, existingNames }) {
   // the local replace already happened and a transient network
   // failure shouldn't undo it).
   await saveFile(name, content)
-  if (workspaces.length > 0) {
-    await uploadReportToWorkspaces(name, workspaces)
+  if (uploadableWorkspaces.length > 0) {
+    await uploadReportToWorkspaces(name, uploadableWorkspaces)
   }
   return { name, content }
 }
 
 // Best-effort push of a freshly-replaced report to every workspace
-// that lists it. Each workspace gets its presence session opened on
+// whose remote inventory already carries it. Callers (the conflict-
+// resolution Replace branch) pre-filter via `isInRemoteOrCached` so
+// a workspace that lists the report locally but has never uploaded
+// it never reaches this loop — opening a presence session to such
+// a workspace would trigger the relay's first-touch auth gate and
+// surface as a password prompt for an upload the user didn't
+// intend. Each workspace gets its presence session opened on
 // demand (mirrors `deleteFromRemote`'s lazy-open pattern: the user
 // may not have navigated to all of these workspaces this session,
 // but the cloud copies still need to track the local replace).
