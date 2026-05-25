@@ -267,11 +267,18 @@ function formatComboField(field, value) {
 // reports where the per-finding `type` is a category, not an
 // analyzer name, and the title already conveys the product.
 //
+// When `model` / `effort` end up as their own chips (i.e. common across
+// every combo, so they aren't folded into the varying-tuple chip), they
+// surface before the `analyzer:` chip — the run identity reads more
+// naturally model-first than analyzer-first. Varying tuples stay at the
+// first-varying slot in canonical order so the tuple text keeps reading
+// `model · effort · exportsMode`.
+//
 // Examples (combos as `type · model · effort · exportsMode`):
 //   `null · opus 4.7 · max · list` + `null · gpt 5.5 · xhigh · list`
 //     → `analyzer: null` `opus 4.7 · max` `gpt 5.5 · xhigh` `list`
 //   `null · opus 4.7 · xhigh · isolate` + `null · opus 4.7 · max · list`
-//     → `analyzer: null` `opus 4.7` `xhigh · isolate` `max · list`
+//     → `opus 4.7` `analyzer: null` `xhigh · isolate` `max · list`
 //   `correctness · null · null · null`  →  `analyzer: correctness`
 function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   const comboMap = new Map()
@@ -292,9 +299,15 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   }
   const varyingSlots = fields.filter((k) => !isCommon[k])
 
+  // Promote common model / effort ahead of the analyzer-type chip; the
+  // remaining fields keep their canonical order so varying tuples still
+  // emit at the first-varying slot.
+  const promoted = ['model', 'effort'].filter((k) => fields.includes(k) && isCommon[k])
+  const emitOrder = [...promoted, ...fields.filter((k) => !promoted.includes(k))]
+
   const tags = []
   let combosEmitted = false
-  for (const k of fields) {
+  for (const k of emitOrder) {
     if (isCommon[k]) {
       const t = formatComboField(k, combos[0][k])
       if (t != null) tags.push(t)
