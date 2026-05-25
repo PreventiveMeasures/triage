@@ -110,7 +110,14 @@ class RepoChip extends LitElement {
       const hasUrl = !!this.url
       const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
       const cls = hasUrl ? 'chip' : 'chip empty'
-      return html`<span class=${cls}>
+      // Empty chip: the whole pill acts as the click target — the
+      // `Set repo` label IS the affordance, so making the user aim
+      // at the tiny pencil reads as needless precision. Once a URL
+      // is set, the pencil reclaims sole edit duty so clicking the
+      // slug doesn't surprise-open the input. `_onEdit` stops the
+      // bubble so the pencil click here doesn't fire twice via the
+      // chip-level handler.
+      return html`<span class=${cls} @click=${hasUrl ? null : this._onEdit}>
         ${GITHUB_ICON}
         <span class="label">${label}</span>
         <button
@@ -146,7 +153,10 @@ class RepoChip extends LitElement {
     }
   }
 
-  _onEdit = () => { this._emit('repo-edit-start') }
+  _onEdit = (e) => {
+    if (e) e.stopPropagation()
+    this._emit('repo-edit-start')
+  }
 
   _onFocus = (e) => { this._opener = e.target.value }
 

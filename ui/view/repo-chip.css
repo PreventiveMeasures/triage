@@ -25,6 +25,11 @@
   font-weight: 500;
 }
 .chip svg { color: var(--muted); flex-shrink: 0; }
+/* Empty chip is one big click target — see repo-chip.js. Hover lift
+   gives the affordance without dropping a text-style pointer cursor
+   on top of what's still a chip (matches the rest of the page-head
+   chrome, which doesn't change cursor on click targets either). */
+.chip.empty:hover { border-color: var(--accent); }
 .chip.empty .label { color: var(--muted); font-style: italic; }
 .chip.readonly { padding-right: .5rem; }
 

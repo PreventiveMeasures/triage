@@ -84,6 +84,12 @@
   & .badge { min-width: 4.4rem; text-align: center; }
   & .row-conf {
     color: var(--muted); font-size: .72rem;
+    /* Clicking the row resets any text selection inside it (the table
+       picks up the click and toggles the details panel), so let the
+       row read as a button rather than selectable text. Scoped to the
+       table row's shadow DOM, so the same fields stay selectable in
+       the kanban / list / grouped / detail views. */
+    user-select: none;
     & strong { color: var(--text); font-size: .8rem; }
   }
 }
@@ -102,6 +108,10 @@
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 500;
+    /* Match `.row-conf`: row-click clears any selection here anyway,
+       so don't tease the user with selectable text. The same title /
+       description prose stays selectable in the non-table views. */
+    user-select: none;
   }
   & .row-type { color: var(--muted); font-size: .68rem; flex-shrink: 0; }
 }

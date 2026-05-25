@@ -1,7 +1,28 @@
 import { html, nothing } from 'lit'
-import { state } from '#client/index.js'
+import { bundlesForFileHash, state } from '#client/index.js'
 import { SEVERITIES, formatBytes } from './format.js'
 import { treeAnchor } from './file-counts.js'
+
+// Code-button template for a file with a known sha512 — picks the
+// first bundle that carries a file with this hash (the cross-report
+// hash index, populated by ingest + bundle parsing) and emits the
+// same `data-finding-code-*` attributes the finding-card uses, so
+// events.js's existing handler does the rest. Returns `nothing`
+// when no bundle has a matching file yet — the index fills lazily
+// as bundles get parsed, so the button surfaces when there's a
+// real target to open and stays hidden otherwise.
+function fileCodeButton(fileHash) {
+  if (!fileHash) return nothing
+  const match = bundlesForFileHash(fileHash)[0]
+  if (!match) return nothing
+  return html`<button
+    type="button"
+    class="tree-code-btn"
+    data-finding-code-bundle=${match.integrity}
+    data-finding-code-file=${match.file}
+    title=${`Open ${match.file} in bundle source viewer`}
+  >Code</button>`
+}
 
 // Render the Files tab. Two view modes:
 //
@@ -145,11 +166,12 @@ export function renderTreeView(treeData, findingCounts) {
           <span class="name">${file}</span>
           ${sevChips(file)}
           ${sizeLabel ? html`<span class="tree-file-size">${sizeLabel}</span>` : nothing}
+          ${fileCodeButton(entry.fileHash)}
         </div>
-        ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">${[
-          entry.fileHash ? `file: ${entry.fileHash}` : null,
-          entry.treeHash ? `tree: ${entry.treeHash}` : null,
-        ].filter(Boolean).join(' | ')}</div>` : nothing}
+        ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
+          ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
+          ${entry.treeHash ? html`<div class="tree-hash">tree: ${entry.treeHash}</div>` : nothing}
+        </div>` : nothing}
         ${entry.imports?.length > 0 ? html`<div class="tree-section">
           <span class="tree-section-label">imports</span>
           <ul>${entry.imports.map((imp) => html`<li>${linkOrText(imp)}</li>`)}</ul>
@@ -177,11 +199,12 @@ function renderFileDetails(entry, file, incoming, linkOrText) {
     <div class="tree-detail-name">
       <span class="name">${file}</span>
       ${sizeLabel ? html`<span class="tree-detail-size">${sizeLabel}</span>` : nothing}
+      ${fileCodeButton(entry.fileHash)}
     </div>
-    ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">${[
-      entry.fileHash ? `file: ${entry.fileHash}` : null,
-      entry.treeHash ? `tree: ${entry.treeHash}` : null,
-    ].filter(Boolean).join(' | ')}</div>` : nothing}
+    ${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
+      ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
+      ${entry.treeHash ? html`<div class="tree-hash">tree: ${entry.treeHash}</div>` : nothing}
+    </div>` : nothing}
     ${entry.imports?.length > 0 ? html`<div class="tree-section">
       <span class="tree-section-label">imports</span>
       <ul>${entry.imports.map((imp) => html`<li>${linkOrText(imp)}</li>`)}</ul>
