@@ -132,12 +132,7 @@ function repositoriesToolbarTemplate(triageCounts) {
       aria-label="Filter repositories"
       .value=${live(state.repositoriesSearchQuery)}
     >
-    <span class="packages-sort-wrap"><select id="repositories-sort-select" class="packages-sort" aria-label="Sort repositories" .value=${live(state.repositoriesSortBy)}>
-      <option value="findings-desc">Findings ↓</option>
-      <option value="files-desc">Files ↓</option>
-      <option value="reports-desc">Reports ↓</option>
-      <option value="name-asc">Name A→Z</option>
-    </select></span>
+    <entity-sort kind="repositories"></entity-sort>
     <triage-selector variant="packages" .counts=${triageCounts} .states=${REPOSITORIES_TRIAGE_STATES}></triage-selector>
   </div>`
 }

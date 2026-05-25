@@ -202,7 +202,8 @@ view-mode-buttons,
 triage-selector,
 slide-triage-tabs,
 source-filter,
-analyzer-select { display: contents; }
+analyzer-select,
+entity-sort { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

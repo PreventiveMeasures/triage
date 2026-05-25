@@ -251,12 +251,7 @@ function packagesToolbarTemplate(triageCounts) {
       aria-label="Filter packages"
       .value=${live(state.packagesSearchQuery)}
     >
-    <span class="packages-sort-wrap"><select id="packages-sort-select" class="packages-sort" aria-label="Sort packages" .value=${live(state.packagesSortBy)}>
-      <option value="findings-desc">Findings ↓</option>
-      <option value="files-desc">Files ↓</option>
-      <option value="reports-desc">Reports ↓</option>
-      <option value="name-asc">Name A→Z</option>
-    </select></span>
+    <entity-sort kind="packages"></entity-sort>
     <triage-selector variant="packages" .counts=${triageCounts} .states=${PACKAGES_TRIAGE_STATES}></triage-selector>
   </div>`
 }
