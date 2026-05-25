@@ -1359,16 +1359,19 @@ function findingsBodyTemplate(filtered) {
     : filtered
   // Each group's location header carries the FULL line row (file +
   // line + exportName + run-meta) for the active tab. The in-body
-  // line-row inside the .finding card is hidden (CSS rule under
-  // `.flat-group .finding .line-row`) so the same info doesn't
+  // line-row inside the card is hidden by `:host([in-group])
+  // .line-row` in view/finding-card.css so the same info doesn't
   // appear twice. Tab switches re-render, so the header tracks the
-  // active tab automatically.
+  // active tab automatically. The print sheet flips both rules
+  // around when the group has duplicates (.multi-case) — see
+  // styles/print.css and finding-card.css's @media print block.
   return html`${repeat(items, (g) => findingCardGid(g), (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p.file, p.line, p.repo?.github, p._repoFallback ?? state.repoUrl)
     const meta = formatRunMeta(p)
     const displayName = findingDisplayName(p)
-    return html`<div class="flat-group">
+    const multiCase = g.length > 1
+    return html`<div class=${classMap({ 'flat-group': true, 'multi-case': multiCase })}>
       <div class="flat-group-loc">
         <span class="file">${fileLink(p.file, p.repo?.github, p._repoFallback ?? state.repoUrl)}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}

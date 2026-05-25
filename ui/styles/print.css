@@ -144,4 +144,16 @@
      break across pages (long descriptions stay readable) — we only
      guard the header-to-body seam. */
   .flat-group-loc { break-after: avoid; }
+
+  /* The header echoes file/line/meta for the ACTIVE tab. On screen
+     that's the only tab visible, so the echo just helpfully promotes
+     the meta into the header band. In print, when the group has
+     duplicates, every tab body stacks visibly with its own .line-row
+     (re-enabled in finding-card.css's print block) — keeping the
+     header's run-meta there would attach the active tab's metadata
+     to the group banner instead of to its own tab body. The
+     `.multi-case` gate keeps single-tab findings unchanged: their
+     header still shows meta and the in-body line-row stays hidden,
+     so meta isn't doubled and isn't dropped. */
+  .flat-group.multi-case .flat-group-loc .run-meta { display: none; }
 }
