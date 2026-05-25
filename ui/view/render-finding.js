@@ -467,7 +467,7 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
       <div class="line-row">
         ${lineRowMain}
         ${npmChip}
-        ${f.discoveredIn ? html`<span class="line-num">(found analyzing ${f.discoveredIn})</span>` : nothing}
+        ${f.discoveredIn ? html`<span class="line-num discovered-in">(found analyzing ${f.discoveredIn})</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
       ${descTitle ? html`<div class="desc-title">${descTitle}</div>` : nothing}

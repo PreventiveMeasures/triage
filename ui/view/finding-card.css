@@ -637,16 +637,19 @@
     margin-top: .5rem; padding-top: .5rem;
     border-top: 1px dashed #999;
   }
-  /* On screen, the .flat-group-loc header above the card stands in for
-     the in-body .line-row (file/line/meta), so :host([in-group])
-     suppresses the duplicate. In print, every tab body stacks — but
-     that header only reflects the active tab, so duplicates would
-     otherwise lose their per-run file/line/meta. Re-show the in-body
-     row on every tab body and hide it only on the one the header
-     represents — keying on `.active` (not DOM position) so the rule
-     survives the user picking a non-primary tab. */
+  /* On screen, the .flat-group-loc header above the card stands in
+     for the in-body .line-row (file/line/meta) so :host([in-group])
+     suppresses the duplicate. In print, every tab body stacks — and
+     the header's run-meta is hidden by styles/print.css so each tab
+     body carries its own per-run metadata. Re-show every tab body's
+     in-body row (active included). */
   :host([in-group]) .tab-body .line-row { display: flex; }
-  :host([in-group]) .tab-body.active .line-row { display: none; }
+  /* `(found analyzing X)` lives in the same flex row as file:line +
+     run-meta. On dense rows it pushes the run-meta onto a wrapped
+     second line; force it to its own row instead so the meta stays
+     on the first line next to file:line. `order: 99` keeps the
+     wrap from re-ordering the source-order meta in front of it. */
+  .line-row .discovered-in { flex-basis: 100%; order: 99; }
   .print-case-label {
     display: block;
     grid-column: 1 / -1;
