@@ -206,7 +206,8 @@ analyzer-select,
 entity-sort,
 findings-sort,
 toolbar-search,
-entity-search { display: contents; }
+entity-search,
+conf-filter { display: contents; }
 
 .view-mode-group {
   display: inline-flex;

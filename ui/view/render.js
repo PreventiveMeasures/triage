@@ -775,26 +775,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
       ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
-        <div class="conf-filter">
-          <span class="conf-range-label">Confidence</span>
-          <!-- Dual-thumb slider replaces the prior min / max select
-               pair. Lower bound at 0 means "include findings without a
-               confidence rating"; upper bound at 10 means "no upper cap
-               (allow >10 outliers)" — both edges are how the user opts
-               out of that half of the filter (see filters.js /
-               matchesFilters). The conf-range-mirror element listens
-               for range-input events from the slider and patches its
-               own text during drag, so the toolbar doesn't re-render
-               every tick. On release a range-change event triggers a
-               full re-render and the property bindings here re-seed
-               the mirror in sync. -->
-          <range-slider
-            id="conf-range" min="0" max="10" step="1"
-            low=${state.filterConfMin}
-            high=${state.filterConfMax}
-            aria-label="Confidence range"></range-slider>
-          <conf-range-mirror id="conf-range-vals" class="conf-vals" for="conf-range" .low=${state.filterConfMin} .high=${state.filterConfMax}></conf-range-mirror>
-        </div>` : nothing}
+        <div class="conf-filter"><conf-filter></conf-filter></div>` : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search
