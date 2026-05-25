@@ -639,16 +639,19 @@
   }
   /* On screen, the .flat-group-loc header above the card stands in
      for the in-body .line-row (file/line/meta) so :host([in-group])
-     suppresses the duplicate. In print, every tab body stacks — and
-     the header's run-meta is hidden by styles/print.css so each tab
-     body carries its own per-run metadata. Re-show every tab body's
-     in-body row (active included). */
-  :host([in-group]) .tab-body .line-row { display: flex; }
-  /* `(found analyzing X)` lives in the same flex row as file:line +
-     run-meta. On dense rows it pushes the run-meta onto a wrapped
-     second line; force it to its own row instead so the meta stays
-     on the first line next to file:line. `order: 99` keeps the
-     wrap from re-ordering the source-order meta in front of it. */
+     suppresses the duplicate. In print, when there are duplicates
+     (.multi-case), every tab body stacks visibly — and the header's
+     run-meta is hidden by styles/print.css — so each tab body needs
+     to carry its own per-run metadata. Re-show every tab body's
+     in-body row (active included). Single-tab in-group findings keep
+     the screen rule and stay hidden so file:line isn't doubled. */
+  :host([in-group].multi-case) .tab-body .line-row { display: flex; }
+  /* In print at 9pt the line-row gets crowded enough that
+     `(found analyzing X)` between file:line and run-meta forces meta
+     onto a wrapped second line. Push the discovered-in span onto its
+     own row instead so the meta stays on the top line next to
+     file:line. `order: 99` keeps the wrap from rearranging meta
+     ahead of it. */
   .line-row .discovered-in { flex-basis: 100%; order: 99; }
   .print-case-label {
     display: block;
