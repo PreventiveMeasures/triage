@@ -31,9 +31,16 @@
 /* Open-in-bundle-source pill, shown in the file header when the
    file's sha512 matches a parsed bundle's contents. Same pill
    chrome `.finding-code-btn` uses in the finding-card, sized for
-   the header row so it lines up next to the size chip. */
+   the header row so it lines up next to the size chip. Inline-flex
+   centers the label inside the pill's padded box; vertical-align
+   middle pulls the pill into line with the surrounding text in
+   the details-panel header (which is a plain block, not a flex
+   container, so baseline alignment would otherwise tip the pill
+   below the file name). */
 .tree-code-btn {
-  display: inline-block;
+  display: inline-flex; align-items: center;
+  vertical-align: middle;
+  margin-left: .5rem;
   padding: .1rem .45rem;
   background: transparent;
   border: 1px solid var(--border); border-radius: 999px;
