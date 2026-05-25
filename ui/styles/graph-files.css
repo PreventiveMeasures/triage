@@ -28,6 +28,24 @@
 
 .tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 
+/* Open-in-bundle-source pill, shown in the file header when the
+   file's sha512 matches a parsed bundle's contents. Same pill
+   chrome `.finding-code-btn` uses in the finding-card, sized for
+   the header row so it lines up next to the size chip. */
+.tree-code-btn {
+  display: inline-block;
+  padding: .1rem .45rem;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted);
+  font: inherit; font-size: .65rem; font-weight: 500;
+  white-space: nowrap;
+}
+.tree-code-btn:hover { border-color: var(--accent); color: var(--accent); }
+@media print {
+  .tree-code-btn { display: none !important; }
+}
+
 .tree-section {
   margin-top: .35rem;
 
