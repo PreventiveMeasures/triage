@@ -125,14 +125,29 @@ export function stripPackagePrefix(file) {
 // Also strips a leading `` (`<name>`): `` or `(<name>): `` prefix from
 // the text when the parenthesised name matches one of the fields —
 // same rationale, the parenthesised lead-in is auto-injected and
-// duplicates the field already on the finding. Run AFTER the
-// `[export:]` pass so a `[export: <name>] (<name>): …` opener
-// collapses fully.
+// duplicates the field already on the finding.
+//
+// In isolate mode (`f.exportsMode === 'isolate'`) ALSO strip a leading
+// `[export: <any>] ` or `(<any>): [export: <any>] ` prefix regardless
+// of whether the bracketed name matches the finding — both are
+// auto-injected by isolate-mode merging and the name there can be a
+// sibling export that doesn't match this finding's own field. This
+// pass runs BEFORE the per-name passes so the global `[export: name]`
+// strip can't decapitate the prefix and leave the `(...): ` lead-in
+// stranded.
 export function stripExportMarker(text, f) {
   if (!text) return text
-  const names = [f?.exportName, f?.methodName].filter(Boolean)
-  if (names.length === 0) return text
   let result = text
+  if (f?.exportsMode === 'isolate') {
+    // Parens content may include one level of nested `()` (e.g.
+    // `` (first branch of `bar()`) ``). `[^()]|\([^()]*\)` allows
+    // either a non-paren char or a balanced inner pair; deeper
+    // nesting is rare in auto-injected prefixes and refuses to match
+    // (leaves the prose intact rather than over-stripping).
+    result = result.replace(/^\((?:[^()]|\([^()]*\))*\): \[export:\s*\w+\] /u, '')
+    result = result.replace(/^\[export:\s*\w+\] /u, '')
+  }
+  const names = [f?.exportName, f?.methodName].filter(Boolean)
   for (const name of names) {
     const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
     result = result.replaceAll(new RegExp(`\\[export:\\s*${escaped}\\]\\s*`, 'gu'), '')
