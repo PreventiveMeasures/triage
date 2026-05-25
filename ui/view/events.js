@@ -877,22 +877,8 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Source filter chips — `data-source-toggle="own|modules"`.
-  // Single-select with toggle-off:
-  //   * click while nothing's active → switch to that chip
-  //   * click on a different chip → switch (the other goes off)
-  //   * click on the active chip again → clear (no filter, show all)
-  // Set-based state (rather than a single string) keeps the filter
-  // predicate in filters.js stable as `size === 1` checks.
-  const srcChip = e.target.closest('[data-source-toggle]')
-  if (srcChip) {
-    const v = srcChip.dataset.sourceToggle
-    const wasActive = state.filterSources.has(v)
-    state.filterSources.clear()
-    if (!wasActive) state.filterSources.add(v)
-    render()
-    return
-  }
+  // Source filter chips now dispatch a `source-toggle` CustomEvent
+  // from `<source-filter>` — handled by the listener registered below.
   // (severity-chips / triage-filter / view-mode-buttons clicks are
   // dispatched as `severity-toggle` / `color-toggle` /
   // `view-mode-change` custom events from their respective Lit
@@ -1634,6 +1620,17 @@ report.addEventListener('color-toggle', (e) => {
   }
   if (state.filterColors.has(col)) state.filterColors.delete(col)
   else state.filterColors.add(col)
+  render()
+})
+// `<source-filter>` — Sources / Dependencies single-select with
+// toggle-off. Clear the Set first so picking a chip switches off
+// whatever else was active (and re-clicking the active chip leaves
+// the Set empty = no filter).
+report.addEventListener('source-toggle', (e) => {
+  const v = e.detail.source
+  const wasActive = state.filterSources.has(v)
+  state.filterSources.clear()
+  if (!wasActive) state.filterSources.add(v)
   render()
 })
 // Package / repository detail slide — `<slide-triage-tabs>` dispatches

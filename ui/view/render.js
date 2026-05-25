@@ -763,12 +763,6 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   // below.
   const viewModes = showGraphMode ? 'table,list,grouped,focus,kanban,graph' : 'table,list,grouped,focus,kanban'
   const sortOpt = (value, label) => html`<option value=${value} ?selected=${state.sortBy === value}>${label}</option>`
-  const srcChip = (value, label) => html`<button
-    type="button"
-    class=${classMap({ 'source-chip': true, active: state.filterSources.has(value) })}
-    data-source-toggle=${value}
-    aria-pressed=${String(state.filterSources.has(value))}
-  >${label}</button>`
 
   return html`<div class="toolbar">
     <div class="toolbar-row">
@@ -791,11 +785,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           ${showPriority ? html`${sortOpt('priority-desc', 'Priority ↓')}${sortOpt('priority-asc', 'Priority ↑')}` : nothing}
         </select>
       </span>
-      ${showSource ? html`<div class="sep"></div>
-        <div class="source-toggle" role="group" aria-label="Source filter">
-          ${srcChip('own', 'Sources')}
-          ${srcChip('modules', 'Dependencies')}
-        </div>` : nothing}
+      ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
       ${showConfidence ? html`<div class="sep"></div>
         <div class="conf-filter">
           <span class="conf-range-label">Confidence</span>

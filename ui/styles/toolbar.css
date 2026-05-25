@@ -200,7 +200,8 @@
    doesn't claim a flex slot. */
 view-mode-buttons,
 triage-selector,
-slide-triage-tabs { display: contents; }
+slide-triage-tabs,
+source-filter { display: contents; }
 
 .view-mode-group {
   display: inline-flex;
@@ -233,9 +234,10 @@ slide-triage-tabs { display: contents; }
 /* Source filter — two flush toggle chips ("Sources" / "Dependencies")
    in a bordered shell, same shape as the view-mode group above so
    the two segmented controls in the toolbar read as siblings.
-   Either / both / neither can be active; empty AND full both mean
-   "no filter" (see filters.js — the predicate goes inert when both
-   are set). Active chip carries the accent recolor. */
+   Single-select with toggle-off: at most one chip is active, and
+   re-clicking the active chip clears the Set (no filter). See
+   filters.js — the predicate is gated on `size === 1`. Active
+   chip carries the accent recolor. */
 .source-toggle {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
