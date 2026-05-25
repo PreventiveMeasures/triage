@@ -48,9 +48,10 @@ export function computeFindingCountsByFile(allGroups) {
 // more than one report merge their imports lists (deduped); the
 // first report wins on other entry fields, with later reports
 // back-filling a missing `size`. Findings already merge across
-// reports via `state.reports.flatMap(r => r.groups)` — this is the
-// matching merge on the tree side. Returns null when no report
-// carries tree data so callers fall back to a tree-less layout.
+// reports via `getMergedGroups()` (group.js — union-finds groups
+// bound by cross-report dedup hints in state.workspaceMerges) —
+// this is the matching merge on the tree side. Returns null when no
+// report carries tree data so callers fall back to a tree-less layout.
 export function mergeReportsTree(reports) {
   let merged = null
   for (const r of reports) {

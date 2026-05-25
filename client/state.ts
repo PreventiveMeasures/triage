@@ -222,15 +222,18 @@ export const state: State = store<State>({
   // (the print pipeline still merges that way). The renderer is shape-
   // agnostic.
   reports: [],
-  // Cross-report duplicate-merge instructions populated at ingest:
-  // when a new report's entry is dropped as a duplicate (every member
-  // id already seen) and those member ids span multiple existing
-  // groups, the entry's member ids are recorded here as a Set. The
+  // Cross-report duplicate-merge instructions populated at ingest.
+  // Each entry's member ids land here as an order-preserving Set in
+  // two cases: (1) all-seen — every member id was already loaded and
+  // the ids span more than one existing group, so we'd otherwise drop
+  // the entry along with its "these prior findings are the same"
+  // hint; (2) partial-seen — some members are new and some seen, so
+  // the new ones get stamped as a fresh group AND a merge is recorded
+  // to bind them with the existing group(s) holding the seen ids. The
   // workspace overall view (`getMergedGroups` in ui/view/group.js)
-  // union-finds groups whose findings share an instruction set so a
-  // report whose only contribution is "these prior findings are the
-  // same" still merges them in the merged display, instead of being
-  // silently dropped along with the dedup hint.
+  // union-finds groups whose findings share an instruction set and
+  // orders the merged super-group's members by the first-recorded
+  // instruction's id order (the combined entry's canonical order).
   workspaceMerges: [],
   // Currently-displayed OPFS basename, or null when nothing is loaded
   // (drop zone visible). Tracked separately from `reports` so the
