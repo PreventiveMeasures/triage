@@ -198,7 +198,7 @@ function renderRepositorySlide(repo, bucket) {
         <div class="bundles-slide-name">${prettyRepoLabel(repo)}</div>
         <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
-      ${repositorySlideTriageTabsTemplate(counts)}
+      <slide-triage-tabs kind="repository" .counts=${counts}></slide-triage-tabs>
     </header>
     <div class="bundles-slide-body">
       ${issueFindingsByFile.size === 0
@@ -208,23 +208,10 @@ function renderRepositorySlide(repo, bucket) {
   </div>`
 }
 
-function repositorySlideTriageTabsTemplate(counts) {
-  const buckets = ['invalid', 'deleted']
-  const visible = buckets.filter((b) => counts[b] > 0 || state.repositorySlideTriage === b)
-  if (visible.length === 0) return nothing
-  return html`<div class="triage-selector packages-slide-triage" role="group" aria-label="Triage view">
-    ${visible.map((b) => {
-      const active = state.repositorySlideTriage === b
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
-        data-repository-slide-triage=${b}
-        title=${active ? `Exit ${b} view` : `Show ${b} (${counts[b]})`}
-        aria-pressed=${String(active)}
-      >${b.charAt(0).toUpperCase() + b.slice(1)} (${counts[b]})</button>`
-    })}
-  </div>`
-}
+// Repository slide Invalid / Deleted bucket tabs now live in
+// `<slide-triage-tabs kind="repository">` (see view/slide-triage-tabs.js).
+// The component reads `state.repositorySlideTriage` directly via
+// StateElement and decides its own visibility.
 
 function renderRepositoryRow(repo, bucket, isSel) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }

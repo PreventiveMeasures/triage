@@ -294,18 +294,11 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Package slide — Invalid / Deleted tabs in the header switch
-  // the slide body to the matching triage bucket. Clicking the
-  // currently-active tab again drops back to `live` (the
-  // default + the same set the rest of the package surface
-  // counts as "issues").
-  const pkgSlideTriage = e.target.closest('[data-package-slide-triage]')
-  if (pkgSlideTriage) {
-    const next = pkgSlideTriage.dataset.packageSlideTriage
-    state.packageSlideTriage = state.packageSlideTriage === next ? null : next
-    render()
-    return
-  }
+  // Package / repository slide Invalid / Deleted tabs are now
+  // dispatched as `slide-triage-toggle` CustomEvents by
+  // `<slide-triage-tabs>` — handled by the listener registered below
+  // (search "slide-triage-toggle"). No data-attribute branch needed
+  // here anymore.
   // Packages details — click a report row to navigate to it.
   // Mirrors the bundle Issues report-chip handler (switchToFile
   // loads it into findings + flips currentView away from packages).
@@ -354,13 +347,9 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  const repoSlideTriage = e.target.closest('[data-repository-slide-triage]')
-  if (repoSlideTriage) {
-    const next = repoSlideTriage.dataset.repositorySlideTriage
-    state.repositorySlideTriage = state.repositorySlideTriage === next ? null : next
-    render()
-    return
-  }
+  // Repository slide Invalid / Deleted tabs — handled by the
+  // `slide-triage-toggle` listener registered below. See the matching
+  // comment in the package-slide branch above.
   // Bundle view — top tab switch. The strip carries Issues,
   // Terminal, Treemap, Graph, Code, Overview. State is purely UI;
   // the parsed bundleDetails stays cached so flipping tabs is
@@ -1645,6 +1634,21 @@ report.addEventListener('color-toggle', (e) => {
   }
   if (state.filterColors.has(col)) state.filterColors.delete(col)
   else state.filterColors.add(col)
+  render()
+})
+// Package / repository detail slide — `<slide-triage-tabs>` dispatches
+// this when an Invalid / Deleted tab is clicked. Routes the toggle
+// to the matching state slice based on `kind`; clicking the active
+// bucket clears it (back to `live`).
+report.addEventListener('slide-triage-toggle', (e) => {
+  const { kind, value } = e.detail
+  if (kind === 'package') {
+    state.packageSlideTriage = state.packageSlideTriage === value ? null : value
+  } else if (kind === 'repository') {
+    state.repositorySlideTriage = state.repositorySlideTriage === value ? null : value
+  } else {
+    return
+  }
   render()
 })
 report.addEventListener('view-mode-change', (e) => {

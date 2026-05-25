@@ -354,7 +354,7 @@ function renderPackageSlide(pkg, bucket, version) {
         <div class="bundles-slide-name">${pkg}${titleSuffix}</div>
         <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
-      ${packageSlideTriageTabsTemplate(counts)}
+      <slide-triage-tabs kind="package" .counts=${counts}></slide-triage-tabs>
     </header>
     <div class="bundles-slide-body">
       ${issueFindingsByFile.size === 0
@@ -364,30 +364,10 @@ function renderPackageSlide(pkg, bucket, version) {
   </div>`
 }
 
-// Triage-bucket tabs for the package Issues slide header. Only
-// renders an `Invalid` button when there are invalid findings (or
-// the user is currently looking at that bucket — keep the active
-// chip visible even if the count drops to 0 mid-session); same
-// for `Deleted`. The default `live` view has no tab — clicking
-// the active Invalid / Deleted tab again clears
-// state.packageSlideTriage and returns to it.
-function packageSlideTriageTabsTemplate(counts) {
-  const buckets = ['invalid', 'deleted']
-  const visible = buckets.filter((b) => counts[b] > 0 || state.packageSlideTriage === b)
-  if (visible.length === 0) return nothing
-  return html`<div class="triage-selector packages-slide-triage" role="group" aria-label="Triage view">
-    ${visible.map((b) => {
-      const active = state.packageSlideTriage === b
-      return html`<button
-        type="button"
-        class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
-        data-package-slide-triage=${b}
-        title=${active ? `Exit ${b} view` : `Show ${b} (${counts[b]})`}
-        aria-pressed=${String(active)}
-      >${b.charAt(0).toUpperCase() + b.slice(1)} (${counts[b]})</button>`
-    })}
-  </div>`
-}
+// Package slide Invalid / Deleted bucket tabs now live in
+// `<slide-triage-tabs kind="package">` (see view/slide-triage-tabs.js).
+// The component reads `state.packageSlideTriage` directly via
+// StateElement and decides its own visibility.
 
 // Single package row in the list — compact (one line + chip strip
 // + Issues shortcut). Click-to-select via `data-select-package`;
