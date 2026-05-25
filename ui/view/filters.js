@@ -143,15 +143,19 @@ function confidenceSorter(dir) {
 }
 
 // Per-mode primary-tab comparator. Severity stays explicit because
-// it carries a three-key lex order (severity rank, then file, then
-// line) — collapsing it into the numeric helper would lose the
-// line-tiebreaker that makes the within-file order deterministic.
+// it composes multiple keys: severity rank, then confidence
+// (delegated to the confidence-desc sorter so critical-flagged
+// findings join the 10 bucket, matching the dedicated confidence
+// sort), then line as a final within-file tiebreaker — file
+// ordering falls out of confidenceSorter, which already chains
+// file as its own tiebreaker.
+const confDescCmp = confidenceSorter('desc')
 const SORTERS = {
   severity: (pa, pb) =>
     (SEVERITY_ORDER[pb.severity] || 0) - (SEVERITY_ORDER[pa.severity] || 0)
-    || pa.file.localeCompare(pb.file)
+    || confDescCmp(pa, pb)
     || parseInt(pa.line, 10) - parseInt(pb.line, 10),
-  'confidence-desc': confidenceSorter('desc'),
+  'confidence-desc': confDescCmp,
   'confidence-asc':  confidenceSorter('asc'),
   'priority-desc':   numericSorter('priority',   'desc', -1),
   'priority-asc':    numericSorter('priority',   'asc',  11),
