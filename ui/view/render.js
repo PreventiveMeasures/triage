@@ -1377,18 +1377,9 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
-  // Fixed top-right print icon visibility — only show on the
-  // findings view with a report loaded AND a printable view-mode
-  // (table / list / grouped). The graph view-mode and the Files
-  // view both have non-printable bodies (canvas + per-file tree),
-  // and the kanban view shows a board layout that doesn't read on
-  // paper, so the button hides for those. Toggled via a body class
-  // so the button itself doesn't need to re-render.
-  document.body.classList.toggle('show-print-btn',
-    state.reports.length > 0 &&
-    state.currentView === 'findings' &&
-    state.viewMode !== 'graph' &&
-    state.viewMode !== 'kanban')
+  // Print-button body class is now managed by an observer-util
+  // autorun (see view/print-btn-visibility.js) — render() no longer
+  // touches it.
   // Bundles view — paints from `state.bundles` (cached by
   // renderSidebar's listBundles call), so it stays paint-only here.
   // Lives before the reports-gate below because the bundles list is

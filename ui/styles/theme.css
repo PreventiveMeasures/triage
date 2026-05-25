@@ -461,11 +461,12 @@ a { color: var(--accent); text-decoration: none; }
 
 /* Print sits directly under the theme toggle — its top stacks below
    the toggle's bottom (.5rem from the viewport top + 30px toggle
-   height + .35rem gap). Hidden by default; render() in view/render.js
-   toggles `body.show-print-btn` based on
-   (state.reports.length > 0 && state.currentView === 'findings')
-   so the button only appears where window.print() makes sense
-   (graph / files tabs strip the canvas / cards in print anyway). */
+   height + .35rem gap). Hidden by default; an autorun in
+   view/print-btn-visibility.js toggles `body.show-print-btn` based
+   on (state.reports.length > 0 && state.currentView === 'findings'
+   && state.viewMode !== 'graph' && state.viewMode !== 'kanban') so
+   the button only appears where window.print() makes sense (graph
+   and kanban don't read on paper; the Files tab isn't findings). */
 #print-btn { top: calc(.5rem + 30px + .35rem); }
 
 /* Download sits directly under the print button, same .35rem gap. */

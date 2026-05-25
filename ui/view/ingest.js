@@ -576,7 +576,6 @@ export async function switchToWorkspace(workspaceId) {
     report.classList.remove('active')
     litRender(nothing, report)
     dropZone.classList.remove('hidden')
-    document.body.classList.remove('show-print-btn')
   }
   // Kick off every readFile concurrently up front, then ingest the
   // results in workspace order. The await inside the loop only blocks
@@ -723,11 +722,13 @@ export async function deleteCurrent({ triage = 'keep', deleteFromRemoteWorkspace
 
 // Shared empty-state reset — clears every piece of in-memory
 // view state (selections, reports, graph2, repo-url) and
-// repaints `#report` / `#drop-zone` / `<title>` / the show-
-// print-btn body class so the user lands on the empty welcome
-// surface. `goHome`, `deleteCurrent`'s tail, and
-// `leaveWorkspace`'s active-view branch all go through here so
-// the three paths can't drift apart.
+// repaints `#report` / `#drop-zone` / `<title>` so the user lands
+// on the empty welcome surface. The show-print-btn body class
+// follows state.reports/currentView/viewMode reactively (see
+// view/print-btn-visibility.js) so no manual reset is needed here.
+// `goHome`, `deleteCurrent`'s tail, and `leaveWorkspace`'s active-
+// view branch all go through here so the three paths can't drift
+// apart.
 //
 // Does NOT bump `loadGen` or close sync sessions — those are
 // caller concerns (each path has its own ordering constraints
@@ -762,7 +763,6 @@ function clearActiveView() {
   litRender(nothing, report)
   dropZone.classList.remove('hidden')
   document.title = 'DeepView'
-  document.body.classList.remove('show-print-btn')
 }
 
 // Drop back to the empty drop-zone screen without touching any
