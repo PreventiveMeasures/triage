@@ -32,7 +32,7 @@ if (globalThis.localStorage === undefined) {
   globalThis.localStorage = createLocalStorage()
 }
 
-const { saveFile } = await import('../client/storage.js')
+const { deleteFile, saveFile } = await import('../client/storage.js')
 const {
   ensureBundleFindingsIndexed,
   findingsForFileHash,
@@ -684,5 +684,113 @@ describe('bundle-finding-index — re-import notifies subscribers (audit round-1
     await ensureBundleFindingsIndexed()
     assert.ok(calls > before, 'new contribution to existing repo key notifies subscribers')
     unsub()
+  })
+})
+
+// `pBucket.repos` powers the Packages view's upstream-link rule
+// (`size === 1` → render the GitHub link). Stale entries left behind
+// by overwritten / deleted reports either suppress a legitimate link
+// (the surviving contributor's URL now has to fight a ghost) or
+// surface a stale URL as the canonical upstream. `invalidateName`
+// walks the per-package `_repoReports` refcount so a depleted repo is
+// pulled out of `pBucket.repos` the moment its last contributor is
+// gone.
+describe('bundle-finding-index — pBucket.repos pruning on invalidation', () => {
+  it('drops a repo URL from pBucket.repos when its sole contributor is deleted', async () => {
+    const tag = `repos-prune-${Date.now()}`
+    const repoA = `acme/${tag}-a`
+    const repoB = `acme/${tag}-b`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: repoA } },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: `${tag}-f2`, severity: 'high', file: `node_modules/${tag}/y.js`, description: 'd', repo: { github: repoB } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+
+    const beforeBucket = getPackagesIndex().get(tag)
+    assert.equal(beforeBucket.repos.size, 2, 'both repos visible before delete')
+
+    await deleteFile(r1)
+    const afterBucket = getPackagesIndex().get(tag)
+    assert.equal(afterBucket.repos.size, 1, 'repoA pruned with its sole contributor')
+    assert.ok(afterBucket.repos.has(repoB), 'repoB survives — its contributor still indexed')
+    assert.ok(!afterBucket.repos.has(repoA), 'repoA gone from pBucket.repos')
+  })
+
+  it('keeps a repo URL when another report still contributes the same URL', async () => {
+    const tag = `repos-shared-${Date.now()}`
+    const repo = `acme/${tag}`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: repo } },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: `${tag}-f2`, severity: 'high', file: `node_modules/${tag}/y.js`, description: 'd', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.equal(getPackagesIndex().get(tag).repos.size, 1, 'both reports agree on one repo')
+
+    await deleteFile(r1)
+    const bucket = getPackagesIndex().get(tag)
+    assert.equal(bucket.repos.size, 1, 'repo URL retained — second report still contributes it')
+    assert.ok(bucket.repos.has(repo))
+  })
+
+  it('overwriting a report with a new repo URL refreshes pBucket.repos', async () => {
+    const tag = `repos-overwrite-${Date.now()}`
+    const oldRepo = `acme/${tag}-old`
+    const newRepo = `acme/${tag}-new`
+    const name = uniqueName('rpt')
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: oldRepo } },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag).repos.has(oldRepo), 'old repo seeded')
+
+    // Overwrite — onFileMutated → invalidateName drops old contribution,
+    // next ensureBundleFindingsIndexed re-indexes against new content.
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: newRepo } },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    const bucket = getPackagesIndex().get(tag)
+    assert.equal(bucket.repos.size, 1, 'exactly one repo after overwrite')
+    assert.ok(bucket.repos.has(newRepo), 'new repo URL replaces the old one')
+    assert.ok(!bucket.repos.has(oldRepo), 'old repo URL no longer leaks')
+  })
+
+  it('keeps unrelated packages\' repos untouched when one report is deleted', async () => {
+    const tagA = `repos-isolation-a-${Date.now()}`
+    const tagB = `repos-isolation-b-${Date.now()}`
+    const repoA = `acme/${tagA}`
+    const repoB = `acme/${tagB}`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tagA}-f1`, severity: 'high', file: `node_modules/${tagA}/x.js`, description: 'd', repo: { github: repoA } },
+      ],
+    })
+    await seedReport({
+      findings: [
+        { id: `${tagB}-f1`, severity: 'high', file: `node_modules/${tagB}/x.js`, description: 'd', repo: { github: repoB } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+
+    await deleteFile(r1)
+    assert.equal(getPackagesIndex().get(tagA), undefined, 'package A cleaned up entirely')
+    const bucketB = getPackagesIndex().get(tagB)
+    assert.ok(bucketB?.repos.has(repoB), 'package B\'s repo untouched by A\'s deletion')
   })
 })
