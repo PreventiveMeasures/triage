@@ -306,7 +306,13 @@ function indexFindingByPackage(f, key, name) {
   // fresh contributing report (common for markdown findings without a
   // `fileHash`), not only when the key itself is new. Audit round-12 M-A.
   const wasNewReport = addFindingToBucket(pBucket, key, name, f)
-  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
+  // `rememberContribution` runs unconditionally — `_repoReports.add(name)`
+  // above also runs unconditionally, and `invalidateName` keys its repo
+  // sweep on `contrib.pkg` containing at least one entry for the (pkg,
+  // name) tuple. Gating on `wasNewReport` would couple the sweep to a
+  // subtle "first-finding-always-wasNewReport-true" invariant; redundant
+  // entries are no-ops in the cleanup loop (`if (!krSet) continue`).
+  rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
   return wasNewReport
 }
 

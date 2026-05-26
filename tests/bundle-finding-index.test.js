@@ -771,6 +771,32 @@ describe('bundle-finding-index — pBucket.repos pruning on invalidation', () =>
     assert.ok(!bucket.repos.has(oldRepo), 'old repo URL no longer leaks')
   })
 
+  // Same-report dedupe-key collision: two findings sharing the same `id` (and
+  // therefore the same `findingDedupeKey`) but stamping different `repo.github`
+  // URLs. The second finding takes the `wasNewReport=false` branch of
+  // `addFindingToBucket` (the report name is already in `_keyReports[key]`
+  // from the first finding), so historically only the first finding would
+  // have been remembered in `contrib.pkg`. The cleanup sweep still has to
+  // prune BOTH repos on deletion — guard against any future regression that
+  // re-couples the sweep to the wasNewReport gate.
+  it('prunes all repos when same-id findings stamp different repos', async () => {
+    const tag = `repos-collide-${Date.now()}`
+    const repoA = `acme/${tag}-a`
+    const repoB = `acme/${tag}-b`
+    const r1 = await seedReport({
+      findings: [
+        { id: `${tag}-shared`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: repoA } },
+        { id: `${tag}-shared`, severity: 'high', file: `node_modules/${tag}/x.js`, description: 'd', repo: { github: repoB } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    const before = getPackagesIndex().get(tag)
+    assert.equal(before.repos.size, 2, 'both repos registered despite key collision')
+
+    await deleteFile(r1)
+    assert.equal(getPackagesIndex().get(tag), undefined, 'package cleared entirely with its sole contributor')
+  })
+
   it('keeps unrelated packages\' repos untouched when one report is deleted', async () => {
     const tagA = `repos-isolation-a-${Date.now()}`
     const tagB = `repos-isolation-b-${Date.now()}`
