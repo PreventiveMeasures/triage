@@ -1201,14 +1201,17 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     // OPFS and orphan references in `workspace.reports`
     // accumulated indefinitely. Mock `storage.readFile` to
     // surface the OPFS-shaped error and confirm the prune.
-    if (typeof (await import('node:test')).mock.module !== 'function') {
+    if (typeof t.mock.module !== 'function') {
       t.skip('requires --experimental-test-module-mocks')
       return
     }
-    const { mock } = await import('node:test')
     const reportName = `opfs-gone-${Date.now()}.json`
     const stamp = `${Date.now()}-${Math.random()}-opfs`
-    mock.module(`../client/storage.js`, {
+    // `t.mock.module` (per-test) auto-restores at test end —
+    // top-level `mock.module` would persist for the rest of the
+    // file run and silently bleed into any later test that
+    // re-imports storage.js via the cache-buster pattern.
+    t.mock.module(`../client/storage.js`, {
       namedExports: {
         readFile: () => Promise.reject(new DOMException(
           `A requested file or directory could not be found at the time an operation was processed.`,
