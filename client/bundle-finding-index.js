@@ -69,6 +69,17 @@ function packageOf(f) {
   return null
 }
 
+// Pure path-based deps test, used to gate `indexFindingByRepo`. Lighter
+// than `packageOf` because the stamp (`f.package.npm.name`) doesn't
+// disqualify a finding from the Repositories view — the analyzer often
+// stamps the user's own project name on own-source findings, and those
+// still belong under the project's repo bucket. Only a file path that
+// physically lives in `node_modules/` / `dependencies/` should be
+// repos-exempt (it's unambiguously a dep, not user code).
+function fileIsInDepsPath(f) {
+  if (typeof f?.file !== 'string') return false
+  return /(?:^|\/)(?:node_modules|dependencies)\//u.test(f.file)
+}
 
 // Extracts the repo "key" the Repositories view buckets under.
 // Prefers the analyzer-stamped `repo.github` (a `user/repo` slug
@@ -324,13 +335,17 @@ function indexFindingByPackage(f, key, name) {
 }
 
 // Repository-keyed bucket update. Mirror of indexFindingByPackage
-// but for own-source findings (those NOT inside a deps dir),
-// keyed by `repoOf(f)`. Findings with no repo signal AT ALL
-// (no `repo.github`, no `_repoFallback`) are skipped — there's
-// nowhere to bucket them. Returns true on a fresh dedupe key,
-// matching the package path's contract.
+// but for findings whose FILE PATH is not under `node_modules/` or
+// `dependencies/`. Stamped `package.npm.name` does NOT exclude a
+// finding from Repositories — analyzers routinely stamp the user's
+// own project name on own-source findings (so the project surfaces as
+// a "package" in Packages), and those findings still belong under
+// the project's repo bucket via `repoOf`'s chip-URL fallback.
+// Findings under deps paths stay Packages-only — they're
+// unambiguously third-party. Findings with no repo signal AT ALL
+// (no `repo.github`, no `_repoFallback`, no chip URL) are skipped.
 function indexFindingByRepo(f, key, name, reportFallback) {
-  if (packageOf(f) !== null) return false
+  if (fileIsInDepsPath(f)) return false
   const repo = repoOf(f, reportFallback)
   if (!repo) return false
   let rBucket = byRepo.get(repo)
