@@ -62,6 +62,12 @@ class SlideTriageTabs extends StateElement {
     this.kind = ''
   }
 
+  connectedCallback() {
+    super.connectedCallback()
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Triage view')
+  }
+
   render() {
     const config = KIND[this.kind]
     if (!config) {
@@ -72,19 +78,17 @@ class SlideTriageTabs extends StateElement {
     const current = state[config.stateKey]
     const visible = BUCKETS.filter((b) => (this.counts[b] ?? 0) > 0 || current === b)
     if (visible.length === 0) return nothing
-    return html`<div class="triage-selector packages-slide-triage" role="group" aria-label="Triage view">
-      ${visible.map((b) => {
-        const active = current === b
-        const n = this.counts[b] ?? 0
-        return html`<button
-          type="button"
-          class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
-          title=${active ? `Exit ${b} view` : `Show ${b} (${n})`}
-          aria-pressed=${String(active)}
-          @click=${() => this._toggle(b)}
-        >${b.charAt(0).toUpperCase() + b.slice(1)} (${n})</button>`
-      })}
-    </div>`
+    return html`${visible.map((b) => {
+      const active = current === b
+      const n = this.counts[b] ?? 0
+      return html`<button
+        type="button"
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${b}`]: true, active })}
+        title=${active ? `Exit ${b} view` : `Show ${b} (${n})`}
+        aria-pressed=${String(active)}
+        @click=${() => this._toggle(b)}
+      >${b.charAt(0).toUpperCase() + b.slice(1)} (${n})</button>`
+    })}`
   }
 
   _toggle(value) {

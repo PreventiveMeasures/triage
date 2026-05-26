@@ -71,16 +71,14 @@ class ToolbarSearch extends StateElement {
         `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
       return nothing
     }
-    return html`<div class="toolbar-search">
-      ${SEARCH_ICON}
+    return html`${SEARCH_ICON}
       <input
         type="text"
         aria-label=${config.placeholder}
         placeholder=${config.placeholder}
         .value=${live(state[config.stateKey])}
         @input=${this._onInput}
-      >
-    </div>`
+      >`
   }
 
   _onInput = (e) => {

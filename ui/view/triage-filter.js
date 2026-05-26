@@ -68,9 +68,9 @@ class TriageFilter extends StateElement {
     kind:     { type: String },
   }
 
-  // CSS lives in styles/toolbar.css under the `.triage-filter`
-  // block. Light DOM keeps those rules applying directly — same
-  // pattern as `<severity-chips>`, lets the host's existing
+  // CSS lives in styles/toolbar.css under the `triage-filter`
+  // host selector. Light DOM keeps those rules applying directly —
+  // same pattern as `<severity-chips>`, lets the host's existing
   // theming hold.
   createRenderRoot() { return this }
 
@@ -79,6 +79,15 @@ class TriageFilter extends StateElement {
     this.counts = {}
     this.selected = []
     this.kind = 'findings'
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    // ARIA on the host — the element selector now carries the
+    // `.triage-filter` shell layout (no wrapping div), so the
+    // group semantics live here too.
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Filter by mark color')
   }
 
   render() {
@@ -94,19 +103,17 @@ class TriageFilter extends StateElement {
     // toolbar row stays clean of placeholder chrome.
     const hasAnything = COLORS.some(([color]) => (this.counts[color] ?? 0) || selected.has(color))
     if (!hasAnything) return nothing
-    return html`<div class="triage-filter" role="group" aria-label="Filter by mark color">
-      ${COLORS.map(([color, tdClass, label]) => {
-        const count = this.counts[color] ?? 0
-        const active = selected.has(color)
-        return html`<button
-          type="button"
-          class=${active ? 'active' : ''}
-          title=${`${label} (${count})`}
-          aria-pressed=${String(active)}
-          @click=${() => this._toggle(color)}
-        ><span class=${`td ${tdClass}`}></span><span class="count">${count}</span></button>`
-      })}
-    </div>`
+    return html`${COLORS.map(([color, tdClass, label]) => {
+      const count = this.counts[color] ?? 0
+      const active = selected.has(color)
+      return html`<button
+        type="button"
+        class=${active ? 'active' : ''}
+        title=${`${label} (${count})`}
+        aria-pressed=${String(active)}
+        @click=${() => this._toggle(color)}
+      ><span class=${`td ${tdClass}`}></span><span class="count">${count}</span></button>`
+    })}`
   }
 
   _toggle(color) {

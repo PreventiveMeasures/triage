@@ -114,15 +114,23 @@ class ViewModeButtons extends StateElement {
     kind: { type: String },
   }
 
-  // Light DOM so the existing `.view-mode-label` / `.view-mode-group`
-  // / `.view-mode-btn` rules in toolbar.css apply directly. Same
-  // pattern as `<severity-chips>` / `<triage-filter>`.
+  // Light DOM so the host can carry the bordered icon-group chrome
+  // directly via the `view-mode-buttons` element selector in
+  // toolbar.css, and the per-button `.view-mode-btn` rules apply
+  // to the buttons rendered as direct children. Same pattern as
+  // `<severity-chips>` / `<triage-filter>`.
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.modes = MODES.join(',')
     this.kind = 'findings'
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'View mode')
   }
 
   render() {
@@ -136,16 +144,14 @@ class ViewModeButtons extends StateElement {
     // tooltips carry the affordance on their own, and dropping the
     // word shortens the toolbar so the sort dropdown sits flush
     // against the icon group.
-    return html`<div class="view-mode-group" role="group" aria-label="View mode">
-        ${list.map((m) => html`<button
-          type="button"
-          class=${classMap({ 'view-mode-btn': true, active: current === m })}
-          title=${VIEW_TITLES[m]}
-          aria-label=${VIEW_TITLES[m]}
-          aria-pressed=${String(current === m)}
-          @click=${() => this._select(m, current)}
-        >${VIEW_ICONS[m]}</button>`)}
-      </div>`
+    return html`${list.map((m) => html`<button
+      type="button"
+      class=${classMap({ 'view-mode-btn': true, active: current === m })}
+      title=${VIEW_TITLES[m]}
+      aria-label=${VIEW_TITLES[m]}
+      aria-pressed=${String(current === m)}
+      @click=${() => this._select(m, current)}
+    >${VIEW_ICONS[m]}</button>`)}`
   }
 
   _select(mode, current) {

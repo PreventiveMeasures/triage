@@ -9,14 +9,15 @@
 // Repositories pages); kept separate because the findings dropdown
 // has a CONDITIONAL option list driven by parent flags (file sort
 // only when a tree exists, confidence/priority options only when
-// the dataset surfaces those fields) and uses different CSS
-// (`.sort-select` / `.sort-wrapper` in toolbar.css vs the entity-
-// sort form's `.packages-sort` / `.packages-sort-wrap` in
-// report.css). Folding them together would require either threading
-// styling and option-shape props through one component or splitting
-// the template into two branches that don't share much, so they
-// stay as two thin components that pair with the same `sort-change`
-// dispatch contract.
+// the dataset surfaces those fields) and uses different CSS — the
+// findings host shares the `& :is(analyzer-select, findings-sort)`
+// chevron rule in toolbar.css with the analyzer dropdown, while
+// `<entity-sort>` has its own offset in report.css's
+// `.packages-toolbar entity-sort` rule. Folding them together
+// would require either threading styling and option-shape props
+// through one component or splitting the template into two
+// branches that don't share much, so they stay as two thin
+// components that pair with the same `sort-change` dispatch contract.
 //
 // Reactivity: extends StateElement, reads `state.sortBy` via the
 // autorun. Native `<select>` value bound through Lit's `live()`
@@ -60,19 +61,17 @@ class FindingsSort extends StateElement {
 
   render() {
     const opt = (value, label) => html`<option value=${value}>${label}</option>`
-    return html`<span class="sort-wrapper">
-      <select
-        class="sort-select"
-        aria-label="Sort findings"
-        .value=${live(state.sortBy)}
-        @change=${this._onChange}
-      >
-        ${opt('severity', 'Severity ↓')}
-        ${this.showFile ? opt('file', 'File ↑') : nothing}
-        ${this.showConfidence ? html`${opt('confidence-desc', 'Confidence ↓')}${opt('confidence-asc', 'Confidence ↑')}` : nothing}
-        ${this.showPriority ? html`${opt('priority-desc', 'Priority ↓')}${opt('priority-asc', 'Priority ↑')}` : nothing}
-      </select>
-    </span>`
+    return html`<select
+      class="sort-select"
+      aria-label="Sort findings"
+      .value=${live(state.sortBy)}
+      @change=${this._onChange}
+    >
+      ${opt('severity', 'Severity ↓')}
+      ${this.showFile ? opt('file', 'File ↑') : nothing}
+      ${this.showConfidence ? html`${opt('confidence-desc', 'Confidence ↓')}${opt('confidence-asc', 'Confidence ↑')}` : nothing}
+      ${this.showPriority ? html`${opt('priority-desc', 'Priority ↓')}${opt('priority-asc', 'Priority ↑')}` : nothing}
+    </select>`
   }
 
   _onChange = (e) => {

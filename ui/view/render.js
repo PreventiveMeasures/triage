@@ -774,8 +774,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<div class="sep"></div><source-filter></source-filter>` : nothing}
-      ${showConfidence ? html`<div class="sep"></div>
-        <div class="conf-filter"><conf-filter></conf-filter></div>` : nothing}
+      ${showConfidence ? html`<div class="sep"></div><conf-filter></conf-filter>` : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
     </div>
     <!-- Filter row: severity chips + mark-color triage pill + search

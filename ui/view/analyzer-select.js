@@ -61,20 +61,18 @@ class AnalyzerSelect extends StateElement {
   }
 
   render() {
-    return html`<span class="sort-wrapper">
-      <select
-        class="sort-select"
-        aria-label="Filter by analyzer"
-        .value=${live(state.filterAnalyzer)}
-        @change=${this._onChange}
-      >
-        <option value="">All analyzers</option>
-        ${this.options.map((a) => {
-          const value = a == null ? NULL_ANALYZER_SENTINEL : a
-          return html`<option value=${value}>${analyzerLabel(a)}</option>`
-        })}
-      </select>
-    </span>`
+    return html`<select
+      class="sort-select"
+      aria-label="Filter by analyzer"
+      .value=${live(state.filterAnalyzer)}
+      @change=${this._onChange}
+    >
+      <option value="">All analyzers</option>
+      ${this.options.map((a) => {
+        const value = a == null ? NULL_ANALYZER_SENTINEL : a
+        return html`<option value=${value}>${analyzerLabel(a)}</option>`
+      })}
+    </select>`
   }
 
   _onChange = (e) => {

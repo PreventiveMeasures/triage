@@ -117,7 +117,7 @@
    issue: it pushes the selector (and everything after — the
    fullscreen button) to the right edge regardless of how the
    sibling flex items distribute. */
-.graph2-topbar .triage-selector { margin-left: auto; }
+.graph2-topbar triage-selector { margin-left: auto; }
 
 .g2-icon-btn {
   width: 28px; height: 28px;

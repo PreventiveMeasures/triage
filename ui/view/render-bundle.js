@@ -65,8 +65,8 @@ import { render } from './render.js'
 // each chip click, and the lazy module rebuilds the graph there.
 let _currentBundlePrep = null
 
-// SEARCH_MODE_ICONS moved into `<bundle-search-modes>` (see
-// view/bundle-search-modes.js) along with the toggle template.
+// SEARCH_MODE_ICONS moved into `<bundle-code-search>` (see
+// view/bundle-code-search.js) along with the toggle template.
 
 // File → set of resolved import paths. The stasis Bundle exposes
 // imports as Map<conditionsKey, Map<parent, Map<specifier, resolved>>>
@@ -1187,10 +1187,7 @@ function renderBundleCodeView(details) {
         <span class="bundle-code-rail-count">${allPaths.length}</span>
       </div>
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
-      <div class="bundle-code-search">
-        <bundle-code-search></bundle-code-search>
-        <bundle-search-modes .modes=${searchModes}></bundle-search-modes>
-      </div>
+      <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
           ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)],

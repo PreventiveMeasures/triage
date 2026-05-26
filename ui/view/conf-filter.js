@@ -15,6 +15,9 @@
 // in render.js's `toolbarTemplate` that bound `state.filterConfMin`
 // and `state.filterConfMax` to both inner components four times
 // over (low / high on the slider, .low / .high on the mirror).
+// The `<conf-filter>` host element now carries the layout styling
+// directly (element selector in toolbar.css) — no wrapping div
+// needed.
 //
 // Reactivity: extends StateElement, so the autorun tracks the two
 // state reads and re-renders the inner property bindings when state

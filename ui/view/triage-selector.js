@@ -18,9 +18,9 @@
 //
 // Returns `nothing` when there is nothing to switch to (zero counts
 // AND no active bucket) so the host can drop it in unconditionally
-// and let the component decide its own visibility. Pair with
-// `triage-selector { display: contents }` in toolbar.css so the host
-// stays transparent in flex layouts when the component renders.
+// and let the component decide its own visibility. The bordered-pill
+// shell layout lives on the `triage-selector` element selector in
+// toolbar.css; the buttons render as direct children of the host.
 //
 // Properties (`attribute: false` — passed by reference via Lit's
 // `.prop=${...}` property binding; no attribute reflection):
@@ -32,7 +32,7 @@
 //                per-report and treated as untriaged in those views.
 //
 // Attributes:
-//   * `variant` — adds an extra class to the inner wrapper so
+//   * `variant` — adds an extra class onto the host element so
 //                 events.js can route the click correctly:
 //                   `graph`    → `.graph2-triage-selector`
 //                   `packages` → `.packages-triage-selector`
@@ -64,38 +64,42 @@ class TriageSelector extends StateElement {
     this.variant = ''
   }
 
+  connectedCallback() {
+    super.connectedCallback()
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Triage view')
+  }
+
   render() {
     const states = this.states ?? DEFAULT_STATES
     const total = states.reduce((n, s) => n + (this.counts[s] ?? 0), 0)
-    if (total === 0 && !state.shownTriage) return nothing
-    // Unknown variants would silently drop the marker class and
-    // mis-route clicks (graph variant without the class falls through
-    // to the toolbar handler, which skips canvas teardown). Warn so
-    // typos surface in dev rather than as a subtle interaction bug.
+    // Variant marker class lives on the HOST element so events.js can
+    // distinguish graph-variant clicks (canvas teardown path) from
+    // toolbar-variant clicks (plain render). Unknown variants would
+    // silently drop the marker class and mis-route — warn in dev so
+    // typos surface rather than reading as a subtle interaction bug.
     const extra = this.variant ? VARIANT_CLASS[this.variant] : null
     if (this.variant && extra === undefined) {
       console.warn(`<triage-selector>: unknown variant ${JSON.stringify(this.variant)}; ` +
         `expected one of ${Object.keys(VARIANT_CLASS).map((k) => JSON.stringify(k)).join(', ')} or "".`)
     }
-    const wrapperClasses = { 'triage-selector': true }
-    if (extra) wrapperClasses[extra] = true
-    return html`<div class=${classMap(wrapperClasses)} role="group" aria-label="Triage view">
-      ${states.map((s) => {
-        const n = this.counts[s] ?? 0
-        const active = state.shownTriage === s
-        // Hidden when the bucket is empty AND not the current view —
-        // so the user can always click the active button to exit
-        // its bucket even when the count drops mid-session.
-        if (n === 0 && !active) return nothing
-        return html`<button
-          type="button"
-          class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
-          data-triage-show=${s}
-          title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
-          aria-pressed=${String(active)}
-        >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
-      })}
-    </div>`
+    for (const cls of Object.values(VARIANT_CLASS)) this.classList.toggle(cls, cls === extra)
+    if (total === 0 && !state.shownTriage) return nothing
+    return html`${states.map((s) => {
+      const n = this.counts[s] ?? 0
+      const active = state.shownTriage === s
+      // Hidden when the bucket is empty AND not the current view —
+      // so the user can always click the active button to exit
+      // its bucket even when the count drops mid-session.
+      if (n === 0 && !active) return nothing
+      return html`<button
+        type="button"
+        class=${classMap({ 'triage-state-btn': true, [`triage-state-${s}`]: true, active })}
+        data-triage-show=${s}
+        title=${active ? `Exit ${s} view` : `Show ${s} (${n})`}
+        aria-pressed=${String(active)}
+      >${s.charAt(0).toUpperCase() + s.slice(1)} (${n})</button>`
+    })}`
   }
 }
 

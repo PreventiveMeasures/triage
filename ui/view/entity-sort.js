@@ -5,10 +5,13 @@
 // listener that wrote to `state.packagesSortBy` /
 // `state.repositoriesSortBy`.
 //
-// The two pages already shared their option list, CSS classes
-// (`.packages-sort` / `.packages-sort-wrap`), and toggle shape — only
-// the state slice (and the aria-label) differed. The component picks
-// the slice from the `kind="packages"|"repositories"` attribute and
+// The two pages already shared their option list, the inner select
+// styling (`.packages-sort`), and toggle shape — only the state
+// slice (and the aria-label) differed. The host element now carries
+// the chevron `::after` directly via `.packages-toolbar entity-sort`
+// in report.css; the `<select>` is the host's only child. The
+// component picks the state slice from the
+// `kind="packages"|"repositories"` attribute and
 // emits a `sort-change(detail: { kind, value })` CustomEvent on
 // native change. events.js's single listener writes the matching
 // `state.${kind}SortBy` slot and calls render().
@@ -62,16 +65,14 @@ class EntitySort extends StateElement {
         `expected one of ${Object.keys(KIND).map((k) => JSON.stringify(k)).join(', ')}.`)
       return nothing
     }
-    return html`<span class="packages-sort-wrap">
-      <select
-        class="packages-sort"
-        aria-label=${config.aria}
-        .value=${live(state[config.stateKey])}
-        @change=${this._onChange}
-      >
-        ${OPTIONS.map(([value, label]) => html`<option value=${value}>${label}</option>`)}
-      </select>
-    </span>`
+    return html`<select
+      class="packages-sort"
+      aria-label=${config.aria}
+      .value=${live(state[config.stateKey])}
+      @change=${this._onChange}
+    >
+      ${OPTIONS.map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+    </select>`
   }
 
   _onChange = (e) => {

@@ -66,11 +66,12 @@ class SeverityChips extends StateElement {
     kind:     { type: String },
   }
 
-  // CSS lives in styles/toolbar.css under the `.sev-chips` /
-  // `.sev-chip` rules. We render light DOM (no shadow root) so those
-  // rules apply directly — the chips reuse the toolbar's padding,
-  // hover, active-tint patterns, and sharing styles with the
-  // surrounding chrome reads cleaner than re-stating the same
+  // CSS lives in styles/toolbar.css under the `severity-chips`
+  // host selector + the per-chip `.sev-chip` rules. We render light
+  // DOM (no shadow root) so those rules apply directly — the chips
+  // reuse the toolbar's padding, hover, active-tint patterns, and
+  // sharing styles with the surrounding chrome reads cleaner than
+  // re-stating the same
   // declarations inside a shadow root.
   createRenderRoot() { return this }
 
@@ -79,6 +80,12 @@ class SeverityChips extends StateElement {
     this.counts = {}
     this.selected = []
     this.kind = 'findings'
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Filter by severity')
   }
 
   render() {
@@ -93,22 +100,20 @@ class SeverityChips extends StateElement {
     // filter can outlive its data (toggling a severity off in the
     // canvas, then having the underlying graph data change).
     const visibleTiers = TIERS.filter(([sev]) => (this.counts[sev] ?? 0) || selected.has(sev))
-    // Hide the whole wrapper when no tiers are visible — otherwise
-    // the bordered `.sev-chips` shell collapses to a thin vertical
-    // line next to the next toolbar control (visible glitch).
+    // Hide the whole pill when no tiers are visible — otherwise the
+    // bordered shell collapses to a thin vertical line next to the
+    // next toolbar control (visible glitch).
     if (visibleTiers.length === 0) return nothing
-    return html`<div class="sev-chips" role="group" aria-label="Filter by severity">
-      ${visibleTiers.map(([sev, label]) => {
-        const count = this.counts[sev] ?? 0
-        const active = selected.has(sev)
-        return html`<button
-          type="button"
-          class=${classMap({ 'sev-chip': true, [sev]: true, active })}
-          aria-pressed=${String(active)}
-          @click=${() => this._toggle(sev)}
-        ><span class="sd"></span><span class="name">${label}</span><span class="n">${count}</span></button>`
-      })}
-    </div>`
+    return html`${visibleTiers.map(([sev, label]) => {
+      const count = this.counts[sev] ?? 0
+      const active = selected.has(sev)
+      return html`<button
+        type="button"
+        class=${classMap({ 'sev-chip': true, [sev]: true, active })}
+        aria-pressed=${String(active)}
+        @click=${() => this._toggle(sev)}
+      ><span class="sd"></span><span class="name">${label}</span><span class="n">${count}</span></button>`
+    })}`
   }
 
   _toggle(severity) {

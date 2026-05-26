@@ -19,11 +19,9 @@
 // state slice rather than a single string keeps the predicate in
 // filters.js stable as `size === 1` checks).
 //
-// The host has no styling on its own; the existing `.source-toggle`
-// CSS rules in toolbar.css apply to the inner wrapper div the
-// component emits. `source-filter { display: contents }` (alongside
-// the other component hosts in toolbar.css) keeps the host out of
-// the toolbar's flex layout.
+// The host element carries the bordered-pill chrome directly via
+// the `source-filter` element selector in toolbar.css; the two
+// chip buttons render as direct children.
 import { html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement } from '@rray/frontend/state-element'
@@ -37,18 +35,22 @@ const SOURCES = [
 class SourceFilter extends StateElement {
   createRenderRoot() { return this }
 
+  connectedCallback() {
+    super.connectedCallback()
+    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
+    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Source filter')
+  }
+
   render() {
-    return html`<div class="source-toggle" role="group" aria-label="Source filter">
-      ${SOURCES.map(([value, label]) => {
-        const active = state.filterSources.has(value)
-        return html`<button
-          type="button"
-          class=${classMap({ 'source-chip': true, active })}
-          aria-pressed=${String(active)}
-          @click=${() => this._toggle(value)}
-        >${label}</button>`
-      })}
-    </div>`
+    return html`${SOURCES.map(([value, label]) => {
+      const active = state.filterSources.has(value)
+      return html`<button
+        type="button"
+        class=${classMap({ 'source-chip': true, active })}
+        aria-pressed=${String(active)}
+        @click=${() => this._toggle(value)}
+      >${label}</button>`
+    })}`
   }
 
   _toggle(source) {

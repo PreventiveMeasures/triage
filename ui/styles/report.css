@@ -614,14 +614,11 @@
    the same string. Mirrors the sidebar's "Search reports" chrome
    (`<div class="sidebar-search">`) so the two strips read as the
    same affordance in different contexts. */
-/* `<bundle-code-search>` + `<bundle-search-modes>` host elements
-   flatten out of the flex layout so their inner contents become
-   direct flex items of the `.bundle-code-search` wrapper. Same
-   pattern as the toolbar component hosts (see toolbar.css). */
-bundle-code-search,
-bundle-search-modes { display: contents; }
-
-.bundle-code-search {
+/* `<bundle-code-search>` host element IS the flex shell — element
+   selector rather than `.bundle-code-search` on a wrapper div so
+   one DOM node carries the layout. The input + clear button + mode
+   tabs all live inside the host. */
+bundle-code-search {
   margin: .35rem .5rem;
   padding: 0 .2rem 0 .45rem;
   display: flex; align-items: center;
@@ -2027,7 +2024,7 @@ body.report-fullscreen {
    block uses `flex: 1` and pushes us out). Inherits the chip
    chrome from `.triage-state-btn` (toolbar.css), so per-state
    active colors match the toolbar's selector. */
-.packages-slide-view .packages-slide-triage {
+.packages-slide-view slide-triage-tabs {
   display: flex; gap: .25rem;
   flex-shrink: 0;
   align-self: center;
@@ -2057,15 +2054,16 @@ body.report-fullscreen {
 }
 .packages-toolbar .packages-search { padding: 0 .55rem; min-width: 12rem; }
 /* Sort dropdown — strip the native chevron (Chrome/Safari draw wildly
-   different glyphs) and paint our own via the wrapper's `::after`, same
-   two-rotated-borders pattern as the findings `.sort-wrapper` in
-   toolbar.css. `appearance: none` is paired with the WebKit prefix for
-   Safari < 15. */
+   different glyphs) and paint our own via the entity-sort host's
+   `::after`, same two-rotated-borders pattern as the findings
+   `analyzer-select` / `findings-sort` rule in toolbar.css.
+   `appearance: none` is paired with the WebKit prefix for Safari
+   < 15. */
 .packages-toolbar .packages-sort {
   appearance: none; -webkit-appearance: none;
   padding: 0 1.5rem 0 .55rem;
 }
-.packages-toolbar .packages-sort-wrap {
+.packages-toolbar entity-sort {
   position: relative;
   display: inline-block;
 

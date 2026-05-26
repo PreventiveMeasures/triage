@@ -36,19 +36,22 @@
     font-weight: 500;
     appearance: none; -webkit-appearance: none;
     /* Transparent so the glass-shell toolbar shows through — matches
-       the sibling `.conf-filter` / `.source-toggle` / `.sev-chip`
-       treatment in the same row. Chevron is drawn by `.sort-wrapper
-       ::after` below since pseudo-elements don't apply to <select>. */
+       the sibling `conf-filter` / `source-filter` / `.sev-chip`
+       treatment in the same row. Chevron is drawn by the
+       `analyzer-select` / `findings-sort` host `::after` below since
+       pseudo-elements don't apply to <select>. */
     background: transparent;
   }
 
   /* Custom chevron — two muted borders rotated 45deg form a down-
      chevron, same approach the design prototype uses for
-     `.field.select::after`. Sits inside the select's right padding
-     (1.7rem total → chevron at .55rem from the right with the
-     glyph itself ~.4rem wide). `pointer-events: none` so a click on
-     the chevron still falls through to the select. */
-  & .sort-wrapper {
+     `.field.select::after`. The host components below own the
+     position-relative + chevron pseudo; the inner `.sort-select`
+     `<select>` has the right padding (1.7rem → chevron at .55rem
+     from the right with the glyph itself ~.4rem wide).
+     `pointer-events: none` on the chevron lets a click fall
+     through to the select. */
+  & :is(analyzer-select, findings-sort) {
     position: relative;
     display: inline-block;
 
@@ -90,8 +93,12 @@
      the design prototype's `.conf-slider`: subtle inset background,
      soft border, label in the muted toolbar tone with slight
      letter-spacing. The slider's own `0 .25rem` margin (above) is
-     reset here so the shell's flex `gap` controls spacing. */
-  & .conf-filter {
+     reset here so the shell's flex `gap` controls spacing.
+
+     Element selector (rather than a `.conf-filter` class on a
+     wrapping div) — the `<conf-filter>` host element IS the layout
+     container; no separate wrapper needed. */
+  & conf-filter {
     display: inline-flex; align-items: center;
     height: 30px; box-sizing: border-box;
     padding: 0 .55rem;
@@ -161,17 +168,26 @@
    state.shownTriage) takes the bucket's accent color. Lives at the
    right of the toolbar row by default.
 
-   Shell mirrors `.source-toggle` above: a single bordered, rounded
+   Shell mirrors `source-filter` above: a single bordered, rounded
    container with flush chips inside divided by `border-right` on
    every chip except the last. Per-bucket colors land on the active
    chip's text only — the shared shell stays neutral. */
-.triage-selector {
+/* Shared shell for the triage-bucket selectors. Both
+   `<triage-selector>` (findings toolbar + graph topbar + packages /
+   repositories pages) and `<slide-triage-tabs>` (Invalid / Deleted
+   tabs in the slide-out headers) get the bordered pill chrome
+   directly on the host element — no wrapping div, no class
+   indirection. The slide variant overlays its own positioning
+   rules via `.packages-slide-view slide-triage-tabs { ... }` in
+   report.css. */
+triage-selector,
+slide-triage-tabs {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 4px;
   overflow: hidden;
 }
-.toolbar .triage-selector { margin-left: auto; }
+.toolbar triage-selector { margin-left: auto; }
 .triage-state-btn {
   background: transparent; border: none; color: var(--muted);
   padding: 0 .55rem;
@@ -188,31 +204,20 @@
 .triage-state-btn.active.triage-state-invalid { color: var(--muted); }
 .triage-state-btn.active.triage-state-ignored { color: var(--accent, #2563eb); }
 
-/* `<view-mode-buttons>` and `<triage-selector>` styles live outside
-   `.toolbar` so the same chrome lands wherever the components are
-   mounted — the findings toolbar, the Files-tab `.tree-toolbar`, the
-   graph topbar, the Packages / Repositories toolbars. `display:
-   contents` on the host flattens it out of layout so the wrapper
-   div becomes a direct flex item of whichever toolbar row wraps it,
-   picking up its `gap` alongside the sort dropdown and filter chips.
-   `<triage-selector>` additionally needs this so the host (which
-   may resolve to `nothing` when there is no bucket to switch to)
-   doesn't claim a flex slot. */
-view-mode-buttons,
-triage-selector,
-slide-triage-tabs,
-source-filter,
-analyzer-select,
-entity-sort,
-findings-sort,
-toolbar-search,
-entity-search,
-conf-filter { display: contents; }
+/* `<entity-search>` is the lone holdout that still needs
+   `display: contents` — its template is just a bare `<input>`, so
+   the host has to stay layout-transparent to let the input be a
+   direct flex child of the page toolbar. Every other component
+   host in this family owns its layout via an element selector
+   rule above (view-mode-buttons, triage-selector, slide-triage-tabs,
+   triage-filter, severity-chips, source-filter, toolbar-search,
+   conf-filter, analyzer-select, findings-sort, entity-sort). */
+entity-search { display: contents; }
 
-.view-mode-group {
+view-mode-buttons {
   display: inline-flex;
   /* Pinned to 30px so the View chooser matches the rest of the
-     toolbar controls (.sev-chip / .triage-filter / .toolbar-search
+     toolbar controls (.sev-chip / triage-filter / toolbar-search
      / .trash-btn — all 30px). Without this the group measured ~27px
      from button intrinsic + group border, which exposed as a step
      against the 30px chip row. */
@@ -244,7 +249,7 @@ conf-filter { display: contents; }
    re-clicking the active chip clears the Set (no filter). See
    filters.js — the predicate is gated on `size === 1`. Active
    chip carries the accent recolor. */
-.source-toggle {
+source-filter {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 4px;
@@ -275,7 +280,7 @@ conf-filter { display: contents; }
    `input[type="text"]` is needed because the generic
    `.toolbar input[type="text"]` rule above paints `var(--bg)` +
    border on every text input and beats the lower-specificity
-   `.toolbar-search input` selector — matching its specificity here
+   `toolbar-search input` selector — matching its specificity here
    plus coming later in the file lets these rules win.
    `flex: 1 1 14rem` mirrors the prototype's `flex: 1 1 220px` so
    the field expands when there's room and stays at a comfortable
@@ -292,7 +297,7 @@ conf-filter { display: contents; }
   flex: 1 1 14rem; min-width: 12rem;
 }
 
-.toolbar-search {
+toolbar-search {
   display: inline-flex; align-items: center; gap: .5rem;
   flex: 1; min-width: 0;
   height: 30px; box-sizing: border-box;
@@ -339,7 +344,7 @@ conf-filter { display: contents; }
 .findings-content.with-details .toolbar { max-width: 1200px; }
 
 /* Severity-filter chips — segmented control matching
-   `.triage-selector` / `.source-toggle` so the three filter groups
+   `triage-selector` / `source-filter` so the three filter groups
    in the toolbar read as siblings. Single bordered, rounded shell;
    flush buttons inside divided by `border-right` on every chip
    except the last. Each chip carries a small severity-colored
@@ -348,7 +353,7 @@ conf-filter { display: contents; }
    read as a box-in-a-box). Active chip takes a low-alpha tint of
    its own severity color so the highlighted tier stays visually
    distinguishable from the rest of the group. */
-.sev-chips {
+severity-chips {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 4px;
@@ -433,7 +438,7 @@ conf-filter { display: contents; }
    sit as a small chip in the upper-right corner of the circle.
    Colors match the per-row `<color-marker>` palette so the same
    hue means the same thing across the chrome. */
-.triage-filter {
+triage-filter {
   display: inline-flex; align-items: center;
   background: var(--surface);
   border: 1px solid var(--border);
