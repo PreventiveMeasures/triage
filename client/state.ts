@@ -134,6 +134,24 @@ export function loadRepoUrlFor(name: string | null | undefined): string {
   if (!name) return ''
   return readRepoUrlMap()[name] ?? ''
 }
+
+// Listener registry for per-report repo-URL changes. Mirrors
+// `storage.js`'s `onFileMutated` pattern so downstream indexes
+// (bundle-finding-index) can prune + re-index when the user-supplied
+// fallback shifts. Fires AFTER the sync in-tab cache update so
+// listener callbacks see the new value via `loadRepoUrlFor`. One bad
+// subscriber doesn't break the chain.
+const repoUrlChangeListeners = new Set<(name: string) => void>()
+export function onRepoUrlChanged(cb: (name: string) => void): () => void {
+  repoUrlChangeListeners.add(cb)
+  return (): void => { repoUrlChangeListeners.delete(cb) }
+}
+function notifyRepoUrlChanged(name: string): void {
+  for (const cb of repoUrlChangeListeners) {
+    try { cb(name) } catch (err) { console.warn('repo-url listener:', err) }
+  }
+}
+
 export function saveRepoUrlFor(name: string | null | undefined, url: string): void {
   if (!name) return
   // Two-step write:
@@ -166,6 +184,10 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
     else delete diskMap[name]
     return JSON.stringify(diskMap)
   }).catch((err: unknown) => console.warn('saveRepoUrlFor cross-tab merge:', err))
+  // Fire AFTER the sync setSecureItem above (step 1) so listeners
+  // calling `loadRepoUrlFor(name)` see the new value. Listeners are
+  // not awaited — the cross-tab merge (step 2) is allowed to lag.
+  notifyRepoUrlChanged(name)
 }
 
 // Bulk merge an imported repo-URL map (triage backup restore) into

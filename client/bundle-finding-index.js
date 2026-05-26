@@ -25,7 +25,7 @@
 
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { loadRepoUrlFor } from './state.ts'
+import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
 
 const byHash = new Map()
@@ -512,4 +512,18 @@ export function ensureBundleFindingsIndexed() {
 // waiting for the next index walk.
 onFileMutated((name) => {
   if (invalidateName(name)) notify()
+})
+
+// Per-report repo-URL changes drop the `reportFallback` arg threaded
+// into `indexFindingByRepo` for findings without their own
+// `f.repo.github`. The index reads `loadRepoUrlFor(name)` once at
+// indexOne time, so without an invalidation hook a user typing a
+// fresh URL into the chip wouldn't see their own-source findings
+// surface in the Repositories view (their only repo signal moved
+// but the index still holds the pre-URL state). Invalidate to drop
+// the stale contributions, then kick a fresh walk so indexOne picks
+// up the new fallback.
+onRepoUrlChanged((name) => {
+  if (invalidateName(name)) notify()
+  ensureBundleFindingsIndexed().catch(() => {})
 })
