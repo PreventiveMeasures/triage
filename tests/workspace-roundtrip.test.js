@@ -1167,9 +1167,11 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     // prune. Now only the genuine `File not found:` case prunes —
     // transient I/O errors / decode failures leave the membership
     // intact. This positive-control test exercises the file-
-    // missing path; the transient-error negative case is verified
-    // by code review (monkey-patching `readFile` from outside
-    // the module isn't possible — ESM bindings are read-only).
+    // missing path under the LS-fallback backend (which throws
+    // `Error: File not found: <name>`); the OPFS shape — a
+    // DOMException with `name === 'NotFoundError'` — is covered
+    // by the sibling test below via `mock.module`. The
+    // transient-error negative case is verified by code review.
     const reportName = `gone-${Date.now()}.json`
     const stamp = `${Date.now()}-${Math.random()}`
     const storageMod = await import(`../client/storage.js?prune-pos=${stamp}`)
@@ -1188,6 +1190,47 @@ describe('buildWorkspaceExportPayload — leak / robustness audits (round-13)', 
     const wsAfter = wsMod.listWorkspaces().find((w) => w.id === ws.id)
     assert.equal(wsAfter?.reports?.includes(reportName), false,
       'genuine file-missing pruned the workspace-report association')
+  })
+
+  it('OPFS-shape NotFoundError DOMException also prunes the workspace membership (audit round-13 W-Export-3 OPFS path)', async (t) => {
+    // Production backend is OPFS; `getFileHandle` on a missing
+    // entry throws `DOMException { name: 'NotFoundError' }` —
+    // NOT an Error with a message starting with "File not
+    // found:". The pre-fix guard only matched the LS-fallback
+    // message string, so the defensive prune never fired under
+    // OPFS and orphan references in `workspace.reports`
+    // accumulated indefinitely. Mock `storage.readFile` to
+    // surface the OPFS-shaped error and confirm the prune.
+    if (typeof t.mock.module !== 'function') {
+      t.skip('requires --experimental-test-module-mocks')
+      return
+    }
+    const reportName = `opfs-gone-${Date.now()}.json`
+    const stamp = `${Date.now()}-${Math.random()}-opfs`
+    // `t.mock.module` (per-test) auto-restores at test end —
+    // top-level `mock.module` would persist for the rest of the
+    // file run and silently bleed into any later test that
+    // re-imports storage.js via the cache-buster pattern.
+    t.mock.module(`../client/storage.js`, {
+      namedExports: {
+        readFile: () => Promise.reject(new DOMException(
+          `A requested file or directory could not be found at the time an operation was processed.`,
+          'NotFoundError',
+        )),
+        listBundles: () => Promise.resolve([]),
+        readBundle: () => Promise.reject(new Error('not used in this test')),
+      },
+    })
+    const wsMod = await import(`../client/workspaces.js?prune-pos=${stamp}`)
+    const exportMod = await import(`../client/workspace-export.js?prune-pos=${stamp}`)
+
+    const ws = makeWorkspace({ reports: [reportName] })
+    await wsMod.upsertWorkspace(ws)
+
+    await exportMod.buildWorkspaceExportPayload(ws)
+    const wsAfter = wsMod.listWorkspaces().find((w) => w.id === ws.id)
+    assert.equal(wsAfter?.reports?.includes(reportName), false,
+      'OPFS NotFoundError pruned the workspace-report association')
   })
 })
 
