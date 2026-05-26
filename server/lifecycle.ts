@@ -46,7 +46,12 @@ export function createLifecycle(): Lifecycle {
   const inFlight = new Set<Promise<unknown>>()
   function track(promise: Promise<unknown>): void {
     inFlight.add(promise)
-    promise.finally(() => inFlight.delete(promise))
+    // Trailing `.catch(() => {})` swallows the rejection that `.finally`
+    // propagates through its returned promise — without it, a tracked
+    // handler that rejects (or whose caller's catch handler itself
+    // throws) trips the `unhandledRejection` catchall below and crashes
+    // the process via `fireShutdown(1)`.
+    promise.finally(() => inFlight.delete(promise)).catch(() => {})
   }
   let shuttingDown = false
   // Live exit code the in-progress shutdown will pass to `process.exit`.
