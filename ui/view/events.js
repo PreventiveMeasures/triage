@@ -1307,7 +1307,7 @@ function setFocusGid(gid) {
   // Post-render: bring the new active card into view in the
   // sidebar. `block: 'nearest'` minimises movement (a no-op when
   // the card is already visible); `behavior: 'instant'` skips the
-  // smooth-scroll animation, which would noticeably lag a J/K
+  // smooth-scroll animation, which would noticeably lag a H/J
   // run-through. The sidebar is the closest scrollable ancestor,
   // so only it scrolls — the page stays put.
   const card = report.querySelector('.focus-side-card.active')
@@ -1323,7 +1323,7 @@ function setFocusGid(gid) {
 
 // Move the focus by `direction` (+1 = next, -1 = previous), walked
 // off the rendered queue. Shared by the forward/back buttons in
-// the main-pane top bar and the arrow/J-K/H-L keyboard handler.
+// the main-pane top bar and the arrow/H-J keyboard handler.
 // Both paths land here so the no-op guard (already at the end)
 // and the gid lookup behave identically.
 function navigateFocus(direction) {
@@ -1367,8 +1367,8 @@ report.addEventListener('click', (e) => {
 // user isn't typing in a text field (Search, Repo, etc.).
 //
 // Bound keys (all clamp at the ends, no wrap):
-//   ← / ArrowLeft  / k / K / h / H   → previous finding
-//   → / ArrowRight / j / J / l / L   → next finding
+//   ← / ArrowLeft  / h / H   → previous finding
+//   → / ArrowRight / j / J   → next finding
 //
 // ArrowUp / ArrowDown intentionally don't navigate — the focused
 // finding-card's description can be tall enough to scroll, and
@@ -1380,8 +1380,8 @@ document.addEventListener('keydown', (e) => {
   const tag = e.target.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return
   let direction = 0
-  if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J' || e.key === 'l' || e.key === 'L') direction = 1
-  else if (e.key === 'ArrowLeft' || e.key === 'k' || e.key === 'K' || e.key === 'h' || e.key === 'H') direction = -1
+  if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J') direction = 1
+  else if (e.key === 'ArrowLeft' || e.key === 'h' || e.key === 'H') direction = -1
   else return
   e.preventDefault()
   navigateFocus(direction)

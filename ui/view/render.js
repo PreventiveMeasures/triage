@@ -1060,7 +1060,7 @@ function findingsBodyTemplate(filtered) {
     // Selection rules:
     //   - `state.focusGid` matches a group still in the filtered
     //     list  → that group is focused (the explicit pick path:
-    //     click in the sidebar, J/K navigation, prior-session
+    //     click in the sidebar, H/J navigation, prior-session
     //     leftover when the user returns to the focus view).
     //   - Otherwise fall back to the previous render's index
     //     (clamped to the new list). After a triage on the centered
@@ -1123,7 +1123,7 @@ function findingsBodyTemplate(filtered) {
              pinned the nav above the card pane, but the user
              pointed out that the position counter and "Up next"
              count duplicated each other, so they're consolidated
-             here. Buttons also respond to ←/→/h/l/j/k via the
+             here. Buttons also respond to ←/→/h/j via the
              events.js keydown handler. -->
         <div class="focus-sidebar-header">
           <span class="label">Up next</span>
