@@ -1307,9 +1307,9 @@ function setFocusGid(gid) {
   // Post-render: bring the new active card into view in the
   // sidebar. `block: 'nearest'` minimises movement (a no-op when
   // the card is already visible); `behavior: 'instant'` skips the
-  // smooth-scroll animation, which would noticeably lag a J/K
-  // run-through. The sidebar is the closest scrollable ancestor,
-  // so only it scrolls — the page stays put.
+  // smooth-scroll animation, which would noticeably lag an arrow-
+  // key run-through. The sidebar is the closest scrollable
+  // ancestor, so only it scrolls — the page stays put.
   const card = report.querySelector('.focus-side-card.active')
   if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
   // Same nearest-scroll trick for the inline Code panel: align the
@@ -1323,7 +1323,7 @@ function setFocusGid(gid) {
 
 // Move the focus by `direction` (+1 = next, -1 = previous), walked
 // off the rendered queue. Shared by the forward/back buttons in
-// the main-pane top bar and the arrow/J-K/H-L keyboard handler.
+// the main-pane top bar and the arrow-key keyboard handler.
 // Both paths land here so the no-op guard (already at the end)
 // and the gid lookup behave identically.
 function navigateFocus(direction) {
@@ -1364,24 +1364,42 @@ report.addEventListener('click', (e) => {
 // Keyboard navigation through the focus-view queue. Bound to
 // document so the key fires from anywhere in the page, guarded so
 // it only acts when the focus view is the one mounted AND the
-// user isn't typing in a text field (Search, Repo, etc.).
+// user isn't typing in a text field (Search, Repo, etc.) and no
+// modal dialog is open.
 //
 // Bound keys (all clamp at the ends, no wrap):
-//   ← / ArrowLeft  / k / K / h / H   → previous finding
-//   → / ArrowRight / j / J / l / L   → next finding
+//   ← / ArrowLeft   → previous finding
+//   → / ArrowRight  → next finding
 //
 // ArrowUp / ArrowDown intentionally don't navigate — the focused
 // finding-card's description can be tall enough to scroll, and
 // hijacking up/down would steal the user's natural way of reading
 // past the fold.
+//
+// The "is the user typing" check walks `composedPath()` rather
+// than reading `e.target.tagName`. Inputs inside a custom
+// element's shadow root (search bars, repo chip, etc.) retarget
+// `e.target` to the shadow host, so the old `tagName` check
+// would hijack arrow-key caret movement inside them. The path
+// walk sees the actual focused node.
+function focusNavBlocked(e) {
+  if (document.querySelector('dialog[open]')) return true
+  for (const el of e.composedPath()) {
+    if (!el || el.nodeType !== 1) continue
+    const tag = el.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+    if (el.isContentEditable) return true
+  }
+  return false
+}
+
 document.addEventListener('keydown', (e) => {
   if (state.viewMode !== 'focus' || state.currentView !== 'findings') return
-  if (e.metaKey || e.ctrlKey || e.altKey) return
-  const tag = e.target.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+  if (focusNavBlocked(e)) return
   let direction = 0
-  if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J' || e.key === 'l' || e.key === 'L') direction = 1
-  else if (e.key === 'ArrowLeft' || e.key === 'k' || e.key === 'K' || e.key === 'h' || e.key === 'H') direction = -1
+  if (e.key === 'ArrowRight') direction = 1
+  else if (e.key === 'ArrowLeft') direction = -1
   else return
   e.preventDefault()
   navigateFocus(direction)
