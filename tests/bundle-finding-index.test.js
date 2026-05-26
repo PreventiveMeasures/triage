@@ -482,6 +482,23 @@ describe('bundle-finding-index — analyzer-stamped package.npm overrides path e
     assert.ok(getPackagesIndex().get(tag), 'deps finding lands in packages')
     assert.equal(getRepositoriesIndex().get(`acme/${tag}`), undefined, 'deps path keeps the finding out of repositories')
   })
+
+  it('does not mis-classify own-source paths that contain a deps-look-alike substring', async () => {
+    // `fileIsInDepsPath` requires a path-segment boundary before
+    // `node_modules`/`dependencies`. A folder NAMED something like
+    // `node_modules-lookalike` mid-path is own source and should
+    // land in Repositories. Guards against any future regex
+    // simplification that drops the leading `(?:^|\/)` anchor.
+    const tag = `lookalike-${Date.now()}`
+    const repo = `acme/${tag}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `src/node_modules-lookalike/${tag}/x.js`, description: 'd', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(repo), 'look-alike folder name does not get classified as deps')
+  })
 })
 
 describe('bundle-finding-index — version comparator', () => {

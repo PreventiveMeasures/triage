@@ -1,9 +1,11 @@
 // Repositories view — cross-report aggregation of own-source
 // findings (anything NOT in `node_modules/` / `dependencies/`)
 // bucketed by their repo URL. Complements `render-packages.js`:
-// most findings belong to either a package (third-party) or a
-// repository (the user's own code); together the two views
-// surface the full inventory without overlap.
+// most findings end up in one of the two views, but analyzer-
+// stamped own-source findings (a `package.npm.name` stamped on
+// a `src/...` file — analyzers often label the user's own project
+// as a "package") appear in BOTH, since path is the structural
+// classifier and the stamp is just metadata refinement on top.
 //
 // Pulls from `client/bundle-finding-index.js`'s `getRepositoriesIndex`
 // (the OPFS-wide background scan) rather than `state.reports`,

@@ -35,10 +35,13 @@ const byPackage = new Map()
 // keyed by the finding's repo URL — `f.repo?.github` when the
 // analyzer stamped one, else the per-report `_repoFallback`
 // the user typed. Powers the cross-report Repositories view,
-// which complements Packages: most findings end up in exactly
-// one of the two (third-party deps in Packages, own source in
-// Repositories). Findings without any repo signal aren't
-// indexed here — there's nothing to bucket them under.
+// which complements Packages: most findings end up in one of the
+// two (third-party deps in Packages, own source in Repositories),
+// but analyzer-stamped own-source findings (a `package.npm.name`
+// stamped on a `src/...` file — the analyzer labelling the user's
+// own project as a "package") appear in BOTH indexes. Findings
+// without any repo signal aren't indexed here — there's nothing
+// to bucket them under.
 const byRepo = new Map()
 // Reverse index: which (hash, key), (pkg, key), and (repo, key)
 // pairs did each report contribute? Lets `invalidateName` prune
@@ -146,9 +149,11 @@ export function getPackagesIndex() {
 // Snapshot of the OPFS-wide repository index for the cross-report
 // Repositories view. Same shape as the Packages index (Map<repoKey,
 // { findings, files, reports, … }>), but only own-source findings
-// (those NOT in node_modules / dependencies) get indexed; deps
-// already surface in Packages, so Repositories is the
-// complementary view. Repo key comes from `repoOf(f)` above.
+// (those NOT in node_modules / dependencies) get indexed — deps
+// stay Packages-only. Note that a finding can appear in BOTH
+// indexes when its file is own-source AND the analyzer stamped
+// a `package.npm.name` (the user's own project as a "package").
+// Repo key comes from `repoOf(f)` above.
 export function getRepositoriesIndex() {
   return byRepo
 }
