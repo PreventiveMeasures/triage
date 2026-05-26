@@ -48,10 +48,10 @@
 // then switches to one without), the rail body falls back to
 // `'files'` in render-bundle.js, and the mode-tab highlight has to
 // follow or nothing reads as active.
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const PLACEHOLDER = {

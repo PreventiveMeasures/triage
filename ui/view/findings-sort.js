@@ -38,9 +38,9 @@
 //                         option pair.
 //   * `show-priority`   — emit the `Priority ↓` / `Priority ↑`
 //                         option pair.
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 class FindingsSort extends StateElement {

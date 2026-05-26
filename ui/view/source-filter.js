@@ -22,9 +22,8 @@
 // The host element carries the bordered-pill chrome directly via
 // the `source-filter` element selector in toolbar.css; the two
 // chip buttons render as direct children.
-import { html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const SOURCES = [

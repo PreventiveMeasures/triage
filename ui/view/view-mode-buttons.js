@@ -23,9 +23,8 @@
 // Events (bubble + composed:true):
 //   * `view-mode-change(detail.mode)` — fired on click. The host
 //     persists the value to localStorage and re-renders.
-import { html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const VIEW_ICONS = {

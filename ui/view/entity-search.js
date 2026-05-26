@@ -23,9 +23,9 @@
 // Attributes:
 //   * `kind` — `"packages"` (writes state.packagesSearchQuery) or
 //              `"repositories"` (writes state.repositoriesSearchQuery).
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const KIND = {

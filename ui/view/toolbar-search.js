@@ -33,9 +33,9 @@
 //   * `kind` — `"findings"` (filters the findings list against
 //                state.filterInclude) or `"files"` (filters the
 //                Files tab tree against state.filesSearch).
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const SEARCH_ICON = html`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">

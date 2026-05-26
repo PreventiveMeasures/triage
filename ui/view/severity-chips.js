@@ -42,9 +42,9 @@
 //     re-render) vs. `graph2.selectedSeverities` (kind="graph" —
 //     surgical canvas redraw + chip property update only, no full
 //     re-render).
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const TIERS = [

@@ -45,8 +45,8 @@
 //   * `color-toggle(detail.color)` — fired when a button is
 //     clicked. The host adds/removes the value from
 //     `state.filterColors` and re-renders.
-import { html, nothing } from 'lit'
-import { StateElement } from '@rray/frontend/state-element'
+import { nothing } from 'lit'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const COLORS = [

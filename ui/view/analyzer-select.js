@@ -26,9 +26,8 @@
 //                or `null`). The component prepends an implicit
 //                "All analyzers" option and translates `null` to
 //                `NULL_ANALYZER_SENTINEL` for the option `value`.
-import { html } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { NULL_ANALYZER_SENTINEL } from './filters.js'
 

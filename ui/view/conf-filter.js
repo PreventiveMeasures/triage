@@ -37,8 +37,7 @@
 // flag is true (some reports don't surface confidence). The
 // component itself doesn't know that flag — visibility stays at
 // the parent.
-import { html } from 'lit'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 class ConfFilter extends StateElement {

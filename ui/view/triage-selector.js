@@ -37,9 +37,9 @@
 //                   `graph`    → `.graph2-triage-selector`
 //                   `packages` → `.packages-triage-selector`
 //                 Empty (default, findings toolbar) → no extra class.
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const DEFAULT_STATES = ['fixed', 'invalid', 'deleted', 'ignored']

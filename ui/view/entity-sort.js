@@ -25,9 +25,9 @@
 //   * `kind` — `"packages"` or `"repositories"`. Required (no
 //              sensible default; missing/unknown surfaces as a dev
 //              warn from the render-time guard).
-import { html, nothing } from 'lit'
+import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const OPTIONS = [
