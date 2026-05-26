@@ -25,7 +25,7 @@
 
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { loadRepoUrlFor } from './state.ts'
+import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { flattenFindings, parseReport } from '../common/report-findings.js'
 
 const byHash = new Map()
@@ -92,6 +92,13 @@ function repoOf(f, reportFallback) {
 const indexed = new Set()
 const listeners = new Set()
 let activeRun = null
+// Set to `true` when `indexOne` rolls back a mid-flight invalidation —
+// the just-indexed bytes were stale and the report needs another pass
+// to pick up the post-invalidate state (new file content via saveFile,
+// or new fallback URL via saveRepoUrlFor). `ensureBundleFindingsIndexed`
+// reads + clears the flag after each walk and re-walks when set, so a
+// rolled-back name doesn't sit unindexed until the next external trigger.
+let needsRescan = false
 
 export function subscribeToBundleFindingIndex(callback) {
   listeners.add(callback)
@@ -463,6 +470,11 @@ async function indexOne(name) {
     // (deleteFile case — listFiles won't return the name).
     if (!indexed.has(name)) {
       invalidateName(name)
+      // Signal the outer walk to retry — the saveFile / saveRepoUrlFor
+      // that cleared `indexed.has(name)` mid-flight wants the report
+      // re-processed against the fresh state, but without this flag the
+      // walk would silently finish and leave the name unindexed.
+      needsRescan = true
       return false
     }
     return added
@@ -485,11 +497,20 @@ export function ensureBundleFindingsIndexed() {
   if (activeRun) return activeRun
   activeRun = (async () => {
     try {
-      const names = await listFiles()
-      for (const name of names) {
-        const added = await indexOne(name)
-        if (added) notify()
-      }
+      // Re-walk while `needsRescan` is set — `indexOne` flips the flag
+      // when its mid-flight rollback fires, so a `saveFile` or
+      // `saveRepoUrlFor` racing the walk gets picked up here instead
+      // of waiting for the next external trigger. Already-indexed
+      // names are no-ops on the second pass (the `indexed.has(name)`
+      // guard short-circuits) so the retry is cheap.
+      do {
+        needsRescan = false
+        const names = await listFiles()
+        for (const name of names) {
+          const added = await indexOne(name)
+          if (added) notify()
+        }
+      } while (needsRescan)
     } finally {
       activeRun = null
     }
@@ -512,4 +533,27 @@ export function ensureBundleFindingsIndexed() {
 // waiting for the next index walk.
 onFileMutated((name) => {
   if (invalidateName(name)) notify()
+})
+
+// Per-report repo-URL changes drop the `reportFallback` arg threaded
+// into `indexFindingByRepo` for findings without their own
+// `f.repo.github`. The index reads `loadRepoUrlFor(name)` once at
+// indexOne time, so without an invalidation hook a user typing a
+// fresh URL into the chip wouldn't see their own-source findings
+// surface in the Repositories view (their only repo signal moved
+// but the index still holds the pre-URL state). Invalidate to drop
+// the stale contributions, then kick a fresh walk so indexOne picks
+// up the new fallback.
+//
+// Known gap: cross-tab repo-URL changes (via `propagateRepoUrlChanges
+// FromStorage` in state.ts) and bulk imports (`importRepoUrls`) DON'T
+// fire `onRepoUrlChanged` — the former doesn't know which names
+// changed under the hood, the latter rewrites the whole map. Either
+// path leaves the index stale until the next file mutation or page
+// reload picks it up. Acceptable: the dominant interaction is the
+// in-tab chip, and bulk imports are typically followed by report
+// re-loads anyway.
+onRepoUrlChanged((name) => {
+  if (invalidateName(name)) notify()
+  ensureBundleFindingsIndexed().catch(() => {})
 })

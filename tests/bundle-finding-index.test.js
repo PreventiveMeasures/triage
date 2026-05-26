@@ -33,6 +33,7 @@ if (globalThis.localStorage === undefined) {
 }
 
 const { deleteFile, saveFile } = await import('../client/storage.js')
+const { saveRepoUrlFor } = await import('../client/state.ts')
 const {
   ensureBundleFindingsIndexed,
   findingsForFileHash,
@@ -818,5 +819,92 @@ describe('bundle-finding-index — pBucket.repos pruning on invalidation', () =>
     assert.equal(getPackagesIndex().get(tagA), undefined, 'package A cleaned up entirely')
     const bucketB = getPackagesIndex().get(tagB)
     assert.ok(bucketB?.repos.has(repoB), 'package B\'s repo untouched by A\'s deletion')
+  })
+})
+
+// The Repositories view buckets non-deps findings (own source) by
+// `repo.github` if the analyzer stamped one, else by the per-report
+// URL the user typed into the page-header chip (`saveRepoUrlFor`).
+// The index reads that URL once via `loadRepoUrlFor(name)` at indexing
+// time, so a later chip edit needs `onRepoUrlChanged` to invalidate
+// the report and kick a fresh walk against the new fallback.
+describe('bundle-finding-index — user-supplied repo URL as fallback', () => {
+  it('buckets non-deps findings under the user-supplied URL when no f.repo.github', async () => {
+    const tag = `user-repo-${Date.now()}`
+    const repo = `acme/${tag}`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, repo)
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    const bucket = getRepositoriesIndex().get(repo)
+    assert.ok(bucket, 'own-source findings bucket under user-supplied URL')
+    assert.equal(bucket.findings.length, 1)
+  })
+
+  it('re-buckets findings when the user-supplied URL changes', async () => {
+    const tag = `user-repo-change-${Date.now()}`
+    const repoA = `acme/${tag}-a`
+    const repoB = `acme/${tag}-b`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, repoA)
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(repoA), 'initial bucket under repoA')
+
+    saveRepoUrlFor(name, repoB)
+    // The listener invalidates synchronously and kicks ensure; await it
+    // explicitly so the assertion runs after the fresh walk completes.
+    await ensureBundleFindingsIndexed()
+    assert.equal(getRepositoriesIndex().get(repoA), undefined, 'old bucket pruned')
+    assert.ok(getRepositoriesIndex().get(repoB), 'new bucket populated')
+  })
+
+  it('drops findings from the index when the user clears the URL and no other repo signal exists', async () => {
+    const tag = `user-repo-clear-${Date.now()}`
+    const repo = `acme/${tag}`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, repo)
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'own source' },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(repo), 'bucket present pre-clear')
+
+    saveRepoUrlFor(name, '')
+    await ensureBundleFindingsIndexed()
+    assert.equal(getRepositoriesIndex().get(repo), undefined, 'bucket dropped after URL cleared')
+  })
+
+  it('keeps the analyzer-stamped repo when the user clears the fallback', async () => {
+    // `f.repo.github` wins over the user-supplied fallback in `repoOf`,
+    // so clearing the chip should NOT evict findings that carry their
+    // own analyzer-stamped repo URL.
+    const tag = `user-repo-coexist-${Date.now()}`
+    const stamped = `acme/${tag}-stamped`
+    const chipUrl = `acme/${tag}-chip`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, chipUrl)
+    await saveFile(name, JSON.stringify({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: 'src/a.js', description: 'd', repo: { github: stamped } },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(stamped), 'analyzer-stamped wins over chip URL')
+    assert.equal(getRepositoriesIndex().get(chipUrl), undefined, 'chip URL not used when stamp present')
+
+    saveRepoUrlFor(name, '')
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(stamped), 'stamped bucket survives chip clear')
   })
 })
