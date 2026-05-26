@@ -127,6 +127,21 @@ const COPY_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidd
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
+// Eight-pointed asterisk / sparkle — Claude mark for the
+// `[hand off to Claude Code]` shortcut button. Same size + stroke
+// weight as the other action icons. Clicking it opens
+// `claude://code/new?q=…` with the same finding block the copy
+// button writes to the clipboard, prefixed with a `Confirm and
+// fix:` instruction.
+const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none">
+    <line x1="8" y1="1.8" x2="8" y2="14.2"/>
+    <line x1="1.8" y1="8" x2="14.2" y2="8"/>
+    <line x1="3.6" y1="3.6" x2="12.4" y2="12.4"/>
+    <line x1="12.4" y1="3.6" x2="3.6" y2="12.4"/>
+  </g>
+</svg>`
+
 // Workspace-merged views show which report a finding came from.
 // The chip mirrors the sidebar's file row (brand sticker + display
 // name) and lives at the start of the action row. Single-file
@@ -170,6 +185,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   // Click handler lives in events.js; it picks the active tab via
   // the same gid lookup the comment / fix flows use.
   const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  // Claude button — hands off the same finding block the copy
+  // button writes (prefixed with "Confirm and fix:") to Claude Code
+  // via the `claude://code/new?q=…` URL scheme.
+  const claudeBtn = html`<button type="button" class="mark-claude" title="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${isFocus ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
   const picker = html`<color-marker .selected=${activeColor}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
@@ -183,7 +202,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span>${copyBtn}${picker}${triageMenuTemplate(group, menuTitle, context)}`
+  return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span><span class="mark-action-group">${copyBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
 }
 
 // Triage menu — chevron button that toggles a popover with the

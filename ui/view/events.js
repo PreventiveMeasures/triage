@@ -112,6 +112,41 @@ function pathClosest(e, selector) {
   return null
 }
 
+// Labeled `Repo / File / Line / Description / Confidence` block for
+// the active tab under the clicked button. Shared by the copy
+// button (writes to clipboard) and the Claude button (hands off to
+// claude:// as a `Confirm and fix:` prompt). The repo lookup walks
+// the package index first (matching the per-package repo header
+// shown in the file picker) and falls back to the per-finding /
+// per-report / global repo URL for OWN-source findings.
+function findingHandoffText(e) {
+  const findingEl = pathClosest(e, '[data-gid]')
+  const gid = findingEl?.dataset?.gid
+  const group = gid ? findGroupById(gid) : null
+  if (!group) return null
+  const f = activeTabFor(group)
+  let inPackage = false
+  let repo = null
+  for (const bucket of getPackagesIndex().values()) {
+    if (bucket.files.has(f.file)) {
+      inPackage = true
+      if (bucket.repos && bucket.repos.size === 1) repo = [...bucket.repos][0]
+      break
+    }
+  }
+  if (!inPackage) {
+    repo = f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
+    if (!repo) repo = null
+  }
+  const lines = []
+  if (repo) lines.push(`Repo: ${repo}`)
+  if (f.file) lines.push(`File: ${f.file}`)
+  if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
+  if (f.description) lines.push(`Description: ${f.description}`)
+  if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
+  return lines.join('\n')
+}
+
 // All interactive elements inside #report are handled via event
 // delegation here, no inline handlers. Order matters: closer-fitting
 // selectors come first so a more specific match short-circuits before a
@@ -784,48 +819,30 @@ report.addEventListener('click', (e) => {
   // load-bearing.
   const copyBtn = pathClosest(e, '.mark-copy')
   if (copyBtn) {
-    const findingEl = pathClosest(e, '[data-gid]')
-    const gid = findingEl?.dataset?.gid
-    const group = gid ? findGroupById(gid) : null
-    if (!group) return
-    const f = activeTabFor(group)
-    // Repo header — surfaces upstream context above the file path.
-    // Two paths:
-    //   * The finding lives inside a package (`bucket.files.has(f.file)`
-    //     in some package bucket): use that package's repo IF every
-    //     analyzer agreed on a single value (`bucket.repos.size ===
-    //     1`). Conflicting or absent → no header for this finding.
-    //   * The finding is OWN-source (no package bucket contains its
-    //     file): fall through to the per-finding `repo.github`,
-    //     then the per-report `_repoFallback` stamped at ingest, then
-    //     the global `state.repoUrl` typed via the page chip in
-    //     single-file mode.
-    let inPackage = false
-    let repo = null
-    for (const bucket of getPackagesIndex().values()) {
-      if (bucket.files.has(f.file)) {
-        inPackage = true
-        if (bucket.repos && bucket.repos.size === 1) repo = [...bucket.repos][0]
-        break
-      }
-    }
-    if (!inPackage) {
-      repo = f.repo?.github ?? f._repoFallback ?? state.repoUrl ?? null
-      if (!repo) repo = null
-    }
-    const lines = []
-    if (repo) lines.push(`Repo: ${repo}`)
-    if (f.file) lines.push(`File: ${f.file}`)
-    if (f.line !== undefined && f.line !== null && f.line !== '') lines.push(`Line: ${f.line}`)
-    if (f.description) lines.push(`Description: ${f.description}`)
-    if (f.confidence !== undefined && f.confidence !== null) lines.push(`Confidence: ${f.confidence}/10`)
-    const text = lines.join('\n')
+    const text = findingHandoffText(e)
+    if (text === null) return
     try {
       navigator.clipboard.writeText(text).then(() => {
         copyBtn.classList.add('copied')
         setTimeout(() => copyBtn.classList.remove('copied'), 1000)
         return null
       }).catch(() => {})
+    } catch {}
+    return
+  }
+  // Claude button — hand the same finding block to Claude Code via
+  // the `claude://code/new?q=…` URL scheme, prefixed with a
+  // `Confirm and fix:` instruction so the receiving session knows
+  // what to do with it.
+  const claudeBtn = pathClosest(e, '.mark-claude')
+  if (claudeBtn) {
+    const text = findingHandoffText(e)
+    if (text === null) return
+    const url = `claude://code/new?q=${encodeURIComponent(`Confirm and fix:\n\n${text}`)}`
+    try {
+      window.location.href = url
+      claudeBtn.classList.add('copied')
+      setTimeout(() => claudeBtn.classList.remove('copied'), 1000)
     } catch {}
     return
   }
