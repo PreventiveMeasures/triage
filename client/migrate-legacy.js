@@ -15,7 +15,7 @@
 // only sees the post-migration filesystem.
 import { deleteFile, listFiles, readFile, saveFile } from './storage.js'
 import { analyzeContent, getCount, removeCount, setCount } from './counts.js'
-import { listWorkspaces, setReportWorkspace } from './workspaces.js'
+import { addReportToWorkspace, listWorkspaces, removeReportFromWorkspace } from './workspaces.js'
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { saveTriage, loadPromise as triageLoadPromise } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
@@ -44,7 +44,7 @@ export function migrateLegacyFilenames() {
 
 async function run() {
   // Wait for triage to finish loading before mutating workspace
-  // membership. The migration's `await setReportWorkspace(...)` calls fire
+  // membership. The migration's membership-mutation calls fire
   // `onReportMembershipChanged`, which the sync layer's hydration
   // path treats as "newly attached" — `hydrateStateFromBaseState`
   // would gap-fill from chain baseState BEFORE state.* loaded the
@@ -149,14 +149,22 @@ async function run() {
   // rename-fail case) pointing the workspace at a `.md` that
   // doesn't exist on disk while the actual `.deepseek` becomes
   // workspace-orphaned. Audit round-12 M-E.
+  // Per-workspace scoped detach + additive attach (NOT
+  // `setReportWorkspace`, which is documented as a "single-owner move"
+  // and strips the identifier from EVERY workspace before attaching).
+  // The outer loop iterates a stale snapshot from `listWorkspaces()`,
+  // so a `.deepseek` listed in multiple workspaces would lose every
+  // claim except the last iterated workspace's — the prior iteration's
+  // just-added `.md` reference gets stripped by the next iteration's
+  // global detach. Audit round-12 M-E follow-up.
   for (const w of listWorkspaces()) {
     for (const r of w.reports) {
       if (!r.toLowerCase().endsWith('.deepseek')) continue
       // Skip case (c): still on disk as `.deepseek`, didn't rename.
       if (!renamed.has(r) && filesOnDiskAtStart.has(r)) continue
       const newName = r.slice(0, -'.deepseek'.length) + '.md'
-      await setReportWorkspace(r, null)
-      await setReportWorkspace(newName, w.id)
+      await removeReportFromWorkspace(r, w.id)
+      await addReportToWorkspace(newName, w.id)
     }
   }
 }
