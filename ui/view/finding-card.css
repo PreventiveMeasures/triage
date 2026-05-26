@@ -330,29 +330,28 @@
   overflow: hidden; margin-right: .25rem;
 }
 .mark-comment,
-.mark-fix {
+.mark-fix,
+.mark-copy,
+.mark-claude {
   background: transparent; border: 0; color: var(--muted);
   padding: 0 .25rem; height: 1.4rem;
   display: inline-flex; align-items: center; justify-content: center;
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
 }
-.mark-copy,
-.mark-claude {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
-  display: inline-flex; align-items: center; justify-content: center;
-  margin-right: .25rem;
-  &:hover { color: var(--accent); border-color: var(--accent); }
-}
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
 /* Pulse the copy / claude button briefly after a successful click
    so it's visually acknowledged — the class is set + cleared by
    the events.js handler around the action (clipboard write for
-   copy, claude:// navigation for claude). */
+   copy, claude:// navigation for claude). Buttons share the
+   group's border now, so the pulse paints the cell background +
+   icon color instead of border-color. */
 .mark-copy.copied,
-.mark-claude.copied { color: var(--green, #4ade80); border-color: var(--green, #4ade80); }
+.mark-claude.copied {
+  color: var(--green, #4ade80);
+  background: color-mix(in srgb, var(--green, #4ade80) 14%, transparent);
+}
 .mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 .mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
 
