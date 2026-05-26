@@ -104,15 +104,23 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
       // started cleaning up workspaces (or from external OPFS
       // tampering) live in the workspace JSON forever otherwise.
       //
-      // Only prune on the GENUINE "file not found" case
-      // (`storage.readFile` throws `Error: File not found: <name>`
-      // when the entry is missing from OPFS / localStorage).
+      // Only prune on the GENUINE "file not found" case. The two
+      // backends report this differently: OPFS surfaces a
+      // DOMException with name 'NotFoundError' (raised by
+      // `getFileHandle` when the entry is missing), while the
+      // LS fallback throws `Error: File not found: <name>`
+      // explicitly. Accept BOTH — matching only the LS-shape
+      // message string would never fire under OPFS (the
+      // production backend), so orphan references in
+      // `workspace.reports` would accumulate indefinitely.
       // Other error classes — UTF-8 decode failures on corrupt
       // OPFS bytes, transient I/O hiccups, future error types —
       // are not deterministic indicators that the file is gone,
       // and we mustn't permanently detach the workspace-report
       // association on a transient. Audit round-13 W-Export-3.
-      if (typeof err?.message === 'string' && err.message.startsWith('File not found:')) {
+      const isNotFound = (err instanceof DOMException && err.name === 'NotFoundError') ||
+        (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
+      if (isNotFound) {
         await setReportWorkspace(name, null)
       }
       continue
