@@ -35,6 +35,7 @@
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
+import { ensureHostAria } from './host-aria.js'
 import { state } from '#client/index.js'
 
 const BUCKETS = ['invalid', 'deleted']
@@ -64,8 +65,7 @@ class SlideTriageTabs extends StateElement {
 
   connectedCallback() {
     super.connectedCallback()
-    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
-    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Triage view')
+    ensureHostAria(this, { role: 'group', 'aria-label': 'Triage view' })
   }
 
   render() {

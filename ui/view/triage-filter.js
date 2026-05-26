@@ -47,6 +47,7 @@
 //     `state.filterColors` and re-renders.
 import { nothing } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
+import { ensureHostAria } from './host-aria.js'
 import { state } from '#client/index.js'
 
 const COLORS = [
@@ -86,8 +87,7 @@ class TriageFilter extends StateElement {
     // ARIA on the host — the element selector now carries the
     // `.triage-filter` shell layout (no wrapping div), so the
     // group semantics live here too.
-    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
-    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Filter by mark color')
+    ensureHostAria(this, { role: 'group', 'aria-label': 'Filter by mark color' })
   }
 
   render() {

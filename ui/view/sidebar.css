@@ -41,7 +41,7 @@
   padding: .35rem 0;
   justify-content: center;
 }
-:host(.collapsed) #delete-current,
+:host(.collapsed) sidebar-delete-current,
 :host(.collapsed) #sync-status .sync-label { display: none; }
 :host(.collapsed) #sync-status {
   padding: .25rem; border: 0;
@@ -223,8 +223,15 @@
    Borderless icon chrome (the search-row border already frames them);
    only the background tint + color move on hover / active. The count
    badge in the top-right corner mirrors the `.triage-filter .count`
-   pattern. Buttons are `hidden` (via the HTML attribute, toggled in
-   sidebar.js) when their respective index is empty. */
+   pattern. Each button is rendered by a `<sidebar-view-button>`
+   StateElement that returns `nothing` (so the inner button + host
+   contribute zero layout) when its `count` property is 0. */
+/* `<sidebar-view-button>` hosts flatten into `.sidebar-search`'s
+   flex layout via `display: contents` so the inner button (or
+   nothing, when count === 0) participates directly alongside the
+   search input. */
+sidebar-view-button { display: contents; }
+
 .sidebar-view-btn {
   position: relative; flex-shrink: 0;
   width: 20px; height: 20px;
@@ -236,9 +243,13 @@
   transition: background .12s, color .12s;
 
   /* Breathing room between adjacent view buttons + a small nudge off
-     the search row's right edge for the trailing one. */
-  & + & { margin-left: .4rem; }
-  &:last-child { margin-right: .1rem; }
+     the search row's right edge for the trailing one. The matcher
+     keys off the host element since the inner button is the only
+     child of its `<sidebar-view-button>` host (so the prior
+     `& + &` adjacent-sibling / `&:last-child` rules wouldn't fire
+     across hosts). */
+  sidebar-view-button + sidebar-view-button > & { margin-left: .4rem; }
+  sidebar-view-button:last-of-type > & { margin-right: .1rem; }
 
   & svg { width: 14px; height: 14px; }
 
@@ -552,7 +563,12 @@
    button's :hover rule above (.sidebar-actions button.danger)
    already swaps the colour to var(--critical); the icon
    inherits via `currentColor`. */
-#delete-current {
+/* The host carries no layout of its own — the inner button is the
+   actual flex item of `.sidebar-actions` (alongside the
+   `#sync-status` button), so flatten the host out via
+   `display: contents`. */
+sidebar-delete-current { display: contents; }
+sidebar-delete-current button {
   display: inline-flex; align-items: center; gap: .35rem;
 
   & .trash-icon { flex-shrink: 0; }

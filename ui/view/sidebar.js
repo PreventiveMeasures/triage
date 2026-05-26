@@ -182,19 +182,12 @@ function workspaceHeaderTemplate() {
   return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" title="Create a new workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
 }
 
-// Packages + Repositories live as compact icon buttons to the right of
-// the sidebar search (see index.html), not as in-list section headers.
-// Each button is `hidden` while its index is empty (nothing to navigate
-// to) and gets `.active` when its view is the current one — mirrors the
-// `.current` highlight a file row picks up while its file is loaded.
-function renderViewButton(id, count, viewName) {
-  const btn = root?.querySelector(id)
-  if (!btn) return
-  btn.hidden = count === 0
-  btn.classList.toggle('active', state.currentView === viewName)
-  const badge = btn.querySelector('.view-btn-count')
-  if (badge) badge.textContent = String(count)
-}
+// Packages + Repositories navigation buttons live as
+// `<sidebar-view-button>` StateElements (see
+// view/sidebar-view-button.js). Each reads `state.currentView`
+// itself for the `.active` highlight and renders `nothing` when
+// its `count` property is 0; `renderSidebar()` pushes the count
+// on every pass.
 
 function bundlesHeaderTemplate() {
   // Plain label — not a navigation target. The section is an
@@ -481,21 +474,23 @@ export async function renderSidebar() {
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
 
-  // Packages + Repositories navigation lives in the search row, not in
-  // #file-list — update those buttons here so visibility + counts +
-  // active-view highlight track the same render pass.
-  renderViewButton('#show-packages-btn', countLoadedPackages(), 'packages')
-  renderViewButton('#show-repositories-btn', countLoadedRepositories(), 'repositories')
+  // Packages + Repositories navigation buttons live to the right of
+  // the sidebar search input. Both are `<sidebar-view-button>`
+  // StateElements that read `state.currentView` themselves for the
+  // `.active` highlight; the cross-report counts aren't observable
+  // (the per-bundle finding index lives in a module-internal Map),
+  // so we push them as properties here on every sidebar render.
+  // The component renders `nothing` when count === 0, so an empty
+  // index hides the button automatically.
+  const pkgBtn = root.querySelector('sidebar-view-button[kind="packages"]')
+  if (pkgBtn) pkgBtn.count = countLoadedPackages()
+  const repoBtn = root.querySelector('sidebar-view-button[kind="repositories"]')
+  if (repoBtn) repoBtn.count = countLoadedRepositories()
 
-  // `#delete-current` targets whichever artifact is currently
-  // active: the selected bundle in the bundles view, otherwise the
-  // open report. Disabled when neither is in play. The click
-  // delegate below dispatches on the same pair.
-  const deleteBtn = root.querySelector('#delete-current')
-  if (deleteBtn) {
-    const bundleActive = state.currentView === 'bundles' && state.selectedBundle
-    deleteBtn.disabled = !state.currentFile && !bundleActive
-  }
+  // `<sidebar-delete-current>` reads `state.currentFile` /
+  // `state.selectedBundle` / `state.currentView` itself via its
+  // autorun and disables when neither artifact is in play — no
+  // imperative update needed here.
 
   // Sync button visibility tracks workspace state (non-empty
   // workspaces) — re-evaluate on every sidebar render so adding
@@ -571,16 +566,18 @@ async function onSidebarClick(e) {
     openBundle(integrity)
     return
   }
-  if (e.target.closest('[data-action="show-packages"]')) {
-    state.currentView = 'packages'
-    render()
-    renderSidebar()
-    return
-  }
-  if (e.target.closest('[data-action="show-repositories"]')) {
-    state.currentView = 'repositories'
-    render()
-    renderSidebar()
+  // `<sidebar-view-button>` clicks bubble through the host as
+  // native click events — read the `kind` attribute from the host
+  // to route to the matching `state.currentView` mutation. Same
+  // closest()-based routing pattern the rest of this delegate uses.
+  const viewBtn = e.target.closest('sidebar-view-button')
+  if (viewBtn) {
+    const kind = viewBtn.getAttribute('kind')
+    if (kind === 'packages' || kind === 'repositories') {
+      state.currentView = kind
+      render()
+      renderSidebar()
+    }
     return
   }
   if (e.target.closest('[data-action="new-workspace"]')) {
@@ -706,7 +703,7 @@ async function onSidebarClick(e) {
     }
     return
   }
-  if (e.target.closest('#delete-current')) {
+  if (e.target.closest('sidebar-delete-current')) {
     // Bundle path first: the bundles view's selected bundle takes
     // precedence over `state.currentFile` (a stale report selection
     // can survive a view switch). The button is disabled when
@@ -1332,30 +1329,12 @@ class AppSidebar extends LitElement {
           <path d="M9.7 9.7L13 13" stroke-linecap="round"/>
         </svg>
         <input id="sidebar-search-input" type="search" placeholder="Search reports..." autocomplete="off">
-        <button id="show-packages-btn" type="button" class="sidebar-view-btn" data-action="show-packages" hidden title="Show packages" aria-label="Show packages">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 6h12v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6Z"/>
-            <path d="M2 6l1.6-3.3A1.3 1.3 0 0 1 4.8 2h6.4a1.3 1.3 0 0 1 1.2.7L14 6"/>
-            <path d="M8 2v4"/>
-          </svg>
-          <span class="view-btn-count"></span>
-        </button>
-        <button id="show-repositories-btn" type="button" class="sidebar-view-btn" data-action="show-repositories" hidden title="Show repositories" aria-label="Show repositories">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="4" x2="4" y1="2.5" y2="10"/>
-            <circle cx="12" cy="4" r="2"/>
-            <circle cx="4" cy="12" r="2"/>
-            <path d="M12 6a6 6 0 0 1-6 6"/>
-          </svg>
-          <span class="view-btn-count"></span>
-        </button>
+        <sidebar-view-button kind="packages"></sidebar-view-button>
+        <sidebar-view-button kind="repositories"></sidebar-view-button>
       </div>
       <ul id="file-list"></ul>
       <div class="sidebar-actions">
-        <button id="delete-current" type="button" class="danger">
-          <svg class="trash-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M5 4l.7 9h4.6L11 4"/></svg>
-          <span>Delete current</span>
-        </button>
+        <sidebar-delete-current></sidebar-delete-current>
         <button id="sync-status" type="button" data-status="off">
           <span class="sync-dot" aria-hidden="true"></span>
           <span class="sync-label">Sync off</span>

@@ -26,6 +26,7 @@
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
+import { ensureHostAria } from './host-aria.js'
 
 const VIEW_ICONS = {
   // table   — gridded cell layout
@@ -128,8 +129,7 @@ class ViewModeButtons extends StateElement {
 
   connectedCallback() {
     super.connectedCallback()
-    if (!this.hasAttribute('role')) this.setAttribute('role', 'group')
-    if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'View mode')
+    ensureHostAria(this, { role: 'group', 'aria-label': 'View mode' })
   }
 
   render() {
