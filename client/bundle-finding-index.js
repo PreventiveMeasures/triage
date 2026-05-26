@@ -285,19 +285,34 @@ function indexFindingByPackage(f, key, name) {
     // single non-conflicting entry; multiple entries (rare — the
     // analyzer disagreed on which repo owns the package) suppress the
     // link rather than guess. `byVersion` holds the per-version
-    // sub-buckets. Both ride alongside the standard bucket shape and
-    // are pruned in `invalidateName`. Audit round-8 H1.
-    pBucket = { ...newBucket(), repos: new Set(), byVersion: new Map() }
+    // sub-buckets. `_repoReports` is the per-repo refcount keyed by
+    // contributing report name — needed so `invalidateName` can drop
+    // a repo URL once its last contributor is gone, otherwise stale
+    // entries would block the `size === 1` upstream-link rule
+    // forever. All three ride alongside the standard bucket shape
+    // and are pruned in `invalidateName`. Audit round-8 H1.
+    pBucket = { ...newBucket(), repos: new Set(), byVersion: new Map(), _repoReports: new Map() }
     byPackage.set(pkg, pBucket)
   }
-  if (typeof f.repo?.github === 'string' && f.repo.github) pBucket.repos.add(f.repo.github)
+  if (typeof f.repo?.github === 'string' && f.repo.github) {
+    pBucket.repos.add(f.repo.github)
+    let reps = pBucket._repoReports.get(f.repo.github)
+    if (!reps) pBucket._repoReports.set(f.repo.github, reps = new Set())
+    reps.add(name)
+  }
   indexFindingByVersion(pBucket, version, f, key, name)
   // `addFindingToBucket` returns wasNewReport so a `notify()` fires and
   // Packages-view subscribers repaint when an existing key gains a
   // fresh contributing report (common for markdown findings without a
   // `fileHash`), not only when the key itself is new. Audit round-12 M-A.
   const wasNewReport = addFindingToBucket(pBucket, key, name, f)
-  if (wasNewReport) rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
+  // `rememberContribution` runs unconditionally — `_repoReports.add(name)`
+  // above also runs unconditionally, and `invalidateName` keys its repo
+  // sweep on `contrib.pkg` containing at least one entry for the (pkg,
+  // name) tuple. Gating on `wasNewReport` would couple the sweep to a
+  // subtle "first-finding-always-wasNewReport-true" invariant; redundant
+  // entries are no-ops in the cleanup loop (`if (!krSet) continue`).
+  rememberContribution(name, 'pkg', { pkg, key, file: f.file, version })
   return wasNewReport
 }
 
@@ -349,6 +364,10 @@ function invalidateName(name) {
     }
     if (bucket.keys.size === 0) byHash.delete(hash)
   }
+  // `cleanedPkgs` dedupes the repo refcount walk: multiple `contrib.pkg`
+  // entries can land in the same package, but `_repoReports` only needs
+  // one sweep per package per invalidation.
+  const cleanedPkgs = new Set()
   for (const { pkg, key, file, version } of contrib.pkg) {
     const pBucket = byPackage.get(pkg)
     if (!pBucket) continue
@@ -363,6 +382,24 @@ function invalidateName(name) {
     // (`bundle-finding-versions.js`); `findingDedupeKey` is
     // threaded in so they don't need to reach back into this file.
     pruneVersionSlot(pBucket, version, key, file, name, findingDedupeKey)
+    // Drop `name` from every repo refcount on this package, removing
+    // any repo whose last contributor we just deleted. Without this,
+    // `pBucket.repos` would leak entries from overwritten / deleted
+    // reports, breaking the Packages view's `repos.size === 1`
+    // upstream-link rule (a depleted repo would stick around and
+    // either suppress the link or surface as a stale canonical URL).
+    if (!cleanedPkgs.has(pkg)) {
+      cleanedPkgs.add(pkg)
+      for (const repo of [...pBucket._repoReports.keys()]) {
+        const reps = pBucket._repoReports.get(repo)
+        if (!reps?.delete(name)) continue
+        if (reps.size === 0) {
+          pBucket._repoReports.delete(repo)
+          pBucket.repos.delete(repo)
+          dirty = true
+        }
+      }
+    }
     if (pBucket._keyReports.size === 0) byPackage.delete(pkg)
     else recomputeBucketReports(pBucket)
   }
