@@ -337,7 +337,8 @@
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:hover { color: var(--accent); background: var(--surface-active); }
 }
-.mark-copy {
+.mark-copy,
+.mark-claude {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 3px; padding: 0 .25rem; height: 1.4rem;
   display: inline-flex; align-items: center; justify-content: center;
@@ -346,11 +347,12 @@
 }
 .mark-comment.has-comment,
 .mark-fix.has-fix { color: var(--accent); }
-/* Pulse the copy button briefly after a successful clipboard
-   write so the click is visually acknowledged — the class is
-   set + cleared by the events.js handler around the
-   `navigator.clipboard.writeText` resolve. */
-.mark-copy.copied { color: var(--green, #4ade80); border-color: var(--green, #4ade80); }
+/* Pulse the copy / claude button briefly after a successful click
+   so it's visually acknowledged — the class is set + cleared by
+   the events.js handler around the action (clipboard write for
+   copy, claude:// navigation for claude). */
+.mark-copy.copied,
+.mark-claude.copied { color: var(--green, #4ade80); border-color: var(--green, #4ade80); }
 .mark-comment.has-comment .bubble { fill: var(--accent); fill-opacity: .15; }
 .mark-fix.has-fix .wrench { fill: var(--accent); fill-opacity: .15; }
 
@@ -518,7 +520,8 @@
 :host([context='focus']) .marks-commit-row { padding-left: 0; }
 :host([context='focus']) .mark-comment,
 :host([context='focus']) .mark-fix,
-:host([context='focus']) .mark-copy {
+:host([context='focus']) .mark-copy,
+:host([context='focus']) .mark-claude {
   height: 1.75rem;
   padding: 0 .55rem;
   gap: .35rem;
@@ -610,8 +613,10 @@
   /* Pure on-screen affordance — the bundle source viewer is an
      interactive surface that doesn't have a paper analogue. */
   .finding-code-btn { display: none !important; }
-  /* Same — clipboard copy button has no paper meaning. */
-  .mark-copy { display: none !important; }
+  /* Same — clipboard copy + claude handoff buttons have no
+     paper meaning. */
+  .mark-copy,
+  .mark-claude { display: none !important; }
   /* Drop the on-screen pill chrome from the npm chip — on paper
      the boxed outline next to the file:line reads inconsistently
      with the surrounding flat text. */
