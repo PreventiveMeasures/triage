@@ -496,6 +496,7 @@ export async function saveFileBytes(name, bytes) {
   })
 }
 
+// eslint-disable-next-line require-await
 export async function deleteFile(name) {
   // Bump synchronously BEFORE the async I/O — see saveFile for the
   // race this guards (a concurrent readFile resolving with stale
@@ -503,34 +504,47 @@ export async function deleteFile(name) {
   bumpWriteGen(name)
   cache.delete(name)
   inFlight.delete(name)
-  const dir = await getOpfsDir()
-  if (dir) {
-    // Only swallow the "already gone" case (NotFoundError). Other
-    // failures — EACCES via NoModificationAllowedError, OPFS
-    // truncate failures wrapped as InvalidModificationError — must
-    // propagate; without this gate, `writeGen` is still bumped and
-    // `'delete'` listeners fire AS IF the removeEntry succeeded,
-    // so subscribers (bundle-finding-index, presence module) think
-    // the file is gone while OPFS still holds it. API ergonomics
-    // audit `client/storage.js:339`.
-    try { await dir.removeEntry(name) }
-    catch (err) {
-      if (!(err instanceof DOMException) || err.name !== 'NotFoundError') {
-        bumpWriteGen(name)
-        throw err
+  // Hold shared VAULT_LOCK so vault enable/disable (which acquires
+  // it exclusively) waits for our removeEntry to land — mirrors the
+  // shared-mode hold in saveFile / saveFileBytes / saveBundle /
+  // deleteBundle. Without this, the migration's `rawReadAndWrite`
+  // can interleave between its read-handle and write-handle
+  // acquisitions around this delete: the write-back uses
+  // `getFileHandle(name, { create: true })` and RESURRECTS the
+  // just-deleted entry with the migration's transform applied.
+  // Particularly bad on disable — a user who deleted a sensitive
+  // file specifically to prevent it being decrypted to plaintext
+  // would see it reappear on disk as plaintext.
+  return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
+    const dir = await getOpfsDir()
+    if (dir) {
+      // Only swallow the "already gone" case (NotFoundError). Other
+      // failures — EACCES via NoModificationAllowedError, OPFS
+      // truncate failures wrapped as InvalidModificationError — must
+      // propagate; without this gate, `writeGen` is still bumped and
+      // `'delete'` listeners fire AS IF the removeEntry succeeded,
+      // so subscribers (bundle-finding-index, presence module) think
+      // the file is gone while OPFS still holds it. API ergonomics
+      // audit `client/storage.js:339`.
+      try { await dir.removeEntry(name) }
+      catch (err) {
+        if (!(err instanceof DOMException) || err.name !== 'NotFoundError') {
+          bumpWriteGen(name)
+          throw err
+        }
       }
+      // Post-commit bump — a readFile that started AFTER our pre-bump
+      // but captured the File snapshot before `removeEntry` resolved
+      // would otherwise observe a matching gen and re-cache the
+      // doomed bytes. Audit round-12 H8.
+      bumpWriteGen(name)
+      notifyFileMutated(name, 'delete')
+      return
     }
-    // Post-commit bump — a readFile that started AFTER our pre-bump
-    // but captured the File snapshot before `removeEntry` resolved
-    // would otherwise observe a matching gen and re-cache the
-    // doomed bytes. Audit round-12 H8.
+    localStorage.removeItem(LS_REPORT_PREFIX + name)
     bumpWriteGen(name)
     notifyFileMutated(name, 'delete')
-    return
-  }
-  localStorage.removeItem(LS_REPORT_PREFIX + name)
-  bumpWriteGen(name)
-  notifyFileMutated(name, 'delete')
+  })
 }
 
 // Bundles — sourcemap (.map) and stasis (.stasis.code.br)
