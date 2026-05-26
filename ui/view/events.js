@@ -1488,7 +1488,7 @@ function restoreAfterPrint() {
 window.addEventListener('beforeprint', prepareForPrint)
 window.addEventListener('afterprint', restoreAfterPrint)
 
-document.querySelector('#print-btn').addEventListener('click', async () => {
+document.addEventListener('print-requested', async () => {
   if (state.reports.length === 0) return
   if (printSavedMode !== null) return
   prepareForPrint()
@@ -1515,7 +1515,7 @@ document.querySelector('#print-btn').addEventListener('click', async () => {
 // stack). Pure data export: no view-mode swap needed since we
 // serialize state.reports + per-finding triage / marker / comment
 // state directly, without going through the DOM.
-document.querySelector('#download-btn').addEventListener('click', () => {
+document.addEventListener('download-requested', () => {
   if (state.reports.length === 0) return
   downloadReportsAsMarkdown(state.reports)
 })

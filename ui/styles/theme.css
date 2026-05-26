@@ -442,41 +442,50 @@ a { color: var(--accent); text-decoration: none; }
    read as part of the matte-glass UI, not floating widgets. The
    sibling `<theme-toggle>` Lit component carries an equivalent rule in
    its shadow DOM (see view/theme.js). */
-#print-btn, #download-btn {
+/* The `<print-button>` and `<download-button>` hosts each render
+   either a `<button>` (when state predicates pass — see the
+   components) or `nothing`. The host element carries the
+   absolute-positioned layout and the per-button `&:hover` chrome
+   directly; `:has(button)` keeps the layout off the host when the
+   button isn't there so it doesn't claim a 30×30 hit target while
+   invisible. The button itself is `display: flex` (was previously
+   driven by the now-retired body.show-print-btn class). */
+print-button:has(button),
+download-button:has(button) {
   position: absolute; right: .5rem;
-  display: none;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: transparent;
-  color: var(--muted);
-  border: 0; border-radius: 6px;
-  font-size: 1rem; line-height: 1;
-  font-family: inherit;
-  align-items: center; justify-content: center;
-  transition: color .12s, background .12s;
 
-  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
-  & svg { display: block; }
+  & button {
+    display: flex;
+    width: 100%; height: 100%;
+    background: transparent;
+    color: var(--muted);
+    border: 0; border-radius: 6px;
+    font-size: 1rem; line-height: 1;
+    font-family: inherit;
+    align-items: center; justify-content: center;
+    transition: color .12s, background .12s;
+
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+    & svg { display: block; }
+  }
 }
 
 /* Print sits directly under the theme toggle — its top stacks below
    the toggle's bottom (.5rem from the viewport top + 30px toggle
-   height + .35rem gap). Hidden by default; an autorun in
-   view/print-btn-visibility.js toggles `body.show-print-btn` based
-   on (state.reports.length > 0 && state.currentView === 'findings'
-   && state.viewMode !== 'graph' && state.viewMode !== 'kanban') so
+   height + .35rem gap). The component itself decides visibility
+   via `state.reports.length > 0 && state.currentView === 'findings'
+   && state.viewMode !== 'graph' && state.viewMode !== 'kanban'` so
    the button only appears where window.print() makes sense (graph
    and kanban don't read on paper; the Files tab isn't findings). */
-#print-btn { top: calc(.5rem + 30px + .35rem); }
+print-button { top: calc(.5rem + 30px + .35rem); }
 
 /* Download sits directly under the print button, same .35rem gap. */
-#download-btn { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
-
-body.show-print-btn #print-btn,
-body.show-print-btn #download-btn { display: flex; }
+download-button { top: calc(.5rem + 30px + .35rem + 30px + .35rem); }
 
 @media print {
-  #print-btn, #download-btn { display: none !important; }
+  print-button, download-button { display: none !important; }
 }
 
 /* Standalone PWA mode (OS title bar above the page, header NOT
@@ -581,13 +590,13 @@ body.show-print-btn #download-btn { display: flex; }
      (toggle, print, download — top → bottom in normal mode)
      reads the same right → left. */
   theme-toggle,
-  #print-btn,
-  #download-btn {
+  print-button,
+  download-button {
     top: calc(env(titlebar-area-height, 33px) + .35rem);
   }
-  theme-toggle { right: .5rem; }
-  #print-btn   { right: calc(.5rem + 30px + .35rem); }
-  #download-btn { right: calc(.5rem + 2 * (30px + .35rem)); }
+  theme-toggle  { right: .5rem; }
+  print-button  { right: calc(.5rem + 30px + .35rem); }
+  download-button { right: calc(.5rem + 2 * (30px + .35rem)); }
 
   /* In WCO mode there's no OS-painted title-bar strip above the
      viewport — the buttons land on top of the page itself — so the
