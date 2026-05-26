@@ -35,10 +35,13 @@ const byPackage = new Map()
 // keyed by the finding's repo URL — `f.repo?.github` when the
 // analyzer stamped one, else the per-report `_repoFallback`
 // the user typed. Powers the cross-report Repositories view,
-// which complements Packages: most findings end up in exactly
-// one of the two (third-party deps in Packages, own source in
-// Repositories). Findings without any repo signal aren't
-// indexed here — there's nothing to bucket them under.
+// which complements Packages: most findings end up in one of the
+// two (third-party deps in Packages, own source in Repositories),
+// but analyzer-stamped own-source findings (a `package.npm.name`
+// stamped on a `src/...` file — the analyzer labelling the user's
+// own project as a "package") appear in BOTH indexes. Findings
+// without any repo signal aren't indexed here — there's nothing
+// to bucket them under.
 const byRepo = new Map()
 // Reverse index: which (hash, key), (pkg, key), and (repo, key)
 // pairs did each report contribute? Lets `invalidateName` prune
@@ -69,6 +72,17 @@ function packageOf(f) {
   return null
 }
 
+// Pure path-based deps test, used to gate `indexFindingByRepo`. Lighter
+// than `packageOf` because the stamp (`f.package.npm.name`) doesn't
+// disqualify a finding from the Repositories view — the analyzer often
+// stamps the user's own project name on own-source findings, and those
+// still belong under the project's repo bucket. Only a file path that
+// physically lives in `node_modules/` / `dependencies/` should be
+// repos-exempt (it's unambiguously a dep, not user code).
+function fileIsInDepsPath(f) {
+  if (typeof f?.file !== 'string') return false
+  return /(?:^|\/)(?:node_modules|dependencies)\//u.test(f.file)
+}
 
 // Extracts the repo "key" the Repositories view buckets under.
 // Prefers the analyzer-stamped `repo.github` (a `user/repo` slug
@@ -135,9 +149,11 @@ export function getPackagesIndex() {
 // Snapshot of the OPFS-wide repository index for the cross-report
 // Repositories view. Same shape as the Packages index (Map<repoKey,
 // { findings, files, reports, … }>), but only own-source findings
-// (those NOT in node_modules / dependencies) get indexed; deps
-// already surface in Packages, so Repositories is the
-// complementary view. Repo key comes from `repoOf(f)` above.
+// (those NOT in node_modules / dependencies) get indexed — deps
+// stay Packages-only. Note that a finding can appear in BOTH
+// indexes when its file is own-source AND the analyzer stamped
+// a `package.npm.name` (the user's own project as a "package").
+// Repo key comes from `repoOf(f)` above.
 export function getRepositoriesIndex() {
   return byRepo
 }
@@ -324,13 +340,17 @@ function indexFindingByPackage(f, key, name) {
 }
 
 // Repository-keyed bucket update. Mirror of indexFindingByPackage
-// but for own-source findings (those NOT inside a deps dir),
-// keyed by `repoOf(f)`. Findings with no repo signal AT ALL
-// (no `repo.github`, no `_repoFallback`) are skipped — there's
-// nowhere to bucket them. Returns true on a fresh dedupe key,
-// matching the package path's contract.
+// but for findings whose FILE PATH is not under `node_modules/` or
+// `dependencies/`. Stamped `package.npm.name` does NOT exclude a
+// finding from Repositories — analyzers routinely stamp the user's
+// own project name on own-source findings (so the project surfaces as
+// a "package" in Packages), and those findings still belong under
+// the project's repo bucket via `repoOf`'s chip-URL fallback.
+// Findings under deps paths stay Packages-only — they're
+// unambiguously third-party. Findings with no repo signal AT ALL
+// (no `repo.github`, no `_repoFallback`, no chip URL) are skipped.
 function indexFindingByRepo(f, key, name, reportFallback) {
-  if (packageOf(f) !== null) return false
+  if (fileIsInDepsPath(f)) return false
   const repo = repoOf(f, reportFallback)
   if (!repo) return false
   let rBucket = byRepo.get(repo)

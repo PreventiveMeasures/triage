@@ -449,22 +449,55 @@ describe('bundle-finding-index — analyzer-stamped package.npm overrides path e
     assert.equal(bucket.byVersion.size, 2, 'two distinct version slots')
   })
 
-  it('keeps a stamp-only finding (no file) out of the repository index', async () => {
-    // A finding with only a stamp + a non-deps source file should still
-    // be classified as "in a package", so the repository index skips it.
-    const tag = `stamp-skips-repo-${Date.now()}`
+  it('surfaces stamped own-source findings in BOTH packages and repositories', async () => {
+    // Analyzers routinely stamp the user's own project name on
+    // own-source findings (so the project surfaces as a row in
+    // Packages). That stamp must NOT exclude the finding from the
+    // Repositories view — path is the structural classifier, stamp
+    // is just metadata refinement.
+    const tag = `stamp-both-${Date.now()}`
     await seedReport({
       findings: [
         // own-source file path + package stamp + a repo signal.
-        // Without the package stamp, this would land in the
-        // repositories index (own source + a github URL). The stamp
-        // promotes it to "in a package", so repositories skip it.
         { id: `${tag}-f1`, severity: 'high', file: 'src/own.js', description: 'd', package: { npm: { name: tag } }, repo: { github: `acme/${tag}` } },
       ],
     })
     await ensureBundleFindingsIndexed()
     assert.ok(getPackagesIndex().get(tag), 'finding lands in packages via stamp')
-    assert.equal(getRepositoriesIndex().get(`acme/${tag}`), undefined, 'stamped finding skipped from repositories')
+    assert.ok(getRepositoriesIndex().get(`acme/${tag}`), 'finding ALSO lands in repositories via its repo signal')
+  })
+
+  it('keeps deps-path findings out of the repository index even when stamped + repo-signalled', async () => {
+    // Findings whose FILE PATH lives under `node_modules/` /
+    // `dependencies/` are unambiguously third-party; they belong in
+    // Packages only. The stamp / repo signal doesn't override the
+    // path-based classification.
+    const tag = `deps-only-${Date.now()}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `node_modules/${tag}/lib/x.js`, description: 'd', package: { npm: { name: tag } }, repo: { github: `acme/${tag}` } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag), 'deps finding lands in packages')
+    assert.equal(getRepositoriesIndex().get(`acme/${tag}`), undefined, 'deps path keeps the finding out of repositories')
+  })
+
+  it('does not mis-classify own-source paths that contain a deps-look-alike substring', async () => {
+    // `fileIsInDepsPath` requires a path-segment boundary before
+    // `node_modules`/`dependencies`. A folder NAMED something like
+    // `node_modules-lookalike` mid-path is own source and should
+    // land in Repositories. Guards against any future regex
+    // simplification that drops the leading `(?:^|\/)` anchor.
+    const tag = `lookalike-${Date.now()}`
+    const repo = `acme/${tag}`
+    await seedReport({
+      findings: [
+        { id: `${tag}-f1`, severity: 'high', file: `src/node_modules-lookalike/${tag}/x.js`, description: 'd', repo: { github: repo } },
+      ],
+    })
+    await ensureBundleFindingsIndexed()
+    assert.ok(getRepositoriesIndex().get(repo), 'look-alike folder name does not get classified as deps')
   })
 })
 
@@ -906,5 +939,34 @@ describe('bundle-finding-index — user-supplied repo URL as fallback', () => {
     saveRepoUrlFor(name, '')
     await ensureBundleFindingsIndexed()
     assert.ok(getRepositoriesIndex().get(stamped), 'stamped bucket survives chip clear')
+  })
+
+  it('buckets stamped own-source findings under the chip URL when no f.repo.github', async () => {
+    // The user's scenario: DeepView JSON stamps `package.npm.name` on
+    // own-source findings (the user's project as a "package") but
+    // doesn't stamp `f.repo.github`. The user sets the project repo
+    // via the chip; those findings should surface in the Repositories
+    // view under the chip URL, even though they ALSO appear in
+    // Packages via the stamp.
+    const tag = `stamped-fallback-${Date.now()}`
+    const repo = `acme/${tag}`
+    const name = uniqueName('rpt')
+    saveRepoUrlFor(name, repo)
+    await saveFile(name, JSON.stringify({
+      findings: [
+        {
+          id: `${tag}-f1`,
+          severity: 'high',
+          file: 'src/own.js',
+          description: 'own source, stamped pkg, no repo signal of its own',
+          package: { npm: { name: tag } },
+        },
+      ],
+    }))
+    await ensureBundleFindingsIndexed()
+    assert.ok(getPackagesIndex().get(tag), 'still lands in packages via stamp')
+    const repoBucket = getRepositoriesIndex().get(repo)
+    assert.ok(repoBucket, 'ALSO lands in repositories via chip URL fallback')
+    assert.equal(repoBucket.findings.length, 1, 'the stamped own-source finding surfaces')
   })
 })
