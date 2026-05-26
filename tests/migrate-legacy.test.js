@@ -104,6 +104,39 @@ describe('migrateLegacyFilenames', () => {
     await deleteWorkspace(wsId)
   })
 
+  it('preserves multi-owner workspace membership across the rename', async () => {
+    // A `.deepseek` report can be listed in multiple workspaces (via
+    // `addReportToWorkspace`'s additive shape). Pre-fix the rewrite loop
+    // called `setReportWorkspace(r, null)` followed by
+    // `setReportWorkspace(newName, w.id)`, both of which are documented
+    // as the "single-owner move" shape — they strip the identifier from
+    // EVERY workspace before attaching to the target. Combined with the
+    // outer loop iterating a stale `listWorkspaces()` snapshot, the
+    // second iteration would silently drop the first iteration's
+    // just-added `.md` claim. Use scoped detach + additive attach to
+    // preserve multi-ownership.
+    const legacy = uniqueLegacyName('multi')
+    const target = legacy.replace(/\.deepseek$/u, '.md')
+    await saveFile(legacy, '# DeepSec\n\n## HIGH (1)\n\n### F\n')
+    const wsIdA = `ws-multi-a-${Date.now()}-${nameCounter}`
+    const wsIdB = `ws-multi-b-${Date.now()}-${nameCounter}`
+    await upsertWorkspace({ id: wsIdA, name: wsIdA, privateKey: 'AAAA', reports: [legacy] })
+    await upsertWorkspace({ id: wsIdB, name: wsIdB, privateKey: 'BBBB', reports: [legacy] })
+
+    await freshMigrate()
+
+    const wsA = listWorkspaces().find((w) => w.id === wsIdA)
+    const wsB = listWorkspaces().find((w) => w.id === wsIdB)
+    assert.ok(wsA && wsB, 'both workspaces survived')
+    assert.equal(wsA.reports.includes(legacy), false, 'legacy cleared from A')
+    assert.equal(wsB.reports.includes(legacy), false, 'legacy cleared from B')
+    assert.equal(wsA.reports.includes(target), true, 'target attached to A')
+    assert.equal(wsB.reports.includes(target), true, 'target attached to B')
+
+    await deleteWorkspace(wsIdA)
+    await deleteWorkspace(wsIdB)
+  })
+
   it('rewrites orphan workspace references even when the OPFS file is absent', async () => {
     // The migration loop writes new content first, then catches up
     // workspace memberships in a separate pass at the end. That
