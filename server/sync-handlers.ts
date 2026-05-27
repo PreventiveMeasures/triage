@@ -18,7 +18,11 @@ import type { UnauthorizedContext } from './auth.ts'
 // 2s is generous against a healthy backend (typical lookups complete
 // in <50ms) and tight enough that a wedged backend doesn't pin the
 // client's UI status on "Connecting…" for more than ~2s + RTT.
-const INVENTORY_LOOKUP_TIMEOUT_MS = 2_000
+// Exported so the corresponding test can pin the contract both ways
+// (the ack must arrive, AND it must wait long enough to suggest the
+// timer actually fired — otherwise an accidental shortening to 0ms
+// would silently pass the upper-bound assertion).
+export const INVENTORY_LOOKUP_TIMEOUT_MS = 2_000
 
 // `chainForWire` accepts the row shape from `chainFrom` (where
 // `keyframe` is the SQLite INTEGER 0 / 1) and returns the same fields
@@ -327,9 +331,17 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // worst-case; broadcasts fill the inventory in the meantime.
     let resources: object[] = []
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    // `Promise.resolve().then(() => objstoreResources(tag))` rather
+    // than `objstoreResources(tag).catch(...)` so a SYNCHRONOUS throw
+    // from the dep (e.g. a stricter future implementation, or a
+    // wire-up that drops the `async` keyword) lands as a rejected
+    // promise inside `.then` and is caught by the next `.catch`
+    // instead of escaping the surrounding `try/finally` (which has no
+    // matching `catch`) and propagating out of the handler, sinking
+    // both the ack and the chain.
     try {
       resources = await Promise.race([
-        objstoreResources(tag).catch((err) => {
+        Promise.resolve().then(() => objstoreResources(tag)).catch((err) => {
           if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err)
           return [] as object[]
         }),
