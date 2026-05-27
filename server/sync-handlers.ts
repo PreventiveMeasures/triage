@@ -13,6 +13,13 @@ import { MAX_CIPHERTEXT_LEN, MAX_FIELD_LEN, validCiphertextShape, validNonce, va
 import { debugTag } from './util.ts'
 import type { UnauthorizedContext } from './auth.ts'
 
+// Hard ceiling on the objstore inventory lookup baked into the
+// `workspace-subscribed` ack (see `handleSubscribe` for the why).
+// 2s is generous against a healthy backend (typical lookups complete
+// in <50ms) and tight enough that a wedged backend doesn't pin the
+// client's UI status on "Connecting…" for more than ~2s + RTT.
+const INVENTORY_LOOKUP_TIMEOUT_MS = 2_000
+
 // `chainForWire` accepts the row shape from `chainFrom` (where
 // `keyframe` is the SQLite INTEGER 0 / 1) and returns the same fields
 // with `keyframe` normalised to a strict boolean for the wire.
@@ -308,9 +315,35 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     // Returns [] for a triage-only workspace. A failing inventory
     // lookup must NOT sink the subscribe — degrade to an empty snapshot
     // (broadcasts will fill it in) so the ack + chain still go out.
+    //
+    // Same fallback for a SLOW lookup: subscribe(socket, tag) above
+    // already registered this socket as a peer, so broadcasts are live
+    // server-side regardless of when the ack lands — but the client's
+    // status stays in `connecting` until `workspace-subscribed` arrives,
+    // even though sync is functionally working. A wedged objstore
+    // backend (503 retry loop, DB latency spike) would otherwise pin
+    // the UI on "Connecting…" for as long as the lookup takes. Cap
+    // the wait so the ack ships within `INVENTORY_LOOKUP_TIMEOUT_MS`
+    // worst-case; broadcasts fill the inventory in the meantime.
     let resources: object[] = []
-    try { resources = await objstoreResources(tag) }
-    catch (err) { if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err) }
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    try {
+      resources = await Promise.race([
+        objstoreResources(tag).catch((err) => {
+          if (debug) console.warn('subscribe: objstore inventory lookup failed', debugTag(tag), err)
+          return [] as object[]
+        }),
+        new Promise<object[]>((resolve) => {
+          timeoutHandle = setTimeout(() => {
+            if (debug) console.warn(`subscribe: objstore inventory lookup slow (>${INVENTORY_LOOKUP_TIMEOUT_MS}ms), sending empty`, debugTag(tag))
+            resolve([])
+          }, INVENTORY_LOOKUP_TIMEOUT_MS)
+          timeoutHandle.unref?.()
+        }),
+      ])
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+    }
     send(socket, { type: 'workspace-subscribed', workspaceTag: tag, resources })
     // `from` is the last revision id the client claims to have applied —
     // now a base64url string, not an integer. We send only revisions
