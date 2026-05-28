@@ -364,9 +364,30 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
     // GET layer doesn't pass If-None-Match — but a future call
     // site could. Treat as unavailable rather than streaming a
     // null body.
-    if (res.statusCode !== 200 || res.stream == null || res.blob.size == null) {
+    if (res.statusCode !== 200 || res.stream == null) {
       return { ok: false, reason: 'unavailable' }
     }
+    // `@vercel/blob@2.x`'s streaming `get()` for private blobs
+    // returns the body but does NOT populate `blob.size` and does
+    // NOT pass a `content-length` header through (verified
+    // empirically: get.size=0, content-length-hdr=null while
+    // head.size reports the true byte count). The REST layer
+    // depends on a size to set `content-length` on its response
+    // and for the integrity check against the DB row, so when
+    // get() leaves it 0/null we fall back to a head() lookup.
+    // Two round-trips per private read on Vercel until the SDK is
+    // fixed — small price vs. the alternative of 503ing every read.
+    let size: number | null | undefined = res.blob?.size
+    if (size == null || size === 0) {
+      try {
+        const h = await sdk.head(path, { token })
+        size = (h as { size?: number })?.size
+      } catch (headErr) {
+        if (isNotFound(headErr)) return { ok: false, reason: 'not-found' }
+        throw headErr
+      }
+    }
+    if (size == null) return { ok: false, reason: 'unavailable' }
     // SDK returns a web ReadableStream<Uint8Array>; the REST layer
     // expects a Node Readable for pipeline(). Convert via
     // Readable.fromWeb — built-in and zero-copy where possible.
@@ -376,7 +397,7 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
       ok: true,
       reader: {
         stream: nodeStream,
-        size: res.blob.size,
+        size,
         // eslint-disable-next-line require-await
         close: async () => {
           // Destroying the Node wrapper also cancels the underlying

@@ -283,6 +283,39 @@ describe('vercel blob backend — error & race surfaces', () => {
     } finally { cleanup() }
   })
 
+  it('openLiveReader falls back to head() when get() reports size 0 (Vercel private-read quirk)', async () => {
+    const { handle, sdk, calls, cleanup } = await freshVercelHandle()
+    try {
+      // Land a live blob the normal way, then reproduce @vercel/blob@2.x's
+      // private streaming get(): a real body but blob.size === 0. The
+      // backend must fall back to head() for the true byte count rather
+      // than 503ing the read.
+      const payload = Buffer.from('private-read-needs-head')
+      const begin = await beginPut(handle, fakeBegin({ expectedLength: payload.byteLength }))
+      assert.equal(begin.ok, true)
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, payload)
+      const c = await commitPut(handle, {
+        workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId,
+      })
+      assert.equal(c.ok, true)
+      const realGet = sdk.get
+      sdk.get = async (pathname, opts) => {
+        const r = await realGet(pathname, opts)
+        return r && { ...r, blob: { size: 0 } }
+      }
+      calls.length = 0
+      const opened = await handle.blob.openLiveReader('ws-1', chash('res-1'))
+      assert.equal(opened.ok, true)
+      // Size is the head() value, not the bogus 0 from get().
+      assert.equal(opened.reader.size, payload.byteLength)
+      assert.equal(calls.some((x) => x.fn === 'head'), true, 'expected a head() fallback')
+      // The body stream still yields the real bytes.
+      const chunks = []
+      for await (const chunk of opened.reader.stream) chunks.push(chunk)
+      assert.equal(Buffer.concat(chunks).toString(), payload.toString())
+    } finally { cleanup() }
+  })
+
   it('unlinkStaging / unlinkLive tolerate not-found (idempotent)', async () => {
     const { handle, cleanup } = await freshVercelHandle()
     try {
