@@ -1545,6 +1545,15 @@ report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.value
   render()
 })
+// `<repo-filter>` dispatches this on native change. Mirrors
+// the analyzer-change branch above — flip state and render the
+// filtered body. Only the toolbar listens for it (the component
+// is workspace-view-only); a stray event from anywhere else is
+// harmless since the predicate gates on `state.filterRepo`.
+report.addEventListener('repo-change', (e) => {
+  state.filterRepo = e.detail.value
+  render()
+})
 // `<bundle-code-search>` dispatches this when a Files / Code /
 // Issues mode tab is clicked in the bundle code rail's search row.
 // Replaces the prior `[data-bundle-search-mode]` click delegate.

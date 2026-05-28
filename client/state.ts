@@ -65,6 +65,7 @@ export interface State {
   filterColors: Set<string>
   filterSources: Set<string>
   filterAnalyzer: string
+  filterRepo: string
   filterConfMin: number
   filterConfMax: number
   filterInclude: string
@@ -398,6 +399,17 @@ export const state: State = store<State>({
   // reports involve only one distinct analyzer — there's nothing to
   // choose between.
   filterAnalyzer: '',
+  // Repository filter — single-select dropdown, only meaningful in
+  // workspace view (single-file mode usually has one repo). Empty
+  // string = no filter. Otherwise the value matches a finding's
+  // resolved repo (`f.repo?.github ?? f._repoFallback`).
+  // `NO_REPO_SENTINEL` (a null character, exported from
+  // view/filters.js) selects findings with no derivable repo —
+  // picked over the bare word `'null'` so a legitimate repo slug
+  // literally named `"null"` stays distinguishable. The selector
+  // is hidden when the loaded reports involve only one distinct
+  // repo or aren't a workspace merge.
+  filterRepo: '',
   // Confidence range — both bounds always set (the new
   // `<range-slider>` has no "unset" concept). 0 / 10 means "no
   // filter": findings with `f.confidence === undefined` pass when

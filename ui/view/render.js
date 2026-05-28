@@ -9,7 +9,7 @@ import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRem
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
-import { NULL_ANALYZER_SENTINEL, applyFilters, applySorting } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, applySorting, repoOfFinding } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { badgeLabel, findingCardGid, firstLine } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
@@ -748,8 +748,8 @@ function triageFilterTemplate(colorCounts) {
 // directly via StateElement and decides its own visibility — the
 // host can drop it in unconditionally.
 
-function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode } = flags
+function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions, repoOptions) {
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -801,6 +801,14 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            the parent's pipeline actually update the visible
            selection. -->
       ${analyzerOptions.length > 1 ? html`<analyzer-select .options=${analyzerOptions}></analyzer-select>` : nothing}
+      <!-- Repo dropdown — only meaningful in workspace view (single-
+           file mode usually has one repo). Hidden when the loaded
+           reports involve a single repo (no choice to make).
+           Component owns its select + the prettyRepoLabel shortening;
+           reads state.filterRepo via StateElement and uses live() so
+           a stale-filter clear in the parent (workspace switch) lands
+           on the actual select.value. -->
+      ${showRepo && repoOptions.length > 1 ? html`<repo-filter .options=${repoOptions}></repo-filter>` : nothing}
       ${triageFilterTemplate(colorCounts)}
       <!-- Search field + result count grouped into a single flex item
            so they wrap as a unit — when the row is too narrow to keep
@@ -1607,6 +1615,31 @@ function renderImpl() {
     const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
     if (!analyzerSet.has(want)) state.filterAnalyzer = ''
   }
+  // Distinct repos across the loaded reports — feeds the workspace
+  // view's repo dropdown. Same shape as the analyzer set above: built
+  // from mergedGroups (not allGroups) so the option list stays stable
+  // when the user flips between live and trash views. `null` (no
+  // derivable repo for the finding) becomes a synthetic "(no repo)"
+  // option in the dropdown via NO_REPO_SENTINEL — picked over the
+  // bare word `'null'` so a legitimate repo slug literally named
+  // "null" stays distinguishable. Sorted alphabetically with the
+  // null bucket pinned last.
+  const repoSet = new Set()
+  for (const g of mergedGroups) {
+    for (const f of g) repoSet.add(repoOfFinding(f))
+  }
+  const repoOptions = [...repoSet].toSorted((a, b) => {
+    if (a == null && b == null) return 0
+    if (a == null) return 1
+    if (b == null) return -1
+    return a.localeCompare(b)
+  })
+  // Same stale-clear guard as analyzer above — a workspace switch
+  // can drop the previously-selected repo from the option list.
+  if (state.filterRepo) {
+    const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
+    if (!repoSet.has(want)) state.filterRepo = ''
+  }
   // If a previously-loaded report had node_modules and the user
   // narrowed the source filter, switching to a report without any
   // node_modules paths would leave the filter at 'own' or 'modules'
@@ -1744,7 +1777,14 @@ function renderImpl() {
       showGraphMode: treeAvailable,
       showFileSort: hasMultipleFiles,
       kanbanMode: isKanban,
-    }, analyzerOptions)
+      // Repo dropdown is workspace-only — single-file mode usually
+      // has exactly one repo, so the dropdown would either be empty
+      // or single-option, and the per-finding repo URL already
+      // shows on the header chip. Workspace merges (multiple
+      // reports stacked into one view) are where the user benefits
+      // from narrowing to a single repo.
+      showRepo: !!state.currentWorkspace,
+    }, analyzerOptions, repoOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's
