@@ -452,11 +452,22 @@ installLifecycle({
 
 // Bind only after the startup orphan sweep finishes — otherwise a
 // fresh boot could serve traffic against tags whose on-disk state
-// still has residue from a prior crash. Top-level await is fine
-// for an entry-point ESM module (no other module imports this for
-// its exports — the side effect IS the program). `startupReap`
-// already resolves on any error (the reaper's own catch logs the
-// failure unconditionally and returns void), so no outer `.catch`
-// is needed here.
+// still has residue from a prior crash. `startupReap` already
+// resolves on any error (the reaper's own catch logs the failure
+// unconditionally and returns void), so no outer `.catch` is
+// needed here.
 await startupReap
-httpServer.listen(PORT, HOST)
+
+// Library mode: when this module is `import`ed (rather than run as
+// the entry script), skip the auto-`.listen()` so consumers can
+// own the bind themselves — e.g. wrap CF Access / framework-preset
+// shims around the assembled `httpServer`. The top-level await
+// above means the server is fully ready (DB open, DDL bootstrapped,
+// objstore reaper swept) before the import resolves. Direct
+// invocation via `node server/index.ts` (or the `triage-server`
+// bin) still listens.
+if (import.meta.main) {
+  httpServer.listen(PORT, HOST)
+}
+
+export { httpServer, wss }
