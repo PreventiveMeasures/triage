@@ -458,16 +458,24 @@ installLifecycle({
 // needed here.
 await startupReap
 
-// Library mode: when this module is `import`ed (rather than run as
-// the entry script), skip the auto-`.listen()` so consumers can
-// own the bind themselves — e.g. wrap CF Access / framework-preset
-// shims around the assembled `httpServer`. The top-level await
-// above means the server is fully ready (DB open, DDL bootstrapped,
-// objstore reaper swept) before the import resolves. Direct
-// invocation via `node server/index.ts` (or the `triage-server`
-// bin) still listens.
-if (import.meta.main) {
+// Start serving: bind the HTTP/WS plane on the configured PORT/HOST.
+// Exported as `start()` so a launcher (server/cli.js — the triage-server
+// bin) or any consumer that `import`ed this module can begin serving once
+// the top-level `await startupReap` above has settled (the server is fully
+// ready — DB open, DDL bootstrapped, objstore reaper swept — by the time
+// the import resolves).
+export function start(): void {
   httpServer.listen(PORT, HOST)
 }
 
 export { httpServer, wss }
+
+// Library mode: when this module is `import`ed (rather than run as the
+// entry script) skip the auto-start so consumers can own the bind — e.g.
+// wrap CF Access / framework-preset shims around the assembled
+// `httpServer`, or just call `start()` when ready. Direct invocation via
+// `node server/index.ts` (or the `triage-server` bin) still listens.
+if (import.meta.main) {
+  start()
+}
+
