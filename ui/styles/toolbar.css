@@ -51,7 +51,7 @@
      from the right with the glyph itself ~.4rem wide).
      `pointer-events: none` on the chevron lets a click fall
      through to the select. */
-  & :is(analyzer-select, findings-sort) {
+  & :is(analyzer-select, repo-filter, findings-sort) {
     position: relative;
     display: inline-block;
 
@@ -211,7 +211,8 @@ slide-triage-tabs {
    host in this family owns its layout via an element selector
    rule above (view-mode-buttons, triage-selector, slide-triage-tabs,
    triage-filter, severity-chips, source-filter, toolbar-search,
-   conf-filter, analyzer-select, findings-sort, entity-sort). */
+   conf-filter, analyzer-select, repo-filter, findings-sort,
+   entity-sort). */
 entity-search { display: contents; }
 
 view-mode-buttons {
