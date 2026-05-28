@@ -368,7 +368,7 @@ function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
   }
   return url.href
 }
-export const __test__ = { validateObjstoreUrlPath }
+export const __test__ = { validateObjstoreUrlPath, isObjectMeta }
 
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
@@ -1149,18 +1149,37 @@ async function parseRestConflict(res: Response): Promise<{ version: number; inca
   return null
 }
 
+// A wire-supplied integer field (`version` / `contentLength`) must be
+// a safe, NON-NEGATIVE integer — not merely `typeof === 'number'`.
+// JSON lets a hostile/buggy relay send a numeric literal that parses
+// to a non-finite or out-of-safe-range double: `1e999` → `Infinity`,
+// `1e308` → a finite-but-unsafe value, etc. Because the Ed25519 PUT
+// signature does NOT cover the server-assigned `version` (see
+// `assertFreshOrLater`), an unchecked value reaching `noteVersion`
+// would poison the rollback watermark — an `Infinity` floor makes
+// every later legitimate fetch trip the `version < last.version`
+// guard (a permanent fetch DoS), and a non-finite/`NaN` value defeats
+// the monotonic comparison outright. Mirrors the server's
+// `isSafeNonNegativeInt` (server/objstore/sign.ts) and the
+// `Number.isSafeInteger` rigor already in `parseRestConflict`.
+function isSafeNonNegativeInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+}
+
 // Wire-shape guard. The objstore broadcast / list / fetch-token
 // frames all carry the same metadata shape; this validates the
 // fields the caller cares about (the signature field is wire-only
 // — callers don't verify it client-side since the bytes themselves
-// are verified via `contentHash`).
+// are verified via `contentHash`). `version` / `contentLength` use
+// the `isSafeNonNegativeInt` gate so a relay can't smuggle a non-
+// finite version past `typeof` and poison the rollback watermark.
 function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
   if (!m || typeof m !== 'object') return false
   return typeof m['resourceTag'] === 'string'
-    && typeof m['version'] === 'number'
+    && isSafeNonNegativeInt(m['version'])
     && typeof m['incarnation'] === 'string'
     && typeof m['contentHash'] === 'string'
-    && typeof m['contentLength'] === 'number'
+    && isSafeNonNegativeInt(m['contentLength'])
     && typeof m['signature'] === 'string'
 }
 
