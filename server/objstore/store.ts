@@ -129,6 +129,11 @@ export type BeginPutResult =
   | { ok: true; stagingId: string; filePath?: string }
   | { ok: false; reason: 'conflict'; conflict: ObjectRow | null }
   | { ok: false; reason: 'workspace-full' }
+  // Per-workspace concurrent-staging cap tripped — too many uncommitted
+  // uploads in flight for this tag. Transient/recoverable (unlike
+  // `workspace-full`): the client retries once an in-flight upload
+  // commits/aborts or the staging TTL reaps it.
+  | { ok: false; reason: 'too-many-uploads' }
 
 export type CommitPutInput = {
   workspaceTag: string
@@ -258,6 +263,7 @@ export type Handle = {
   listAllStaging: AllStmt<[number], { workspace_tag: string; resource_tag: string; staging_id: string; begun_at: number }>
   listLiveTags: AllStmt<[], { workspace_tag: string }>
   countLive: GetStmt<[string], { c: number }>
+  countStaging: GetStmt<[string], { c: number }>
 }
 
 // Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
@@ -283,6 +289,24 @@ export type SqliteHandle = Handle & { db: DatabaseSync }
 // that lock keyed on (tag, resourceTag), so concurrent NEW-resource
 // begins held DIFFERENT locks and raced the count anyway.
 export const MAX_RESOURCES_PER_WORKSPACE = 100
+
+// Per-workspace concurrent in-flight (staging) upload cap. Each open
+// `objstore-put-begin` holds a `workspace_object_staging` row plus up
+// to `MAX_CONTENT_LENGTH` of staging bytes until the matching commit /
+// abort, or until the staging TTL reaps it. Without a bound, a single
+// seed holder can open unbounded begins (new resources OR repeated
+// re-uploads of one resource — each gets its own staging_id, so the
+// live-row cap above doesn't constrain them) and never commit, pinning
+// disk for up to the TTL window. This caps that to
+// `MAX_STAGING_PER_WORKSPACE * MAX_CONTENT_LENGTH` per tag. Legitimate
+// uploads are user-driven and effectively serial (the client issues one
+// `put` at a time per fileName), so this ceiling sits far above any
+// real concurrency. Like `MAX_RESOURCES_PER_WORKSPACE` it is a soft
+// bound: the count + insert are not atomic, so concurrent begins can
+// over-shoot by `(parallel begins - 1)` — accepted. (A per-workspace
+// total-BYTES quota and a relay-wide cap across tags are deeper, separate
+// follow-ups; this only bounds the per-tag concurrent-staging count.)
+export const MAX_STAGING_PER_WORKSPACE = 64
 
 // Per-upload byte cap, shared by the WS plane (rejects oversize
 // `expectedLength` in `objstore-put-begin`) and the REST plane (gates
@@ -484,6 +508,9 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
     countLive: wrapGet(db.prepare(`
       SELECT COUNT(*) AS c FROM workspace_object WHERE workspace_tag = ?
     `)),
+    countStaging: wrapGet(db.prepare(`
+      SELECT COUNT(*) AS c FROM workspace_object_staging WHERE workspace_tag = ?
+    `)),
   }
 }
 
@@ -521,6 +548,16 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
   // in commitPut.
   if (liveVersion !== input.prevVersion || liveIncarnation !== input.prevIncarnation) {
     return { ok: false, reason: 'conflict', conflict: live }
+  }
+  // Per-workspace concurrent-staging cap. Bounds the disk a single tag
+  // can pin with UNCOMMITTED uploads. Unlike the live-row cap below this
+  // applies to BOTH new resources AND re-uploads — a re-upload also opens
+  // its own staging row/blob, so N concurrent begins for one resource pin
+  // N staging blobs and the live count never moves. Soft bound (count +
+  // insert not atomic), same accepted over-shoot tradeoff as the live cap.
+  const staged = await handle.countStaging.get(input.workspaceTag) as { c: number } | undefined
+  if ((staged?.c ?? 0) >= MAX_STAGING_PER_WORKSPACE) {
+    return { ok: false, reason: 'too-many-uploads' }
   }
   // Per-workspace resource cap. Only enforced for NEW resources —
   // re-uploads of an existing resourceTag (live != null) don't

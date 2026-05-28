@@ -133,12 +133,16 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
     signature: msg.signature as string,
   })
   if (!result.ok) {
-    // `workspace-full` is the per-workspace 100-resource cap; goes
-    // out as a typed error so the client can distinguish a quota
-    // refusal from a `conflict` (which is a version-precondition
-    // mismatch that the client can fix by re-reading + rebasing).
-    if (result.reason === 'workspace-full') {
-      deps.send(socket, { type: 'objstore-put-error', workspaceTag: tag, resourceTag, reason: 'workspace-full' })
+    // Typed quota errors (vs a version-precondition `conflict`, which the
+    // client fixes by re-reading + rebasing): `workspace-full` is the
+    // per-workspace live-row cap (terminal until the holder deletes a
+    // resource); `too-many-uploads` is the per-workspace concurrent-
+    // staging cap (transient — the client retries once an in-flight
+    // upload settles or the staging TTL reaps it). Both go out as a typed
+    // `objstore-put-error` so the client can tell them apart from a
+    // rebasable conflict.
+    if (result.reason === 'workspace-full' || result.reason === 'too-many-uploads') {
+      deps.send(socket, { type: 'objstore-put-error', workspaceTag: tag, resourceTag, reason: result.reason })
       return
     }
     deps.send(socket, conflictReply('put', tag, resourceTag, result.conflict))

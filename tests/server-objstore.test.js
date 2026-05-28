@@ -11,7 +11,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 
-import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../server/objstore/store.ts'
+import { MAX_RESOURCES_PER_WORKSPACE, MAX_STAGING_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 
@@ -252,6 +252,66 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
       // ws-A is full; ws-B should accept a fresh new resource.
       const b = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-B', resourceTag: 'r-0000', expectedLength: 4 }))
       assert.equal(b.ok, true)
+    } finally { cleanup() }
+  })
+})
+
+describe('beginPut — per-workspace concurrent-staging cap', () => {
+  it('rejects the (MAX_STAGING+1)th concurrent staging begin with reason=too-many-uploads', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      // Open MAX_STAGING uncommitted begins (distinct NEW resources) —
+      // each pins a staging row. Nothing is committed, so the live-row
+      // cap can't fire (live count stays 0); the staging cap is what bites.
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        const b = await beginPut(handle, fakeBegin({ resourceTag: `r-${i.toString().padStart(4, '0')}` }))
+        assert.equal(b.ok, true)
+      }
+      const over = await beginPut(handle, fakeBegin({ resourceTag: 'one-too-many' }))
+      assert.equal(over.ok, false)
+      assert.equal(over.reason, 'too-many-uploads')
+    } finally { cleanup() }
+  })
+
+  it('counts staging ROWS not resources — repeated begins for ONE resourceTag also trip it', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      // The disk-DoS vector: open many begins for the SAME resource. Each
+      // gets its own staging_id + staging blob, so they accumulate even
+      // though the resource count never moves (this is why the cap can't
+      // piggyback on the live-row cap).
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        assert.equal((await beginPut(handle, fakeBegin({ resourceTag: 'same' }))).ok, true)
+      }
+      assert.equal((await beginPut(handle, fakeBegin({ resourceTag: 'same' }))).reason, 'too-many-uploads')
+    } finally { cleanup() }
+  })
+
+  it('frees a slot when a staging row is aborted (caps CONCURRENT staging, not lifetime)', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      let firstStagingId
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        const b = await beginPut(handle, fakeBegin({ resourceTag: `r-${i.toString().padStart(4, '0')}` }))
+        assert.equal(b.ok, true)
+        if (i === 0) firstStagingId = b.stagingId
+      }
+      assert.equal((await beginPut(handle, fakeBegin({ resourceTag: 'next' }))).reason, 'too-many-uploads')
+      // Abort one in-flight upload → a slot frees → the next begin succeeds.
+      await abortPut(handle, 'workspace-tag-1', 'r-0000', firstStagingId)
+      assert.equal((await beginPut(handle, fakeBegin({ resourceTag: 'next' }))).ok, true)
+    } finally { cleanup() }
+  })
+
+  it('is per-workspace, not global', async () => {
+    const { handle, cleanup } = freshHandle()
+    try {
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        assert.equal((await beginPut(handle, fakeBegin({ resourceTag: `r-${i.toString().padStart(4, '0')}` }))).ok, true)
+      }
+      // A different workspace tag at the cap of the first is unaffected.
+      const other = await beginPut(handle, fakeBegin({ workspaceTag: 'workspace-tag-2', resourceTag: 'r-0000' }))
+      assert.equal(other.ok, true)
     } finally { cleanup() }
   })
 })
