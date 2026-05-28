@@ -57,9 +57,9 @@ function sharedInstance() {
 }
 
 // Build the lazy "query descriptor" + transaction shim mirroring the
-// slice of the `@neondatabase/serverless` surface that the Neon planes
-// use:
-//   • sql(text, params)            — awaited standalone, resolves to rows[]
+// slice of the `@neondatabase/serverless` v1 surface that the Neon
+// planes use:
+//   • sql.query(text, params)      — awaited standalone, resolves to rows[]
 //   • sql.transaction([q, q, ...]) — runs the descriptors in ONE PGlite
 //                                    transaction (BEGIN…COMMIT), in
 //                                    order, resolves to rows[][]
@@ -70,17 +70,17 @@ function sharedInstance() {
 // `.text`/`.params` off each descriptor (it never awaits them, which
 // would double-execute them outside the transaction).
 function makeNeonSql(pg) {
-  const sql = (text, params = []) => ({
+  const query = (text, params = []) => ({
     text,
     params,
     // Lazy thenable: execution is deferred until the descriptor is
-    // awaited, so the same object can run standalone (`await sql(...)`)
+    // awaited, so the same object can run standalone (`await sql.query(...)`)
     // OR be collected by `transaction()` and run inside one BEGIN…COMMIT
     // — mirroring the real driver's pipelined-transaction query objects.
     // eslint-disable-next-line unicorn/no-thenable
     then: (resolve, reject) => pg.query(text, params).then((r) => r.rows).then(resolve, reject),
   })
-  sql.transaction = async (queries) => {
+  const transaction = async (queries) => {
     if (pendingFault) {
       const fault = pendingFault
       pendingFault = null
@@ -93,7 +93,7 @@ function makeNeonSql(pg) {
       return out
     })
   }
-  return sql
+  return { query, transaction }
 }
 
 // The mocked `neon(url)` is synchronous (matching the real driver,

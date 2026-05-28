@@ -68,7 +68,7 @@ describe('openNeonDb — bootstrap + durability (PGlite)', () => {
     // throwing; assert the underlying level directly too.
     const { pg, cleanup } = await freshNeonDb()
     try {
-      const sql = async (text) => (await pg.query(text)).rows
+      const sql = { query: async (text) => (await pg.query(text)).rows }
       await assertDurableSyncCommit(sql) // resolves (PGlite default is 'on')
       const [{ synchronous_commit: level }] = await pg.query(`SHOW synchronous_commit`).then((r) => r.rows)
       assert.ok(['local', 'on', 'remote_write', 'remote_apply'].includes(level), `durable level, got '${level}'`)
@@ -78,7 +78,7 @@ describe('openNeonDb — bootstrap + durability (PGlite)', () => {
   it('assertDurableSyncCommit rejects an endpoint configured synchronous_commit=off', async () => {
     // Unit-level: the only level that skips the primary WAL fsync and
     // breaks the ack-implies-durable contract must fail the boot gate.
-    const offSql = () => Promise.resolve([{ synchronous_commit: 'off' }])
+    const offSql = { query: () => Promise.resolve([{ synchronous_commit: 'off' }]) }
     await assert.rejects(() => assertDurableSyncCommit(offSql), /synchronous_commit='off'/u)
   })
 

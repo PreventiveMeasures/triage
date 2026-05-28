@@ -10,9 +10,14 @@
 // (`autoInstallPeers: false` in `pnpm-workspace.yaml`) and never
 // reaches the import.
 //
-// API shape: `neon(connectionString)` returns a tagged-template +
-// callable function. We use the function-call form
-// `sql(text, params)`. `tryCommitNeon` (below) folds the dup-check
+// API shape: `neon(connectionString)` returns a tagged-template
+// callable with a `.query(text, params)` value-placeholder method.
+// We use the `sql.query(text, params)` form everywhere — our queries
+// are dynamically composed strings + parameter arrays from
+// `./db-revision-sql.ts`, so the tagged-template form doesn't fit.
+// The function-call form (`sql(text, params)`) that the 0.x driver
+// accepted was removed in `@neondatabase/serverless@1.0.0`; the peer
+// dep declares `^1.0.2`. `tryCommitNeon` (below) folds the dup-check
 // + head-check + gated INSERT into a single pipelined
 // `sql.transaction([...])` — NO commit-time advisory lock. The gated
 // INSERT's head-check and `MAX(seq)` run inside one Postgres
@@ -71,15 +76,16 @@ export { num, numOrNull }
 // side. Used by the DDL bootstrap below to prevent partial schema
 // creation on a transient mid-batch network failure.
 //
-// `transaction` is typed against the query promise the call form
+// `transaction` is typed against the query promise `sql.query`
 // returns (NOT plain `Promise<unknown>`) so a misuse like
 // `sql.transaction([Promise.resolve(123)])` fails at compile time
 // rather than failing opaquely inside the driver. The driver itself
 // inspects each promise's internal shape and rejects non-query
 // promises at runtime; the type narrows that to a static error.
-type NeonQueryPromise = ReturnType<NeonSqlCall>
-type NeonSqlCall = (queryText: string, params?: readonly unknown[]) => Promise<unknown[]>
-export type NeonSql = NeonSqlCall & {
+type NeonQueryPromise = ReturnType<NeonQueryCall>
+type NeonQueryCall = (queryText: string, params?: readonly unknown[]) => Promise<unknown[]>
+export type NeonSql = {
+  query: NeonQueryCall
   transaction: (queries: NeonQueryPromise[]) => Promise<unknown[][]>
 }
 
@@ -104,7 +110,7 @@ const DDL_LOCK_KEY_REVISION_SUB = 0x7273_6e72 // 'rsnr'
 const DURABLE_SYNC_COMMIT_LEVELS = new Set(['local', 'on', 'remote_write', 'remote_apply'])
 
 export async function assertDurableSyncCommit(sql: NeonSql): Promise<void> {
-  const rows = await sql(`SHOW synchronous_commit`, []) as Array<{ synchronous_commit?: unknown }>
+  const rows = await sql.query(`SHOW synchronous_commit`, []) as Array<{ synchronous_commit?: unknown }>
   const level = String(rows[0]?.synchronous_commit ?? '').trim().toLowerCase()
   if (!DURABLE_SYNC_COMMIT_LEVELS.has(level)) {
     throw new Error(
@@ -157,7 +163,7 @@ const SCHEMA_PG = [
 
 // Generic statement-builder helpers shared by both Neon planes
 // (workspace_revision here + the objstore tables in store-neon.ts).
-// They remove the repeated `{ run/get: async (...args) => sql(...) }`
+// They remove the repeated `{ run/get: async (...args) => sql.query(...) }`
 // wrapper for the statements whose positional args map straight to
 // the query's `$1..$N` placeholders and whose rows need no coercion.
 // Statements that coerce BIGINT (via `num`) or map snake_case rows
@@ -166,14 +172,14 @@ const SCHEMA_PG = [
 
 // Trivial passthrough write: args → $1..$N in order, no result shape.
 export function runStmt<P extends unknown[]>(sql: NeonSql, query: string): RunStmt<P> {
-  return { run: async (...args: P) => { await sql(query, args as readonly unknown[]) } }
+  return { run: async (...args: P) => { await sql.query(query, args as readonly unknown[]) } }
 }
 
 // First-row read with no coercion (callers needing BIGINT→number or
 // snake_case mapping build their own). Returns `undefined` on the
 // empty result set, matching the SQLite `wrapGet` contract.
 export function getRowStmt<P extends unknown[], T>(sql: NeonSql, query: string): GetStmt<P, T> {
-  return { get: async (...args: P) => (await sql(query, args as readonly unknown[]) as T[])[0] }
+  return { get: async (...args: P) => (await sql.query(query, args as readonly unknown[]) as T[])[0] }
 }
 
 // Per-statement builders — extracted so `openNeonDb` stays small
@@ -185,7 +191,7 @@ function buildHeadFor(sql: NeonSql): GetStmt<[string], { id: string }> {
 
 function buildSeqOfId(sql: NeonSql): GetStmt<[string, string], { seq: number }> {
   return { get: async (tag, id) => {
-    const rows = await sql(SEQ_OF_ID_SQL, [tag, id]) as Array<{ seq: number | string }>
+    const rows = await sql.query(SEQ_OF_ID_SQL, [tag, id]) as Array<{ seq: number | string }>
     const r = rows[0]
     if (!r) return undefined
     const n = numOrNull(r.seq)
@@ -195,7 +201,7 @@ function buildSeqOfId(sql: NeonSql): GetStmt<[string, string], { seq: number }> 
 
 function buildLastKeyframeSeq(sql: NeonSql): GetStmt<[string], { s: number | null }> {
   return { get: async (tag) => {
-    const rows = await sql(LAST_KEYFRAME_SEQ_SQL, [tag]) as Array<{ s: number | string | null }>
+    const rows = await sql.query(LAST_KEYFRAME_SEQ_SQL, [tag]) as Array<{ s: number | string | null }>
     const r = rows[0]
     return r ? { s: numOrNull(r.s) } : undefined
   } }
@@ -203,14 +209,14 @@ function buildLastKeyframeSeq(sql: NeonSql): GetStmt<[string], { s: number | nul
 
 function buildChain(sql: NeonSql, query: string): AllStmt<[string], RevisionRow> {
   return { all: async (tag) => {
-    const rows = await sql(query, [tag]) as Array<Record<string, unknown>>
+    const rows = await sql.query(query, [tag]) as Array<Record<string, unknown>>
     return rows.map(mapRevisionRow)
   } }
 }
 
 function buildChainSeq(sql: NeonSql, query: string): AllStmt<[string, number], RevisionRow> {
   return { all: async (tag, seq) => {
-    const rows = await sql(query, [tag, seq]) as Array<Record<string, unknown>>
+    const rows = await sql.query(query, [tag, seq]) as Array<Record<string, unknown>>
     return rows.map(mapRevisionRow)
   } }
 }
@@ -221,7 +227,7 @@ function buildRevisionExists(sql: NeonSql): GetStmt<[string, string], unknown> {
 
 function buildRevisionById(sql: NeonSql): GetStmt<[string, string], RevisionRow> {
   return { get: async (tag, id) => {
-    const rows = await sql(REVISION_BY_ID_SQL, [tag, id]) as Array<Record<string, unknown>>
+    const rows = await sql.query(REVISION_BY_ID_SQL, [tag, id]) as Array<Record<string, unknown>>
     const r = rows[0]
     return r ? mapRevisionRow(r) : undefined
   } }
@@ -283,7 +289,7 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
         // matches `base = NULL` on the first revision against the
         // empty-chain head (also NULL); plain `=` would be NULL → false
         // and the first revision would never insert.
-        sql(
+        sql.query(
           GATED_INSERT_SQL_PG,
           [tag, id, baseNorm, keyframeCol, nonce, ciphertext, signature, createdAt],
         ),
@@ -297,8 +303,8 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
         // stable: our id present ⇒ duplicate, else the head moved ⇒
         // stale-base. (The INSERT itself is still authoritative — its own
         // single-statement snapshot is what prevents a chain fork.)
-        sql(REVISION_EXISTS_SQL, [tag, id]),
-        sql(HEAD_FOR_SQL, [tag]),
+        sql.query(REVISION_EXISTS_SQL, [tag, id]),
+        sql.query(HEAD_FOR_SQL, [tag]),
       ])
     } catch (err) {
       // A unique-violation reaches here when a cross-replica racer (or
@@ -312,9 +318,9 @@ function tryCommitNeon(sql: NeonSql): (input: RevisionInsert) => Promise<CommitR
       // escaping to `handleSave`'s IIFE. Other errors (network, syntax,
       // type mismatch) rethrow.
       if (!isUniqueViolation(err)) throw err
-      const dupRows = await sql(REVISION_EXISTS_SQL, [tag, id]) as Array<unknown>
+      const dupRows = await sql.query(REVISION_EXISTS_SQL, [tag, id]) as Array<unknown>
       if (dupRows.length > 0) return { kind: 'inserted' }
-      const headRows = await sql(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
+      const headRows = await sql.query(HEAD_FOR_SQL, [tag]) as Array<{ id: string }>
       return { kind: 'stale-base', head: headRows[0]?.id ?? null }
     }
     const insertRows = results[0] as Array<unknown>
@@ -352,8 +358,8 @@ export async function openNeonDb(connectionString: string): Promise<Handle> {
   // their DDL (the advisory lock releases at COMMIT; the
   // `IF NOT EXISTS` clauses then make the second runner a no-op).
   await sql.transaction([
-    sql(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_REVISION, DDL_LOCK_KEY_REVISION_SUB]),
-    ...SCHEMA_PG.map((stmt) => sql(stmt, [])),
+    sql.query(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_REVISION, DDL_LOCK_KEY_REVISION_SUB]),
+    ...SCHEMA_PG.map((stmt) => sql.query(stmt, [])),
   ])
 
   const handle: Handle = {

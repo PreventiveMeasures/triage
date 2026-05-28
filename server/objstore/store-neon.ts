@@ -121,7 +121,7 @@ type StagingRow = {
 
 function buildSelectStaging(sql: NeonSql): GetStmt<[string, string, string], StagingRow> {
   return { get: async (tag, resourceTag, stagingId) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT prev_version, prev_incarnation, expected_length, content_hash, signature, begun_at
        FROM workspace_object_staging
        WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3`,
@@ -162,7 +162,7 @@ function buildDeleteStaging(sql: NeonSql): RunStmt<[string, string, string]> {
 // Bind order: (tag, res, sid, staleBefore).
 function buildDeleteStagingIfStale(sql: NeonSql): GetStmt<[string, string, string, number], { ok: number }> {
   return { get: async (tag, resourceTag, stagingId, staleBefore) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `DELETE FROM workspace_object_staging
        WHERE workspace_tag = $1 AND resource_tag = $2 AND staging_id = $3 AND begun_at < $4
        RETURNING 1 AS ok`,
@@ -175,7 +175,7 @@ function buildDeleteStagingIfStale(sql: NeonSql): GetStmt<[string, string, strin
 
 function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
   return { all: async (tag) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT resource_tag, version, incarnation, content_hash, content_length,
               signature, put_at
        FROM workspace_object
@@ -189,7 +189,7 @@ function buildSelectLive(sql: NeonSql): AllStmt<[string], LiveDbRow> {
 
 function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> {
   return { get: async (tag, resourceTag) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT resource_tag, version, incarnation, content_hash, content_length,
               signature, put_at
        FROM workspace_object
@@ -208,7 +208,7 @@ function buildSelectLiveOne(sql: NeonSql): GetStmt<[string, string], LiveDbRow> 
 // (tag, res, hash, len, sig, put_at); version is the literal 1.
 function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string, string, number, string, number], { ok: number }> {
   return { get: async (tag, resourceTag, incarnation, contentHash, contentLength, signature, putAt) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `INSERT INTO workspace_object
          (workspace_tag, resource_tag, version, incarnation, content_hash, content_length,
           signature, put_at)
@@ -230,7 +230,7 @@ function buildInsertLiveIfAbsent(sql: NeonSql): GetStmt<[string, string, string,
 // (tag, res, nextVersion, hash, len, sig, put_at, expectedVersion).
 function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string, number, string, number, number, string], { ok: number }> {
   return { get: async (tag, resourceTag, nextVersion, contentHash, contentLength, signature, putAt, expectedVersion, expectedIncarnation) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `UPDATE workspace_object
        SET version        = $3,
            content_hash   = $4,
@@ -252,7 +252,7 @@ function buildUpdateLiveCAS(sql: NeonSql): GetStmt<[string, string, number, stri
 // not-found, never a lost update.
 function buildDeleteLiveCAS(sql: NeonSql): GetStmt<[string, string, number, string], { ok: number }> {
   return { get: async (tag, resourceTag, expectedVersion, expectedIncarnation) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `DELETE FROM workspace_object
        WHERE workspace_tag = $1 AND resource_tag = $2 AND version = $3 AND incarnation = $4
        RETURNING 1 AS ok`,
@@ -268,7 +268,7 @@ function buildListAllStaging(sql: NeonSql): AllStmt<[number], { workspace_tag: s
     // `WHERE begun_at < $1` uses workspace_object_staging_begun_at_idx
     // so the reaper sweep is O(stale-rows) cluster-wide. DB-layout
     // audit follow-up.
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT workspace_tag, resource_tag, staging_id, begun_at
        FROM workspace_object_staging
        WHERE begun_at < $1`,
@@ -285,7 +285,7 @@ function buildListAllStaging(sql: NeonSql): AllStmt<[number], { workspace_tag: s
 
 function buildListLiveTags(sql: NeonSql): AllStmt<[], { workspace_tag: string }> {
   return { all: async () => {
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT DISTINCT workspace_tag FROM workspace_object`,
       [],
     ) as Array<Record<string, unknown>>
@@ -295,7 +295,7 @@ function buildListLiveTags(sql: NeonSql): AllStmt<[], { workspace_tag: string }>
 
 function buildCountLive(sql: NeonSql): GetStmt<[string], { c: number }> {
   return { get: async (tag) => {
-    const rows = await sql(
+    const rows = await sql.query(
       `SELECT COUNT(*) AS c FROM workspace_object WHERE workspace_tag = $1`,
       [tag],
     ) as Array<{ c: number | string | bigint }>
@@ -324,8 +324,8 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
   // advisory lock so two replicas booting concurrently serialize
   // their DDL (the advisory lock releases at COMMIT).
   await sql.transaction([
-    sql(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_OBJSTORE, DDL_LOCK_KEY_OBJSTORE_SUB]),
-    ...SCHEMA_PG.map((stmt) => sql(stmt, [])),
+    sql.query(`SELECT pg_advisory_xact_lock($1, $2)`, [DDL_LOCK_KEY_OBJSTORE, DDL_LOCK_KEY_OBJSTORE_SUB]),
+    ...SCHEMA_PG.map((stmt) => sql.query(stmt, [])),
   ])
 
   return {
