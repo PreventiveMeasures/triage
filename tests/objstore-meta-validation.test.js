@@ -1,20 +1,24 @@
-// Unit tests for the objstore client's wire-metadata guard
-// (`isObjectMeta`). The relay controls the `version` / `contentLength`
-// integers on the `objstore-fetch-token` reply, the `objstore-put`
-// broadcast, the `objstore-conflict` `current`, and the
-// `workspace-subscribed` inventory snapshot — and the Ed25519 PUT
-// signature does NOT cover the server-assigned `version`. So an
-// unchecked non-finite / out-of-range value would flow into
-// `noteVersion` and poison the per-incarnation rollback watermark:
+// Unit tests for the objstore client's numeric wire-metadata gate.
+// The relay controls the `version` / `contentLength` integers on the
+// `objstore-fetch-token` reply, the `objstore-put` broadcast, the
+// `objstore-conflict` `current`, the `workspace-subscribed` inventory
+// snapshot, the REST PUT-ack body, and the REST 409 conflict body —
+// and the Ed25519 PUT signature does NOT cover the server-assigned
+// `version`. So an unchecked non-finite / out-of-range value would
+// flow into `noteVersion` and poison the per-incarnation rollback
+// watermark:
 //   - `version: Infinity` floors the watermark, so every later
 //     LEGITIMATE fetch trips `assertFreshOrLater` → a permanent,
 //     relay-induced fetch DoS for that resource;
 //   - a finite-but-unsafe value (> 2^53-1) defeats the monotonic
 //     `version < last.version` freshness comparison.
-// `isObjectMeta` is the single choke point every watermark-feeding
-// path routes through (broadcast, fetch-token, conflict, inventory),
-// so this guard is the whole fix. The wire vector is reachable: a
-// JSON literal like `1e999` parses to `Infinity` (asserted below).
+// `isSafeNonNegativeInt` is the shared gate applied at EVERY one of
+// those relay-controlled feeders (NOT only the WS-frame guard
+// `isObjectMeta` — the REST PUT-ack parser `_rawPut` and the 409
+// parser `parseRestConflict` use it too). We unit-test the predicate
+// directly (it's the common trust boundary) plus `isObjectMeta`, which
+// composes it. The wire vector is reachable: a JSON literal like
+// `1e999` parses to `Infinity` (asserted below).
 
 import './_polyfills.js'
 import assert from 'node:assert/strict'
@@ -22,7 +26,7 @@ import { describe, it } from 'node:test'
 
 import { __test__ } from '../client/sync/objstore.ts'
 
-const { isObjectMeta } = __test__
+const { isObjectMeta, isSafeNonNegativeInt } = __test__
 
 // A well-formed wire metadata object. Field shapes mirror what the
 // server emits via `objectMetaWire` (resourceTag/incarnation/
@@ -79,5 +83,38 @@ describe('objstore isObjectMeta wire-metadata guard', () => {
     assert.equal(isObjectMeta(validMeta({ version: '3' })), false)
     assert.equal(isObjectMeta(validMeta({ resourceTag: 123 })), false)
     assert.equal(isObjectMeta({ ...validMeta(), signature: undefined }), false)
+  })
+})
+
+// The shared gate behind isObjectMeta AND the REST PUT-ack / 409
+// parsers. Pinning it directly documents the single trust-boundary
+// contract every relay-controlled numeric-meta feeder relies on.
+describe('objstore isSafeNonNegativeInt (shared numeric-meta gate)', () => {
+  it('accepts safe non-negative integers (incl. 0 and MAX_SAFE_INTEGER)', () => {
+    assert.equal(isSafeNonNegativeInt(0), true)
+    assert.equal(isSafeNonNegativeInt(1), true)
+    assert.equal(isSafeNonNegativeInt(100 * 1024 * 1024), true)
+    assert.equal(isSafeNonNegativeInt(Number.MAX_SAFE_INTEGER), true)
+  })
+
+  it('rejects non-finite values (the `1e999` → Infinity wire vector)', () => {
+    assert.equal(JSON.parse('{"v":1e999}').v, Infinity)
+    assert.equal(isSafeNonNegativeInt(Infinity), false)
+    assert.equal(isSafeNonNegativeInt(-Infinity), false)
+    assert.equal(isSafeNonNegativeInt(NaN), false)
+  })
+
+  it('rejects finite-but-unsafe, negative, and fractional numbers', () => {
+    assert.equal(isSafeNonNegativeInt(1e308), false)
+    assert.equal(isSafeNonNegativeInt(Number.MAX_SAFE_INTEGER + 1), false)
+    assert.equal(isSafeNonNegativeInt(-1), false)
+    assert.equal(isSafeNonNegativeInt(1.5), false)
+  })
+
+  it('rejects non-number types', () => {
+    assert.equal(isSafeNonNegativeInt('3'), false)
+    assert.equal(isSafeNonNegativeInt(null), false)
+    assert.equal(isSafeNonNegativeInt(undefined), false)
+    assert.equal(isSafeNonNegativeInt(3n), false)
   })
 })
