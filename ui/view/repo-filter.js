@@ -8,8 +8,8 @@
 // implicit "All repositories" entry, plus an explicit `(no repo)`
 // bucket for findings whose repo can't be derived (no `repo.github`
 // and no `_repoFallback` URL). The `(no repo)` value rides
-// `NO_REPO_SENTINEL` (a null character) so it can't collide with a
-// legitimate repo slug literally named `null`.
+// `NO_REPO_SENTINEL` (a control character) so it can't collide with a
+// legitimate repo slug.
 //
 // Reactivity: extends StateElement, so reads of `state.filterRepo`
 // during render() are tracked. `live()` binds the native select's
