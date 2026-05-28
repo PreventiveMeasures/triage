@@ -76,6 +76,21 @@ const FLUSH_DELAY_MS = 100
 // response server-side is the takeover signal we want here.
 const FLUSH_MAX_WAIT_MS = 5_000
 
+// Outbound queue cap (approx bytes of queued frame JSON). The WS plane
+// hands each frame to the socket immediately (native send buffer + TCP
+// backpressure); the SSE uplink instead BUFFERS frames in `outbound`
+// between POSTs. A stalled uplink + active editing (each save up to the
+// ~2 MiB ciphertext cap) would otherwise grow that queue without bound
+// in JS heap — the one place the SSE plane lacked the backpressure the
+// server enforces everywhere else. Mirror the server's per-socket
+// MAX_BUFFERED_BYTES (16 MiB): past the cap we tear the channel down
+// rather than buffer arbitrarily. The outer transport reconnects and the
+// client catches up via the revision chain + re-arms any pending save —
+// exactly the recovery the network-error `shutdown()` paths already rely
+// on. (Configurable via the constructor, mainly so tests can exercise the
+// overflow path without allocating 16 MiB of frames.)
+const MAX_OUTBOUND_BUFFER_BYTES = 16 * 1024 * 1024
+
 // SSE frame parser. Splits a streaming chunk buffer on `\n\n` event
 // terminators and yields each event with its name + concatenated data
 // lines. Holds incomplete trailing bytes in `buf` for the next call.
@@ -136,6 +151,13 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // Frames queued for the next POST flush. `send` enqueues; the
   // flush timer drains.
   private outbound: PendingFrame[] = []
+  // Approx serialized bytes currently in `outbound` (sum of each frame's
+  // source-JSON length). Tracked incrementally so the backpressure check
+  // in `send` is O(1); reset to 0 when `flush` drains the queue.
+  private outboundBytes = 0
+  // Outbound-queue byte ceiling (see MAX_OUTBOUND_BUFFER_BYTES). Instance
+  // field so tests can lower it; production uses the module default.
+  private readonly maxOutboundBytes: number
   // Flush timer handle; null when no flush is pending.
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   // The in-flight POST's `Promise<Response>` chain. Concurrent POSTs
@@ -158,9 +180,10 @@ export class SseTransport extends EventTarget implements WebSocketLike {
   // `addEventListener('open' / 'message' / 'close' / 'error', …)`.
   // The first `session` event flips us from CONNECTING → OPEN.
 
-  constructor(wsUrl: string) {
+  constructor(wsUrl: string, opts?: { maxOutboundBytes?: number }) {
     super()
     this.baseUrl = wsUrlToSseUrl(wsUrl)
+    this.maxOutboundBytes = opts?.maxOutboundBytes ?? MAX_OUTBOUND_BUFFER_BYTES
     // Kick off the first POST immediately so the session opens before
     // any consumer frames arrive. An empty-body POST is a valid "open
     // me" probe — the server mints a session, writes the `session`
@@ -189,7 +212,18 @@ export class SseTransport extends EventTarget implements WebSocketLike {
       this.scheduleFlush()
       return
     }
+    // Outbound backpressure: if appending this frame would push the queued
+    // bytes past the cap (a stalled uplink that isn't draining), tear the
+    // channel down instead of buffering unbounded. The outer transport
+    // reconnects + the client re-syncs via the chain — same recovery as a
+    // network-error shutdown. We drop this frame (it's never queued); the
+    // post-reconnect catch-up + pending-save re-arm makes it whole.
+    if (this.outboundBytes + data.length > this.maxOutboundBytes) {
+      this.shutdown()
+      return
+    }
     this.outbound.push(frame)
+    this.outboundBytes += data.length
     this.scheduleFlush()
   }
 
@@ -237,6 +271,7 @@ export class SseTransport extends EventTarget implements WebSocketLike {
     // about to ship.
     const frames = this.outbound
     this.outbound = []
+    this.outboundBytes = 0
     const body: { password?: string; frames?: PendingFrame[] } = {}
     if (this.cachedPassword != null) body.password = this.cachedPassword
     if (frames.length > 0) body.frames = frames
