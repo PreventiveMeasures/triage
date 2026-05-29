@@ -102,12 +102,11 @@ export function createHub(deps: { peers: PeerRegistry; maxBufferedBytes: number;
   }
 
   function fanOut(set: Set<WebSocket>, payload: string, except: WebSocket | null): void {
-    // Snapshot before iterating — `send`'s try/catch swallows
-    // socket.send errors, but a socket transitioning to CLOSED
+    // Snapshot before iterating — a socket transitioning to CLOSED
     // mid-broadcast triggers `unsubscribeAll` from the 'close' handler,
-    // which mutates `set` while we're walking it. The snapshot keeps a
-    // future refactor (different collection, async send) from silently
-    // skipping subscribers. Audit M4 round-3.
+    // mutating `set` while we walk it. The snapshot also keeps a future
+    // refactor (different collection, async send) from silently skipping
+    // subscribers. Audit M4 round-3.
     for (const s of [...set]) {
       if (s === except) continue
       sendRaw(s, payload)

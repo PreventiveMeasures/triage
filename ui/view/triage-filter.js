@@ -5,12 +5,8 @@
 // `state.filterColors` set. Per-button counts sit as a small chip
 // in the upper-right of each circle.
 //
-// Replaces the inline `triageFilterHtml(colorCounts)` builder in
-// render.js. Was a string-concatenated block that interpolated
-// counts and per-color classes; making it a component scopes the
-// click handler, keeps the rendered chips consistent with the
-// per-color styling in toolbar.css's `.triage-filter` block, and
-// (for the findings kind) lets the active highlight self-sync via
+// Per-color styling lives in toolbar.css's `.triage-filter` block.
+// For the findings kind the active highlight self-syncs via
 // StateElement instead of riding on a parent-passed prop.
 //
 // Tooltips intentionally name the color only — these dots are

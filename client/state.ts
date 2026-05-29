@@ -14,10 +14,9 @@ export type TriageBucket = 'fixed' | 'invalid' | 'deleted'
 // `triage-entry.ts` prune emptied fields and drop the id entirely when
 // nothing remains, so iteration / persistence / GC only ever see
 // meaningful ids. `ignoredReports` lists the report names in which the
-// finding is per-report ignored — the explicit-list replacement for the
-// old `${reportName}\0${id}` composite Set key. `deleted` is the legacy
-// persisted/wire form, migrated to `triage: 'deleted'` on load and never
-// written back in-memory.
+// finding is per-report ignored. `deleted` is the legacy persisted/wire
+// form, migrated to `triage: 'deleted'` on load and never written back
+// in-memory.
 export type TriageEntry = {
   color?: string
   triage?: TriageBucket
@@ -97,24 +96,16 @@ function readSavedViewMode(): ViewMode | null {
   } catch { return null }
 }
 
-// Per-report repo URLs. The user's typed URL is meaningful in the
-// context of one specific report (different reports can analyze
-// different projects), so we key it on the OPFS filename rather
-// than store a single global value. JSON object so the whole map
-// round-trips in one localStorage call; missing entries default
-// to empty string. Exported so `switchToFile` can populate
-// `state.repoUrl` on every file switch and the events.js input
-// handler can write back without re-deriving the key.
-// Reads go through secure-storage's in-memory cache (sync). Writes
-// go through `mutateSecureItem` which acquires a per-key Web Lock
-// and re-hydrates inside the lock before the updater runs — without
-// this, a sibling tab's `saveRepoUrlFor` racing ours would have its
-// write clobbered: our cache is blind to the sibling's write
-// (pendingValues protection on our in-flight setItem masks the
-// storage event), and our subsequent merge writes back the
-// sibling-less map. The lock + in-lock-hydrate gives cross-tab
-// last-writer-wins SEMANTICS at the entry level (both URLs survive)
-// instead of at the whole-map level (one URL lost).
+// Per-report repo URLs. The user's typed URL is meaningful only in
+// the context of one report (different reports analyze different
+// projects), so we key it on the OPFS filename rather than store a
+// single global value. JSON object so the whole map round-trips in
+// one localStorage call; missing entries default to empty string.
+// Reads go through secure-storage's sync in-memory cache; writes go
+// through `mutateSecureItem` for cross-tab safety (see
+// `saveRepoUrlFor`). Exported so `switchToFile` can repopulate
+// `state.repoUrl` on file switch and the events.js input handler can
+// write back without re-deriving the key.
 function parseRepoUrlMap(raw: string | null): Record<string, string> {
   // JSON.parse can return any value — `null`, an array, a primitive
   // — depending on the source contents. Without the typeof+object
@@ -157,19 +148,15 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
   if (!name) return
   // Two-step write:
   //
-  // 1. Synchronous in-tab cache update via `setSecureItem`. Preserves
-  //    the long-standing contract that `saveRepoUrlFor()` followed
-  //    immediately by `loadRepoUrlFor()` returns the new value
-  //    without an `await`. Many call sites (header chip, table
-  //    cell renderer) rely on this.
-  //
-  // 2. Async cross-tab reconciliation via `mutateSecureItem` under
-  //    a per-key Web Lock. After our sync setItem persists, the
-  //    mutate's in-lock hydrate pulls in any sibling writes we
-  //    overwrote — its updater applies our modification ON TOP of
-  //    the freshest disk view, merging entries from both tabs.
-  //    Eventually consistent: both tabs converge to the merged map
-  //    after one mutate round-trip.
+  // 1. Sync in-tab cache update via `setSecureItem`, preserving the
+  //    contract that `saveRepoUrlFor()` then `loadRepoUrlFor()`
+  //    returns the new value without an `await`. Many call sites
+  //    (header chip, table cell renderer) rely on this.
+  // 2. Async cross-tab reconciliation via `mutateSecureItem` under a
+  //    per-key Web Lock: its in-lock hydrate pulls in sibling writes
+  //    we overwrote, then re-applies our change on top of the
+  //    freshest disk view. Both tabs converge to the merged map after
+  //    one round-trip.
   //
   // Without (2), two tabs editing different entries clobber each
   // other (each writes its whole-map view, last writer wins). Audit
@@ -192,17 +179,13 @@ export function saveRepoUrlFor(name: string | null | undefined, url: string): vo
 }
 
 // Bulk merge an imported repo-URL map (triage backup restore) into
-// the stored map. Routed through the same secure-storage contract as
-// `saveRepoUrlFor`, NOT raw localStorage: under an enabled vault the
-// slot holds an encrypted envelope, so a raw `getItem` + `JSON.parse`
-// throws and silently drops every URL; a raw `setItem` writes
-// plaintext over the encrypted slot and leaves the in-tab cache
-// stale. `mutateSecureItem` acquires the per-key Web Lock, hydrates
-// the freshest (decrypted) disk view inside the lock, applies the
-// per-mode merge, and re-seals — giving the same cross-tab
-// last-writer-wins-at-the-entry-level guarantee, so a concurrent
-// `saveRepoUrlFor` from another tab isn't clobbered. Merge modes
-// mirror the triage merge in `applyTriageImport`:
+// the stored map. Routed through `mutateSecureItem`, NOT raw
+// localStorage: under an enabled vault the slot holds an encrypted
+// envelope, so a raw `getItem` + `JSON.parse` throws and drops every
+// URL, and a raw `setItem` writes plaintext over the encrypted slot
+// and leaves the cache stale. The per-key Web Lock + in-lock hydrate
+// gives the same cross-tab entry-level guarantee as `saveRepoUrlFor`.
+// Merge modes mirror `applyTriageImport`:
 //   * 'replace'         — install the imported map verbatim.
 //   * 'prefer-imported' — imported value wins on key collision.
 //   * 'prefer-current'  — current value wins (only fills gaps).
@@ -453,8 +436,8 @@ export const state: State = store<State>({
   triage: new Map<string, TriageEntry>(),
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'fixed' / 'invalid' / 'deleted' = filter to that bucket
-  // only. Replaces the prior boolean showDeleted; the toolbar's
-  // 4-segment selector flips between the four states.
+  // only. The toolbar's 4-segment selector flips between the four
+  // states.
   shownTriage: null,
   nextFindingId: 0,
   // Ephemeral per-render state — which tab is active within each dedup

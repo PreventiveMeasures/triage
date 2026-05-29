@@ -16,42 +16,28 @@
 //     No pencil. Used when every non-module finding shares the
 //     same `repo.github` and no user input is needed.
 //
-// Replaces `repoChipHtml` (in render.js) plus the in-events.js
-// `data-edit-repo` click branch + `#repo-url` input / keydown /
-// focusout branches. The component owns the focus management
-// (calling `.focus()` after switching to editing mode is
-// otherwise unreliable on innerHTML-injected nodes — autofocus
-// only fires on the page's first load).
+// The component owns focus management because `.focus()` after
+// switching to editing mode is unreliable on innerHTML-injected
+// nodes — autofocus only fires on the page's first load.
 //
-// Properties:
-//   * `url` — current value (full URL or bare slug; the host
-//     normalizes via prettyRepoLabel for display).
-//   * `editable` — whether the chip should let the user type.
-//     `false` shows the read-only variant with no pencil.
-//   * `editing` — whether the input form is open. Mirrored to an
-//     attribute so the host's render-state can drive it; the
-//     component flips it back to `false` on its own commit /
-//     cancel events for free.
+// `editing` is reflected to an attribute so the host can drive it
+// open; the component flips it back to `false` on its own commit/cancel.
 //
-// Events (all bubble + composed:true):
-//   * `repo-edit-start` — pencil clicked. Host should set
-//     `editing=true` and re-render.
-//   * `repo-input(detail.url)` — fires on every keystroke for
-//     live persistence.
-//   * `repo-commit(detail.url)` — Enter / blur. Host should set
-//     `editing=false` and persist the final value.
+// Events (all bubble + composed:true) and what the host should do:
+//   * `repo-edit-start` — pencil clicked. Set `editing=true`.
+//   * `repo-input(detail.url)` — every keystroke; live-persist.
+//   * `repo-commit(detail.url)` — Enter / blur. Set `editing=false`,
+//     persist the value.
 //   * `repo-cancel(detail.url)` — Escape. `detail.url` is the
-//     pre-edit value (the one the input was opened with) — host
-//     should restore that and set `editing=false`.
+//     pre-edit value; restore it and set `editing=false`.
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import { live } from 'lit/directives/live.js'
 import chipCSS from './repo-chip.css'
 
-// Strip protocol + host so the chip reads as the bare `user/repo`
-// slug — that's the canonical form per-finding `repo.github` carries
-// (e.g. `lodash/lodash`), so the same value renders consistently
-// whether it came from a finding or the user's typed URL. Falls back
-// to the raw input when the URL isn't a github.com one.
+// Strip protocol + host to the bare `user/repo` slug — the canonical
+// form per-finding `repo.github` carries (e.g. `lodash/lodash`), so a
+// finding-sourced value and a user-typed URL render identically.
+// Falls back to the raw input when the URL isn't a github.com one.
 function prettyRepoLabel(s) {
   if (!s) return ''
   const m = s.match(/github\.com\/([^/?#]+\/[^/?#]+?)(?:\.git)?(?:[/?#]|$)/iu)
@@ -76,10 +62,9 @@ class RepoChip extends LitElement {
     this.url = ''
     this.editable = false
     this.editing = false
-    // Snapshot of the URL at the moment the input opened — Escape
-    // rolls back to this. Captured by `_onFocus` so a programmatic
-    // re-open after a previous commit always starts with the most
-    // recently-saved value.
+    // URL snapshot at the moment the input opened — Escape rolls back
+    // to this. Captured by `_onFocus` so a programmatic re-open after
+    // a previous commit starts from the most recently-saved value.
     this._opener = ''
   }
 
@@ -110,13 +95,12 @@ class RepoChip extends LitElement {
       const hasUrl = !!this.url
       const label = hasUrl ? prettyRepoLabel(this.url) : 'Set repo'
       const cls = hasUrl ? 'chip' : 'chip empty'
-      // Empty chip: the whole pill acts as the click target — the
-      // `Set repo` label IS the affordance, so making the user aim
-      // at the tiny pencil reads as needless precision. Once a URL
-      // is set, the pencil reclaims sole edit duty so clicking the
-      // slug doesn't surprise-open the input. `_onEdit` stops the
-      // bubble so the pencil click here doesn't fire twice via the
-      // chip-level handler.
+      // Empty chip: the whole pill is the click target — the `Set
+      // repo` label IS the affordance, so requiring a tiny-pencil aim
+      // would be needless precision. Once a URL is set, the pencil
+      // reclaims sole edit duty so clicking the slug doesn't
+      // surprise-open the input. `_onEdit` stops the bubble so the
+      // pencil click doesn't also fire the chip-level handler.
       return html`<span class=${cls} @click=${hasUrl ? null : this._onEdit}>
         ${GITHUB_ICON}
         <span class="label">${label}</span>
@@ -138,11 +122,9 @@ class RepoChip extends LitElement {
     return nothing
   }
 
-  // Auto-focus the input the moment editing flips on. `autofocus` on
-  // an innerHTML-injected node is unreliable in Chrome (only the
-  // page's initial parse honours it), so we drive focus imperatively
-  // here. Selecting the existing value puts the cursor at the end
-  // and primes "type to replace" behaviour.
+  // Drive focus imperatively when editing flips on (see header:
+  // autofocus is unreliable on innerHTML-injected nodes). `select()`
+  // primes "type to replace" with the cursor at the end.
   updated(changed) {
     if (changed.has('editing') && this.editing) {
       const input = this.renderRoot.querySelector('input')
@@ -171,8 +153,8 @@ class RepoChip extends LitElement {
       this._emit('repo-commit', { url: this.url })
     } else if (e.key === 'Escape') {
       e.preventDefault()
-      // Restore the input's value AND emit cancel — the host
-      // updates state.repoUrl from the cancel detail and re-renders.
+      // Restore the value AND emit cancel — the host updates
+      // state.repoUrl from the cancel detail and re-renders.
       this.url = this._opener
       this._emit('repo-cancel', { url: this._opener })
     }

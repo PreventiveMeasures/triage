@@ -13,20 +13,18 @@
 //
 // Cross-bundle sharing: this module is bundled into BOTH `view.js`
 // (main, statically reached via events.js / ingest.js / sidebar.js /
-// render*.js) AND `graph.js` (lazy, reached via graph-layout.js /
-// canvas.js / graph/render.js). Each bundle gets its own copy of
-// the module — without coordination, each side would hold a
-// SEPARATE `graph2` object, and writes from the main bundle's
-// click handlers (severity chip toggle, path filter, etc.) would
-// never reach the lazy bundle's canvas. To share, the exported
-// `graph2` is a `Proxy` that forwards every property access through
-// a swappable internal `_impl`. The graph-attach helper calls
-// `_swapImpl(mainBundleImpl)` on the lazy module after load, so
-// both proxies end up driving the SAME underlying object.
-// Mutations to nested values (`graph2.selectedSeverities.add(...)`,
-// `graph2.hidden.clear()`) hit the live Set / object directly —
-// the proxy is only at the top level, so nested-state mutations
-// are observable across both bundles too.
+// render*.js) AND `graph.js` (lazy, via graph-layout.js / canvas.js
+// / graph/render.js). Each bundle gets its own copy, so without
+// coordination each side would hold a SEPARATE `graph2` and writes
+// from the main bundle's click handlers (severity chip toggle, path
+// filter, etc.) would never reach the lazy bundle's canvas. The
+// exported `graph2` is therefore a `Proxy` forwarding every access
+// through a swappable internal `_impl`; the graph-attach helper
+// calls `_swapImpl(mainBundleImpl)` on the lazy module after load
+// so both proxies drive the SAME object. Nested mutations
+// (`graph2.selectedSeverities.add(...)`, `graph2.hidden.clear()`)
+// hit the live Set/object directly — the proxy is top-level only,
+// so they're observable across both bundles too.
 
 function createImpl() {
   return {
@@ -41,24 +39,19 @@ function createImpl() {
     // style (single hue, arrowheads, file labels). null = full
     // graph; reset on report swap and on the back-button click.
     focusedPkg: null,
-    // Right-panel "Top packages" sort axis. Same role as graph v1's
-    // hubs Issues/Imports tab — issues-first by default so the user
-    // lands on the actionable list, files for "what's the codebase
-    // shape" exploration.
+    // Right-panel "Top packages" sort axis. Issues-first by default
+    // so the user lands on the actionable list; files for "what's
+    // the codebase shape" exploration.
     topPkgsTab: 'issues',  // 'issues' | 'files'
-    // Visual constants — were sliders / toggles in the Display
-    // section before it was removed. Canvas reads them as fixed
-    // values now; tune the defaults here when needed.
+    // Visual constants the canvas reads as fixed values (no longer
+    // user-facing sliders). Tune the defaults here.
     edgeOpacity: 0.22,
     nodeSize: 1.0,
     showLabels: false,
-    // Severity highlight filter — empty = no filter, every node
-    // draws at full opacity (the default). When 1+ severities are
-    // selected, matching nodes stay full opacity and everything
-    // else dims to 0.1; the previous boolean-per-severity model
-    // and the standalone "Show only issues" toggle both collapse
-    // into this single set (selecting all four = the old
-    // issues-only behavior, automatically).
+    // Severity highlight filter — empty = no filter, every node at
+    // full opacity (default). With 1+ selected, matching nodes stay
+    // full opacity and the rest dim to 0.1. Selecting all severities
+    // reproduces the old "Show only issues" behavior automatically.
     selectedSeverities: new Set(),
     // Mark-color highlight filter — same shape as the severity set.
     // Empty = no filter. When non-empty, a node stays full-opacity

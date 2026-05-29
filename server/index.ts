@@ -97,8 +97,8 @@ import {
 import { createBusReceiver } from './bus-receiver.ts'
 
 // All external inputs (env vars + optional config.json) are parsed
-// and validated in ./config.ts. Destructure into the existing
-// uppercase names so the rest of this module reads unchanged.
+// and validated in ./config.ts; destructure into the uppercase names
+// the rest of this module uses.
 const config = loadConfig()
 const {
   port: PORT, host: HOST, dbPath: DB_PATH, objstoreDir: OBJSTORE_DIR,
@@ -109,8 +109,8 @@ const {
 } = config
 
 // Same-origin gate for the WS upgrade and REST data plane (see
-// ./origin.ts). `TRUST_PROXY_ENV` (from config) also feeds the
-// boot-time misconfiguration fail-fast below.
+// ./origin.ts). `TRUST_PROXY_ENV` also feeds the boot-time
+// misconfiguration fail-fast below.
 const { trustProxy: TRUST_PROXY, isOriginAllowed } = createOriginGate(HOST, TRUST_PROXY_ENV)
 
 // Per-socket buffered-bytes cap. `socket.send` returns synchronously
@@ -131,10 +131,9 @@ const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 
 // Per-connection state registry. One `Peer` per accepted socket holds
 // the challenge nonce, auth flag, heartbeat liveness, in-flight count,
-// and subscribed tags (see ./peer.ts) — replacing what were five
-// parallel per-socket WeakMaps. The connection handler holds the Peer
-// in a closure for the hot paths; cross-function call sites resolve it
-// via `peers.get(socket)`.
+// and subscribed tags (see ./peer.ts). The connection handler holds
+// the Peer in a closure for the hot paths; cross-function call sites
+// resolve it via `peers.get(socket)`.
 const peers: PeerRegistry = new WeakMap()
 
 // REST PUT idle-body timeout. A slow-loris client trickling bytes
@@ -163,8 +162,8 @@ const REST_PUT_IDLE_TIMEOUT_MS = 30_000
 const HEARTBEAT_INTERVAL_MS = 30_000
 
 // Backend selection. Both planes (workspace_revision DB + the
-// v1.objstore byte store) are picked from config at boot. Two supported
-// pairings:
+// v1.objstore byte store) are picked from config at boot. Two
+// supported pairings:
 //   1. DATABASE_URL set → Neon (workspace_revision + objstore
 //      tables) + Vercel Blob Private Storage (bytes). Requires
 //      BLOB_READ_WRITE_TOKEN — fail fast at boot if missing, since
@@ -174,11 +173,10 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 //      process; the only pairing the SQLite plane supports.
 // The Neon / Vercel files import their peer deps lazily inside the
 // open functions, so static imports here are safe even on a SQLite-
-// only install where the optional peer deps aren't present. Branch
-// out explicitly (rather than via a ternary) so the SQLite path
-// keeps its `SqliteHandle` narrowing — `sqliteHandle.db` is typed
-// as a non-optional `DatabaseSync` and `openObjstore` accepts it
-// without a non-null assertion.
+// only install where the optional peer deps aren't present. Explicit
+// branch (not a ternary) so the SQLite path keeps its `SqliteHandle`
+// narrowing — `sqliteHandle.db` is a non-optional `DatabaseSync` that
+// `openObjstore` accepts without a non-null assertion.
 let handle: Handle
 let objstoreHandle: ObjstoreHandle
 let objstoreBanner: string
@@ -238,8 +236,7 @@ async function workspaceExists(tag: string): Promise<boolean> {
 }
 
 // WS fan-out hub: subscriber registry + backpressure-aware send /
-// broadcast (see ./hub.ts). Destructure into the existing names so the
-// handlers / dispatcher / objstore wiring below read unchanged.
+// broadcast (see ./hub.ts).
 const hub = createHub({ peers, maxBufferedBytes: MAX_BUFFERED_BYTES, debug: DEBUG })
 const { send, broadcast, subscribe, unsubscribeAll, broadcastLocalRaw } = hub
 
@@ -276,7 +273,7 @@ if (NEON_URL) {
 }
 
 // Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
-// handshake. Destructure into the existing names for the wiring below.
+// handshake.
 const auth = createAuth({ peers, password: CONFIG_PASSWORD, send, debug: DEBUG })
 const { requiresAuth, handleAuthenticate, sendUnauthorized } = auth
 
@@ -320,8 +317,8 @@ const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper 
   sendUnauthorized,
   // `tokenSecret` is set only when OBJSTORE_TOKEN_SECRET was
   // provided in env (see TOKEN_SECRET resolution above). Omitted
-  // → initObjstore mints a fresh per-process secret (the pre-PR
-  // behaviour, fine for single-replica).
+  // → initObjstore mints a fresh per-process secret (fine for
+  // single-replica).
   ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
 })
 
@@ -458,12 +455,11 @@ installLifecycle({
 // needed here.
 await startupReap
 
-// Start serving: bind the HTTP/WS plane on the configured PORT/HOST.
-// Exported as `start()` so a launcher (server/cli.js — the triage-server
-// bin) or any consumer that `import`ed this module can begin serving once
-// the top-level `await startupReap` above has settled (the server is fully
-// ready — DB open, DDL bootstrapped, objstore reaper swept — by the time
-// the import resolves).
+// Bind the HTTP/WS plane on the configured PORT/HOST. Exported so a
+// launcher (server/cli.js — the triage-server bin) or any `import`er can
+// start serving. The top-level `await startupReap` above means the server
+// is fully ready — DB open, DDL bootstrapped, objstore reaper swept — by
+// the time the import resolves.
 export function start(): void {
   httpServer.listen(PORT, HOST)
 }

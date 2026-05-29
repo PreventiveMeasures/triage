@@ -61,13 +61,12 @@ class WorkspaceShareLinkDialog extends AppDialog {
     // Drop sensitive state on every exit path, not just after a
     // successful generate. `_password` / `_confirm` carry the typed
     // secret; `_url` embeds the workspace private key (base64url +
-    // AES-GCM ciphertext that the password unlocks); `privateKeyBase64`
-    // is the raw 32-byte key passed in via property assignment from
-    // the public entry point. Lit's reactive setter retains the old
-    // value in its change-tracker until the next microtask, so the
-    // wipe doesn't fully erase the value until `el.remove()` (which
-    // runs sync in the wrapper's resolve listener) detaches the host.
-    // The property slots themselves are empty immediately.
+    // AES-GCM ciphertext the password unlocks); `privateKeyBase64` is
+    // the raw 32-byte key passed in via property assignment. The
+    // property slots empty immediately, but Lit's reactive setter
+    // retains the old value in its change-tracker until the next
+    // microtask, so full erasure waits for `el.remove()` (sync in the
+    // wrapper's resolve listener).
     this._password = ''
     this._confirm = ''
     this._url = ''
@@ -100,17 +99,15 @@ class WorkspaceShareLinkDialog extends AppDialog {
         privateKeyBase64: this.privateKeyBase64,
         password: this._password,
       })
-      // PBKDF2 takes hundreds of ms; user may have cancelled in the
-      // meantime. Skip the URL write so the freshly-derived encoded
-      // value (which embeds the workspace private key) doesn't outlive
-      // the cancelled dialog. `_finish` already cleared `_password`
-      // and `_url` on its way out.
+      // PBKDF2 takes hundreds of ms; user may have cancelled meanwhile.
+      // Skip the URL write so the freshly-derived encoded value (which
+      // embeds the workspace private key) doesn't outlive the cancelled
+      // dialog. `_finish` already cleared `_password` / `_url`.
       if (this._settled) return
       this._url = buildShareUrl(encoded)
-      // Drop the plaintext password as soon as it's no longer needed
-      // — the encoded URL is the only thing the user copies, and a
-      // post-generation re-render shouldn't re-bind the password
-      // input's `.value` to live secret state.
+      // Drop the plaintext password once no longer needed — the encoded
+      // URL is all the user copies, and a post-generation re-render
+      // shouldn't re-bind the password input's `.value` to live secret.
       this._password = ''
       this._confirm = ''
     } catch (err) {
@@ -123,25 +120,20 @@ class WorkspaceShareLinkDialog extends AppDialog {
 
   _onCopy = async () => {
     if (!this._url) return
-    // Clear the previous attempt's error so a successful retry
-    // (after granting clipboard permission, switching to a
-    // secure context, etc.) doesn't keep painting the failure
-    // message under the now-working button.
+    // Clear the previous attempt's error so a successful retry (after
+    // granting clipboard permission, switching to a secure context,
+    // etc.) doesn't keep painting the failure under the working button.
     this._error = ''
     try {
       await navigator.clipboard.writeText(this._url)
-      // User may have hit Close while the clipboard write was
-      // pending. Skip the timer setup so a `setTimeout` doesn't
-      // land on a settled / detached element (Lit no-ops the
-      // property write, but the 1500ms closure pins `this` against
-      // GC for the duration).
+      // Close may have fired while the write was pending. Skip the
+      // timer so it doesn't land on a detached element — Lit no-ops the
+      // write, but the 1500ms closure pins `this` against GC meanwhile.
       if (this._settled) return
       this._copied = true
-      // Stash the timer id so `_finish` can cancel it — without
-      // that, a Close within 1500ms of Copy would leave the
-      // callback firing on the detached element. Lit no-ops the
-      // property write on a disconnected host so there's no crash,
-      // but the leak is cheap to plug.
+      // Stash the timer id so `_finish` can cancel it — otherwise a
+      // Close within 1500ms of Copy leaves the callback firing on the
+      // detached element (cheap leak, no crash).
       if (this._copiedTimer) clearTimeout(this._copiedTimer)
       this._copiedTimer = setTimeout(() => {
         this._copied = false

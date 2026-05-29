@@ -5,23 +5,20 @@
 // same cached password to silently replay on reconnect / re-upload.
 //
 // Storage shape:
-//   * In-memory `inMemory` is the source of truth for synchronous
-//     reads from session code (cheap lookup; no async hop required
-//     between an `unauthorized` arriving and the silent retry going
-//     out).
+//   * `inMemory` is the source of truth for synchronous reads from
+//     session code — no async hop between an `unauthorized` arriving
+//     and the silent retry going out.
 //   * `deepview.sync.password` in secure-storage is the persisted
-//     mirror. When the passkey vault is enabled + unlocked the
-//     envelope is encrypted under the vault key; when the vault is
-//     disabled it's stored as plaintext, matching the same envelope
-//     contract every other entry in `SECURE_KEYS` uses.
+//     mirror: encrypted under the vault key when the passkey vault is
+//     enabled + unlocked, plaintext when disabled — the same envelope
+//     contract every other `SECURE_KEYS` entry uses.
 //
 // The single-key (no per-server scoping) shape is deliberate: a user
-// realistically targets one sync relay at a time, and per-server
-// scoping would require threading the URL through every getter /
-// setter. Server-switch invalidation lives in triage-sync's
-// `setServerUrl` (only fires when switching between two different
-// non-empty URLs — the boot-time initial set and the off-toggle are
-// not invalidations).
+// realistically targets one relay at a time, and per-server scoping
+// would thread the URL through every getter/setter. Server-switch
+// invalidation lives in triage-sync's `setServerUrl`, firing only when
+// switching between two different non-empty URLs — the boot-time
+// initial set and the off-toggle are not invalidations.
 
 import { syncHost } from './host.ts'
 
@@ -47,10 +44,10 @@ export function loadCachedSyncPasswordFromStorage(): void {
 }
 
 // Persist (or wipe) the cached password. Updates `inMemory`
-// synchronously so subsequent synchronous reads see the new value
-// before the secure-storage write resolves; the write is awaited so
-// callers can decide whether to surface a persistence failure (today
-// every caller logs and continues — caching is best-effort).
+// synchronously so synchronous reads see the new value before the
+// secure-storage write resolves; the write is awaited so callers can
+// surface a persistence failure (today every caller logs and continues
+// — caching is best-effort).
 export async function setCachedSyncPassword(password: string | null): Promise<void> {
   inMemory = password
   const host = syncHost()

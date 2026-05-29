@@ -1,21 +1,13 @@
 // `<toolbar-search>` — the SVG-icon-prefixed search field used by
-// the findings toolbar and the Files tab toolbar. Consolidates two
-// near-duplicate inline `<div class="toolbar-search"><svg>…</svg>
-// <input id="..." .value=${state.X}>` blocks (one in render.js's
-// `toolbarTemplate`, one in render-files.js's `renderTreeView`
-// toolbar) into one StateElement.
+// the findings toolbar and the Files tab toolbar.
 //
-// The two pages had identical wrapper + SVG markup, identical
-// `<input type="text">` shape, and identical event flow (write the
-// matching state slice on `input`, re-render). Only the state slice
-// (`state.filterInclude` vs `state.filesSearch`), placeholder, and
-// id differed. The component picks the slice from `kind="findings"|
-// "files"`, emits a `search-input(detail: { kind, value })`
-// CustomEvent on native `input`, and uses `live()` for the value
-// binding — the findings slice is reset by `resetFilters()` in
-// filters.js and overwritten by the graph "jump to findings" path
-// in events.js, both of which need the DOM `value` to follow state
-// even after user interaction has touched the field.
+// The component picks its state slice from `kind="findings"|"files"`,
+// emits a `search-input(detail: { kind, value })` CustomEvent on
+// native `input`, and uses `live()` for the value binding — the
+// findings slice is reset by `resetFilters()` in filters.js and
+// overwritten by the graph "jump to findings" path in events.js, both
+// of which need the DOM `value` to follow state even after user
+// interaction has touched the field.
 //
 // The wrapping `.search-row` + adjacent `.result-count` span stay
 // in the parent template (those compose the search field with the
@@ -23,11 +15,9 @@
 // toolbar.css).
 //
 // Reactivity: extends StateElement, so reads of the matched state
-// slice during render() are tracked by observer-util. Lit reuses
-// the same `<input>` element across re-renders (parent and own
-// autorun both diff against the same template), so focus + cursor
-// position survive every keystroke without the `renderKeepFocus`
-// dance the id-keyed listener in events.js used to do.
+// slice during render() are tracked by observer-util. Lit reuses the
+// same `<input>` element across re-renders, so focus + cursor
+// position survive every keystroke.
 //
 // Attributes:
 //   * `kind` — `"findings"` (filters the findings list against

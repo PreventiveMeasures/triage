@@ -306,29 +306,24 @@ function workspaceItemTemplate(w) {
   const isCurrent = state.currentWorkspace === w.id
     && (state.currentView === 'findings' || state.currentView === 'files')
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
-  // Clicking the workspace's main button loads every report in the
-  // workspace into a single merged view (handled by the `.file-item`
-  // click delegate against the dataset.workspaceId). The
-  // hover-revealed download exports the workspace as a `.gz` bundle.
-  // The .file-label uses a `.textContent` property binding instead
-  // of a child interpolation because the dblclick inline-rename
-  // handler (below) clears `labelSpan.textContent` and appends an
-  // <input> as the temporary edit affordance. A child interpolation
-  // would emit Lit marker comments around the text, and clearing
-  // textContent would wipe those markers — the next renderSidebar
-  // (which always runs on rename commit/cancel) would then crash
-  // inside Lit's `_commitText`. The property binding keeps no
-  // marker comments inside the span; the inline mutation becomes
-  // a plain overwrite that the next render reapplies.
-  // Hover-revealed actions on the right side of the row (in row
-  // order): Share by link, Export (download .gz bundle), then Leave
-  // (drop the workspace from THIS browser — entry, OPFS reports,
-  // persisted triage base — without touching the server's chain,
-  // so peers and your other devices keep their copy). The eventual
-  // server-side "delete the chain too" affordance lives elsewhere
-  // (TBD) — we don't park a placeholder trash icon here because
-  // that misreads as "Delete is the same action as Leave, just
-  // greyed out".
+  // Clicking the main button loads every report in the workspace
+  // into a single merged view (the `.file-item` click delegate
+  // against dataset.workspaceId).
+  // `.file-label` uses a `.textContent` property binding, NOT a child
+  // interpolation: the dblclick inline-rename handler (below) clears
+  // `labelSpan.textContent` and appends an <input>. A child
+  // interpolation emits Lit marker comments around the text; clearing
+  // textContent wipes them, and the next renderSidebar (always runs on
+  // rename commit/cancel) then crashes inside Lit's `_commitText`. The
+  // property binding leaves no markers inside the span, so the inline
+  // mutation is a plain overwrite the next render reapplies.
+  // Hover-revealed actions, in row order: Share by link, Export
+  // (download .gz bundle), then Leave (drop the workspace from THIS
+  // browser — entry, OPFS reports, persisted triage base — without
+  // touching the server's chain, so peers and your other devices keep
+  // their copy). No placeholder trash icon for the eventual
+  // server-side "delete the chain too" (TBD): it would misread as
+  // "Delete is the same action as Leave, just greyed out".
   return html`<li class=${cls} data-workspace-id=${w.id}><button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button><button type="button" class="workspace-share" data-action="share-workspace" title="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button><button type="button" class="workspace-export" data-action="export-workspace" title="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button><button type="button" class="workspace-leave" data-action="leave-workspace" title="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button></li>`
 }
 
@@ -695,11 +690,10 @@ async function onSidebarClick(e) {
     try {
       triageImpact = await analyzeTriageImpact(reports)
     } catch (err) {
-      // Round-1 review #1: `analyzeTriageImpact` now propagates
-      // OPFS errors instead of silently treating every overlap
-      // as orphaned. Refuse to open the dialog rather than show
-      // a wrong "wipe N orphans" count — the user can retry
-      // once OPFS settles.
+      // `analyzeTriageImpact` propagates OPFS errors rather than
+      // treating every overlap as orphaned. Refuse to open the dialog
+      // instead of showing a wrong "wipe N orphans" count — the user
+      // can retry once OPFS settles.
       alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
       return
     }
@@ -710,11 +704,10 @@ async function onSidebarClick(e) {
       triageImpact,
     })
     if (!confirmed) return
-    // Round-1 review #3: a sibling tab may have deleted the
-    // workspace while our dialog was open. The cached `ws`
-    // here is the snapshot we showed the user; re-resolve
-    // against the live blob and surface "already gone" rather
-    // than silently no-op'ing inside `leaveWorkspace`.
+    // A sibling tab may have deleted the workspace while our dialog
+    // was open. The cached `ws` is the snapshot we showed the user;
+    // re-resolve against the live blob and surface "already gone"
+    // rather than silently no-op'ing inside `leaveWorkspace`.
     if (!listWorkspaces().some((w) => w.id === ws.id)) {
       alert(`Workspace "${ws.name}" was removed elsewhere; nothing to leave.`)
       return
@@ -807,9 +800,8 @@ async function onSidebarClick(e) {
     try {
       triageImpact = await analyzeTriageImpact([name])
     } catch (err) {
-      // Round-1 review #1: a transient OPFS error must not
-      // silently mis-classify orphans — refuse to open the
-      // dialog and let the user retry.
+      // A transient OPFS error must not silently mis-classify
+      // orphans — refuse to open the dialog and let the user retry.
       alert(`Couldn't read reports to analyze triage impact: ${err.message}`)
       return
     }
@@ -829,11 +821,10 @@ async function onSidebarClick(e) {
     const inRemote = remoteWorkspaceIds.length > 0
     const { confirmed, triage } = await openDeleteReportDialog({ name, triageImpact, inRemote })
     if (!confirmed) return
-    // Round-1 review #3: the active file may have changed under
-    // us (cross-tab switch / sibling-tab delete) while the
-    // dialog was open. Bail rather than deleting whatever's
-    // current now — the user confirmed deletion of the file
-    // shown in the dialog, not whatever just slid into place.
+    // The active file may have changed under us (cross-tab switch /
+    // sibling-tab delete) while the dialog was open. Bail rather than
+    // deleting whatever's current now — the user confirmed deletion of
+    // the file shown in the dialog, not whatever just slid into place.
     if (state.currentFile !== name) {
       alert(`Active report changed during confirmation; aborting delete of "${name}".`)
       return
@@ -951,11 +942,10 @@ const SYNC_LABELS = {
 function syncButtonVisible() {
   const usableUrl = triageSync.getServerUrl() || DEFAULT_SYNC_URL
   if (!usableUrl) return false
-  // Any workspace, with or without attached reports. The previous
-  // gate required reports.length > 0 — which hid the button on a
-  // freshly-attached share-link workspace and prevented the user
-  // from seeing the sender's triage land before they'd added
-  // their own reports.
+  // Any workspace, with or without attached reports — gating on
+  // reports.length > 0 would hide the button on a freshly-attached
+  // share-link workspace and stop the user seeing the sender's triage
+  // land before they'd added their own reports.
   return listWorkspaces().length > 0
 }
 
@@ -1120,10 +1110,8 @@ function dragHasOurPayload(e) {
 }
 
 function onSidebarDragstart(e) {
-  // Bundle rows match BOTH `.file-item[data-file]` (no — they don't
-  // carry data-file) and `.file-item[data-bundle-integrity]`, so the
-  // bundle branch goes first. Reports carry data-file; bundles carry
-  // data-bundle-integrity; an element never carries both.
+  // Reports carry data-file; bundles carry data-bundle-integrity;
+  // an element never carries both, so the bundle branch can go first.
   const bundleEl = e.target.closest('.file-item[data-bundle-integrity]')
   if (bundleEl) {
     // Missing-bundle rows must not initiate a drag. The `<li>` carries
@@ -1145,7 +1133,7 @@ function onSidebarDragstart(e) {
     // handler doesn't have to re-derive it from a `.dragging`
     // element that may have been swapped out by a renderSidebar()
     // racing the drag. Empty string when dragged from the unfiled
-    // bucket. (Review L1 follow-up.)
+    // bucket.
     e.dataTransfer.setData(SOURCE_WS_DT, bundleEl.dataset.workspaceId ?? '')
     // text/plain fallback — paste-into-an-unrelated-textarea is
     // pointless for an integrity hash but consistent with how the

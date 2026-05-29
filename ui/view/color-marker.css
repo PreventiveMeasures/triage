@@ -16,23 +16,21 @@ button {
 }
 button:hover { opacity: 1; transform: scale(1.12); }
 
-/* Active = filled disc + a 1px panel-colored gap + a 1px outer
-   colored ring, drawn via two stacked box-shadows. The gap reads
-   as the dot "floating" above the surface, with the outer ring
-   echoing the fill color. var(--surface) inherits through the
-   shadow boundary so the gap matches whichever surface this marker
-   is rendered on. */
+/* Active = filled disc + 1px surface-colored gap + 1px outer colored
+   ring, via two stacked box-shadows: the gap reads as the dot
+   "floating" above the surface, the ring echoes the fill. var(--surface)
+   inherits through the shadow boundary so the gap matches whatever
+   surface the marker is rendered on. */
 button.active {
   background: currentcolor;
   opacity: 1;
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px currentcolor;
 }
 
-/* Hues come from the global `--marker-*` custom properties (see
-   theme.css). Custom properties cross the shadow boundary, so the
-   `<color-marker>` shadow stylesheet stays in sync with the
-   workspace-conflict-dialog swatches and any future consumer
-   without duplicating the oklch values per surface. */
+/* Hues from the global `--marker-*` custom props (theme.css). They
+   cross the shadow boundary, so this shadow stylesheet stays in sync
+   with the workspace-conflict-dialog swatches and future consumers
+   without duplicating the oklch values. */
 .color-red   { color: var(--marker-red); }
 .color-blue  { color: var(--marker-blue); }
 .color-green { color: var(--marker-green); }

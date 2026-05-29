@@ -1,19 +1,12 @@
 // `<entity-sort>` — `Findings ↓ / Files ↓ / Reports ↓ / Name A→Z`
 // dropdown shared by the Packages and Repositories page toolbars.
-// Replaces two near-duplicate `<select>` blocks (one per page) and
-// two id-keyed branches in events.js's generic toolbar `change`
-// listener that wrote to `state.packagesSortBy` /
-// `state.repositoriesSortBy`.
 //
-// The two pages already shared their option list, the inner select
-// styling (`.packages-sort`), and toggle shape — only the state
-// slice (and the aria-label) differed. The host element now carries
-// the chevron `::after` directly via `.packages-toolbar entity-sort`
-// in report.css; the `<select>` is the host's only child. The
-// component picks the state slice from the
-// `kind="packages"|"repositories"` attribute and
-// emits a `sort-change(detail: { kind, value })` CustomEvent on
-// native change. events.js's single listener writes the matching
+// The host element carries the chevron `::after` directly via
+// `.packages-toolbar entity-sort` in report.css; the `<select>` is
+// the host's only child. The component picks the state slice from the
+// `kind="packages"|"repositories"` attribute and emits a
+// `sort-change(detail: { kind, value })` CustomEvent on native
+// change. events.js's single listener writes the matching
 // `state.${kind}SortBy` slot and calls render().
 //
 // The native `<select>` value is bound through Lit's `live()`

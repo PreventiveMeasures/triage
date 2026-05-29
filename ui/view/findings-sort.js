@@ -1,23 +1,17 @@
 // `<findings-sort>` — `Severity ↓ / File ↑ / Confidence ↓ / ... `
-// sort dropdown for the findings toolbar. Replaces the inline
-// `<select id="sort-select">` + `sortOpt` helper that lived in
-// render.js's `toolbarTemplate`, plus the last id-keyed branch in
-// events.js's generic toolbar `change` listener (which now drops
-// away entirely).
+// sort dropdown for the findings toolbar.
 //
-// Sibling of `<entity-sort>` (which serves the Packages /
-// Repositories pages); kept separate because the findings dropdown
-// has a CONDITIONAL option list driven by parent flags (file sort
-// only when a tree exists, confidence/priority options only when
-// the dataset surfaces those fields) and uses different CSS — the
-// findings host shares the `& :is(analyzer-select, findings-sort)`
-// chevron rule in toolbar.css with the analyzer dropdown, while
-// `<entity-sort>` has its own offset in report.css's
-// `.packages-toolbar entity-sort` rule. Folding them together
-// would require either threading styling and option-shape props
-// through one component or splitting the template into two
-// branches that don't share much, so they stay as two thin
-// components that pair with the same `sort-change` dispatch contract.
+// Kept separate from its sibling `<entity-sort>` (Packages /
+// Repositories pages) because the findings dropdown has a CONDITIONAL
+// option list driven by parent flags (file sort only when a tree
+// exists, confidence/priority options only when the dataset surfaces
+// those fields) and uses different CSS — the findings host shares the
+// `& :is(analyzer-select, findings-sort)` chevron rule in toolbar.css
+// with the analyzer dropdown, while `<entity-sort>` has its own offset
+// in report.css. Folding them would require either threading styling
+// and option-shape props through one component or splitting the
+// template into two barely-shared branches, so they stay as two thin
+// components paired by the same `sort-change` dispatch contract.
 //
 // Reactivity: extends StateElement, reads `state.sortBy` via the
 // autorun. Native `<select>` value bound through Lit's `live()`

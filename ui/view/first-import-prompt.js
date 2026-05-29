@@ -27,22 +27,17 @@ function markPrompted() {
   try { localStorage.setItem(PROMPTED_KEY, '1') } catch {}
 }
 
-// Decide-and-run. Resolves once the prompt (and any follow-up
-// setup dialog) has settled — caller awaits this BEFORE the
-// action that creates new local data so any encryption setup the
-// user chooses takes effect for that data.
+// Decide-and-run. Resolves once the prompt (and any follow-up setup
+// dialog) settles — caller awaits this BEFORE the action that creates
+// new local data so chosen encryption takes effect for that data.
 //
-// Flag semantics — only set the prompted flag on a SETTLED outcome:
-//   - explicit Cancel on the native confirm → user said "no",
-//     don't pester on subsequent actions.
-//   - setup dialog completed AND vault is now enabled → success;
-//     no need to re-prompt.
-//   - user accepted confirm but cancelled the setup dialog, or the
-//     WebAuthn ceremony failed → leave the flag UNSET so the next
-//     action re-asks. Without this, a single mis-click on the
-//     confirm followed by a setup-dialog cancel would permanently
-//     shut the user out of the prompt with no in-app affordance
-//     to bring it back.
+// Only set the prompted flag on a SETTLED outcome:
+//   - explicit Cancel on the confirm → user said "no", don't re-ask.
+//   - setup completed AND vault now enabled → success, no re-prompt.
+//   - accepted confirm but cancelled setup, or WebAuthn ceremony
+//     failed → leave the flag UNSET so the next action re-asks.
+//     Otherwise one mis-click + setup-cancel would permanently shut
+//     the user out, with no in-app affordance to bring it back.
 export async function maybePromptFirstUse() {
   if (isEncryptionEnabled()) return
   if (!isPasskeyEnvironmentSupported()) return

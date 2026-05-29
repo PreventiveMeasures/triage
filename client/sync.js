@@ -1,10 +1,9 @@
 // Aggregated entry point for the sync surface (objstore presence +
-// triage-sync). Imported by `ui/client-sync.js` as the lazy chunk;
-// kept strictly to sync re-exports + the host install seam — no
-// non-sync `client/*` imports — so this bundle's runtime graph
-// stays disjoint from the main `view.js` bundle's. The default
-// host (which DOES touch the rest of `client/`) is composed
-// elsewhere — see `client/sync-host.js`.
+// triage-sync). Imported by `ui/client-sync.js` as the lazy chunk; kept
+// strictly to sync re-exports + the host install seam — no non-sync
+// `client/*` imports — so this bundle's runtime graph stays disjoint
+// from the main `view.js` bundle's. The default host (which DOES touch
+// the rest of `client/`) is composed in `client/sync-host.js`.
 
 export {
   closeWorkspace,

@@ -686,15 +686,12 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     let ack: unknown
     try { ack = await res.json() }
     catch { throw new TypeError('objstore: PUT ack JSON parse failed') }
-    // `version`/`contentLength` get the same `isSafeNonNegativeInt` gate
-    // as the WS-frame metadata (isObjectMeta): the PUT-ack `version` is
-    // RELAY-CONTROLLED and is NOT pinned to anything client-side (unlike
-    // `contentHash`/`contentLength`, re-checked below), yet it flows into
-    // `noteVersion` (rawPutAndMap). A relay answering our own PUT with
-    // `version: 1e999` (→ Infinity) would otherwise poison the rollback
-    // watermark just like the fetch-token vector. So this ack is also a
-    // watermark feeder and must use the same numeric gate — `isObjectMeta`
-    // is not the only one.
+    // `version`/`contentLength` get the same `isSafeNonNegativeInt`
+    // gate as isObjectMeta: the PUT-ack `version` is RELAY-CONTROLLED,
+    // not pinned client-side (unlike `contentHash`/`contentLength`,
+    // re-checked below), yet flows into `noteVersion` (rawPutAndMap).
+    // A relay answering with `version: 1e999` (→ Infinity) would poison
+    // the rollback watermark — so this ack is a watermark feeder too.
     if (!ack || typeof ack !== 'object'
       || !isSafeNonNegativeInt((ack as { version?: unknown }).version)
       || typeof (ack as { incarnation?: unknown }).incarnation !== 'string'
@@ -1114,9 +1111,8 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   function close(): void {
     if (clientClosed) return
     clientClosed = true
-    // Close every open session — wipe keys, drop from the map, reject
-    // pending connect waiters. We release all acquisitions and then
-    // close the transport: closing the transport triggers
+    // Close every open session, then release all acquisitions and
+    // close the transport — closing it triggers
     // `onTransportDisconnected` which calls `failPendingWaiters`.
     for (const state of sessionsByTag.values()) {
       state.closed = true

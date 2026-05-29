@@ -13,9 +13,8 @@ import { MAX_CIPHERTEXT_LEN, MAX_FIELD_LEN, validCiphertextShape, validNonce, va
 import { debugTag } from './util.ts'
 import type { UnauthorizedContext } from './auth.ts'
 
-// `chainForWire` accepts the row shape from `chainFrom` (where
-// `keyframe` is the SQLite INTEGER 0 / 1) and returns the same fields
-// with `keyframe` normalised to a strict boolean for the wire.
+// Wire shape `chainForWire` produces from a `chainFrom` row, with
+// `keyframe` normalised from the SQLite INTEGER 0/1 to a strict boolean.
 type WireRevision = {
   base: string | null
   id: string
@@ -88,14 +87,12 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
     send(socket, { type: 'workspace-save-error', workspaceTag, base, reason })
   }
 
-  // Normalise `keyframe` on outbound chain entries to a strict boolean.
+  // Normalise `keyframe` to a strict boolean on outbound chain entries.
   // SQLite stores the column as INTEGER (0/1) and `chainFrom` returns
-  // raw rows; the wire contract (and the canonical signing payload)
-  // uses strict `=== true` to mark keyframes. Forwarding the integer
-  // shape works only because every shipping client coerces via
-  // `Boolean(rev.keyframe)` before reconstructing the canonical bytes —
-  // fragile if a future client (or test harness) ever strict-compares.
-  // Convert once on the send side.
+  // raw rows; the wire contract (and canonical signing payload) uses
+  // strict `=== true`. Convert once on the send side — forwarding the
+  // integer relies on clients coercing via `Boolean()` before rebuilding
+  // canonical bytes, fragile against any client that strict-compares.
   function chainForWire(revisions: RevisionRow[]): WireRevision[] {
     return revisions.map((r) => ({ ...r, keyframe: r.keyframe === 1 }))
   }
@@ -174,19 +171,14 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
       sendUnauthorized(socket, { kind: 'gated', workspaceTag: tag, base: msg.base ?? null })
       return
     }
-    // NOTE: Earlier revisions auto-subscribed the sending socket here.
-    // That created a replay vector — a passive observer who captured
-    // any single valid `workspace-save` frame could replay it from any
-    // TCP connection forever to attach as a subscriber and silently
-    // mirror every future encrypted broadcast for the workspace,
-    // without ever holding the seed (the duplicate-id path returns
-    // ack-only and doesn't reject the socket). Audit round-9 H1.
-    //
-    // The legitimate client always sends an explicit
-    // `workspace-subscribe` (see `trySendSubscribe` in
-    // `client/triage-sync.js` — fires on key derivation, on socket
-    // open, on continuity-break recovery, on dismissError). The
-    // subscribe path remains the only way to attach as a subscriber.
+    // Save does NOT subscribe the sending socket — that would be a
+    // replay vector: a passive observer who captured one valid
+    // `workspace-save` frame could replay it from any TCP connection to
+    // attach as a subscriber and mirror every future encrypted
+    // broadcast, without holding the seed (the duplicate-id path returns
+    // ack-only, doesn't reject the socket). Explicit `workspace-subscribe`
+    // (signs the per-connection challenge nonce) is the ONLY attach path.
+    // Audit round-9 H1.
     const baseNorm = msg.base ?? null
     // `keyframe === true` is what canonicalSave bound the signature to
     // (strict equality); the signer's intent is unambiguous here.
@@ -230,13 +222,10 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
       base: baseNorm,
       id,
     })
-    // Carry `keyframe` as a strict boolean on the broadcast wire —
-    // peers strict-compare `=== true` (matching the canonical-payload
-    // contract). The previous shape emitted `keyframe ? 1 : 0` which a
-    // strict check would treat as non-keyframe, making a replayed
-    // keyframe look like a regular delta on broadcast paths even though
-    // the chain-fetch path (chainFrom → SQLite integer) DID round-trip
-    // correctly.
+    // Carry `keyframe` as a strict boolean on the broadcast wire — peers
+    // strict-compare `=== true` (matching the canonical-payload
+    // contract). An integer 0/1 here would make a keyframe look like a
+    // regular delta on broadcast paths.
     broadcast(tag, {
       type: 'workspace-state',
       workspaceTag: tag,

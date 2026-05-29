@@ -12,12 +12,8 @@
 //      doesn't statically resolve it into the main bundle, the
 //      browser resolves it against the page URL.
 //
-// Older revisions of this module experimented with a SW Content-
-// Encoding echo trick and a Cache API echo trick. Both returned the
-// bytes unchanged in modern browsers (the response decoder runs
-// only on real network responses), so they were dropped.
-// `unregisterSW()` still runs on every init so any leftover
-// `/brotli-sw.js` registration from those revisions is cleaned up.
+// `unregisterSW()` runs on every init to clean up any leftover
+// `/brotli-sw.js` from a prior SW-based fallback revision.
 
 let mode = null
 let initPromise = null
@@ -39,8 +35,7 @@ async function decompressNative(format, bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-// Drop any leftover `/brotli-sw.js` registration from a prior
-// revision that tried the echo-trick fallback. Idempotent — does
+// Drop any leftover `/brotli-sw.js` registration. Idempotent — does
 // nothing when no such SW is registered. Always awaited from init
 // so callers don't observe the SW lingering in DevTools.
 async function unregisterSW() {

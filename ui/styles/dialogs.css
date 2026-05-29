@@ -1,26 +1,20 @@
-/* Remaining light-DOM modal + full-page lock-overlay styles. The
-   app's reusable modal dialogs are now shadow-DOM components that
-   extend `AppDialog` (view/dialogs/app-dialog.js) and carry their own
-   chrome via the dialog-*.css layers. What's left here targets the
-   two light-DOM holdouts that must stay in the global cascade: the
-   boot-time `<origin-migration-dialog>` (origin-check.js) and the
-   `#lock-overlay` div (lock-overlay.js). */
+/* The two light-DOM dialogs (reusable modals are shadow-DOM
+   AppDialog, styled in dialog-*.css): boot-time
+   `<origin-migration-dialog>` (origin-check.js) and `#lock-overlay`
+   (lock-overlay.js). */
 
-/* Top offset for light-DOM <dialog>s (just the origin-migration
-   dialog now). The UA stylesheet centers showModal() dialogs
-   vertically via `margin: auto`; the explicit `margin-top` here
-   drops the bottom auto-margin's share to the difference, shifting
-   the dialog down by ~5rem so the chrome doesn't punch through the
-   viewport's vertical centerline on tall screens. (The shadow-DOM
-   dialogs set the same offset in dialog-base.css.) */
+/* Top offset for light-DOM <dialog>s. UA centers showModal() via
+   `margin: auto`; margin-top steals from the bottom auto-margin,
+   shifting the dialog ~5rem below the vertical centerline on tall
+   screens. (Shadow-DOM dialogs set the same offset in
+   dialog-base.css.) */
 dialog {
   margin-top: 5rem;
 }
 
-/* `<origin-migration-dialog>` — boot-time prompt for legacy hosts
-   (deepaudit.dev, chalker.github.io/deepview/) telling the user
-   the view has moved to triage.space. Same frame look as the
-   other deepview dialogs. Light DOM so these rules apply directly. */
+/* `<origin-migration-dialog>` — boot-time prompt on legacy hosts
+   (deepaudit.dev, chalker.github.io/deepview/) that the view moved
+   to triage.space. Light DOM, so these rules apply directly. */
 .origin-migration-dialog {
   border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); color: var(--text);
@@ -48,10 +42,9 @@ dialog {
     border-radius: 3px;
     word-break: break-all;
   }
-  /* Link to triage.space — keep the same monospace chip framing as
-     <code>, plus an accent colour and underline so it reads as a
-     link. Hover bumps brightness slightly to mirror the primary
-     button affordance. */
+  /* Link to triage.space — same monospace chip framing as <code>,
+     plus accent + underline so it reads as a link. Hover brightness
+     mirrors the primary button. */
   & .om-link {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .82em;
@@ -83,11 +76,10 @@ dialog {
   }
 }
 
-/* Full-page lock overlay — shown by `ui/view/lock-overlay.js` when
-   the passkey vault is enabled but this tab hasnt unlocked yet.
-   Sits above EVERYTHING (the report pane, the sidebar, even dialogs)
-   so the user cant accidentally interact with stale or empty
-   widgets while encrypted state is unreadable. */
+/* Full-page lock overlay (lock-overlay.js) — shown when the passkey
+   vault is enabled but this tab hasn't unlocked. Sits above
+   EVERYTHING (report, sidebar, dialogs): encrypted state is
+   unreadable, so every widget below would be stale/empty. */
 #lock-overlay {
   position: fixed; inset: 0;
   z-index: 9999;
@@ -161,7 +153,6 @@ dialog {
   }
 }
 
-/* `#sidebar-tooltip` (the instant truncated-name hover tooltip) is
-   appended to `<body>` so it escapes the sidebar's overflow:hidden
-   boundary — it lives in light DOM, so its styles are in
-   styles/sidebar-chrome.css, not here. */
+/* Instant hover tooltip is appended to `<body>` (escapes the
+   sidebar's overflow:hidden); its styles live in
+   styles/sidebar-chrome.css. */

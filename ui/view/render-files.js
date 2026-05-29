@@ -33,9 +33,8 @@ function fileCodeButton(fileHash) {
 //     two-column layout (3fr list / 2fr details).
 //
 //   * `list` — every file rendered as a self-contained card with
-//     all the import / export / hash sections inlined. The
-//     pre-existing layout, kept for users who prefer scrolling
-//     through everything in one pass.
+//     all the import / export / hash sections inlined. Kept for
+//     users who prefer scrolling through everything in one pass.
 //
 // A toolbar at the top carries the view-mode switcher (`table` /
 // `list` only — `grouped` from the findings tab doesn't apply
@@ -142,8 +141,7 @@ export function renderTreeView(treeData, findingCounts) {
     </div>`
   }
 
-  // List mode — the original card layout, filtered by the toolbar's
-  // search input.
+  // List mode — card layout, filtered by the toolbar's search input.
   return html`<div class="tree-view">
     ${toolbar}
     ${files.length === 0 ? html`<div class="tree-table-empty">No files match the search.</div>` : nothing}

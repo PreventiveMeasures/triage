@@ -7,17 +7,15 @@ import { pkgColor } from './utils.js'
 import { forceLayout } from './force-layout.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
-// critical/high so they pop above the package hue, calmer tones
-// for medium/low; bug-class tiers (high_bug, bug) use earthy
-// browns to differentiate them from the saturated vuln palette;
-// informational uses a saturated blue. Theme-independent — they
-// read as data colors regardless of chrome lightness. Critical
-// rings get a slightly larger radius + thicker stroke (see the
-// ringR / lw branches in draw) so they stand out without
-// needing the time-driven pulse the design originally used.
-//
-// Tier set matches format.js SEVERITIES so the topbar pill row
-// can display every tier the findings tab can produce.
+// critical/high pop above the package hue; calmer tones for
+// medium/low; bug-class tiers (high_bug, bug) use earthy browns to
+// distinguish them from the saturated vuln palette; informational
+// is a saturated blue. Theme-independent — they read as data colors
+// regardless of chrome lightness. Critical rings get a larger
+// radius + thicker stroke (see ringR / lw in draw) so they stand
+// out without a time-driven pulse. Tier set matches format.js
+// SEVERITIES so the topbar pill row shows every tier the findings
+// tab can produce.
 const SEV_COLORS = {
   critical: '#ff5470',
   high: '#ff9d4a',
@@ -28,13 +26,12 @@ const SEV_COLORS = {
   informational: '#218bff',
 }
 
-// Theme-aware canvas palette. Mirrors graph v1's GRAPH_THEMES
-// pattern (./view/graph/canvas.js): values baked into the JS
-// rather than read from CSS so the per-frame draw doesn't pay a
-// getComputedStyle round-trip. The chrome around the canvas (panels,
-// toolbar, tooltip) is plain CSS using the shared --bg / --surface /
-// etc. vars so it flips with the user's theme; canvas-internal
-// fills flip alongside via currentTheme().
+// Theme-aware canvas palette. Baked into JS rather than read from
+// CSS so the per-frame draw doesn't pay a getComputedStyle
+// round-trip. Chrome around the canvas (panels, toolbar, tooltip)
+// is plain CSS on the shared --bg / --surface / etc. vars so it
+// flips with the theme; canvas-internal fills flip alongside via
+// currentTheme().
 const G2_THEMES = {
   dark: {
     bg: '#0c0c0c',
@@ -43,9 +40,8 @@ const G2_THEMES = {
     edgeIntra: 'rgba(180, 195, 215, ALPHA)',
     hubRing: 'rgba(255, 255, 255, ALPHA)',
     labelFill: 'rgba(230, 233, 238, 0.78)',
-    // Package-view label palette — mirrors graph v1's colors so
-    // labels read against the canvas backdrop without bleeding
-    // into adjacent nodes.
+    // Package-view label palette — tuned so labels read against
+    // the canvas backdrop without bleeding into adjacent nodes.
     labelShadow: 'rgba(12, 12, 12, 0.98)',
     labelOutline: 'rgba(12, 12, 12, 0.9)',
     labelDefault: 'rgba(200, 210, 225, 0.78)',
@@ -89,11 +85,10 @@ const G2_THEMES = {
 
 function currentTheme() {
   // Each named light-style theme picks its own G2_THEMES entry so
-  // the canvas fill matches the surrounding page chrome. Anything
+  // the canvas fill matches the surrounding page chrome; anything
   // unmatched (default dark, theme-green) falls through to dark.
   // The body-class observer in attachGraph2Interaction requestDraws
-  // on any class swap, so swapping themes via DeepView.setTheme
-  // repaints the canvas with the new palette.
+  // on any class swap, so theme changes repaint with the new palette.
   const c = document.body.classList
   if (c.contains('theme-pink')) return G2_THEMES.pink
   if (c.contains('theme-light')) return G2_THEMES.light
@@ -110,17 +105,15 @@ function alphaHex(a) {
 
 // Wire up the v2 canvas: layout (deferred to first resize so the
 // solver gets real dimensions), draw loop, hover/click hit-test,
-// pan/zoom, and all the live counters in the corner readouts.
-// The container is the .graph2-stage element; refresh is a
-// function the renderer passes in to rebuild the right-panel
-// selection card after a click (it already owns the data context
-// the card needs).
+// pan/zoom, and the live corner-readout counters. refreshSidebar
+// is passed in by the renderer to rebuild the right-panel
+// selection card after a click (it owns the card's data context).
 export function attachGraph2Interaction(container, graph, refreshSidebar) {
   // Pierce the `<graph-layout>` shadow root — the canvas + corner
   // overlays + zoom controls all live inside it. Callers pass the
   // outer slot (`#findings-graph-slot` / `#bundle-graph-slot` /
-  // the `#report` host) without knowing whether the layout is
-  // shadowed; finding it here keeps the call site simple.
+  // the `#report` host); finding the shadow host here keeps the
+  // call site free of shadow-DOM knowledge.
   const host = container.querySelector('graph-layout')
   const root = host?.shadowRoot
   if (!root) return
@@ -132,11 +125,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   if (!canvas) return
 
   // render.js calls this on every render() while viewMode==='graph',
-  // not just on the transition into graph mode — a triageSync push or
-  // any unrelated re-render mid-graph would otherwise re-attach
-  // window-level listeners + ResizeObserver + MutationObserver on
-  // top of the previous set, leaking handlers each time. Tear down
-  // any prior attachment before re-wiring.
+  // not just on the transition in — a triageSync push or any
+  // unrelated re-render mid-graph would otherwise stack window
+  // listeners + ResizeObserver + MutationObserver on top of the
+  // previous set, leaking handlers. Tear down any prior attachment
+  // before re-wiring.
   cleanupGraph2()
 
   const ctx = canvas.getContext('2d')
@@ -149,11 +142,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   let layoutW = 0
   let needsLayout = true
   let needsFit = true
-
-  // Keep a reference to the current selected file in a local for
-  // fast access in draw — the renderer mutates graph2.selected on
-  // click, but reading it through the import is fine since modules
-  // are live-bound.
 
   // ── Layout (deferred until we have real canvas dimensions) ─────
   function ensureLayout() {
@@ -168,14 +156,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       }
     } else {
       if (focused) {
-        // Package-focus mode: graph v1's force-directed solver
-        // shines on small subgraphs (a few dozen files) and
-        // gives the structural-cluster look the user expects
-        // from v1, but it's O(N²) per iteration and locks up
-        // the UI on packages with hundreds of files. Switch to
-        // a file-level Vogel sunflower past 50 files — instant,
-        // visually consistent with the spiral view, hubs still
-        // land at center via the degree-desc sort.
+        // Package-focus mode: the force-directed solver gives the
+        // structural-cluster look on small subgraphs (a few dozen
+        // files), but it's O(N²) per iteration and locks up the UI
+        // on packages with hundreds of files. Switch to a
+        // file-level Vogel sunflower past 50 files — instant,
+        // consistent with the spiral view, hubs still land at
+        // center via the degree-desc sort.
         if (graph.nodes.length > 50) {
           layoutFilesVogel(graph, layoutW, layoutH)
         } else {
@@ -196,11 +183,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     needsLayout = false
   }
 
-  // Computes the (k, tx, ty) that would fit the graph's
-  // bounding box into the viewport with 10% padding. Pure
-  // function — doesn't mutate viewport. Used by fitToView()
-  // and by the wheel handler to clamp min-zoom and to know
-  // where "centered" is for the pan-to-center fallback.
+  // (k, tx, ty) that fits the graph's bounding box into the
+  // viewport with 10% padding. Pure — doesn't mutate viewport.
+  // Used by fitToView() and by the wheel handler to clamp
+  // min-zoom and locate "centered" for the pan-to-center fallback.
   function computeFit() {
     if (graph.nodes.length === 0) {
       return { k: 1, tx: W / 2, ty: H / 2 }
@@ -242,29 +228,25 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   // Visibility predicate — only the legacy package-hide set,
   // which nothing currently writes to. Solo and the severity
   // filter are NOT here on purpose: they dim non-matching nodes
-  // to 0.1 instead of hiding them, so they still occupy space
-  // and read as context (the user can see "where" the matching
-  // subgraph sits inside the larger picture).
+  // to 0.1 instead of hiding them, so they still occupy space and
+  // read as context (where the matching subgraph sits in the whole).
   function nodeVisible(n) {
     if (graph2.hidden.has(n.pkg)) return false
     return true
   }
 
-  // Soft-dim predicate. Returns true when a node should be
-  // rendered at reduced opacity (0.1) — triggered by any of:
-  //   - severity filter: 1+ severities selected and no finding on
-  //     this file matches one of them
-  //   - color filter: 1+ marker colors selected and no finding on
-  //     this file carries one of them (severity AND color combine
-  //     independently — same union-per-axis semantics the findings
-  //     tab uses, so the canvas highlight tracks the table's view)
-  //   - package-solo: a package is solo'd and this node isn't
-  //     in it
-  //   - path/package filter: non-empty, and neither the file
-  //     path nor the package name case-insensitively contains
-  //     the filter text
-  // All filters AND-combine — a node passes only when it
-  // satisfies every active filter.
+  // Soft-dim predicate — true when a node should render at reduced
+  // opacity (0.1). Triggered by any of:
+  //   - severity filter: 1+ severities selected, no finding matches
+  //   - color filter: 1+ marker colors selected, no finding carries
+  //     one (union within each axis; severity/color combine
+  //     independently — same semantics as the findings tab, so the
+  //     canvas highlight tracks the table's view)
+  //   - package-solo: a package is solo'd and this node isn't in it
+  //   - path filter: non-empty and neither file path nor package
+  //     name case-insensitively contains the text
+  // All filters AND-combine — a node passes only when it satisfies
+  // every active filter.
   function nodeIsDimmed(n) {
     if (graph2.selectedSeverities.size > 0) {
       const sevs = n.severitySet
@@ -292,10 +274,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   }
 
   function nodeRadius(n) {
-    // Hub : member radius ratio = 1.4× — gives hubs a clear
-    // read without overpowering the cluster (earlier 6 / 3.5 ≈
-    // 1.71× was too dominant once the cross-imported mode lit
-    // up many more files as hubs).
+    // Hub : member radius ratio = 1.4× — clear read without
+    // overpowering the cluster. A larger ratio (~1.71×) was too
+    // dominant once cross-imported mode lit up many more hubs.
     const base = (n.isHub ? 4.9 : 3.5) * graph2.nodeSize
     const z = Math.max(0.6, Math.min(1.6, viewport.k))
     return base * z
@@ -319,12 +300,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
       layoutW = W; layoutH = H; needsLayout = true
     }
     ensureLayout()
-    // Refit on first resize OR when the viewport changed substantially
-    // (e.g. fullscreen toggle: stage went from ~600×500 to ~1400×900).
-    // Without this, the existing pan/zoom keeps the old framing and
-    // the canvas opens with a slice of the graph off-screen. The 15%
-    // threshold avoids re-fitting on cosmetic 1px reflows from sub-
-    // pixel rounding when DPR changes.
+    // Refit on first resize OR a substantial viewport change (e.g.
+    // fullscreen toggle: ~600×500 → ~1400×900). Without this the
+    // old pan/zoom framing leaves the canvas opening on a slice of
+    // the graph. The 15% threshold avoids re-fitting on cosmetic
+    // 1px reflows from sub-pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
     if (needsFit || sizeChanged) { fitToView(); needsFit = false }
     // Always redraw on resize: the canvas pixel buffer was just
@@ -335,14 +315,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   }
 
   // ── Draw ──────────────────────────────────────────────────────
-  // On-demand scheduling: the canvas redraws only when something
-  // changes (pan / zoom / hover / selection / layout / theme /
-  // resize). An earlier version ran requestAnimationFrame(draw)
-  // continuously to support the time-driven critical-issue
-  // pulse, but the pulse is gone and a 12k-file canvas at 60fps
-  // is wasteful. requestDraw() sets a dirty flag and coalesces
-  // multiple state changes within a frame into a single draw
-  // call via rAF.
+  // On-demand scheduling: redraw only on change (pan / zoom / hover
+  // / selection / layout / theme / resize). Continuous rAF would be
+  // wasteful on a 12k-file canvas at 60fps and nothing animates
+  // per-frame. requestDraw() sets a dirty flag and coalesces changes
+  // within a frame into a single rAF draw.
   let rafId = null
   let needsDraw = true
   let drawScheduled = false
@@ -517,20 +494,16 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
     // ── Labels (auto-on at high zoom or low on-screen count,
     // collision-avoidant) ──────────────────────────────────────
-    // Auto-enable labels in two cases:
-    //   1. Zoom ≥ 900%: user is clearly inspecting in detail.
-    //   2. Fewer than 50 nodes currently visible inside the
-    //      canvas viewport — at that density labels can fit
-    //      without much overlap.
-    // Manual graph2.showLabels still works as a force-on signal.
+    // Auto-enable when zoom ≥ 900% (detailed inspection) OR fewer
+    // than 50 nodes visible in the viewport (labels fit without
+    // much overlap). graph2.showLabels force-ons regardless.
     //
-    // Three legibility-of-zoom brackets stay enforced regardless
-    // of how labels were turned on:
-    //   - zoom ≤ 1.4: no labels at all (text would be too small
-    //     relative to the layout density to be useful).
+    // Zoom legibility brackets, enforced however labels were
+    // turned on:
+    //   - zoom ≤ 1.4: none (text too small vs layout density).
     //   - 1.4 < zoom < 2.4: hubs only (load-bearing nodes get
     //     priority screen real estate).
-    //   - zoom ≥ 2.4: all visible nodes are candidates, the
+    //   - zoom ≥ 2.4: all visible nodes are candidates; the
     //     collision pass thins them by priority.
     if (viewport.k > 1.4) {
       const VISIBLE_THRESHOLD = 50
@@ -554,29 +527,23 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
         ctx.textBaseline = 'middle'
         const lineH = 11
         const pad = 2
-        // Nodes whose centre is more than `LABEL_MARGIN` pixels
-        // outside the canvas viewport can't contribute to either
-        // the label-placement candidates (their text would render
-        // offscreen) or the collision-target boxes (their circles
-        // aren't drawn, so a label can't visually collide with
-        // them). Skipping them is a big speedup on large graphs —
-        // the candidates loop calls `ctx.measureText` per node
-        // (expensive canvas API), and the collision pass is
-        // O(candidates × nodeBoxes), so trimming both lists by
-        // the viewport cuts the cost super-linearly.
-        // Margin is generous enough to cover the longest label
-        // (~200px) plus a node-radius's worth of slack so labels
-        // for nodes JUST offscreen can still place against
-        // on-screen neighbours.
+        // Nodes more than `LABEL_MARGIN` px outside the viewport
+        // can't contribute to either the placement candidates (text
+        // renders offscreen) or the collision-target boxes (their
+        // circles aren't drawn). Skipping them is a big speedup: the
+        // candidates loop calls `ctx.measureText` per node (expensive)
+        // and the collision pass is O(candidates × nodeBoxes), so
+        // trimming both by viewport cuts cost super-linearly. Margin
+        // covers the longest label (~200px) plus a node-radius of
+        // slack, so labels for nodes JUST offscreen can still place
+        // against on-screen neighbours.
         const LABEL_MARGIN = 250
         const inLabelBounds = (sx, sy) =>
           sx > -LABEL_MARGIN && sx < W + LABEL_MARGIN &&
           sy > -LABEL_MARGIN && sy < H + LABEL_MARGIN
         // Pre-build AABBs for every visible node circle. The label
         // collision pass checks against these so a label can't
-        // straddle a neighbour's dot — the prior version only
-        // checked label-vs-label, so labels happily covered nearby
-        // nodes.
+        // straddle a neighbour's dot (not just other labels).
         const nodeBoxes = []
         for (const n of graph.nodes) {
           if (!nodeVisible(n)) continue
@@ -662,10 +629,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   }
 
   // Package-focus rendering — v1-style: curved edges with
-  // arrowheads, file labels on every node, single hue (the
-  // focused package's color). Operates on the same nodes/edges
-  // as the spiral view, but with the assumption that the layout
-  // pass produced a force-directed arrangement.
+  // arrowheads, file labels on every node, single hue (the focused
+  // package's color). Same nodes/edges as the spiral view, but
+  // assumes the layout pass produced a force-directed arrangement.
   function drawPackageView(T, selected, sel) {
     const baseColor = pkgColor(graph2.focusedPkg)
     // Connected-files set for hover dimming (mirrors v1's pattern)
@@ -908,17 +874,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
     const relPath = pkgRelative(n.file, n.pkg)
     // Three-line layout:
-    //   1. file path relative to the package root (monospace,
-    //      primary text colour) — what the user mostly cares
-    //      about identifying the node.
+    //   1. file path relative to package root (monospace, primary
+    //      text colour) — the main node identifier.
     //   2. dot + package name — secondary context.
-    //   3. per-severity chips when n.totalIssues > 0 — same
-    //      block the selection card uses.
-    //
-    // Lit's `html` interpolation auto-escapes `relPath` and
-    // `pkgLabel` (both user-provided — file paths from a loaded
-    // report). `renderSevChips` now returns a Lit template too,
-    // so it slots in directly with no `unsafeHTML` round-trip.
+    //   3. per-severity chips when n.totalIssues > 0 — same block
+    //      the selection card uses.
+    // Lit's `html` interpolation auto-escapes `relPath`/`pkgLabel`
+    // (both user-provided — file paths from a loaded report).
     render(html`
       <div class="g2-tt-path">${relPath}</div>
       <div class="g2-tt-head">
@@ -938,13 +900,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const sy = cy - stageRect.top
     const stageW = stageRect.width
     const stageH = stageRect.height
-    // Default: 12px to the right and below the cursor (matches v1's
-    // intent of "near the cursor, not under it"). Flip horizontally
-    // when it would overshoot the right edge — same logic v1 uses
-    // (`tx = cx - 254` style flip, sized to the actual tooltip
-    // width here so the flip holds for any content). Flip vertically
-    // when too close to the bottom; clamp at top so the tooltip
-    // doesn't scroll out of view when hovering near the top edge.
+    // Default: 12px right and below the cursor (near it, not under
+    // it). Flip horizontally when it would overshoot the right edge
+    // (sized to the actual tooltip width so the flip holds for any
+    // content). Flip vertically when too close to the bottom; clamp
+    // at top so it doesn't scroll out of view near the top edge.
     const PAD = 12
     let tx = sx + PAD
     if (tx + ttW > stageW - 4) tx = sx - ttW - PAD
@@ -1074,11 +1034,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
   zFit?.addEventListener('click', () => { fitToView(); requestDraw() })
 
   // Resize observer — handles container resize (sidebar collapse,
-  // window resize, tab switch with different available space). The
-  // relayout-on-resize is intentionally off: even cheap closed-form
+  // window resize, tab switch with different available space).
+  // Relayout-on-resize is intentionally off: even cheap closed-form
   // passes would jitter the graph on every drag of the window edge.
-  // The canvas just
-  // refits its viewport so the existing positions stay centered.
+  // The canvas just refits its viewport so positions stay centered.
   resize()
   const ro = new ResizeObserver(() => resize())
   ro.observe(stage)

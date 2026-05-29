@@ -79,9 +79,8 @@ const SCHEMA = `
 
 // One LIVE row, exactly the shape the `workspace-subscribed` ack's
 // `resources` array carries on the wire, minus `keyframe`-style
-// server-only flags. `put_at` is a
-// debug aid the wire format doesn't include — operators can inspect
-// it via the DB but the server never volunteers it.
+// server-only flags. `put_at` is a debug aid the wire format never
+// includes — inspectable via the DB but the server never volunteers it.
 export type ObjectRow = {
   resourceTag: string
   version: number
@@ -118,13 +117,11 @@ export type BeginPutInput = {
 // PUT will reference. `workspace-full` is the per-workspace resource-
 // count cap rejection — see `MAX_RESOURCES_PER_WORKSPACE`.
 //
-// `filePath` is set only for the FS-backed handle (where it's the
-// absolute on-disk staging path); the Vercel-Blob handle omits it
-// since "path" isn't a meaningful concept against a remote object
-// store. Production code (rest.ts) never reads this field — the
-// REST layer goes through `handle.blob.openStagingWriter(tag, sid)`.
-// Tests for the FS path use it as a convenience to write fixture
-// bytes directly to the staging slot.
+// `filePath` is the absolute on-disk staging path, set only for the
+// FS handle; the Vercel handle omits it ("path" is meaningless against
+// a remote store). Production (rest.ts) never reads it — it goes
+// through `handle.blob.openStagingWriter(tag, sid)`. FS-path tests use
+// it as a convenience to write fixture bytes to the staging slot.
 export type BeginPutResult =
   | { ok: true; stagingId: string; filePath?: string }
   | { ok: false; reason: 'conflict'; conflict: ObjectRow | null }
@@ -134,17 +131,14 @@ export type CommitPutInput = {
   workspaceTag: string
   resourceTag: string
   stagingId: string
-  // Optional: the storage-side byte count the caller already
-  // verified after the upload landed. When provided, commitPut
-  // skips the otherwise-redundant `statStaging` round-trip — for
-  // the Vercel backend that's one fewer HTTP HEAD per PUT.
-  // Caller must ONLY pass a value it observed for THIS stagingId
-  // after its upload finished (i.e. the REST PUT path's post-upload
-  // `statStaging`). Safe without a lock because staging ids are
-  // random — no other request writes this blob — and the sole writer
-  // (this PUT) has already completed. Tests that drive commitPut
-  // directly without the REST layer should omit this and let
-  // commitPut stat for itself.
+  // Optional storage-side byte count the caller already verified
+  // post-upload. When provided, commitPut skips the redundant
+  // `statStaging` round-trip — one fewer Vercel HEAD per PUT. Caller
+  // must ONLY pass a value it observed for THIS stagingId after its
+  // upload finished (the REST PUT path's post-upload `statStaging`).
+  // Safe without a lock: staging ids are random (no other request
+  // writes this blob) and the sole writer (this PUT) has finished.
+  // Tests driving commitPut directly omit this and let it stat.
   observedSize?: number
 }
 
@@ -181,9 +175,9 @@ type DbRow = {
 //   - the reaper's age grace window + an atomic conditional staging
 //     delete (`deleteStagingIfStale`) so the stale-staging sweep
 //     can't race an upload that just finished.
-// These hold both within a single process AND across replicas — the
-// old per-(tag, resourceTag) in-process mutex added nothing the CAS +
-// content-addressing didn't already give, so it was removed.
+// These hold both within a single process AND across replicas, so no
+// per-(tag, resourceTag) in-process mutex is needed — the CAS +
+// content-addressing already cover everything one would.
 export type Handle = {
   // SQLite-only: the underlying `DatabaseSync`. Unset on the Neon
   // backend (see ./store-neon.ts). Test-only fixture SQL routes
@@ -212,15 +206,14 @@ export type Handle = {
   selectStagingByWsSid: GetStmt<[string, string], unknown>
   refreshStagingBegunAt: RunStmt<[number, string, string, string]>
   deleteStaging: RunStmt<[string, string, string]>
-  // Atomic conditional staging delete used by the reaper's stale-row
+  // Atomic conditional staging delete for the reaper's stale-row
   // sweep. `deleteStagingIfStale(tag, res, sid, staleBefore)` deletes
   // the row IFF its `begun_at < staleBefore`, returning `{ ok: 1 }`
-  // when a row was actually removed and `undefined` otherwise. This is
-  // the lock-free replacement for the old in-lock begun_at re-read
-  // (PR #4 "F1"): a slow PUT that finishes and calls
-  // `refreshStagingBegunAt` bumps `begun_at` fresh, so a concurrent
-  // reaper's conditional delete simply doesn't match (its predicate
-  // fails atomically) and the row survives for the commit. Mirrors the
+  // when a row was actually removed and `undefined` otherwise. Lock-
+  // free race guard (PR #4 "F1"): a slow PUT that finishes calls
+  // `refreshStagingBegunAt` to bump `begun_at` fresh, so a concurrent
+  // reaper's conditional delete doesn't match (predicate fails
+  // atomically) and the row survives for the commit. Mirrors the
   // `insertLiveIfAbsent` RETURNING pattern.
   deleteStagingIfStale: GetStmt<[string, string, string, number], { ok: number }>
   selectLive: AllStmt<[string], DbRow>
@@ -279,9 +272,6 @@ export type SqliteHandle = Handle & { db: DatabaseSync }
 // transient over-shoot under high concurrency across DIFFERENT
 // resources is bounded by `(parallel new-resource begins - 1)` and is
 // accepted (the cap is a soft policy bound, not a security invariant).
-// This was already the contract under the old per-resource lock —
-// that lock keyed on (tag, resourceTag), so concurrent NEW-resource
-// begins held DIFFERENT locks and raced the count anyway.
 export const MAX_RESOURCES_PER_WORKSPACE = 100
 
 // Per-upload byte cap, shared by the WS plane (rejects oversize
@@ -372,12 +362,10 @@ export function openObjstore(db: DatabaseSync, dir: string): SqliteHandle {
   const blob = openFsBlobBackend(dir)
   // No `close` method on the returned Handle: the underlying
   // `DatabaseSync` is owned by the caller (in production, the
-  // workspace_revision handle in `server/db.ts`, which closes it
-  // from `shutdown()`). Exposing `close()` here was misleading —
-  // a callsite reading `await objstoreHandle.close()` would
-  // reasonably assume it closes something, when in practice it
-  // either no-op'd (production) or left the connection open
-  // (tests construct their own DB and `db.close()` separately).
+  // workspace_revision handle in `server/db.ts`, closed from
+  // `shutdown()`; tests close their own DB). A `close()` here would
+  // mislead — it could only no-op or leak, never close the caller-
+  // owned connection.
   return {
     db,
     blob,
@@ -522,11 +510,10 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
   if (liveVersion !== input.prevVersion || liveIncarnation !== input.prevIncarnation) {
     return { ok: false, reason: 'conflict', conflict: live }
   }
-  // Per-workspace resource cap. Only enforced for NEW resources —
-  // re-uploads of an existing resourceTag (live != null) don't
-  // change the count, so they're always allowed. Not atomic with the
-  // insert below (see MAX_RESOURCES_PER_WORKSPACE) — a soft policy
-  // bound, accepted to over-shoot under concurrent NEW-resource begins.
+  // Per-workspace resource cap, NEW resources only — re-uploads
+  // (live != null) don't change the count, so they're always allowed.
+  // Not atomic with the insert below; soft bound, see
+  // MAX_RESOURCES_PER_WORKSPACE.
   if (!live) {
     const count = await handle.countLive.get(input.workspaceTag) as { c: number } | undefined
     if ((count?.c ?? 0) >= MAX_RESOURCES_PER_WORKSPACE) {
@@ -557,51 +544,48 @@ export async function beginPut(handle: Handle, input: BeginPutInput): Promise<Be
 // IF ABSENT; a re-upload bumps the version IFF it still matches the
 // precondition we read. Exactly one of N racing commits wins the CAS;
 // the losers get `conflict` (with the current live row) and rebase.
-// Because each PUT is content-addressed at its OWN hash (distinct PUTs
-// get distinct hashes — random nonce per encrypt), N racing commits
-// promote to N DIFFERENT immutable paths: no promote clobbers another's
-// bytes, and a loser's blob is just left unreferenced for the GC. There
-// is no metadata-vs-bytes desync to guard against. The
-// CAS provides the commit's atomicity both within a process and across
-// replicas, so NO in-process lock is taken. A crash between the
-// promote and the CAS leaves the staging blob/row intact alongside (at
-// most) a stranded, unreferenced live blob — the reaper's stale-staging
-// sweep cleans the row, and the GC reaps the unreferenced live blob
-// once it's past the grace window, matching the "stranded state,
-// reaper-cleaned, never row-pointing-at-nothing" crash-safety contract.
+// Each PUT is content-addressed at its OWN hash (distinct PUTs get
+// distinct hashes — random nonce per encrypt), so N racers promote to
+// N DIFFERENT immutable paths: no promote clobbers another's bytes, a
+// loser's blob is just left unreferenced for the GC, and there's no
+// metadata-vs-bytes desync to guard. The CAS gives atomicity both
+// within a process and across replicas, so NO in-process lock is taken.
+// A crash between the promote and the CAS leaves the staging blob/row
+// intact alongside (at most) a stranded, unreferenced live blob — the
+// stale-staging sweep cleans the row, the GC reaps the blob once past
+// the grace window: the "stranded state, reaper-cleaned, never row-
+// pointing-at-nothing" crash-safety contract.
 //
-// ACCEPTED TRADEOFF (lock removal): with no lock, the reaper no longer
-// WAITS for an in-flight upload on this key. An upload taking >1h FROM
-// BEGIN (i.e. exceeding the staging TTL during the body) can have its
-// staging row reaped mid-flight by `deleteStagingIfStale`; this commit
-// then sees no staging row and returns `no-staging` → REST 410. The
-// previous lock made the reaper block on any in-flight upload
-// (unbounded). Sub-1h uploads are unaffected: `begun_at` (set at begin)
-// stays within the TTL through the body, so the conditional delete
-// can't match, and the after-body `refreshStagingBegunAt` re-extends
-// the TTL to cover this commit step. This matches the staging TTL's
-// documented intent ("1h, comfortably over a 50 MiB upload on a slow
-// line").
+// ACCEPTED TRADEOFF (lock removal): without a lock the reaper no longer
+// waits for an in-flight upload on this key (the old lock blocked it on
+// any in-flight upload, unbounded). An upload taking >1h FROM BEGIN
+// (exceeding the staging TTL during the body) can have its staging row
+// reaped mid-flight by `deleteStagingIfStale` → this commit sees no
+// staging row → `no-staging` → REST 410. Sub-1h uploads are unaffected:
+// `begun_at` (set at begin) stays within the TTL through the body, so
+// the conditional delete can't match, and the after-body
+// `refreshStagingBegunAt` re-extends the TTL to cover this commit step —
+// matching the staging TTL's intent ("1h, comfortably over a 50 MiB
+// upload on a slow line").
 export async function commitPut(handle: Handle, input: CommitPutInput): Promise<CommitPutResult> {
   const staging = await handle.selectStaging.get(input.workspaceTag, input.resourceTag, input.stagingId)
   if (!staging) return { ok: false, reason: 'no-staging' }
   let stagedSize: number | null
   // statStaging failure here is a server-side issue (staging file
-  // was unlinked by a racing abort / reaper, EACCES, EIO, backend
+  // unlinked by a racing abort / reaper, EACCES, EIO, backend
   // unreachable, …) — not a client length-mismatch. Route through
   // `io-error` so the REST layer returns 5xx, not 400. PR #4 review.
   //
   // The REST PUT layer already statted the staging blob post-upload
   // and threads the result in via `observedSize` — skipping the
-  // round-trip saves one Vercel HEAD per PUT. The staging blob can't
-  // have been resized between that stat and here: staging ids are
-  // 16-byte random, so no other request targets this blob, and the
-  // sole writer (this PUT's upload pipeline) has already finished
-  // before the REST stat ran. The only other actor that touches a
-  // staging blob is the reaper, which UNLINKS (it never resizes); a
-  // racing reaper unlink surfaces below as statStaging→io-error or a
-  // promote failure, not a wrong size. WS / test paths that omit
-  // `observedSize` fall through to the explicit stat.
+  // round-trip saves one Vercel HEAD per PUT. The blob can't have been
+  // resized between that stat and here: staging ids are 16-byte random
+  // (no other request targets this blob) and the sole writer (this
+  // PUT's upload pipeline) has finished. The only other actor on a
+  // staging blob is the reaper, which UNLINKS (never resizes); a racing
+  // reaper unlink surfaces below as statStaging→io-error or a promote
+  // failure, not a wrong size. WS / test paths that omit `observedSize`
+  // fall through to the explicit stat.
   if (input.observedSize === undefined) {
     try { stagedSize = await handle.blob.statStaging(input.workspaceTag, input.stagingId) }
     catch { return { ok: false, reason: 'io-error' } }
@@ -637,15 +621,14 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   }
   // Promote to the CONTENT-ADDRESSED live path `${tag}/${hash}.bin`.
   // `promoteStagingToLive` returns false on any backend error (FS:
-  // EACCES / ENOSPC / EIO / a racing abort that already unlinked
-  // the staging file; Vercel: copy failure). 'io-error' is mapped
-  // to HTTP 500 by the REST layer — it's a server-side fault, not
-  // a client-fixable one. Because the destination path IS the content
-  // hash, any write to it is byte-identical BY CONSTRUCTION, so a
-  // retried or racing promote to the same path is an idempotent
-  // rewrite, never a clobber. (Distinct PUTs get distinct hashes — a
-  // fresh random nonce per encrypt makes each ciphertext unique — so
-  // concurrent commits to the same resource write to DIFFERENT paths.)
+  // EACCES / ENOSPC / EIO / a racing abort that already unlinked the
+  // staging file; Vercel: copy failure) → 'io-error' → REST HTTP 500
+  // (server-side fault, not client-fixable). The destination path IS
+  // the content hash, so any write to it is byte-identical BY
+  // CONSTRUCTION: a retried or racing promote to the same path is an
+  // idempotent rewrite, never a clobber. (Distinct PUTs get distinct
+  // hashes — fresh random nonce per encrypt — so concurrent commits to
+  // the same resource write to DIFFERENT paths.)
   if (!await handle.blob.promoteStagingToLive(input.workspaceTag, input.stagingId, staging.content_hash)) {
     return { ok: false, reason: 'io-error' }
   }
@@ -658,13 +641,12 @@ export async function commitPut(handle: Handle, input: CommitPutInput): Promise<
   const committedIncarnation = staging.prev_version == null ? freshIncarnation : staging.prev_incarnation!
   const putAt = Date.now()
   // Version-CAS in try/catch so a Neon transient (5xx, network
-  // hiccup, connection-pool exhaustion) doesn't bypass the abortPut
-  // ladder by throwing out of commitPut. Without this guard, a thrown
-  // rejection skips the REST layer's `if (!r.ok) abortPut` branch and
-  // bubbles to handleRest's outer catch — the live blob is already
-  // promoted, the staging blob + row stay, and the client sees a 500.
-  // The reaper reconciles (stale-staging sweep + unreferenced-blob
-  // GC) but the surface is a 500 the caller can retry.
+  // hiccup, pool exhaustion) doesn't throw out of commitPut and bypass
+  // the abortPut ladder. A thrown rejection would skip the REST layer's
+  // `if (!r.ok) abortPut` branch and bubble to handleRest's outer catch
+  // — live blob already promoted, staging blob + row left behind. The
+  // reaper reconciles (stale-staging sweep + unreferenced-blob GC); the
+  // surface is a 500 the caller can retry.
   let won: { ok: number } | undefined
   try {
     if (staging.prev_version == null) {
@@ -753,30 +735,28 @@ export async function abortPut(handle: Handle, tag: string, resourceTag: string,
 // `deletedVersion = 0` sentinel tells the broadcast path to skip.
 //
 // No lock: the drop is a version-CAS (`deleteLiveCAS` — DELETE WHERE
-// version = prev), so every race resolves to exactly one winner, the
-// same as the old lock did, with no lost update:
+// version = prev), so every race resolves to exactly one winner with
+// no lost update:
 //   - delete vs. a concurrent COMMIT on the same resource: whichever
 //     CAS lands first wins. A stale delete can NOT remove a row the
-//     commit just bumped — the `WHERE version = prev` no longer matches,
-//     so the delete gets `conflict` (re-read sees the bumped version).
-//     If the delete wins, the commit's `updateLiveCAS` matches no row →
-//     `conflict`. (The earlier draft used an UNCONDITIONAL delete here,
-//     which — without the lock — let `getLive` read v1, a commit bump
-//     to v2 slip in, and the delete then destroy v2: a lost update. The
-//     version-CAS closes that.)
+//     commit just bumped — `WHERE version = prev` no longer matches, so
+//     the delete gets `conflict` (re-read sees the bumped version). If
+//     the delete wins, the commit's `updateLiveCAS` matches no row →
+//     `conflict`. (An UNCONDITIONAL delete here would let `getLive`
+//     read v1, a commit bump to v2 slip in, then the delete destroy v2:
+//     a lost update. The version-CAS closes that.)
 //   - two concurrent deletes with the same prevVersion: one CAS removes
 //     the row; the other matches no row → re-read → `not-found`.
 //
 // On success we ONLY drop the live row — we do NOT unlink the live
-// blob. Blob reclamation is deferred to the reaper's grace-window GC
+// blob. Reclamation is deferred to the reaper's grace-window GC
 // (unlinks once no live row references the hash AND it's older than the
-// grace window) rather than done inline, so the drop stays lock-free
-// and can't race two things: a concurrent commit's promote→CAS window
-// (a just-promoted blob isn't referenced yet — the age grace protects
-// it) and an in-flight GET still streaming the bytes. NOT because the
-// hash might be shared — distinct PUTs get distinct hashes (random
-// nonce per encrypt → unique ciphertext), so the hash↔row mapping is
-// effectively 1:1; this delete simply orphans the blob for the GC.
+// grace window) so the drop stays lock-free and can't race a concurrent
+// commit's promote→CAS window (a just-promoted blob isn't referenced
+// yet — the age grace protects it) or an in-flight GET still streaming
+// the bytes. NOT because the hash might be shared — distinct PUTs get
+// distinct hashes (random nonce → unique ciphertext), so the hash↔row
+// mapping is effectively 1:1; this delete simply orphans the blob.
 export async function deleteObject(
   handle: Handle, tag: string, resourceTag: string, prevVersion: number | null, prevIncarnation: string | null,
 ): Promise<DeleteResult> {

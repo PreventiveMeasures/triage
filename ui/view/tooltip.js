@@ -1,11 +1,10 @@
 // Shared styled-tooltip primitive. A single fixed-position element
 // is appended to <body> at module load (escapes any view's
-// `overflow: hidden`) and repositioned per show. Multiple consumers
-// share the element: each calls `showTooltip(el)` / `hideTooltip()`
-// and the `[data-tooltip]` attribute drives the text. Replaces the
-// native `title=` browser tooltip — `title` reads as a webpage in
-// the DeepView app shell (delayed, light gray, OS chrome) while we
-// want an instant in-app affordance.
+// `overflow: hidden`) and repositioned per show. Consumers share it:
+// each calls `showTooltip(el)` / `hideTooltip()` and the
+// `[data-tooltip]` attribute drives the text. Used instead of native
+// `title=`, which reads as a webpage tooltip in the app shell
+// (delayed, light gray, OS chrome); we want an instant in-app one.
 //
 // `installGlobalTooltipListener` wires a document-level mouseover /
 // mouseout pair that shows / hides for any `[data-tooltip]` element
@@ -18,14 +17,11 @@
 // only shows when the row's label is actually truncated (skip when
 // the label fits) while the bundle view shows unconditionally.
 //
-// Placement: 'cursor' (default) anchors the tooltip's top edge to
-// `mouseY + CURSOR_GAP_PX` and clamps horizontally to stay in the
-// viewport — natural for in-column rows where right-of-element
-// would overlap the next column. 'right' anchors the tooltip to
-// the right edge of the hovered element, vertically centered —
-// used by the sidebar where rows are pinned to the left side of
-// the viewport and the tooltip lands in the empty main-content
-// gutter to the right.
+// Placement: 'cursor' (default) anchors below the cursor and clamps
+// horizontally to the viewport — natural for in-column rows where
+// right-of-element would overlap the next column. 'right' anchors to
+// the hovered element's right edge, vertically centered — for the
+// sidebar, whose left-pinned rows leave the main-content gutter free.
 
 let tipEl
 function ensureEl() {
@@ -74,9 +70,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   if (!text) return
   node.textContent = text
   if (placement === 'right') {
-    // Anchor to the element's right edge, vertically centered on
-    // its midline. Used by the sidebar — rows sit at the left side
-    // of the viewport so there's always room to the right.
+    // Anchor to the element's right edge, vertically centered.
     const rect = el.getBoundingClientRect()
     node.style.top = `${Math.round(rect.top + rect.height / 2)}px`
     node.style.left = `${Math.round(rect.right + RIGHT_GAP_PX)}px`
@@ -117,8 +111,7 @@ export function scheduleTooltip(el, { gate, placement } = {}) {
 
 // Document-level handler — wires once at boot, covers every
 // light-DOM `[data-tooltip]` element. Shadow-DOM consumers attach
-// their own listeners (the document handler can't see across shadow
-// boundaries via `closest`).
+// their own listeners (`closest` can't cross shadow boundaries).
 let globalInstalled = false
 export function installGlobalTooltipListener() {
   if (globalInstalled) return

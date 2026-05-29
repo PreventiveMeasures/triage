@@ -1,47 +1,30 @@
 // `<severity-chips>` — multi-select pill row of severity filter chips
-// for the toolbar. One chip per severity tier that has at least one
+// for the toolbar. One chip per severity tier with at least one
 // finding in the current load (the host filters out zero-count tiers
-// before passing data in); each chip shows a colored swatch + the
-// tier name + a count badge.
-//
-// Replaces the inline `severityChipsHtml(counts)` builder in
-// render.js. Was a string-concatenated block of ~20 lines that
-// interpolated counts and per-tier classes; making it a component
-// scopes the click handler, keeps the rendered chips consistent
-// with the per-tier styling in toolbar.css's `.sev-chip` block, and
-// (for the findings kind) lets the active highlight self-sync via
-// StateElement instead of riding on a parent-passed prop.
+// before passing data in); each chip shows a colored swatch + tier
+// name + count badge. CSS: toolbar.css `severity-chips` host +
+// per-chip `.sev-chip`.
 //
 // Reactivity (kind="findings"): extends StateElement, so reads of
-// `state.filterSeverities` inside render() are auto-tracked and
-// the chips re-highlight without the host re-passing `selected`.
-// Counts still come in via the `counts` property because computing
-// them requires the filter pipeline output the parent already has.
+// `state.filterSeverities` inside render() are auto-tracked and the
+// chips re-highlight without the host re-passing `selected`. Counts
+// still arrive via the `counts` property — computing them needs the
+// filter pipeline output the parent already has.
 //
 // Reactivity (kind="graph"): `graph2.*` lives outside the
 // `store()`-wrapped state, so its reads aren't tracked by
-// observer-util. The graph topbar keeps passing `selected` via Lit
-// property binding and events.js's severity-toggle handler pushes a
-// fresh array into `el.selected` on every toggle — both paths drive
-// updates through Lit's property setter, not the autorun. DO NOT
-// drop the explicit `el.selected = [...]` push in events.js thinking
+// observer-util. The graph topbar passes `selected` via Lit property
+// binding and events.js's severity-toggle handler pushes a fresh
+// array into `el.selected` on every toggle — both drive updates
+// through Lit's property setter, not the autorun. DO NOT drop the
+// explicit `el.selected = [...]` push in events.js thinking
 // StateElement will pick it up; for the graph kind, it won't.
 //
-// Properties (`attribute: false` — passed by reference via Lit's
-// `.prop=${...}` property binding; no attribute reflection):
-//   * `counts`   — `{ critical, high, medium, low, high_bug, bug,
-//                  informational }`. Tiers with `0` (or missing)
-//                  are skipped.
-//   * `selected` — array of currently-active tier names; consulted
-//                  only when kind="graph".
-//
-// Events (bubble + composed:true):
-//   * `severity-toggle(detail.severity, detail.kind)` — fired when a
-//     chip is clicked. `kind` rides along so events.js routes to
-//     `state.filterSeverities` (kind="findings", default — full
-//     re-render) vs. `graph2.selectedSeverities` (kind="graph" —
-//     surgical canvas redraw + chip property update only, no full
-//     re-render).
+// `severity-toggle` carries `kind` so events.js routes to
+// `state.filterSeverities` (kind="findings", default — full
+// re-render) vs. `graph2.selectedSeverities` (kind="graph" — surgical
+// canvas redraw + chip property update, no full re-render).
+// `selected` is consulted only when kind="graph".
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -62,18 +45,14 @@ class SeverityChips extends StateElement {
   static properties = {
     counts:   { attribute: false },
     selected: { attribute: false },
-    // Identifies which state slot the host is wiring up — see the
-    // `severity-toggle` description above. Default 'findings'.
+    // Which state slot the host is wiring up (see header routing).
+    // Default 'findings'.
     kind:     { type: String },
   }
 
-  // CSS lives in styles/toolbar.css under the `severity-chips`
-  // host selector + the per-chip `.sev-chip` rules. We render light
-  // DOM (no shadow root) so those rules apply directly — the chips
-  // reuse the toolbar's padding, hover, active-tint patterns, and
-  // sharing styles with the surrounding chrome reads cleaner than
-  // re-stating the same
-  // declarations inside a shadow root.
+  // Light DOM (no shadow root) so toolbar.css's `severity-chips` +
+  // `.sev-chip` rules apply directly and the chips reuse the toolbar's
+  // padding/hover/active-tint instead of restating them in a shadow root.
   createRenderRoot() { return this }
 
   constructor() {
@@ -89,9 +68,8 @@ class SeverityChips extends StateElement {
   }
 
   render() {
-    // Findings kind reads state directly via StateElement's autorun;
-    // graph kind keeps using the `selected` prop because graph2 lives
-    // outside the observable store. See module header.
+    // Findings reads state directly (autorun); graph uses the
+    // `selected` prop (graph2 is outside the store). See header.
     const selected = this.kind === 'graph'
       ? new Set(this.selected)
       : state.filterSeverities

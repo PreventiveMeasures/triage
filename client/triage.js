@@ -12,15 +12,14 @@ import {
   sealForTriage,
 } from './passkey-vault.js'
 
-// Tail-of-save notifier. The sync layer registers itself here via
-// `setTriageChangeNotifier(triageSync.notify)` once it's loaded;
-// before then (or when sync is opted out entirely), the slot is a
-// no-op and `saveTriage` just persists locally without fanning out
-// to peers. The reverse-direction inversion mirrors the
-// `SyncHost` injection — sync depends on triage's blob, triage
-// depends on sync's fan-out trigger; the slot lets both compile
-// without a runtime cycle so `client/sync/*` stays code-split-
-// able out of `view.js`'s main bundle.
+// Tail-of-save notifier. The sync layer registers itself via
+// `setTriageChangeNotifier(triageSync.notify)` once loaded; before
+// then (or when sync is opted out), the slot is a no-op and
+// `saveTriage` persists locally without fanning out to peers. The
+// dependency inversion mirrors the `SyncHost` injection — sync
+// depends on triage's blob, triage on sync's fan-out trigger; the
+// slot breaks the runtime cycle so `client/sync/*` stays code-split
+// out of `view.js`'s main bundle.
 let triageChangeNotifier = () => {}
 export function setTriageChangeNotifier(fn) {
   triageChangeNotifier = typeof fn === 'function' ? fn : () => {}
@@ -40,21 +39,20 @@ export function setTriageChangeNotifier(fn) {
 // finding-url ids the codex CSV importer attaches. Any non-numeric
 // id is treated as stable enough to round-trip.
 const TRIAGE_KEY = 'deepview.triage'
-// Synchronous "ahead-of-compress" snapshot — populated by saveTriage
-// before the async compressDeflate await, cleared after the
-// compressed write lands. A tab crash mid-compress would otherwise
-// drop the user's edit (the in-memory state.* mutation is gone with
-// the process, the compressed key wasn't updated, and triageSync
-// notify hasn't fired yet because it runs at the END of saveTriage).
-// readTriageBlob prefers this key when present — it's strictly newer
-// than the compressed one. Audit M3 round-5.
+// Synchronous "ahead-of-compress" snapshot — written by saveTriage
+// before the compressDeflate await, cleared after the compressed
+// write lands. A tab crash mid-compress would otherwise drop the
+// edit: the in-memory state.* mutation dies with the process, the
+// compressed key wasn't updated, and triageSync notify (runs at the
+// END of saveTriage) hasn't fired. readTriageBlob prefers this key
+// when present — strictly newer than the compressed one. Audit M3
+// round-5.
 const TRIAGE_PENDING_KEY = 'deepview.triage.pending'
-// Exported because the triage-gc helpers in `./triage-gc.js` need
-// to share the same "session-only id" predicate the
-// save/load/apply paths use — without identical filtering the
-// GC could either wipe live in-memory session ids (numeric
-// fallbacks for findings without a uuid) or, conversely, leave
-// orphans behind on a report that did carry uuids.
+// Shared with `./triage-gc.js` so GC uses the same "session-only
+// id" predicate as the save/load/apply paths. Divergent filtering
+// would let GC either wipe live in-memory session ids (numeric
+// fallbacks for findings without a uuid) or leave orphans behind on
+// a report that did carry uuids.
 export const SESSION_ID_RE = /^\d+$/u
 
 async function compressDeflate(bytes) {
@@ -67,27 +65,23 @@ async function decompressDeflate(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-// Web Lock + per-tab "latest snapshot wins" generation counter
-// that together close the audit round-12 H10b race (two
-// concurrent saveTriages racing on TRIAGE_KEY +
-// TRIAGE_PENDING_KEY) without holding the lock across the
-// compress await:
+// Web Lock + per-tab "latest snapshot wins" generation counter that
+// together close the audit round-12 H10b race (two concurrent
+// saveTriages racing on TRIAGE_KEY + TRIAGE_PENDING_KEY) without
+// holding the lock across the compress await:
 //
-//   1. M3 round-5: the synchronous TRIAGE_PENDING_KEY write
-//      happens BEFORE any await, so a tab crash mid-compress
-//      still recovers the uncompressed snapshot. Any code path
-//      that blocks for I/O sits AFTER the sync write.
+//   1. M3 round-5: the synchronous TRIAGE_PENDING_KEY write happens
+//      BEFORE any await, so a crash mid-compress still recovers the
+//      uncompressed snapshot. Anything that blocks for I/O sits
+//      AFTER the sync write.
 //
-//   2. Compress runs OUTSIDE the lock. A stuck `CompressionStream`
-//      (browser bug, hostile peer content, test stub) can't pin
-//      the lock indefinitely and starve every subsequent
-//      saveTriage call.
+//   2. Compress runs OUTSIDE the lock, so a stuck `CompressionStream`
+//      (browser bug, hostile peer content, test stub) can't pin the
+//      lock and starve every subsequent saveTriage.
 //
-//   3. The lock-protected commit checks `gen === saveGen` — only
-//      the LATEST saveTriage in this tab actually writes. Slower
-//      compresses (out-of-order completion) skip cleanly. This
-//      replaces the FIFO-compress assumption the PR-#172 shape
-//      depended on.
+//   3. The lock-protected commit checks `gen === saveGen` — only the
+//      LATEST saveTriage in this tab writes; slower (out-of-order)
+//      compresses skip cleanly (no FIFO-compress assumption).
 const TRIAGE_LOCK = 'deepview.triage.save'
 let saveGen = 0
 
@@ -95,11 +89,10 @@ let saveGen = 0
 // map, dropping session-scoped numeric ids. `normalizeEntry` migrates
 // the legacy `deleted` form, prunes empty fields, and returns a fresh
 // entry (its own `ignoredReports` array), so the persisted blob never
-// aliases live state. Shared by `saveTriage` (the at-rest blob) and
-// `buildTriageExportPayload` (the backup export) so the two can't
-// drift. Per-report ignore persists as `ignoredReports: ['nameA',
-// 'nameB', ...]` on the entry — the explicit-list form of the old
-// `${reportName}\0${id}` Set.
+// aliases live state. Shared by `saveTriage` (at-rest blob) and
+// `buildTriageExportPayload` (backup export) so the two can't drift.
+// Per-report ignore persists as `ignoredReports: ['nameA', ...]` on
+// the entry.
 export function buildPersistedTriageEntries() {
   const entries = {}
   for (const [id, entry] of state.triage) {
@@ -112,39 +105,32 @@ export function buildPersistedTriageEntries() {
 
 export function saveTriage() {
   const gen = ++saveGen
-  // Build entries synchronously so the M3 round-5 pending-key
-  // write reflects the user's mutation BEFORE any await (a crash
-  // during the compress await still recovers).
+  // Build entries synchronously so the M3 round-5 pending-key write
+  // reflects the user's mutation BEFORE any await.
   const entries = buildPersistedTriageEntries()
   const isEmpty = Object.keys(entries).length === 0
   const json = isEmpty ? null : JSON.stringify(entries)
-  // Synchronous M3 round-5 belt-and-suspenders: pending key holds
-  // the uncompressed JSON in case a tab crash during the compress
-  // await would otherwise lose this edit (in-memory state.* gone,
-  // compressed key still stale). readTriageBlob prefers pending
-  // on next load. Wrapped in its own try so a localStorage quota
-  // failure doesn't abort the compress + main write below.
+  // M3 round-5 pending key holds the uncompressed JSON for crash
+  // recovery (readTriageBlob prefers it on next load). Own try so a
+  // localStorage quota failure doesn't abort the compress + main
+  // write below.
   //
-  // The pending key is intentionally NOT encrypted — it's a crash-
-  // recovery snapshot that the same tab needs to be able to read
-  // even before the user has unlocked the vault on a subsequent
-  // page load. Trading off encryption-at-rest of the pending
-  // window for the recovery guarantee: a crash-recovery read of an
-  // encrypted pending key would itself need the session key, and
-  // a locked vault would mean the pending edit is lost. The blob
-  // is short-lived (cleared at the tail of saveTriage) and lives
-  // only on the user's device.
+  // Intentionally NOT encrypted: the same tab must be able to read
+  // it on a subsequent load before the vault is unlocked. We trade
+  // encryption-at-rest of this window for the recovery guarantee —
+  // an encrypted pending key would need the session key, so a locked
+  // vault would lose the pending edit. The blob is short-lived
+  // (cleared at the tail of saveTriage) and lives only on-device.
   if (json != null) {
     try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
   }
-  // Hold a SHARED VAULT_LOCK for the duration of the compress + seal
-  // + commit so a vault enable/disable (which acquires the lock
-  // exclusively) waits for us to finish. Without this, an enable
-  // that ran its `listFiles` snapshot BEFORE saveTriage's write
-  // could miss the just-written-enveloped blob; a disable that
-  // ran AFTER saveTriage's seal-with-key-K could leave the envelope
-  // unrecoverable. Shared mode lets concurrent saves run in
-  // parallel; only the (rare) transition pauses them.
+  // Hold a SHARED VAULT_LOCK across compress + seal + commit so a
+  // vault enable/disable (which takes the lock exclusively) waits
+  // for us. Without it, an enable whose `listFiles` snapshot ran
+  // BEFORE saveTriage's write could miss the just-enveloped blob; a
+  // disable that ran AFTER saveTriage's seal-with-key-K could leave
+  // the envelope unrecoverable. Shared mode lets concurrent saves
+  // run in parallel; only the rare transition pauses them.
   return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
     let b64 = null
     let sealedWithKey = null
@@ -152,17 +138,15 @@ export function saveTriage() {
       try {
         const bytes = encodeUtf8(json)
         const compressed = await compressDeflate(bytes)
-        // Envelope when the vault is unlocked. A vault that's
-        // enabled but locked (no session key) skips the seal step,
-        // saving as plaintext — the next saveTriage post-unlock
-        // re-writes enveloped, and the on-disk blob is overwritten
-        // before any read could surface stale plaintext.
+        // Envelope when the vault is unlocked. Enabled-but-locked (no
+        // session key) skips the seal and saves plaintext — the next
+        // post-unlock saveTriage re-writes enveloped, overwriting the
+        // blob before any read could surface stale plaintext.
         //
-        // `sealedWithKey` is captured here so the lock-protected
-        // commit below can detect a same-tab user-driven flip during
-        // compress (the sibling-tab race is already covered by the
-        // shared VAULT_LOCK; this guards the in-tab edge where a
-        // listener fires during the await window).
+        // Capture `sealedWithKey` so the commit below can detect a
+        // same-tab user-driven flip during compress. The sibling-tab
+        // race is covered by the shared VAULT_LOCK; this guards the
+        // in-tab edge where a listener fires during the await window.
         sealedWithKey = getSessionKey()
         const finalBytes = sealedWithKey ? await sealForTriage(compressed) : compressed
         b64 = finalBytes.toBase64()
@@ -173,38 +157,35 @@ export function saveTriage() {
       }
     }
     // Lock-protected commit. `gen !== saveGen` means a NEWER
-    // saveTriage call started in this tab while we were
-    // compressing — its snapshot supersedes ours, so we skip
-    // both the TRIAGE_KEY write AND the pending-key clear (the
-    // newer call's pending is already in localStorage and
-    // mustn't be clobbered by our older commit).
+    // saveTriage started in this tab during compress — its snapshot
+    // supersedes ours, so skip both the TRIAGE_KEY write AND the
+    // pending-key clear (the newer call's pending is already in
+    // localStorage and mustn't be clobbered by our older commit).
     //
-    // Vault-state consistency: if the session key has changed
-    // (sibling tab disabled / enabled / re-keyed mid-compress), the
-    // bytes we just sealed (or didn't seal) are inconsistent with
-    // the current vault state. Skip the write and queue a fresh
-    // saveTriage so the next snapshot lands under the correct
-    // state. Without this, a "compress completes after sibling
-    // disabled the vault" race would persist an envelope into a
-    // disabled vault, bricking the data.
+    // Vault-state consistency: if the session key changed (sibling
+    // disabled / enabled / re-keyed mid-compress), the bytes we
+    // sealed (or didn't) are inconsistent with the current state.
+    // Skip the write and queue a fresh saveTriage so the next
+    // snapshot lands under the correct state. Without this, a
+    // "compress finishes after sibling disabled the vault" race
+    // would persist an envelope into a disabled vault, bricking it.
     //
-    // LOAD-BEARING under shared VAULT_LOCK: the shared lock serialises
-    // saveTriage vs enable/disable in this tab and across tabs, BUT
-    // the storage-event handler in passkey-vault.js synchronously
-    // nulls `sessionKey` on a sibling-tab disable WITHOUT acquiring
+    // LOAD-BEARING under shared VAULT_LOCK: the lock serialises
+    // saveTriage vs enable/disable in- and cross-tab, BUT
+    // passkey-vault.js's storage-event handler synchronously nulls
+    // `sessionKey` on a sibling-tab disable WITHOUT acquiring
     // VAULT_LOCK — storage events fire on the JS task queue, not
     // through the lock scheduler. This check catches that path.
     await navigator.locks.request(TRIAGE_LOCK, () => {
       try {
         if (gen !== saveGen) return
-        // Vault-state consistency check ONLY applies to the seal
-        // path (json != null). The empty-entries branch removes
-        // TRIAGE_KEY entirely — there's no enveloped vs plaintext
-        // ambiguity to reconcile, and `sealedWithKey` was never
-        // captured for the empty path. Without this gate, an
-        // unlocked-vault empty save would loop: sealedWithKey
-        // stayed null, getSessionKey() returns the non-null key,
-        // mismatch → microtask retry → identical state → repeat.
+        // Consistency check ONLY applies to the seal path (json !=
+        // null): the empty branch removes TRIAGE_KEY entirely (no
+        // enveloped-vs-plaintext ambiguity), and `sealedWithKey` was
+        // never captured for it. Without this gate an unlocked-vault
+        // empty save would loop forever — sealedWithKey stays null,
+        // getSessionKey() is non-null, mismatch → microtask retry →
+        // identical state → repeat.
         if (json != null && getSessionKey() !== sealedWithKey) {
           queueMicrotask(() => { saveTriage() })
           return
@@ -221,13 +202,11 @@ export function saveTriage() {
       }
     })
     // Notify the WS sync client (no-op when disabled / not yet
-    // configured). Outside the lock + outside the inner catch so
-    // a sync send error doesn't suppress the localStorage warning,
-    // and a localStorage failure doesn't suppress the network
-    // notification. Reached from BOTH the empty-entries and
-    // non-empty branches now — the previous early `return` in the
-    // empty-entries branch (audit round-12 H10a) skipped this and
-    // stranded the chain on stale state.
+    // configured). Outside the lock + outside the inner catch so a
+    // sync send error doesn't suppress the localStorage warning, and
+    // vice versa. MUST run for BOTH the empty and non-empty branches
+    // — an early return in the empty branch strands the sync chain on
+    // stale state (audit round-12 H10a).
     triageChangeNotifier()
   })
 }
@@ -434,25 +413,19 @@ export const loadPromise = loadTriage()
 onVaultStateChange(() => { reloadTriageFromStorage() })
 
 // Pending-key plaintext cleanup. `TRIAGE_PENDING_KEY` is the
-// synchronous "ahead-of-compress" snapshot saveTriage writes
-// before the async compress await (M3 round-5). It's plaintext
-// because crash-recovery needs to be readable without the session
-// key. Once a `saveTriage` commit lands successfully, the pending
-// key is cleared at line 213. But if a saveTriage fails AFTER
-// writing pending but BEFORE the commit (compress throw, browser
-// kill), the plaintext can sit on disk indefinitely until the
-// next successful save. The audit-flagged concrete failure: a
-// user enables encryption, makes one edit, crashes, never edits
-// again — TRIAGE_PENDING_KEY stays plaintext alongside the
-// sealed TRIAGE_KEY, defeating encryption-at-rest for the most
-// recent edit.
+// synchronous "ahead-of-compress" snapshot (M3 round-5), kept
+// plaintext so crash-recovery can read it without the session key.
+// A successful commit clears it, but a saveTriage that fails AFTER
+// writing pending and BEFORE the commit (compress throw, browser
+// kill) leaves the plaintext on disk indefinitely. Audit-flagged
+// case: enable encryption, make one edit, crash, never edit again —
+// pending stays plaintext beside the sealed TRIAGE_KEY, defeating
+// encryption-at-rest for that last edit.
 //
-// Fix: trigger a fresh saveTriage whenever:
-//   - the vault transitions to unlocked, AND
-//   - a plaintext pending blob exists.
-// The fresh save reads the just-loaded in-memory state (which
-// was populated from pending on boot), compresses, seals, and
-// clears the pending key — closing the window.
+// Fix: trigger a fresh saveTriage when the vault transitions to
+// unlocked AND a plaintext pending blob exists. It reads the
+// in-memory state (populated from pending on boot), compresses,
+// seals, and clears pending — closing the window.
 onVaultStateChange(() => {
   if (getSessionKey() && localStorage.getItem(TRIAGE_PENDING_KEY)) {
     saveTriage()
@@ -462,26 +435,24 @@ onVaultStateChange(() => {
 // Migration helpers — used by passkey-vault.js's
 // enable/disableEncryption flow. CONTRACT: must be called from
 // inside an EXCLUSIVE VAULT_LOCK acquisition. The shared-mode
-// VAULT_LOCK that saveTriage acquires waits for the migration to
-// release the exclusive hold; calling these helpers outside that
-// hold creates a TOCTOU window where a concurrent saveTriage can
-// land bytes inconsistent with the just-flipped vault state.
+// VAULT_LOCK saveTriage acquires waits for that exclusive hold to
+// release; calling these outside it opens a TOCTOU window where a
+// concurrent saveTriage can land bytes inconsistent with the
+// just-flipped vault state.
 //
-// Encrypt: read the current plaintext blob, seal under the
-// just-derived session key, write the envelope back. Then drop
-// any stale `TRIAGE_PENDING_KEY` plaintext — the main key is now
-// the authoritative sealed copy; pending was either already
-// merged into it (next saveTriage cycle) or is older crash-
-// recovery bytes that we don't want sitting around plaintext
-// under an enabled vault. If no triage data is stored, this is a
-// no-op (but the pending clear still fires defensively).
+// Encrypt: read the plaintext blob, seal under the just-derived
+// session key, write the envelope back. Then drop any stale
+// `TRIAGE_PENDING_KEY` plaintext — the main key is now the
+// authoritative sealed copy, and pending is either already merged
+// into it or older crash-recovery bytes we don't want sitting
+// plaintext under an enabled vault. No-op when no triage data is
+// stored (the pending clear still fires defensively).
 //
-// Decrypt: read the current envelope, unwrap, write the plaintext
-// back. Tolerant of a blob that's already plaintext (legacy /
-// half-migrated) — leaves it alone. Pending is ALSO cleared here:
-// it's stale relative to the just-decrypted main key, and on a
-// next-load it would be `readTriageBlob`-preferred (overriding
-// the freshly-decrypted entries the user just chose to expose).
+// Decrypt: read the envelope, unwrap, write plaintext back.
+// Tolerant of an already-plaintext blob (legacy / half-migrated).
+// Pending is ALSO cleared: stale relative to the just-decrypted
+// main key, and on next load it would be `readTriageBlob`-preferred,
+// overriding the freshly-decrypted entries the user chose to expose.
 //
 // AAD comes from the vault's `getEnvelopeAadForTriage` so a future
 // rename of the AAD format doesn't drift between save / migrate.

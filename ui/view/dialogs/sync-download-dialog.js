@@ -1,9 +1,8 @@
 // `<sync-download-dialog>` — unified download prompt for the
-// workspace's remote inventory. Replaces the prior
-// `<download-report-dialog>` + `<download-bundles-dialog>` split so
-// the page-header badge can offer a single "N cloud" chunk covering
-// peer-uploaded reports + bundles. Each item carries its kind so
-// the dialog dispatches per-item to the right session method
+// workspace's remote inventory, so the page-header badge can offer a
+// single "N cloud" chunk covering peer-uploaded reports + bundles.
+// Each item carries its kind so the dialog dispatches per-item to
+// the right session method
 // (`fetchFile` → save + attach for reports;
 // `fetchBundleFromRemote` for bundles, which already saves + fires
 // the bundle auto-download listener so the UI refreshes).
@@ -78,7 +77,7 @@ class SyncDownloadDialog extends AppDialog {
           downloaded.push({ kind: 'bundle', identifier: item.identifier })
           continue
         }
-        // Report path — mirror the prior download-dialog logic.
+        // Report path.
         const got = await fetchFile(this.workspaceId, item.identifier)
         if (!got) {
           failed.push({ kind: 'report', identifier: item.identifier, reason: 'not found in remote' })
@@ -113,9 +112,8 @@ class SyncDownloadDialog extends AppDialog {
     this._running = false
     this._done = true
     // Reload the active workspace view so freshly-saved reports
-    // show up in merged findings. Only run when the user is still
-    // looking at the workspace we downloaded into (mirrors the
-    // r3242639406 guard in the old download-dialog).
+    // show up in merged findings. Only when the user is still looking
+    // at the workspace we downloaded into (guard r3242639406).
     if (downloaded.some((d) => d.kind === 'report')) {
       try {
         if (state.currentWorkspace === this.workspaceId) {

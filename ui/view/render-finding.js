@@ -7,13 +7,11 @@ import { activeTabFor, groupKey, groupState, isIgnored, sortTabs, tabKey } from 
 import { FILE_ICONS, displayName, groupOf } from './file-display.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
-// here as Lit `html` template results so the components can render
-// directly without `unsafeHTML`. Lit auto-escapes interpolated text
-// and attribute values, so the previous string builders' manual
-// `esc()` calls are gone — only structural HTML lives in the
-// templates. Light-DOM-targeting helpers in render.js (e.g. flat
-// list location headers) keep using the string-returning siblings
-// in format.js.
+// here as Lit `html` template results (no `unsafeHTML`). Lit
+// auto-escapes interpolated text + attribute values, so only
+// structural HTML lives in the templates — no manual `esc()`.
+// Light-DOM helpers in render.js (e.g. flat list location headers)
+// keep using the string-returning siblings in format.js.
 
 // Display label for the .badge tier text. The class still gets the
 // canonical severity string ('informational' / 'high_bug') so CSS
@@ -117,22 +115,16 @@ const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidde
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// Two stacked rectangles — clipboard / copy glyph for the
-// `[copy]` shortcut button. Matches the size + stroke weight of
-// the comment / fix icons so the row reads as a uniform action
-// strip. The events.js handler writes a labeled `File / Line /
-// Description / Confidence` block to the clipboard when clicked.
+// Clipboard / copy glyph for the `[copy]` shortcut button. Same
+// size + stroke weight as the comment / fix icons so the row reads
+// as a uniform action strip.
 const COPY_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
-// Eight-pointed asterisk / sparkle — Claude mark for the
-// `[hand off to Claude Code]` shortcut button. Same size + stroke
-// weight as the other action icons. Clicking it opens
-// `claude://code/new?q=…` with the same finding block the copy
-// button writes to the clipboard, prefixed with a `Confirm and
-// fix:` instruction.
+// Claude mark for the `[hand off to Claude Code]` shortcut button.
+// Same size + stroke weight as the other action icons.
 const CLAUDE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none">
     <line x1="8" y1="1.8" x2="8" y2="14.2"/>
@@ -154,15 +146,14 @@ function reportChipTemplate(group) {
   return html`<span class="report-chip" title=${reportName}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(reportName)}</span></span>`
 }
 
-// Action buttons — workspace-only report chip + comment button +
-// `<color-marker>` (the 4-dot color picker) plus either the delete
-// `×` or the trash-mode `restore` button. The dots themselves live
-// in their own component (see view/color-marker.js) so finding-row /
-// finding-card don't carry duplicate `.mark-dot` styling. Click on
-// a dot bubbles up as a composed `mark-color` event with
-// `{ detail: { color } }` — events.js's delegate on `report`
-// resolves the gid via the same `[data-gid]` walk used for the
-// other buttons.
+// Action buttons — workspace-only report chip + comment / fix /
+// copy / claude buttons + `<color-marker>` (the 4-dot color picker)
+// + triage menu. The dots live in their own component (see
+// view/color-marker.js) so finding-row / finding-card don't carry
+// duplicate `.mark-dot` styling. A dot click bubbles as a composed
+// `mark-color` event `{ detail: { color } }`; events.js's delegate
+// on `report` resolves the gid via the same `[data-gid]` walk used
+// for the other buttons.
 function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = null) {
   const reportChip = reportChipTemplate(group)
   const activeEntry = state.triage.get(activeKey)
@@ -181,9 +172,8 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   const commentBtn = html`<button type="button" class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} title=${commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${isFocus ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
   const fixBtn = html`<button type="button" class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} title=${fixTitle} aria-label=${fixTitle}>${FIX_ICON}${isFocus ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Copy button — writes a labeled `File / Line / Description /
-  // Confidence` block for the active tab to the clipboard.
-  // Click handler lives in events.js; it picks the active tab via
-  // the same gid lookup the comment / fix flows use.
+  // Confidence` block for the active tab to the clipboard (handler
+  // in events.js, active tab resolved via the same gid lookup).
   const copyBtn = html`<button type="button" class="mark-copy" title="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${isFocus ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code
@@ -197,32 +187,26 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeKey, context = 
   // option, so the user can flip a deleted finding to fixed without
   // first restoring + re-triaging. In the live view the button is
   // a chevron-only chip.
-  // Conflict groups still scope the action to the active tab,
-  // matching the prior delete-active-tab semantic.
+  // Conflict groups scope the action to the active tab.
   const menuTitle = groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
   return html`${reportChip}<span class="mark-action-group">${commentBtn}${fixBtn}</span><span class="mark-action-group">${copyBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context)}`
 }
 
-// Triage menu — chevron button that toggles a popover with the
-// Fixed / Invalid / Delete actions (and a Restore entry when the
-// row is in a non-live triage view).
+// Triage menu — chevron button toggling a popover with the Fixed /
+// Invalid / Delete actions (and a Restore entry in a non-live
+// triage view).
 //
-// Renders the menu using the native `popover="auto"` HTML
-// attribute, which lifts the element into the top layer so it
-// escapes any `overflow: hidden` parents (e.g. `.flat-group`,
-// `.findings-table`) that would otherwise clip the dropdown when
-// it lives next to a row's right edge or the last row in a list.
-// The browser handles open/close (toggle on button click via
-// `popovertarget`, dismissal on outside click / Escape); position
-// is set by a global `beforetoggle` listener (see events.js)
-// reading the anchor button's bounding rect.
-//
-// Each menu has a unique id derived from the group's gid; the
-// data-gid on the popover lets the action handler resolve the
-// target group when the menu has been moved to the top layer
-// (out of the row's DOM scope).
+// Uses the native `popover="auto"` attribute, which lifts the menu
+// into the top layer so it escapes any `overflow: hidden` parents
+// (`.flat-group`, `.findings-table`) that would clip a dropdown
+// next to a row's right edge or the last row in a list. The browser
+// handles open/close (toggle via `popovertarget`, dismiss on
+// outside click / Escape); position comes from `positionTriagePopover`
+// below. The popover's data-gid (unique id derived from the group's
+// gid) lets the action handler resolve the target group once the
+// menu has moved to the top layer, out of the row's DOM scope.
 // Position a triage popover under its trigger button. `beforetoggle`
 // doesn't bubble, so this is bound directly on the popover via
 // Lit's `@beforetoggle=` rather than a document-level delegate.
@@ -275,19 +259,14 @@ function triageMenuTemplate(group, title, context = null) {
   // Action order: triage states first (Fixed / Invalid / Delete),
   // then Ignore.
   //
-  // Focus-view variant always shows all four states as toggleable
-  // chips with the currently-active state marked `.active` (visually
-  // pressed). Clicking the active state toggles it off (the same
-  // semantic the events.js handler already implements for any
-  // duplicate click), so there's no need for a separate "Restore"
-  // entry — the user reaches the same outcome by clicking the
-  // pressed chip.
+  // Focus-view variant shows all four states as toggleable chips
+  // with the active one marked `.active` (pressed); clicking it
+  // toggles off (the duplicate-click semantic events.js already
+  // implements), so no separate "Restore" entry is needed.
   //
-  // List-view variant (the dropdown) still prepends Restore when
-  // we're in a triage view, and excludes the current state from
-  // the action list — that pattern reads better as a popover menu
-  // where seeing the active bucket in the list (without a "press"
-  // affordance) would be confusing.
+  // List-view variant (the dropdown) prepends Restore in a triage
+  // view and excludes the current state — as a popover menu, showing
+  // the active bucket without a "press" affordance would confuse.
   const ALL_ACTIONS = ['fixed', 'invalid', 'deleted', 'ignored']
   const isFocus = context === 'focus'
   let actions
@@ -376,7 +355,8 @@ function confTemplate(f) {
 // with an optional `@scope/` prefix. Anything outside this set
 // (whitespace, `?`, `#`, `..`, multiple slashes, etc.) suppresses
 // the link rather than producing a URL that points at the wrong
-// npm page.
+// npm page. Not an XSS guard — Lit auto-escapes the interpolated
+// href; this is purely about link correctness.
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
 
 // npm chip — small accent-tinted pill linking to npmjs.com. Returns
@@ -432,19 +412,10 @@ function tabBodyTemplate(f, isActive, idx = 0, total = 1, context = null) {
   const meta = formatRunMeta(f)
   // npm chip in the focused finding view's line-row — surfaces the
   // upstream package + version when the analyzer stamped
-  // `package: { npm: { name, version? } }` on the finding. Links to
-  // the package page on npmjs.com (versioned permalink when the
-  // version is known). The list / grouped / table-details variants
-  // don't render this — the focus view has more horizontal room and
-  // is the workbench surface, so the extra chip reads as orientation
-  // rather than noise.
-  //
-  // Name is regex-validated to npm's character set (lowercase /
-  // digits / `-_.` plus an optional `@scope/` prefix) before being
-  // interpolated into the URL path — Lit auto-escapes attribute
-  // values so XSS isn't a risk, but a malformed stamp ("foo?bar",
-  // "../bar", whitespace) would otherwise produce a link to the
-  // wrong page. Invalid names suppress the chip entirely.
+  // `package: { npm: { name, version? } }` on the finding (links to
+  // npmjs.com; see npmChipTemplate for name validation). Focus-only:
+  // it has the horizontal room and is the workbench surface, so the
+  // chip reads as orientation rather than noise in the other views.
   const npmChip = context === 'focus' ? npmChipTemplate(f.package?.npm) : nothing
   // "Code →" shortcut — when this finding's `fileHash` is present
   // in any bundle the analyzer was run against (per-finding
@@ -529,14 +500,13 @@ export function findingCardClasses(g) {
 }
 
 // Inner template for a `.finding` card — every tab body (only active
-// is shown on screen; print stacks them) plus the bottom marks row
-// (commit ref, multi-tab strip, action buttons). The wrapping
-// `.finding` div is gone — the host element IS the card.
+// shown on screen; print stacks them) plus the bottom marks row
+// (commit ref, multi-tab strip, action buttons). The host element IS
+// the card.
 //
-// Workspace mode lifts the "introduced in" line above the marks row.
-// The action row in workspace mode carries a wide report-name chip
-// at its left, which would otherwise squeeze the commit-ref span on
-// the same row and force the hash to wrap mid-line.
+// Workspace mode lifts the "introduced in" line above the marks row:
+// its action row carries a wide report-name chip on the left that
+// would otherwise squeeze the commit-ref span and wrap the hash.
 export function findingCardInnerTemplate(g, opts = {}) {
   const { context = null } = opts
   const groupSt = groupState(g)
@@ -573,10 +543,9 @@ export function tableRowGid(g) {
   return groupKey(g)
 }
 
-// State-derived class list for a row's host element. Mirrors what the
-// old renderTableRow baked into the wrapper, minus the `selected`
-// class — that's owned by the host's `selected` property since the
-// parent <finding-table> tracks selection there.
+// State-derived class list for a row's host element. Omits the
+// `selected` class — that's owned by the host's `selected` property
+// since the parent <finding-table> tracks selection there.
 export function tableRowClasses(g) {
   const groupSt = groupState(g)
   const isCritical = g.some((f) => f.critical || f.severity === 'critical')
@@ -589,9 +558,8 @@ export function tableRowClasses(g) {
 }
 
 // Inner template for a row — score column on the left, body column
-// (title / meta / optional tab strip) on the right. The wrapping
-// `.finding-row` div is no longer here: it's the <finding-row> host
-// element. Layout/grid placement is handled by finding-row.css.
+// (title / meta / optional tab strip) on the right. The <finding-row>
+// host element is the wrapper; layout/grid is in finding-row.css.
 export function tableRowInnerTemplate(g) {
   const groupSt = groupState(g)
   const sortedTabs = sortTabs(g)

@@ -1,13 +1,10 @@
 /* `<triage-export-dialog>` layer — full triage backup / restore
    dialog (DeepView.export() console command). Composed into the
-   dialog's shadow `static styles` on top of dialog-base.css (frame
-   + reset + WCO). Shadow isolation lets the body address the rule,
-   header text, and file input by type and use short, unprefixed
-   class names. */
+   shadow `static styles` on top of dialog-base.css. */
 
 dialog { max-width: 560px; width: min(94vw, 560px); }
 
-header h3 { margin: 0 0 .25rem; }  /* tighter than base; font/weight inherited */
+header h3 { margin: 0 0 .25rem; }  /* tighter than base */
 header p {
   margin: 0 0 .9rem; color: var(--muted); font-size: .82rem;
 }

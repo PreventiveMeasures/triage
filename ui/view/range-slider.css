@@ -3,10 +3,10 @@
   align-items: center;
   width: 8.5rem;
   height: 16px;
-  /* Color hooks — host can override via inline style or CSS vars
-     on an ancestor. Defaults inherit from the surrounding text
-     color (track) and pick up currentColor for the selected range
-     / thumbs (which the host typically tints to the page accent). */
+  /* Color hooks — host overrides via inline style or CSS vars on an
+     ancestor. Defaults derive from currentcolor: the rail, and the
+     fill (selected range / thumbs) which the host usually tints to
+     the page accent. */
   --rs-thumb-size: 14px;
   --rs-track-height: 3px;
   --rs-rail: rgb(from currentcolor r g b / .25);
@@ -19,10 +19,9 @@
   height: var(--rs-thumb-size);
 }
 
-/* Single track with a gradient that paints the selected range in
-   --rs-fill between --low% and --high%, and the rail elsewhere.
-   var(--low) / var(--high) come from inline style on the wrapper
-   (set by render() each tick). */
+/* Single track; gradient paints --rs-fill between --low% and --high%,
+   rail elsewhere. var(--low)/var(--high) come from inline style on the
+   wrapper, set by render() each tick. */
 .track {
   position: absolute;
   left: 0; right: 0;
@@ -39,10 +38,9 @@
       var(--rs-rail) var(--high, 100%));
 }
 
-/* Both inputs overlap the same area; pointer-events:none on the
-   input itself + pointer-events:auto on the thumb lets the user
-   grab whichever thumb is closer without the input's full-width
-   hitbox blocking the other. */
+/* Both inputs overlap the same area; pointer-events:none on the input
+   + auto on the thumb lets the user grab whichever thumb is closer
+   without one input's full-width hitbox blocking the other. */
 input[type='range'] {
   appearance: none; -webkit-appearance: none;
   position: absolute;

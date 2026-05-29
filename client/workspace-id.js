@@ -1,27 +1,25 @@
-// Deterministic workspace id derivation from the workspace's
-// 32-byte private key. Used by:
-//   - `createWorkspace` (workspaces.js): stamps id = derive(key)
-//     so a future share link can omit the id from the wire and
-//     the recipient re-derives it.
+// Deterministic workspace id derivation from the workspace's 32-byte
+// private key. Used by:
+//   - `createWorkspace` (workspaces.js): stamps id = derive(key) so a
+//     future share link can omit the id from the wire and the
+//     recipient re-derives it.
 //   - `encodeShareLink` / `decodeShareLink` (workspace-share-link.js):
-//     encoder omits the id when it matches derivation; decoder
-//     re-derives when the wire is silent.
+//     encoder omits the id when it matches derivation; decoder re-
+//     derives when the wire is silent.
 //
-// Format: UUIDv8 (8-4-4-4-12 hex), with the version nibble stamped
-// to '8' and the RFC 4122 variant bits (high two of the 17th hex
-// char) set to 10. Same surface as `crypto.randomUUID()`, so
-// consumers that pattern-match on UUID shape don't need a special
-// case. Workspaces created before this derivation existed kept
-// their `crypto.randomUUID()` id; for those the share-link path
-// detects the mismatch and ships the id explicitly.
+// Format: UUIDv8 (8-4-4-4-12 hex) with the version nibble stamped to
+// '8' and the RFC 4122 variant bits (high two of the 17th hex char)
+// set to 10 — same surface as `crypto.randomUUID()`, so UUID-shape
+// pattern-matchers need no special case. Workspaces created before
+// this derivation kept their `crypto.randomUUID()` id; for those the
+// share-link path detects the mismatch and ships the id explicitly.
 //
-// Lives in its own module so a) the workspaces / share-link
-// modules share one definition of the derivation convention
-// (changing the domain separator in two places would be a
-// silent split-brain), and b) `workspaces.js` stays under the
-// project's per-file `max-lines` lint cap of 300 non-blank /
-// non-comment lines (see `.oxlintrc.json`; raw line count is
-// higher because the file carries dense audit-trail comments).
+// Own module so a) workspaces / share-link share one definition of
+// the derivation convention (changing the domain separator in two
+// places would silently split-brain), and b) `workspaces.js` stays
+// under the per-file `max-lines` lint cap of 300 non-blank/non-comment
+// lines (`.oxlintrc.json`; raw count is higher due to dense audit-
+// trail comments).
 
 import { encodeUtf8 } from '../common/utf8.js'
 
@@ -29,10 +27,10 @@ const DOMAIN = 'deepview/workspace-id/v1\n'
 
 export async function deriveWorkspaceIdFromPrivateKey(privateKeyBase64) {
   const secret = Uint8Array.fromBase64(privateKeyBase64)
-  // `encodeUtf8` rejects lone surrogates and non-string input —
-  // the domain separator is a literal so it always passes, but
-  // funneling every utf8 conversion through the checked helper
-  // keeps the project's "no raw TextEncoder" convention.
+  // `encodeUtf8` rejects lone surrogates and non-string input — the
+  // domain separator is a literal so it always passes, but funneling
+  // every utf8 conversion through the checked helper keeps the
+  // project's "no raw TextEncoder" convention.
   const domain = encodeUtf8(DOMAIN)
   const buf = new Uint8Array(domain.length + secret.length)
   buf.set(domain, 0)

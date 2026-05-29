@@ -4,21 +4,12 @@
 // chrome, has an SVG icon prefix and lives inside `.search-row`)
 // and `<entity-sort>` (Packages/Repositories sort dropdown).
 //
-// Replaces two near-duplicate inline `<input>` blocks (one each in
-// render-packages.js and render-repositories.js) plus two id-keyed
-// branches in events.js's generic toolbar `input` listener. The two
-// pages already shared the `.packages-search` CSS class, the
-// `<input type="search">` shape, and the `live()` value binding;
-// only the id, placeholder, aria-label, and state slice differed.
-//
 // Dispatches `search-input(detail: { kind, value })` on native
-// `input`, matching the contract `<toolbar-search>` already uses.
-// events.js's `search-input` listener gains two new kinds; the
-// renderKeepFocus dance the id-keyed branches used drops away on
-// the same grounds as the toolbar-search port (Lit reuses the
-// `<input>` element across re-renders, `live()` performs a no-op
-// DOM write when the typed value matches state, so the user's caret
-// survives every keystroke).
+// `input`, matching the contract `<toolbar-search>` already uses;
+// the two new kinds route through events.js's `search-input`
+// listener. No focus-keeping dance needed: Lit reuses the `<input>`
+// across re-renders and `live()` is a no-op DOM write when the typed
+// value matches state, so the user's caret survives every keystroke.
 //
 // Attributes:
 //   * `kind` — `"packages"` (writes state.packagesSearchQuery) or

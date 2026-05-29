@@ -35,12 +35,10 @@
      graph-layout) so the host fills #report's remaining space
      below the page header. */
   grid-template-rows: auto 1fr;
-  /* `right` spans both rows so the sidebar starts at the very
-     top of the layout, alongside the topbar — its first row
-     (Selection title + inline fullscreen) sits at the same Y
-     as the topbar's controls instead of stacking below them.
-     Saves a row of vertical real estate the sidebar previously
-     wasted on bare chrome. */
+  /* `right` spans both rows so the sidebar starts at the very top,
+     alongside the topbar — its first row (Selection title + inline
+     fullscreen) sits at the same Y as the topbar's controls instead
+     of stacking below them, saving a row of vertical space. */
   grid-template-areas:
     'topbar right'
     'stage  right';
@@ -54,13 +52,12 @@
   font-size: 12px;
 }
 
-/* Inner wrapper — `display: contents` removes its own box from
-   layout so its three children (topbar / stage / right) become
-   direct grid children of `:host` and pick up the grid-area
-   assignments above. Keeping the wrapper in the template (vs.
-   emitting three siblings from `render()`) preserves the existing
-   structural class so any external selector targeting
-   `.graph2-layout` inside the shadow tree still matches. */
+/* Inner wrapper — `display: contents` removes its own box so its
+   three children (topbar / stage / right) become direct grid
+   children of `:host` and pick up the grid-area assignments above.
+   Wrapper kept (vs. three siblings from `render()`) so external
+   selectors targeting `.graph2-layout` in the shadow tree still
+   match. */
 .graph2-layout { display: contents; }
 
 /* Findings-view chrome (6px radius + glass shadow + transparent
@@ -73,15 +70,12 @@
    report.css so the chain survives the move into shadow DOM). */
 
 /* ── Top bar ───────────────────────────────────────────────── */
-/* Padding / gap / font-size all match the findings `.toolbar`
-   (.6rem .75rem padding, .5rem inter-row gap, .825rem font) so the
-   View row reads at the same height and the "View:" label is the
-   same size. Horizontal padding lives on the rows (.75rem on each
-   side) so the row's flex layout owns its own gutter; vertical
-   padding lives on the topbar so the rows aren't directly
-   responsible for spacing themselves off the topbar's edges. The
-   topbar still hugs the canvas — no margin between this panel and
-   the stage; the grid keeps them in the same enclosure. */
+/* Padding / gap / font-size match the findings `.toolbar` (.6rem
+   .75rem padding, .5rem inter-row gap, .825rem font) so the View row
+   reads at the same height and the "View:" label is the same size.
+   Horizontal padding lives on the rows (.75rem/side) so each row's
+   flex layout owns its gutter; vertical padding lives on the topbar.
+   No margin to the stage — the grid keeps them in one enclosure. */
 .graph2-topbar {
   grid-area: topbar;
   display: flex;
@@ -109,14 +103,12 @@
 
 .graph2-topbar .g2-spacer { flex: 1; }
 
-/* Triage selector flushes to the right of the topbar row. The
-   `.g2-spacer` above is `flex: 1`, but the toolbar-search ahead of
-   it is also `flex: 1` and consumes the available space first, so
-   the spacer collapses to 0 and the selector ends up next to All
-   files. `margin-left: auto` on the selector itself sidesteps the
-   issue: it pushes the selector (and everything after — the
-   fullscreen button) to the right edge regardless of how the
-   sibling flex items distribute. */
+/* Triage selector flushes right. The `.g2-spacer` above is `flex: 1`,
+   but the toolbar-search ahead of it is also `flex: 1` and eats the
+   free space first, collapsing the spacer to 0 so the selector lands
+   next to All files. `margin-left: auto` on the selector sidesteps
+   this: it pushes the selector (and the fullscreen button after it)
+   to the right edge regardless of how sibling flex items distribute. */
 .graph2-topbar triage-selector { margin-left: auto; }
 
 .g2-icon-btn {
@@ -166,17 +158,15 @@
   &:hover { color: var(--text); background: var(--surface-active); }
 }
 
-/* Hide the clear button when the input is empty (placeholder
-   showing). Live-checks the input's actual value so the clear
-   button appears/disappears as the user types, without re-
-   rendering the topbar on every keystroke. */
+/* Hide the clear button when the input is empty. Keys off the
+   input's live value (:placeholder-shown) so it toggles as the user
+   types, without re-rendering the topbar per keystroke. */
 .g2-path-filter:placeholder-shown ~ .g2-path-filter-clear { display: none; }
 
-/* Severity-highlight pills in the graph topbar are rendered by
-   the shared `<severity-chips kind="graph">` component now (see
-   view/severity-chips.js + the `.sev-chip` styling in
-   styles/toolbar.css). Empty selectedSeverities set = all pills
-   off = no canvas dimming (default); one or more .active pills =
+/* Severity-highlight pills in the graph topbar render via the shared
+   `<severity-chips kind="graph">` component (view/severity-chips.js +
+   `.sev-chip` in styles/toolbar.css). Empty selectedSeverities = all
+   pills off = no canvas dimming (default); one or more .active pills =
    matching nodes draw at full opacity, others fade to 0.1 in
    canvas.js. */
 
@@ -216,22 +206,19 @@
 }
 
 /* ── Right panel ───────────────────────────────────────────── */
-/* Single side panel — selection card, top-packages distribution,
-   palette, statistics, severity rows, display sliders, options.
-   The left-panel column was removed in favor of more horizontal
-   canvas space; everything that used to live there now scrolls
-   inside this panel below the selection block. */
+/* Single side panel holding the selection card and the top-packages
+   distribution; content scrolls inside it below the selection
+   block. (The former left-panel column was dropped for more
+   horizontal canvas space.) */
 .graph2-right {
   grid-area: right;
   border-left: 1px solid var(--graph-divider);
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
-  /* Flex column so the Top-packages block can grow to fill the
-     remaining height while the Selection block above takes its
-     natural size. The panel itself doesn't scroll; the top-pkgs
-     list scrolls internally instead, so the package list can
-     extend down to the bottom of the sidebar without an outer
-     scroll competing. */
+  /* Flex column: Top-packages grows to fill remaining height,
+     Selection above takes its natural size. The panel itself
+     doesn't scroll; the top-pkgs list scrolls internally so it can
+     extend to the sidebar bottom without a competing outer scroll. */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -239,11 +226,10 @@
 }
 
 .g2-panel-title {
-  /* Properties spelled out instead of `font: ... inherit` —
-     the `inherit` keyword isn't valid as a sub-value of the
-     `font` shorthand (only as the whole property), so the
-     shorthand was being discarded and the panel inherited the
-     12px from .graph2-layout. */
+  /* Properties spelled out, not `font: ... inherit`: `inherit` is
+     invalid as a `font`-shorthand sub-value (only as the whole
+     property), so the shorthand gets discarded and the panel falls
+     back to .graph2-layout's 12px. */
   font-family: inherit;
   font-weight: 600;
   font-size: 11px;
@@ -279,13 +265,12 @@
   gap: 8px;
 }
 
-/* Wrapper for the Top-packages block — exists so the section can
-   be re-rendered in place without rebuilding the canvas. The
-   wrapping breaks the panel-title's `:first-child { margin-top: 0 }`
-   rule that previously gave the title its 14px gap from the
-   selection card above (the title is now :first-child of the
-   wrapper, not of the right panel), so put the gap on the wrapper
-   instead — total spacing stays 14px regardless. */
+/* Wrapper for the Top-packages block — exists so the section can be
+   re-rendered in place without rebuilding the canvas. Its title is
+   now :first-child of the wrapper (not the right panel), so the
+   panel-title's `:first-child { margin-top: 0 }` zeroes the title's
+   gap; put the 14px gap on the wrapper instead so total spacing
+   stays 14px. */
 /* Top-packages block flexes to fill the remaining sidebar height
    so the package list can extend all the way down. min-height: 0
    is required because flex items default to a content-based
@@ -316,8 +301,8 @@
   border: 0;
   color: var(--muted);
   /* Spelled out — `font: ... inherit` is invalid (see
-     .g2-panel-title) and was silently dropping font-size,
-     leaving these to inherit 12px from .graph2-layout. */
+     .g2-panel-title), silently dropping font-size to
+     .graph2-layout's inherited 12px. */
   font-family: inherit;
   font-weight: 500;
   font-size: 11px;
@@ -330,17 +315,15 @@
   &.on { background: var(--surface-active); color: var(--accent); }
 }
 
-/* The .g2-switch class is still used by the topbar's "All files"
-   pill (.g2-topbar-toggle .g2-switch); other toggle / collapsible /
-   slider chrome that lived in the now-removed Display panel was
-   stripped along with the markup. */
+/* Used by the topbar's "All files" pill (.g2-topbar-toggle
+   .g2-switch). */
 .g2-switch {
   width: 26px; height: 14px;
   /* Track uses --border so it stays visible against the panel
-     surface in both themes. --surface-active was a pale blue
-     (#ddf4ff) in light mode and read as almost no contrast
-     against the white-ish panel; --border (#d1d9e0 light /
-     #2c2c2c dark) gives a clear off-state slot in both. */
+     surface in both themes. --surface-active is a pale blue
+     (#ddf4ff) in light mode — almost no contrast against the
+     white-ish panel; --border (#d1d9e0 light / #2c2c2c dark) gives
+     a clear off-state slot in both. */
   background: var(--border);
   border-radius: 8px;
   position: relative;
@@ -375,9 +358,8 @@
 }
 
 /* Top-left overlay — wraps the back button when the user has
-   drilled into a package. Empty in normal mode (the back
-   button is the only thing it ever holds these days; stats
-   moved to .g2-stage-stats at bottom-left). */
+   drilled into a package; empty in normal mode (stats live in
+   .g2-stage-stats at bottom-left). */
 .g2-stage-overlay {
   position: absolute;
   top: 12px;
@@ -391,13 +373,9 @@
 }
 .g2-stage-overlay > * { pointer-events: auto; }
 
-/* Stats overlay at the bottom-left — file/package/edge/hub
-   counts. Was previously top-left next to the back button,
-   then "DEEPVIEW · graph" stage title; now lives at the
-   bottom-left where it doesn't compete with the focused
-   subgraph for attention and replaces the old "X of Y
-   visible" readout (which always read X == Y now that
-   filters soft-dim instead of hide). */
+/* Stats overlay at the bottom-left — file/package/edge/hub counts.
+   Bottom-left so it doesn't compete with the focused subgraph for
+   attention. */
 .g2-stage-stats {
   position: absolute;
   bottom: 10px;
@@ -511,11 +489,10 @@
   border-bottom: 1px solid var(--graph-divider);
 }
 
-/* The fit button carries a "fit" text label rather than a
-   glyph — matches graph v1's pattern. Selector chained with
-   the parent so it beats `.g2-zoom-ctrl button` on specificity
-   (otherwise the button rule's font-size: 13px wins and the
-   "fit" label renders too big for the 28×28 box). */
+/* The fit button carries a "fit" text label (graph v1's pattern).
+   Selector chained with the parent to beat `.g2-zoom-ctrl button` on
+   specificity — otherwise its font-size: 13px wins and "fit" renders
+   too big for the 28×28 box. */
 .g2-zoom-ctrl .g2-zoom-fit-btn {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   font-weight: 600;
@@ -594,9 +571,8 @@
    medium chip's default `color: #000` reads as black-on-darkamber
    once --medium darkens for light theme, hard to read. */
 /* `:host-context()` walks up across the shadow boundary so the
-   `body.theme-light` ancestor in light DOM still gates the rule
-   from inside our shadow stylesheet. The selector matches the
-   host element when any ancestor satisfies the argument. */
+   light-DOM `body.theme-light` ancestor can still gate this rule
+   from inside our shadow stylesheet. */
 :host-context(body.theme-light) .graph2-right .tree-count-chip.medium,
 :host-context(body.theme-light) .g2-tooltip .tree-count-chip.medium { color: #fff; }
 
@@ -616,10 +592,9 @@
   gap: 8px;
 }
 
-/* File-card header — vertical stack: relative path on top, dot
-   + package name underneath. The full path lives in its own
-   sibling block below so the head's bottom border doubles as
-   the divider in the user's mock layout. */
+/* File-card header — vertical stack: relative path on top, dot +
+   package name underneath. The full path lives in its own sibling
+   block below, so the head's bottom border doubles as the divider. */
 .g2-sel-file-head {
   padding: 11px 13px;
   border-bottom: 1px solid var(--graph-divider);
@@ -729,10 +704,8 @@
 }
 
 .g2-sel-section-label {
-  /* Properties spelled out — `font: ... inherit` is invalid as a
-     shorthand and was being silently discarded, leaving the
-     label at the inherited 12px. See .g2-panel-title for the
-     same fix in the right-panel headers. */
+  /* Spelled out — `font: ... inherit` is invalid and gets discarded,
+     leaving the label at the inherited 12px. See .g2-panel-title. */
   font-family: inherit;
   font-weight: 600;
   font-size: 11px;
@@ -765,9 +738,9 @@
   color: var(--accent);
   border-radius: 4px;
   padding: 2px 8px;
-  /* Properties spelled out — `font: ... inherit` is invalid as a
-     shorthand and was being discarded, leaving the button at the
-     inherited 12px and a chunkier height than intended. */
+  /* Spelled out — `font: ... inherit` is invalid and gets discarded,
+     leaving the button at the inherited 12px and a chunkier height
+     than intended. See .g2-panel-title. */
   font-family: inherit;
   font-weight: 500;
   font-size: 11px;
@@ -778,12 +751,11 @@
 
 /* ── File-link list (Imported by / Imports inside selection
    sections) ─────────────────────────────────────────────────── */
-/* List of clickable file rows. Caps at ~5 visible entries
-   (110px) and scrolls vertically. overflow-x explicitly
-   clipped — without it, the spec promotes overflow-x from
-   `visible` to `auto` whenever overflow-y is `auto`, which
-   produced a phantom horizontal scrollbar even with content
-   that fit on one line. */
+/* List of clickable file rows. Caps at ~5 visible entries (110px)
+   and scrolls vertically. overflow-x explicitly clipped — the spec
+   promotes overflow-x from `visible` to `auto` whenever overflow-y
+   is `auto`, giving a phantom horizontal scrollbar even when content
+   fits on one line. */
 .g2-sel-file-list {
   list-style: none;
   margin: 0;
@@ -943,9 +915,8 @@
    print path doesn't dump a giant black box. */
 @media print {
   /* Host-level hide so the print path doesn't reserve layout space
-     for the empty shell. `.graph2-layout` lives inside the shadow
-     DOM so the previous `.graph2-layout { display: none }` would
-     have been unreachable from the print media-query in the
-     shadow CSS anyway. */
+     for the empty shell. Must target `:host`: `.graph2-layout` lives
+     inside the shadow DOM, so hiding it from this shadow print
+     media-query wouldn't be reachable. */
   :host { display: none !important; }
 }

@@ -1,10 +1,10 @@
 // `<persistence-degraded-dialog>` — informational popup shown when the
 // sync layer flips `persistenceDegraded` on (see
-// `client/sync/triage-session-store.ts`). The triage state still works
-// in-memory this session, but it can't be written back to this browser
-// — so it won't survive a reload. The user has no other signal (the
-// producer only `console.warn`s), so surface it explicitly. Pairs with
-// the amber ring on the sidebar's `#sync-status` badge.
+// `client/sync/triage-session-store.ts`). Triage still works in-memory
+// this session but can't be written back to this browser, so it won't
+// survive a reload. The producer only `console.warn`s, so surface it
+// explicitly. Pairs with the amber ring on the sidebar's
+// `#sync-status` badge.
 //
 // Single-acknowledge dialog: extends `AppDialog` for the shared
 // shadow-DOM <dialog> chrome (focus-trap + Esc-to-close). The open
@@ -54,11 +54,11 @@ customElements.define('persistence-degraded-dialog', PersistenceDegradedDialog)
 // Own open helper rather than the shared `openAppDialog`, so we settle
 // on `modal-conflict` too: if another modal is already open when
 // persistence degrades, `AppDialog.firstUpdated`'s `showModal()` throws
-// and dispatches `modal-conflict` instead of `resolve`. The shared
+// and dispatches `modal-conflict` instead of `resolve` — the shared
 // helper only listens for `resolve`, so it would hang forever and leak
-// the element. Resolve `{ shown }` and remove the element on BOTH paths
-// so the promise always settles and cleans up; `shown: false` (conflict,
-// never displayed) tells the caller to retry while still degraded so the
+// the element. Resolve `{ shown }` and remove on BOTH paths so the
+// promise always settles and cleans up; `shown: false` (conflict, never
+// displayed) tells the caller to retry while still degraded so the
 // one-shot notice isn't skipped for the whole episode.
 export function openPersistenceDegradedDialog() {
   return new Promise((resolve) => {

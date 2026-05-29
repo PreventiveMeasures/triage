@@ -7,10 +7,10 @@
 //
 // Deliberately does NOT touch `state.bundleDetails` /
 // `state.selectedBundle` — those are owned by the bundles view's
-// own selection flow, and clobbering them here would yank the user
-// out of whatever bundle panel they had open. Each integrity gets a
-// single in-flight load; subsequent calls during the load return
-// `null` (loading) without retriggering.
+// selection flow, and clobbering them would yank the user out of
+// whatever bundle panel they had open. Each integrity gets a single
+// in-flight load; calls during the load return `null` (loading)
+// without retriggering.
 import { bundlesForFileHash, state } from '#client/index.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
@@ -48,11 +48,10 @@ function kickHighlight(integrity, file, content) {
 }
 
 async function loadSources(integrity) {
-  // Already loaded or in-flight — nothing to do. We intentionally
-  // don't cache the "state.bundles hasn't listed this integrity"
-  // path below: that list is populated asynchronously on first
-  // sidebar render and may lag a focus-view click, so the next
-  // render's call should be free to retry.
+  // Already loaded or in-flight — nothing to do. Intentionally don't
+  // cache the "state.bundles hasn't listed this integrity" miss below:
+  // that list populates asynchronously on first sidebar render and may
+  // lag a focus-view click, so the next render's call should retry.
   const existing = sourcesCache.get(integrity)
   if (existing && (existing.loading || existing.sources)) return
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
@@ -65,22 +64,19 @@ async function loadSources(integrity) {
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
-  // Defer to a fresh microtask so the render runs cleanly outside
-  // the await-resolution stack. Without this, render() executes
-  // mid-resolution chain and the parent template's Lit diff occasionally
-  // commits before the focus-pane-code branch sees the new cache —
-  // the panel stays on the "Loading…" frame until the next manual
-  // render (navigation, filter change). queueMicrotask + a state
-  // tick (so observer-util consumers in the page also re-flow)
-  // robustly resolves both cases.
+  // Defer to a fresh microtask so render runs outside the await-
+  // resolution stack. Run mid-chain, the parent template's Lit diff
+  // occasionally commits before the focus-pane-code branch sees the
+  // new cache, leaving the panel on "Loading…" until the next manual
+  // render (navigation, filter change). The state tick also re-flows
+  // observer-util consumers on the page.
   state.focusCodeTick++
   queueMicrotask(render)
-  // Scroll the active code line into view after the render above
-  // commits it to the DOM. setFocusGid attempts this scroll
-  // immediately after its own render(), but on a cache miss the
-  // code panel isn't painted yet and the element doesn't exist.
-  // Queuing a second microtask here (FIFO after the render above)
-  // retries the scroll once the content has actually landed.
+  // Scroll the active line into view after the render above commits
+  // it. setFocusGid tries this right after its own render(), but on a
+  // cache miss the panel isn't painted yet and the element doesn't
+  // exist. A second microtask (FIFO after the render above) retries
+  // once the content has landed.
   queueMicrotask(() => {
     const codeLine = report.querySelector('.focus-code-line-active')
     if (codeLine) codeLine.scrollIntoView({ block: 'center', behavior: 'instant' })
@@ -96,9 +92,8 @@ async function loadSources(integrity) {
 //      doesn't contain this file.
 //
 // Reading triggers loadSources / kickHighlight as side-effects,
-// which is fine inside render(): both deduplicate, and the
-// resulting render() call is async (microtask) so it doesn't
-// recurse into the current frame.
+// which is safe inside render(): both deduplicate, and their
+// follow-up render() is a microtask so it doesn't recurse this frame.
 export function getFocusCode(focusedGroup) {
   if (!focusedGroup) return null
   const active = activeTabFor(focusedGroup)
@@ -112,8 +107,7 @@ export function getFocusCode(focusedGroup) {
   if (!cached) {
     // First sight of this integrity — kick the load and report
     // pending. The cache flips to loading:true synchronously inside
-    // loadSources so a sibling getFocusCode on the same pass
-    // doesn't double-fire.
+    // loadSources so a sibling call on the same pass doesn't double-fire.
     void loadSources(match.integrity)
     return { loading: true }
   }

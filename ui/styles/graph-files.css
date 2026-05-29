@@ -18,25 +18,22 @@
   & .name { flex: 1; min-width: 0; }
 }
 
-/* `.tree-count-chip` + `.tree-count-chips` moved to
-   `styles/tree-count-chip.css` so the rules can be reused inside
-   the `<graph-layout>` shadow tree without bundling the rest of
-   the Files-tab chrome here. The split file is `@import`-ed by
-   `view.css` so the light-DOM call sites in this file (and in
-   render-bundle.js / render-packages.js / render-repositories.js)
-   keep resolving. */
+/* `.tree-count-chip` + `.tree-count-chips` live in
+   `styles/tree-count-chip.css` so they can be reused inside the
+   `<graph-layout>` shadow tree without bundling the rest of the
+   Files-tab chrome. That file is `@import`-ed by `view.css`, so the
+   light-DOM call sites here (and in render-bundle.js /
+   render-packages.js / render-repositories.js) still resolve. */
 
 .tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 
 /* Open-in-bundle-source pill, shown in the file header when the
-   file's sha512 matches a parsed bundle's contents. Same pill
-   chrome `.finding-code-btn` uses in the finding-card, sized for
-   the header row so it lines up next to the size chip. Inline-flex
-   centers the label inside the pill's padded box; vertical-align
-   middle pulls the pill into line with the surrounding text in
-   the details-panel header (which is a plain block, not a flex
-   container, so baseline alignment would otherwise tip the pill
-   below the file name). */
+   file's sha512 matches a parsed bundle's contents. Same pill chrome
+   as `.finding-code-btn`, sized for the header row to line up next to
+   the size chip. Inline-flex centers the label; vertical-align middle
+   aligns the pill with surrounding text in the details-panel header,
+   which is a plain block (not flex), where baseline alignment would
+   otherwise tip the pill below the file name. */
 .tree-code-btn {
   display: inline-flex; align-items: center;
   vertical-align: middle;
@@ -113,14 +110,12 @@
   }
 }
 
-/* The Files-tab wrapper caps at the same widths as the findings
-   tab: 1200px in single-panel layouts (list mode AND table mode
-   without a selection), expanding to 2000px when the details
-   panel is open so the 3fr / 2fr split below has the same
-   1200 + 800 footprint as `.findings-table-layout.open`. The
-   toolbar stays capped at 1200px in details mode (separate rule
-   below) so the filter chrome keeps the same visual width
-   across selection states. */
+/* Wrapper caps at the findings-tab widths: 1200px single-panel (list
+   mode and table mode without a selection), 2000px when the details
+   panel is open so the 3fr / 2fr split below matches
+   `.findings-table-layout.open`'s 1200 + 800 footprint. The toolbar
+   stays capped at 1200px in details mode (rule below) so the filter
+   chrome keeps the same width across selection states. */
 .tree-view, .tree-view-table { max-width: 1200px; }
 .tree-view-table.with-details { max-width: 2000px; }
 .tree-view-table.with-details > .tree-toolbar { max-width: 1200px; }

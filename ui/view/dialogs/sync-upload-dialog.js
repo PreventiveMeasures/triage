@@ -1,9 +1,8 @@
 // `<sync-upload-dialog>` — unified upload prompt for the workspace's
-// remote inventory. Replaces the prior split between
-// `<upload-report-dialog>` and `<upload-bundles-dialog>` so the
-// page-header sync badge can surface a single "M local" chunk
-// covering reports + bundles. Each item carries its kind so the
-// dialog dispatches per-item to the right session method
+// remote inventory, so the page-header sync badge can surface a
+// single "M local" chunk covering reports + bundles. Each item
+// carries its kind so the dialog dispatches per-item to the right
+// session method
 // (`putFile` for reports, `putBundleToRemote` for bundles).
 //
 // Public API:

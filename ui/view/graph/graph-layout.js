@@ -6,16 +6,15 @@
 //   .graph    — buildGraph(...) result; nodes/edges/packages
 //   .options  — { hideAllFiles?, triageCounts?, extraTopRow? }
 //
-// Why shadow DOM: this keeps the long `.graph2-*` selector set
-// (~900 lines in graph2.css) scoped to this component instead of
-// flooding the global cascade. The chip widgets (`<severity-chips>`,
-// `<triage-filter>`) and the triage-selector / toolbar-row chrome
-// inside the topbar render with classes from `styles/toolbar.css`,
-// and the per-severity count chips in the selection sidebar
-// (`renderSevChips` → `.tree-count-chip`) come from
-// `styles/tree-count-chip.css` — both files get inlined into our
-// shadow styles so those classes pick up the same styling the rest
-// of the page already gives them.
+// Why shadow DOM: scopes the long `.graph2-*` selector set (~900
+// lines in graph2.css) to this component instead of flooding the
+// global cascade. The chip widgets (`<severity-chips>`,
+// `<triage-filter>`) and triage-selector / toolbar-row chrome use
+// classes from `styles/toolbar.css`; the per-severity count chips
+// in the selection sidebar (`renderSevChips` → `.tree-count-chip`)
+// come from `styles/tree-count-chip.css`. Both files are inlined
+// into our shadow styles so those classes pick up the same styling
+// they get elsewhere on the page.
 //
 // Refresh helpers (refreshGraph2Sidebar / refreshGraph2TopPkgs /
 // refreshGraph2FocusOverlay in render.js, and the bundle siblings

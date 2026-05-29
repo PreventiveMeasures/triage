@@ -4,17 +4,13 @@ import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 
 // Wires the per-finding conflict dialog into both the report-attach
 // hydration path AND the chain-receive path (a peer's broadcast — or
-// our own first-sync catch-up — that disagrees per-property with the
-// user's unsynced overlay). triage-sync calls the resolver with a
+// our own first-sync catch-up — whose baseState triage disagrees
+// per-property with the user's unsynced local overlay for the same
+// finding-id). triage-sync fires the resolver registered here with a
 // `context` tag so the dialog strings reflect what just happened.
-//
-// When the user attaches a report to a workspace and the chain's
-// baseState has triage values (from a peer) that disagree with the
-// local state.* for the same finding-id, triage-sync fires the
-// resolver registered here. The headless lookup helper builds the
-// per-finding metadata map (severity / file:line / description) from
-// the already-ingested `state.reports`, then `resolveTriageConflicts`
-// drives the lit dialog.
+// The headless lookup helper builds the per-finding metadata map
+// (severity / file:line / description) from the already-ingested
+// `state.reports`, then `resolveTriageConflicts` drives the lit dialog.
 
 const DIALOG_STRINGS = {
   attach: {

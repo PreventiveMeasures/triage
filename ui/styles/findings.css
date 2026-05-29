@@ -1,13 +1,12 @@
-/* file groups */
 .file-group {
   margin-bottom: 1rem;
   &.hidden { display: none; }
 }
 
-/* file-header + file-body form a single card visually — they share
-   borders and rounding. Both get glass so the card reads as one
-   continuous frosted surface (rather than a frosted top with an
-   empty body). The same logic applies to .flat-group below. */
+/* file-header + file-body form one visual card (shared borders +
+   rounding). Both get glass so the whole card reads as a single
+   continuous frosted surface, not a frosted top over a plain body.
+   Same logic for .flat-group below. */
 .file-header {
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -27,34 +26,31 @@
   box-shadow: var(--shadow-glass);
 }
 
-/* Flat mode (group by file = OFF): each dedup group renders inside a
-   self-contained card. The card border replaces the per-finding
-   border-bottom, and a header strip carries the FULL line row — file
-   + line + exportName + run-meta — so every result reads as a complete
-   unit. The in-body line-row is suppressed inside `.flat-group` so
-   the same line/exportName/run-meta doesn't appear twice. Run-meta
-   floats right via `margin-left: auto`. */
+/* Flat mode (group by file = OFF): each dedup group is a self-
+   contained card. The card border replaces the per-finding
+   border-bottom; a header strip carries the FULL line row (file +
+   line + exportName + run-meta, run-meta floated right) so every
+   result reads as a complete unit. The in-body line-row is
+   suppressed so that same info doesn't appear twice. */
 .flat-group {
   margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);
 
-  /* `.finding` is a `<finding-card>` host: the light-DOM rule still
-     reaches the host element to drop its bottom border. The in-body
-     `.line-row` lives in the card's shadow DOM, so its hide rule
-     moved next door — see the `:host([in-group]) .line-row` rule in
-     view/finding-card.css, which the parent triggers by emitting
-     `<finding-card in-group>`. */
+  /* `.finding` is a `<finding-card>` host: this light-DOM rule
+     reaches the host to drop its bottom border. The in-body
+     `.line-row` lives in the card's shadow DOM, so its hide rule is
+     `:host([in-group]) .line-row` in view/finding-card.css, which
+     the parent triggers by emitting `<finding-card in-group>`. */
   & .finding { border-bottom: none; }
 }
 
 .flat-group-loc {
   display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
   padding: .4rem .7rem; font-size: .85rem;
-  /* Parent .flat-group already has the glass surface — this header
-     sits inside it as a slightly darker tint to mark the location
-     row. No backdrop-filter (the parent owns the blur), just a
-     translucent overlay that reads as a subtle band. */
+  /* Parent .flat-group owns the glass surface + blur, so this
+     location-row header is just a translucent tint over it (no
+     backdrop-filter of its own), reading as a subtle band. */
   background: var(--surface); border-bottom: 1px solid var(--border);
 
   & .file { color: var(--text); font-weight: 500; }
@@ -64,34 +60,17 @@
   & .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
 }
 
-/* The `.finding` card and its descendants — `.tab-body`, `.line-row`,
-   `.desc`, `.recommendation`, `.conf-reason`, `.run-meta`, `.marks`,
-   `.marks-left`, `.commit-ref`, `.tabs` (within .finding) — moved
-   into `<finding-card>`'s shadow DOM (see view/finding-card.css).
-   The host element keeps the `.finding` class so external selectors
-   like `.flat-group .finding` still match the card from this
-   stylesheet. The `.tab` / `.mark-*` / `.badge` rules below are
-   intentionally kept here too — both `<finding-row>` and
-   `<finding-card>` carry private duplicates in their own shadow
-   DOMs, but no third site renders these, so the originals stay
-   purely as a single source of truth. */
-
-/* The reusable row/card building blocks (`.tab`, `.mark-dot`,
-   `.mark-x`, `.mark-restore`, `.badge`, `.conf-score`,
-   `.value-label`, `.print-case-label`, `.finding-left`) used to live
-   here so list-view `.finding` cards and table-view `.finding-row`
-   rows could share one source of truth. Both consumers are now Lit
-   components with their own shadow DOM (see view/finding-row.css
-   and view/finding-card.css), so the originals are gone — copies in
-   each component's stylesheet keep them self-contained. */
+/* The `.finding` finding-card body lives in `<finding-card>`'s
+   shadow DOM (see view/finding-card.css); the host keeps the
+   `.finding` class so external selectors like `.flat-group .finding`
+   still match the card from this stylesheet. */
 
 /* ── Table view ─────────────────────────────────────────────────────
-   When a row is selected, the table view splits into a list column
-   on the left and a sticky details panel on the right (3 fr : 2 fr,
-   capped at 1200 px : 800 px). When nothing is selected, the list
-   takes the full width. The details panel renders the same per-
-   finding card the list view uses (renderGroup) so the body content
-   reads consistently across the two view modes. */
+   With a row selected, the view splits into a list column (left) and
+   a sticky details panel (right): 3fr:2fr, capped 1200px:800px. With
+   nothing selected the list takes full width. The panel renders the
+   same per-finding card the list view uses (renderGroup) so body
+   content reads consistently across both view modes. */
 .findings-table-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -104,12 +83,11 @@
      already caps at 2000 px (1200 list + 800 panel). */
 }
 .findings-table-list { min-width: 0; }
-/* Bound the row to the body slot's height (set by the flex chain
-   in report.css's `@media not print` block) so the list column
-   below can cap at `max-height: 100%` and scroll internally —
-   without it the implicit row sizes to the list's content and
-   grows past the viewport. Print mode skips this so paginated
-   output flows over page breaks instead of clipping. */
+/* Bound the row to the body slot's height (set by report.css's
+   `@media not print` flex chain) so the list column can cap at
+   `max-height: 100%` and scroll internally — without it the
+   implicit row sizes to content and grows past the viewport. Print
+   skips this so paginated output flows over page breaks, not clips. */
 @media not print {
   .findings-table-layout {
     grid-template-rows: minmax(0, 1fr);
@@ -120,21 +98,21 @@
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
-    /* Bottom gap lives inside the scroller — #report's own
-       padding-bottom is zeroed for table / list / grouped modes
-       (see report.css). List / grouped get the same gap from the
-       last .flat-group / .file-group's margin-bottom. */
+    /* Bottom gap lives inside the scroller — #report's
+       padding-bottom is zeroed for table/list/grouped modes (see
+       report.css). List/grouped get the equivalent gap from the last
+       .flat-group / .file-group's margin-bottom. */
     padding-bottom: 1rem;
   }
 }
-/* Details panel = its own glass card. Sticky so it follows the
-   user as they scroll the list, with a header bar carrying the
-   close button (instead of an absolute-positioned button that
-   would float over the rendered finding's title). */
+/* Details panel = its own glass card, sticky so it follows the
+   scroll. Header bar carries the close button rather than an
+   absolute-positioned one that would float over the finding's
+   title. */
 .findings-table-details {
   position: sticky;
-  /* Sits 1rem from the top of the viewport when the user scrolls
-     past it; nothing above is sticky, so a small offset is enough. */
+  /* 1rem from the viewport top once scrolled past; nothing above is
+     sticky, so a small offset is enough. */
   top: 1rem;
   max-height: calc(100vh - 2rem);
   max-width: 800px;
@@ -143,10 +121,9 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: var(--shadow-glass);
-  /* overflow: hidden clips the rendered finding's content to the
-     panel's rounded corners and lets the body's scrollbar live
-     inside the radius cleanly. The flex column splits the chrome
-     header from the scrollable body. */
+  /* overflow: hidden clips content to the rounded corners so the
+     body's scrollbar lives inside the radius cleanly; the flex
+     column splits the chrome header from the scrollable body. */
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -198,28 +175,22 @@
 
 /* ── Kanban view ────────────────────────────────────────────────────
    One column per triage bucket (Active / Fixed / Invalid / Deleted /
-   Ignored). The board fills the entire viewport height (via the
-   `.findings-content.with-kanban` flex chain below) and only the
-   column bodies scroll. The wrapper drops its max-width cap so the
-   five columns lay out edge-to-edge; columns overflow horizontally
-   inside the board itself when the viewport is too narrow.
-
-   Cards are plain divs (`<div class="kanban-card">`) with a floated
-   severity chip top-right; the title flows around it. file:line
-   sits along the bottom with the optional confidence number on the
-   right. */
+   Ignored). The board fills the full viewport height (via the
+   `.findings-content.with-kanban` flex chain below); only the column
+   bodies scroll. The wrapper drops its max-width cap so the five
+   columns lay out edge-to-edge and overflow horizontally inside the
+   board when the viewport is too narrow. */
 .kanban-board {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(200px, 1fr);
-  /* Force the implicit row to fill the board's height instead of
-     auto-sizing to content. Without this, an `auto` row sized to
-     `max(column content heights)` makes the board outgrow its
-     parent whenever any column has more cards than fit — and the
-     per-column `overflow-y: auto` never kicks in because the
-     column itself was given enough height for everything. `minmax
-     (0, 1fr)` clamps the row to the parent (flex: 1 inside the
-     bounded findings-content), letting the column bodies scroll. */
+  /* Force the implicit row to fill the board height, not auto-size
+     to content. An `auto` row sized to max(column content heights)
+     makes the board outgrow its parent whenever a column overflows,
+     and the per-column `overflow-y: auto` never kicks in because the
+     column got enough height for everything. `minmax(0, 1fr)` clamps
+     the row to the parent (flex: 1 inside the bounded
+     findings-content), letting the column bodies scroll. */
   grid-template-rows: minmax(0, 1fr);
   gap: .4rem;
   overflow-x: auto;
@@ -231,10 +202,10 @@
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Columns derive their height from the grid row (which fills the
-   board via flex: 1) — no `max-height` heuristic needed. Each
-   column body owns the vertical scroll via overflow-y: auto and
-   flex: 1 below the column header. */
+/* Columns take their height from the grid row (which fills the
+   board via flex: 1) — no `max-height` heuristic needed. The column
+   body owns the vertical scroll (overflow-y: auto, flex: 1) below
+   the header. */
 .kanban-column {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
@@ -245,8 +216,8 @@
   transition: border-color .12s, background .12s;
 }
 
-/* drag-over state — applied by events.js while a card is over the
-   column. Accent border + faint inner tint so the drop target reads
+/* drag-over state (applied by events.js while a card is over the
+   column): accent border + faint inner tint so the drop target reads
    immediately. */
 .kanban-column.drag-over {
   border-color: var(--accent);
@@ -272,8 +243,8 @@
 }
 
 /* Per-column accent — the header label adopts the same bucket color
-   used by .triage-state-btn.active.triage-state-* so the kanban
-   columns read at a glance even without their labels. */
+   as .triage-state-btn.active.triage-state-* so columns read at a
+   glance even without their labels. */
 .kanban-column-untriaged .kanban-column-header .label { color: var(--text); }
 .kanban-column-fixed     .kanban-column-header .label { color: var(--green, #4ade80); }
 .kanban-column-invalid   .kanban-column-header .label { color: var(--muted); }
@@ -302,10 +273,6 @@
   font-style: italic;
 }
 
-/* Compact kanban card — block layout so the floated severity chip
-   in the top-right lets the title text flow around it. The bottom
-   row holds file:line + an optional grey confidence digit, kept
-   single-line so the card height varies only with title length. */
 /* Compact kanban card — three-area grid: title clamps to three
    lines on the left, severity chip in the top-right corner,
    meta row (file:line + confidence) across both columns at the
@@ -497,17 +464,6 @@
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Modal open / close transition. events.js dynamically stamps
-   `view-transition-name: kanban-detail-modal` on the clicked card
-   so the browser pairs the card (old snapshot) with the modal
-   (new snapshot, name supplied by CSS above) and morphs position
-   + size between them — the modal flies out of the card, and on
-   close flies back into it. Only the morph speed is overridden;
-   the default crossfade of `::view-transition-{old,new}` runs
-   alongside at the same duration so the contents swap mid-flight.
-   The backdrop is named separately so its own fade is independent
-   of the morph (the morph wraps a single group; the backdrop is
-   the surrounding dim). */
 /* Shared-element fly transition (open: card → modal, close:
    modal → card). The source card is stamped with
    `view-transition-name: kanban-detail-modal` via inline style

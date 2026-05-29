@@ -1,9 +1,8 @@
-/* `<finding-table>` shadow-DOM styles. Just the glass-card wrapper
-   the rows live inside — each row is a `<finding-row>` Lit child
-   that carries its own grid layout and styles in its own shadow
-   DOM (see view/finding-row.css). CSS variables (--surface,
-   --border, etc.) inherit through this shadow boundary so theme
-   switching keeps working. */
+/* `<finding-table>` shadow-DOM styles — just the glass-card wrapper.
+   Each row is a `<finding-row>` Lit child carrying its own grid
+   layout/styles in its own shadow DOM (see view/finding-row.css). CSS
+   variables (--surface, --border, …) inherit through the shadow
+   boundary so theme switching keeps working. */
 :host {
   display: block;
   background: var(--surface);

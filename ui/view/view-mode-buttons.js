@@ -4,25 +4,14 @@
 // that previews the layout it switches to. The active button picks
 // up an outline + accent recolor via the toolbar's CSS.
 //
-// Replaces an inline `for (const mode of ...)` loop in render.js
-// that interpolated the icon SVGs as raw strings, plus the
-// `[data-view-mode]` click branch in events.js. Was a six-line
-// loop with three icon string constants stitched together; making
-// it a component lets the SVGs live as Lit `html` template
-// fragments next to the click handler that switches modes, and
-// gives the host one event to listen to instead of one selector
-// per click delegation chain.
+// Self-syncs against the global state store via StateElement: reads
+// of `state.viewMode` (or `state.filesViewMode` when `kind="files"`)
+// inside render() are auto-tracked, so flipping the active button
+// doesn't require the parent to pass an updated `mode` prop — the
+// highlight follows the state mutation on its own.
 //
-// Self-syncs against the global state store via StateElement:
-// reads of `state.viewMode` (or `state.filesViewMode` when
-// `kind="files"`) inside render() are auto-tracked, so flipping
-// the active button doesn't require the parent to pass an updated
-// `mode` prop. The host just emits `<view-mode-buttons></view-mode-buttons>`
-// and the highlight follows the state mutation on its own.
-//
-// Events (bubble + composed:true):
-//   * `view-mode-change(detail.mode)` — fired on click. The host
-//     persists the value to localStorage and re-renders.
+// `view-mode-change(detail.mode)` (bubbles + composed) fires on click;
+// the host persists the value to localStorage and re-renders.
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
@@ -36,16 +25,15 @@ const VIEW_ICONS = {
     <line x1="3" x2="21" y1="15" y2="15"/>
     <line x1="9" x2="9" y1="3" y2="21"/>
   </svg>`,
-  // list    — three full-width horizontal lines (no bullet dots).
-  // `stroke-linecap="round"` softens the line ends.
+  // list    — three full-width horizontal lines (no bullet dots)
   list: html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
     <line x1="3" x2="21" y1="6" y2="6"/>
     <line x1="3" x2="21" y1="12" y2="12"/>
     <line x1="3" x2="21" y1="18" y2="18"/>
   </svg>`,
-  // grouped — two header bands, each with two indented items below.
-  // Showing two distinct groups (vs one header + rows) is what
-  // visually communicates "grouping" instead of just "list w/ title".
+  // grouped — two header bands, each with two indented items: two
+  // distinct groups (vs one header + rows) reads as "grouping" rather
+  // than just "list with title".
   grouped: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
     <rect x="2" y="1.5" width="12" height="2" rx=".4"/>
     <rect x="5" y="4.4" width="9" height="1.3"/>
@@ -66,9 +54,9 @@ const VIEW_ICONS = {
     <rect x="11.6" y="5.6" width="2" height="1.4" rx=".2"/>
     <rect x="11.6" y="7.6" width="2" height="1.4" rx=".2"/>
   </svg>`,
-  // focus   — large primary card on the left + three stacked
-  // small cards on the right, mirroring the focus-view layout
-  // (one finding centered, a queue of upcoming findings beside it).
+  // focus   — large primary card left + three stacked small cards
+  // right, mirroring the focus-view layout (one finding centered, a
+  // queue of upcoming findings beside it).
   focus: html`<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
     <rect x="1.5" y="2.5" width="8.5" height="11" rx=".6" fill="none" stroke="currentColor" stroke-width="1"/>
     <rect x="3" y="4.4" width="5.5" height="1"/>
@@ -102,23 +90,19 @@ const MODES = ['table', 'list', 'grouped', 'focus', 'kanban', 'graph']
 
 class ViewModeButtons extends StateElement {
   static properties = {
-    // Comma-separated subset of MODES to expose. Default = all
-    // three (table / list / grouped) for the findings tab; the
-    // Files tab passes "table,list" since the grouped layout
-    // doesn't apply there.
+    // Comma-separated subset of MODES to expose. Defaults to all of
+    // them; the Files tab passes "table,list" since the other layouts
+    // don't apply there.
     modes: { type: String },
-    // Identifies which state slot the host is wiring up — drives
-    // both which state slice the active highlight reads from
-    // (`state.viewMode` vs `state.filesViewMode`) AND which slot
-    // the `view-mode-change` event detail asks events.js to write.
+    // Which state slot the host is wiring up — drives both which slice
+    // the active highlight reads (`state.viewMode` vs
+    // `state.filesViewMode`) AND which slot `view-mode-change` writes.
     kind: { type: String },
   }
 
-  // Light DOM so the host can carry the bordered icon-group chrome
-  // directly via the `view-mode-buttons` element selector in
-  // toolbar.css, and the per-button `.view-mode-btn` rules apply
-  // to the buttons rendered as direct children. Same pattern as
-  // `<severity-chips>` / `<triage-filter>`.
+  // Light DOM so toolbar.css's `view-mode-buttons` (bordered icon-group
+  // chrome) and per-button `.view-mode-btn` rules apply directly to the
+  // child buttons. Same pattern as `<severity-chips>` / `<triage-filter>`.
   createRenderRoot() { return this }
 
   constructor() {
@@ -133,15 +117,13 @@ class ViewModeButtons extends StateElement {
   }
 
   render() {
-    // Reads `state.viewMode` / `state.filesViewMode` via StateElement's
-    // autorun wrapper — mutating the slot in events.js triggers a
-    // targeted re-render of just this element, no `mode` prop needed.
+    // Read via StateElement's autorun — mutating the slot in events.js
+    // re-renders just this element, no `mode` prop needed.
     const current = this.kind === 'files' ? state.filesViewMode : state.viewMode
     const allowed = this.modes.split(',').map((s) => s.trim()).filter((s) => MODES.includes(s))
     const list = allowed.length > 0 ? allowed : MODES
-    // No leading "View:" label — the per-button SVG icons + their
-    // tooltips carry the affordance on their own, and dropping the
-    // word shortens the toolbar so the sort dropdown sits flush
+    // No leading "View:" label — the icons + tooltips carry the
+    // affordance, and dropping it lets the sort dropdown sit flush
     // against the icon group.
     return html`${list.map((m) => html`<button
       type="button"

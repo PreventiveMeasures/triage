@@ -30,13 +30,12 @@ import type { Conflict, ConflictProperty, TriageStateMap } from './triage-change
 // must carry every id we've ever seen in the chain, not just the ones
 // in our current session.ids scope.
 export function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> | Iterable<string>): TriageStateMap {
-  // `Object.create(null)` so a `__proto__` own key on the incoming
-  // baseState (via prior `applyChangeset` of a peer-controlled
-  // changeset) doesn't trigger the Object.prototype setter when
-  // spread into a normal `{}` — that path would re-pollute out's
-  // prototype chain and propagate attacker entries into localState
-  // → computeChangeset's `target[id]` lookups → emitted changesets.
-  // Audit round-12 H6.
+  // `Object.create(null)` so a `__proto__` own key on baseState (via
+  // prior `applyChangeset` of a peer-controlled changeset) doesn't
+  // trigger the Object.prototype setter when spread into a normal `{}`
+  // — that would re-pollute out's prototype chain and propagate
+  // attacker entries into localState → computeChangeset's `target[id]`
+  // lookups → emitted changesets. Audit round-12 H6.
   const out: TriageStateMap = Object.assign(Object.create(null), baseState)
   const state = syncHost().state
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
@@ -58,18 +57,17 @@ export function effectiveLocalState(baseState: TriageStateMap, ids: Set<string> 
 // triaged in another open workspace (state.triage is global, chains are
 // per-workspace) keeps its local value.
 //
-// Used when ids enter session scope (a report attached mid-session —
-// see `onReportMembershipChanged` listener at module init). Without
-// this, the next `effectiveLocalState` would snapshot each newly-in-
-// scope id, get an empty entry (state.triage not populated for OOS
-// ids), and emit a delete that wipes the chain's view for that id. The
-// `ignoredReports` mutex with triage is honored — skipped when the
-// entry already carries any triage state, mirroring
-// `applyToReactiveState`'s rule.
+// Used when ids enter session scope (report attached mid-session — see
+// the `onReportMembershipChanged` listener). Without it, the next
+// `effectiveLocalState` would snapshot each newly-in-scope id, get an
+// empty entry (state.triage unpopulated for OOS ids), and emit a delete
+// wiping the chain's view for that id. The `ignoredReports`/triage mutex
+// is honored — skipped when the entry already carries triage, mirroring
+// `applyToReactiveState`.
 //
 // `cur` is captured ONCE up front: hydration only adds missing fields,
-// so each property's pre-hydration local value is the conflict
-// baseline regardless of the order the gap-fills run.
+// so each property's pre-hydration value is the conflict baseline
+// regardless of gap-fill order.
 export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterable<string>): Conflict[] {
   const state = syncHost().state
   const conflicts: Conflict[] = []
@@ -104,11 +102,10 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
     }
 
     // Per-report ignore: skipped when triage is set (mutex), and when
-    // the id already carries any ignoredReports (local-wins on
-    // conflict, same shape as the field-by-field checks above). No
-    // conflict path for ignoredReports — the mutex makes a "user picks
-    // ignored over triage" resolution require dropping triage too,
-    // which the dialog doesn't model.
+    // the id already carries any ignoredReports (local-wins, like the
+    // checks above). No conflict path for ignoredReports — the mutex
+    // would make "user picks ignored over triage" require dropping
+    // triage too, which the dialog doesn't model.
     const triageEffectivelySet = triageNext != null || bucketOf(cur) != null
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
     if ((cur?.ignoredReports?.length ?? 0) > 0) continue
@@ -119,19 +116,18 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
   return conflicts
 }
 
-// Apply the user's per-conflict decisions returned by the hydration
-// conflict resolver. `decisions` is a map keyed by `${id}:${property}`
-// with `'local'` / `'imported'`. Triage's 'imported' branch also clears
-// the per-report ignored entries for the id (mutex).
+// Apply the user's per-conflict decisions from the hydration resolver.
+// `decisions` is keyed by `${id}:${property}` with `'local'` /
+// `'imported'`. Triage's 'imported' branch also clears the id's
+// per-report ignored entries (mutex).
 //
-// The resolver dialog is async (user time) so state.triage may have
-// changed while it was open — a chain that landed via `applyChainToBase`
-// or a saveTriage from an action handler. Re-read each property's
-// current local value at apply-time and SKIP any 'imported' decision
-// whose `local` no longer matches: the user (or another peer's chain)
-// has effectively voted "local" again. Without this guard the dialog's
-// `imported` choice would silently overwrite fresh local edits made
-// during the dialog window. Audit M-2.
+// The resolver dialog is async (user time), so state.triage may have
+// changed while open — a chain landing via `applyChainToBase` or a
+// saveTriage from an action handler. Re-read each property's current
+// local value at apply-time and SKIP any 'imported' decision whose
+// `local` no longer matches: the user (or a peer's chain) effectively
+// re-voted "local". Without this, the dialog's `imported` choice would
+// silently overwrite fresh local edits made during the dialog. Audit M-2.
 export function applyHydrationDecisions(
   conflicts: Conflict[],
   decisions: { [key: string]: 'local' | 'imported' },
@@ -167,14 +163,13 @@ function currentLocalValue(id: string, property: ConflictProperty): string {
   return ''
 }
 
-// Replace each in-scope id's live entry with `targetState`'s entry
-// (deleting it when empty). Mutual exclusion with triage: if the wire
-// entry carries a triage state we drop its ignoredReports — the action-
-// level invariant says triage and ignore can't coexist on a tab, and a
-// stale chain that carries both resolves in favor of triage (matches
-// the action handler, which clears ignore when setting triage). Out-of-
-// scope ids are untouched. `setEntry` normalizes the rest (legacy
-// `deleted` → bucket, prune empty fields, fresh arrays).
+// Replace each in-scope id's live entry with `targetState`'s (deleting
+// when empty). Triage mutex: if the wire entry carries triage we drop
+// its ignoredReports — triage and ignore can't coexist on a tab, and a
+// stale chain carrying both resolves in favor of triage (matching the
+// action handler, which clears ignore when setting triage). Out-of-scope
+// ids untouched. `setEntry` normalizes the rest (legacy `deleted` →
+// bucket, prune empty fields, fresh arrays).
 export function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | Iterable<string>): void {
   const state = syncHost().state
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)

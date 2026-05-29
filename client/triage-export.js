@@ -157,22 +157,20 @@ export async function applyTriageImport(payload, mode) {
   await saveTriage()
 
   // Repo URLs — merge per mode through secure-storage's per-key Web
-  // Lock (the keys are OPFS report names; values are URLs). The
-  // entire read-modify-write happens inside the lock with a fresh
-  // in-lock hydrate of the decrypted disk view, so this can't clobber
-  // a concurrent cross-tab `saveRepoUrlFor` and never writes plaintext
-  // over an encrypted slot. A raw localStorage RMW here would also
-  // fail to decrypt under an enabled vault (current would parse to
-  // `{}`, collapsing every mode into an overwrite).
+  // Lock (keys are OPFS report names, values URLs). The whole RMW
+  // runs inside the lock with a fresh in-lock hydrate of the
+  // decrypted disk view, so it can't clobber a concurrent cross-tab
+  // `saveRepoUrlFor` and never writes plaintext over an encrypted
+  // slot. A raw localStorage RMW would also fail to decrypt under an
+  // enabled vault (current parses to `{}`, collapsing every mode into
+  // an overwrite).
   //
-  // Best-effort, like `saveTriage` above (which swallows + warns on a
-  // failed write) and like the original repo-URL `try/catch`: the
-  // triage entries are already merged into `state.triage` and
-  // persisted by the time we get here, so a SECONDARY repo-URL write
-  // failure — e.g. a sibling tab locking the vault mid-import, making
-  // secure-storage refuse the plaintext write — must not surface as a
-  // blanket "Import failed" that contradicts the triage import that
-  // actually landed. Report it in the result instead of throwing.
+  // Best-effort: the triage entries are already merged and persisted
+  // by now, so a SECONDARY repo-URL write failure (e.g. a sibling tab
+  // locking the vault mid-import, making secure-storage refuse the
+  // plaintext write) must not surface as a blanket "Import failed"
+  // that contradicts the triage import that actually landed. Report
+  // it in the result instead of throwing.
   let repoUrlsApplied = 0
   let repoUrlError = null
   try {

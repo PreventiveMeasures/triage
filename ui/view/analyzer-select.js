@@ -1,12 +1,8 @@
 // `<analyzer-select>` — toolbar dropdown that filters findings to a
 // single analyzer (or `(none)` for findings that don't carry one).
-// Replaces the inline `<select id="analyzer-select" .value=${live(
-// state.filterAnalyzer)}>` + the id-keyed branch in events.js's
-// generic toolbar `change` listener. Hidden by the parent (via the
-// `analyzerOptions.length > 1` guard) when the report only has one
-// analyzer to begin with — the component itself doesn't filter that
-// edge case since the visibility decision lives in the parent's
-// flow.
+// Hidden by the parent (via the `analyzerOptions.length > 1` guard)
+// when the report only has one analyzer to begin with — the
+// visibility decision lives in the parent's flow, not here.
 //
 // Reactivity: extends StateElement, so reads of `state.filterAnalyzer`
 // during render() are tracked. The native `<select>`'s value is bound

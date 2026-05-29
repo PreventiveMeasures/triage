@@ -18,11 +18,10 @@
 //     to `conf-range`, the confidence-filter slider in the
 //     findings toolbar.
 //
-// Replaces the previous `<span id="conf-range-vals" .textContent
-// =${...}>` that events.js patched imperatively during drag —
-// that direct mutation poisoned Lit's part-cache when the span
-// carried a child interpolation, which crashed `_commitText` on
-// the next full render.
+// A component rather than a host-patched `<span .textContent>`:
+// imperatively mutating a span that carries a child interpolation
+// poisons Lit's part-cache and crashes `_commitText` on the next
+// full render.
 import { LitElement, html } from 'lit'
 
 class ConfRangeMirror extends LitElement {

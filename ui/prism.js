@@ -10,9 +10,8 @@
 // effect of its IIFE, so the language packs (plain scripts that
 // reference `Prism` as a free global) resolve correctly once they
 // run. ES module evaluation order matches the import order here,
-// so the dependency chains (clike → javascript → tsx, markup → ...)
-// stay correct. clike is a base grammar that javascript / typescript
-// extend; markup is a base for html.
+// so base-grammar chains stay correct: clike must precede the
+// javascript/typescript that extend it (→ jsx/tsx), markup before html.
 import Prism from 'prismjs/prism.js'
 import 'prismjs/components/prism-markup.js'
 import 'prismjs/components/prism-clike.js'

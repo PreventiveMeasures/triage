@@ -1,16 +1,11 @@
 /* `<comment-dialog>` layer — multi-line editor for the per-finding
-   .mark-comment button. Composed into the dialog's shadow
-   `static styles` on top of dialog-base.css (the `dialog` frame +
-   reset + WCO) and dialog-severity.css (the `.conflict-sev` chip).
-   Shadow isolation lets the body address structural singletons by
-   type (`header h3`, `textarea`) and use short, unprefixed class
-   names — there's no global scope to collide with. Flattened from
-   the `.comment-dialog { … }` block in styles/dialogs.css. */
+   .mark-comment button. Composed into the shadow `static styles` on
+   top of dialog-base.css and dialog-severity.css (`.conflict-sev`). */
 
-/* Roomier frame than the base 480px for the textarea. */
+/* Roomier than the base 480px for the textarea. */
 dialog { max-width: 640px; width: min(94vw, 640px); }
 
-header h3 { margin: 0 0 .4rem; }  /* tighter than base; font/weight inherited */
+header h3 { margin: 0 0 .4rem; }  /* tighter than base */
 .finding {
   display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap;

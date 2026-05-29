@@ -1,12 +1,10 @@
 import { depsDirName } from '../format.js'
 
-// Graph-flavored utilities. `treeAnchor` /
-// `computeFindingCountsByFile` / `computeTransitiveCounts` /
-// `fileHasFindings` / `totalFindings` moved to
-// `view/file-counts.js` (they're consumed by the Files tab and
-// graph data prep, not by graph-internal rendering — so they
-// don't belong under `graph/`). `forceLayout` lives in
-// `./force-layout.js` next to canvas.js for the same reason.
+// Graph-flavored utilities. Helpers consumed by the Files tab and
+// graph data prep (rather than graph-internal rendering) live in
+// `view/file-counts.js`: `treeAnchor`, `computeFindingCountsByFile`,
+// `computeTransitiveCounts`, `fileHasFindings`, `totalFindings`.
+// `forceLayout` lives in `./force-layout.js` next to canvas.js.
 
 // Group key for clustering + coloring nodes in the graph. Files
 // inside the active deps dir (`node_modules/<pkg>/` by default;
@@ -27,22 +25,20 @@ export function packageOf(file) {
 }
 
 // ── Vivid per-package color palette ─────────────────────────────────────────
-// Each package gets a vivid, high-saturation hue so clusters read distinctly.
-// Curated flat palette — 20 perceptually distinct colors. Drawn from
-// Tableau 20 + adjusted for UI legibility. Ordered so adjacent indices
-// have maximum hue distance (not sequential), meaning even small
-// graphs with 3-4 packages get very distinct colors.
+// 20 perceptually distinct colors from Tableau 20, adjusted for UI
+// legibility. Ordered for maximum hue distance between adjacent
+// indices (not sequential) so even small 3-4 package graphs get
+// very distinct colors.
 //
-// Two parallel palettes — same hue order, different lightness, so a
-// package keeps its identity (a "blue package" stays blue) when the
-// user toggles between dark and light themes; only the saturation /
-// lightness shifts. The dark palette stays bright and pastel so it
-// reads on the near-black canvas backdrop; the light palette pulls
-// every color toward GitHub-primary saturated tones so it doesn't
-// wash out against #f6f8fa. Several of the dark variants (the pinks,
-// pale blues, light grays, sage greens) drop ~25-30 lightness in the
-// light variant — they were the worst offenders for "I can barely
-// see the node" on a light bg.
+// Two parallel palettes — same hue order, different lightness — so a
+// package keeps its identity (a "blue package" stays blue) across
+// dark/light themes; only saturation/lightness shifts. Dark stays
+// bright and pastel to read on the near-black canvas; light pulls
+// toward GitHub-primary saturated tones so colors don't wash out
+// against #f6f8fa. Several dark variants (pinks, pale blues, light
+// grays, sage greens) drop ~25-30 lightness in the light variant —
+// they were the worst "I can barely see the node" offenders on a
+// light bg.
 const PKG_PALETTE_DARK = [
   '#4e9af1', // blue
   '#f28e2b', // orange

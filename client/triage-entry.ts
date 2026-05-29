@@ -1,8 +1,7 @@
 // Pure operations over the unified triage map — one
-// `Map<findingId, TriageEntry>` that replaces the former parallel
-// `state.markers` / `state.triageState` / `state.comments` /
-// `state.fixes` Maps plus the `state.ignoredIds` Set. Shared by the
-// live `client/` writers (operating on `state.triage`) and the sync
+// `Map<findingId, TriageEntry>` consolidating markers, triage state,
+// comments, fixes, and per-report ignores. Shared by the live
+// `client/` writers (operating on `state.triage`) and the sync
 // projection (operating on `syncHost().state.triage`), so these take
 // the map explicitly and hold no module state — safe to unit-test in
 // isolation and free of any host coupling.

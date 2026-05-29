@@ -1,7 +1,6 @@
-// Triage garbage collection + pre-deletion impact analysis. Lifted
-// out of `client/triage.js` (which had grown past the 300-line
-// max-lines lint) so the persistence + cross-tab-sync core stays
-// focused on the load/save path; the report-delete flows reach
+// Triage garbage collection + pre-deletion impact analysis. Split
+// from `client/triage.js` so the persistence + cross-tab-sync core
+// stays focused on the load/save path; the report-delete flows reach
 // here for the analyzer + the GC pass.
 //
 // Surface:
