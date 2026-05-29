@@ -130,6 +130,10 @@ export type PutResult =
   | { ok: true; meta: { version: number; incarnation: string; contentLength: number } }
   | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
+  // Per-workspace concurrent-staging cap tripped — too many uncommitted
+  // uploads in flight for this tag. Transient (unlike `workspace-full`):
+  // retry once an in-flight upload settles or the staging TTL reaps it.
+  | { ok: false; reason: 'too-many-uploads' }
   // Operator-side first-action gate fired: this is the FIRST signed
   // action against a workspace tag that doesn't yet exist on the
   // server, and the connection hasn't authenticated. Caller surfaces
@@ -638,6 +642,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     if (reply.type === 'unauthorized') return { ok: false, reason: 'unauthorized' }
     if (reply.type === 'objstore-put-error') {
       if (reply['reason'] === 'workspace-full') return { ok: false, reason: 'workspace-full' }
+      if (reply['reason'] === 'too-many-uploads') return { ok: false, reason: 'too-many-uploads' }
       throw new Error(`objstore: put-error reason='${String(reply['reason'])}'`)
     }
     if (reply.type === 'objstore-conflict') {
@@ -932,6 +937,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
         return { ok: true, meta: { version: raw.meta.version, incarnation: raw.meta.incarnation, contentLength: raw.meta.contentLength } }
       }
       if (raw.reason === 'workspace-full') return { ok: false, reason: 'workspace-full' }
+      if (raw.reason === 'too-many-uploads') return { ok: false, reason: 'too-many-uploads' }
       if (raw.reason === 'unauthorized') return { ok: false, reason: 'unauthorized' }
       if (raw.current) noteVersion(full, resourceTag, raw.current.incarnation, raw.current.version)
       return { ok: false, reason: 'conflict', current: raw.current }
@@ -1125,6 +1131,7 @@ type RawPutResult =
   | { ok: true; meta: { version: number; incarnation: string; contentHash: string; contentLength: number } }
   | { ok: false; reason: 'conflict'; current: { version: number; incarnation: string } | null }
   | { ok: false; reason: 'workspace-full' }
+  | { ok: false; reason: 'too-many-uploads' }
   | { ok: false; reason: 'unauthorized' }
 
 type RawDeleteResult =

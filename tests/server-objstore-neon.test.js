@@ -30,7 +30,7 @@ import { Buffer } from 'node:buffer'
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
-import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive } from '../server/objstore/store.ts'
+import { MAX_RESOURCES_PER_WORKSPACE, MAX_STAGING_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
 import { freshNeonObjstore, twoNeonReplicas } from './_neon-pglite.js'
@@ -231,6 +231,34 @@ describe('beginPut — per-workspace resource cap (Neon)', () => {
       await seedLiveRows(pg, 'workspace-tag-1', MAX_RESOURCES_PER_WORKSPACE)
       const begin = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-2', resourceTag: 'res-new' }))
       assert.equal(begin.ok, true)
+    } finally { await cleanup() }
+  })
+})
+
+describe('beginPut — per-workspace concurrent-staging cap (Neon)', () => {
+  it('rejects the (MAX_STAGING+1)th concurrent staging begin with reason=too-many-uploads', async () => {
+    const { handle, cleanup } = await freshNeonObjstore()
+    try {
+      // Exercises buildCountStaging on the Neon backend: MAX_STAGING
+      // uncommitted begins accumulate staging rows, the next trips the cap.
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        const b = await beginPut(handle, fakeBegin({ resourceTag: `r-${i.toString().padStart(4, '0')}` }))
+        assert.equal(b.ok, true)
+      }
+      const over = await beginPut(handle, fakeBegin({ resourceTag: 'one-too-many' }))
+      assert.equal(over.ok, false)
+      assert.equal(over.reason, 'too-many-uploads')
+    } finally { await cleanup() }
+  })
+
+  it('is per-workspace, not global', async () => {
+    const { handle, cleanup } = await freshNeonObjstore()
+    try {
+      for (let i = 0; i < MAX_STAGING_PER_WORKSPACE; i++) {
+        assert.equal((await beginPut(handle, fakeBegin({ resourceTag: `r-${i.toString().padStart(4, '0')}` }))).ok, true)
+      }
+      const other = await beginPut(handle, fakeBegin({ workspaceTag: 'workspace-tag-2', resourceTag: 'r-0000' }))
+      assert.equal(other.ok, true)
     } finally { await cleanup() }
   })
 })

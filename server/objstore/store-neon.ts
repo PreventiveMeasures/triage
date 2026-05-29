@@ -304,6 +304,17 @@ function buildCountLive(sql: NeonSql): GetStmt<[string], { c: number }> {
   } }
 }
 
+function buildCountStaging(sql: NeonSql): GetStmt<[string], { c: number }> {
+  return { get: async (tag) => {
+    const rows = await sql.query(
+      `SELECT COUNT(*) AS c FROM workspace_object_staging WHERE workspace_tag = $1`,
+      [tag],
+    ) as Array<{ c: number | string | bigint }>
+    const r = rows[0]
+    return r ? { c: num(r.c) } : undefined
+  } }
+}
+
 export async function openNeonObjstore(connectionString: string, blob: BlobBackend): Promise<Handle> {
   // Same dynamic-import pattern as db-neon.ts — routed through the
   // local `../neon-driver.ts` re-export wrapper so the peer dep stays
@@ -347,5 +358,6 @@ export async function openNeonObjstore(connectionString: string, blob: BlobBacke
     listAllStaging: buildListAllStaging(sql),
     listLiveTags: buildListLiveTags(sql),
     countLive: buildCountLive(sql),
+    countStaging: buildCountStaging(sql),
   }
 }
