@@ -475,12 +475,16 @@ sidebar-view-button { display: contents; }
   width: 1px; background: var(--border);
 }
 
-/* Workspace-claimed bundles whose bytes aren't on this device — typically
-   imported from another device. Rendered muted + italic so the user sees
-   what's referenced without being misled into clicking (no button wrapper,
-   non-draggable). The tree-line decoration from `.file-item.indented`
-   still applies, so the row reads as "part of the workspace". */
-.file-item.bundle-missing > .file-name {
+/* Workspace-claimed bundles/reports whose bytes aren't on this device —
+   typically imported from another device, or evicted with no cloud copy.
+   Rendered muted + italic so the user sees what's referenced without
+   being misled into clicking (no button wrapper, non-draggable). The
+   tree-line decoration from `.file-item.indented` still applies, so the
+   row reads as "part of the workspace". `report-missing` shares the
+   styling — a missing report shows its filename in the same muted slot a
+   missing bundle uses for its integrity prefix. */
+.file-item.bundle-missing > .file-name,
+.file-item.report-missing > .file-name {
   display: flex; align-items: center; gap: .5rem;
   padding: .2rem .3rem .2rem 1.4rem;
   color: var(--muted);
@@ -506,13 +510,14 @@ sidebar-view-button { display: contents; }
    styles/theme.css). `:host-context` walks across the shadow
    boundary so a `body.theme-pink` ancestor in light DOM still gates
    these rules from inside the sidebar's shadow stylesheet. The
-   selectors mirror the three mono declarations above (rename
-   input, file label, bundle-missing label) so specificity wins
-   over the originals; everything else in the sidebar already used
+   selectors mirror the mono declarations above (rename input, file
+   label, bundle-missing label, report-missing label) so specificity
+   wins over the originals; everything else in the sidebar already used
    `font: inherit` and just picks up the body font automatically. */
 :host-context(body.theme-pink) .workspace-rename-input,
 :host-context(body.theme-pink) .file-item button.file-name .file-label,
-:host-context(body.theme-pink) .file-item.bundle-missing .file-label {
+:host-context(body.theme-pink) .file-item.bundle-missing .file-label,
+:host-context(body.theme-pink) .file-item.report-missing .file-label {
   font-family: inherit;
 }
 
