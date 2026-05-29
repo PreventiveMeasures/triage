@@ -15,6 +15,7 @@ import {
   decryptObjstorePayload,
   deriveObjstoreKeys,
   encryptObjstorePayload,
+  objstorePayloadWireLength,
   unwrapBundleContent,
   wrapBundleContent,
 } from '../client/sync/objstore-content-crypto.ts'
@@ -317,6 +318,31 @@ describe('client/objstore-content-crypto', () => {
       const reboundTag = await computeResourceTag(tagKey, decoded.fileName)
       assert.notEqual(reboundTag, realTag,
         'rebinding catches the swap: decoded fileName HMACs to a different tag than the wire tag')
+    })
+  })
+
+  describe('objstorePayloadWireLength', () => {
+    it('predicts the exact wire length encryptObjstorePayload produces', async () => {
+      const { contentKey, tagKey, workspaceTag } = await deriveObjstoreKeys(FIXED_KEY_BASE64, 'ws')
+      // Cover empty, ASCII, and multi-byte (UTF-8) fileNames + varying
+      // content sizes — the prediction must match the real encrypt's
+      // byte length in every case (it's what the recovery "matching the
+      // expected one" check compares against the row's contentLength).
+      const cases = [
+        { fileName: 'a.json', content: Buffer.alloc(0) },
+        { fileName: 'report.json', content: Buffer.from('hello world') },
+        { fileName: 'r.json', content: crypto.getRandomValues(new Uint8Array(5000)) },
+        { fileName: 'résumé-€.json', content: Buffer.from('unicode name') },
+        { fileName: '', content: Buffer.from('empty name is legal at this layer') },
+      ]
+      for (const { fileName, content } of cases) {
+        const tag = await computeResourceTag(tagKey, fileName)
+        const actual = encryptObjstorePayload(contentKey, fileName, content, workspaceTag, tag).length
+        assert.equal(
+          objstorePayloadWireLength(fileName, content.length), actual,
+          `wire length mismatch for fileName=${JSON.stringify(fileName)} contentLen=${content.length}`,
+        )
+      }
     })
   })
 })

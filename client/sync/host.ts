@@ -62,6 +62,10 @@ export interface SyncHost {
   gunzipBytes(bytes: Uint8Array): Promise<Uint8Array>
   listBundles(): Promise<SyncHostBundleMeta[]>
   listFiles(): Promise<string[]>
+  // Raw bytes of a stored report — the gzipped on-disk representation
+  // the objstore upload path consumes. Used by objstore recovery to
+  // reupload a locally-held report whose remote bytes went missing.
+  readFileBytes(name: string): Promise<Uint8Array>
   readBundle(integrity: string): Promise<Uint8Array | null>
   saveBundle(name: string, bytes: Uint8Array): Promise<unknown>
   saveFileBytes(name: string, bytes: Uint8Array): Promise<unknown>

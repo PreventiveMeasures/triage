@@ -1,0 +1,39 @@
+/* Objstore recovery dialog — per-object status list. Composed on top
+   of dialog-base.css + dialog-list.css (reuses .lwd-body, .lwd-kind-tag,
+   .nwd-actions); only the recovery-specific `.rec-*` chrome lives here. */
+.rec-list {
+  margin: .2rem 0 .55rem; padding: 0;
+  list-style: none;
+  max-height: 320px; overflow-y: auto;
+}
+.rec-row {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .28rem .15rem;
+  font-size: .8rem; line-height: 1.4;
+  border-bottom: 1px solid rgb(from var(--text) r g b / .06);
+}
+.rec-row:last-child { border-bottom: none; }
+.rec-label {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rec-status {
+  flex: 0 0 auto;
+  padding: 0 .4rem;
+  border-radius: 4px;
+  font-size: .68rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.rec-status-checking { color: var(--muted); }
+.rec-status-good { color: var(--ok, #16a34a); }
+.rec-status-reuploaded { color: var(--accent, #2563eb); }
+.rec-status-missing { color: var(--critical, #dc2626); }
+.rec-summary {
+  margin: .1rem 0 .2rem;
+  color: var(--muted); font-size: .76rem; line-height: 1.45;
+}
+.rec-error {
+  margin: .3rem 0 .2rem;
+  color: var(--critical, #f87171); font-size: .76rem; line-height: 1.4;
+}

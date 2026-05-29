@@ -18,12 +18,14 @@ import { deleteFile, listFiles, readFile, readFileBytes, saveFileBytes } from '.
 import { triageSync } from '../client/sync/triage-sync.ts'
 import { createWorkspace, deleteWorkspace, listWorkspaces, setBundleWorkspace, setReportWorkspace } from '../client/workspaces.js'
 import { bootServer } from './_helpers.js'
+import { readdirSync, rmSync } from 'node:fs'
+import path from 'node:path'
 
 const {
   closeWorkspace, deleteBundleFromRemote, deleteFromRemote,
   discoverRemoteBundleIntegrities, discoverRemoteFileNames,
   fetchFile, isBundleInRemote, isInRemote,
-  onAutoDownloaded, onChange, openWorkspace, putFile,
+  onAutoDownloaded, onChange, openWorkspace, putFile, recheckRemoteStorage,
   remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
 } = await import('../client/sync/objstore-presence.js')
 
@@ -1454,6 +1456,67 @@ describe('client/sync/objstore-presence', () => {
       const integrities = await discoverRemoteBundleIntegrities(ws.id)
       assert.ok(integrities.includes(integrity),
         `membership-aware skip must run fetchByTag for cached-but-unclaimed integrity; got ${JSON.stringify(integrities)}`)
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage re-uploads a local report whose remote bytes are gone; marks peer-only missing; then good', async () => {
+    const ws = await createWorkspace('objstore-recovery')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const localName = `recover-local-${crypto.randomUUID()}.json`
+    const localBytes = encodeUtf8(`local report payload for ${localName}`)
+    try {
+      // A report we hold locally AND have uploaded to the relay.
+      await saveFileBytes(localName, localBytes)
+      await setReportWorkspace(localName, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, localName, localBytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, localName), 'local report in remote')
+
+      // A peer uploads a report we do NOT hold locally.
+      const peer = await openPeerSession(ws)
+      const peerName = `peer-only-${crypto.randomUUID()}.json`
+      try {
+        assert.equal((await peer.put({ fileName: peerName, content: encodeUtf8('peer payload'), prev: null })).ok, true)
+        await awaitPresence(() => remoteCount(ws.id) >= 2, 'peer report visible in remote')
+        assert.ok(await fetchFile(ws.id, localName), 'local report fetchable before blob loss')
+
+        // Simulate the 503 case: the relay loses the content bytes for
+        // every live blob (reaper race / Vercel-Blob propagation loss)
+        // while the DB rows survive. Delete only top-level live `.bin`
+        // files — keep the dir + `.staging` so the recovery re-upload's
+        // PUT can stage + promote.
+        const liveBlobs = readdirSync(blobDir).filter((n) => n.endsWith('.bin'))
+        assert.ok(liveBlobs.length >= 2, `expected >=2 live blobs, got ${liveBlobs.length}`)
+        for (const n of liveBlobs) rmSync(path.join(blobDir, n))
+        assert.equal(await fetchFile(ws.id, localName), null, 'bytes gone → fetch returns null (persistent 503)')
+
+        // (1) Recovery: re-check + repair. The local report matches (same
+        // name + same re-encrypted wire length) → re-uploaded; the
+        // peer-only report has no local copy → missing.
+        const r1 = await recheckRemoteStorage(ws.id)
+        assert.equal(r1.counts.reuploaded, 1, `expected 1 reuploaded, got ${JSON.stringify(r1.counts)}`)
+        assert.equal(r1.counts.missing, 1, `expected 1 missing, got ${JSON.stringify(r1.counts)}`)
+        assert.equal(r1.items.find((i) => i.identifier === localName)?.status, 'reuploaded')
+
+        // The re-upload restored the bytes — fetch works again, same content.
+        const restored = await fetchFile(ws.id, localName)
+        assert.ok(restored, 'local report fetchable again after recovery')
+        assert.equal(decodeUtf8(restored.content), decodeUtf8(localBytes))
+
+        // (2) A second re-check: the repaired report is now healthy
+        // ('good'); the peer-only one (never recoverable here) stays missing.
+        const r2 = await recheckRemoteStorage(ws.id)
+        assert.equal(r2.counts.good, 1, `expected 1 good, got ${JSON.stringify(r2.counts)}`)
+        assert.equal(r2.counts.reuploaded, 0)
+        assert.equal(r2.counts.missing, 1)
+      } finally {
+        peer.close()
+      }
     } finally {
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)

@@ -45,6 +45,10 @@ const BUNDLE_TAG_HMAC_PREFIX = 'objstore-bundle-tag\n'
 // each PUT MUST generate a fresh nonce — never derived from
 // fileName or version.
 const AEAD_NONCE_LEN = 12
+// ChaCha20-Poly1305 appends a fixed 16-byte Poly1305 authentication
+// tag to the ciphertext, so a payload's wire byte-length is a pure
+// function of the plaintext length (see `objstorePayloadWireLength`).
+const AEAD_TAG_LEN = 16
 
 export type ObjstoreKeys = {
   // Ed25519 CryptoKey scoped to `['sign']`. Mirrors the existing
@@ -179,6 +183,24 @@ export function encryptObjstorePayload(
   out.set(nonce, 0)
   out.set(ciphertext, AEAD_NONCE_LEN)
   return out
+}
+
+// Wire byte-length `encryptObjstorePayload` produces for a given
+// (fileName, content) — computed WITHOUT encrypting. The framing is a
+// fixed `nonce(12) || AEAD( u16BE(nameLen) || name || content )` and
+// the AEAD adds a fixed 16-byte tag, so the length is a pure function
+// of the name's UTF-8 byte length and the content length.
+//
+// The recovery path uses this as the "matching the expected one" gate:
+// once a remote blob's bytes are gone (the server 503s the GET), the
+// only surviving "same content?" signal is the live row's recorded
+// `contentLength` — the random per-PUT nonce means the contentHash can
+// NOT be reproduced from local plaintext. A locally-held report is
+// reuploaded only when its re-encrypted wire length equals that
+// recorded length. Kept next to the framing it mirrors so the two
+// can't drift.
+export function objstorePayloadWireLength(fileName: string, contentByteLength: number): number {
+  return AEAD_NONCE_LEN + 2 + encodeUtf8(fileName).length + contentByteLength + AEAD_TAG_LEN
 }
 
 // Bundles carry both the sha512 integrity (for tag round-trip
