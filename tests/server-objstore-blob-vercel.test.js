@@ -313,7 +313,10 @@ describe('vercel blob backend — error & race surfaces', () => {
     // FS backend, which maps ENOENT → unavailable (blob-fs.ts).
     const { handle, cleanup } = await freshVercelHandle()
     try {
-      const opened = await handle.blob.openLiveReader('ws-1', 'missing-tag')
+      // A syntactically valid (43-char base64url) content hash that was
+      // never written — representative of a real hash, and robust if the
+      // backend later validates contentHash shape.
+      const opened = await handle.blob.openLiveReader('ws-1', chash('absent-resource'))
       assert.equal(opened.ok, false)
       assert.equal(opened.reason, 'unavailable')
       assert.notEqual(opened.reason, 'not-found')
@@ -385,8 +388,11 @@ describe('vercel blob backend — error & race surfaces', () => {
       // Now the blob bytes vanish out from under the still-live row —
       // models a reaper GC of a just-superseded hash, or a Vercel-Blob
       // read-after-write / propagation loss. The DB row is untouched, so
-      // the same token still matches (version, incarnation).
-      blobs.delete(liveName('ws-1', 'res-1'))
+      // the same token still matches (version, incarnation). Derive the
+      // pathname from the live row's actual contentHash (not the fixture's
+      // chash(resourceTag) convention) so this stays correct if the
+      // fixture or production hashing changes.
+      blobs.delete(`ws-1/${row.contentHash}.bin`)
       const goneRes = mockRes()
       await handleRest(deps, mockReq({ method: 'GET', url, token }), goneRes)
       assert.equal(goneRes.statusCode, 503, 'row present + bytes gone → 503 unavailable')
