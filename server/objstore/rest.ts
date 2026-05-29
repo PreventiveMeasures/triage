@@ -451,7 +451,7 @@ async function openLiveSnapshot(
   // bytes behind `live.content_hash` can never change underneath us —
   // the worst a race can do is have the reaper GC an already-superseded
   // hash just before we open it, which surfaces as openLiveReader
-  // not-found → `unavailable` → 503, and the client refetches. We can
+  // returning `unavailable` → 503, and the client refetches. We can
   // never serve torn or wrong bytes. (For the FS backend the open also
   // returns a pinned fd; for the Vercel backend a fetch-backed stream.)
   const live = await deps.handle.selectLiveOne.get(route.tag, route.resourceTag)

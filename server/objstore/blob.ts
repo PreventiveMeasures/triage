@@ -83,13 +83,21 @@ export type LiveReader = {
   close(): Promise<void>
 }
 
-// `not-found` maps to HTTP 404 (the live blob is gone or never
-// existed); `unavailable` maps to HTTP 503 (transient backend issue
-// the reaper will eventually sort out). The REST layer uses this
-// discrimination to set the right status code.
+// A missing blob is always `unavailable` (→ HTTP 503), never a 404. The
+// byte plane has NO view of the metadata row, so it can't decide whether
+// a resource "doesn't exist" — only whether specific bytes are present
+// right now. The authoritative "this resource/version is gone" 404 is the
+// REST layer's call, made from the live row BEFORE it opens a reader
+// (rest.ts openLiveSnapshot). By the time `openLiveReader` runs the row is
+// already confirmed, so an absent blob means a transient bytes/metadata
+// desync the reaper (or store propagation) reconciles — exactly the
+// `unavailable`/503 contract, which the client retries. Both backends MUST
+// map a missing blob to `unavailable` (FS: ENOENT; Vercel: BlobNotFoundError
+// / null get()). Returning a 404-mapping reason here is the bug fixed in the
+// Vercel backend — the variant is intentionally absent so it can't recur.
 export type OpenLiveResult =
   | { ok: true; reader: LiveReader }
-  | { ok: false; reason: 'not-found' | 'unavailable' }
+  | { ok: false; reason: 'unavailable' }
 
 export type BlobBackend = {
   // Per-workspace setup. FS creates the on-disk staging directory;
@@ -128,9 +136,10 @@ export type BlobBackend = {
   promoteStagingToLive(tag: string, stagingId: string, contentHash: string): Promise<boolean>
 
   // Open a streaming reader for the content-addressed live blob.
-  // `not-found` lets the REST layer return 404; `unavailable` returns
-  // 503 for a transient state (file/blob missing while the row still
-  // exists — reaper will reconcile on the next sweep).
+  // Called only after the REST layer has confirmed the live row, so a
+  // missing blob is the transient "row present, bytes gone" state →
+  // `unavailable` (HTTP 503), which the reaper reconciles and the client
+  // retries. Never a 404 from here — see OpenLiveResult above.
   openLiveReader(tag: string, contentHash: string): Promise<OpenLiveResult>
 
   // Idempotent deletes. Backends MUST tolerate "already gone" as
