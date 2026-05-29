@@ -12,7 +12,7 @@ import { Buffer } from 'node:buffer'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
@@ -20,6 +20,8 @@ import { createHash } from 'node:crypto'
 import { openVercelBlobBackend } from '../server/objstore/blob-vercel.ts'
 import { abortPut, beginPut, commitPut, deleteObject, getLive, openObjstore } from '../server/objstore/store.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
+import { handleRest } from '../server/objstore/rest.ts'
+import { mintGetToken, newTokenSecret } from '../server/objstore/tokens.ts'
 
 // 64-byte b64url, 86 chars no padding (SIG_RE)
 function b64u64() { return 'a'.repeat(86) }
@@ -214,6 +216,34 @@ async function streamBytesToStaging(handle, tag, sid, bytes) {
   await writer.finalize()
 }
 
+// Minimal IncomingMessage / ServerResponse stand-ins for driving
+// `handleRest` end-to-end without a live TCP server. On the GET path
+// handleRest reads only req.method / req.url / req.headers and writes
+// the status via res.writeHead, then res.end (deny) or pipeline (200).
+// The res is a real Writable so the 200 success path's
+// `pipeline(reader.stream, res)` works just as in production.
+function mockReq({ method, url, token }) {
+  return { method, url, headers: token ? { authorization: `Bearer ${token}` } : {} }
+}
+function mockRes() {
+  // Capture raw Buffer chunks so the helper is byte-exact for the
+  // octet-stream GET path (production serves arbitrary ciphertext bytes).
+  // `bodyBuffer` is binary-safe; `body` decodes the FULL concatenation
+  // once as UTF-8 (for JSON error envelopes) — never per-chunk, which
+  // could split a multibyte sequence across write() boundaries.
+  const chunks = []
+  const res = new Writable({ write(chunk, _enc, cb) { chunks.push(Buffer.from(chunk)); cb() } })
+  res.statusCode = 0
+  res.headersSent = false
+  res.writeHead = function writeHead(status) { this.statusCode = status; this.headersSent = true; return this }
+  Object.defineProperty(res, 'bodyBuffer', { get() { return Buffer.concat(chunks) } })
+  Object.defineProperty(res, 'body', { get() { return Buffer.concat(chunks).toString() } })
+  return res
+}
+function restDepsFor(handle, secret) {
+  return { handle, secret, broadcast: () => {}, publishObjPut: () => {}, debug: false }
+}
+
 describe('vercel blob backend — happy path', () => {
   it('begin → put bytes → commit promotes staging → live', async () => {
     const { handle, blobs, cleanup } = await freshVercelHandle()
@@ -274,12 +304,22 @@ describe('vercel blob backend — error & race surfaces', () => {
     } finally { cleanup() }
   })
 
-  it('openLiveReader returns not-found when the blob is missing', async () => {
+  it('openLiveReader returns unavailable (NOT not-found) when the blob is missing', async () => {
+    // Byte-plane contract: a missing blob maps to `unavailable` (→ HTTP
+    // 503), never `not-found`/404. The byte plane has no view of the
+    // metadata row, so it can't decide existence — only the REST layer's
+    // live-row check (openLiveSnapshot) produces a terminal 404. (This
+    // test calls openLiveReader directly, with no live row.) Mirrors the
+    // FS backend, which maps ENOENT → unavailable (blob-fs.ts).
     const { handle, cleanup } = await freshVercelHandle()
     try {
-      const opened = await handle.blob.openLiveReader('ws-1', 'missing-tag')
+      // A syntactically valid (43-char base64url) content hash that was
+      // never written — representative of a real hash, and robust if the
+      // backend later validates contentHash shape.
+      const opened = await handle.blob.openLiveReader('ws-1', chash('absent-resource'))
       assert.equal(opened.ok, false)
-      assert.equal(opened.reason, 'not-found')
+      assert.equal(opened.reason, 'unavailable')
+      assert.notEqual(opened.reason, 'not-found')
     } finally { cleanup() }
   })
 
@@ -313,6 +353,51 @@ describe('vercel blob backend — error & race surfaces', () => {
       const chunks = []
       for await (const chunk of opened.reader.stream) chunks.push(chunk)
       assert.equal(Buffer.concat(chunks).toString(), payload.toString())
+    } finally { cleanup() }
+  })
+
+  it('REST GET → 503 (not 404) when the live row is present but the blob bytes are gone', async () => {
+    // The exact "objstore link 404s in vercel mode" regression, end-to-end
+    // through handleRest: a GET token still matches the live row's
+    // (version, incarnation), but the content-addressed blob is missing
+    // (reaper GC racing a version bump, or Vercel-Blob propagation lag).
+    // The byte plane must surface this as 503 `unavailable` (transient —
+    // the client retries), never 404 (which the client treats as a
+    // terminal "gone" and stops re-fetching). Before the fix the Vercel
+    // backend returned not-found here → handleRestGet emitted 404.
+    const { handle, blobs, cleanup } = await freshVercelHandle()
+    try {
+      const secret = newTokenSecret()
+      const deps = restDepsFor(handle, secret)
+      // Commit a live row + its blob the normal way.
+      const payload = Buffer.from('objstore-link-bytes')
+      const begin = await beginPut(handle, fakeBegin({ expectedLength: payload.byteLength }))
+      assert.equal(begin.ok, true)
+      await streamBytesToStaging(handle, 'ws-1', begin.stagingId, payload)
+      const c = await commitPut(handle, { workspaceTag: 'ws-1', resourceTag: 'res-1', stagingId: begin.stagingId })
+      assert.equal(c.ok, true)
+      const row = await getLive(handle, 'ws-1', 'res-1')
+      // Mint a GET token that matches the live row exactly (the "link").
+      const { token } = mintGetToken(secret, 'ws-1', 'res-1', row.version, row.incarnation)
+      const url = '/api/objstore/ws-1/res-1'
+      // Positive control: the link serves bytes (200) while the blob exists.
+      const okRes = mockRes()
+      await handleRest(deps, mockReq({ method: 'GET', url, token }), okRes)
+      assert.equal(okRes.statusCode, 200, 'link serves bytes while the blob is present')
+      assert.equal(Buffer.compare(okRes.bodyBuffer, payload), 0, 'serves the exact blob bytes')
+      // Now the blob bytes vanish out from under the still-live row —
+      // models a reaper GC of a just-superseded hash, or a Vercel-Blob
+      // read-after-write / propagation loss. The DB row is untouched, so
+      // the same token still matches (version, incarnation). Derive the
+      // pathname from the live row's actual contentHash (not the fixture's
+      // chash(resourceTag) convention) so this stays correct if the
+      // fixture or production hashing changes.
+      blobs.delete(`ws-1/${row.contentHash}.bin`)
+      const goneRes = mockRes()
+      await handleRest(deps, mockReq({ method: 'GET', url, token }), goneRes)
+      assert.equal(goneRes.statusCode, 503, 'row present + bytes gone → 503 unavailable')
+      assert.notEqual(goneRes.statusCode, 404, 'must NOT be the terminal 404 the client gives up on')
+      assert.deepEqual(JSON.parse(goneRes.body), { error: 'unavailable' })
     } finally { cleanup() }
   })
 

@@ -299,13 +299,22 @@ type WireMessage = { type?: unknown; workspaceTag?: unknown; resourceTag?: unkno
 // all. Empirically the queue depth is bounded by inflight ops.
 const MAX_QUEUE_SIZE = 64
 
-// REST GET vs concurrent commit: a token minted at v1 can race a
-// commitPut that lands v2 before the GET reaches the server, which
-// then 404s (token-ver mismatch) or 503s (mid-promote bytes/meta
-// desync). Cap retries small — the race window is microseconds, so
-// the next attempt usually picks up the stable post-commit state.
-const REST_RACE_MAX_ATTEMPTS = 4
-const REST_RACE_BACKOFF_MS = 15
+// REST GET vs concurrent commit / backend propagation: a token minted at
+// v1 can race a commitPut that lands v2 before the GET reaches the server
+// (→ 404 token-ver mismatch), or the live row can be present while its
+// bytes are momentarily absent (→ 503): the commitPut promote→CAS window,
+// a reaper sweep on a just-superseded hash, or — on the Vercel Blob byte
+// plane — read-after-write / edge-propagation lag on a freshly-promoted
+// private blob. The first two are microsecond races; Vercel-Blob
+// propagation can run hundreds of ms, so the budget is an exponential-
+// backoff CEILING, not a fixed cost: nearly every fetch resolves on the
+// first attempt, and only a genuinely degraded read spends the full budget
+// before surfacing null. A truly absent resource never enters this loop —
+// the WS fetch returns `objstore-fetch-not-found` and `_rawFetch` returns
+// null immediately (see `_rawFetchOnce`).
+const REST_RACE_MAX_ATTEMPTS = 6
+const REST_RACE_BACKOFF_BASE_MS = 25
+const REST_RACE_BACKOFF_CAP_MS = 500
 
 // Per-workspace state held by the client's session map. The shared
 // socket routes broadcasts here via `workspaceTag`; the per-session
@@ -704,7 +713,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // `fetchByTag` (public) wrap this with decryption.
   //
   // A concurrent commit/delete can land between the WS token-issue
-  // and the REST GET. The server's openLiveUnderLock gates on the
+  // and the REST GET. The server's openLiveSnapshot gates on the
   // token's `ver` matching the current live row, so the racing
   // outcomes the GET observes are:
   //   - REST 404 "not-found": row was at v1 when token issued, now
@@ -726,9 +735,14 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
       if (r.kind === 'ok') return r.value
       if (r.kind === 'not-found') return null
       // r.kind === 'retry' — REST 404 or 503 against a token the
-      // server minted. Re-issue the WS fetch.
+      // server minted. Re-issue the WS fetch after an exponential
+      // backoff capped at REST_RACE_BACKOFF_CAP_MS (25, 50, 100, 200,
+      // 400 ms across the 5 inter-attempt waits — ~775 ms ceiling),
+      // enough to ride out sub-second Vercel-Blob propagation without
+      // hammering the relay.
       if (attempt + 1 < REST_RACE_MAX_ATTEMPTS) {
-        await new Promise<void>((resolve) => { setTimeout(resolve, REST_RACE_BACKOFF_MS) })
+        const delay = Math.min(REST_RACE_BACKOFF_CAP_MS, REST_RACE_BACKOFF_BASE_MS * 2 ** attempt)
+        await new Promise<void>((resolve) => { setTimeout(resolve, delay) })
       }
     }
     return null

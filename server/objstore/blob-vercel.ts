@@ -356,10 +356,26 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
     // origin truth. Origin fetch is the right default for a store
     // where freshness > latency.
     try { res = await sdk.get(path, { access: 'private', useCache: false, token }) } catch (err) {
-      if (isNotFound(err)) return { ok: false, reason: 'not-found' }
+      // A missing blob HERE is never "the resource doesn't exist" — the
+      // REST layer (rest.ts openLiveSnapshot) already confirmed a live row
+      // whose (version, incarnation) matches the GET token before calling
+      // us. So a BlobNotFoundError means the bytes for a still-live row are
+      // momentarily gone: the reaper GC'd a hash a racing version-bump just
+      // unreferenced, or Vercel Blob's read-after-write / edge propagation
+      // hasn't caught up to a freshly-promoted private blob. That is the
+      // documented `unavailable` (HTTP 503) case — a transient state the
+      // reaper / propagation reconciles and the client retries — NOT a 404.
+      // Returning `not-found` here would emit a 404 the FS backend never
+      // emits for the same condition (blob-fs.ts maps ENOENT → `unavailable`),
+      // telling the client the resource is gone for good when it should
+      // refetch. See server/README.md's GET status table.
+      if (isNotFound(err)) return { ok: false, reason: 'unavailable' }
       throw err
     }
-    if (res == null) return { ok: false, reason: 'not-found' }
+    // SDK returned null (no blob) — same "bytes missing for a live row"
+    // transient as the BlobNotFoundError branch above → `unavailable`, not
+    // `not-found`.
+    if (res == null) return { ok: false, reason: 'unavailable' }
     // statusCode 304 doesn't reach here in practice — the REST
     // GET layer doesn't pass If-None-Match — but a future call
     // site could. Treat as unavailable rather than streaming a
@@ -383,7 +399,10 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
         const h = await sdk.head(path, { token })
         size = (h as { size?: number })?.size
       } catch (headErr) {
-        if (isNotFound(headErr)) return { ok: false, reason: 'not-found' }
+        // Blob vanished between get() and the head() size fallback (a
+        // racing reaper GC) — still the "live row present, bytes gone"
+        // transient, so `unavailable` (503), matching the get() path above.
+        if (isNotFound(headErr)) return { ok: false, reason: 'unavailable' }
         throw headErr
       }
     }
