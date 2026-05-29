@@ -713,7 +713,7 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   // `fetchByTag` (public) wrap this with decryption.
   //
   // A concurrent commit/delete can land between the WS token-issue
-  // and the REST GET. The server's openLiveUnderLock gates on the
+  // and the REST GET. The server's openLiveSnapshot gates on the
   // token's `ver` matching the current live row, so the racing
   // outcomes the GET observes are:
   //   - REST 404 "not-found": row was at v1 when token issued, now
