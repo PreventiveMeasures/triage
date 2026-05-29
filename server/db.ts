@@ -10,49 +10,30 @@
 // `base` points at the previous revision's `id` (or null for the
 // first revision in a workspace).
 //
-// `keyframe` is `1` for a revision the client emits with the full
-// state baked in (rather than just a delta). The wire-level flag
-// is also covered by the signature, so the column value MUST match
-// what the signed canonical bytes claim — `canonicalSave` in
-// `server/sign.ts` (called from `handleSave` in `server/index.ts`)
-// encodes `keyframe ? '1' : ''` into the bytes that `verifyEd25519`
-// then checks against the wire-supplied signature, so a wire flag
-// that doesn't match what the signer hashed fails verify and never
-// reaches this column. Client-driven: the server only stores what
-// the client sent and treats keyframes as catch-up roots when a
-// from=null subscriber arrives.
+// `keyframe` is `1` for a revision the client emits with full state
+// baked in (rather than a delta). The wire flag is covered by the
+// signature, so the column value MUST match the signed canonical
+// bytes: `canonicalSave` (server/sign.ts, via `handleSave`) encodes
+// `keyframe ? '1' : ''` into the bytes `verifyEd25519` checks, so a
+// mismatched wire flag fails verify and never reaches this column.
+// Client-driven: the server stores what the client sent and treats
+// keyframes as catch-up roots when a from=null subscriber arrives.
 //
 // `node:sqlite` is the built-in driver (Node ≥ 22 experimental,
-// stable in 24+). The driver is synchronous under the hood; the
-// Handle wraps each prepared statement so call sites `await`
-// uniformly. This is async-ready surface for a future async DB
-// backend — every operation today resolves in the current microtask
-// off a sync `node:sqlite` call.
+// stable in 24+), synchronous under the hood; the Handle wraps each
+// prepared statement so call sites `await` uniformly — async-ready
+// surface for a future async DB backend (every op resolves in the
+// current microtask off a sync call).
 //
-// Because operations are now async, two handlers can interleave
-// across an `await`. `commitRevision` (below) does NOT take an
-// in-process lock — it folds the dup recheck, base-equality check,
-// MAX(seq) and INSERT into ONE gated INSERT statement
-// (`commitRevisionSqlite` below):
-//   INSERT … SELECT COALESCE(MAX(seq),0)+1 … WHERE NOT EXISTS(dup)
-//     AND head IS base RETURNING seq
-// `node:sqlite` is synchronous, so that single statement runs to
-// completion without yielding the event loop — no concurrent commit
-// can interleave mid-statement, and the head-check + MAX(seq) read
-// from ONE consistent snapshot. That single-snapshot property is
-// what makes a per-tag lock redundant: the lock formerly existed
-// only to stop a chain fork where a racer read `head` from one
-// snapshot but `MAX(seq)` from a LATER one (after a sibling
-// committed) and inserted (seq=N+2, base=X) alongside the winner's
-// (seq=N+1, base=X) — same base, different seq, no PK conflict. With
-// both reads inside one statement that interleaving is impossible:
-// a racer's snapshot is either before the winner's commit (→ same
-// seq=N+1 → the UNIQUE(workspace_tag, seq) PK rejects the second →
-// recovery → stale-base) or after it (→ head ≠ base → no insert →
-// stale-base). Exactly one commits; the loser gets stale-base.
-// SQLite also serialises writers internally, and the PK backstops
-// the unsupported multi-connection case. See `commitRevisionSqlite`
-// for the full fork-safety argument.
+// Operations being async, two handlers can interleave across an
+// `await`. `commitRevision` (below) takes NO in-process lock — it
+// folds the dup recheck, base-equality check, MAX(seq) and INSERT
+// into ONE gated INSERT (`commitRevisionSqlite`). `node:sqlite` runs
+// that statement to completion without yielding, so its head-check +
+// MAX(seq) read ONE snapshot, which is what makes a per-tag lock
+// redundant. SQLite also serialises writers internally, and the PK
+// backstops the unsupported multi-connection case. See
+// `commitRevisionSqlite` for the full fork-safety argument.
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
@@ -64,24 +45,20 @@ import {
   mapRevisionRow, toSqlitePlaceholders,
 } from './db-revision-sql.ts'
 
-// `CHECK (keyframe IN (0, 1))` is the value-domain guard on the
-// keyframe column. STRICT (the table marker) enforces the column's
-// TYPE — an INTEGER stays an INTEGER — but NOT its value range:
-// `keyframe = 2` is a perfectly valid integer that STRICT accepts,
-// which `mapRevisionRow`'s `=== 1` check then silently coerces back to
-// 0. That divergence between the stored row and the signed canonical
-// (which only ever encodes 0 / 1) poisons chain-replay verifies for
-// any peer who recomputes — the same operator-with-direct-DB-write
-// attack vector the STRICT guard in `openDbInner` catches for the
-// column TYPE. The CHECK closes the value-domain half, giving SQLite
-// the protection the Neon schema's identical `CHECK (keyframe IN
-// (0, 1))` carries (see `db-neon.ts`).
+// `CHECK (keyframe IN (0, 1))` is the value-domain guard. STRICT
+// (the table marker) enforces the column TYPE (an INTEGER stays an
+// INTEGER) but NOT its value range: `keyframe = 2` is a valid integer
+// STRICT accepts, which `mapRevisionRow`'s `=== 1` check then coerces
+// back to 0. That divergence from the signed canonical (only ever
+// 0 / 1) poisons chain-replay verifies for any recomputing peer — the
+// same operator-with-direct-DB-write vector the STRICT guard in
+// `openDbInner` catches for TYPE. The CHECK closes the value-domain
+// half, matching the Neon schema's identical CHECK (see `db-neon.ts`).
 //
-// `WORKSPACE_REVISION_DEF` is the parenthesised column + constraint
-// body (plus the STRICT marker), shared by the initial `CREATE TABLE`
-// and the `migrateAddKeyframeCheck` rebuild below — so a table the
-// rebuild produces is byte-identical in shape to a freshly-created
-// one, and a future column edit can't drift the two apart.
+// Parenthesised column + constraint body (plus STRICT marker), shared
+// by the initial `CREATE TABLE` and the `migrateAddKeyframeCheck`
+// rebuild below — so a rebuilt table is byte-identical in shape to a
+// fresh one and a future column edit can't drift the two apart.
 const WORKSPACE_REVISION_DEF = `(
     workspace_tag TEXT NOT NULL,
     seq INTEGER NOT NULL,
@@ -105,10 +82,10 @@ const SCHEMA = `
   ${WORKSPACE_REVISION_TAG_ID_INDEX};
 `
 
-// Row shape returned by the chain queries. SQLite stores `keyframe`
-// as INTEGER (0 / 1); `chainForWire` in server/index.ts normalises
-// to a strict boolean before broadcasting, but the raw row carries
-// the integer. `base` is nullable on the very first revision.
+// Row shape from the chain queries. `keyframe` is stored as INTEGER
+// (0 / 1); the raw row carries the integer — `chainForWire` in
+// server/index.ts normalises to a strict boolean before broadcasting.
+// `base` is nullable on the very first revision.
 export type RevisionRow = {
   base: string | null
   id: string
@@ -119,9 +96,8 @@ export type RevisionRow = {
 }
 
 // Input to `commitRevision`. `keyframe` is a strict boolean here —
-// the canonical-payload contract uses `=== true`, and the storage
-// path coerces to 0 / 1 via `keyframe ? 1 : 0` before hitting the
-// STRICT INTEGER column.
+// the canonical-payload contract uses `=== true`; the storage path
+// coerces to 0 / 1 before hitting the STRICT INTEGER column.
 export type RevisionInsert = {
   tag: string
   id: string
@@ -142,37 +118,31 @@ export type CommitResult =
   | { kind: 'duplicate' }
   | { kind: 'stale-base'; head: string | null }
 
-// Bag of pre-prepared statements + the underlying connection.
-// Held for the process lifetime; `close()` runs from `shutdown()`.
+// Pre-prepared statements + the underlying connection, held for the
+// process lifetime; `close()` runs from `shutdown()`.
 //
-// `db` is the raw `DatabaseSync` and is SQLite-only. The Neon
-// backend (`./db-neon.ts`) constructs a Handle with `db` unset.
-// Callers that reach into `db` directly (e.g. `openObjstore`,
-// test-only fixture SQL) are SQLite-coupled by construction —
-// passing them a Neon-backed Handle is the operator's mistake to
-// catch at the `if (DATABASE_URL)` switch in `server/index.ts`.
+// `db` is the raw `DatabaseSync`, SQLite-only — the Neon backend
+// (`./db-neon.ts`) constructs a Handle with `db` unset. Callers that
+// reach into `db` directly (e.g. `openObjstore`, test-only fixture
+// SQL) are SQLite-coupled by construction; passing them a Neon-backed
+// Handle is the operator's mistake to catch at the `if (DATABASE_URL)`
+// switch in `server/index.ts`.
 //
-// `tryCommit` is the backend-specific atomic-commit primitive that
+// `tryCommit` is the backend-specific atomic-commit primitive
 // `commitRevision` dispatches through. SQLite runs one synchronous
-// gated INSERT (no in-process lock — `node:sqlite` doesn't yield
-// mid-statement, so the head-check + MAX(seq) read one snapshot;
-// see `commitRevisionSqlite`). Neon wraps the dup-check + head-check
-// + gated INSERT in a pipelined transaction; it relies on Postgres'
-// READ-COMMITTED single-statement snapshot (the gated INSERT's
-// head-check and MAX(seq) read one snapshot) plus the
-// `UNIQUE(workspace_tag, seq)` PK to keep cross-replica racers from
-// forking the chain — see `db-neon.ts`'s `tryCommitNeon`.
+// gated INSERT (see `commitRevisionSqlite`); Neon wraps it in a
+// pipelined transaction (see `db-neon.ts`'s `tryCommitNeon`). Both
+// rely on a single-statement snapshot + the `UNIQUE(workspace_tag,
+// seq)` PK for fork-safety; see those functions for the argument.
 //
 // `gatedInsert` is SQLite-only (like `db`): it backs
-// `commitRevisionSqlite`'s single gated INSERT (the dup-gate +
-// head-equals-base-gate + server-assigned seq folded into one
-// statement, mirroring the Neon path's gated INSERT). The Neon
-// backend leaves it unset — its gated INSERT lives inside the
-// pipelined `sql.transaction([...])`, not a standalone statement
-// object. Kept on the Handle (rather than a module-private closure)
-// so the SQLite white-box tests can wrap `.get` to inject a
-// unique-violation / non-unique failure into the commit, the same
-// recovery paths the Neon suite stages via `failNextCommit`.
+// `commitRevisionSqlite`'s single gated INSERT. The Neon backend
+// leaves it unset — its gated INSERT lives inside the pipelined
+// `sql.transaction([...])`, not a standalone statement object. Kept
+// on the Handle (not a module-private closure) so SQLite white-box
+// tests can wrap `.get` to inject a unique-violation / non-unique
+// failure into the commit, exercising the same recovery paths the
+// Neon suite stages via `failNextCommit`.
 export type Handle = {
   db?: DatabaseSync
   headFor: GetStmt<[string], { id: string }>
@@ -192,23 +162,22 @@ export type Handle = {
 }
 
 // Narrowing alias for the SQLite-backed Handle: `db` is guaranteed
-// to be set. `openDb` returns this so call sites that need direct
+// set. `openDb` returns this so call sites needing direct
 // `DatabaseSync` access (e.g. `openObjstore(handle.db, …)` in
-// `server/index.ts`'s SQLite branch) can reach `handle.db` without
-// an optional-chain or non-null assertion. A Neon-backed Handle
-// (`openNeonDb`) keeps the wider `db?: DatabaseSync` shape; routing
-// a Neon Handle into a SQLite-coupled call site is a compile-time
-// error. Mirrors the same pattern in `server/objstore/store.ts`.
+// `server/index.ts`'s SQLite branch) reach `handle.db` without an
+// optional-chain or non-null assertion. A Neon-backed Handle
+// (`openNeonDb`) keeps the wider `db?: DatabaseSync` shape, so routing
+// one into a SQLite-coupled call site is a compile-time error. Mirrors
+// `server/objstore/store.ts`.
 export type SqliteHandle = Handle & { db: DatabaseSync }
 
 export function openDb(path: string): SqliteHandle {
   mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
-  // Any throw between the DatabaseSync constructor and the return
-  // would otherwise leak the underlying file / WAL / shm locks until
-  // process exit — close before re-raising so the operator can fix
-  // the underlying issue (failed STRICT check, ALTER TABLE error,
-  // …) and re-run without a stale lock pinning the file.
+  // A throw between the DatabaseSync constructor and the return would
+  // leak the file / WAL / shm locks until process exit — close before
+  // re-raising so the operator can fix the cause (failed STRICT check,
+  // ALTER TABLE error, …) and re-run without a stale lock on the file.
   try {
     return openDbInner(db)
   } catch (err) {
@@ -218,35 +187,30 @@ export function openDb(path: string): SqliteHandle {
 }
 
 function openDbInner(db: DatabaseSync): SqliteHandle {
-  // WAL gives concurrent readers + faster writes and survives
-  // crashes between commits without corrupting the file. Foreign
-  // keys aren't strictly needed here (single-table schema) but
-  // turning them on preserves the option to add referential
-  // tables later without revisiting init.
+  // WAL gives concurrent readers + faster writes and survives crashes
+  // between commits without corrupting the file. Foreign keys aren't
+  // needed here (single-table schema) but turning them on keeps the
+  // option to add referential tables later without revisiting init.
   db.exec('PRAGMA journal_mode = WAL;')
   // FULL (not NORMAL): the server emits `workspace-save-ack` BEFORE
-  // returning to the event loop after `commitRevision`. With NORMAL,
-  // SQLite only fsyncs at WAL checkpoint, so a power loss between
-  // ack and the next checkpoint loses the row even though the
-  // originator and broadcast peers were told the revision committed.
-  // FULL fsyncs per commit; durability matches the contract the
-  // ack implies. Trade-off is per-commit fsync latency, acceptable
-  // for the protocol's edit-driven write pattern (triage edits, not
-  // streaming throughput). Audit round-9 M1.
+  // returning to the event loop after `commitRevision`. NORMAL only
+  // fsyncs at WAL checkpoint, so a power loss between ack and the next
+  // checkpoint loses a row the originator + peers were told committed.
+  // FULL fsyncs per commit, matching the durability the ack implies.
+  // Trade-off is per-commit fsync latency, acceptable for the edit-
+  // driven write pattern (triage edits, not streaming). Audit round-9 M1.
   db.exec('PRAGMA synchronous = FULL;')
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
   // Fail-loud on a pre-existing non-STRICT table — `CREATE TABLE IF
-  // NOT EXISTS … STRICT` is a no-op when the table already exists,
-  // so a deployment that predates the STRICT marker would silently
-  // keep its non-STRICT shape. Without STRICT, an operator with
-  // direct DB write access could insert mis-typed rows (e.g. a
-  // `keyframe = "1\nfoo"` text value in the INTEGER column) and
-  // poison the chain — the signed canonical the client originally
-  // hashed says `keyframe = 1`, but the stored `keyframe = "1\nfoo"`
-  // round-trips back into the canonical as a different string,
-  // making every subsequent verify fail. Operator must migrate
-  // before this server boots.
+  // NOT EXISTS … STRICT` is a no-op when the table exists, so a
+  // deployment predating the STRICT marker keeps its non-STRICT shape.
+  // Without STRICT, an operator with direct DB write access could
+  // insert mis-typed rows (e.g. `keyframe = "1\nfoo"` text in the
+  // INTEGER column) and poison the chain: the signed canonical says
+  // `keyframe = 1`, but the stored text round-trips into the canonical
+  // as a different string, failing every subsequent verify. Operator
+  // must migrate before this server boots.
   const meta = db.prepare(
     `SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = 'workspace_revision'`,
   ).get() as { strict: number } | undefined
@@ -254,13 +218,11 @@ function openDbInner(db: DatabaseSync): SqliteHandle {
     throw new Error('workspace_revision is non-STRICT — migrate via rename+create+copy before booting')
   }
   // Idempotent migration for DBs created before the keyframe column
-  // existed. Inspect the column list rather than catching every
-  // ALTER error — the previous shape swallowed `try { ALTER } catch
-  // {}` for ANY failure (lock contention, disk full, corrupt page),
-  // masking real problems as "column already exists". Now we only
-  // ALTER when the column is genuinely missing, and any failure of
-  // the ALTER itself bubbles up as an open-time crash where the
-  // operator can act on it.
+  // existed. Inspect the column list rather than `try { ALTER } catch
+  // {}`: a blanket catch swallows ANY failure (lock contention, disk
+  // full, corrupt page) as "column already exists". ALTER only when
+  // the column is genuinely missing, so an ALTER failure bubbles up as
+  // an open-time crash the operator can act on.
   const columns = db.prepare(`PRAGMA table_info(workspace_revision)`).all() as Array<{ name: string }>
   if (!columns.some((c) => c.name === 'keyframe')) {
     // ADD COLUMN carries the CHECK so a legacy DB migrating up lands
@@ -507,9 +469,8 @@ export function commitRevision(handle: Handle, input: RevisionInsert): Promise<C
 //     base gate fails → `stale-base`.
 //   • Two retransmits with the same id: the second's dup gate fails →
 //     `duplicate`.
-// These are PROVEN green, unchanged, by the no-fork concurrency tests
-// in `tests/server-db.test.js` (two/N concurrent same-base, mixed,
-// chainFrom-during-commits) which now pass with no lock present.
+// Covered by the no-fork concurrency tests in `tests/server-db.test.js`
+// (two/N concurrent same-base, mixed, chainFrom-during-commits).
 //
 // SQLite serialises writers internally even ACROSS connections, but a
 // multi-connection deployment is unsupported regardless. The

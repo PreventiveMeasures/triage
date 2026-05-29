@@ -39,27 +39,21 @@ import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 // `view-mode-change` events.
 
 // Build the v2 graph data from the currently-loaded report. Returns
-// null when no tree-bearing report is loaded — callers (the tab
-// switcher in render(), the "Graph v2" event handler) use that to
-// fall back to a friendlier state.
+// null when no tree-bearing report is loaded — callers fall back to
+// a friendlier state.
 //
 // Two filters compose:
-//   - state.showDeleted splits findings the same way the findings
-//     tab does: live findings by default, deleted findings in trash
-//     mode. Visibility is at the GROUP level (a group is "deleted"
-//     when every member is in state.deletedIds), matching the
-//     findings tab so swapping tabs reads consistently.
+//   - trash split at the GROUP level (group "deleted" when every
+//     member is in state.deletedIds), matching the findings tab so
+//     swapping tabs reads consistently.
 //   - graph2.showAll then optionally pads the file set with clean
 //     files whose subtree contains a (filtered-in) finding,
 //     reachable through imports. Off by default so the canvas
 //     focuses on issue-bearing code.
 export function buildGraph2Data() {
   // Merge the per-report trees so a workspace canvas spans every
-  // loaded report. Using `state.reports[0].tree` alone dropped
-  // every file (and edge) that lived in the 2nd+ reports, even
-  // though their findings were already merged in via flatMap
-  // below — so the graph silently rendered only the first
-  // report's slice of the workspace.
+  // loaded report — the 1st report's tree alone omits files/edges
+  // from the 2nd+ reports whose findings are still merged in below.
   const treeData = mergeReportsTree(state.reports)
   if (!treeData) return null
   const allFiles = Object.keys(treeData)
@@ -71,21 +65,19 @@ export function buildGraph2Data() {
     groupState(g).commonTriage === state.shownTriage)
   const findingCounts = computeFindingCountsByFile(visibleGroups)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-  // Per-file Sets that drive the topbar severity / triage chip
-  // counts AND the canvas dim predicate. Each finding contributes
-  // its severity tier and its current marker color (default 'none'
-  // when unmarked); a file is highlighted under a filter iff any
-  // of its findings matches — same union semantics the findings
-  // tab's filter uses, so the canvas highlight tracks "issues that
-  // would have been displayed by the table".
+  // Per-file Sets driving the topbar severity / triage chip counts
+  // AND the canvas dim predicate. Each finding contributes its
+  // severity tier and marker color (default 'none' when unmarked); a
+  // file highlights under a filter iff any of its findings matches —
+  // same union semantics as the findings tab's filter, so the canvas
+  // tracks "issues the table would have shown".
   const severitySets = new Map()
   const colorSets = new Map()
-  // Per-finding `{severity, color}` pairs, stamped on each node so
-  // the Packages → Issues distribution can count findings filtered
-  // by BOTH severity and color simultaneously (a count derived from
-  // per-severity totals alone can't intersect with the color
-  // filter). Sets above stay separate for the canvas dim predicate
-  // and the topbar chip counts where set membership is enough.
+  // Per-finding `{severity, color}` pairs, so Packages → Issues can
+  // count findings filtered by BOTH severity and color at once (an
+  // intersection the per-severity totals above can't express). Sets
+  // stay separate where set membership alone suffices (dim predicate,
+  // chip counts).
   const fileFindings = new Map()
   for (const g of visibleGroups) {
     for (const f of g) {
@@ -98,17 +90,13 @@ export function buildGraph2Data() {
       fileFindings.get(f.file).push({ severity: f.severity, color })
     }
   }
-  // Package-focus mode narrows to files in the focused package.
-  // graph2.showAll still gates the clean-file filter inside that
-  // scope: when off, drop files that have neither own findings
-  // nor a subtree (transitive) finding reachable through imports
-  // — same predicate the full-graph view uses, applied to the
-  // package subset. The canvas's intra-package import set falls
-  // out automatically since buildGraph filters edges to the file
-  // set; cross-package imports outside the focus aren't drawn,
-  // but their transitive findings still count toward keeping a
-  // file in scope (they're part of "reachable issues" the user
-  // expects to see represented).
+  // Package-focus mode narrows to files in the focused package, with
+  // graph2.showAll still gating the clean-file filter inside that
+  // scope (when off, drop files with neither own nor transitive
+  // findings — the full-graph predicate applied to the subset).
+  // Cross-package imports outside the focus aren't drawn, but their
+  // transitive findings still count toward keeping a file in scope
+  // (part of the "reachable issues" the user expects represented).
   let files
   if (graph2.focusedPkg) {
     files = allFiles.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
@@ -133,19 +121,18 @@ export function buildGraph2Data() {
   }
 }
 
-// Re-render only the right-panel selection card. Surgical update
-// — the canvas DOM (and thus the active rAF / hover state) survives
-// a click on a node or a sidebar neighbor link. `litRender` runs its
-// own diff against the cached PartInfo it stamps on the container,
-// so we feed the new template directly; clearing `innerHTML` first
-// would orphan the cache and the next render would try to
-// `insertBefore` on a null parent (TypeError on the next click).
+// Surgical sidebar update — keeps the canvas DOM (and its active rAF /
+// hover state) alive across a node / neighbor-link click. `litRender`
+// diffs against the PartInfo it stamps on the container, so feed it
+// the new template directly; clearing `innerHTML` first orphans the
+// cache and the next render `insertBefore`s on a null parent
+// (TypeError on the next click).
+//
 // Wrappers — assemble graph data + bundle-context flag from main-
-// bundle state, then dispatch into the lazy `ui/graph.js` module
-// for the actual `<graph-layout>` shadow-DOM render. No-op when
-// the graph has never been opened in this session
-// (`loadedGraphMod()` returns null) — there's no shadow tree to
-// refresh in that state either.
+// bundle state, then dispatch into the lazy `ui/graph.js` module for
+// the actual `<graph-layout>` shadow-DOM render. No-op when the graph
+// was never opened this session (`loadedGraphMod()` null) — no shadow
+// tree to refresh.
 export function refreshGraph2Sidebar() {
   const mod = loadedGraphMod()
   if (!mod) return
@@ -210,13 +197,12 @@ function repoChipTemplate(repoInputUseful, knownRepo) {
 const COMBO_FIELDS = ['type', 'model', 'effort', 'exportsMode']
 
 // Format a single combo-field value as a tag-display string. The
-// type field carries the `analyzer: ` label and always renders
-// (even when null) so the slot is never silently dropped — `analyzer:
-// null` reads as "this run had no analyzer subtype" the same way the
-// DeepView.0 prototype's `<code>null</code>` did. Non-type fields
-// return `null` from this function when the value is missing so the
-// caller can drop them entirely; rendering a bare `null` for a
-// missing model / effort / exports just clutters the header.
+// type field carries the `analyzer: ` label and always renders (even
+// when null) so the slot is never silently dropped — `analyzer: null`
+// reads as "this run had no analyzer subtype". Non-type fields return
+// null when the value is missing so the caller can drop them; a bare
+// `null` for a missing model / effort / exports just clutters the
+// header.
 function formatComboField(field, value) {
   if (field === 'type') return `analyzer: ${value ?? 'null'}`
   if (value == null) return null
@@ -306,10 +292,9 @@ function buildAnalyzerTags(findings, fields = COMBO_FIELDS) {
   return tags
 }
 
-// Page header — port of the prototype's `.page-head` block. The h1
-// carries the tool name plus a pill-shaped file chip naming the
-// active report; the meta-row underneath strings together the count
-// followed by the analyzer-combo tags from `buildAnalyzerTags`.
+// Page header. The h1 carries the tool name plus a pill-shaped file
+// chip naming the active report; the meta-row underneath strings the
+// count followed by the analyzer-combo tags from `buildAnalyzerTags`.
 //
 // Tool name comes from the source marker when every loaded report
 // agrees on one (`Claude Security findings`, `Codex Security
@@ -331,11 +316,9 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   // File chip: single-file reports get the filename verbatim with a
   // brand sticker for the source bucket (Claude / Codex / DeepSec /
   // DeepView eye for analyzer-native). Multi-report loads (workspace
-  // merge) collapse to "N reports" with a GENERIC outline file
-  // glyph — even when every loaded report shares one source, the
-  // brand sticker would mis-imply the chip names a single
-  // upstream-shaped item, so the generic icon reads as the
-  // collection it actually is.
+  // merge) collapse to "N reports" with a GENERIC outline file glyph
+  // — even under one shared source, a brand sticker would mis-imply
+  // the chip names a single item rather than the collection it is.
   const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
   const singleSticker = unsafeHTML(FILE_ICONS[singleStickerKey])
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
@@ -348,11 +331,10 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
 
   const findings = state.reports.flatMap((r) => r.groups.flat())
 
-  // Count covers EVERY loaded finding (live + trashed) — the trashed
+  // Count covers EVERY loaded finding (live + trashed) — trashed
   // entries are still part of the report, just hidden from the active
-  // list. The trash mode toggle button (in the toolbar) is the user's
-  // signal that they're in the deleted view; the header stays steady
-  // so the load total doesn't visually shift when the toggle flips.
+  // list. The header stays steady so the load total doesn't shift
+  // when the trash toggle flips (the toggle itself signals the mode).
   const findingNoun = `finding${totalCount === 1 ? '' : 's'}`
   const countLabel = `${totalCount} ${findingNoun}`
 
@@ -397,12 +379,11 @@ function headerTemplate(totalCount, fileNames, repoInputUseful, knownRepo, treeF
   const repoTpl = repoChipTemplate(repoInputUseful, knownRepo)
   const sep = html`<span class="sep" aria-hidden="true"></span>`
 
-  // Files toggle — replaces the top-of-page Files (N) tab. Sits
-  // right after the repo chip in the title row so it's visually
-  // tied to the report identity, and operates on/off like the
-  // Trash button: clicking flips state.currentView between 'files'
-  // and the previous (saved) view. Same `treeFileCount > 1` gate
-  // the old Files tab used; a single-file tree adds no value.
+  // Files toggle — sits right after the repo chip in the title row so
+  // it's visually tied to the report identity, and operates on/off
+  // like the Trash button: clicking flips state.currentView between
+  // 'files' and the previous (saved) view. Gated on
+  // `treeFileCount > 1`; a single-file tree adds no value.
   const filesActive = state.currentView === 'files'
   const filesBtnTpl = (treeFileCount ?? 0) > 1
     ? html`<button
@@ -511,14 +492,11 @@ function syncBadgeTemplate() {
   // side-by-side badges. The click handlers fan out to a unified
   // upload / download dialog that lists items of both kinds.
   //
-  // `cloudCount` is just `remoteCount` (reports + bundles together
-  // — `remoteCount` is the cardinality of remoteTags, which now
-  // includes both kinds). The earlier split (`remoteCount -
-  // remoteBundleCount + remoteBundleCount`) algebraically collapsed
-  // to this; keeping the simpler form pins the relationship clearly.
-  // The actual report-vs-bundle dispatch happens in
-  // `openDownloadFromBadge`, which fans out both discovery passes
-  // and assembles the unified dialog item list.
+  // `cloudCount` is just `remoteCount` (reports + bundles together —
+  // the cardinality of remoteTags, which includes both kinds). The
+  // actual report-vs-bundle dispatch happens in
+  // `openDownloadFromBadge`, which fans out both discovery passes and
+  // assembles the unified dialog item list.
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
   const cloudCount = remoteCount(workspaceId)
@@ -689,39 +667,22 @@ function resolveWorkspaceContext() {
   return null
 }
 
-// Stats — clickable filter chips. Severity chips on the left, mark-color
-// chips on the right. Both are multi-select: empty selection = no
-// filter; multiple selections = union across the ticked chips (so
-// ticking every chip is equivalent to ticking none). A zero-count
-// chip is hidden so the row stays compact.
-// Severity-filter chips — ported from the DeepView.0 prototype's
-// `.sev-chip` design. Each chip pairs a small color square (the
-// severity's hue swatch) with the severity name and a count badge.
-// Active chips pick up a 50%-alpha border and a 10%-alpha
-// background tint of their own severity color, so the active state
-// reads as "this severity is highlighted" without overpowering the
-// chip's content. Hidden when count is zero — keeps the row tight
-// for Claude / Codex / JSON dumps that don't carry every tier.
+// Stats — clickable filter chips: severity on the left, mark-color on
+// the right. Both multi-select: empty selection = no filter; multiple
+// = union across the ticked chips (ticking every chip == ticking
+// none). Zero-count chips hidden so the row stays compact for Claude /
+// Codex / JSON dumps that don't carry every tier. The prototype's
+// "X shown / All / None" actions group is omitted — the search row's
+// `X of Y` count + the per-chip toggle already cover it.
 //
-// Unlike the prototype the chips live inside the toolbar block (see
-// `toolbarHtml`) rather than in their own outer row, and the
-// "X shown / All / None" actions group is intentionally left off:
-// the result count + filter-clearing affordances live elsewhere
-// (the search row's `X of Y` and the per-chip toggle), so the
-// extra summary just duplicates them.
-// Severity / mark-color filter strips — these used to be string-
-// concatenated blocks here that interpolated counts + active state.
-// Both moved to StateElement components (`<severity-chips>`,
-// `<triage-filter>`) that read the active filter set from `state`
-// via observer-util's autorun. Counts arrive via Lit property
-// binding (the parent already has the filter-pipeline output in
-// hand). The CSS still lives in toolbar.css (the components render
-// to light DOM so those rules apply). Gating the templates at the
-// call site (rather than only relying on the components' internal
-// empty-set guards) keeps an empty `<severity-chips>` /
-// `<triage-filter>` from sitting in the toolbar's flex row as a
-// zero-content item that would still claim a `gap` slot between its
-// visible neighbours.
+// Both strips are StateElement components (`<severity-chips>`,
+// `<triage-filter>`) reading the active filter set from `state` via
+// observer-util autorun; counts arrive via Lit property binding (the
+// parent holds the filter-pipeline output). CSS lives in toolbar.css
+// (components render to light DOM so those rules apply). Gating the
+// templates at the call site — not just the components' own empty-set
+// guards — keeps an empty component from claiming a flex `gap` slot
+// between its visible neighbours.
 function severityChipsTemplate(counts) {
   const hasAny = Object.values(counts).some((n) => n > 0) || state.filterSeverities.size > 0
   if (!hasAny) return nothing
@@ -743,10 +704,9 @@ function triageFilterTemplate(colorCounts) {
 // the underlying filter state is forced to its no-op value upstream
 // for confidence / source so it can't be left set from a previous
 // report). Hides chrome the user can't act on usefully.
-// Triage state selector now lives in `<triage-selector>` (see
-// view/triage-selector.js). The component reads `state.shownTriage`
-// directly via StateElement and decides its own visibility — the
-// host can drop it in unconditionally.
+// `<triage-selector>` (view/triage-selector.js) reads
+// `state.shownTriage` via StateElement and self-gates its visibility,
+// so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerOptions, repoOptions) {
   const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo } = flags
@@ -792,10 +752,10 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            effective analyzer is absent (no per-finding type on a
            native dump) gets a synthetic "(none)" option whose value
            is the NULL_ANALYZER_SENTINEL — that sentinel can't collide
-           with a legitimate analyzer literally named "null"
-           (a valid analyzer name), which would otherwise resolve to
-           the same <option value="null"> and be indistinguishable in
-           the dropdown. Component owns its select + the friendly
+           with a legitimate analyzer literally named "null", which
+           would otherwise resolve to the same <option value="null">
+           and be indistinguishable in the dropdown. Component owns
+           its select + the friendly
            ANALYZER_LABELS lookup; reads state.filterAnalyzer itself
            via StateElement and uses live() so stale-filter clears in
            the parent's pipeline actually update the visible
@@ -1084,12 +1044,9 @@ function findingsBodyTemplate(filtered) {
       ? filtered.findIndex((g) => groupKey(g) === state.focusGid)
       : -1
     if (focusedIdx < 0) {
-      // Stale focusGid (default: never set, OR previously-focused
-      // finding fell out of view via a triage action / filter
-      // tightening). Use the previous render's index, clamped to
-      // the new list — after a triage, the item at the same slot
-      // is the one that took its place, so the user feels "the
-      // queue advanced" rather than "I got teleported to the top".
+      // Stale focusGid (never set, OR the focused finding fell out of
+      // view via a triage action / filter tightening) → fall back to
+      // the previous render's index, clamped (see Selection rules).
       focusedIdx = Math.min(prevFocusedIdx, filtered.length - 1)
       if (focusedIdx < 0) focusedIdx = 0
     }
@@ -1127,12 +1084,10 @@ function findingsBodyTemplate(filtered) {
       </div>
       <aside class="focus-sidebar" aria-label="Up next">
         <!-- Sidebar header carries both the queue's label and the
-             prev / counter / next controls — earlier iterations
-             pinned the nav above the card pane, but the user
-             pointed out that the position counter and "Up next"
-             count duplicated each other, so they're consolidated
-             here. Buttons also respond to ←/→ via the
-             events.js keydown handler. -->
+             prev / counter / next controls (consolidated here so the
+             position counter and "Up next" count don't duplicate).
+             Buttons also respond to ←/→ via the events.js keydown
+             handler. -->
         <div class="focus-sidebar-header">
           <span class="label">Up next</span>
           <div class="focus-nav">
@@ -1297,29 +1252,10 @@ function findingsBodyTemplate(filtered) {
   })}`
 }
 
-// Bundle-side packageOf — recognizes BOTH `node_modules/` and
-// `dependencies/` simultaneously. Unlike the report-driven
-// `packageOf` in graph/utils.js (which picks ONE active deps dir
-// per render based on the loaded report), bundle paths might use
-// either or both depending on the build that produced them.
-//
-// Designed to be called on STRIPPED paths (after
-// stripCommonPathPrefix has trimmed the shared directory prefix)
-// — that way packages reflect what's actually different between
-// files. A path like `dist/src/foo/a.js` would otherwise bucket
-// under `dist`, hiding the meaningful `foo`. After stripping
-// `dist/`, the same path becomes `src/foo/a.js` → bucket `src`.
-//
-// Paths with no remaining directory bucket under the synthetic
-// `__own__` so the chart still has somewhere to put them.
-
-// Cross-report packages view — `renderPackagesView` plus its
-// internal helpers (toolbar / triage selector / sorting / per-row
-// + per-file rendering / details / overview / slide) live in
-// `./render-packages.js`. The orchestrator below imports the
-// entry point and dispatches into it for `state.currentView ===
-// 'packages'`. They got lifted out because they touch no
-// findings-tab state and read cleaner as a coherent neighbor.
+// Cross-report packages view — `renderPackagesView` and its internal
+// helpers live in `./render-packages.js` (they touch no findings-tab
+// state); the orchestrator below dispatches into it for
+// `state.currentView === 'packages'`.
 
 // Bundle source viewer overlay — rendered into a top-level slot
 // (see index.html) so it can pop over any view: bundles list,
@@ -1365,9 +1301,8 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
-  // Print-button body class is now managed by an observer-util
-  // autorun (see view/print-btn-visibility.js) — render() no longer
-  // touches it.
+  // Print-button body class is owned by an observer-util autorun (see
+  // view/print-btn-visibility.js) — render() must not touch it.
   // Bundles view — paints from `state.bundles` (cached by
   // renderSidebar's listBundles call), so it stays paint-only here.
   // Lives before the reports-gate below because the bundles list is
@@ -1732,11 +1667,6 @@ function renderImpl() {
     state.viewMode === 'table' &&
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
-  // Graph view-mode within the Findings tab swaps the table/list/grouped
-  // body for the same canvas the dedicated Graph tab uses. The
-  // wrapper drops its max-width cap so the graph layout (a CSS grid
-  // with 1fr stage + 300px sidebar) can spread across the full
-  // viewport like the standalone Graph tab does.
   // Graph view-mode within the Findings tab swaps the table/list/grouped
   // body for the same canvas the dedicated Graph tab uses. The
   // wrapper drops its max-width cap so the graph layout (a CSS grid

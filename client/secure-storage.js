@@ -120,15 +120,11 @@ function aadFor(key) {
   return encodeUtf8(`deepview.secure.v1|${tag}|${key}`)
 }
 
-// Distinguish an enveloped value from a plaintext string. Plaintext
-// JSON / strings / `'0'` / `'1'` etc. are never valid base64 of the
-// envelope shape (the envelope magic `DVE1` doesn't fit JSON's
-// expected first chars, and base64 of `D + V + E + 1` is `RFZFMQ`
-// which would only match envelopes — even if a plaintext literally
-// started with `RFZFMQ`, it would still need to be a valid base64
-// string AND decode to bytes starting with the magic, which is
-// astronomically unlikely for human-readable content). The
-// `Uint8Array.fromBase64` throws on non-base64 input; we treat any
+// Distinguish an enveloped value from a plaintext string. A
+// plaintext value would have to be valid base64 AND decode to bytes
+// starting with the `DVE1` magic to be mistaken for an envelope —
+// astronomically unlikely for human-readable JSON / strings.
+// `Uint8Array.fromBase64` throws on non-base64 input; treat any
 // throw as "this is plaintext".
 function tryDecodeEnvelope(raw) {
   try {
@@ -357,24 +353,15 @@ export async function hydrate() {
 // be called from inside an exclusive VAULT_LOCK acquisition.
 //
 // Each per-key migration is wrapped in an ATOMIC writeChain entry:
-// the read-disk + transform + write-disk happens inside a single
-// chain slot, so a concurrent user `setItem` for the same key
-// queues either entirely BEFORE us (we see their write on disk and
-// no-op via the envelope/plaintext check) or entirely AFTER us
-// (their persist runs once we yield the chain). Without this
-// chain-atomicity, the previous `await setItem(...)`-based
-// migration could:
-//   1. Read disk, observe V_OLD.
-//   2. Await decrypt/encrypt for V_OLD (yields to event loop).
-//   3. A user `setItem(K, V_NEW)` lands during the await — caches
-//      V_NEW, pins pendingValues, queues persist.
-//   4. Migrate's `await setItem(K, V_OLD_transformed)` syncs
-//      `cache.set(K, V_OLD_transformed)` — clobbering the user's
-//      V_NEW in cache — and queues the stale persist BEHIND the
-//      user's chain entry but with stale data.
-//   5. End: disk has V_OLD_transformed (last writer was migrate),
-//      cache has V_OLD_transformed (migrate's setItem). User's
-//      fresh write is silently lost both on disk and in cache.
+// read-disk + transform + write-disk in a single chain slot, so a
+// concurrent user `setItem` for the same key queues either entirely
+// BEFORE us (we see their write on disk and no-op via the envelope/
+// plaintext check) or entirely AFTER us (their persist runs once we
+// yield the chain). The prior `await setItem(...)`-based migration
+// lacked this: a user `setItem(K, V_NEW)` landing during migrate's
+// decrypt/encrypt await would cache+pin V_NEW, then migrate's own
+// setItem would `cache.set(V_OLD_transformed)` over it and queue a
+// stale persist — V_NEW silently lost in both cache and disk.
 //
 // Additional safety: each transform re-checks `pendingValues` AFTER
 // any awaits within it and skips entirely if a user write has

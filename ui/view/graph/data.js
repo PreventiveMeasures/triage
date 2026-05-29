@@ -3,13 +3,12 @@ import { totalFindings } from '../file-counts.js'
 import { SEVERITIES, depsDirName } from '../format.js'
 
 // Top-severity tier for a per-file count map. Walks SEVERITIES
-// (already in highest-to-lowest order in format.js) and returns
-// the first tier with a non-zero count, or null when clean.
-// Returns the FULL 7-tier set the findings tab uses (critical,
-// high, medium, low, high_bug, bug, informational) — earlier
-// versions collapsed bug / info tiers into the closest vuln
-// tier, but that hid information; the topbar pill row now
-// shows all seven so the canvas should reflect them too.
+// (highest-to-lowest order in format.js) and returns the first
+// tier with a non-zero count, or null when clean. Reports the FULL
+// 7-tier set the findings tab uses (critical, high, medium, low,
+// high_bug, bug, informational) rather than collapsing bug/info
+// into the nearest vuln tier, so the canvas matches the topbar
+// pill row.
 export function topIssueOf(counts) {
   if (!counts) return null
   for (const sev of SEVERITIES) {
@@ -19,12 +18,12 @@ export function topIssueOf(counts) {
 }
 
 // Build the full v2 graph data structure from a treeData blob and
-// per-file own-counts map. Filters to files that actually have a
-// tree entry. Returns: files (string[]), packages (string[] sorted
-// by node count desc), pkgIndex (pkg → index), nodes (one per file),
-// edges (intra/cross), adj (file → edge index list), ambassadors
-// (file paths flagged as hubs). Side-effect free; all positions
-// written into nodes by the caller's layout pass.
+// per-file own-counts map, filtered to files with a tree entry.
+// Returns: files (string[]), packages (string[] sorted by node
+// count desc), pkgIndex (pkg → index), nodes (one per file), edges
+// (intra/cross), adj (file → edge index list), ambassadors (file
+// paths flagged as hubs). Side-effect free; positions are written
+// into nodes by the caller's layout pass.
 // `severitySets` / `colorSets` (both Map<file, Set<string>>): the
 // distinct severities and triage-marker colors that appear on each
 // file's own findings. Used by the canvas dim-logic + topbar chip

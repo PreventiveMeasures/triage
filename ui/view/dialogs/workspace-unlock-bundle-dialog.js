@@ -27,21 +27,19 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
     this._tryPassword = null
   }
 
-  // The base `focusInitial()` default focuses the first input — the
-  // password field. Modal-conflict (another modal already open) is
-  // handled by the base `firstUpdated`, which dispatches
-  // `modal-conflict`; the open() wrapper wipes the wrapper-set
-  // `_tryPassword` closure in that listener.
+  // The base `focusInitial()` default focuses the first input (the
+  // password field). On modal-conflict the base `firstUpdated`
+  // dispatches `modal-conflict`, and the open() wrapper wipes the
+  // wrapper-set `_tryPassword` closure in that listener.
 
   _finish(result) {
     if (this._settled) return
-    // Drop sensitive state on every exit path. `_password` carries
-    // the typed secret; `_tryPassword` is the wrapper-set closure
-    // that captures the file bytes + would invoke decryptBundle if
-    // called. Lit's reactive setter retains the old value in its
-    // change-tracker until the next microtask, but `el.remove()`
-    // runs sync in the wrapper's resolve listener, so the post-
-    // remove element is GC-eligible.
+    // Drop sensitive state on every exit path. `_password` carries the
+    // typed secret; `_tryPassword` is the wrapper-set closure capturing
+    // the file bytes that would invoke decryptBundle. Lit's reactive
+    // setter retains the old value until the next microtask, but
+    // `el.remove()` runs sync in the resolve listener, so the
+    // post-remove element is GC-eligible.
     this._password = ''
     this._tryPassword = null
     super._finish(result)
@@ -58,10 +56,9 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
     this._error = ''
     try {
       const result = await this._tryPassword(this._password)
-      // PBKDF2 takes hundreds of ms; user may have cancelled in the
-      // meantime. Skip the resolve so the decrypted `result` (with
-      // workspace.privateKey + reports + triage) isn't passed through
-      // to a settled-and-detached dialog.
+      // PBKDF2 takes hundreds of ms; user may have cancelled meanwhile.
+      // Skip the resolve so the decrypted `result` (workspace.privateKey
+      // + reports + triage) isn't passed to a settled-detached dialog.
       if (this._settled) return
       this._finish(result)
     } catch (err) {

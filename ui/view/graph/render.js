@@ -3,62 +3,47 @@ import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { pkgRelative } from './data.js'
-// `<graph-layout>` is defined in `./graph-layout.js`, which lives
-// behind the lazy entry `ui/graph.js` (loaded by
-// `view/graph-attach.js` the first time the graph is shown).
-// Nothing here needs to import it — the per-section template
-// functions exported below are called by the host's `render()`
-// AFTER the lazy module has loaded and `customElements.define`d
-// the element, so the import direction is one-way (graph-layout
-// → render.js).
+// `<graph-layout>` is defined in `./graph-layout.js`, behind the
+// lazy entry `ui/graph.js` (loaded by `view/graph-attach.js` on
+// first show). Nothing here imports it: the per-section templates
+// below are called by the host's `render()` after the lazy module
+// has defined the element, so the import direction is one-way
+// (graph-layout → render.js).
 
-// Build the entire v2 layout as a Lit template — three columns:
-// left panel (palette / stats / issues / display / options), stage
-// (canvas + corner readouts + zoom controls + tooltip), right
-// panel (selection + top groups). All sub-fragments are Lit
-// templates too (returns from the per-section helpers below), so
-// interpolated user-derived values (file paths, package names,
-// the path-filter input) auto-escape through Lit's `${…}` slot.
-//
-// attachGraph2Interaction (in canvas.js) wires up the canvas
-// rAF / hover / click / pan / zoom on top of the rendered DOM.
+// Per-section Lit templates for the v2 layout (left panel, stage,
+// right panel), composed by the `<graph-layout>` shadow-DOM host in
+// `./graph-layout.js`. Interpolated user-derived values (file paths,
+// package names, the path-filter input) auto-escape through Lit's
+// `${…}` slot. Kept as plain exported functions so the refresh
+// helpers in view/render.js can call `renderSelectionCard` /
+// `renderFocusOverlay` / `renderTopPkgsBlock` directly without going
+// through the host element. attachGraph2Interaction (canvas.js)
+// wires the canvas rAF / hover / click / pan / zoom on top.
 //
 // Tab-state inputs:
 //   graph     — buildGraph(...) result; nodes/edges/packages/etc.
 //   ownCounts — file → severity-count map; drives the "Top groups"
 //               distribution and the per-package issue counts
-// `options.extraTopRow` — optional Lit template emitted as a
-// SECOND row above the main topbar contents. Used by the
-// Findings-tab embed to host the view-mode chooser inside the
-// graph's own toolbar instead of stacking a separate findings
-// toolbar above the canvas.
-// Topbar / stage / right-panel templates — exported so the
-// `<graph-layout>` shadow-DOM host (in `./graph-layout.js`) can
-// compose them into its render output. Keeping the per-section
-// helpers as plain functions here lets the refresh helpers in
-// view/render.js continue to call `renderSelectionCard`,
-// `renderFocusOverlay`, `renderTopPkgsBlock` without going through
-// the host element.
+// `options.extraTopRow` — optional Lit template emitted as a SECOND
+// row above the main topbar. Used by the Findings-tab embed to host
+// the view-mode chooser inside the graph's own toolbar instead of
+// stacking a separate findings toolbar above the canvas.
 export function renderTopBar(graph, options) {
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
   const triageCounts = options.triageCounts ?? { fixed: 0, invalid: 0, deleted: 0 }
   const triageStates = options.triageStates ?? ['fixed', 'invalid', 'deleted']
-  // Severity highlight pills — same tier set as the findings
-  // tab (critical, high, medium, low, high_bug, bug,
-  // informational from format.js's SEVERITIES). Skip tiers
-  // with zero count UNLESS that tier is currently in the
-  // selected set, so the user can always click an active pill
-  // to deselect it even if the dataset has stopped containing
-  // that severity. Empty selectedSeverities = no canvas dimming.
-  // Lives at the left edge of the topbar (before All files)
-  // since it's the most-frequently-used control.
-  // Each file contributes to EVERY severity tier present in its
-  // findings (same union semantic the findings-tab toolbar uses),
-  // not just its top-tier — so a file with high+low findings
-  // counts under both chips and toggling either one keeps the file
-  // highlighted. Mirrors `severitySet` on the node, populated by
-  // buildGraph2Data from the visible groups.
+  // Severity highlight pills — same tier set as the findings tab
+  // (format.js's SEVERITIES). Skip zero-count tiers UNLESS currently
+  // selected, so an active pill stays clickable to deselect even
+  // after the dataset stops containing that severity. Empty
+  // selectedSeverities = no canvas dimming. Left edge of the topbar
+  // (before All files) as the most-used control. Each file counts
+  // toward EVERY severity tier in its findings, not just its top
+  // tier (same union semantic the findings-tab toolbar uses), so a
+  // high+low file counts under both chips and stays highlighted when
+  // either is toggled. Mirrors `severitySet` on the node, populated
+  // by buildGraph2Data from the visible groups.
   const issueCounts = {}
   for (const sev of SEVERITIES) issueCounts[sev] = 0
   for (const n of graph.nodes) {
@@ -127,13 +112,12 @@ export function renderTopBar(graph, options) {
       kind="graph"
     ></triage-filter>` : null}
     <!-- Path / package substring filter — same .toolbar-search shell
-         the findings tab uses for "Search findings", just wired to
-         the canvas dim predicate instead of the row filter. Clear
-         button is always rendered, hidden via CSS when the input is
-         empty (using :placeholder-shown sibling). Keeps the button
-         live across user typing without re-rendering the topbar on
-         every keystroke — the canvas redraws on input but the chrome
-         doesn't. -->
+         as the findings tab's "Search findings", wired to the canvas
+         dim predicate instead of the row filter. Clear button always
+         rendered, hidden via CSS when empty (:placeholder-shown
+         sibling), so it stays live as the user types without re-
+         rendering the topbar per keystroke — input redraws the canvas
+         but not the chrome. -->
     <div class="toolbar-search g2-path-filter-wrap">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/>
@@ -150,10 +134,10 @@ export function renderTopBar(graph, options) {
     ${extraTopRow ? null : allFilesBtn}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
-    <!-- Fullscreen — toggles body.report-fullscreen. With the
-         sidebar now spanning both grid rows, the topbar covers only
-         the stage column, so the button's right-edge position here
-         sits right at the stage / sidebar boundary. -->
+    <!-- Fullscreen — toggles body.report-fullscreen. The sidebar
+         spans both grid rows, so the topbar covers only the stage
+         column and this button's right edge lands at the stage /
+         sidebar boundary. -->
     <button type="button" class="g2-icon-btn" id="g2-fullscreen" title="Toggle fullscreen">⛶</button>
     </div>
   </div>`
@@ -188,14 +172,12 @@ function shorterPath(file, referenceDir) {
   return rel.length < file.length ? rel : file
 }
 
-// File-link list — shared between file card's Imported by /
-// Imports sections and the package card's Imported by section.
-// Each row is clickable, routes through data-g2-select to the
-// existing file-selection handler. The list itself becomes a
-// scroll container past 5 visible rows so the section doesn't
-// dominate the right panel on hub-y files. Each row gets a
-// little package-color dot so cross-package importers read
-// instantly without parsing the path prefix.
+// File-link list — shared by the file card's Imported by / Imports
+// sections and the package card's Imported by section. Rows route
+// through data-g2-select to the file-selection handler. Scrolls past
+// 5 rows so it doesn't dominate the right panel on hub-y files. Each
+// row's package-color dot lets cross-package importers read instantly
+// without parsing the path prefix.
 //
 // referenceDir (optional): when present, paths shorter than
 // the absolute form get displayed as `./...` / `../...`
@@ -248,10 +230,9 @@ export function renderSevChips(counts) {
 }
 
 export function renderStage(graph) {
-  // Bottom-left stats — file/package/edge/hub/issue counts. The
-  // earlier "X of Y visible" readout is gone: every node stays on
-  // screen now (filters / solo soft-dim instead of hiding), so
-  // visibleCount always equaled total.
+  // Bottom-left stats — file/package/edge/hub/issue counts. No
+  // "X of Y visible" readout: filters / solo soft-dim instead of
+  // hiding, so every node stays on screen and visible == total.
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
@@ -261,11 +242,9 @@ export function renderStage(graph) {
 
   return html`<main class="graph2-stage">
     <canvas id="g2-canvas"></canvas>
-    <!-- Top-left overlay — back button only (in package-focus
-         mode). Stats moved to the bottom-left where they don't
-         compete with the focused subgraph for attention; only
-         shown here when there's something to render (the back
-         button), so the corner is empty in normal mode. -->
+    <!-- Top-left overlay — back button only, shown in package-focus
+         mode. Stats live bottom-left where they don't compete with
+         the focused subgraph; this corner is empty in normal mode. -->
     ${graph2.focusedPkg ? html`<div class="g2-stage-overlay">
       <button type="button" class="g2-back-btn" id="g2-back-to-full" title="Back to the full graph">← ${focusedLabel}</button>
     </div>` : null}
@@ -283,7 +262,6 @@ export function renderStage(graph) {
       <span><b>${issues}</b> issues</span>
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
-    <!-- Bottom-right: zoom controls. -->
     <div class="g2-zoom-ctrl">
       <button id="g2-zoom-in" title="Zoom in">+</button>
       <div class="g2-zoom-pct" id="g2-zoom-pct">100%</div>
@@ -345,20 +323,15 @@ export function renderRightPanel() {
   </aside>`
 }
 
-// Top-packages section — exported so events.js can re-render it
-// in place when the user flips the Issues/Files tab without
-// rebuilding the whole canvas. The caller wraps the returned
-// template in #g2-top-pkgs-block.
+// Top-packages section — exported so events.js can re-render it in
+// place when the user flips the Issues/Files tab without rebuilding
+// the canvas. Caller wraps the result in #g2-top-pkgs-block.
 //
-// The Size mini-tab only shows when (a) the user has flipped the
-// "All files" toggle on (so the file set isn't pre-filtered to
-// issue-bearing files only — a bundle's Size view is most useful
-// against the unfiltered set) AND (b) every node carries a `size`.
-// Without a size on every node, the tab's percentages would be
-// meaningless. The Issues tab hides when no node carries any
-// findings (a clean bundle / report — there's nothing to rank).
-// If the active tab is gated off, the renderer falls back to
-// Files.
+// Size tab shows only when (a) "All files" is on (Size is most useful
+// against the unfiltered set) AND (b) every node carries a `size`
+// (otherwise the percentages are meaningless). Issues tab hides when
+// no node has findings (clean bundle/report — nothing to rank). If
+// the active tab is gated off, falls back to Files.
 export function renderTopPkgsBlock(graph) {
   const showSize = graph2.showAll && graph.nodes.length > 0
     && graph.nodes.every((n) => typeof n.size === 'number')
@@ -405,28 +378,22 @@ function renderFileCard(graph, n, file, ctx) {
   const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
   const relPath = pkgRelative(file, n.pkg)
 
-  // Directional import lists. Imported by = files that point
-  // AT this one; Imports = files this one points at. The
-  // earlier "Top neighbors" combined both directions and lost
-  // that information, which made the section less useful for
-  // tracing what depends on what. Each list scrolls past 5
-  // entries via CSS. Paths are displayed relative to the
-  // selected file's directory when that's shorter than the
-  // absolute form.
+  // Directional import lists, kept separate so the section traces
+  // what depends on what. Imported by = files that point AT this one;
+  // Imports = files this one points at. Each list scrolls past 5
+  // entries via CSS. Paths display relative to the selected file's
+  // directory when that's shorter than the absolute form.
   const importers = graph.importedBy.get(file) ?? []
   const imports = graph.importsOf.get(file) ?? []
   const lastSlash = file.lastIndexOf('/')
   const referenceDir = lastSlash >= 0 ? file.slice(0, lastSlash) : ''
 
   return html`<div class="g2-selection-card">
-    <!-- Three-line header (matches the hover tooltip):
-           1. file path relative to the package root — primary
-              identifier, monospace, full text colour.
-           2. dot + package name — secondary context.
-           3. (below the head's border) full path in small muted
-              monospace, ellipsis-clipped if the column is narrow.
-              Title attr keeps the full path discoverable on hover
-              when truncation kicks in. -->
+    <!-- Three-line header, matching the hover tooltip: package-
+         relative path (primary id), dot + package name, then the
+         full path below the head's border. The full-path line is
+         ellipsis-clipped in a narrow column; its title attr keeps
+         the untruncated path discoverable on hover. -->
     <div class="g2-sel-file-head">
       <div class="g2-sel-path">${relPath}</div>
       <div class="g2-sel-pkg-row">
@@ -437,11 +404,9 @@ function renderFileCard(graph, n, file, ctx) {
     <div class="g2-sel-fullpath" title=${file}>${file}</div>
     ${formatBytes(n.size) ? html`<div class="g2-sel-size">${formatBytes(n.size)}</div>` : null}
     <!-- Own + subtree finding chips — same chrome as graph v1's
-         sidebar (.tree-info-section / .tree-count-chip), so the
-         visual reads consistently across the two graph tabs. The
-         single-severity Status row + issue-text bar that lived
-         here previously duplicated the data without showing the
-         breakdown — chips are strictly more informative. -->
+         sidebar (.tree-info-section / .tree-count-chip) so it reads
+         consistently across the two graph tabs, and the chips show
+         the full per-severity breakdown. -->
     <div class="g2-sel-section">
       <div class="g2-sel-section-label">Own findings</div>
       ${renderSevChips(n.own)}
@@ -452,10 +417,9 @@ function renderFileCard(graph, n, file, ctx) {
     </div>
     <!-- Bottom row carries only the navigation jumps (Findings /
          Files). The package-graph drill-in is a different kind of
-         action — it stays on the Graph tab and just narrows the
-         canvas — so it lives on the canvas itself as a top-right
-         icon button (rendered in renderStage), pairing with the
-         top-left back button. -->
+         action — stays on the Graph tab, just narrows the canvas —
+         so it lives on the canvas as a top-right icon button
+         (renderStage), pairing with the top-left back button. -->
     <div class="g2-sel-jumps">
       ${n.totalIssues > 0 ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
       ${ctx.isBundleContext
@@ -467,12 +431,10 @@ function renderFileCard(graph, n, file, ctx) {
   </div>`
 }
 
-// Package selection card — shown when a package is solo'd via
-// the palette swatch or Top packages list (and no file is
-// selected). Aggregates per-file stats up to package level:
-// total file / hub counts, intra vs cross edges, summed own
-// findings broken down by severity, and a "Package graph →"
-// drill-in for the v1-style subview.
+// Package selection card — shown when a package is solo'd via the
+// palette swatch or Top packages list (and no file is selected).
+// Aggregates per-file stats up to package level (counts, intra/cross
+// edges, summed own findings by severity).
 function renderPackageCard(graph, pkg) {
   const filesInPkg = graph.nodes.filter((n) => n.pkg === pkg)
   const fileCount = filesInPkg.length
@@ -509,11 +471,9 @@ function renderPackageCard(graph, pkg) {
   let hubs = 0
   for (const n of filesInPkg) if (n.isHub) hubs++
 
-  // Imported by — every file from a different package that
-  // points at any file in this package. Dedup via Set since a
-  // single importer file may point at multiple files in the
-  // package; we want to list each importer once. Same scrollable
-  // list rendering the file card uses.
+  // Imported by — every file from a different package that points at
+  // any file in this package. Set dedups, since one importer may
+  // point at multiple files here but should be listed once.
   const importerSet = new Set()
   for (const n of filesInPkg) {
     for (const f of (graph.importedBy.get(n.file) ?? [])) {
@@ -545,14 +505,13 @@ function renderPackageCard(graph, pkg) {
 function renderDistribution(graph, activeTab) {
   const totalFiles = graph.nodes.length || 1
   const tab = activeTab ?? graph2.topPkgsTab
-  // Aggregate own-issue counts per package. The topbar's severity
-  // and triage filters narrow what's counted — empty filters = full
-  // count, otherwise count only findings whose severity AND color
-  // both pass their respective filter (intersection across axes,
-  // matching what the canvas dim predicate highlights). Per-finding
-  // {severity, color} pairs are stamped on each node by
-  // buildGraph2Data; without them an empty `n.findings` falls back
-  // to `n.totalIssues` (which equals the unfiltered count).
+  // Aggregate own-issue counts per package, narrowed by the topbar's
+  // severity + triage filters: empty filters = full count, else count
+  // only findings passing severity AND color (intersection across
+  // axes, matching the canvas dim predicate). Per-finding
+  // {severity, color} pairs are stamped on nodes by buildGraph2Data;
+  // without them an empty `n.findings` falls back to `n.totalIssues`
+  // (the unfiltered count).
   const sevFilter = graph2.selectedSeverities
   const colorFilter = graph2.selectedColors
   const useSev = sevFilter.size > 0
@@ -583,13 +542,12 @@ function renderDistribution(graph, activeTab) {
       totalSize += n.size
     }
   }
-  // Ranked list reorders + filters per tab. On Issues, drop
-  // packages with no issues — they're noise in an issues-first
-  // ranking (matches graph v1's hubs filter). On Size, drop
-  // packages with zero / unknown bytes for the same reason. Files
-  // shows everything so the user gets the full pkg.count breakdown.
-  // Each axis tie-breaks by the next-most-stable axis so equal
-  // primary-axis packages don't shuffle alpha.
+  // Ranked list reorders + filters per tab. Issues drops zero-issue
+  // packages (noise in an issues-first ranking; matches v1's hubs
+  // filter); Size drops zero / unknown-byte packages likewise; Files
+  // shows everything for the full pkg.count breakdown. Each axis tie-
+  // breaks by the next-most-stable axis so equal primary-axis
+  // packages don't shuffle alpha.
   let sorted
   if (tab === 'issues') {
     sorted = graph.packages
@@ -635,9 +593,8 @@ function renderDistribution(graph, activeTab) {
       return html`<span style=${styleMap({ background: c, width: `${widthFor(pkg)}%` })}></span>`
     })}
   </div>
-  <!-- Show every package — the wrapping section flexes to fill
-       the available sidebar height and scrolls past that, so the
-       top-N cap that lived here previously is no longer needed. -->
+  <!-- Show every package — the wrapping section flexes to fill the
+       sidebar height and scrolls past it, so no top-N cap is needed. -->
   <div class="g2-dist-list">
     ${sorted.length === 0 ? html`<div class="g2-dist-empty">${emptyMsg}</div>` : null}
     ${repeat(sorted, (pkg) => pkg, (pkg) => {
@@ -645,11 +602,10 @@ function renderDistribution(graph, activeTab) {
       const fileCnt = graph.pkgCount.get(pkg) ?? 0
       const issueCnt = issueByPkg.get(pkg) ?? 0
       const sizeBytes = sizeByPkg.get(pkg) ?? 0
-      // Count + percentage both follow the active tab — reading
-      // "30 88.2%" on Issues makes the row monotonically decrease
-      // with the sort; mixing issue counts with file percentages
-      // (the previous behavior) read as a sorting bug. On Size
-      // the count slot becomes a byte readout via formatBytes.
+      // Count + percentage both follow the active tab, so the row
+      // (e.g. "30 88.2%" on Issues) reads monotonically with the
+      // sort instead of mixing an issue count with a file percentage.
+      // On Size the count slot becomes a byte readout via formatBytes.
       const cnt = tab === 'issues' ? issueCnt
                : tab === 'size'   ? formatBytes(sizeBytes)
                : fileCnt
@@ -657,10 +613,9 @@ function renderDistribution(graph, activeTab) {
                 : tab === 'size'   ? (totalSize   > 0 ? (sizeBytes / totalSize   * 100).toFixed(1) : '0.0')
                 : (fileCnt / totalFiles * 100).toFixed(1)
       const label = pkg === '__own__' ? 'own source' : pkg
-      // Each row is a button with data-g2-pkg so the existing
-      // package-click handler in events.js (used by the palette
-      // swatches) handles top-pkgs clicks too: same toggle-solo
-      // semantics, same right-panel refresh, no duplicated logic.
+      // data-g2-pkg routes each row to the events.js package-click
+      // handler (shared with the palette swatches): same toggle-solo
+      // semantics and right-panel refresh, no duplicated logic.
       const isSelected = graph2.solo === pkg
       return html`<button
         type="button"

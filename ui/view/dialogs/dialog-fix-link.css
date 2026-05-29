@@ -1,14 +1,11 @@
 /* `<fix-link-dialog>` layer — single-line URL editor for the per-
-   finding .mark-fix button. Composed into the dialog's shadow
-   `static styles` on top of dialog-base.css (frame + reset + WCO)
-   and dialog-severity.css (the `.conflict-sev` chip). Shadow
-   isolation lets the body address the lone input by type and use
-   short, unprefixed class names. */
+   finding .mark-fix button. Composed into the shadow `static styles`
+   on top of dialog-base.css and dialog-severity.css (`.conflict-sev`). */
 
-/* Wider frame than the base 480px for the URL row. */
+/* Wider than the base 480px for the URL row. */
 dialog { max-width: 560px; width: min(94vw, 560px); }
 
-header h3 { margin: 0 0 .4rem; }  /* tighter than base; font/weight inherited */
+header h3 { margin: 0 0 .4rem; }  /* tighter than base */
 
 .finding {
   display: flex; align-items: center; gap: .5rem;

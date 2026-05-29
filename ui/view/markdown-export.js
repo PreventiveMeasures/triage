@@ -89,12 +89,11 @@ function findingToMarkdown(f) {
   return lines.join('\n')
 }
 
-// One report → markdown. Findings flattened from groups[] (a
-// "group" is a list of cases for the same finding, see ingest /
-// group.js — we emit each case as its own subsection so the order
-// matches what the user sees in the list/grouped views) and sorted
-// by severity descending so the doc opens with the most urgent
-// findings.
+// One report → markdown. Findings flattened from groups[] (a group
+// is a list of cases for the same finding, see ingest / group.js);
+// each case is its own subsection so the order matches the
+// list/grouped views. Sorted by severity descending so the doc
+// opens with the most urgent findings.
 function reportToMarkdown(report) {
   const findings = (report.groups ?? []).flat()
   const lines = [`# ${report.fileName}`, '']

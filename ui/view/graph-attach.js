@@ -13,10 +13,9 @@ let loadPromise = null
 // Resolved module reference, cached after the first successful
 // `loadGraph()` so synchronous callers (the refresh wrappers in
 // `view/render.js` / `view/render-bundle.js`, fired from
-// `events.js` click handlers) can dispatch into the lazy module
-// without awaiting. `null` means the graph has never been opened
-// in this session — those callers no-op, which is fine because
-// there's no graph DOM to refresh in that state either.
+// `events.js` click handlers) can dispatch without awaiting. `null`
+// means the graph has never been opened this session — those
+// callers no-op, fine since there's no graph DOM to refresh anyway.
 let loaded = null
 
 export function loadedGraphMod() { return loaded }

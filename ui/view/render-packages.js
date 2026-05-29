@@ -3,9 +3,7 @@
 // Pulls from `client/bundle-finding-index.js` (the OPFS-wide
 // background scan) rather than `state.reports`, so the page
 // reflects every report the user has ever dropped — not just the
-// one currently loaded. Lifted out of `render.js` because it
-// touches no findings-tab state and reads cleaner as a coherent
-// neighbor.
+// one currently loaded.
 //
 // `renderPackagesView()` is the single export — orchestrates the
 // page's list / details / slide layout. The render() orchestrator
@@ -29,12 +27,9 @@ import { pkgColor } from './graph/utils.js'
 import { renderIssuesGroupedByFile } from './render-bundle.js'
 
 export function renderPackagesView() {
-  // Pulls from the OPFS-wide finding index (populated by the
-  // background scan in bundle-finding-index.js), not state.reports
-  // — so the page reflects every report the user has ever
-  // dropped, not just the one currently loaded. The first call
-  // kicks the scan if it hasn't run yet; the events.js subscriber
-  // re-renders progressively as more reports finish indexing.
+  // The first call kicks the OPFS background scan if it hasn't run
+  // yet; the events.js subscriber re-renders progressively as more
+  // reports finish indexing.
   //
   // Triage filter: state.shownTriage gates which findings count
   // (null = untriaged, 'fixed' / 'invalid' / 'deleted' = those
@@ -234,12 +229,11 @@ function keyForVisibleRow(row) {
 }
 
 // Toolbar at the top-right of the Packages page header — search
-// input + sort dropdown + the existing triage segmented selector.
-// Search is a case-insensitive substring match on the package name;
-// sort options key off finding / file / report counts plus a
-// name-asc fallback. The triage selector is unchanged from before
-// (same Fixed / Invalid / Deleted chips); it stays grouped here
-// so the page header reads as a single horizontal control row.
+// input + sort dropdown + triage segmented selector. Search is a
+// case-insensitive substring match on the package name; sort options
+// key off finding / file / report counts plus a name-asc fallback.
+// All three stay grouped here so the header reads as one horizontal
+// control row.
 function packagesToolbarTemplate(triageCounts) {
   return html`<div class="packages-toolbar">
     <entity-search kind="packages"></entity-search>
@@ -248,11 +242,9 @@ function packagesToolbarTemplate(triageCounts) {
   </div>`
 }
 
-// Packages page triage selector now lives in `<triage-selector
-// variant="packages">` (see view/triage-selector.js). The 3-bucket
-// state list (no `ignored` — that's per-report and treated as
-// untriaged in this view) is the only thing the call site has to
-// pass; everything else is handled by the component.
+// State list for `<triage-selector variant="packages">` (see
+// view/triage-selector.js) — the only thing the call site passes.
+// No `ignored`: it's per-report and treated as untriaged in this view.
 const PACKAGES_TRIAGE_STATES = ['fixed', 'invalid', 'deleted']
 
 // In-place sort by the user-selected key. Every option falls back
@@ -545,11 +537,9 @@ function packageFindingsByFile(rawBucket, pkg, mode = 'live', version) {
   return result
 }
 
-// Overview tab body — moved out of renderPackageDetails so the
-// tab dispatch above stays compact. Same content as the previous
-// (pre-tabs) detail body. `version` is the per-version slot the
-// detail panel is scoped to, surfaced as an extra `Version` row in
-// the meta dl when it's a known string.
+// Overview tab body. `version` is the per-version slot the detail
+// panel is scoped to, surfaced as an extra `Version` row in the meta
+// dl when it's a known string.
 function renderPackageOverview(pkg, bucket, version) {
   const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   for (const f of bucket.findings) {

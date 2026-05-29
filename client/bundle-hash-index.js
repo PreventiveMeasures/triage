@@ -16,9 +16,8 @@
 const bundleFilesByHash = new Map()
 const bundleHashesByIntegrity = new Map()
 
-// Record a bundle's per-file hash map. Idempotent — calling
-// twice with the same data is a no-op (the inner Map.set just
-// overwrites with the same value). Returns true when this
+// Record a bundle's per-file hash map. Idempotent — re-recording
+// the same data overwrites in place. Returns true when this
 // integrity is fresh (helps callers avoid redundant parses).
 export function recordBundleFileHashes(integrity, fileHashes) {
   if (!integrity || !fileHashes) return false

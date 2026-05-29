@@ -24,11 +24,10 @@ class SyncAuthDialog extends AppDialog {
     this._value = ''
   }
 
-  // Wipe the password from the instance before the resolve hop —
-  // mirrors `workspace-unlock-link-dialog`'s post-unlock wipe. Lit's
-  // reactive tracker retains the old value until the next microtask,
-  // but the slot itself is emptied so the still-mounted host doesn't
-  // keep the bytes. Defers the close + resolve to the base.
+  // Wipe the password before the resolve hop — mirrors
+  // `workspace-unlock-link-dialog`'s post-unlock wipe. Lit's reactive
+  // tracker retains the old value until the next microtask, but the
+  // slot is emptied so the still-mounted host doesn't keep the bytes.
   _finish(result) {
     this._value = ''
     super._finish(result)

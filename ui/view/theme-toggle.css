@@ -1,9 +1,8 @@
 /* `<theme-toggle>` shadow-DOM styles. Imported as text by theme.js
    and wrapped with unsafeCSS() so the bytes ship inside the
-   component's shadow root. `:host` is the element itself — it acts
-   as the clickable button surface. Mirrors what was previously the
-   global #theme-toggle rule in styles/theme.css; #print-btn still
-   carries its own copy there. */
+   component's shadow root. `:host` is the element itself, acting as
+   the clickable button surface. (#print-btn carries its own copy of
+   these rules in styles/theme.css.) */
 
 :host {
   position: absolute; top: .5rem; right: .5rem;

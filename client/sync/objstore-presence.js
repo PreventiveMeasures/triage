@@ -25,11 +25,8 @@ import { computeSha512Integrity } from '../../common/integrity.js'
 import { onSyncHostInstalled } from './host.ts'
 
 // Late-bound host accessors — populated by `onSyncHostInstalled` at
-// the bottom of this file before any of the entry points below
-// (`openWorkspace`, the workspace-listener callbacks, etc.) can fire.
-// Direct references here read cleaner than `syncHost().listWorkspaces()`
-// at every call site, but the actual binding is `syncHost()` once we
-// know the host is installed.
+// the bottom of this file before any entry point below
+// (`openWorkspace`, the workspace-listener callbacks) can fire.
 let listWorkspaces
 let addReportToWorkspace
 let addBundleToWorkspace
@@ -46,26 +43,25 @@ const sessions = new Map()
 const listeners = new Set()
 
 // Persisted tag→name cache, keyed per-workspace in localStorage.
-// Lets a page refresh skip `fetchByTag` for every remote tag we've
-// already decoded — `fetchByTag` downloads the FULL encrypted blob
-// over REST just to read the embedded name, so a workspace with N
-// remote reports + bundles costs N REST round-trips on every boot
-// without this cache.
+// Lets a page refresh skip `fetchByTag` for every already-decoded
+// remote tag — `fetchByTag` downloads the FULL encrypted blob over
+// REST just to read the embedded name, so without this cache a
+// workspace with N remote reports + bundles costs N REST round-trips
+// on every boot.
 //
 // Shape: { names: { tag: fileName }, bundles: { tag: integrity },
 //          bundleNames: { integrity: name } }
 //
-// Trust: this data is workspace-private (filenames, bundle names,
-// HMAC tags); nothing here is secret material. localStorage is the
-// same persistence tier the workspace blob (`deepview.workspaces`)
-// uses for its plaintext `reports` / `bundles` arrays, so the cache
-// doesn't widen the exposure surface.
+// Trust: workspace-private (filenames, bundle names, HMAC tags), no
+// secret material, and the same persistence tier the workspace blob
+// (`deepview.workspaces`) already uses for its plaintext `reports` /
+// `bundles` arrays — so it doesn't widen the exposure surface.
 //
 // Invalidation: cleared on `onWorkspaceDeleted` and
-// `onWorkspacePrivateKeyChanged` (where the cached HMACs were
-// computed against an old `tagKey` and are now garbage). Pruned
-// after each `session.list()` against the live remote inventory so
-// stale entries from a peer-side delete don't linger.
+// `onWorkspacePrivateKeyChanged` (cached HMACs computed against the
+// old `tagKey` are garbage under the new one). Pruned after each
+// `session.list()` against the live remote inventory so stale entries
+// from a peer-side delete don't linger.
 const PRESENCE_CACHE_PREFIX = 'deepview.objstore-presence.'
 function presenceCacheKey(workspaceId) { return PRESENCE_CACHE_PREFIX + workspaceId }
 function loadPresenceCache(workspaceId) {
@@ -81,13 +77,11 @@ function loadPresenceCache(workspaceId) {
       // `tag → version` of the local on-disk bytes we last committed
       // for that tag (via putFile success, maybeAutoDownload save,
       // or maybeApplyRemoteReplace save). Drives the boot-time
-      // divergence check: when remote shows a version strictly
-      // greater than the local one, a peer Replace landed while we
-      // were offline and we must re-fetch on reconnect. Defaults
-      // to an empty object for legacy cache rows (entries without
-      // this field) so a fresh-from-disk session simply has no
-      // divergence baseline to compare against — same effect as
-      // the pre-fix behaviour for those rows.
+      // divergence check: a remote version strictly greater than the
+      // local one means a peer Replace landed while we were offline,
+      // so we must re-fetch on reconnect. Defaults to {} for legacy
+      // cache rows lacking this field — such a session simply has no
+      // divergence baseline to compare against.
       localVersions: obj.localVersions && typeof obj.localVersions === 'object' ? obj.localVersions : {},
     }
   } catch { return null }
@@ -102,9 +96,9 @@ function savePresenceCache(workspaceId, entry) {
     }
     localStorage.setItem(presenceCacheKey(workspaceId), JSON.stringify(payload))
   } catch (err) {
-    // QuotaExceeded or similar. The in-memory cache still works for
-    // this session; the next page refresh will repeat the
-    // `fetchByTag` discovery cycle. Log so the operator sees why.
+    // QuotaExceeded or similar. The in-memory cache still works this
+    // session; the next refresh repeats the `fetchByTag` discovery
+    // cycle. Log so the operator sees why.
     console.warn(`objstore-presence: cache persist failed for ${workspaceId}:`, err)
   }
 }
@@ -113,60 +107,53 @@ function clearPresenceCache(workspaceId) {
 }
 
 // Shared multiplexed objstore client — one per page. The WebSocket
-// itself lives on the shared `SocketTransport` from
-// `client/sync/sync-transport.ts` so triage-sync and objstore share one
-// TCP connection: one heartbeat, one `authenticate` round-trip, one
-// reconnect schedule. The transport's `setServerUrl` is driven by
-// triage-sync; the operator-side auth resolver is wired via
-// `setSharedAuthResolver`. The HTTP origin (REST data-plane) is
-// derived from the WS URL the first time we need a client and
-// captured into the client — we never re-derive because in this
-// app the user only ever has one server URL, and toggling sync
-// off/on goes through the transport's acquire/release without
-// touching this client.
+// lives on the shared `SocketTransport` (`client/sync/sync-transport.ts`)
+// so triage-sync and objstore share one TCP connection: one
+// heartbeat, one `authenticate` round-trip, one reconnect schedule.
+// The HTTP origin (REST data-plane) is derived from the WS URL on
+// first client use and captured — never re-derived, because the user
+// only ever has one server URL and toggling sync off/on goes through
+// the transport's acquire/release without touching this client.
 //
 // Known gap: the console-API path
 // `DeepView.triageSync.setServerUrl('wss://different-host')` swaps
-// the WS plane but leaves this client's captured httpOrigin
-// pointing at the previous derivation — REST PUT/GET tokens issued
-// by the new server would then hit the OLD origin. Accepted as
-// out-of-scope: the supported flows (initial set, off-toggle,
-// on-toggle) all use the same URL.
+// the WS plane but leaves the captured httpOrigin on the previous
+// derivation — REST tokens from the new server would hit the OLD
+// origin. Out-of-scope: the supported flows (initial set, off/on
+// toggle) all use the same URL.
 let client = null
 function ensureClient(httpOrigin) {
   if (!client) {
     client = createObjstoreClient({
       // `serverUrl` only matters when the client builds its own
-      // private transport (the path tests take when they pass no
-      // `transport`); here the shared transport carries all WebSocket
-      // traffic, so pass empty string to keep the deps shape valid
-      // without pretending to drive the URL.
+      // private transport (the test path with no `transport`); here
+      // the shared transport carries all WS traffic, so pass empty
+      // string to keep the deps shape valid without driving the URL.
       serverUrl: '',
       httpOrigin,
       transport: getSharedTransport(),
       // Presence sends NO `workspace-subscribe` of its own (the objstore
-      // client has no subscribe path at all). It relies on triage-sync's
-      // single subscribe for the same tag on this shared socket (presence
-      // and sync open a workspace together, so sync always owns it). That
-      // one subscribe registers the socket for the tag's broadcasts —
+      // client has no subscribe path). It rides triage-sync's single
+      // subscribe for the same tag on this shared socket (presence and
+      // sync open a workspace together, so sync always owns it). That
+      // subscribe registers the socket for the tag's broadcasts —
       // including objstore-put/-deleted — so ours would be a pure
-      // duplicate (and would trip triage-sync's continuity-break
-      // re-subscribe via the full-chain replay).
+      // duplicate, and would trip triage-sync's continuity-break
+      // re-subscribe via the full-chain replay.
     })
   }
   return client
 }
-// Fired after the auto-download worker saves a new report to OPFS
-// + attaches it to the workspace. The UI bridge re-runs
-// `switchToWorkspace` if the affected workspace is currently
-// active so the new report joins state.reports without a manual
-// refresh.
+// Fired after the auto-download worker saves a new report to OPFS +
+// attaches it to the workspace. The UI bridge re-runs
+// `switchToWorkspace` if that workspace is active so the new report
+// joins state.reports without a manual refresh.
 const autoDownloadListeners = new Set()
 // Same shape for bundles — fires after `maybeAutoDownloadBundle` (or
-// an explicit `fetchBundleFromRemote` followed by attach) lands a
-// new bundle's bytes in OPFS + claims it under a workspace. The UI
-// bridge re-renders the sidebar (so `state.bundles` picks up the
-// new entry) and the bundles main view if active.
+// explicit `fetchBundleFromRemote` + attach) lands a bundle's bytes
+// in OPFS + claims it under a workspace. The UI bridge re-renders the
+// sidebar (so `state.bundles` picks it up) and the bundles main view
+// if active.
 const bundleAutoDownloadListeners = new Set()
 
 function notify() {
@@ -180,30 +167,17 @@ function notify() {
 // scheme + drop pathname. Returns null when sync isn't configured —
 // in that case we keep an empty entry around so isInRemote can still
 // answer false synchronously.
-// Stringify `entry.err` for inclusion in user-facing Error messages.
-// `entry.err` is typically an `Error` (e.g. `new Error('connect
-// failed')`) so `.message` is the readable form. But the boot path
-// captures rejection from `client.openWorkspace`, which can also
-// reject with a non-Error value (Web Locks API throws plain
-// `{ name, message }` DOMExceptions; `crypto.subtle.*` failures
-// surface as DOMException too). Falling back to `String(err)`
-// instead of bare `err` avoids producing `[object Object]` in the
-// thrown message. Memory-lifecycle audit follow-up
+// Stringify `entry.err` for user-facing Error messages. Usually an
+// `Error` so `.message` reads best, but the boot path captures
+// non-Error rejections from `client.openWorkspace` (Web Locks and
+// `crypto.subtle` both throw DOMExceptions), so a `String(err)`
+// fallback avoids `[object Object]`. Pathological shapes degrade
+// gracefully: empty `.message` falls to `String(err)`, and a `Symbol`
+// that throws in `String` is swallowed to ''. A plain object with no
+// string `.message` still yields `: [object Object]` — a known,
+// accepted defense-in-depth gap.
+// Memory-lifecycle audit follow-up
 // `client/sync/objstore-presence.js:374`.
-//
-// Edge cases:
-//   - `new Error('')` (empty message) → Error branch skips empty
-//     message, falls through to `String(err)` → ': Error' (the
-//     prototype toString). Degraded but not misleading.
-//   - `{ name: 'X' }` (object, no .message) → falls to `String(err)`
-//     → ': [object Object]'. Same as the pre-fix shape — formally
-//     a defense-in-depth gap, but no real-world thrower in the
-//     codebase produces such shapes.
-//   - `Symbol(...)` → `String(err)` throws on most engines; the
-//     outer try/catch returns '' rather than propagating. Callers
-//     end up with a less-informative composite ("Objstore session
-//     is not connected" with no trailing reason) — acceptable for
-//     this rare pathological case.
 function formatEntryErr(err) {
   if (err == null) return ''
   if (err instanceof Error && err.message) return `: ${err.message}`
@@ -212,15 +186,14 @@ function formatEntryErr(err) {
   try { return `: ${String(err)}` } catch { return '' }
 }
 
-// Receiver-side defensive cap on the user-friendly bundle name.
-// The wire wrap allows up to 64 KiB (u16BE length prefix) — a
-// misbehaving workspace member could ship a huge name to bloat the
-// OPFS `_meta.json` blob and break the sidebar render. Clamp before
-// passing to `saveBundle`. 256 bytes is comfortably past any
-// reasonable filename. UTF-8 truncation at a non-codepoint boundary
-// would produce mojibake but never a JSON-stringify failure, so we
-// slice by JS string length (codepoints) rather than byte length
-// to keep the cap easy to reason about.
+// Receiver-side defensive cap on the user-friendly bundle name. The
+// wire wrap allows up to 64 KiB (u16BE length prefix), so a
+// misbehaving member could ship a huge name to bloat the OPFS
+// `_meta.json` blob and break the sidebar render — clamp before
+// `saveBundle`. 256 is well past any real filename. Slice by JS
+// string length (codepoints), not bytes: mid-codepoint truncation
+// would mojibake but never break JSON-stringify, and codepoints are
+// easier to reason about.
 const MAX_RECEIVED_BUNDLE_NAME_LEN = 256
 
 function clampBundleName(name) {
@@ -242,11 +215,10 @@ function httpOriginFromWsUrl(wsUrl) {
   }
 }
 
-// Hold a single in-flight session per workspaceId. Calling
-// openWorkspace twice with the same id is a no-op — the first call
-// has already populated `fileTags` and the session boot resolves on
-// its own. A subsequent close + open cycle (user leaves + re-enters
-// the workspace) opens a new session.
+// One in-flight session per workspaceId. A second openWorkspace with
+// the same id is a no-op (the first already populated `fileTags` and
+// the boot resolves on its own); a close + open cycle (user leaves +
+// re-enters) opens a new session.
 export function openWorkspace(workspaceId) {
   if (sessions.has(workspaceId)) return
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
@@ -286,9 +258,8 @@ export function openWorkspace(workspaceId) {
     // `putBundleToRemote` after a successful local put. Drives the
     // version-bump detection in the `onPut` handler so a Replace
     // under an existing tag (same fileName, new content) forces
-    // peers to re-download the bytes — the prior behavior treated
-    // every onPut for a known tag as a no-op, leaving peers stuck
-    // on the old content while new joiners fetched the fresh blob.
+    // peers to re-download the bytes rather than stay pinned on the
+    // old content while new joiners fetch the fresh blob.
     remoteVersions: new Map(),
     // `resourceTag → version` of the bytes WE last committed to
     // local OPFS. Set whenever we successfully write a report's
@@ -502,11 +473,6 @@ export function openWorkspace(workspaceId) {
   // discovery (matching the new-tag branch), and a tag whose
   // version exceeds whatever the boot list has set so far flows
   // through the replace-refetch path.
-  // Closed over the outer `entry` / the session captured from
-  // `entry.session` at call-time and `workspaceId` from openWorkspace's
-  // signature. Hoisted only to express the "register-before-list"
-  // ordering above with a single name; no parameters since the
-  // closure already has everything.
   function registerBroadcastHandlers() {
     const session = entry.session
     session.onPut(({ resourceTag, version }) => {
@@ -523,17 +489,13 @@ export function openWorkspace(workspaceId) {
       }
       notify()
       if (isReplace) {
-        // A workspace member overwrote this resource. The prior
-        // behaviour treated every onPut as either "new tag → run
-        // discovery" or "known tag → no-op", so a Replace landed
-        // on disk for new joiners (who would auto-download from
-        // scratch) but stayed invisible to existing peers — their
-        // local bytes kept the OLD content while the workspace
-        // badge claimed cloud-sync. Re-fetch the new blob and
-        // overwrite local under content validation; bundles are
-        // content-addressed and a "replace under the same
-        // integrity" would be byte-identical, so the helper
-        // skips that case.
+        // A workspace member overwrote this resource. Existing peers
+        // must re-fetch: discovery alone only auto-downloads brand-new
+        // tags, so without this their local bytes would keep the OLD
+        // content while the badge claims cloud-sync. Re-fetch + overwrite
+        // local under content validation; bundles are content-addressed,
+        // so a "replace under the same integrity" is byte-identical and
+        // the helper skips it.
         maybeApplyRemoteReplace(entry, resourceTag).catch(() => {})
         return
       }
@@ -1246,10 +1208,9 @@ async function maybeApplyRemoteReplace(entry, tag) {
     return
   }
   if (entry.disposed) return
-  // Reuse the existing auto-download bridge — the UI listener
-  // already reloads `state.currentWorkspace` and renders the
-  // sidebar; this PR's matching change in `ui/view.js` extends it
-  // to also reload `state.currentFile` so a single-file view of
+  // Reuse the auto-download bridge — the UI listener reloads
+  // `state.currentWorkspace` + renders the sidebar, and reloads
+  // `state.currentFile` (see `ui/view.js`) so a single-file view of
   // the replaced report flips to the new bytes without a manual
   // navigate.
   for (const cb of autoDownloadListeners) {
@@ -1396,11 +1357,10 @@ export async function putFile(workspaceId, fileName, content) {
   await requireConnectedSession(entry)
   // Optimistic first-upload precondition. The objstore session
   // tracks version monotonically internally (`seenVersions` —
-  // populated by every put/fetch/list/broadcast), so on a
-  // conflict we read the server's current version off the result
-  // and retry with the live `prevVersion`. Pre-fix this method
-  // issued an extra `list()` per upload to compute prevVersion;
-  // skipping it removes a round-trip and races (cf. review
+  // populated by every put/fetch/list/broadcast), so on a conflict
+  // we read the server's current version off the result and retry
+  // with the live `prevVersion` — no per-upload `list()` to compute
+  // prevVersion, which would add a round-trip and a race (cf. review
   // r3242197772).
   const result = await retryOnConflict((prev) => entry.session.put({ fileName, content, prev }))
   // Advance the local version baseline so the matching `onPut`
@@ -1444,13 +1404,12 @@ export async function putFile(workspaceId, fileName, content) {
 //
 // On success the presence module ALSO drops the tag from its own
 // cache synchronously. The server's `objstore-deleted` broadcast
-// now includes the originator (PR landing this comment) and the
-// session's `onDeleted` handler will do the same cleanup when it
-// arrives — but that's an async round-trip; the synchronous drop
-// here ensures `isInRemote` / `remoteCount` return false BEFORE
-// this function resolves. Without the synchronous drop, an
-// in-flight `fetchByTag` whose response races our delete could
-// race-restore the file via `maybeAutoDownload`.
+// includes the originator, so the session's `onDeleted` handler does
+// the same cleanup when it arrives — but that's an async round-trip;
+// the synchronous drop here ensures `isInRemote` / `remoteCount`
+// return false BEFORE this function resolves, so an in-flight
+// `fetchByTag` whose response races our delete can't race-restore the
+// file via `maybeAutoDownload`.
 //
 // Opens a short-lived presence session for the workspace if one
 // isn't already cached — drag-out from a non-active workspace, or
@@ -1487,13 +1446,8 @@ export async function deleteFromRemote(workspaceId, fileName) {
     const tag = entry.fileTags.get(fileName)
     const result = await retryOnConflict((prev) => entry.session.delete(fileName, prev))
     if (result.ok) {
-      // Drop the tag locally — the server's `objstore-deleted`
-      // broadcast now includes the originator (PR symmetric-broadcast)
-      // and `onDeleted` will do this same cleanup when it arrives.
-      // The synchronous drop here ensures isInRemote / remoteCount
-      // return false IMMEDIATELY (before the broadcast round-trip)
-      // so an in-flight fetchByTag whose response is queued can't
-      // race-restore the file via maybeAutoDownload.
+      // Synchronous local drop ahead of the `onDeleted` round-trip —
+      // see the header for why (prevents a race-restore).
       entry.remoteTags.delete(tag)
       entry.remoteNameByTag.delete(tag)
       entry.remoteVersions.delete(tag)

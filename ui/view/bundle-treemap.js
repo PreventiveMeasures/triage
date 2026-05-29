@@ -1,9 +1,9 @@
 // `<bundle-treemap>` — a classic squarified treemap of a bundle's
-// source files, sized by UTF-8 byte length. Replaces the earlier
-// per-package flex strips (which weren't a real treemap and degraded
-// badly on big packages): this lays out the actual PATH hierarchy as
-// nested rectangles, so a directory's box contains its children and a
-// file's area is its share of the bundle.
+// source files, sized by UTF-8 byte length. Lays out the actual PATH
+// hierarchy as nested rectangles (a directory's box contains its
+// children, a file's area is its share of the bundle), unlike flat
+// per-package strips which aren't real treemaps and degrade badly on
+// big packages.
 //
 // Squarified layout (Bruls/Huizing/van Wijk) needs pixel dimensions
 // to choose row orientation by aspect ratio, so the element measures

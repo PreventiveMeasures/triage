@@ -1,8 +1,6 @@
 // `<source-filter>` — `Sources` / `Dependencies` chip pair in the
 // findings toolbar that filters the row set to OWN-source vs.
-// node_modules findings. Replaces the inline `srcChip(...)` helper
-// + `.source-toggle` wrapper div that lived in render.js's
-// `toolbarTemplate`.
+// node_modules findings.
 //
 // Selection is SINGLE-SELECT WITH TOGGLE-OFF:
 //   * Click an inactive chip → it becomes the active one
@@ -10,9 +8,7 @@
 //
 // Reactivity: extends StateElement, so reads of `state.filterSources`
 // during render() are tracked by observer-util — the active chip
-// follows state mutations on its own. Matches the pattern used by
-// the other toolbar chrome components (`<severity-chips>`,
-// `<triage-filter>`, `<view-mode-buttons>`, `<triage-selector>`).
+// follows state mutations on its own.
 //
 // Click dispatches a `source-toggle(detail: { source })` CustomEvent;
 // events.js's listener applies the clear+add logic (a Set-based

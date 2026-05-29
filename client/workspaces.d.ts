@@ -1,6 +1,6 @@
 // Type declarations for `client/workspaces.js`. Hand-written so the
 // JS source stays untouched while triage-sync.ts pulls a typed
-// surface. Goes away when `workspaces.js` itself is converted.
+// surface; removable once `workspaces.js` is itself converted.
 
 export interface Workspace {
   id: string
@@ -30,10 +30,9 @@ export function upsertWorkspace(workspace: {
   bundles?: string[]
   /**
    * When true, `bundles` is ignored and the previously-persisted
-   * `bundles` array for this id is reused (read inside the lock).
-   * On first-insert with this flag, defaults to []. Used by the import
-   * path to avoid wiping locally-attached bundles when an older export
-   * predates the field.
+   * `bundles` for this id is reused (read inside the lock); first-
+   * insert defaults to []. Used by the import path so an older export
+   * predating the field doesn't wipe locally-attached bundles.
    */
   preserveBundles?: boolean
   createdAt?: number

@@ -36,7 +36,7 @@ function persist() {
 
 // Normalize a cache entry to the `{ count, source }` shape. Legacy
 // entries were bare numbers — accept those and treat the source as
-// unknown. Returns `undefined` for unknown entries.
+// unknown.
 function entryOf(name) {
   const v = load()[name]
   if (v === undefined) return undefined
@@ -95,21 +95,18 @@ export function analyzeContent(content) {
 // can re-render incrementally; files that error during read are
 // skipped — the sidebar will fall back to no badge.
 //
-// Concurrency model: at most ONE active walk at a time. While a walk
-// is in progress, additional `ensureCounts` calls union their `names`
-// into the active run's pending set; when the active loop finishes
-// its current iteration it picks up any new names that were enqueued.
-// Previous shape used a re-entrance flag that simply DROPPED the
-// nested call — a workspace switch firing `ensureCounts(namesB)`
-// while an earlier sidebar render's `ensureCounts(namesA)` was still
-// running would silently skip every name only in B. Audit round-8 H2.
+// Concurrency model: at most ONE active walk at a time. Re-entrant
+// `ensureCounts` calls union their `names` into the active run's
+// pending set, picked up as the loop iterates. Must union, not drop:
+// a workspace switch firing `ensureCounts(namesB)` mid-walk of
+// `namesA` would otherwise silently skip names only in B. Audit
+// round-8 H2.
 //
 // Each caller's `onUpdate` is tracked alongside the names IT asked
 // about, so a re-entrant call doesn't replace the original caller's
-// callback — both fire for their respective name sets. Round-9 L1
-// fixed the previous "last caller wins" bug where the FIRST
-// caller's onUpdate stopped firing for any of its still-pending
-// names the moment a second caller landed.
+// callback — both fire for their respective name sets (else the
+// first caller's onUpdate stops firing once a second lands; round-9
+// L1).
 let activeRun = null
 let activePending = null      // Set<name> queued during the current run
 let activeCallbacks = null    // Array<{ names: Set<name>, onUpdate }>

@@ -26,12 +26,11 @@ type PersistedSession = {
 }
 export type PersistedSessionsMap = { [workspaceId: string]: PersistedSession | undefined }
 
-// CURRENT state of persistence (was the last load result an
-// unknown-version blob?), not just a one-way sticky flag, so a user
-// who clears `localStorage[deepview.sync.sessions]` via DevTools
-// can recover within the same page-load without a reload. Both
-// flips (off→on AND on→off) fire registered listeners. Audit
-// follow-up to round-15 / PR #61 latch-lifecycle review.
+// CURRENT state of persistence (was the last load an unknown-version
+// blob?), not a one-way sticky flag, so a user who clears
+// `localStorage[deepview.sync.sessions]` via DevTools recovers within
+// the same page-load without a reload. Both flips (off→on AND on→off)
+// fire listeners. Audit follow-up to round-15 / PR #61 latch-lifecycle.
 let persistenceDegradedLatch = false
 const persistenceDegradedListeners = new Set<(degraded: boolean) => void>()
 
@@ -49,10 +48,9 @@ export function setPersistenceDegraded(next: boolean): void {
       'Free up storage and/or clear localStorage[deepview.sync.sessions]; the badge clears on the next successful save.',
     )
   } else {
-    // `warn` rather than `info` so operators correlating support
-    // tickets via screenshares / DevTools paste don't miss the
-    // recovery transition — Chrome/Firefox hide `info`-level logs
-    // by default in the standard filter set.
+    // `warn` not `info` so operators correlating support tickets via
+    // screenshares / DevTools paste don't miss the recovery transition —
+    // Chrome/Firefox hide `info`-level logs in the default filter set.
     console.warn('triage-sync: persistence recovered; persisted-sessions blob is now writable.')
   }
   for (const cb of persistenceDegradedListeners) {
@@ -60,14 +58,13 @@ export function setPersistenceDegraded(next: boolean): void {
   }
 }
 
-// Subscribe to ALL degraded-state transitions (off↔on, both
-// directions). The listener receives the new `degraded` value on every
-// transition AND once on subscribe with the current state — so a
-// lazily-mounted UI component (badge, toast) doesn't have to separately
-// poll. The on-subscribe fire is queued on a microtask so the subscribe
-// call returns synchronously; calling the returned unsubscribe before
-// the queued microtask runs is safe (the listener is removed before the
-// dispatch and skipped). Audit follow-up to PR #80 review.
+// Subscribe to ALL degraded-state transitions (off↔on). The listener
+// receives the new `degraded` value on every transition AND once on
+// subscribe with the current state, so a lazily-mounted UI component
+// (badge, toast) needn't poll. The on-subscribe fire is queued on a
+// microtask so subscribe returns synchronously; unsubscribing before
+// that microtask runs is safe (the listener is removed and skipped).
+// Audit follow-up to PR #80 review.
 export function onPersistenceDegraded(cb: (degraded: boolean) => void): () => void {
   // Wrap each subscription in a fresh closure so the Set keys on a
   // unique entry per call. Two subscriptions of the SAME `cb` reference
@@ -84,11 +81,10 @@ export function onPersistenceDegraded(cb: (degraded: boolean) => void): () => vo
 }
 
 // Discriminated load result so `mutateAllSessions` can distinguish
-// "blob doesn't exist / is unparseable / is legacy / is current"
-// from "blob is a future version we don't understand". The latter
-// MUST skip the write — overwriting with a v1 shape would silently
-// destroy whatever a future build persisted under the same key.
-// Open-ended audit `client/triage-sync.ts:884`.
+// "doesn't exist / unparseable / legacy / current" from "future version
+// we don't understand". The latter MUST skip the write — overwriting
+// with a v1 shape would silently destroy what a future build persisted
+// under the same key. Open-ended audit `client/triage-sync.ts:884`.
 export type LoadAllSessionsResult =
   | { kind: 'v1' | 'legacy'; map: PersistedSessionsMap }
   | { kind: 'empty' }
@@ -96,37 +92,33 @@ export type LoadAllSessionsResult =
 
 export function loadAllSessionsResult(): LoadAllSessionsResult {
   try {
-    // Read through the secure-storage cache so encrypted-at-rest
-    // session state surfaces decrypted post-unlock. Cache is
-    // hydrated by view.js's boot flow before any session-touching
-    // code runs.
+    // Read through the secure-storage cache so encrypted-at-rest session
+    // state surfaces decrypted post-unlock. The cache is hydrated by
+    // view.js's boot flow before any session-touching code runs.
     const raw = syncHost().getSecureItem(SESSION_STATE_KEY)
     if (!raw) return { kind: 'empty' }
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return { kind: 'empty' }
     const obj = parsed as { version?: unknown, sessions?: unknown }
     // Versioned shape we understand: { version === SESSIONS_VERSION,
-    // sessions: map }. The `version === SESSIONS_VERSION` check is
-    // the gate that distinguishes "current build" from "future
-    // version we don't know how to read" — the previous shape
-    // returned `{}` for any unrecognised `version`, which let
+    // sessions: map }. This version check is the gate distinguishing
+    // "current build" from "future version we can't read" — the previous
+    // shape returned `{}` for any unrecognised `version`, letting
     // `mutateAllSessions` overwrite a v2 blob with v1 entries.
     if (obj.version === SESSIONS_VERSION
       && obj.sessions && typeof obj.sessions === 'object' && !Array.isArray(obj.sessions)) {
       return { kind: 'v1', map: obj.sessions as PersistedSessionsMap }
     }
-    // Matching version but malformed/missing `sessions` (e.g. crashed
-    // mid-write, hand-edited corruption). Don't quarantine the
-    // localStorage entry — the version says "this is for our build",
-    // so an empty start + clean rewrite on next save is the right
-    // recovery. `'unknown-version'` is reserved for blobs whose
-    // version we don't recognise (future build's data we mustn't
+    // Matching version but malformed/missing `sessions` (crashed
+    // mid-write, hand-edited corruption). Don't quarantine — the version
+    // says "for our build", so empty start + clean rewrite on next save
+    // is the right recovery. `'unknown-version'` is reserved for blobs
+    // whose version we don't recognise (future data we mustn't
     // overwrite). Audit follow-up to round-15.
     if (obj.version === SESSIONS_VERSION) return { kind: 'empty' }
     if ('version' in obj) return { kind: 'unknown-version' }
-    // Pre-version legacy shape: bare object keyed by workspaceId.
-    // The legacy entries had a `serverUrl` field on each value, so
-    // a flat object without a `version` key is the v0 shape.
+    // Pre-version legacy (v0) shape: bare object keyed by workspaceId
+    // (each value carried a `serverUrl` field), i.e. no `version` key.
     return { kind: 'legacy', map: obj as PersistedSessionsMap }
   } catch { return { kind: 'empty' } }
 }
@@ -150,9 +142,8 @@ async function writeAllSessionsRaw(map: PersistedSessionsMap): Promise<boolean> 
     }))
     return true
   } catch (err) {
-    // Likely QuotaExceededError or vault-locked-cannot-save — sync
-    // just falls back to the "always start from null base" path on
-    // next reload.
+    // Likely QuotaExceededError or vault-locked — sync falls back to the
+    // "always start from null base" path on next reload.
     console.warn('Triage sync: could not persist session state:', err)
     return false
   }
@@ -175,12 +166,11 @@ export function loadPersistedSession(workspaceId: string, currentServerUrl: stri
   if (!entry || entry.serverUrl !== currentServerUrl) return null
   return {
     baseRevision: typeof entry.baseRevision === 'string' ? entry.baseRevision : null,
-    // Round-12 H6 defense-in-depth: normalise the persisted blob's
-    // baseState into a null-prototype object so a `__proto__` own
-    // key (from a prior version's polluted save) doesn't trigger
-    // the Object.prototype setter when downstream code spreads or
-    // assigns from it. JSON.parse always returns Object.prototype-
-    // having objects; convert here at the trust boundary.
+    // Round-12 H6 defense-in-depth: normalise baseState into a
+    // null-prototype object so a `__proto__` own key (from a prior
+    // version's polluted save) doesn't trigger the Object.prototype
+    // setter when downstream spreads/assigns from it. JSON.parse always
+    // returns Object.prototype-having objects; convert at the trust boundary.
     baseState: (entry.baseState && typeof entry.baseState === 'object')
       ? Object.assign(Object.create(null), entry.baseState)
       : Object.create(null),
@@ -199,15 +189,13 @@ export async function mutateAllSessions(mutator: SessionsMutator): Promise<void>
   await navigator.locks.request(SESSION_STATE_LOCK, async () => {
     const r = loadAllSessionsResult()
     if (r.kind === 'unknown-version') {
-      // The persisted blob is from a future build we don't recognize.
-      // Writing v1 over it would silently destroy the future shape;
-      // skip the mutation. In-memory session state still updates via
-      // the caller's other paths, but on next page-load it's lost
-      // (the future blob is read again, sees no entries for our
-      // workspaceId, returns null → fresh session, re-fetches
-      // keyframe from server). Flip `persistenceDegraded` so the UI
-      // can surface a hint to the user; `triageSync.persistenceDegraded`
-      // exposes it. Audit follow-up to round-15.
+      // Future-build blob we don't recognize. Writing v1 over it would
+      // silently destroy the future shape; skip. In-memory state still
+      // updates via the caller's other paths, but on next page-load it's
+      // lost (future blob re-read, no entries for our workspaceId → null
+      // → fresh session, re-fetches keyframe from server). Flip
+      // `persistenceDegraded` so the UI can hint
+      // (`triageSync.persistenceDegraded` exposes it). Follow-up round-15.
       setPersistenceDegraded(true)
       return
     }
@@ -215,35 +203,31 @@ export async function mutateAllSessions(mutator: SessionsMutator): Promise<void>
     const result = await mutator(all)
     if (result === false) return
     const wroteSuccessfully = await writeAllSessionsRaw(all)
-    // A confirmed write clears the latch; a swallowed write failure
-    // (QuotaExceededError "disk full" / vault-locked — the catch in
-    // writeAllSessionsRaw logs but returns false) RAISES it. Such a
-    // failure is itself degraded persistence: the user's state isn't
-    // being saved and won't survive a reload, with no other signal.
-    // This is the producer half that the hydrate handler's `empty`-
-    // case comment in triage-sync.ts already anticipated ("a
-    // pre-existing ON state from a failed write should persist…").
+    // Confirmed write clears the latch; a swallowed failure
+    // (QuotaExceededError / vault-locked — writeAllSessionsRaw logs and
+    // returns false) RAISES it. Such a failure is itself degraded
+    // persistence: state isn't saved, won't survive reload, no other
+    // signal. This is the producer half the hydrate handler's `empty`-case
+    // comment in triage-sync.ts anticipated ("a pre-existing ON state
+    // from a failed write should persist…").
     setPersistenceDegraded(!wroteSuccessfully)
   })
 }
 
-// Drop persisted entries that can no longer be applied. Two
-// classes:
-//   1. Workspace was deleted while we were away. (Live deletions go
-//      through the `onWorkspaceDeleted` listener; this handles the
-//      offline-tab case.)
-//   2. The entry's `serverUrl` doesn't match the relay we're about
-//      to use. Revision IDs are per-server, so `loadPersistedSession`
-//      already refuses to apply such an entry (returns null on
-//      `entry.serverUrl !== currentServerUrl`) — pruning here just
-//      stops the dead bytes from sitting in localStorage forever.
-//      Older builds with a different WS path (e.g. pre-`/api/sync`)
-//      are the typical source.
+// Drop persisted entries that can no longer be applied. Two classes:
+//   1. Workspace deleted while we were away. (Live deletions go through
+//      the `onWorkspaceDeleted` listener; this handles the offline-tab
+//      case.)
+//   2. The entry's `serverUrl` doesn't match the relay we're about to
+//      use. Revision IDs are per-server, so `loadPersistedSession`
+//      already refuses such an entry (null on `serverUrl !==
+//      currentServerUrl`) — pruning just stops dead bytes lingering in
+//      localStorage. Older builds with a different WS path (e.g.
+//      pre-`/api/sync`) are the typical source.
 //
-// Pass `currentUrl=null` (default) to skip the URL check — module
-// load runs before the sidebar primes the URL, so a null check
-// there would nuke every entry. `setServerUrl` re-runs this with
-// the new URL once it's known.
+// `currentUrl=null` (default) skips the URL check — module load runs
+// before the sidebar primes the URL, so a null check would nuke every
+// entry. `setServerUrl` re-runs this with the URL once known.
 export function prunePersistedSessions(currentUrl: string | null = null): void {
   mutateAllSessions((all) => {
     const ids = Object.keys(all)
@@ -263,13 +247,12 @@ export function prunePersistedSessions(currentUrl: string | null = null): void {
   }).catch((err) => { console.warn('Triage sync: prunePersistedSessions lock failed:', err) })
 }
 
-// Drop the persisted-session entry for one workspace id (if any).
-// Used by the workspace-deleted listener so the live persistence
-// blob doesn't survive the deletion until the next page-load prune.
-// Returns the underlying lock-RMW promise so callers that need to
-// observe the wipe before they read the blob (e.g. the privateKey-
-// rotation listener, before reopening the session — audit H2)
-// can `await` it. Other callers can fire-and-forget.
+// Drop the persisted-session entry for one workspace id (if any). Used
+// by the workspace-deleted listener so the blob doesn't survive the
+// deletion until the next page-load prune. Returns the lock-RMW promise
+// so callers needing to observe the wipe before reading the blob (e.g.
+// the privateKey-rotation listener, before reopening — audit H2) can
+// `await` it; others can fire-and-forget.
 export function dropPersistedSession(workspaceId: string): Promise<void> {
   return mutateAllSessions((all) => {
     if (!(workspaceId in all)) return false

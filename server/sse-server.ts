@@ -168,9 +168,8 @@ export function installSseServer(deps: SseServerDeps): SseServer {
     session.writeEvent('session', sid)
     // Hand the session to the shared WS connection setup so it joins
     // the same Peer / dispatcher / hub lifecycle as a real WebSocket.
-    // `setupPeerConnection` sends the protocol `challenge` frame as
-    // its first action; that re-uses the normal default-named SSE
-    // message channel.
+    // `setupPeerConnection`'s first action is the protocol `challenge`
+    // frame, on the default-named SSE channel.
     setupPeerConnection(session as unknown as WebSocket, req, peerDeps)
     return { sid, session }
   }
@@ -329,15 +328,14 @@ export function installSseServer(deps: SseServerDeps): SseServer {
 
 // Bare-bones query parse for `id=<base64url>`. Avoids URLSearchParams
 // (which decodes percent-escapes) — `randomId()` mints a 22-char
-// base64url string, and the client echoes it back unchanged, so no
-// escapes are possible on the legitimate path. The {1,64} bound is a
-// deliberately lenient sanity gate: anything outside the base64url
-// alphabet is rejected (and a missing id is treated as "no id"); a
-// client that sent a sid this regex doesn't recognise just gets a
-// fresh session minted by createSession, no failure mode. The wide
-// length window means a future randomId-length change here doesn't
-// silently break old clients that round-trip a longer or shorter
-// token. Returns null on missing / malformed.
+// base64url string echoed back unchanged, so no escapes are possible
+// on the legitimate path. The {1,64} bound is a deliberately lenient
+// sanity gate: anything outside the base64url alphabet is rejected; an
+// unrecognised sid just gets a fresh session from createSession (no
+// failure mode), and the wide length window keeps a future
+// randomId-length change from silently breaking old clients that
+// round-trip a longer/shorter token. Returns null on missing /
+// malformed.
 function parseSidQuery(query: string | undefined): string | null {
   if (typeof query !== 'string') return null
   for (const part of query.split('&')) {

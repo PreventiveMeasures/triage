@@ -12,13 +12,12 @@
 //
 // Reactivity: extends StateElement, which wraps render() in an
 // observer-util reaction. Reads of `state.triage`,
-// `state.activeTabByGroup`, `state.showDeleted` performed during
-// render — via the helpers in render-finding.js + group.js — are
-// auto-tracked, and a mutation that invalidates the row triggers a
-// targeted re-render of just this element. The classList stamping
-// is intentionally done inside render so its `state.showDeleted`
-// read joins the same tracked set; otherwise toggling trash would
-// fail to update the host's `.deleted` class.
+// `state.activeTabByGroup`, `state.showDeleted` during render — via
+// the helpers in render-finding.js + group.js — are auto-tracked, so
+// a mutation that invalidates the row re-renders just this element.
+// The classList stamping is intentionally inside render so its
+// `state.showDeleted` read joins the same tracked set; otherwise
+// toggling trash wouldn't update the host's `.deleted` class.
 //
 // Click semantics: a click anywhere on the row that didn't land on
 // an action button / link / label dispatches a composed-bubbling
@@ -33,10 +32,10 @@ import { tableRowClasses, tableRowGid, tableRowInnerTemplate } from './render-fi
 import rowCSS from './finding-row.css'
 
 // Every class this component might apply to the host. Listed
-// explicitly so `classList.toggle(c, …)` cleanly removes any class
-// that no longer applies after the group's state changes (e.g.
-// switching colors mid-render). `selected` is driven by the
-// `selected` property; the rest come from tableRowClasses().
+// explicitly so `classList.toggle(c, …)` cleanly removes any that no
+// longer applies after the group's state changes (e.g. switching
+// colors mid-render). `selected` comes from the `selected` property;
+// the rest from tableRowClasses().
 const MANAGED_HOST_CLASSES = [
   'is-critical',
   'mark-red', 'mark-blue', 'mark-green', 'mark-gray',
@@ -61,34 +60,32 @@ class FindingRow extends StateElement {
 
   render() {
     if (!this.group) return html``
-    // Stamp host attributes/classes inside render() so the state
-    // reads (e.g. state.showDeleted via tableRowClasses,
-    // state.markers / state.deletedIds via tableRowInnerHTML) join
-    // StateElement's tracked set and trigger a re-render on
-    // mutation. Doing this in willUpdate would skip the autorun
-    // entirely, since StateElement only wraps render.
+    // Stamp host attributes/classes inside render() so the state reads
+    // (e.g. state.showDeleted via tableRowClasses, state.markers /
+    // state.deletedIds via tableRowInnerHTML) join StateElement's
+    // tracked set and re-render on mutation. willUpdate would skip the
+    // autorun entirely, since StateElement only wraps render.
     this.dataset.gid = tableRowGid(this.group)
     const next = new Set(tableRowClasses(this.group))
     if (this.selected) next.add('selected')
     for (const c of MANAGED_HOST_CLASSES) this.classList.toggle(c, next.has(c))
-    // Visual chrome is on the inner `.row` wrapper rather than the
-    // host so the global `* { padding: 0 }` reset in theme.css can't
-    // override our padding/border via the shadow boundary's
-    // outer-wins-over-inner cascade rule. See finding-row.css.
+    // Visual chrome lives on the inner `.row`, not the host, so
+    // theme.css's global `* { padding: 0 }` reset can't override our
+    // padding/border via the shadow boundary's outer-wins cascade
+    // rule. See finding-row.css.
     return html`<div class="row">${tableRowInnerTemplate(this.group)}</div>`
   }
 
   connectedCallback() {
     super.connectedCallback()
     this.addEventListener('click', this._onClick)
-    // Force a render after every (re)connect so StateElement's
-    // wrapped render() runs and a fresh autorun gets registered.
-    // Necessary because render.js detaches and re-inserts the
-    // persistent <finding-table> on each render() call: this
-    // element disconnects (StateElement disposes its autorun) then
-    // reconnects, but if neither `group` nor `selected` changed Lit
-    // wouldn't call render again on its own and reactivity would
-    // silently break.
+    // Force a render after every (re)connect so StateElement's wrapped
+    // render() runs and re-registers a fresh autorun. render.js
+    // detaches and re-inserts the persistent <finding-table> on each
+    // render() call: this element disconnects (StateElement disposes
+    // its autorun) then reconnects, but if neither `group` nor
+    // `selected` changed Lit wouldn't call render on its own and
+    // reactivity would silently break.
     if (this.hasUpdated) this.requestUpdate()
   }
 

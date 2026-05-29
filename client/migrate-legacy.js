@@ -52,12 +52,10 @@ async function run() {
   // local-wins resolution. Awaiting `triageLoadPromise` here closes
   // that boot-time race. Audit round-8 H4.
   try { await triageLoadPromise } catch {}
-  // Don't catch a `listFiles()` failure inside `run()`. The
-  // `migrateLegacyFilenames` wrapper clears `migrationPromise` on
-  // rejection so the next call retries; catching here would
-  // memoize a "successful" no-op and strand the user with stale
-  // .deepseek buckets for the rest of the page session.
-  // Audit round-12 M-C.
+  // Don't catch a `listFiles()` failure here — let it reject so the
+  // wrapper's memo-clear (above) lets the next call retry. Catching
+  // would memoize a "successful" no-op and strand the user with
+  // stale .deepseek buckets for the page session. Audit round-12 M-C.
   const names = await listFiles()
   const nameSet = new Set(names)
   // Pre-rename snapshot of the OPFS file list. Used by the
@@ -77,9 +75,8 @@ async function run() {
     // sidebar will show it in the default bucket until the user
     // resolves the conflict by deleting one side.
     if (nameSet.has(target)) continue
-    // `content` is read inside the try (so a failed read short-circuits
-    // the rename) but ALSO referenced below in the count-cache carry-over
-    // path. Declare it outside so it survives the try block scope.
+    // Declared outside the try so the count-cache carry-over below
+    // can reuse it, while a failed read still short-circuits the rename.
     let content
     try {
       content = await readFile(name)

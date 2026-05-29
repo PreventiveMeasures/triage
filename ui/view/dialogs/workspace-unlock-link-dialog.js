@@ -49,9 +49,8 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
   }
 
   // Initial focus (via the base `firstUpdated`) lands on the active
-  // stage's input. Modal-conflict (another modal already open) is
-  // handled by the base `firstUpdated`, which dispatches
-  // `modal-conflict`; the open() wrapper wipes the wrapper-set
+  // stage's input. On modal-conflict the base dispatches
+  // `modal-conflict`, and the open() wrapper wipes the wrapper-set
   // `encoded` ciphertext in that listener.
   focusInitial() {
     this._focusActiveInput()
@@ -75,17 +74,15 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
 
   _finish(result) {
     if (this._settled) return
-    // Drop the decrypted privateKey from the instance before the
-    // resolve hop. Lit's reactive setter briefly retains the old
-    // value in its change-tracker until the next microtask, so the
-    // wipe doesn't fully erase the value until `el.remove()` detaches
-    // the host — but the property slot itself is empty.
+    // Drop the decrypted privateKey before the resolve hop. The slot
+    // empties immediately, but Lit's reactive setter retains the old
+    // value in its change-tracker until the next microtask, so full
+    // erasure waits for `el.remove()`.
     this._decoded = null
     this._password = ''
     // Drop the encrypted blob too — `encoded` came in via property
-    // assignment from the public entry point and would otherwise
-    // outlive the resolve hop on the still-mounted element until
-    // `el.remove()` runs.
+    // assignment and would otherwise outlive the resolve hop on the
+    // still-mounted element until `el.remove()`.
     this.encoded = ''
     super._finish(result)
   }
@@ -105,10 +102,9 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
         encoded: this.encoded,
         password: this._password,
       })
-      // PBKDF2 takes hundreds of ms; user may have cancelled in the
-      // meantime. Skip the writes so `_finish`'s heap-snapshot wipe
-      // of `_decoded` / `_password` isn't undone by an in-flight
-      // resolution landing after cancel.
+      // PBKDF2 takes hundreds of ms; user may have cancelled meanwhile.
+      // Skip the writes so `_finish`'s wipe of `_decoded` / `_password`
+      // isn't undone by an in-flight resolution landing after cancel.
       if (this._settled) return
       const existing = listWorkspaces().find((w) => w.id === decoded.id) ?? null
       this._decoded = decoded
@@ -128,16 +124,14 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
     if (!this._decoded) return
     const sanitised = sanitizeWorkspaceName(this._name)
     if (!sanitised) return
-    // Re-resolve against the LIVE workspaces list, not the snapshot
-    // we took at unlock-time. `_onAttach` is only reachable when
-    // the snapshot was null (a same-id workspace at unlock-time
-    // would have routed to the already-attached stage and disabled
-    // this code path). So the only transition we need to catch is
-    // "a same-id workspace appeared while the user was at the
-    // name stage" — a sibling tab attached the same link, an
-    // import landed, etc. Flip to the already-attached branch and
-    // bail so the dialog and the persisted state agree. The
-    // lock-atomic `attachSharedWorkspace` is still the source of
+    // Re-resolve against the LIVE workspaces list, not the unlock-time
+    // snapshot. This path is only reachable when the snapshot was null
+    // (a same-id workspace would have routed to the already-attached
+    // stage), so the only transition to catch is a same-id workspace
+    // appearing while the user was at the name stage (a sibling tab
+    // attached the same link, an import landed, etc.) — flip to the
+    // already-attached branch and bail so dialog and persisted state
+    // agree. Lock-atomic `attachSharedWorkspace` is still the source of
     // truth; this is just the UI-routing guard.
     const liveExisting = listWorkspaces().find((w) => w.id === this._decoded.id) ?? null
     if (liveExisting) {
@@ -153,12 +147,11 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
   }
 
   // Returns the existing workspace whose `name` collides with the
-  // user's typed value (compared under the SAME `sanitizeWorkspaceName`
-  // pipeline `attachSharedWorkspace` will apply at write time) and
-  // whose id does NOT match the share-link's derived id. A same-id
-  // collision is handled separately as the "already attached" branch
-  // — there's nothing to do, so the dialog short-circuits to a Close
-  // button. Compared on the sanitised form (not raw trim) so a
+  // user's typed value, compared under the SAME `sanitizeWorkspaceName`
+  // pipeline `attachSharedWorkspace` applies at write time, and whose
+  // id does NOT match the share-link's derived id (same-id is handled
+  // as the "already attached" branch). Compared on the sanitised form
+  // (not raw trim) so a
   // control-char variant like `"Foo"` can't slip past the gate
   // and persist as a second `"Foo"` row. Audit follow-up.
   _nameCollision(sanitised) {

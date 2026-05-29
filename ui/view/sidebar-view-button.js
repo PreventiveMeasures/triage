@@ -1,36 +1,21 @@
 // `<sidebar-view-button>` — the Packages / Repositories navigation
-// buttons that sit to the right of the sidebar search input.
-// Replaces the static `<button id="show-packages-btn">` /
-// `<button id="show-repositories-btn">` markup in AppSidebar's
-// shadow template and the imperative `renderViewButton(id, count,
-// viewName)` helper in sidebar.js that toggled `hidden` / `active`
-// / badge text on every renderSidebar() pass.
+// buttons to the right of the sidebar search input.
 //
-// Reactivity: extends StateElement and reads `state.currentView`
-// in render() so the `.active` highlight follows the user
-// navigating between views without anyone having to call
-// `renderSidebar()` to repaint the buttons.
+// Extends StateElement and reads `state.currentView` in render() so
+// the `.active` highlight follows view navigation without a
+// `renderSidebar()` repaint.
 //
-// The `count` (cross-report packages / repositories present in the
-// OPFS-wide index) is NOT observable — `getPackagesIndex()` and
+// `count` (cross-report packages / repositories in the OPFS-wide
+// index) is NOT observable — `getPackagesIndex()` /
 // `getRepositoriesIndex()` return module-internal Maps the
 // observer-util proxy can't see through — so it arrives as a
-// property the parent (AppSidebar's renderSidebar() call site)
-// assigns. When the count is zero the component returns `nothing`,
-// hiding the button entirely.
+// property the parent (renderSidebar() call site) assigns. count 0
+// → render `nothing`, hiding the button.
 //
-// The native button click bubbles through the host element up to
-// sidebar.js's `onSidebarClick` delegate on the shadow root; that
-// delegate uses `closest('sidebar-view-button')` + the host's
-// `kind` attribute to route to the matching `state.currentView`
-// mutation. Same closest()-based routing pattern the rest of the
-// sidebar's interactions use.
-//
-// Attributes:
-//   * `kind` — `"packages"` or `"repositories"`.
-//
-// Properties:
-//   * `count` — number; the visible badge value. 0 = hide.
+// The native button click bubbles through the host to sidebar.js's
+// `onSidebarClick` delegate, which routes via
+// `closest('sidebar-view-button')` + the host's `kind` attribute to
+// the matching `state.currentView` mutation.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'

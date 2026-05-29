@@ -130,20 +130,6 @@
     color: var(--muted);
     & input { margin: 0; }
   }
-
-  /* Trash toggle — flips the render path from "non-deleted" to
-     "deleted only". Active state uses the critical color to signal
-     "not your normal view". `margin-left: auto` pushes the button
-     to the right edge of its toolbar row, so the row reads
-     `View [□☰▤] [Severity ↓] [Source] [Confidence……] ⋯ Trash`.
-     Hoisted to top-level (below) so the graph topbar's Trash uses
-     the same shell without re-declaring the rules. */
-
-  /* View-mode icon button group — three flush buttons inside a
-     bordered shell. Active button glows with the accent color; SVG
-     icons inherit currentColor so theme + state recolor automatically.
-     The "View:" label sits to the left as a sibling, not inside the
-     group, so the bordered shell only wraps the buttons. */
 }
 
 /* Trash toggle — used in the findings .toolbar AND the graph
@@ -163,10 +149,9 @@
 .toolbar .trash-btn { margin-left: auto; }
 
 /* Triage state selector — Fixed / Invalid / Deleted / Ignored
-   buttons that replace the prior single Trash button. Visible
-   buttons follow the bucket counts; the active one (matching
-   state.shownTriage) takes the bucket's accent color. Lives at the
-   right of the toolbar row by default.
+   buttons. Visible buttons follow the bucket counts; the active one
+   (matching state.shownTriage) takes the bucket's accent color.
+   Lives at the right of the toolbar row by default.
 
    Shell mirrors `source-filter` above: a single bordered, rounded
    container with flush chips inside divided by `border-right` on
@@ -338,10 +323,10 @@ toolbar-search {
    filter strip from stretching across into the details column.
    The list / details split below stays at its full expanded
    width — only the filter chrome is constrained. */
-/* Was `> .toolbar` before the Lit refactor; render.js now drops
-   the toolbar into a `<div id="toolbar-slot">` placeholder, so the
-   direct-child path doesn't match. `.toolbar` is unique inside
-   `.findings-content` so descendant selector is safe. */
+/* Descendant (not child) combinator: render.js drops the toolbar
+   into a `<div id="toolbar-slot">`, so a `>` path wouldn't match.
+   `.toolbar` is unique inside `.findings-content`, so descendant is
+   safe. */
 .findings-content.with-details .toolbar { max-width: 1200px; }
 
 /* Severity-filter chips — segmented control matching

@@ -1,14 +1,11 @@
 /* Leave / delete / sync-transfer dialog layer — composed into the
    shadow `static styles` of the dialogs that put
    `leave-workspace-dialog` on their frame (leave-workspace,
-   delete-report, sync-download, sync-upload). Sits on top of
-   dialog-base.css; the leave-workspace frame shares the base
-   `dialog` frame values, so only the `.lwd-*` inner chrome is here.
-   Flattened from the nested `.leave-workspace-dialog { … }` block
-   in styles/dialogs.css. */
+   delete-report, sync-download, sync-upload). On top of
+   dialog-base.css; the frame reuses base `dialog` values, so only the
+   `.lwd-*` inner chrome is here. */
 
-/* Header `h3` uses the base default margin (.6rem), so no override
-   here. */
+/* No `header h3` override here — keeps the base margin. */
 .lwd-body {
   margin: .2rem 0 .55rem;
   color: var(--text); font-size: .86rem; line-height: 1.5;
@@ -17,8 +14,7 @@
   margin: .2rem 0 .55rem;
   color: var(--muted); font-size: .78rem;
 }
-/* Triage-section informational note (used by both the leave-
-   workspace dialog and the delete-report dialog). */
+/* Triage-section note (leave-workspace + delete-report). */
 .lwd-note {
   margin: .2rem 0 .65rem;
   padding: .55rem .7rem;
@@ -65,9 +61,8 @@
   & li + li { margin-top: .2rem; }
   & strong { color: var(--text); font-weight: 600; }
 }
-/* Inline kind chip after a bundle filename in the sync-upload /
-   sync-download item lists, so bundles read as distinct from
-   reports in mixed lists. */
+/* Inline kind chip after a bundle filename in the sync lists, so
+   bundles read as distinct from reports. */
 .lwd-kind-tag {
   display: inline-block; vertical-align: middle;
   margin-left: .3rem;
@@ -78,8 +73,8 @@
   font-size: .62rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: .06em;
 }
-/* Inline name field under the Rename radio in <import-conflict-dialog>.
-   Tightens the .nwd-input spacing so it sits inside the radio's text
+/* Inline name field under the Rename radio in <import-conflict-dialog>:
+   tightens .nwd-input spacing so it sits inside the radio's text
    column rather than spanning the full dialog width. */
 .lwd-rename-input { margin-top: .2rem; }
 .lwd-rename-error {

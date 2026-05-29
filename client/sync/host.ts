@@ -38,9 +38,8 @@ export type { TriageBucket, TriageEntry }
 
 export interface SyncHost {
   // Mutable app state — sync reads/writes the triage map live. Identity-
-  // sensitive: the implementation passes the same object the rest of
-  // the app holds, so `host.state.triage.set(...)` is observable
-  // everywhere.
+  // sensitive: the same object the rest of the app holds, so
+  // `host.state.triage.set(...)` is observable everywhere.
   readonly state: State
 
   // Workspaces — read + membership mutations + change feeds.
@@ -96,11 +95,10 @@ export function installSyncHost(host: SyncHost): void {
   }
 }
 
-// Lazy accessor for callers that run only after the boot wiring has
-// installed the host (e.g. handlers reached through `triageSync.*`,
-// user-initiated `openWorkspace(...)`, transport callbacks). Throws
-// when called pre-install so a misconfigured app surfaces clearly
-// instead of silently no-op'ing on a stub.
+// Lazy accessor for callers that run only after boot wiring installed
+// the host (handlers via `triageSync.*`, user-initiated
+// `openWorkspace(...)`, transport callbacks). Throws pre-install so a
+// misconfigured app surfaces clearly instead of no-op'ing on a stub.
 export function syncHost(): SyncHost {
   if (installed === null) {
     throw new Error('SyncHost: not installed — call installSyncHost(host) during app boot')

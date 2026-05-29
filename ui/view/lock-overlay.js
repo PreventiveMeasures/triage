@@ -1,17 +1,10 @@
 // Full-screen overlay shown when the passkey vault is enabled but
-// this tab hasn't unlocked it yet. The rationale: when encryption
-// is on and locked, there's literally nothing the user can do that
-// doesn't require the decrypted state — every list, badge, drop
-// target depends on data we can't read. Rather than presenting a
-// half-functional UI that surfaces "vault locked" errors on every
-// click, we cover everything with an unlock affordance.
-//
-// Sole interactive surface during the locked-boot state. Clicking
-// the primary button calls `unlockEncryption` DIRECTLY — no
-// intermediate confirmation dialog. The same dialog used to layer
-// on top here for symmetry with the icon-button path, but a
-// dedicated dialog adds an extra click for no value: the overlay
-// itself IS the unlock prompt.
+// this tab hasn't unlocked it. Locked ⇒ every list / badge / drop
+// target needs decrypted state we can't read, so a half-functional
+// UI would just spam "vault locked" errors — cover everything with
+// one unlock affordance instead. The button calls `unlockEncryption`
+// DIRECTLY (no intermediate dialog): the overlay itself IS the
+// unlock prompt.
 
 import { isEncryptionEnabled, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
 

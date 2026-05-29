@@ -55,15 +55,6 @@ export type SubscribeMsg = {
 // `Uint8Array<ArrayBuffer>` (not `<ArrayBufferLike>`) so the bytes
 // thread directly into `crypto.subtle.digest` — `BufferSource`
 // rejects SharedArrayBuffer-backed views.
-//
-// NOTE: `verifySaveSigAndCanonical` is a test-friendly composition
-// helper. Production `handleSave` in `server/index.ts` does NOT
-// call it — it composes `canonicalSave` +
-// `computeRevisionIdFromCanonical` + `verifyEd25519` separately so
-// the dup-precheck (`revisionExists`) can fire BEFORE the Ed25519
-// verify, closing the round-9 H1 CPU-DoS vector where a passive
-// observer floods captured saves. The wrapper exists for unit
-// tests that don't need the precheck ordering.
 export type VerifyResult =
   | { ok: true; canonical: Uint8Array<ArrayBuffer> }
   | { ok: false; canonical: null }

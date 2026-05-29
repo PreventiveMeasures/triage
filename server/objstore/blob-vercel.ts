@@ -119,21 +119,19 @@ type VercelBlobSdk = {
 
 // Recognise "blob is gone" errors uniformly across read/write/delete
 // paths so callers can treat them as success (delete) or
-// not-found (read). The SDK exposes BlobNotFoundError as a class
-// with `.name === 'BlobNotFoundError'`; checking the name string
-// avoids importing the class at the top level (which would force
-// the optional peer dep to resolve).
+// not-found (read). The SDK exposes BlobNotFoundError as a class with
+// `.name === 'BlobNotFoundError'`; checking the name string avoids
+// importing the class at the top level (which would force the optional
+// peer dep to resolve).
 //
-// Class-name check ONLY. The SDK's internal mapper translates every
-// API `not_found` code into BlobNotFoundError-by-name; a bare-404
-// transport leak doesn't reach here. A prior version of this
-// function had a `/does not exist|\b404\b/` fallback that
-// DANGEROUSLY matched BlobStoreNotFoundError's message "This store
-// does not exist." — a config fault (revoked token, deleted store)
-// would silently surface as every-blob-missing across reads and
-// unlinks, masking the fatal misconfiguration. The tight name check
-// lets BlobStoreNotFoundError / other classes propagate as real
-// exceptions.
+// Class-name check ONLY — the SDK's internal mapper turns every API
+// `not_found` into BlobNotFoundError-by-name, so a bare-404 transport
+// leak doesn't reach here. A broader `/does not exist|\b404\b/` match
+// is DANGEROUS: it also matches BlobStoreNotFoundError's "This store
+// does not exist.", so a config fault (revoked token, deleted store)
+// would silently surface as every-blob-missing across reads/unlinks,
+// masking the fatal misconfiguration. The tight name check lets
+// BlobStoreNotFoundError / other classes propagate as real exceptions.
 function isNotFound(err: unknown): boolean {
   if (err == null || typeof err !== 'object') return false
   const name = (err as { name?: unknown }).name
@@ -242,20 +240,17 @@ function buildOpenStagingWriter(sdk: VercelBlobSdk, token: string): BlobBackend[
       abortSignal: ac.signal,
     })
     // Defuse a possible unhandled-rejection if abort() is called
-    // BEFORE finalize() (the REST layer's error path). Attach a
-    // detached `.catch` on the original promise so an early
-    // rejection has a handler; finalize() awaits `putPromise`
-    // directly, which still re-throws the original rejection
-    // (the .catch returns a separate chain that doesn't replace
-    // putPromise's state).
+    // BEFORE finalize() (the REST error path). The detached `.catch`
+    // gives an early rejection a handler; finalize() still awaits
+    // `putPromise` directly and re-throws the original rejection (the
+    // .catch is a separate chain, not a replacement of putPromise).
     putPromise.catch(() => {})
     return {
       writable: pt,
       // Await the upload's completion. After pipeline(req, counter,
-      // pt) resolves, pt has emitted 'end' on the read side and
-      // `put` is finalising the last multipart part. Awaiting here
-      // gives us the same "bytes durable" guarantee that
-      // pipeline-to-WriteStream gives the FS backend.
+      // pt) resolves, pt has emitted 'end' and `put` is finalising the
+      // last multipart part. Awaiting here gives the same "bytes
+      // durable" guarantee pipeline-to-WriteStream gives the FS backend.
       finalize: async () => { await putPromise },
       // Await the SDK's put-promise settlement (rejected via the
       // AbortController). Without this await, a slow upload that
@@ -315,11 +310,11 @@ function buildPromoteStagingToLive(sdk: VercelBlobSdk, token: string): BlobBacke
       //
       // `allowOverwrite: true` because the content-addressed live
       // pathname `${tag}/${contentHash}.bin` can be (re)written by a
-      // retried or racing promote of the same blob. The destination
-      // bytes are identical by construction (the path IS the hash), so
-      // the overwrite is idempotent — never a clobber of DIFFERENT
-      // bytes. Without the flag, the SDK sends `x-allow-overwrite: 0`
-      // and Vercel rejects any such re-promote with BlobAccessError.
+      // retried or racing promote of the same blob. Destination bytes
+      // are identical by construction (the path IS the hash), so the
+      // overwrite is idempotent — never a clobber of DIFFERENT bytes.
+      // Without the flag the SDK sends `x-allow-overwrite: 0` and
+      // Vercel rejects the re-promote with BlobAccessError.
       await sdk.copy(from, to, {
         access: 'private',
         allowOverwrite: true,
@@ -359,16 +354,16 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
       // A missing blob HERE is never "the resource doesn't exist" — the
       // REST layer (rest.ts openLiveSnapshot) already confirmed a live row
       // whose (version, incarnation) matches the GET token before calling
-      // us. So a BlobNotFoundError means the bytes for a still-live row are
+      // us. So BlobNotFoundError means the bytes for a still-live row are
       // momentarily gone: the reaper GC'd a hash a racing version-bump just
-      // unreferenced, or Vercel Blob's read-after-write / edge propagation
-      // hasn't caught up to a freshly-promoted private blob. That is the
-      // documented `unavailable` (HTTP 503) case — a transient state the
-      // reaper / propagation reconciles and the client retries — NOT a 404.
-      // Returning `not-found` here would emit a 404 the FS backend never
-      // emits for the same condition (blob-fs.ts maps ENOENT → `unavailable`),
-      // telling the client the resource is gone for good when it should
-      // refetch. See server/README.md's GET status table.
+      // unreferenced, or Vercel's read-after-write / edge propagation hasn't
+      // caught up to a freshly-promoted private blob. That is the documented
+      // `unavailable` (HTTP 503) transient — reconciled by reaper /
+      // propagation, retried by the client — NOT a 404. Returning
+      // `not-found` would emit a 404 the FS backend never emits for the
+      // same condition (blob-fs.ts maps ENOENT → `unavailable`), telling
+      // the client the resource is gone for good when it should refetch.
+      // See server/README.md's GET status table.
       if (isNotFound(err)) return { ok: false, reason: 'unavailable' }
       throw err
     }
@@ -383,16 +378,14 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
     if (res.statusCode !== 200 || res.stream == null) {
       return { ok: false, reason: 'unavailable' }
     }
-    // `@vercel/blob@2.x`'s streaming `get()` for private blobs
-    // returns the body but does NOT populate `blob.size` and does
-    // NOT pass a `content-length` header through (verified
-    // empirically: get.size=0, content-length-hdr=null while
-    // head.size reports the true byte count). The REST layer
-    // depends on a size to set `content-length` on its response
-    // and for the integrity check against the DB row, so when
-    // get() leaves it 0/null we fall back to a head() lookup.
-    // Two round-trips per private read on Vercel until the SDK is
-    // fixed — small price vs. the alternative of 503ing every read.
+    // `@vercel/blob@2.x`'s streaming `get()` for private blobs returns
+    // the body but does NOT populate `blob.size` nor pass a
+    // `content-length` header (verified empirically: get.size=0,
+    // content-length-hdr=null, while head.size reports the true count).
+    // The REST layer needs a size to set `content-length` and for the
+    // integrity check against the DB row, so on 0/null we fall back to
+    // head(). Two round-trips per private read until the SDK is fixed —
+    // small price vs. 503ing every read.
     let size: number | null | undefined = res.blob?.size
     if (size == null || size === 0) {
       try {

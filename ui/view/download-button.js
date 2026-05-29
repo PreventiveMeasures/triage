@@ -1,13 +1,8 @@
 // `<download-button>` — fixed top-right markdown download icon,
-// stacks below the print button. Shares the print button's
-// visibility predicate (only on the findings view with a loaded
-// report AND a printable view-mode) because the user generally
-// wants the markdown export alongside the print affordance.
-//
-// Replaces a static `<button id="download-btn">` in index.html that
-// rode the same `body.show-print-btn` visibility class as the
-// print button. Each button now owns its own visibility via
-// StateElement — there's no shared body-class anymore.
+// stacks below the print button. Shares the print button's visibility
+// predicate (findings view, loaded report, printable view-mode)
+// because the user generally wants the markdown export alongside the
+// print affordance; each owns its visibility via StateElement.
 //
 // Click dispatches a `download-requested` CustomEvent (bubbles +
 // composed); events.js listens on document and calls

@@ -1,15 +1,12 @@
 /* `<triage-conflict-dialog>` layer — per-property triage conflict
    resolver (workspace import + report-attach hydration). Composed
-   into the dialog's shadow `static styles` on top of dialog-base.css
-   (frame + reset + WCO) and dialog-severity.css (the `.conflict-sev`
-   chip — that one class is shared, so it keeps its name). Everything
-   else is local to this shadow, so the body uses short, unprefixed
-   class names and addresses the header by type. */
+   into the shadow `static styles` on top of dialog-base.css and
+   dialog-severity.css (`.conflict-sev`). */
 
 /* Wide frame — the conflict cards carry three columns. */
 dialog { max-width: 720px; width: min(94vw, 720px); }
 
-header h3 { margin: 0 0 .25rem; }  /* tighter than base; font/weight inherited */
+header h3 { margin: 0 0 .25rem; }  /* tighter than base */
 header p {
   margin: 0 0 .75rem; color: var(--muted); font-size: .82rem;
 }
@@ -37,9 +34,8 @@ header p {
   display: flex; flex-direction: column; gap: .5rem;
 }
 
-/* One card per finding id. Header row carries the severity badge,
-   file:line, and a truncated id chip; description preview sits
-   below; per-property decision rows fill the rest. */
+/* One card per finding id: head row (severity badge, file:line, id
+   chip), description preview, then per-property decision rows. */
 .card {
   border: 1px solid var(--border); border-radius: 6px;
   padding: .55rem .7rem .6rem;
@@ -71,10 +67,9 @@ header p {
 
 .rows { display: flex; flex-direction: column; gap: .35rem; }
 
-/* One row per property (color, comment) inside a card. Three
-   columns: property label, "current" choice, "imported" choice.
-   Each choice is a clickable label wrapping its radio so the
-   whole side is a hit target. */
+/* One row per property (color, comment): label, "current" choice,
+   "imported" choice. Each choice label wraps its radio so the whole
+   side is a hit target. */
 .row {
   display: grid;
   grid-template-columns: 5rem 1fr 1fr;
@@ -116,9 +111,8 @@ header p {
   width: 12px; height: 12px; border-radius: 50%;
   box-shadow: 0 0 0 1px rgb(from var(--text) r g b / .2);
   flex-shrink: 0;
-  /* Hue per marker — pulls from the global --marker-* custom
-     properties (theme.css), same source the <color-marker>
-     picker uses, so palette changes land in one place. */
+  /* Hue from theme.css's --marker-* properties — same source as the
+     <color-marker> picker, so palette changes land in one place. */
   &.marker-red   { background: var(--marker-red); }
   &.marker-blue  { background: var(--marker-blue); }
   &.marker-green { background: var(--marker-green); }

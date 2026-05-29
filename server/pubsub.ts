@@ -169,9 +169,8 @@ type NeonState = {
   pendingHandlers: Set<Promise<void>>
 }
 
-// Notification dispatch — closes over `state.senderId` and
-// `state.handler`. Filters foreign channels (defensive) and our own
-// publish round-trip (Postgres NOTIFY delivers to publishers too).
+// Notification dispatch. Filters foreign channels (defensive) and our
+// own publish round-trip (Postgres NOTIFY delivers to publishers too).
 function dispatchNotification(state: NeonState, n: { channel: string; payload?: string }): void {
   if (n.channel !== CHANNEL) return
   if (typeof n.payload !== 'string') return
@@ -187,24 +186,19 @@ function dispatchNotification(state: NeonState, n: { channel: string; payload?: 
   // notification dispatch (which would queue further notifications
   // behind it). Errors are logged but don't kill the loop — a missed
   // broadcast surfaces to clients on reconnect via the chain re-pull.
-  //
-  // The promise is also tracked in `state.pendingHandlers` so `stop()`
-  // can drain in-flight handlers BEFORE the lifecycle teardown closes
-  // the DB handle. Without the tracking, `onBusMessage`'s DB queries
-  // (`handle.revisionById.get` / `getLive`) could race
-  // `handle.close()` and throw inside a half-settled handler.
+  // Tracked in `state.pendingHandlers` so `stop()` drains in-flight
+  // handlers before the lifecycle closes the DB handle (see that
+  // field's doc).
   const promise: Promise<void> = fn(msg).catch((err) => {
     console.warn('pubsub: handler error:', errStack(err))
   }).finally(() => { state.pendingHandlers.delete(promise) })
   state.pendingHandlers.add(promise)
 }
 
-// Single connect attempt. Resolves once LISTEN is registered, or
-// rejects on transport / LISTEN failure. Assigns `state.client = c`
-// EAGERLY (before `c.connect()` is awaited) for the two invariants
-// documented on `NeonState.client`: the error handler's equality gate
-// must work mid-handshake, and `stop()` must be able to abort a hung
-// connect by reading `state.client?.end()`.
+// Single connect attempt. Resolves once LISTEN is registered, rejects
+// on transport / LISTEN failure. Assigns `state.client = c` EAGERLY
+// (before awaiting `c.connect()`) for the invariants on
+// `NeonState.client`.
 async function tryConnect(state: NeonState): Promise<void> {
   const c = state.newClient()
   state.client = c
@@ -221,13 +215,11 @@ async function tryConnect(state: NeonState): Promise<void> {
     })
     await c.query(`LISTEN ${CHANNEL}`)
   } catch (err) {
-    // Clear `state.client` only if it still points at OUR client (a
+    // Clear `state.client` only if it still points at OUR client — a
     // racing `stop()` may have already null'd it and ended the
-    // half-connected socket — don't clobber that). The `c.end()`
-    // below may be a redundant second call in that race (stop already
-    // ended it); pg-style Client.end() is idempotent so the second
-    // call is a harmless no-op. The try/catch additionally absorbs
-    // any rejection from end() itself.
+    // half-connected socket; don't clobber that. The `c.end()` below
+    // may then be a redundant second call, but pg-style Client.end()
+    // is idempotent (and the try/catch absorbs any rejection).
     if (state.client === c) state.client = null
     try { await c.end() } catch {}
     throw err
@@ -236,8 +228,7 @@ async function tryConnect(state: NeonState): Promise<void> {
 
 // Outer (re)connect loop. Exits silently on `state.stopped`; otherwise
 // retries with exponential backoff after a connect / LISTEN failure.
-// `tryConnect` assigns `state.client` itself (see the eager-assign
-// rationale on `NeonState.client`), so this loop only counts attempts
+// `tryConnect` owns `state.client`, so this loop only counts attempts
 // and runs the backoff sleep.
 async function connectAndListen(state: NeonState): Promise<void> {
   // oxlint-disable-next-line no-unmodified-loop-condition
@@ -262,10 +253,9 @@ async function connectAndListen(state: NeonState): Promise<void> {
 // default) waiting on the timer. We stash the cancel callback on the
 // shared state object so `stop()` can fire it; the loop's
 // `if (state.stopped) return` then exits on the next turn. The
-// `settled` flag guards against a race between the timer firing and
-// `stop()` racing the same wake-up (Promise resolves are idempotent
-// at the runtime layer, but oxlint's `no-multiple-resolved` rule is
-// stricter and the guard documents the mutual exclusion explicitly).
+// `settled` flag guards the timer-vs-`stop()` wake-up race: resolves
+// are idempotent at runtime, but it also satisfies oxlint's stricter
+// `no-multiple-resolved` and documents the mutual exclusion.
 function cancellableSleep(state: NeonState, ms: number): Promise<void> {
   return new Promise((resolve) => {
     let settled = false

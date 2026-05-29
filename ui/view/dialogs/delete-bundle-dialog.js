@@ -1,13 +1,11 @@
 // `<delete-bundle-dialog>` — confirmation prompt that fronts the
 // sidebar's "Delete current" button when a bundle is the active
-// selection. Replaces the prior `window.confirm()` prompt the
-// per-row delete button used. Always shown so the destructive
-// action goes through an explicit Cancel/Delete prompt. When the
-// bundle exists in any owning workspace's remote objstore
-// inventory, a notice surfaces explaining that the delete fans
-// out to remote too (no per-scope choice; the "delete locally
-// only" path had no honest semantics — see the matching note in
-// `delete-report-dialog.js`).
+// selection. Always shown so the destructive action goes through an
+// explicit Cancel/Delete prompt. When the bundle exists in any
+// owning workspace's remote objstore inventory, a notice surfaces
+// explaining that the delete fans out to remote too (no per-scope
+// choice; the "delete locally only" path had no honest semantics —
+// see the matching note in `delete-report-dialog.js`).
 //
 // Sibling of `<delete-report-dialog>`: extends `AppDialog` for the
 // shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
@@ -79,12 +77,10 @@ class DeleteBundleDialog extends AppDialog {
 
 customElements.define('delete-bundle-dialog', DeleteBundleDialog)
 
-// Public entry point. Resolves with `{ confirmed }`. Cancel / Esc
-// / native close all resolve to `{ confirmed: false }`. Pass
+// Public entry point. Resolves with `{ confirmed }`. Cancel / Esc /
+// native close all resolve to `{ confirmed: false }`. Pass
 // `inRemote: true` when any owning workspace's objstore session
-// holds a copy of the bundle — the dialog surfaces the remote-
-// side notice; the caller already knows the remote scope so the
-// dialog doesn't re-emit it.
+// holds a copy of the bundle, to surface the remote-side notice.
 export function openDeleteBundleDialog({ name, inRemote } = {}) {
   return openAppDialog('delete-bundle-dialog', {
     bundleName: name ?? '',

@@ -63,20 +63,14 @@ export class SseSession extends EventEmitter {
   // failure on a healthy session.
   private wireResponse(res: ServerResponse): void {
     res.on('close', () => {
-      // Only the *current* response's close terminates the session. A
-      // swapped-out previous response closes naturally during takeover
-      // and must not knock the session offline.
-      if (res !== this.currentRes) return
+      if (res !== this.currentRes) return  // current-response guard (see above)
       if (this.readyState === SseSession.CLOSED) return
       this.readyState = SseSession.CLOSED
       this.currentRes = null
       this.emit('close')
     })
     res.on('error', (err: Error) => {
-      // Same identity guard as close: drained-out previous responses
-      // may emit RST/EPIPE during flush and we don't want those to
-      // pseudo-fail the healthy session that's now on a new response.
-      if (res !== this.currentRes) return
+      if (res !== this.currentRes) return  // current-response guard (see above)
       this.emit('error', err)
     })
   }

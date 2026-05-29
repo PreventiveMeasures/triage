@@ -21,12 +21,11 @@ export type Conflict = {
 export type TriageStateMap = { [id: string]: TriageEntry | undefined }
 export type Changeset = { [id: string]: TriageEntry | null | undefined }
 
-// Per-property normalisers — collapse "no value" of any shape
-// (missing entry, empty string, legacy `deleted: true` for triage)
-// to the empty string '' so the conflict-detection three-way
-// compare (oldBase / local / chain) doesn't get tricked into
-// reporting `'red'` vs `undefined` as a conflict when one side
-// just doesn't carry the property at all.
+// Per-property normalisers — collapse "no value" of any shape (missing
+// entry, empty string, legacy `deleted: true` for triage) to '' so the
+// three-way conflict compare (oldBase / local / chain) doesn't report
+// `'red'` vs `undefined` as a conflict when one side just doesn't carry
+// the property.
 function normColor(entry: TriageEntry | null | undefined): string {
   return typeof entry?.color === 'string' ? entry.color : ''
 }
@@ -43,33 +42,23 @@ function normFix(entry: TriageEntry | null | undefined): string {
 }
 
 // Per-property comparison between the user's pre-rebase overlay
-// (= unsynced state.* edits captured before the chain landed) and
-// the chain's new baseState. Surfaced to the resolver so a peer's
-// view that a chain just changed doesn't silently flip — and
-// symmetrically, the joining client's local-wins overlay doesn't
-// silently overwrite an already-agreed chain value when the user
-// might prefer to accept it. Mirrors the per-property semantics
-// `hydrateStateFromBaseState` uses on the report-attach path.
+// (= unsynced state.* edits captured before the chain landed) and the
+// chain's new baseState. Surfaced to the resolver so neither side
+// silently flips: a peer's chained change doesn't overwrite the user,
+// and (symmetrically) the joining client's local-wins overlay doesn't
+// overwrite an already-agreed chain value. Mirrors the per-property
+// semantics `hydrateStateFromBaseState` uses on the report-attach path.
 //
 // Three-way compare against `oldBaseState` so an "unset" intent
-// (overlay = null OR overlay's entry omits a property the user
-// previously had) is detected as a conflict against a chain that
-// re-assigned the property — and vice versa, when the user set a
-// value and a peer deleted it. Without the three-way, both
-// silent-loss directions sail past:
-//   * we disconnect, peer changes color, we unset, reconnect →
-//     overlay says `{X: null}`, chain says `{X: {color: blue}}`,
-//     two-way (overlay vs chain) sees no per-property
-//     disagreement, applyChangeset replays the delete and the
-//     peer's blue is lost.
-//   * we disconnect, peer unsets color, we change ours, reconnect →
-//     overlay has color, chain doesn't, two-way again sees no
-//     disagreement, the user's set wins and the peer's delete is
-//     lost.
-// The three-way says "both sides changed FROM oldBase, both
-// changes disagree, surface a conflict". `local` / `imported`
-// values are the empty string '' for the unset side; the dialog
-// renders that as `<em>none</em>`.
+// (overlay = null OR its entry omits a property the user previously
+// had) conflicts with a chain that re-assigned that property — and vice
+// versa. Both silent-loss directions need it: e.g. we disconnect, peer
+// sets color, we unset, reconnect → overlay `{X: null}`, chain `{X:
+// {color: blue}}`; a two-way (overlay vs chain) sees no disagreement,
+// applyChangeset replays the delete, peer's blue is lost (symmetrically
+// the user's set overwrites a peer's delete). The three-way says "both
+// sides changed FROM oldBase and disagree → conflict". `local` /
+// `imported` are '' for the unset side; the dialog renders `<em>none</em>`.
 export function collectChainConflicts(
   overlay: Changeset,
   oldBaseState: TriageStateMap,
@@ -77,9 +66,8 @@ export function collectChainConflicts(
 ): Conflict[] {
   const conflicts: Conflict[] = []
   // Only check ids the user touched (= ids in overlay). Chain-only
-  // changes for ids the user didn't touch are gap-fills handled
-  // automatically by `applyChangeset(newBaseState, overlay)` —
-  // ids missing from the overlay get the chain's value through.
+  // changes are gap-fills handled by `applyChangeset(newBaseState,
+  // overlay)` — ids missing from the overlay get the chain's value.
   for (const id of Object.keys(overlay)) {
     const overlayValue = overlay[id]
     const oldEntry = oldBaseState[id]
@@ -109,12 +97,11 @@ export function collectChainConflicts(
   return conflicts
 }
 
-// Set-equal comparison for `ignoredReports`. Each list is an
-// unordered collection of report names; a peer's snapshot may
-// produce them in iteration order of state.ignoredIds (insertion
-// order), and an applied chain may produce them in a different
-// order, so a positional compare would falsely report changes
-// and produce empty-but-nonzero changesets.
+// Set-equal comparison for `ignoredReports`: an unordered collection of
+// report names. A peer's snapshot iterates state.ignoredIds in insertion
+// order, an applied chain may order them differently, so a positional
+// compare would falsely report changes and produce empty-but-nonzero
+// changesets.
 function ignoredReportsEqual(a: unknown, b: unknown): boolean {
   const la: string[] = Array.isArray(a) ? a : []
   const lb: string[] = Array.isArray(b) ? b : []
@@ -126,12 +113,11 @@ function ignoredReportsEqual(a: unknown, b: unknown): boolean {
 }
 
 function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
-  // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'`
-  // or absent). Legacy `deleted: true` from older peers / stored
-  // chains is treated as 'deleted' for comparison purposes — the
-  // receive-side migrates on apply, but a local state still
-  // carrying the legacy boolean shouldn't false-equal a remote
-  // entry that already moved to the new field.
+  // `triage` is the current shape (`'fixed' | 'invalid' | 'deleted'` or
+  // absent). Legacy `deleted: true` from older peers / stored chains
+  // compares as 'deleted' — the receive-side migrates on apply, but a
+  // local state still carrying the legacy boolean shouldn't false-equal
+  // a remote entry that already moved to the new field.
   const triageA = a.triage ?? (a.deleted ? 'deleted' : '')
   const triageB = b.triage ?? (b.deleted ? 'deleted' : '')
   return a.color === b.color
@@ -149,21 +135,19 @@ export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
   return true
 }
 
-// Walk a state through a changeset, producing a new state. `null`
-// in the changeset means "delete this id from the state".
-// Exported for unit-test access (round-12 H6 prototype-pollution
-// regression). Pure function — no module state, no side effects.
+// Walk a state through a changeset, producing a new state. `null` in
+// the changeset deletes the id. Exported for unit-test access (round-12
+// H6 prototype-pollution regression). Pure — no module state/side effects.
 export function applyChangeset(baseState: TriageStateMap, changeset: Changeset): TriageStateMap {
-  // `Object.create(null)` (not `{}`) so a peer-controlled changeset
+  // `Object.create(null)`, not `{}`, so a peer-controlled changeset
   // can't pollute the prototype chain. JSON.parse turns `{"__proto__":
-  // …}` into an OWN property; `out[id] = entry` for id='__proto__' on
-  // a normal `{}` would trigger Object.prototype's `__proto__` setter
-  // and mutate out's prototype to the attacker-supplied entry. Every
-  // subsequent `baseState[id]` lookup (hydrateStateFromBaseState,
-  // statesEqual, etc.) would then walk the polluted chain and return
-  // attacker-controlled triage values. Null-prototype out has no
-  // setter to trigger; the key just becomes an inert own property.
-  // Audit round-12 H6.
+  // …}` into an OWN property; `out['__proto__'] = entry` on a normal
+  // `{}` triggers Object.prototype's `__proto__` setter and mutates
+  // out's prototype to the attacker entry — every later `baseState[id]`
+  // lookup (hydrateStateFromBaseState, statesEqual, …) then walks the
+  // polluted chain and returns attacker-controlled triage. Null-prototype
+  // out has no setter; the key becomes an inert own property. Audit
+  // round-12 H6.
   const out: TriageStateMap = Object.assign(Object.create(null), baseState)
   for (const [id, entry] of Object.entries(changeset)) {
     if (entry === null) delete out[id]
@@ -176,10 +160,9 @@ export function applyChangeset(baseState: TriageStateMap, changeset: Changeset):
 // `applyChangeset` — `null` entries clear, present entries overwrite.
 export function computeChangeset(base: TriageStateMap, target: TriageStateMap): Changeset {
   // `Object.create(null)` mirrors `applyChangeset` / `effectiveLocalState`.
-  // Without this, `changeset['__proto__'] = entry` (when an id of
-  // `__proto__` shows up in base.keys / target.keys) would trigger
-  // the Object.prototype setter on changeset and pollute the
-  // outbound payload's prototype chain. Audit round-12 H6.
+  // Otherwise `changeset['__proto__'] = entry` (when `__proto__` shows up
+  // in base/target keys) triggers the Object.prototype setter and
+  // pollutes the outbound payload's prototype chain. Audit round-12 H6.
   const changeset: Changeset = Object.create(null)
   const ids = new Set([...Object.keys(base), ...Object.keys(target)])
   for (const id of ids) {

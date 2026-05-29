@@ -3,8 +3,8 @@ import { getKind } from '#client/index.js'
 // Shared file-row affordances — the brand-marked "sticker" icons,
 // the source-bucket detection, and the display-name transform that
 // strips bucket-marker suffixes added by ingest. Used by the
-// sidebar's file list (where these landed first) and by the
-// action-row report chip in workspace-merged views.
+// sidebar's file list and the action-row report chip in
+// workspace-merged views.
 
 const STICKER_BASE = '<path class="bg" d="M3 2h6l4 4v8H3z"/><path fill="rgba(0,0,0,.18)" d="M9 2v4h4Z"/>'
 

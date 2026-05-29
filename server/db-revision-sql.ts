@@ -1,9 +1,7 @@
 // Shared SQL + row-mapping for the `workspace_revision` chain, used by
 // BOTH backends — `./db.ts` (SQLite) and `./db-neon.ts` (Neon/Postgres).
-// The two backends previously carried byte-for-byte-equal query strings
-// (modulo `?`↔`$N` placeholders) and a copy of the same row mapper; that
-// duplication is collapsed here so a query edit can't silently drift
-// between backends.
+// Single source of truth (modulo `?`↔`$N` placeholders) so a query edit
+// can't silently drift between backends.
 //
 // Single source of truth, in `$N` (Postgres) form:
 //   • the read queries (`headFor`, `seqOfId`, `lastKeyframeSeq`, the
@@ -60,11 +58,10 @@ export function numOrNull(v: unknown): number | null {
 // `Record<string, unknown>` rows whose `keyframe` may be a number OR (on
 // a future driver change) a string; `node:sqlite` hands back native
 // numbers. The `num`/`numOrNull` coercion is safe over both — a native
-// `0`/`1` integer passes through unchanged, so SQLite rows round-trip
-// identically to the bespoke pass-through they had before, while Neon
-// rows keep their defensive string→number coercion. `base` is the only
-// nullable column (first revision); `keyframe` collapses to a strict
-// 0 / 1 via the `=== 1` check the chain-broadcast contract relies on.
+// `0`/`1` integer passes through unchanged, while Neon rows keep their
+// defensive string→number coercion. `base` is the only nullable column
+// (first revision); `keyframe` collapses to a strict 0 / 1 via the
+// `=== 1` check the chain-broadcast contract relies on.
 export function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
   return {
     base: (r['base'] as string | null) ?? null,

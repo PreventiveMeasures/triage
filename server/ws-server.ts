@@ -55,23 +55,19 @@ export type WsServerDeps = PeerConnectionDeps & {
 }
 
 // Per-connection setup: create Peer, send challenge, wire message /
-// close / error / pong listeners. Shared between the WS connection
-// handler below and the SSE+POST adapter in ./sse-server.ts. The
-// `socket` parameter is the WebSocket-shaped surface (a real `ws`
-// `WebSocket`, or an `SseSession` cast through `as unknown as
-// WebSocket`); the function only uses the subset both expose.
+// close / error / pong listeners. `socket` is the WebSocket-shaped
+// surface — a real `ws` `WebSocket`, or an `SseSession` cast through
+// `as unknown as WebSocket`; only the subset both expose is used.
 export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: PeerConnectionDeps): void {
   const {
     peers, send, unsubscribeAll, handleSave, handleSubscribe, handleAuthenticate,
     sendSaveError, objstore, track, isShuttingDown, maxInflightPerSocket, debug,
   } = deps
   if (debug) console.log(`connect from ${req.socket.remoteAddress}`)
-  // One Peer holds this connection's state (challenge / authorized /
-  // alive / inflight / tags). Created before any client frame can
-  // arrive (`socket.on('message')` is wired below). The heartbeat
-  // sweep flips `alive` false after each `ping()`; the `pong` listener
-  // flips it back, and a socket still false on the next sweep is
-  // terminated — the only thing closing FDs for an idle peer.
+  // One Peer holds this connection's state, created before any client
+  // frame can arrive (`socket.on('message')` is wired below). The
+  // heartbeat sweep's two-tick liveness check (see below) is the only
+  // thing closing FDs for an otherwise-idle peer.
   const peer = new Peer(randomId())
   peers.set(socket, peer)
   socket.on('pong', () => { peer.alive = true })
@@ -228,9 +224,8 @@ export function setupPeerConnection(socket: WebSocket, req: HttpRequest, deps: P
   // Surface socket-level errors instead of swallowing — these are
   // the signals operators want under abuse / network flakiness
   // (TLS handshake failures, frame-decode errors, ws-protocol
-  // violations). The previous `() => {}` left every per-connection
-  // failure invisible. `close` fires after `error` and runs the
-  // unsubscribe cleanup, so logging here doesn't risk leaking.
+  // violations). `close` fires after `error` and runs the unsubscribe
+  // cleanup, so logging here doesn't risk leaking.
   socket.on('error', (err: Error) => { console.warn('Socket error:', errMsg(err)) })
 }
 

@@ -151,14 +151,14 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     stopHeartbeat()
     if (pingIntervalMs <= 0) return
     pingIntervalId = setInterval(() => {
-      // `socket.OPEN` (instance constant) rather than the bare global
-      // `WebSocket.OPEN` — when the SSE fallback engaged because there
-      // is NO global `WebSocket` constructor at all (Node SSR, hostile
-      // browser env), the global form throws ReferenceError on every
-      // tick and silently disables dead-socket detection. Instance
-      // constants exist on both real `WebSocket` and the SSE adapter.
+      // `socket.OPEN` (instance constant) not the global `WebSocket.OPEN`:
+      // when the SSE fallback engaged because there is NO global
+      // `WebSocket` constructor (Node SSR, hostile browser env), the
+      // global form throws ReferenceError every tick and silently
+      // disables dead-socket detection. Instance constants exist on both
+      // real `WebSocket` and the SSE adapter.
       if (!socket || socket.readyState !== socket.OPEN) return
-      // Don't double-arm — the existing pongTimeout will close if its pong doesn't land.
+      // Don't double-arm — the existing pongTimeout closes if its pong doesn't land.
       if (pongTimeoutId) return
       send({ type: 'ping' })
       pongTimeoutId = setTimeout(() => {
@@ -215,17 +215,17 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     }
     if (msg.type === 'challenge') {
       if (typeof msg['nonce'] !== 'string') return
-      // Detect a session restart: a second challenge with a different
-      // nonce arrives mid-life when the SSE plane's continuation token
-      // landed on a replica that didn't know it, so the server minted
-      // a fresh session (new id + new challenge). Fire a synthetic
-      // disconnect FIRST so consumers reset their subscribed-state
-      // (triage-sync clears session.subscribed in onDisconnected),
-      // then notifyConnected runs the normal re-subscribe path against
-      // the new nonce. Without this, the new nonce is silently latched
-      // but consumers never re-sign / re-send subscribes, and the new
-      // server-side session has no subscribers — broadcasts never
-      // reach this client until the next full reconnect.
+      // Session restart: a second challenge with a different nonce
+      // arrives mid-life when the SSE plane's continuation token landed
+      // on a replica that didn't know it, so the server minted a fresh
+      // session (new id + challenge). Fire a synthetic disconnect FIRST
+      // so consumers reset subscribed-state (triage-sync clears
+      // session.subscribed in onDisconnected), THEN notifyConnected runs
+      // the normal re-subscribe against the new nonce. Without the
+      // disconnect, the new nonce latches but consumers never re-sign /
+      // re-send subscribes, the new server-side session has no
+      // subscribers, and broadcasts never reach this client until the
+      // next full reconnect.
       if (connectionNonce != null && connectionNonce !== msg['nonce']) {
         notifyDisconnected('session restarted')
       }
@@ -290,14 +290,13 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     // re-armed by `onDisconnected`, re-enters on the fresh socket.
     const startSocket = socket
     const promise = (async (): Promise<boolean> => {
-      // Yield once so the outer `authFlowInFlight = promise` assignment
-      // below lands BEFORE this body can reach its `finally`. The body
-      // can return synchronously (cached replay skipped AND no
-      // `authResolver` — the loop's no-resolver bail), in which case a
-      // finally running before that assignment nulls the slot and then
-      // the assignment resurrects this already-settled promise into it,
-      // wedging every future runAuthFlow (and resetCachedReplayGuard's
-      // boot-after-unlock recovery) on the stale `false`. Same
+      // Yield once so `authFlowInFlight = promise` (below) lands BEFORE
+      // this body can reach `finally`. The body can return synchronously
+      // (cached replay skipped AND no `authResolver` — the no-resolver
+      // bail): a finally running before that assignment nulls the slot,
+      // the assignment then resurrects this already-settled promise into
+      // it, and every future runAuthFlow (plus resetCachedReplayGuard's
+      // boot-after-unlock recovery) wedges on the stale `false`. Same
       // "yield once" idiom as counts.js's ensureCounts.
       await Promise.resolve()
       try {
@@ -362,29 +361,28 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     tryOpen(/* sse= */ false)
   }
 
-  // One open attempt against one wire. When `sse=false` we try the
-  // WebSocket; on close-before-open (server refused upgrade, proxy
-  // stripped the Upgrade header, constructor threw) we re-enter with
-  // `sse=true` and try the SSE+POST adapter against the same URL.
-  // Successive reconnects after a fully-opened socket dropped restart
-  // at `sse=false` — the WS plane is the preferred path; SSE is the
-  // last-resort fallback, re-tested every connection cycle so a
-  // transient WS-blocking middlebox doesn't permanently downgrade.
+  // One open attempt against one wire. `sse=false` tries the WebSocket;
+  // on close-before-open (server refused upgrade, proxy stripped the
+  // Upgrade header, constructor threw) we re-enter with `sse=true` and
+  // try the SSE+POST adapter against the same URL. Reconnects after a
+  // fully-opened socket dropped restart at `sse=false`: WS is preferred,
+  // SSE is last-resort, re-tested every cycle so a transient WS-blocking
+  // middlebox doesn't permanently downgrade.
   function tryOpen(sse: boolean): void {
-    // Re-check the gates each time tryOpen is invoked — the WS-ctor
-    // catch and the close-fallback path call back into us, and a
-    // close() racing those re-entries would otherwise construct an
-    // orphan SseTransport that immediately fires a POST to the server.
+    // Re-check the gates on every tryOpen — the WS-ctor catch and the
+    // close-fallback path re-enter, and a close() racing those re-entries
+    // would otherwise construct an orphan SseTransport that immediately
+    // POSTs to the server.
     if (transportClosed) return
     if (acquireCount === 0) return
     if (!serverUrl) return
     let next: WebSocketLike
     try { next = sse ? new SseTransport(serverUrl) : new WebSocket(serverUrl) }
     catch (err) {
-      // Constructor failure path. For WS this is e.g. an invalid URL
-      // shape that `new WebSocket(…)` rejects synchronously; for SSE
-      // it's the wsUrlToSseUrl scheme check. Fall back to SSE if we
-      // were trying WS; otherwise schedule a normal reconnect.
+      // Synchronous constructor failure: for WS an invalid URL shape
+      // `new WebSocket(…)` rejects; for SSE the wsUrlToSseUrl scheme
+      // check. Fall back to SSE if we were trying WS; else schedule a
+      // normal reconnect.
       if (!sse) {
         console.warn('socket-transport: WebSocket constructor failed; trying SSE fallback:', err)
         tryOpen(true)
@@ -397,11 +395,9 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     socket = next
     connectionNonce = null
     cachedPasswordTriedOnThisSocket = false
-    // Track whether THIS attempt ever reached `open`. The WS plane
-    // fires `close` immediately on a failed upgrade (without a prior
-    // `open`); we use that signal to fall back to SSE. After a
-    // legitimately-opened connection drops, this path is not taken —
-    // the next reconnect cycle restarts at WS through `openSocket`.
+    // Whether THIS attempt ever reached `open`. The WS plane fires
+    // `close` without a prior `open` on a failed upgrade — that signal
+    // drives the SSE fallback in the close handler below.
     let hasOpened = false
 
     next.addEventListener('open', () => {
@@ -412,12 +408,12 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       // Consumers fire on `challenge`, not `open` — nonce arrives later.
     })
 
-    // The message listener is wrapped so a stale frame on the prior
-    // transport (in-flight between teardownCurrentSocket setting
-    // socket=null and stale.close() draining its receive buffer; acute
-    // for SSE per the older-readers issue in sse-transport.ts) doesn't
-    // re-fire `notifyConnected` / settle a stale auth resolver / push
-    // a phantom frame to consumers that just received `onDisconnected`.
+    // Guard against a stale frame on the prior transport (in-flight
+    // between teardownCurrentSocket setting socket=null and stale.close()
+    // draining its receive buffer; acute for SSE per the older-readers
+    // issue in sse-transport.ts) re-firing `notifyConnected` / settling a
+    // stale auth resolver / pushing a phantom frame to consumers that
+    // just received `onDisconnected`.
     next.addEventListener('message', (ev) => {
       if (socket !== next) return
       handleMessage(ev as MessageEvent)
@@ -430,18 +426,17 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
       cachedPasswordTriedOnThisSocket = false
       settleAuthResponse(false)
       stopHeartbeat()
-      // WS close-before-open is the "this transport doesn't work
-      // against this server" signal. Try SSE before notifying
-      // consumers (the SSE attempt is a continuation of the same
-      // open cycle; from the consumer's perspective the transport
-      // hasn't disconnected because it never connected). If SSE was
-      // already the one that failed, fall through to the normal
+      // WS close-before-open signals "this transport doesn't work
+      // against this server". Try SSE before notifying consumers — the
+      // SSE attempt continues the same open cycle, and to the consumer
+      // the transport never disconnected because it never connected. If
+      // SSE was the one that failed, fall through to the normal
       // reconnect-notify path.
       if (!hasOpened && !sse && !transportClosed && acquireCount > 0) {
         if (typeof fetch === 'undefined') {
-          // No fetch available (Node test env without polyfill);
-          // can't fall back. Fall through to the normal reconnect path
-          // so the WS retry loop keeps trying.
+          // No fetch (Node test env without polyfill); can't fall back.
+          // Fall through to the normal reconnect path so the WS retry
+          // loop keeps trying.
           notifyDisconnected('socket closed')
           scheduleReconnect()
           return
@@ -450,14 +445,12 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
         tryOpen(true)
         return
       }
-      // Read the close code if the transport surfaced one (WebSocket
-      // CloseEvent has it natively, SseTransport attaches it as a
-      // plain-Event property). 1001 (server going away) is the
-      // graceful-shutdown signal — reset the backoff so the immediate
-      // reconnect attempt fires at INITIAL_RECONNECT_DELAY instead of
-      // whatever bumped value the previous reconnect cycle left. The
-      // optional chain handles legacy listeners that may not pass an
-      // event argument (test fakes, some embedded WS shims).
+      // Close code if the transport surfaced one (WebSocket CloseEvent
+      // natively; SseTransport attaches it as a plain-Event property).
+      // 1001 (server going away, graceful) resets the backoff so the
+      // reconnect fires at INITIAL_RECONNECT_DELAY, not whatever bumped
+      // value the prior cycle left. Optional chain handles listeners
+      // passed no event arg (test fakes, WS shims).
       const closeCode = (ev as (Event & { code?: number }) | undefined)?.code
       if (closeCode === 1001) reconnectDelayMs = INITIAL_RECONNECT_DELAY
       notifyDisconnected('socket closed')

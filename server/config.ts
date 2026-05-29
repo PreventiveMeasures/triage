@@ -156,8 +156,8 @@ export function loadConfig(): Config {
   // 0 = OS-assigned ephemeral port (the test harness boots with PORT=0).
   const port = intEnv('PORT', 8765, 0, 65535)
   const host = env['HOST'] ?? '127.0.0.1'
-  // `fileURLToPath` decodes percent-escapes / non-ASCII path segments
-  // correctly (the older `new URL(...).pathname` left `%20` raw).
+  // `fileURLToPath` decodes percent-escapes / non-ASCII path segments;
+  // `new URL(...).pathname` would leave `%20` raw.
   const dbPath = env['DB_PATH'] ?? fileURLToPath(new URL('./data/data.db', import.meta.url))
   // `path.join` so a Windows DB_PATH doesn't get a mixed-separator child.
   const objstoreDir = env['OBJSTORE_DIR'] ?? join(dirname(dbPath), 'objstore')
@@ -174,8 +174,8 @@ export function loadConfig(): Config {
   const password = rawPassword ?? null
   // Upper bound 65_536 — bounds memory under hostile load; a deployer
   // passing MAX_SAFE_INTEGER would silently defeat the cap. Validated
-  // here (after the config.json / password parse) to preserve the
-  // pre-split error-precedence order.
+  // here, after the config.json / password parse, to keep the
+  // error-precedence order.
   const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
 
   if (argv.includes('--help') || argv.includes('-h')) {

@@ -13,15 +13,12 @@
 // helper can wire the canvas in the same async cycle.
 //
 // `refreshSidebar` / `refreshTopPkgs` carry the per-click refresh
-// logic that used to live in view/render.js + view/render-bundle.js
-// (each one was a `document.querySelector('graph-layout').shadowRoot
-// .querySelector('#…')` + `litRender(renderSelectionCard…)` pair).
-// Moving the rendering bodies here keeps the chunky template
-// functions (renderSelectionCard, renderFocusOverlay,
-// renderTopPkgsBlock) out of the main bundle — the main-bundle
-// refresh wrappers in render.js / render-bundle.js only handle the
-// data-fetch + ctx assembly (which needs the `state` aggregator)
-// and dispatch into the loaded module.
+// logic (shadow-root querySelector + litRender(renderSelectionCard…)).
+// Keeping the rendering bodies here holds the chunky templates
+// (renderSelectionCard, renderFocusOverlay, renderTopPkgsBlock) out
+// of the main bundle — the main-bundle refresh wrappers in
+// render.js / render-bundle.js only do data-fetch + ctx assembly
+// (which needs the `state` aggregator) and dispatch into us.
 
 import { render as litRender } from './view/frontend-global.js'
 import './view/graph/graph-layout.js'
@@ -40,14 +37,11 @@ export { attachGraph2Interaction } from './view/graph/canvas.js'
 export { _swapImpl as _swapGraph2Impl } from './view/graph/state.js'
 
 // Repaint the right-panel selection card + the top-right canvas
-// drill-in overlay slot. Both surfaces depend on the same
-// selection / solo / focus state (graph2 module-state in
-// view/graph/state.js), so they refresh together. The wrappers in
-// view/render.js (`refreshGraph2Sidebar`) and view/render-bundle.js
-// (`refreshBundleGraphSidebar`) compute `graph` + `ctx` from main-
-// bundle state and call us here — the rendering itself lands in
-// this lazy bundle so its dependencies (graph/render.js + chunky
-// per-card templates) stay out of view.js.
+// drill-in overlay slot. Both depend on the same selection / solo /
+// focus state (graph2 in view/graph/state.js), so they refresh
+// together. Called by the main-bundle wrappers
+// `refreshGraph2Sidebar` (render.js) / `refreshBundleGraphSidebar`
+// (render-bundle.js), which compute `graph` + `ctx` from state.
 export function refreshSidebar(prep, ctx) {
   const root = document.querySelector('graph-layout')?.shadowRoot
   if (!root) return
@@ -70,10 +64,9 @@ export function refreshTopPkgs(prep) {
 }
 
 // `prep` is the raw-inputs shape `buildGraph2Data` /
-// `buildBundleGraphData` in the main bundle assembles from
-// `state.reports` / `state.bundleDetails`. The actual
-// `buildGraph(...)` call lives here so its implementation (and
-// the `data.js` module it lives in) stays out of the main bundle.
+// `buildBundleGraphData` assemble from `state.reports` /
+// `state.bundleDetails`. The `buildGraph(...)` call lives here so
+// data.js stays out of the main bundle.
 //
 // `prep.options.pkgOf` (bundle-only) drives package classification
 // at buildGraph time; `prep.strippedToOrig` (bundle-only) stamps

@@ -68,11 +68,11 @@ function urlPathFor(tag: string, resourceTag: string): string {
 // Shared gate every objstore handler runs after its message-specific
 // field checks: fetch the socket's challenge nonce, verify the signed
 // message against it, then re-confirm the socket is still OPEN — the
-// close handler may have fired during the verify await, and attaching
-// to / replying on a closed socket is the half-handshake leak case
-// (PR #4 review F4). Returns true when the caller may proceed.
-// Centralising the post-await readyState recheck keeps that
-// easy-to-forget invariant in one auditable place.
+// close handler may have fired during the verify await, and replying
+// on a closed socket is the half-handshake leak case (PR #4 review
+// F4). Centralising the post-await readyState recheck keeps that
+// invariant in one auditable place. Returns true when the caller may
+// proceed.
 async function verified<M extends { workspaceTag?: unknown }>(
   deps: ObjstoreDeps, socket: WebSocket, msg: M, label: string,
   verify: (m: M, nonce: string) => Promise<boolean>,
@@ -96,12 +96,10 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // signature to fail. Cheaper to reject up-front, and consistent
   // with `verifyObjstorePutSig`'s `isSafeNonNegativeInt` gate.
   if (!Number.isSafeInteger(msg.expectedLength) || (msg.expectedLength as number) < 0 || (msg.expectedLength as number) > MAX_CONTENT_LENGTH) return
-  // Symmetric with `handleDelete`'s prevVersion gate (line 116) and
-  // `verifyObjstorePutSig`'s `isSafeIntOrNull` (sign.ts:119). Without
-  // this, a non-safe-integer `prevVersion` (NaN, 2^53+1, ...) would
-  // pass the typeof check below and reach sig verify, burning a
-  // hash + Ed25519 round-trip on a guaranteed-fail input. Input-
-  // validation audit `server/objstore/handlers.ts:76`.
+  // Same up-front reject for `prevVersion` (symmetric with handleDelete
+  // and `verifyObjstorePutSig`'s `isSafeIntOrNull`): a non-safe-integer
+  // (NaN, 2^53+1, ...) would pass the typeof check below and reach sig
+  // verify, burning a hash + Ed25519 round-trip on a guaranteed fail.
   if (msg.prevVersion != null && (typeof msg.prevVersion !== 'number' || !Number.isSafeInteger(msg.prevVersion))) return
   if (!await verified(deps, socket, msg, 'put-begin', verifyObjstorePutSig)) return
   const tag = msg.workspaceTag
@@ -110,8 +108,8 @@ async function handlePutBegin(deps: ObjstoreDeps, socket: WebSocket, msg: Objsto
   // workspace tag (no rows in workspace_revision AND none in
   // workspace_object). Mirrors handleSave in server/index.ts; runs
   // AFTER sig verify so `unauthorized` only reaches a legitimate
-  // signer. The gate is config-driven (server/config.json
-  // `password`) and is a no-op when no password is configured.
+  // signer. Config-driven (server/config.json `password`), no-op when
+  // unconfigured.
   if (deps.authGate && deps.sendUnauthorized && await deps.authGate(socket, tag)) {
     if (socket.readyState !== socket.OPEN) return
     if (deps.debug) console.warn(`reject objstore-put-begin: unauthorized (new workspace ${debugTag(tag)})`)

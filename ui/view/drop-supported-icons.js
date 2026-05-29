@@ -1,15 +1,13 @@
 // Hydrate the supported-formats list on the empty drop-zone with
-// the SAME SVG markup the sidebar uses for its row icons. The
-// list in `index.html` ships as a set of empty
+// the SAME SVG markup the sidebar uses for its row icons.
+// `index.html` ships empty
 // `<span class="drop-supported-icon" data-icon="…">` placeholders
-// keyed by bucket name; on import this module looks each one up
-// and writes the corresponding SVG string via innerHTML. Single
-// source of truth: report-bucket stickers come from
-// `view/file-display.js` (also used by the sidebar's file rows);
-// bundle + workspace glyphs come from `view/icons.js` (also used
-// by the sidebar's bundle / workspace rows). The supported list
-// is purely informational, so it doesn't need to live in a Lit
-// component — a one-shot DOM populate at boot is enough.
+// keyed by bucket name; this module looks each one up and writes
+// the SVG via innerHTML. Single source of truth: report-bucket
+// stickers from `view/file-display.js`, bundle + workspace glyphs
+// from `view/icons.js` (both also feed the sidebar rows). Purely
+// informational, so no Lit component — a one-shot DOM populate at
+// boot is enough.
 
 import { FILE_ICONS } from './file-display.js'
 import { BUNDLE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'

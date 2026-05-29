@@ -1,13 +1,10 @@
 // Tree-walking finding counters + anchor IDs for the Files tab and
-// for the graph data-prep stage. Was inside `graph/utils.js` but
-// none of these functions are called from the graph's lazy chain
-// (graph/render.js / canvas.js / graph-layout.js / data.js) — the
-// finding-count helpers run in the main bundle to assemble the
-// `prep` object that `attachGraphLayout` hands to the lazy graph
+// the graph data-prep stage. Kept out of `graph/` (which holds only
+// graph-rendering code) because none of these run in the graph's
+// lazy chain: the count helpers run in the main bundle to assemble
+// the `prep` object `attachGraphLayout` hands to the lazy graph
 // module, and `treeAnchor` is the Files tab's in-page anchor ID
-// generator (used by render-files.js for the tree cards and by
-// events.js for the scroll-to-file jump). Lifted here so the
-// graph directory holds only graph-rendering code.
+// generator (render-files.js tree cards + events.js scroll-to-file).
 
 import { SEVERITIES } from './format.js'
 

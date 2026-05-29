@@ -217,12 +217,9 @@ function severityLabel(s) {
 //   * Data     — render one section per package with at least
 //                one advisory, sorted by severity desc then by
 //                package name
-// First-time consent UI for the Advisories tab. Centred card with a
-// short explanation of what gets sent (package names + versions, via
-// the same-origin /api/npm-advisories relay — surfaced as the
-// page's own host so the user sees the actual server they're sending
-// to) and a single primary action. The trailing note tells the user
-// the preference is persisted — there's no per-bundle re-prompt
+// First-time consent UI for the Advisories tab: explains what gets
+// sent (package names + versions, via the same-origin relay) before
+// the first request. The preference persists — no per-bundle re-prompt
 // after the first Confirm.
 function renderConsentPrompt() {
   // `window.location.host` (vs `.origin`) mirrors the bare
@@ -337,11 +334,8 @@ function ghsaIdFrom(url) {
 }
 
 // External-link glyph rendered next to the GHSA id — bare diagonal
-// arrow (no box outline). The arrow fills the full 16×16 viewBox so
-// at the rendered 11×11 size it carries the same visual weight as
-// the previous box-and-arrow combo, just stripped down to the
-// essential element. `currentColor` so it tints with the
-// surrounding text (muted by default, accent on hover).
+// arrow filling the full 16×16 viewBox. `currentColor` so it tints
+// with the surrounding text (muted by default, accent on hover).
 const EXTERNAL_LINK_SVG = html`<svg class="bundle-advisory-ghsa-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M3 13L13 3"/>
   <path d="M5 3h8v8"/>
@@ -370,9 +364,8 @@ function renderAdvisoryRow(a) {
   const cwes = Array.isArray(a.cwe) ? a.cwe.filter((c) => typeof c === 'string') : []
   // GHSA — pinned to the right of the title row when present. Click
   // opens the GitHub advisory page; the title itself stays a plain
-  // span (was a link in the earlier layout; the GHSA chip is the
-  // single canonical pointer at the upstream advisory now, so a
-  // duplicate title-link would be redundant noise).
+  // span so it isn't a duplicate pointer at the same upstream
+  // advisory (the GHSA chip is the single canonical link).
   const ghsaEl = ghsa && url
     ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${ghsa}${EXTERNAL_LINK_SVG}</a>`
     : (ghsa ? html`<span class="bundle-advisory-ghsa">${ghsa}</span>` : nothing)

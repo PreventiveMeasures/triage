@@ -7,17 +7,17 @@ import { gzipText } from '../common/gzip.js'
 import { encryptBundle } from './workspace-bundle-crypto.js'
 
 // Pure-logic side of workspace export. The DOM-touching layer
-// (export dialog + anchor-click download trigger) lives in
-// `ui/view/workspace-export.js` and calls into the public dispatcher
-// `buildWorkspaceExportBundle(workspace, { password })`. Split this
-// way so the payload-building logic can be exercised from
+// (export dialog + anchor-click download) lives in
+// `ui/view/workspace-export.js` and calls the public dispatcher
+// `buildWorkspaceExportBundle(workspace, { password })`. Split so the
+// payload-building logic can be exercised from
 // `tests/workspace-roundtrip.test.js` directly.
 //
-// Triage filtering is by report-membership: only entries whose id
-// appears in one of the workspace's reports ride along, so a
-// workspace export stays a clean self-contained slice of the user's
-// triage. Always emits the new `triage: 'fixed'|'invalid'|'deleted'`
-// shape; legacy `deleted: true` is never written by this path.
+// Triage filters by report-membership: only entries whose id appears
+// in one of the workspace's reports ride along, so the export stays a
+// clean self-contained slice. Always emits the new
+// `triage: 'fixed'|'invalid'|'deleted'` shape; legacy `deleted: true`
+// is never written here.
 
 const EXPORT_VERSION = 1
 
@@ -25,9 +25,8 @@ async function reportFindingIds(content) {
   const ids = new Set()
   const data = parseReport(content)
   // `findings` must be an array — a malformed report (object,
-  // string, number) would otherwise abort the whole export. Skip
-  // gracefully so one bad report doesn't strand the rest. Audit
-  // round-13 W-Export-2.
+  // string, number) would otherwise abort the whole export. Skip so
+  // one bad report doesn't strand the rest. Audit round-13 W-Export-2.
   if (!Array.isArray(data?.findings)) return ids
   const all = flattenFindings(data.findings)
   await backfillFindingIds(all)
@@ -43,14 +42,13 @@ function safeFilename(name) {
 }
 
 // Best-effort fetch of bundle bytes for the workspace's `bundles`
-// integrity list. Skips pointers that don't resolve locally
-// (cross-workspace orphans, pre-migration entries, or bundles a
-// peer auto-attached without shipping the bytes) so the export
-// stays a snapshot of what THIS device can actually hand off.
-// `readBundle` returns the uncompressed bytes (the storage layer
-// peels gzip / envelope), so the recipient's `saveBundle`
-// recomputes the same SHA-512 integrity from the round-tripped
-// bytes — content-addressed by design.
+// integrity list. Skips pointers that don't resolve locally (cross-
+// workspace orphans, pre-migration entries, or bundles a peer auto-
+// attached without shipping the bytes) so the export is a snapshot of
+// what THIS device can actually hand off. `readBundle` returns
+// uncompressed bytes (storage peels gzip / envelope), so the
+// recipient's `saveBundle` recomputes the same SHA-512 integrity from
+// the round-tripped bytes — content-addressed by design.
 async function readBundleBlobs(integrities) {
   if (!Array.isArray(integrities) || integrities.length === 0) return []
   const meta = await listBundles()
@@ -65,9 +63,8 @@ async function readBundleBlobs(integrities) {
     } catch (err) {
       // Per-blob best effort: one failed read (sealed bundle under a
       // locked vault, transient OPFS hiccup, partial-write corruption)
-      // shouldn't abort the export — the orphan pointer still rides
-      // through `bundles`, and the recipient can drop the bytes later
-      // to resolve it.
+      // shouldn't abort the export — the orphan pointer still rides in
+      // `bundles`, and the recipient can drop the bytes later.
       console.warn(`Workspace export: failed to read bundle ${integrity}: ${err?.message ?? err}`)
       continue
     }
@@ -76,19 +73,17 @@ async function readBundleBlobs(integrities) {
   return blobs
 }
 
-// Build the export payload object. Reads the workspace's reports
-// from OPFS, derives finding ids per report, filters in-memory
-// triage by id-membership, and bundles per-report repo URLs.
-// Side effect: drops stale workspace report references when their
-// OPFS entry is gone (defensive prune — matches the original
-// inline behaviour).
+// Build the export payload. Reads the workspace's reports from OPFS,
+// derives finding ids per report, filters in-memory triage by id-
+// membership, and bundles per-report repo URLs. Side effect: drops
+// stale workspace report references when their OPFS entry is gone
+// (defensive prune).
 //
-// `includeBundleBytes: true` opts into shipping the actual bundle
-// bytes alongside the integrity pointers — useful when handing a
-// workspace off to a recipient who doesn't already have the bundles
-// locally. Bytes ride as `bundleBlobs: [{ integrity, name, data }]`
-// where `data` is base64 of the raw uncompressed bundle bytes. The
-// integrities still ride in the `bundles` list (back-compat), so a
+// `includeBundleBytes: true` also ships the bundle bytes alongside
+// the integrity pointers — useful for a recipient who doesn't have
+// the bundles locally. Bytes ride as `bundleBlobs:
+// [{ integrity, name, data }]`, `data` base64 of the raw uncompressed
+// bytes. The integrities still ride in `bundles` (back-compat), so a
 // receiver that ignores `bundleBlobs` sees the same orphan-pointer
 // shape as a pre-bytes export.
 export async function buildWorkspaceExportPayload(workspace, { includeBundleBytes = false } = {}) {
@@ -100,24 +95,17 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
       content = await readFile(name)
     } catch (err) {
       console.warn(`Workspace export: skipping ${name}: ${err?.message ?? err}`)
-      // Defensive prune: stale references from before deleteCurrent
-      // started cleaning up workspaces (or from external OPFS
-      // tampering) live in the workspace JSON forever otherwise.
-      //
-      // Only prune on the GENUINE "file not found" case. The two
-      // backends report this differently: OPFS surfaces a
-      // DOMException with name 'NotFoundError' (raised by
-      // `getFileHandle` when the entry is missing), while the
-      // LS fallback throws `Error: File not found: <name>`
-      // explicitly. Accept BOTH — matching only the LS-shape
-      // message string would never fire under OPFS (the
-      // production backend), so orphan references in
-      // `workspace.reports` would accumulate indefinitely.
-      // Other error classes — UTF-8 decode failures on corrupt
-      // OPFS bytes, transient I/O hiccups, future error types —
-      // are not deterministic indicators that the file is gone,
-      // and we mustn't permanently detach the workspace-report
-      // association on a transient. Audit round-13 W-Export-3.
+      // Defensive prune: stale references otherwise live in the
+      // workspace JSON forever. Only prune on the GENUINE "file not
+      // found" case, which the two backends report differently: OPFS
+      // raises a DOMException 'NotFoundError' (from `getFileHandle`),
+      // the LS fallback throws `Error: File not found: <name>`. Accept
+      // BOTH — matching only the LS message would never fire under
+      // OPFS (the production backend), so orphans would accumulate.
+      // Other error classes (UTF-8 decode failure on corrupt bytes,
+      // transient I/O, future types) aren't deterministic "file gone"
+      // signals — don't permanently detach on a transient. Audit
+      // round-13 W-Export-3.
       const isNotFound = (err instanceof DOMException && err.name === 'NotFoundError') ||
         (typeof err?.message === 'string' && err.message.startsWith('File not found:'))
       if (isNotFound) {
@@ -129,17 +117,17 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
     for (const id of await reportFindingIds(content)) claimedIds.add(id)
   }
 
-  // Triage filter — only keep entries whose id appears in this
-  // workspace's reports, and normalize each into the clean wire shape
+  // Triage filter — keep only entries whose id appears in this
+  // workspace's reports, and normalize each into the wire shape
   // (migrate legacy `deleted`, prune empties).
   //
-  // Per-report ignore is filtered against the workspace's reports too:
-  // the same content-derived id can carry ignore entries from reports
-  // OUTSIDE this workspace (when the user opens multiple workspaces
-  // referencing shared findings). Without the filter, those foreign
-  // report names leak into the export's `ignoredReports` array,
-  // breaking the "clean self-contained slice" guarantee. Audit
-  // round-13 W-Export-1.
+  // Per-report ignore is also filtered against the workspace's
+  // reports: the same content-derived id can carry ignore entries
+  // from reports OUTSIDE this workspace (user opens multiple
+  // workspaces referencing shared findings). Without the filter those
+  // foreign report names leak into the export's `ignoredReports`,
+  // breaking the clean-self-contained-slice guarantee. Audit round-13
+  // W-Export-1.
   const workspaceReportSet = new Set(workspace.reports ?? [])
   const triage = {}
   for (const [id, entry] of state.triage) {
@@ -150,9 +138,9 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   }
 
   // Per-report repo URLs — each report carries its own user-typed URL
-  // (see state.js / loadRepoUrlFor). Only the URLs for THIS workspace's
-  // reports go in the bundle; entries for unrelated reports are
-  // dropped so the export stays a clean self-contained slice.
+  // (see state.js / loadRepoUrlFor). Only THIS workspace's reports'
+  // URLs go in the bundle; unrelated entries are dropped so the
+  // export stays a clean self-contained slice.
   const repoUrls = {}
   for (const r of reports) {
     const url = loadRepoUrlFor(r.name)
@@ -160,17 +148,14 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
   }
 
   // Bundle membership rides as a top-level list of sha512 integrities
-  // — symmetric with `reports`. Bytes-free by default: bundle blobs
-  // can be tens of MB, content-addressed by SHA-512, so shipping the
-  // bytes alongside reports would balloon the export when the
-  // recipient already has them. A receiver that already has the
-  // matching bundle in their OPFS will auto-claim it into the
-  // workspace on import (same address = same bytes); a receiver who
-  // doesn't gets a pointer that the sidebar skips at render time.
-  // Senders who want to hand off bundles inline can opt into the
-  // separate `bundleBlobs` field below. Filter to string values just
-  // in case the in-memory workspace blob got a junk entry from
-  // elsewhere — the import side does the same defensive check.
+  // — symmetric with `reports`. Bytes-free by default: blobs can be
+  // tens of MB and content-addressed by SHA-512, so shipping bytes
+  // would balloon the export when the recipient already has them. A
+  // receiver with the matching bundle in OPFS auto-claims it into the
+  // workspace on import (same address = same bytes); one without gets
+  // a pointer the sidebar skips at render. Inline hand-off opts into
+  // the `bundleBlobs` field below. Filter to strings in case the in-
+  // memory blob got a junk entry — the import side checks the same.
   const bundles = (workspace.bundles ?? []).filter((b) => typeof b === 'string' && b.length > 0)
 
   const payload = {
@@ -188,9 +173,9 @@ export async function buildWorkspaceExportPayload(workspace, { includeBundleByte
     triage,
   }
 
-  // Optional bundle bytes — only included when the caller opts in
-  // AND the workspace has bundles that resolve locally. Omitted (not
-  // empty array) when there's nothing to ship so the validator's
+  // Optional bundle bytes — only when the caller opts in AND the
+  // workspace has bundles that resolve locally. Omitted (not an empty
+  // array) when there's nothing to ship, so the validator's
   // `bundleBlobs === undefined` short-circuit stays the common path
   // for back-compat exports.
   if (includeBundleBytes) {

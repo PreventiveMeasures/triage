@@ -8,11 +8,10 @@
 // dialog bodies hang their shared `.nwd-*` / `.wsl-*` / `.lwd-*`
 // classes on DEEP elements, and a wrapper could only style
 // top-level slotted nodes (`::slotted` doesn't reach descendants).
-// Subclassing puts each dialog's body in its OWN shadow root where
-// the inherited `static styles` reach every element, with no
-// per-dialog duplication — the shared base CSSResult is a single
-// object, so the browser shares one adoptedStyleSheet across all
-// dialog instances.
+// Subclassing puts each body in its OWN shadow root where the
+// inherited `static styles` reach every element. The base CSSResult
+// is one shared object, so the browser dedupes the underlying
+// adoptedStyleSheet across all dialog instances.
 //
 // Contract for subclasses:
 //   - `render()` returns `html\`<dialog @close=${this._onClose}>…\``
@@ -27,9 +26,7 @@ import dialogBaseCSS from './dialog-base.css'
 
 export class AppDialog extends LitElement {
   // Array so subclasses extend it: `static styles = [...AppDialog.styles,
-  // unsafeCSS(extraCSS)]`. The base CSSResult is one shared object,
-  // so the browser dedupes the underlying adoptedStyleSheet across
-  // every dialog instance.
+  // unsafeCSS(extraCSS)]`.
   static styles = [unsafeCSS(dialogBaseCSS)]
 
   firstUpdated() {
@@ -41,11 +38,11 @@ export class AppDialog extends LitElement {
     } catch (err) {
       // Another modal is already open (showModal throws
       // InvalidStateError). Mark settled so a stray `close` event
-      // can't drive `_finish` after the conflict, then dispatch:
-      // dialogs whose open() helper listens for `modal-conflict`
-      // turn this into a rejection (and wipe any wrapper-set secret
-      // in that listener); the rest just stay closed (their open()
-      // promise never resolves — matches the pre-component behavior).
+      // can't drive `_finish` after the conflict, then dispatch
+      // `modal-conflict`: open() helpers that listen for it turn it
+      // into a rejection (and wipe any wrapper-set secret in that
+      // listener); the rest stay closed — their open() promise never
+      // resolves, matching the pre-component behavior.
       this._settled = true
       this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause: err } }))
       return
@@ -54,9 +51,8 @@ export class AppDialog extends LitElement {
   }
 
   // Override hook: seed reactive state from properties before the
-  // dialog opens (the public open() helper assigns props after
-  // createElement, so they're set by firstUpdated time). Default
-  // no-op.
+  // dialog opens. The open() helper assigns props after
+  // createElement, so they're set by firstUpdated time. Default no-op.
   beforeOpen() {}
 
   // Initial focus target. Default: first text field, else the
@@ -86,7 +82,7 @@ export class AppDialog extends LitElement {
 // Shared open-helper: create the element, append to <body>, resolve
 // with the dialog's `resolve` detail (and remove the element). Each
 // dialog's public `open*()` wrapper delegates here so the
-// create / listen / cleanup dance isn't copy-pasted 16×.
+// create / listen / cleanup dance lives in one place.
 export function openAppDialog(tagName, props = {}) {
   return new Promise((resolve) => {
     const el = document.createElement(tagName)
