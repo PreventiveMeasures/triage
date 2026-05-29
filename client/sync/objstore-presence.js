@@ -316,10 +316,10 @@ export function openWorkspace(workspaceId) {
     }
     notify()
     // Sync unconfigured (no serverUrl) or unparseable origin: skip the
-    // remote session but keep `entry` in `sessions`. Its pre-computed
-    // local fileTags/bundleTags back the synchronous presence predicates
-    // (isInRemote/isBundleInRemote) and the no-op second open — don't
-    // tear it down just because remote sync is off.
+    // remote session but leave `entry` in `sessions` — its presence
+    // keeps a repeat openWorkspace a no-op and preserves the pre-computed
+    // local fileTags/bundleTags. The presence predicates just report
+    // nothing remote (`remoteTags` stays empty).
     const serverUrl = triageSync.getServerUrl()
     if (!serverUrl) return
     const httpOrigin = httpOriginFromWsUrl(serverUrl)
