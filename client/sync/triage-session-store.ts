@@ -69,12 +69,18 @@ export function setPersistenceDegraded(next: boolean): void {
 // the queued microtask runs is safe (the listener is removed before the
 // dispatch and skipped). Audit follow-up to PR #80 review.
 export function onPersistenceDegraded(cb: (degraded: boolean) => void): () => void {
-  persistenceDegradedListeners.add(cb)
+  // Wrap each subscription in a fresh closure so the Set keys on a
+  // unique entry per call. Two subscriptions of the SAME `cb` reference
+  // would otherwise collapse to one Set entry, and either returned
+  // unsubscribe would silently remove the listener for BOTH subscribers
+  // (and the on-subscribe fire would still run once per call, asymmetric).
+  const wrapped = (degraded: boolean) => cb(degraded)
+  persistenceDegradedListeners.add(wrapped)
   queueMicrotask(() => {
-    if (!persistenceDegradedListeners.has(cb)) return
-    try { cb(persistenceDegradedLatch) } catch (err) { console.warn('persistenceDegraded listener:', err) }
+    if (!persistenceDegradedListeners.has(wrapped)) return
+    try { wrapped(persistenceDegradedLatch) } catch (err) { console.warn('persistenceDegraded listener:', err) }
   })
-  return () => persistenceDegradedListeners.delete(cb)
+  return () => persistenceDegradedListeners.delete(wrapped)
 }
 
 // Discriminated load result so `mutateAllSessions` can distinguish

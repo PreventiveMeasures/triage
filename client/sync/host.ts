@@ -74,7 +74,7 @@ export interface SyncHost {
   // cached operator password).
   getSecureItem(key: string): string | null
   setSecureItem(key: string, value: string): Promise<void>
-  removeSecureItem(key: string): void
+  removeSecureItem(key: string): Promise<void>
   onSecureStorageHydrated(cb: () => void): () => void
 }
 

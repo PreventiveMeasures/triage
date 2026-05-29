@@ -120,7 +120,14 @@ function canonicalSubscribe(
   { workspaceTag, from }: SubscribeMsg,
   connectionNonce: string,
 ): Uint8Array<ArrayBuffer> {
-  const fromStr = from == null ? '' : String(from)
+  // Strict `from` typing, mirroring canonicalSave's `base` check: `from`
+  // is `string | null`. A non-string non-null value would otherwise
+  // coerce via `String(...)` to canonical bytes the client could never
+  // reproduce (123 → "123", {} → "[object Object]"), so a signature
+  // computed over that coercion would verify against a malformed wire
+  // shape. verifySubscribeSig wraps this call in try/catch → clean drop.
+  if (from != null && typeof from !== 'string') throw new TypeError('canonicalSubscribe: from must be string or null')
+  const fromStr = from == null ? '' : from
   return encodeUtf8([SUBSCRIBE_DOMAIN, workspaceTag as string, fromStr, connectionNonce].join('\n'))
 }
 

@@ -133,6 +133,13 @@ async function parsePlaintextPayload(plaintext) {
   if (typeof parsed.i === 'string' && parsed.i.length > 256) {
     throw new Error('shape')
   }
+  // Same bloat guard for the workspace name `n`, which is persisted
+  // verbatim into the localStorage workspaces blob: without a cap, a
+  // crafted link could plant a multi-MB name and saturate the origin's
+  // storage quota. Names are short labels; 1024 chars is generous.
+  if (parsed.n.length > 1024) {
+    throw new Error('shape')
+  }
   // The privateKey rides through to `sync-crypto`'s 32-byte
   // assertion. Reject up front so a crafted payload (wrong length,
   // non-base64) surfaces as a clean error instead of an unhandled

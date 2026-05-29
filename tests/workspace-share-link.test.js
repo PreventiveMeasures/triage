@@ -123,6 +123,19 @@ describe('workspace share-link', { concurrency: true }, () => {
     )
   })
 
+  it('rejects a share link whose workspace name exceeds the length cap', async () => {
+    // parsePlaintextPayload caps `n` like `i`, so a crafted link can't
+    // plant a multi-MB name into the persisted localStorage workspaces
+    // blob. Encode (uncapped) succeeds; decode rejects at the cap.
+    const encoded = await encodeShareLink({
+      id: fakeUuid(),
+      name: 'x'.repeat(2000),
+      privateKeyBase64: randomPrivateKeyBase64(),
+      password: 'pw',
+    })
+    await assert.rejects(() => decodeShareLink({ encoded, password: 'pw' }))
+  })
+
   it('rejects an encode call missing the id field', async () => {
     await assert.rejects(
       () => encodeShareLink({

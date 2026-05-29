@@ -218,9 +218,35 @@ export async function setItem(key, value) {
   await next
 }
 
-export function removeItem(key) {
+export async function removeItem(key) {
+  // Coordinate with in-flight setItem persists. A bare removal clears
+  // cache + disk immediately, but a still-pending persist from an
+  // earlier setItem then writes the value back to localStorage —
+  // silently resurrecting it — and a hydrate landing in the gap
+  // re-caches it. Pin a per-call tombstone in pendingValues so a
+  // concurrent hydrate SKIPS this key until our removal runs (clearing
+  // the pin would re-open that race), and chain the disk removal behind
+  // any queued persist so it is the last writer.
+  const tombstone = Symbol('secure-storage:removed')
   cache.delete(key)
-  try { localStorage.removeItem(key) } catch {}
+  pendingValues.set(key, tombstone)
+  const prev = writeChain.get(key) ?? Promise.resolve()
+  const finishRemoval = () => {
+    try { localStorage.removeItem(key) } catch {}
+    // Only clear the pin + cache if no LATER setItem/removeItem replaced
+    // our tombstone — a writer that landed after us owns the key now, so
+    // its optimistic cache value + pin must survive (mirrors setItem's
+    // clearPendingIfMine). Without this guard the unconditional
+    // cache.delete would clobber a later setItem's value, diverging
+    // cache from disk until the next hydrate.
+    if (pendingValues.get(key) === tombstone) {
+      pendingValues.delete(key)
+      cache.delete(key)
+    }
+  }
+  const next = prev.catch(() => {}).then(() => finishRemoval())
+  writeChain.set(key, next.catch(() => {}))
+  await next
 }
 
 async function persist(key, value) {

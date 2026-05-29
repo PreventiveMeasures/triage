@@ -6,7 +6,7 @@ export const SECURE_KEYS: readonly string[]
 
 export function getItem(key: string): string | null
 export function setItem(key: string, value: string): Promise<void>
-export function removeItem(key: string): void
+export function removeItem(key: string): Promise<void>
 
 export function hydrate(): Promise<void>
 
