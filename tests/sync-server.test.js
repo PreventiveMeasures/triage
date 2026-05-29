@@ -567,6 +567,25 @@ describe('triage-sync server', { concurrency: true }, () => {
     c.ws.close()
   })
 
+  it('drops a subscribe whose `from` exceeds MAX_FIELD_LEN at the wire gate', async () => {
+    // handleSubscribe now mirrors handleSave's validTagSigBase gate:
+    // workspaceTag / signature / from are length+alphabet-checked
+    // BEFORE canonicalSubscribe UTF-8-encodes them and the signature is
+    // base64-decoded. An over-long `from` with an otherwise-valid
+    // signature over it used to be ACCEPTED (the server treats an
+    // unknown id as a full-chain catch-up and acks); it is now rejected
+    // up front, with no canonical encode / verify work done.
+    const { sk, tag } = await makeKp()
+    const c = await connect(serverUrl)
+    const longFrom = 'A'.repeat(129) // > MAX_FIELD_LEN (128), valid base64url alphabet
+    const sig = await signSubscribe(sk, tag, longFrom, c.connectionNonce)
+    c.ws.send(JSON.stringify({
+      type: 'workspace-subscribe', workspaceTag: tag, from: longFrom, signature: sig,
+    }))
+    await c.expectSilent(200)
+    c.ws.close()
+  })
+
   it('persists revisions across reconnects (same DB, same tag, fresh socket)', async () => {
     const { sk, tag } = await makeKp()
     const writer = await connect(serverUrl)

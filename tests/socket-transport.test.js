@@ -969,6 +969,26 @@ describe('socket-transport: auth flow', () => {
     t.close()
   })
 
+  it('runAuthFlow with no resolver does not wedge the in-flight singleton', async () => {
+    // Synchronous-return path: no cached password (cleared in
+    // beforeEach) and no authResolver, so the IIFE runs straight to the
+    // `!deps.authResolver` bail. The `await Promise.resolve()` at the
+    // top of the IIFE ensures `authFlowInFlight = promise` lands BEFORE
+    // the finally nulls it — otherwise the finally ran first and the
+    // outer assignment resurrected the settled-`false` promise into the
+    // slot, wedging every subsequent runAuthFlow (and the documented
+    // resetCachedReplayGuard boot-after-unlock recovery) on it.
+    const t = makeTransport() // no authResolver
+    t.acquire()
+    FakeWebSocket.last.handshake('n0') // socket OPEN + challenge nonce
+    const p1 = t.runAuthFlow()
+    assert.equal(await p1, false, 'no resolver → false')
+    const p2 = t.runAuthFlow()
+    assert.notEqual(p2, p1, 'a fresh flow is created, not the wedged settled promise')
+    assert.equal(await p2, false)
+    t.close()
+  })
+
   it('resetCachedReplayGuard re-arms the cached replay on the current socket', async () => {
     await setCachedSyncPassword('cached-pw')
     const t = makeTransport({ authResolver: () => Promise.resolve(null) })
