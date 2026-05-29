@@ -1642,4 +1642,47 @@ describe('client/sync/objstore-presence', () => {
       await deleteWorkspace(ws.id)
     }
   })
+
+  it('recheckRemoteStorage reports a re-upload that fails as "failed" (not swallowed into "missing")', async () => {
+    // The re-upload attempt can throw (a transient relay/blob commit error
+    // — 500/400 — or a re-fired conflict). recoverReport used to swallow
+    // ANY such failure into 'missing', discarding the cause; it must now
+    // surface 'failed' with the reason (retryable), distinct from a
+    // genuinely-absent local copy.
+    const ws = await createWorkspace('objstore-recovery-failed')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `failed-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`failing report ${name}`)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, name, bytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+
+      // Make the re-upload throw at the session layer (simulating a failed
+      // commit), and assert it surfaces as 'failed' with the reason.
+      const e = __test__.getEntry(ws.id)
+      const realPut = e.session.put.bind(e.session)
+      e.session.put = () => Promise.reject(new Error('simulated commit failure'))
+      try {
+        const r = await recheckRemoteStorage(ws.id)
+        assert.equal(r.counts.failed, 1, `expected 1 failed, got ${JSON.stringify(r.counts)}`)
+        assert.equal(r.counts.missing, 0, 'an attempted-but-failed re-upload must not count as missing')
+        const row = r.items.find((i) => i.identifier === name)
+        assert.equal(row?.status, 'failed')
+        assert.match(row?.detail ?? '', /simulated commit failure/u)
+      } finally {
+        e.session.put = realPut
+      }
+    } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
 })

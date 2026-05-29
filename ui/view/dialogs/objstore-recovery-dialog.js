@@ -24,7 +24,7 @@ import { openSyncDownloadDialog } from './sync-download-dialog.js'
 import listCSS from './dialog-list.css'
 import recoveryCSS from './dialog-recovery.css'
 
-const STATUS_LABEL = { checking: 'checking…', good: 'available', reuploaded: 're-uploaded', missing: 'missing' }
+const STATUS_LABEL = { checking: 'checking…', good: 'available', reuploaded: 're-uploaded', failed: 're-upload failed', missing: 'missing' }
 
 class ObjstoreRecoveryDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS), unsafeCSS(recoveryCSS)]
@@ -66,7 +66,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
   _onCancel = () => this._finish(this._ran ? this._result() : null)
 
   _counts() {
-    const counts = { good: 0, reuploaded: 0, missing: 0 }
+    const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
     for (const r of this._rows) if (r.status in counts) counts[r.status] += 1
     return counts
   }
@@ -124,7 +124,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
     return html`<ul class="rec-list">
       ${this._rows.map((r) => html`<li class="rec-row">
         <span class="rec-label">${r.label}${r.kind === 'bundle' ? html`<span class="lwd-kind-tag">bundle</span>` : nothing}</span>
-        <span class=${`rec-status rec-status-${r.status}`}>${STATUS_LABEL[r.status] ?? r.status}</span>
+        <span class=${`rec-status rec-status-${r.status}`} title=${r.detail ?? nothing}>${STATUS_LABEL[r.status] ?? r.status}</span>
       </li>`)}
     </ul>`
   }
@@ -135,6 +135,7 @@ class ObjstoreRecoveryDialog extends AppDialog {
     const parts = []
     if (c.good) parts.push(`${c.good} available`)
     if (c.reuploaded) parts.push(`${c.reuploaded} re-uploaded`)
+    if (c.failed) parts.push(`${c.failed} failed`)
     if (c.missing) parts.push(`${c.missing} missing`)
     // role="status"/aria-live so a screen reader announces the outcome
     // when the re-check finishes (the per-row updates above aren't a live

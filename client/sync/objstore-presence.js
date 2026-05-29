@@ -1673,7 +1673,7 @@ export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {})
   // row the fresh listing established as live.
   const deletedDuringRecheck = new Set()
   const offDeleted = entry.session.onDeleted((ev) => { deletedDuringRecheck.add(ev.resourceTag) })
-  const counts = { good: 0, reuploaded: 0, missing: 0 }
+  const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
   try {
     for (const row of rows) {
       row.status = await classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
@@ -1781,10 +1781,23 @@ async function recoverReport(workspaceId, row) {
   if (row.contentLength == null || objstorePayloadWireLength(row.reportName, bytes.length) !== row.contentLength) {
     return 'missing'
   }
+  // We hold a matching local copy → ATTEMPT the re-upload. A failure
+  // here is NOT 'missing' (the copy exists, and a transient relay/blob
+  // error — e.g. a 500 io-error or 400 size-mismatch from the commit, the
+  // same blob-availability class as the original 503 — is retryable).
+  // Surface it as 'failed' with the reason and never swallow it silently:
+  // bare `catch { return 'missing' }` here was conflating a failed attempt
+  // with "no local copy" and discarding the cause.
   try {
     const r = await putFile(workspaceId, row.reportName, bytes)
-    return r && r.ok ? 'reuploaded' : 'missing'
-  } catch { return 'missing' }
+    if (r && r.ok) return 'reuploaded'
+    row.detail = `re-upload rejected: ${r?.reason ?? 'unknown'}`
+    return 'failed'
+  } catch (err) {
+    row.detail = `re-upload error: ${err?.message ?? String(err)}`
+    console.warn(`objstore-recovery: re-upload of "${row.reportName}" failed:`, err)
+    return 'failed'
+  }
 }
 
 // Reupload a locally-held bundle whose remote bytes went missing.
@@ -1792,10 +1805,21 @@ async function recoverReport(workspaceId, row) {
 // byte-identical to what the row expects, so identity IS the match (no
 // length gate). `putBundleToRemote` reads the bytes from OPFS.
 async function recoverBundle(workspaceId, row) {
+  // Probe local bytes first so "no local copy" stays 'missing'; a failure
+  // of the actual upload is a retryable 'failed' (reason surfaced), not a
+  // bare swallowed 'missing'.
+  try { await readBundle(row.bundleIntegrity) }
+  catch { return 'missing' }  // bytes gone from OPFS too — unrecoverable here
   try {
     const r = await putBundleToRemote(workspaceId, row.bundleIntegrity)
-    return r && r.ok ? 'reuploaded' : 'missing'
-  } catch { return 'missing' }
+    if (r && r.ok) return 'reuploaded'
+    row.detail = `re-upload rejected: ${r?.reason ?? 'unknown'}`
+    return 'failed'
+  } catch (err) {
+    row.detail = `re-upload error: ${err?.message ?? String(err)}`
+    console.warn(`objstore-recovery: bundle re-upload of "${row.bundleIntegrity}" failed:`, err)
+    return 'failed'
+  }
 }
 
 // Best-effort kind for a row before (or without) a successful fetch:
@@ -1824,7 +1848,9 @@ function pendingLabel(entry, tag, reportName, bundleIntegrity) {
 // Strip the internal match fields from a recovery row before it
 // crosses to the dialog / a caller.
 function publicRecoveryRow(row) {
-  return { resourceTag: row.resourceTag, kind: row.kind, label: row.label, status: row.status, identifier: row.identifier }
+  // `detail` is set only for 'failed' rows (the surfaced re-upload error),
+  // so the dialog can show WHY a held copy didn't re-upload.
+  return { resourceTag: row.resourceTag, kind: row.kind, label: row.label, status: row.status, identifier: row.identifier, detail: row.detail }
 }
 
 // Resolve/reject with `promise`, but reject after `ms` if it hasn't
