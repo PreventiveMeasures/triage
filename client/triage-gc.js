@@ -65,7 +65,13 @@ async function collectReachableIds(names) {
     }
     if (content == null) continue
     const data = parseReport(content)
-    if (!data?.findings) continue
+    // `Array.isArray` rather than a truthy check: parseReport does no
+    // shape validation, so a malformed report whose `findings` is a
+    // truthy non-array (number, plain object, ...) would make
+    // `flattenFindings`'s `for…of` throw, aborting collectReachableIds
+    // and with it both analyzeTriageImpact (delete-report dialog) and
+    // pruneOrphanTriage (GC) — one bad file on disk blocks deletion.
+    if (!Array.isArray(data?.findings)) continue
     const findings = flattenFindings(data.findings)
     await backfillFindingIds(findings)
     for (const f of findings) if (f.id) ids.add(f.id)
@@ -195,7 +201,7 @@ export async function pruneOrphanTriage() {
     // by the per-report pass below (reachable.has(id) is false there).
     const cur = state.triage.get(id)
     if (!cur || !(cur.color || bucketOf(cur) || cur.comment || cur.fix)) continue
-    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined })) {
+    if (patchEntry(state.triage, id, { color: undefined, triage: undefined, comment: undefined, fix: undefined, deleted: undefined })) {
       changed = true
     }
   }

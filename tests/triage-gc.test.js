@@ -775,3 +775,27 @@ describe('round-2 review #8: listFiles failure propagates', () => {
     })
   })
 })
+
+describe('triage-gc: malformed + legacy-shape robustness', () => {
+  beforeEach(clearAll)
+
+  it('pruneOrphanTriage clears a legacy {deleted:true} entry on an orphaned id', async () => {
+    // An unmigrated legacy entry reaching state.triage as the raw
+    // {deleted:true} shape. The prune patch must clear `deleted` too —
+    // otherwise normalizeEntry re-derives triage:'deleted', entriesEqual
+    // sees no change, and the entry survives every sweep.
+    await saveReport('keep.json', [{ id: FINDING_A }])
+    state.triage.set(FINDING_B, { deleted: true }) // orphan: in no report
+    await pruneOrphanTriage()
+    assert.equal(state.triage.has(FINDING_B), false, 'legacy deleted orphan should be pruned')
+  })
+
+  it('a report whose findings is a non-array does not crash the GC sweep', async () => {
+    // parseReport does no shape validation; a truthy non-array
+    // `findings` must be skipped, not throw out of collectReachableIds
+    // (which would block both the delete-report dialog and GC).
+    await storage.saveFile('bad.json', JSON.stringify({ findings: 42 }))
+    state.triage.set(FINDING_A, { triage: 'fixed' })
+    await assert.doesNotReject(pruneOrphanTriage())
+  })
+})

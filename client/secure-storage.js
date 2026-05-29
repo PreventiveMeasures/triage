@@ -218,9 +218,25 @@ export async function setItem(key, value) {
   await next
 }
 
-export function removeItem(key) {
+export async function removeItem(key) {
+  // Coordinate with in-flight setItem persists. An un-chained removal
+  // clears the cache + disk immediately, but a still-pending persist
+  // from an earlier setItem then writes the (sealed) value back to
+  // localStorage — silently resurrecting it; and a hydrate landing in
+  // the gap re-caches it (its pendingValues pin still set). Drop the
+  // optimistic pin and chain the actual removal behind any queued
+  // persist for this key, mirroring setItem's writeChain discipline so
+  // the removal is the last writer.
+  pendingValues.delete(key)
   cache.delete(key)
-  try { localStorage.removeItem(key) } catch {}
+  const removeFromDisk = () => {
+    cache.delete(key)
+    try { localStorage.removeItem(key) } catch {}
+  }
+  const prev = writeChain.get(key) ?? Promise.resolve()
+  const next = prev.catch(() => {}).then(() => removeFromDisk())
+  writeChain.set(key, next.catch(() => {}))
+  await next
 }
 
 async function persist(key, value) {

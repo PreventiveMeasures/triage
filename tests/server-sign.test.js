@@ -219,6 +219,17 @@ describe('verifySubscribeSig', () => {
     assert.equal(await verifySubscribeSig(msg, NONCE_A), false)
   })
 
+  it('returns false for a non-string non-null `from` (no String() coercion)', async () => {
+    // canonicalSubscribe now rejects a non-string non-null `from`
+    // (mirroring canonicalSave's `base` check) instead of coercing via
+    // String(). A number `from` signed over its String() form ('123')
+    // used to verify, letting a malformed wire shape through; the
+    // canonical now throws and verifySubscribeSig's try/catch drops it.
+    const { sk, tag } = await makeKp()
+    const signature = await signSubscribeMsg(sk, { tag, from: 123, nonce: NONCE_A })
+    assert.equal(await verifySubscribeSig({ workspaceTag: tag, from: 123, signature }, NONCE_A), false)
+  })
+
   it('returns false when signed against a different `from` cursor', async () => {
     // Replay-resistance: a captured subscribe sig for from=X can't
     // be reused for from=Y (the canonical bytes differ).
