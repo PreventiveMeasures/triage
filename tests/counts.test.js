@@ -266,11 +266,11 @@ describe('ensureCounts multi-caller (audit round-9 L1)', () => {
     let countsMod
     t.mock.module('../client/storage.js', {
       namedExports: {
-        readFile: async (n) => {
+        readFile: (n) => {
           // Concurrent ingest lands while we're "reading": count 999.
           countsMod.setCount(n, 999, 'deepsec')
           // ...whereas the walk's own parse would yield count 1.
-          return JSON.stringify({ findings: [{ id: '1' }] })
+          return Promise.resolve(JSON.stringify({ findings: [{ id: '1' }] }))
         },
       },
     })

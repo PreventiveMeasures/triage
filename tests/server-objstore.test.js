@@ -77,8 +77,8 @@ describe('initObjstore — auth-gate config guard', () => {
     // silently fail OPEN — unauthenticated first-writes to unknown
     // workspaces would be accepted. initObjstore must reject it at boot.
     assert.throws(
-      () => initObjstore({ authGate: async () => true }),
-      /authGate requires sendUnauthorized/,
+      () => initObjstore({ authGate: () => Promise.resolve(true) }),
+      /authGate requires sendUnauthorized/u,
     )
   })
 
@@ -90,7 +90,7 @@ describe('initObjstore — auth-gate config guard', () => {
       send: () => {}, broadcast: () => {},
       publishObjPut: () => {}, publishObjDeleted: () => {},
       getNonce: () => undefined, debug: false,
-      authGate: async () => true,
+      authGate: () => Promise.resolve(true),
       sendUnauthorized: () => {},
     })
     assert.equal(typeof init.stopReaper, 'function')
