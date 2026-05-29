@@ -1118,6 +1118,14 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
   // re-downloaded here. `addReportToWorkspace` is idempotent, so a
   // re-download of an already-claimed report just restores the bytes
   // without disturbing membership.
+  //
+  // Trust posture: letting a claimed-but-evicted fileName accept peer
+  // bytes is a member-trust operation, but it stays within the model
+  // already documented in this function's header — the write target
+  // is empty (we only reach here when the bytes are absent, so nothing
+  // local is clobbered) and the `analyzeContent` gate below refuses
+  // anything that isn't a recognized report. It's the same capability
+  // a member already has via the Replace / boot-divergence paths.
   // Validate the decompressed text against `analyzeContent`. A
   // peer with the workspace key could PUT arbitrary bytes; refuse
   // anything that isn't a recognized report shape.
