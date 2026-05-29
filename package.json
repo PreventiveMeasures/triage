@@ -28,12 +28,18 @@
     "#client/sync.js": "./client/sync.js",
     "#client/sync-host.js": "./client/sync-host.js"
   },
+  "exports": {
+    "./server": "./server/index.ts",
+    "./strip-types-loader": "./strip-types-loader.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
-    "triage-server": "server/index.ts"
+    "triage-server": "server/cli.js"
   },
   "files": [
     "server/auth.ts",
     "server/bus-receiver.ts",
+    "server/cli.js",
     "server/config.ts",
     "server/db-neon.ts",
     "server/db-revision-sql.ts",
@@ -83,7 +89,8 @@
     "out/terminal.js",
     "out/view.css",
     "out/view.html",
-    "out/view.js"
+    "out/view.js",
+    "strip-types-loader.js"
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
