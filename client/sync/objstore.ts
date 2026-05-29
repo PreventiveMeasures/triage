@@ -368,7 +368,7 @@ function validateObjstoreUrlPath(urlPath: string, httpOrigin: string): string {
   }
   return url.href
 }
-export const __test__ = { validateObjstoreUrlPath }
+export const __test__ = { validateObjstoreUrlPath, isObjectMeta, isSafeNonNegativeInt }
 
 export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
   const timeoutMs = deps.requestTimeoutMs ?? 10_000
@@ -677,12 +677,21 @@ export function createObjstoreClient(deps: ObjstoreClientDeps): ObjstoreClient {
     let ack: unknown
     try { ack = await res.json() }
     catch { throw new TypeError('objstore: PUT ack JSON parse failed') }
+    // `version`/`contentLength` get the same `isSafeNonNegativeInt` gate
+    // as the WS-frame metadata (isObjectMeta): the PUT-ack `version` is
+    // RELAY-CONTROLLED and is NOT pinned to anything client-side (unlike
+    // `contentHash`/`contentLength`, re-checked below), yet it flows into
+    // `noteVersion` (rawPutAndMap). A relay answering our own PUT with
+    // `version: 1e999` (→ Infinity) would otherwise poison the rollback
+    // watermark just like the fetch-token vector. So this ack is also a
+    // watermark feeder and must use the same numeric gate — `isObjectMeta`
+    // is not the only one.
     if (!ack || typeof ack !== 'object'
-      || typeof (ack as { version?: unknown }).version !== 'number'
+      || !isSafeNonNegativeInt((ack as { version?: unknown }).version)
       || typeof (ack as { incarnation?: unknown }).incarnation !== 'string'
       || typeof (ack as { contentHash?: unknown }).contentHash !== 'string'
-      || typeof (ack as { contentLength?: unknown }).contentLength !== 'number') {
-      throw new TypeError('objstore: PUT ack malformed (missing version/incarnation/contentHash/contentLength)')
+      || !isSafeNonNegativeInt((ack as { contentLength?: unknown }).contentLength)) {
+      throw new TypeError('objstore: PUT ack malformed (missing/invalid version/incarnation/contentHash/contentLength)')
     }
     const meta = ack as { version: number; incarnation: string; contentHash: string; contentLength: number }
     if (meta.contentHash !== contentHash || meta.contentLength !== opts.bytes.byteLength) {
@@ -1141,7 +1150,10 @@ type RawDeleteResult =
 async function parseRestConflict(res: Response): Promise<{ version: number; incarnation: string } | null> {
   try {
     const body = (await res.json()) as { currentVersion?: unknown; currentIncarnation?: unknown }
-    if (typeof body.currentVersion === 'number' && Number.isSafeInteger(body.currentVersion)
+    // Same `isSafeNonNegativeInt` gate as the other watermark feeders:
+    // `currentVersion` is relay-controlled (REST 409 body) and flows into
+    // `noteVersion` via rawPutAndMap's conflict branch.
+    if (isSafeNonNegativeInt(body.currentVersion)
       && typeof body.currentIncarnation === 'string') {
       return { version: body.currentVersion, incarnation: body.currentIncarnation }
     }
@@ -1149,18 +1161,42 @@ async function parseRestConflict(res: Response): Promise<{ version: number; inca
   return null
 }
 
+// A wire-supplied integer field (`version` / `contentLength`) must be
+// a safe, NON-NEGATIVE integer — not merely `typeof === 'number'`.
+// JSON lets a hostile/buggy relay send a numeric literal that parses
+// to a non-finite or out-of-safe-range double: `1e999` → `Infinity`,
+// `1e308` → a finite-but-unsafe value, etc. Because the Ed25519 PUT
+// signature does NOT cover the server-assigned `version` (see
+// `assertFreshOrLater`), an unchecked value reaching `noteVersion`
+// would poison the rollback watermark — an `Infinity` floor makes
+// every later legitimate fetch trip the `version < last.version`
+// guard (a permanent fetch DoS), and a non-finite/`NaN` value defeats
+// the monotonic comparison outright. Mirrors the server's
+// `isSafeNonNegativeInt` (server/objstore/sign.ts).
+//
+// This gate is the trust boundary for EVERY relay-controlled numeric
+// metadata field that can feed `noteVersion` / `assertFreshOrLater` —
+// not just the WS-frame guard `isObjectMeta`. The other feeders that
+// must use it: the REST PUT-ack parser (`_rawPut`) and the REST 409
+// conflict parser (`parseRestConflict`). Keep all three in sync.
+function isSafeNonNegativeInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+}
+
 // Wire-shape guard. The objstore broadcast / list / fetch-token
 // frames all carry the same metadata shape; this validates the
 // fields the caller cares about (the signature field is wire-only
 // — callers don't verify it client-side since the bytes themselves
-// are verified via `contentHash`).
+// are verified via `contentHash`). `version` / `contentLength` use
+// the `isSafeNonNegativeInt` gate so a relay can't smuggle a non-
+// finite version past `typeof` and poison the rollback watermark.
 function isObjectMeta(m: WireMessage | undefined): m is WireMessage {
   if (!m || typeof m !== 'object') return false
   return typeof m['resourceTag'] === 'string'
-    && typeof m['version'] === 'number'
+    && isSafeNonNegativeInt(m['version'])
     && typeof m['incarnation'] === 'string'
     && typeof m['contentHash'] === 'string'
-    && typeof m['contentLength'] === 'number'
+    && isSafeNonNegativeInt(m['contentLength'])
     && typeof m['signature'] === 'string'
 }
 
