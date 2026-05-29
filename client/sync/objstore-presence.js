@@ -1617,13 +1617,16 @@ export async function deleteBundleFromRemote(workspaceId, integrity) {
 //          local bundle with that integrity is byte-identical).
 //      Re-upload goes through putFile / putBundleToRemote → a fresh
 //      ciphertext at version+1 (the live row's version-CAS accepts it).
-//   4. Report a status per object: 'good' | 'reuploaded' | 'missing'.
+//   4. Report a status per object: 'good' | 'reuploaded' | 'failed' | 'missing'
+//      ('failed' = a held copy whose re-upload attempt errored — retryable,
+//      with the reason on `detail`; distinct from 'missing' = no usable copy).
 //
 // `onList(rows)` (optional) fires once with the full pending set right
 // after the fresh listing lands; `onItem(row)` (optional) fires as each
 // object resolves, so the dialog can render live progress. Returns
 // `{ items, counts }` so a non-UI caller (tests) gets the full result.
-// Rows are `{ resourceTag, kind: 'report'|'bundle'|'unknown', label, status }`.
+// Rows are `{ resourceTag, kind: 'report'|'bundle'|'unknown', label, status,
+// identifier?, detail? }` (`detail` set only on 'failed').
 export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {}) {
   const entry = sessions.get(workspaceId)
   if (!entry) throw new Error(`Workspace ${workspaceId} is not open`)
@@ -1631,59 +1634,63 @@ export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {})
   if (!entry.keys) throw new Error('Objstore session keys missing — derivation failed during open')
   const tagKey = entry.keys.tagKey
 
-  // (1) Authoritative fresh listing from the server DB.
-  const remote = await freshRemoteListing(entry, workspaceId)
-
-  // Index local copies by their wire tag so a remote row can be matched
-  // to a held report/bundle by IDENTITY (no fetch — the fetch is what's
-  // failing). reports: tag→fileName; bundles: tag→integrity.
-  const localReports = await safeListFiles()
-  const localBundles = await safeListBundles()
-  const reportTagToName = new Map()
-  for (const name of localReports) reportTagToName.set(await computeResourceTag(tagKey, name), name)
-  const bundleTagToIntegrity = new Map()
-  for (const b of localBundles) bundleTagToIntegrity.set(await computeBundleResourceTag(tagKey, b.integrity), b.integrity)
-
-  // Build the pending rows the dialog renders up front (status 'checking').
-  const rows = remote.map((r) => {
-    const reportName = reportTagToName.get(r.resourceTag)
-    const bundleIntegrity = bundleTagToIntegrity.get(r.resourceTag)
-    return {
-      resourceTag: r.resourceTag,
-      kind: classifyKind(entry, r.resourceTag, reportName, bundleIntegrity),
-      label: pendingLabel(entry, r.resourceTag, reportName, bundleIntegrity),
-      contentLength: r.contentLength,
-      reportName,         // defined only when a local report matches
-      bundleIntegrity,    // defined only when a local bundle matches
-      // fileName (report) / integrity (bundle) once known — from a local
-      // match up front, or from a successful fetch's decrypted payload.
-      // Lets the dialog offer to download a healthy remote-only object.
-      identifier: reportName ?? bundleIntegrity,
-      status: 'checking',
-    }
-  })
-  if (typeof onList === 'function') { try { onList(rows.map(publicRecoveryRow)) } catch {} }
-
   // Track deletes that land DURING this recheck so we don't resurrect a
-  // peer-deleted object. We must NOT gate on the long-lived
+  // peer-deleted object. Register the observer BEFORE re-fetching the
+  // listing: the fresh subscribe-ack and `objstore-deleted` broadcasts
+  // arrive on the same ordered socket, so any delete the server processes
+  // after building the snapshot lands AFTER the ack and is caught by an
+  // already-live handler — closing the window where a delete racing the
+  // recheck could otherwise slip past and be re-uploaded over its
+  // tombstone. We deliberately do NOT gate on the long-lived
   // `entry.remoteTags` set: the rows come from the authoritative fresh DB
   // listing, and `remoteTags` (seeded at open + maintained by broadcasts)
-  // can lag it — gating on it would false-'missing' a perfectly
-  // recoverable object. Only a delete observed mid-recheck invalidates a
-  // row the fresh listing established as live.
+  // can lag it — gating on it would false-'missing' a recoverable object.
   const deletedDuringRecheck = new Set()
   const offDeleted = entry.session.onDeleted((ev) => { deletedDuringRecheck.add(ev.resourceTag) })
-  const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
   try {
+    // (1) Authoritative fresh listing from the server DB.
+    const remote = await freshRemoteListing(entry, workspaceId)
+
+    // Index local copies by their wire tag so a remote row can be matched
+    // to a held report/bundle by IDENTITY (no fetch — the fetch is what's
+    // failing). reports: tag→fileName; bundles: tag→integrity.
+    const localReports = await safeListFiles()
+    const localBundles = await safeListBundles()
+    const reportTagToName = new Map()
+    for (const name of localReports) reportTagToName.set(await computeResourceTag(tagKey, name), name)
+    const bundleTagToIntegrity = new Map()
+    for (const b of localBundles) bundleTagToIntegrity.set(await computeBundleResourceTag(tagKey, b.integrity), b.integrity)
+
+    // Build the pending rows the dialog renders up front (status 'checking').
+    const rows = remote.map((r) => {
+      const reportName = reportTagToName.get(r.resourceTag)
+      const bundleIntegrity = bundleTagToIntegrity.get(r.resourceTag)
+      return {
+        resourceTag: r.resourceTag,
+        kind: classifyKind(entry, r.resourceTag, reportName, bundleIntegrity),
+        label: pendingLabel(entry, r.resourceTag, reportName, bundleIntegrity),
+        contentLength: r.contentLength,
+        reportName,         // defined only when a local report matches
+        bundleIntegrity,    // defined only when a local bundle matches
+        // fileName (report) / integrity (bundle) once known — from a local
+        // match up front, or from a successful fetch's decrypted payload.
+        // Lets the dialog offer to download a healthy remote-only object.
+        identifier: reportName ?? bundleIntegrity,
+        status: 'checking',
+      }
+    })
+    if (typeof onList === 'function') { try { onList(rows.map(publicRecoveryRow)) } catch {} }
+
+    const counts = { good: 0, reuploaded: 0, failed: 0, missing: 0 }
     for (const row of rows) {
       row.status = await classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
       counts[row.status] += 1
       if (typeof onItem === 'function') { try { onItem(publicRecoveryRow(row)) } catch {} }
     }
+    return { items: rows.map(publicRecoveryRow), counts }
   } finally {
     offDeleted()
   }
-  return { items: rows.map(publicRecoveryRow), counts }
 }
 
 // Force a DB-backed remote listing via a fresh subscribe ack, falling
@@ -1729,7 +1736,8 @@ function parseRemoteResources(raw) {
 }
 
 // Re-fetch one remote object and, if its bytes are missing, repair it
-// from a matching local copy. Returns 'good' | 'reuploaded' | 'missing'.
+// from a matching local copy. Returns 'good' | 'reuploaded' | 'failed' |
+// 'missing' (sets `row.detail` with the reason on 'failed').
 async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck) {
   // (2) Attempt the re-fetch. `fetchByTag` rides the client's internal
   // 404/503 retry loop; a non-null result means the bytes are present
