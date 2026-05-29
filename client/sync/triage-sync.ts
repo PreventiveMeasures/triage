@@ -2171,6 +2171,16 @@ onSyncHostInstalled((host) => {
     oldSession.key = null
     oldSession.verifyingKey = null
     oldSession.workspaceTag = null
+    // Invalidate any in-flight key derivation too. An openSession /
+    // dismissError `kickKeyDerivation` IIFE that started under the OLD
+    // privateKey before this rotation may still be awaiting derivation;
+    // nulling the fields above doesn't stop it, because its commit guard
+    // only checks `sessions.get(...) === session` (still true until the
+    // delete below) and `keyDerivationGen !== gen`. Without bumping the
+    // gen, it would re-commit OLD-key material and re-arm the session
+    // under the orphaned OLD workspaceTag, then trySendSubscribe/Save on
+    // it. Same invalidation kickKeyDerivation performs on every kick.
+    oldSession.keyDerivationGen = (oldSession.keyDerivationGen ?? 0) + 1
     // Await the persisted-base wipe BEFORE reopening — `openSession`
     // calls `loadPersistedSession` (a lock-free read of the same
     // blob), so without the await it would race the lock-scheduled

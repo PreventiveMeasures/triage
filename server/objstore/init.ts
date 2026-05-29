@@ -56,6 +56,16 @@ export type ObjstoreInit = {
 }
 
 export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
+  // Fail loud on a lopsided auth config. The put-begin gate in
+  // handlers.ts only fires when BOTH authGate and sendUnauthorized are
+  // present (it needs the reporter to emit the `unauthorized` frame),
+  // so wiring authGate WITHOUT sendUnauthorized silently fails OPEN —
+  // unauthenticated first-writes to unknown workspaces would be accepted
+  // despite the operator's intent to gate them. Reject at boot rather
+  // than regress access control silently.
+  if (deps.authGate && !deps.sendUnauthorized) {
+    throw new Error('initObjstore: authGate requires sendUnauthorized (the put-begin gate needs it to emit the unauthorized frame)')
+  }
   const handle = deps.handle
   const secret = deps.tokenSecret ?? newTokenSecret()
   const handlers = createObjstoreHandlers({

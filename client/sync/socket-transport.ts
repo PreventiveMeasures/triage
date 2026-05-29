@@ -290,6 +290,16 @@ export function createSocketTransport(deps: SocketTransportDeps): SocketTranspor
     // re-armed by `onDisconnected`, re-enters on the fresh socket.
     const startSocket = socket
     const promise = (async (): Promise<boolean> => {
+      // Yield once so the outer `authFlowInFlight = promise` assignment
+      // below lands BEFORE this body can reach its `finally`. The body
+      // can return synchronously (cached replay skipped AND no
+      // `authResolver` — the loop's no-resolver bail), in which case a
+      // finally running before that assignment nulls the slot and then
+      // the assignment resurrects this already-settled promise into it,
+      // wedging every future runAuthFlow (and resetCachedReplayGuard's
+      // boot-after-unlock recovery) on the stale `false`. Same
+      // "yield once" idiom as counts.js's ensureCounts.
+      await Promise.resolve()
       try {
         // Silent cached-replay, once per socket.
         const cached = getCachedSyncPassword()

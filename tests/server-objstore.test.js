@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto'
 import { MAX_RESOURCES_PER_WORKSPACE, abortPut, beginPut, commitPut, deleteObject, getLive, listLive, openObjstore } from '../server/objstore/store.ts'
 import { liveFilePath, stagingFilePath } from '../server/objstore/fs.ts'
 import { reapOrphans } from '../server/objstore/reaper.ts'
+import { initObjstore } from '../server/objstore/init.ts'
 
 let counter = 0
 function freshHandle() {
@@ -68,6 +69,36 @@ function writeStaging(filePath, bytes) {
   const fd = openSync(filePath, 'a')
   try { writeSync(fd, bytes) } finally { closeSync(fd) }
 }
+
+describe('initObjstore — auth-gate config guard', () => {
+  it('throws when authGate is wired without sendUnauthorized (fail-loud, not fail-open)', () => {
+    // The put-begin gate in handlers.ts fires only when BOTH authGate
+    // and sendUnauthorized are present, so a lopsided config would
+    // silently fail OPEN — unauthenticated first-writes to unknown
+    // workspaces would be accepted. initObjstore must reject it at boot.
+    assert.throws(
+      () => initObjstore({ authGate: () => Promise.resolve(true) }),
+      /authGate requires sendUnauthorized/u,
+    )
+  })
+
+  it('accepts a complete auth config (both authGate and sendUnauthorized)', () => {
+    const { handle, cleanup } = freshHandle()
+    const init = initObjstore({
+      handle,
+      reapIntervalMs: 60_000,
+      send: () => {}, broadcast: () => {},
+      publishObjPut: () => {}, publishObjDeleted: () => {},
+      getNonce: () => undefined, debug: false,
+      authGate: () => Promise.resolve(true),
+      sendUnauthorized: () => {},
+    })
+    assert.equal(typeof init.stopReaper, 'function')
+    // Stop the reaper timer + drain the startup sweep before closing
+    // the handle so the test leaves no dangling timer / open DB.
+    return init.stopReaper().finally(cleanup)
+  })
+})
 
 describe('openObjstore — schema', () => {
   it('creates both tables on a fresh DB', async () => {

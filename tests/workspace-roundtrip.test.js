@@ -485,6 +485,33 @@ describe('applyWorkspaceImport: triage migration', () => {
     )
   })
 
+  it('clears pre-existing local ignored when adopting an imported triage bucket with no conflict (mutex)', async () => {
+    // mergeTriage's `importedTriage && !localTriage` branch adopts the
+    // imported bucket directly — no conflict, since the id has only a
+    // per-report ignore and no local triage bucket. It must STILL clear
+    // the local ignoredReports so triage and per-report ignore never
+    // coexist (the same mutex applyConflictDecisions enforces on the
+    // conflict path above). Pre-fix the patch omitted `ignoredReports:
+    // undefined`, leaving both fields on the entry.
+    setReportIgnored(state.triage, FINDING_A, 'r.json', true)
+    assert.equal(state.triage.get(FINDING_A)?.triage, undefined, 'precondition: ignored, no triage bucket')
+    let resolverCalled = false
+    const data = parseWorkspaceJson(JSON.stringify({
+      version: 1,
+      workspace: { id: 'ws-mutex-nc', name: 'M', privateKey: 'k' },
+      reports: [{ name: 'r.json', content: reportContent([FINDING_A]) }],
+      triage: { [FINDING_A]: { triage: 'fixed' } },
+    }))
+    await applyWorkspaceImport(data, { conflictResolver: () => { resolverCalled = true; return null } })
+    assert.equal(resolverCalled, false, 'no conflict: the id had no local triage bucket')
+    assert.equal(state.triage.get(FINDING_A)?.triage, 'fixed', 'imported triage bucket adopted')
+    assert.equal(
+      isReportIgnored(state.triage, FINDING_A, 'r.json'),
+      false,
+      'pre-existing local per-report ignore cleared by the mutex (retained pre-fix)',
+    )
+  })
+
   it('keeps the local value when conflict resolver returns null (cancel)', async () => {
     patchEntry(state.triage, FINDING_A, { triage: 'fixed' })
     const data = parseWorkspaceJson(JSON.stringify({

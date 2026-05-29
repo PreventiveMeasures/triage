@@ -280,6 +280,12 @@ export async function hydrate() {
       if (!sessionKey) continue  // locked vault — leave un-cached
       try {
         const plain = await openEnvelope(sessionKey, envelopeBytes, aadFor(key))
+        // Re-check after the async open: a user setItem may have pinned
+        // a newer value for this key during the await. Overwriting the
+        // cache with the decrypted stale-disk value would clobber that
+        // optimistic write — the same re-check migrateKeyAtomic applies
+        // after its transform, honoring the in-flight-writes invariant.
+        if (pendingValues.has(key)) continue
         cache.set(key, decodeUtf8(plain))
       } catch (err) {
         // AEAD failure — wrong key, tampered ciphertext, or wrong

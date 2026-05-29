@@ -254,4 +254,33 @@ describe('ensureCounts multi-caller (audit round-9 L1)', () => {
     // The point is that NEITHER call threw.
     assert.equal(calls.length, 0, 'all-cached call doesn\'t fire onUpdate')
   })
+
+  it('a concurrent setCount landing mid-walk is not clobbered by the stale parse', async (t) => {
+    // ensureCounts re-checks the cache AFTER `await readFile(n)`: if an
+    // ingest's setCount lands for the same name while the walk is
+    // reading the file, the walk must keep the fresher ingest count
+    // rather than overwrite it with its now-stale parse result. Mock
+    // readFile to fire that concurrent setCount before it resolves.
+    globalThis.localStorage.clear()
+    const stamp = `${Date.now()}-${Math.random()}`
+    let countsMod
+    t.mock.module('../client/storage.js', {
+      namedExports: {
+        readFile: (n) => {
+          // Concurrent ingest lands while we're "reading": count 999.
+          countsMod.setCount(n, 999, 'deepsec')
+          // ...whereas the walk's own parse would yield count 1.
+          return Promise.resolve(JSON.stringify({ findings: [{ id: '1' }] }))
+        },
+      },
+    })
+    countsMod = await import(`../client/counts.js?race-${stamp}`)
+    const name = `race-${stamp}.json`
+    await countsMod.ensureCounts([name])
+    assert.equal(
+      countsMod.getCount(name),
+      999,
+      'concurrent setCount(999) survives; the stale parse (count 1) must not clobber it',
+    )
+  })
 })
