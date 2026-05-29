@@ -258,6 +258,31 @@ function missingBundleItemTemplate(integrity, workspaceId) {
   ><span class="file-name"><span class="file-icon" aria-hidden="true">?</span><span class="file-label"><em>missing · ${shortPrefix}…</em></span></span></li>`
 }
 
+// Row for a workspace-claimed report whose bytes aren't on this device
+// — the report-side twin of `missingBundleItemTemplate`. A report is
+// keyed by its filename (not a content hash), so unlike a missing
+// bundle we can show the actual name instead of an integrity prefix.
+// Rendered muted + non-interactive: it carries no `data-file` and isn't
+// draggable, so the click / dragstart delegates (which match
+// `.file-item[data-file]`) skip it without needing a class guard, while
+// `data-workspace-id` still makes it a valid assign-to-workspace drop
+// target — matching the present rows of the same workspace.
+//
+// A missing report is usually transient: if a workspace member has the
+// report uploaded, the objstore-presence auto-download restores the
+// bytes and the next render flips this row to a normal report row. It
+// lingers only when no peer copy exists (e.g. an imported workspace that
+// references a report nobody re-shared, or an eviction with no cloud
+// backup) — which is exactly the state worth surfacing rather than
+// silently dropping.
+function missingReportItemTemplate(name, workspaceId) {
+  return html`<li
+    class="file-item indented report-missing"
+    data-workspace-id=${workspaceId}
+    data-tooltip="Report not on this device — it re-downloads automatically if a workspace member has uploaded it."
+  ><span class="file-name"><span class="file-icon" aria-hidden="true">?</span><span class="file-label"><em>missing · ${displayName(name)}</em></span></span></li>`
+}
+
 // Workspace glyph — see `BUNDLE_ICON` above for the SVG-source
 // rationale; wrapped once at module load with `unsafeHTML`.
 const WORKSPACE_ICON = html`${unsafeHTML(WORKSPACE_ICON_SVG)}`
@@ -354,10 +379,12 @@ export async function renderSidebar() {
   hostEl.classList.remove('empty')
 
   // Reports already claimed by a workspace render INSIDE that workspace
-  // and are dropped from the default buckets. Stale entries (a workspace
-  // referencing a report that no longer exists in OPFS) are ignored at
-  // render time — they round-trip in the JSON until a setReportWorkspace
-  // call rewrites the list and prunes them.
+  // and are dropped from the default buckets. A workspace reference to a
+  // report not present in OPFS no longer vanishes silently — it renders
+  // as a muted "missing" row inside the workspace (see
+  // `missingReportItemTemplate` in the render loop below), mirroring how
+  // missing bundles surface. The reference still round-trips in the JSON
+  // until a setReportWorkspace call rewrites the list.
   const nameSet = new Set(names)
   const claimed = new Set()
   for (const w of workspaces) {
@@ -401,7 +428,10 @@ export async function renderSidebar() {
   const visibleWorkspaces = workspaces.filter((w) => {
     if (!searchQuery) return true
     if (w.name.toLowerCase().includes(searchQuery)) return true
-    if (w.reports.some((r) => nameSet.has(r) && matchesSearch(r))) return true
+    // Match present AND missing reports — both keep their filename, so a
+    // search query can surface a workspace whose only match is a report
+    // that's referenced but not on this device.
+    if (w.reports.some((r) => matchesSearch(r))) return true
     return w.bundles.some((integ) => {
       const b = bundleByIntegrity.get(integ)
       return b && matchesSearch(b.name)
@@ -434,7 +464,24 @@ export async function renderSidebar() {
   litRender(html`
     ${workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
-      const visibleReports = w.reports.filter((r) => nameSet.has(r) && matchesSearch(r))
+      // Reports split into present vs missing, mirroring the bundle
+      // split below:
+      //   - present: the name resolves to an OPFS file → normal row
+      //   - missing: claimed by the workspace but no bytes locally
+      //              (eviction with no cloud copy, or an imported
+      //              workspace referencing a report nobody re-shared)
+      //              → muted row so the reference is visible instead of
+      //              silently dropped.
+      // Unlike missing bundles (which have no name and so can't be
+      // matched by a search query), a missing report keeps its filename,
+      // so the search filter applies to both buckets uniformly.
+      const presentReports = []
+      const missingReports = []
+      for (const r of w.reports) {
+        if (!matchesSearch(r)) continue
+        if (nameSet.has(r)) presentReports.push(r)
+        else missingReports.push(r)
+      }
       // Resolve bundle integrities to their metadata + filter by search.
       // Bundles split into two render paths:
       //   - present:  the integrity matches an OPFS bundle → normal row
@@ -456,7 +503,8 @@ export async function renderSidebar() {
       }
       return html`
         ${workspaceItemTemplate(w)}
-        ${visibleReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
+        ${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}
+        ${missingReports.map((r) => missingReportItemTemplate(r, w.id))}
         ${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}
         ${missingBundles.map((integ) => missingBundleItemTemplate(integ, w.id))}
       `
