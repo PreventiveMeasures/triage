@@ -99,6 +99,29 @@ async function writeRaw(list) {
 const WORKSPACE_LOCK = STORAGE_KEY
 function mutateWorkspaces(mutator) {
   return navigator.locks.request(WORKSPACE_LOCK, async () => {
+    // Pull the freshest disk state into the secure-storage cache BEFORE
+    // reading. The Web Lock serializes the RMW across tabs, but the lock
+    // grant is a microtask while a sibling tab's `storage` event is a
+    // later task — so `readRaw()` (a cache read) can still be served the
+    // pre-sibling-write value. Without this hydrate the mutator operates
+    // on stale state and our `setItem` clobbers the sibling's change
+    // (cross-tab lost update); worse, once that `setItem` pins
+    // `pendingValues`, the late-arriving hydrate skips the key and locks
+    // in the stale-derived value. Audit round-13 W (workspaces.js:102).
+    // (Relies on `STORAGE_KEY` being written ONLY via `writeRaw` under
+    // this lock, so its `pendingValues` pin is clear at acquire and the
+    // hydrate below never skips the key — keep that invariant.)
+    //
+    // `hydrate()` fires secure-storage's after-hydrate listeners — incl.
+    // this module's own `propagateWorkspaceChangesFromStorage` — while we
+    // hold the lock. That's bounded and not a new behaviour class: any
+    // `secureStorage.mutate(...)` call already runs `hydrate()` (firing
+    // all after-hydrate listeners) inside its own lock. A workspace-event
+    // subscriber is async, so a re-entrant mutation merely QUEUES on this
+    // Web Lock (navigator.locks queues, it doesn't deadlock) and runs
+    // after release; and every `fire*` is diff-gated against `lastSeen`,
+    // so a converged state fires nothing (the chain terminates).
+    await secureStorage.hydrate()
     const list = readRaw()
     const result = await mutator(list)
     if (result === false) return undefined
