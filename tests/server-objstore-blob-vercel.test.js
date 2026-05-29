@@ -226,11 +226,18 @@ function mockReq({ method, url, token }) {
   return { method, url, headers: token ? { authorization: `Bearer ${token}` } : {} }
 }
 function mockRes() {
-  const res = new Writable({ write(chunk, _enc, cb) { res.body += chunk.toString(); cb() } })
+  // Capture raw Buffer chunks so the helper is byte-exact for the
+  // octet-stream GET path (production serves arbitrary ciphertext bytes).
+  // `bodyBuffer` is binary-safe; `body` decodes the FULL concatenation
+  // once as UTF-8 (for JSON error envelopes) — never per-chunk, which
+  // could split a multibyte sequence across write() boundaries.
+  const chunks = []
+  const res = new Writable({ write(chunk, _enc, cb) { chunks.push(Buffer.from(chunk)); cb() } })
   res.statusCode = 0
-  res.body = ''
   res.headersSent = false
   res.writeHead = function writeHead(status) { this.statusCode = status; this.headersSent = true; return this }
+  Object.defineProperty(res, 'bodyBuffer', { get() { return Buffer.concat(chunks) } })
+  Object.defineProperty(res, 'body', { get() { return Buffer.concat(chunks).toString() } })
   return res
 }
 function restDepsFor(handle, secret) {
@@ -298,11 +305,12 @@ describe('vercel blob backend — error & race surfaces', () => {
   })
 
   it('openLiveReader returns unavailable (NOT not-found) when the blob is missing', async () => {
-    // A missing live blob is the transient "row present, bytes gone"
-    // state (→ HTTP 503), never a 404: the byte plane can't know whether
-    // the resource exists — only the REST layer's live-row check decides
-    // 404. Mirrors the FS backend (blob-fs.ts maps ENOENT → unavailable)
-    // and the FS race assertion in objstore-server-races.test.js.
+    // Byte-plane contract: a missing blob maps to `unavailable` (→ HTTP
+    // 503), never `not-found`/404. The byte plane has no view of the
+    // metadata row, so it can't decide existence — only the REST layer's
+    // live-row check (openLiveSnapshot) produces a terminal 404. (This
+    // test calls openLiveReader directly, with no live row.) Mirrors the
+    // FS backend, which maps ENOENT → unavailable (blob-fs.ts).
     const { handle, cleanup } = await freshVercelHandle()
     try {
       const opened = await handle.blob.openLiveReader('ws-1', 'missing-tag')
@@ -373,7 +381,7 @@ describe('vercel blob backend — error & race surfaces', () => {
       const okRes = mockRes()
       await handleRest(deps, mockReq({ method: 'GET', url, token }), okRes)
       assert.equal(okRes.statusCode, 200, 'link serves bytes while the blob is present')
-      assert.equal(okRes.body, payload.toString())
+      assert.equal(Buffer.compare(okRes.bodyBuffer, payload), 0, 'serves the exact blob bytes')
       // Now the blob bytes vanish out from under the still-live row —
       // models a reaper GC of a just-superseded hash, or a Vercel-Blob
       // read-after-write / propagation loss. The DB row is untouched, so
