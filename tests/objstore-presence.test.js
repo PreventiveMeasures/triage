@@ -22,6 +22,7 @@ import { readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 const {
+  __test__,
   closeWorkspace, deleteBundleFromRemote, deleteFromRemote,
   discoverRemoteBundleIntegrities, discoverRemoteFileNames,
   fetchFile, isBundleInRemote, isInRemote,
@@ -1600,6 +1601,41 @@ describe('client/sync/objstore-presence', () => {
       assert.equal(r.items.find((i) => i.identifier === name)?.status, 'missing')
       // Bytes stay gone — we did not overwrite the row with mismatched content.
       assert.equal(await fetchFile(ws.id, name), null)
+    } finally {
+      await deleteFile(name).catch(() => {})
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+    }
+  })
+
+  it('recheckRemoteStorage recovers a report even when the in-memory remoteTags lags the fresh listing', async () => {
+    // Regression: recovery rows come from the authoritative fresh DB
+    // listing, but a stale guard used to gate on entry.remoteTags — so a
+    // recoverable object missing from the lagging in-memory set was wrongly
+    // reported 'missing'. Clearing remoteTags reproduces that divergence;
+    // recovery must still re-upload (it observes only mid-recheck deletes).
+    const ws = await createWorkspace('objstore-recovery-lag')
+    const tag = (await deriveObjstoreKeys(ws.privateKey, ws.id)).workspaceTag
+    const blobDir = path.join(server.serverDir, 'objstore', tag)
+    const name = `lag-${crypto.randomUUID()}.json`
+    const bytes = encodeUtf8(`lagging report ${name}`)
+    try {
+      await saveFileBytes(name, bytes)
+      await setReportWorkspace(name, ws.id)
+      openWorkspace(ws.id)
+      await awaitSyncOnline()
+      assert.equal((await putFile(ws.id, name, bytes)).ok, true)
+      await awaitPresence(() => isInRemote(ws.id, name), 'report in remote')
+
+      // Lose the relay bytes AND simulate the in-memory view lagging the
+      // authoritative listing by clearing remoteTags.
+      for (const n of readdirSync(blobDir).filter((x) => x.endsWith('.bin'))) rmSync(path.join(blobDir, n))
+      __test__.getEntry(ws.id).remoteTags.clear()
+
+      const r = await recheckRemoteStorage(ws.id)
+      assert.equal(r.counts.reuploaded, 1, `expected 1 reuploaded despite remoteTags lag, got ${JSON.stringify(r.counts)}`)
+      assert.equal(r.items.find((i) => i.identifier === name)?.status, 'reuploaded')
+      assert.ok(await fetchFile(ws.id, name), 'bytes restored after recovery')
     } finally {
       await deleteFile(name).catch(() => {})
       closeWorkspace(ws.id)

@@ -1664,11 +1664,24 @@ export async function recheckRemoteStorage(workspaceId, { onList, onItem } = {})
   })
   if (typeof onList === 'function') { try { onList(rows.map(publicRecoveryRow)) } catch {} }
 
+  // Track deletes that land DURING this recheck so we don't resurrect a
+  // peer-deleted object. We must NOT gate on the long-lived
+  // `entry.remoteTags` set: the rows come from the authoritative fresh DB
+  // listing, and `remoteTags` (seeded at open + maintained by broadcasts)
+  // can lag it — gating on it would false-'missing' a perfectly
+  // recoverable object. Only a delete observed mid-recheck invalidates a
+  // row the fresh listing established as live.
+  const deletedDuringRecheck = new Set()
+  const offDeleted = entry.session.onDeleted((ev) => { deletedDuringRecheck.add(ev.resourceTag) })
   const counts = { good: 0, reuploaded: 0, missing: 0 }
-  for (const row of rows) {
-    row.status = await classifyAndRecover(entry, workspaceId, row)
-    counts[row.status] += 1
-    if (typeof onItem === 'function') { try { onItem(publicRecoveryRow(row)) } catch {} }
+  try {
+    for (const row of rows) {
+      row.status = await classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck)
+      counts[row.status] += 1
+      if (typeof onItem === 'function') { try { onItem(publicRecoveryRow(row)) } catch {} }
+    }
+  } finally {
+    offDeleted()
   }
   return { items: rows.map(publicRecoveryRow), counts }
 }
@@ -1717,7 +1730,7 @@ function parseRemoteResources(raw) {
 
 // Re-fetch one remote object and, if its bytes are missing, repair it
 // from a matching local copy. Returns 'good' | 'reuploaded' | 'missing'.
-async function classifyAndRecover(entry, workspaceId, row) {
+async function classifyAndRecover(entry, workspaceId, row, deletedDuringRecheck) {
   // (2) Attempt the re-fetch. `fetchByTag` rides the client's internal
   // 404/503 retry loop; a non-null result means the bytes are present
   // AND intact (it verifies the contentHash) → healthy. Refresh the
@@ -1733,13 +1746,12 @@ async function classifyAndRecover(entry, workspaceId, row) {
   // (3) Bytes missing for a row the fresh DB listing still lists ⇒ the
   // 503/bytes-gone case. Repair only from a MATCHING local copy.
   //
-  // Guard the delete-vs-recheck race first: the fresh listing was
-  // snapshotted once up front, but a peer delete that lands mid-recheck
-  // drops the tag from the live broadcast view (onDeleted →
-  // remoteTags.delete). Don't resurrect a just-deleted object over its
-  // tombstone — a tag no longer in the live set is reported missing, not
-  // re-uploaded.
-  if (!entry.remoteTags.has(row.resourceTag)) return 'missing'
+  // Guard the delete-vs-recheck race: skip recovery only for an object
+  // whose delete we OBSERVED during this recheck (don't resurrect a
+  // tombstone). We deliberately do NOT consult `entry.remoteTags` — that
+  // long-lived set can lag the authoritative fresh listing the rows came
+  // from, which would false-'missing' a recoverable object.
+  if (deletedDuringRecheck.has(row.resourceTag)) return 'missing'
   if (row.reportName !== undefined) return await recoverReport(workspaceId, row)
   if (row.bundleIntegrity !== undefined) return await recoverBundle(workspaceId, row)
   // Listed remotely, bytes gone, and we hold no local copy — this
@@ -1843,3 +1855,9 @@ async function safeListBundles() {
 // The unfiled-bundle-bytes path (`putBundleToRemote` from the user
 // dragging a bundle into a workspace + then explicitly clicking
 // upload) also exists above.
+
+// Test-only window into the per-workspace session entry (the in-memory
+// `remoteTags` / version maps). Not part of the public API — used by the
+// recovery tests to simulate the in-memory view lagging the authoritative
+// remote listing.
+export const __test__ = { getEntry: (workspaceId) => sessions.get(workspaceId) }
