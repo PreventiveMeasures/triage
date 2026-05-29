@@ -4,22 +4,20 @@
 // Kept separate from its sibling `<entity-sort>` (Packages /
 // Repositories pages) because the findings dropdown has a CONDITIONAL
 // option list driven by parent flags (file sort only when a tree
-// exists, confidence/priority options only when the dataset surfaces
-// those fields) and uses different CSS — the findings host shares the
+// exists, confidence/priority only when the dataset surfaces those
+// fields) and different CSS — findings shares the
 // `& :is(analyzer-select, findings-sort)` chevron rule in toolbar.css
 // with the analyzer dropdown, while `<entity-sort>` has its own offset
-// in report.css. Folding them would require either threading styling
-// and option-shape props through one component or splitting the
-// template into two barely-shared branches, so they stay as two thin
-// components paired by the same `sort-change` dispatch contract.
+// in report.css. Folding them would mean threading style + option-shape
+// props through one component or two barely-shared template branches;
+// instead they stay two thin components paired by the `sort-change`
+// dispatch contract.
 //
-// Reactivity: extends StateElement, reads `state.sortBy` via the
-// autorun. Native `<select>` value bound through Lit's `live()`
-// directive so a stale-filter clear in the parent's pipeline
-// (e.g. `state.sortBy` reset when its option drops out of view)
-// actually moves the browser-native `value` rather than just
-// flipping a `?selected=` attribute the browser ignores after user
-// interaction.
+// Reactivity: extends StateElement, reads `state.sortBy`. Native
+// `<select>` value bound through `live()` so a stale-filter clear in
+// the parent's pipeline (e.g. `state.sortBy` reset when its option
+// drops out of view) actually moves the browser-native `value`, not
+// just a `?selected=` attribute the browser ignores after interaction.
 //
 // Dispatches `sort-change(detail: { kind: "findings", value })`
 // on native change, matching `<entity-sort>`'s dispatch shape so

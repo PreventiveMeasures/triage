@@ -12,18 +12,17 @@
 // — both edges are how the user opts out of that half of the
 // filter, NOT a literal 0-or-10 match.
 //
-// Reactivity: extends StateElement, so the autorun tracks the two
-// state reads and re-renders the inner property bindings when state
-// changes — typically on `range-change` release. `range-input`
-// during a drag doesn't touch state (the mirror handles the live
-// label update event-side); committed values come back via the same
-// autorun after release.
+// Reactivity: extends StateElement; the autorun re-renders the inner
+// property bindings on state change — typically `range-change`
+// release. `range-input` during a drag doesn't touch state (the
+// mirror updates the live label event-side); committed values return
+// via the autorun after release.
 //
 // Event contract: the slider dispatches `range-input` (drag) and
-// `range-change` (release) CustomEvents, bubbling composed; events.js
-// listens on `report` and writes `state.filterConfMin`/`Max` on
-// `range-change`. This component intercepts neither — it just owns
-// the layout + state-to-prop hand-off.
+// `range-change` (release), bubbling composed; events.js listens on
+// `report` and writes `state.filterConfMin`/`Max` on `range-change`.
+// This component intercepts neither — it owns only the layout +
+// state-to-prop hand-off.
 //
 // Mounted only when the parent's `showConfidence` flag is true (some
 // reports don't surface confidence); the component doesn't know that

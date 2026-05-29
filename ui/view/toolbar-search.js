@@ -1,28 +1,20 @@
-// `<toolbar-search>` — the SVG-icon-prefixed search field used by
-// the findings toolbar and the Files tab toolbar.
+// `<toolbar-search>` — search field shared by the findings toolbar
+// (`kind="findings"`, filters against state.filterInclude) and the
+// Files tab toolbar (`kind="files"`, filters against state.filesSearch).
 //
-// The component picks its state slice from `kind="findings"|"files"`,
-// emits a `search-input(detail: { kind, value })` CustomEvent on
-// native `input`, and uses `live()` for the value binding — the
-// findings slice is reset by `resetFilters()` in filters.js and
-// overwritten by the graph "jump to findings" path in events.js, both
-// of which need the DOM `value` to follow state even after user
-// interaction has touched the field.
+// Emits `search-input(detail: { kind, value })` on native `input`.
+// Uses `live()` for the value binding because the findings slice is
+// reset by `resetFilters()` (filters.js) and overwritten by the graph
+// "jump to findings" path (events.js) — both need the DOM `value` to
+// follow state even after the user has typed in the field.
 //
-// The wrapping `.search-row` + adjacent `.result-count` span stay
-// in the parent template (those compose the search field with the
-// count and live alongside the search-row's wrapping breakpoints in
-// toolbar.css).
+// The wrapping `.search-row` + adjacent `.result-count` span stay in
+// the parent template, alongside the search-row's wrapping breakpoints
+// in toolbar.css.
 //
-// Reactivity: extends StateElement, so reads of the matched state
-// slice during render() are tracked by observer-util. Lit reuses the
-// same `<input>` element across re-renders, so focus + cursor
-// position survive every keystroke.
-//
-// Attributes:
-//   * `kind` — `"findings"` (filters the findings list against
-//                state.filterInclude) or `"files"` (filters the
-//                Files tab tree against state.filesSearch).
+// Extends StateElement, so render()'s read of the matched slice is
+// tracked by observer-util. Lit reuses the same `<input>` across
+// re-renders, so focus + cursor position survive every keystroke.
 import { nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'

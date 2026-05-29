@@ -1,10 +1,6 @@
-// `<finding-table>` — table-view rows + selection container. Takes
-// the dedup groups via `items` and the active selection via
-// `selectedGid`; each row is a `<finding-row>` Lit child (see
-// view/finding-row.js) that owns its own click handling and dispatches
-// a composed-bubbling `row-select` event when clicked outside an
-// action button. This component is just the glass-card wrapper + row
-// layout; the click delegate lives in events.js.
+// `<finding-table>` — table-view rows + selection container. Each row
+// is a `<finding-row>` Lit child dispatching composed-bubbling
+// `row-select`; the click delegate lives in events.js.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { tableRowGid } from './render-finding.js'
@@ -26,13 +22,10 @@ class FindingTable extends LitElement {
   }
 
   render() {
-    // Keyed by gid via lit's `repeat` directive: when the items list
-    // reorders (sort change, filter add/remove) Lit moves the existing
-    // <finding-row> elements to the new positions instead of swapping
-    // their `group` property — each row stays associated with its
-    // group, so unchanged rows skip re-rendering. Without the key,
-    // the default `.map()` matches by position and would dirty every
-    // row whose neighbour shifted.
+    // Keyed by gid via `repeat`: on reorder Lit moves existing
+    // <finding-row> elements rather than reassigning `group`, so
+    // unchanged rows skip re-rendering. Default `.map()` matches by
+    // position and would dirty every row whose neighbour shifted.
     return html`${repeat(
       this.items ?? [],
       (g) => tableRowGid(g),

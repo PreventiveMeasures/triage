@@ -1,21 +1,19 @@
 // `<sidebar-view-button>` — the Packages / Repositories navigation
-// buttons to the right of the sidebar search input.
+// buttons right of the sidebar search input.
 //
-// Extends StateElement and reads `state.currentView` in render() so
-// the `.active` highlight follows view navigation without a
-// `renderSidebar()` repaint.
+// Reads `state.currentView` in render() so the `.active` highlight
+// follows view navigation without a `renderSidebar()` repaint.
 //
 // `count` (cross-report packages / repositories in the OPFS-wide
 // index) is NOT observable — `getPackagesIndex()` /
 // `getRepositoriesIndex()` return module-internal Maps the
-// observer-util proxy can't see through — so it arrives as a
-// property the parent (renderSidebar() call site) assigns. count 0
-// → render `nothing`, hiding the button.
+// observer-util proxy can't see through — so it arrives as a property
+// the parent (renderSidebar() call site) assigns. count 0 → `nothing`,
+// hiding the button.
 //
-// The native button click bubbles through the host to sidebar.js's
-// `onSidebarClick` delegate, which routes via
-// `closest('sidebar-view-button')` + the host's `kind` attribute to
-// the matching `state.currentView` mutation.
+// The click bubbles through the host to sidebar.js's `onSidebarClick`
+// delegate, which routes via `closest('sidebar-view-button')` + the
+// host's `kind` attribute to the matching `state.currentView` mutation.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'

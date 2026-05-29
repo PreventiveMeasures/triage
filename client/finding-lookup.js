@@ -40,7 +40,6 @@ export function buildFindingLookupForLoadedReports(conflicts) {
           line: f.line,
           description: firstDescriptionLine(f.description),
         })
-        // Returning here unwinds all three nested loops at once.
         if (lookup.size === wanted.size) return lookup
       }
     }

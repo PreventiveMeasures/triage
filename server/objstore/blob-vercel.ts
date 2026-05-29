@@ -441,8 +441,7 @@ function buildListWorkspaceTags(sdk: VercelBlobSdk, token: string): BlobBackend[
     const { folders } = await listAll(sdk, { mode: 'folded', token })
     const out: string[] = []
     for (const f of folders) {
-      // Folder names come back with trailing slash, e.g. "ws-1/".
-      // Strip it to get the bare tag.
+      // Folder names come back with a trailing slash, e.g. "ws-1/".
       const tag = f.endsWith('/') ? f.slice(0, -1) : f
       if (tag.length > 0) out.push(tag)
     }

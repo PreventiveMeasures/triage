@@ -259,11 +259,10 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Packages details — tab switch. Overview keeps the regular
-  // list + details layout; Issues opens the full-width slide
-  // (state.packageDetailsTab='issues' triggers the slide branch
-  // in renderPackagesView). Bucket's already in memory, so the
-  // re-render is paint-only.
+  // Packages details — tab switch. Overview keeps the list + details
+  // layout; Issues opens the full-width slide (packageDetailsTab='issues'
+  // triggers the slide branch in renderPackagesView). Bucket's in memory,
+  // so the re-render is paint-only.
   const pkgTab = e.target.closest('[data-package-tab]')
   if (pkgTab) {
     const tab = pkgTab.dataset.packageTab
@@ -487,12 +486,11 @@ report.addEventListener('click', (e) => {
     return
   }
   // Files toggle (page header, right of the repo chip). Flips
-  // state.currentView between 'files' and 'findings', mirroring the
-  // Trash button's state.showDeleted. The graph view-mode lives
-  // inside Findings; its rAF/observers tear down when render() resets
-  // the body innerHTML, but cleanupGraph2 is called explicitly so the
-  // canvas drops its viewport cache / hover state cleanly across the
-  // switch.
+  // state.currentView between 'files' and 'findings'. The graph
+  // view-mode lives inside Findings; its rAF/observers tear down when
+  // render() resets the body innerHTML, but cleanupGraph2 runs
+  // explicitly so the canvas drops its viewport cache / hover state
+  // cleanly across the switch.
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
     if (state.currentView === 'files') {
@@ -835,9 +833,8 @@ report.addEventListener('click', (e) => {
     return
   }
   // Files-tab table view: row click toggles the file selection
-  // (re-clicking the active row deselects, just like the findings
-  // table). The details panel on the right follows
-  // state.filesSelectedFile.
+  // (re-clicking the active row deselects, like the findings table).
+  // The details panel on the right follows state.filesSelectedFile.
   const treeRow = e.target.closest('[data-tree-select]')
   if (treeRow) {
     const file = treeRow.dataset.treeSelect
@@ -1459,17 +1456,14 @@ document.addEventListener('download-requested', () => {
 })
 
 // `<analyzer-select>` dispatches this on native change; it owns its
-// `<select>`, so there's no id-keyed branch in a generic change
-// listener.
+// `<select>`, so there's no id-keyed branch in a generic change listener.
 report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.value
   render()
 })
-// `<repo-filter>` dispatches this on native change. Mirrors
-// the analyzer-change branch above — flip state and render the
-// filtered body. Only the toolbar listens for it (the component
-// is workspace-view-only); a stray event from anywhere else is
-// harmless since the predicate gates on `state.filterRepo`.
+// `<repo-filter>` dispatches this on native change. Only the toolbar
+// listens for it (workspace-view-only component); a stray event from
+// elsewhere is harmless since the predicate gates on `state.filterRepo`.
 report.addEventListener('repo-change', (e) => {
   state.filterRepo = e.detail.value
   render()

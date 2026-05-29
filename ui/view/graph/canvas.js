@@ -149,7 +149,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const cache = graph2.layoutCache
     const focused = graph2.focusedPkg
     if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH && cache.focused === focused) {
-      // Reuse cached positions — copy back into the live nodes.
+      // Copy cached positions back into the live nodes.
       for (const n of graph.nodes) {
         const p = cache.pos.get(n.file)
         if (p) { n.x = p.x; n.y = p.y }
@@ -307,19 +307,17 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     // 1px reflows from sub-pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
     if (needsFit || sizeChanged) { fitToView(); needsFit = false }
-    // Always redraw on resize: the canvas pixel buffer was just
-    // resized via canvas.width/.height, which clears it. Without
-    // an explicit draw the canvas would render blank until the
-    // next user interaction.
+    // Setting canvas.width/.height above cleared the pixel buffer;
+    // redraw or it stays blank until the next interaction.
     requestDraw()
   }
 
   // ── Draw ──────────────────────────────────────────────────────
   // On-demand scheduling: redraw only on change (pan / zoom / hover
   // / selection / layout / theme / resize). Continuous rAF would be
-  // wasteful on a 12k-file canvas at 60fps and nothing animates
-  // per-frame. requestDraw() sets a dirty flag and coalesces changes
-  // within a frame into a single rAF draw.
+  // wasteful on a 12k-file canvas since nothing animates per-frame.
+  // requestDraw() sets a dirty flag and coalesces same-frame changes
+  // into a single rAF draw.
   let rafId = null
   let needsDraw = true
   let drawScheduled = false
@@ -494,9 +492,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
 
     // ── Labels (auto-on at high zoom or low on-screen count,
     // collision-avoidant) ──────────────────────────────────────
-    // Auto-enable when zoom ≥ 900% (detailed inspection) OR fewer
-    // than 50 nodes visible in the viewport (labels fit without
-    // much overlap). graph2.showLabels force-ons regardless.
+    // Auto-on when zoom ≥ 900% (detailed inspection) OR < 50 nodes
+    // visible (labels fit without much overlap). graph2.showLabels
+    // force-ons regardless.
     //
     // Zoom legibility brackets, enforced however labels were
     // turned on:
@@ -873,12 +871,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar) {
     const col = pkgColor(n.pkg)
     const pkgLabel = n.pkg === '__own__' ? 'own source' : n.pkg
     const relPath = pkgRelative(n.file, n.pkg)
-    // Three-line layout:
-    //   1. file path relative to package root (monospace, primary
-    //      text colour) — the main node identifier.
-    //   2. dot + package name — secondary context.
-    //   3. per-severity chips when n.totalIssues > 0 — same block
-    //      the selection card uses.
     // Lit's `html` interpolation auto-escapes `relPath`/`pkgLabel`
     // (both user-provided — file paths from a loaded report).
     render(html`

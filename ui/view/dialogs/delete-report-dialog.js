@@ -31,8 +31,7 @@ class DeleteReportDialog extends AppDialog {
     reportName: { type: String },
     orphanedTriage: { type: Number },
     sharedTriage: { type: Number },
-    // `true` when the report exists in the workspace's remote
-    // objstore inventory. Surfaces the remote-side notice.
+    // true = report is in the workspace's remote objstore inventory; surfaces the remote-side notice.
     inRemote: { type: Boolean },
     _triage: { state: true },
   }

@@ -83,7 +83,6 @@ export function parseCodexCsvToScans(text) {
     relevant_paths: colIndex('relevant_paths'),
   }
 
-  // Group rows by configured_scan_id.
   const byScan = new Map()
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]
@@ -150,14 +149,12 @@ function rowToFinding(r, cols) {
     severity: (r[cols.severity] || 'medium').toLowerCase(),
     description,
     repo: { github: r[cols.repository] },
-    // No per-finding `type` here — the codex CSV doesn't carry a
-    // category column, and stamping a synthetic 'security' on every
-    // row used to make the run-meta line read "security" on every
-    // finding even though there's nothing categorical to differentiate
-    // them. The renderer already suppresses an empty run-meta
-    // (filter(Boolean) → '' → no <span>), so leaving this off is the
-    // cleanest result. data.type at the report level still keeps a
-    // sensible 'security' default for document.title.
+    // No per-finding `type` — the codex CSV has no category column, and
+    // a synthetic 'security' on every row makes the run-meta line read
+    // "security" on every finding with nothing categorical to
+    // differentiate. The renderer suppresses an empty run-meta
+    // (filter(Boolean) → '' → no <span>). data.type at the report level
+    // still keeps a 'security' default for document.title.
   }
   if (cols.commit_hash !== -1 && r[cols.commit_hash]) finding.commitHash = r[cols.commit_hash]
   if (cols.detected_at !== -1 && r[cols.detected_at]) finding.detectedAt = r[cols.detected_at]

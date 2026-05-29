@@ -23,9 +23,7 @@ class DeleteBundleDialog extends AppDialog {
 
   static properties = {
     bundleName: { type: String },
-    // `true` when the bundle exists in at least one owning
-    // workspace's remote objstore inventory. Surfaces the remote-
-    // side notice.
+    // true = bundle is in an owning workspace's remote objstore inventory; surfaces the remote-side notice.
     inRemote: { type: Boolean },
   }
 

@@ -162,11 +162,6 @@ function notify() {
   }
 }
 
-// triageSync.getServerUrl() returns `ws[s]://host[:port]/api/sync`.
-// objstore's REST plane lives on the same origin (no path), so swap
-// scheme + drop pathname. Returns null when sync isn't configured —
-// in that case we keep an empty entry around so isInRemote can still
-// answer false synchronously.
 // Stringify `entry.err` for user-facing Error messages. Usually an
 // `Error` so `.message` reads best, but the boot path captures
 // non-Error rejections from `client.openWorkspace` (Web Locks and
@@ -320,6 +315,11 @@ export function openWorkspace(workspaceId) {
       console.warn(`objstore-presence: listBundles failed during ${workspaceId} open:`, err)
     }
     notify()
+    // Sync unconfigured (no serverUrl) or unparseable origin: skip the
+    // remote session but keep `entry` in `sessions`. Its pre-computed
+    // local fileTags/bundleTags back the synchronous presence predicates
+    // (isInRemote/isBundleInRemote) and the no-op second open — don't
+    // tear it down just because remote sync is off.
     const serverUrl = triageSync.getServerUrl()
     if (!serverUrl) return
     const httpOrigin = httpOriginFromWsUrl(serverUrl)

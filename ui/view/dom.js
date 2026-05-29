@@ -1,6 +1,6 @@
-// Cached references to the static DOM scaffolding declared in index.html.
-// Looking these up once at module load is cheaper than repeatedly
-// querying — and keeps every consumer module's import list short.
+// Cached references to the static DOM scaffolding declared in
+// index.html: looked up once at module load, then imported by name so
+// consumers don't each re-query.
 import { html, render as litRender } from 'lit'
 
 export const dropZone = document.querySelector('#drop-zone')

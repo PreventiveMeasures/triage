@@ -19,11 +19,8 @@ export function topIssueOf(counts) {
 
 // Build the full v2 graph data structure from a treeData blob and
 // per-file own-counts map, filtered to files with a tree entry.
-// Returns: files (string[]), packages (string[] sorted by node
-// count desc), pkgIndex (pkg → index), nodes (one per file), edges
-// (intra/cross), adj (file → edge index list), ambassadors (file
-// paths flagged as hubs). Side-effect free; positions are written
-// into nodes by the caller's layout pass.
+// Side-effect free; positions are written into nodes by the
+// caller's layout pass.
 // `severitySets` / `colorSets` (both Map<file, Set<string>>): the
 // distinct severities and triage-marker colors that appear on each
 // file's own findings. Used by the canvas dim-logic + topbar chip

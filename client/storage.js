@@ -104,25 +104,19 @@ function getOpfsDir() {
   return openOpfsDir(OPFS_DIR, { create: true, warnOnce: true })
 }
 
-// `gunzipBytes` is re-exported (the UI + sync-host consume it). The
-// bundles layer gzips .map sourcemaps (text JSON, highly compressible)
-// so they cost less in OPFS; readBundle auto-detects via the gzip
+// `gunzipBytes` re-exported (UI + sync-host consume it). The bundles
+// layer gzips .map sourcemaps; readBundle auto-detects via the gzip
 // magic bytes (1f 8b) so the flag doesn't need to live in metadata.
 export { gunzipBytes }
 
 // Each function re-probes OPFS once per call — caching the dir
 // handle is unnecessary because getDirectoryHandle is cheap.
 //
-// In-memory cache for report contents. Populated lazily on
-// `readFile`, kept in sync by `saveFile` (overwrite) and `deleteFile`
-// (evict). `inFlight` deduplicates concurrent reads of the same name
-// — `switchToWorkspace` fires every read in parallel, so multiple
-// callers asking for the same file (e.g. workspace + main view race)
-// share a single round-trip rather than each hitting OPFS.
-//
-// Cache is per-page-load. No size cap: the user has already chosen
-// to keep these reports around (they're persisted in OPFS), and the
-// JS-string overhead of the active set is small relative to the
+// In-memory cache for report contents, per-page-load. `inFlight`
+// deduplicates concurrent reads of the same name — `switchToWorkspace`
+// fires every read in parallel, so callers racing for the same file
+// share a single round-trip rather than each hitting OPFS. No size
+// cap: the active set's JS-string overhead is small relative to the
 // rendered DOM. A failed read is NOT cached (the inFlight entry
 // clears in the finally block) so callers can retry.
 const cache = new Map()
@@ -133,8 +127,7 @@ const inFlight = new Map()
 // `cache.set(name, content)` if it changed by resolution time (a
 // save/delete landed meanwhile, so the read is stale). Without it,
 // an in-flight read that started before a saveFile could resolve
-// AFTER saveFile's `cache.set(NEW)` and overwrite it with OLD bytes
-// — stale content with no invalidation until the next saveFile.
+// AFTER saveFile's `cache.set(NEW)` and overwrite it with OLD bytes.
 //
 // Two bumps close BOTH race directions:
 //   1. read started BEFORE the write — captured pre-bump gen, sees
@@ -144,15 +137,13 @@ const inFlight = new Map()
 //      close) — sees the gen advance again at close + cache.set,
 //      skips. (round-12 H8.)
 //
-// Map grows monotonically with every distinct filename touched; we
-// deliberately do NOT prune on `deleteFile`, because prune-then-
-// reinsert weakens the invariant. A NEW read post-prune captures
-// gen 0, sees the next saveFile bump to 1, and skips caching its
-// OWN fresh bytes (gen-check gates `cache.set`, not `return
-// content` — bytes still reach the caller, but the next readFile
-// re-pays the OPFS round-trip). (An in-flight read that captured
-// gen 5 pre-prune is still safe: 0 !== 5 also skips.) Net effect:
-// a redundant re-read on a per-render fast path, not a correctness
+// Map grows monotonically; we deliberately do NOT prune on
+// `deleteFile`, because prune-then-reinsert weakens the invariant.
+// A NEW read post-prune captures gen 0, sees the next saveFile bump
+// to 1, and skips caching its OWN fresh bytes (gen-check gates
+// `cache.set`, not `return content` — bytes still reach the caller,
+// but the next readFile re-pays the OPFS round-trip). Net effect: a
+// redundant re-read on a per-render fast path, not a correctness
 // break — cheaper to leak ~8 bytes/name than re-read. Audit-flagged
 // "benign in practice"; documented so it isn't re-litigated.
 const writeGen = new Map()
@@ -252,11 +243,9 @@ export async function saveFile(name, content) {
     // the session key before the seal, recheck it didn't flip during
     // it. Mirrors saveTriage. A sibling-tab disable mid-seal would
     // otherwise leave envelope bytes under a key the next page load
-    // lacks; on mismatch we abort cleanly (the caller already saw a
-    // resolved promise from the bump; the next save lands under the
-    // new state). This recheck is LOAD-BEARING under the shared
-    // VAULT_LOCK: the lock serialises us against enable/disable, but
-    // passkey-vault's storage-event handler nulls `sessionKey` on a
+    // lacks; on mismatch we abort cleanly. LOAD-BEARING even under the
+    // shared VAULT_LOCK: the lock serialises us against enable/disable,
+    // but passkey-vault's storage-event handler nulls `sessionKey` on a
     // sibling-tab disable WITHOUT the lock (storage events fire on the
     // task queue, not the lock scheduler) — this catches that path.
     //

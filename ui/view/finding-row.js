@@ -1,31 +1,23 @@
-// `<finding-row>` — one row of the table view, owned as a Lit
-// component nested inside `<finding-table>`'s shadow DOM. The host
-// element IS the row: classes derived from the dedup group
-// (`is-critical`, `mark-{red|blue|green|gray}`, `has-conflict`,
-// `deleted`) plus a `selected` class driven by the `selected`
-// property are reflected onto `this.classList`, and `this.dataset.gid`
-// carries the group key (events.js's `pathClosest('[data-gid]')`
-// walks the composedPath up through this host to identify the
-// targeted row from action-button clicks). Inner DOM (badge, title
-// + meta + optional tab strip, action buttons) is built by
-// render-finding.js as an HTML string and injected via unsafeHTML.
+// `<finding-row>` — one table-view row, a Lit component nested in
+// `<finding-table>`'s shadow DOM. The host element IS the row:
+// group-derived classes plus a `selected` class are reflected onto
+// `this.classList`, and `this.dataset.gid` carries the group key
+// (events.js's `pathClosest('[data-gid]')` walks composedPath up
+// through this host to resolve the targeted row). Inner DOM is built
+// by render-finding.js as a string and injected via unsafeHTML.
 //
-// Reactivity: extends StateElement, which wraps render() in an
-// observer-util reaction. Reads of `state.triage`,
-// `state.activeTabByGroup`, `state.showDeleted` during render — via
-// the helpers in render-finding.js + group.js — are auto-tracked, so
-// a mutation that invalidates the row re-renders just this element.
-// The classList stamping is intentionally inside render so its
-// `state.showDeleted` read joins the same tracked set; otherwise
-// toggling trash wouldn't update the host's `.deleted` class.
+// Reactivity: StateElement wraps render() in an observer-util
+// reaction; reads of `state.triage`, `state.activeTabByGroup`,
+// `state.showDeleted` (via render-finding.js + group.js helpers)
+// auto-track so an invalidating mutation re-renders just this element.
+// classList stamping lives inside render so its `state.showDeleted`
+// read joins the tracked set; otherwise toggling trash wouldn't update
+// the host's `.deleted` class.
 //
-// Click semantics: a click anywhere on the row that didn't land on
-// an action button / link / label dispatches a composed-bubbling
-// `row-select` CustomEvent with the gid; events.js listens on
-// `report` and toggles `state.tableSelectedGid`. Native button
-// clicks (`.tab`, `.mark-dot`, `.mark-x`, `.mark-restore`) bubble
-// out composed:true and reach events.js's `pathClosest`-based
-// delegate without intervention from this component.
+// Click semantics: a click missing any action button / link / label
+// dispatches composed-bubbling `row-select` with the gid; events.js
+// toggles `state.tableSelectedGid`. Native button clicks bubble
+// composed:true to events.js's `pathClosest` delegate untouched.
 import { unsafeCSS } from 'lit'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { tableRowClasses, tableRowGid, tableRowInnerTemplate } from './render-finding.js'

@@ -28,13 +28,8 @@
 //                Defaults to all four; Packages / Repositories pass
 //                `['fixed', 'invalid', 'deleted']` because ignore is
 //                per-report and treated as untriaged in those views.
-//
-// Attributes:
-//   * `variant` — adds an extra class onto the host element so
-//                 events.js can route the click correctly:
-//                   `graph`    → `.graph2-triage-selector`
-//                   `packages` → `.packages-triage-selector`
-//                 Empty (default, findings toolbar) → no extra class.
+//   * `variant` — marker class on the host for events.js routing (see
+//                 first paragraph + VARIANT_CLASS); empty = no class.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
@@ -71,11 +66,9 @@ class TriageSelector extends StateElement {
   render() {
     const states = this.states ?? DEFAULT_STATES
     const total = states.reduce((n, s) => n + (this.counts[s] ?? 0), 0)
-    // Variant marker class lives on the HOST element so events.js can
-    // distinguish graph-variant clicks (canvas teardown path) from
-    // toolbar-variant clicks (plain render). Unknown variants would
-    // silently drop the marker class and mis-route — warn in dev so
-    // typos surface rather than reading as a subtle interaction bug.
+    // Unknown variants would silently drop the marker class and
+    // mis-route the click — warn so typos surface rather than reading
+    // as a subtle interaction bug.
     const extra = this.variant ? VARIANT_CLASS[this.variant] : null
     if (this.variant && extra === undefined) {
       console.warn(`<triage-selector>: unknown variant ${JSON.stringify(this.variant)}; ` +

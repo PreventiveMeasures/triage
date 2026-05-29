@@ -20,10 +20,6 @@ import { pkgRelative } from './data.js'
 // through the host element. attachGraph2Interaction (canvas.js)
 // wires the canvas rAF / hover / click / pan / zoom on top.
 //
-// Tab-state inputs:
-//   graph     — buildGraph(...) result; nodes/edges/packages/etc.
-//   ownCounts — file → severity-count map; drives the "Top groups"
-//               distribution and the per-package issue counts
 // `options.extraTopRow` — optional Lit template emitted as a SECOND
 // row above the main topbar. Used by the Findings-tab embed to host
 // the view-mode chooser inside the graph's own toolbar instead of

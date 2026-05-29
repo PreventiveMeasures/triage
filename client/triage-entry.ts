@@ -126,7 +126,6 @@ export function setEntry(map: TriageMap, id: string, entry: unknown): boolean {
   return true
 }
 
-// Add / remove a single report from id's ignoredReports.
 export function setReportIgnored(map: TriageMap, id: string, report: string, ignored: boolean): boolean {
   const set = new Set(map.get(id)?.ignoredReports ?? [])
   if (ignored) set.add(report)
@@ -134,8 +133,8 @@ export function setReportIgnored(map: TriageMap, id: string, report: string, ign
   return patchEntry(map, id, { ignoredReports: set.size > 0 ? [...set] : undefined })
 }
 
-// Drop one report name from every entry's ignoredReports (report
-// deletion / un-assignment). Snapshots the keys first since the loop
+// Report deletion / un-assignment: drop one report name from every
+// entry's ignoredReports. Snapshots the keys first since the loop
 // mutates the map.
 export function clearReportEverywhere(map: TriageMap, report: string): void {
   for (const [id, entry] of [...map]) {

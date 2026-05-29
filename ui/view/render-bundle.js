@@ -528,11 +528,6 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes) {
   </div>`
 }
 
-// Full-width "slide" view for the Graph and Issues tabs. The
-// bundles list and the regular details panel both step aside; a
-// header bar across the top carries the back button + bundle name
-// + integrity, plus a Graph / Issues sub-tab switcher. Body
-// renders the active sub-tab's content edge to edge.
 // Source viewer overlay — opens on top of any bundles view (regular
 // or slide) when state.bundleSourceFile is set. Reads the open
 // bundle's source map / stasis content via bundleSourcesAsMap;

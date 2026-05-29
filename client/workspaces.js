@@ -43,9 +43,8 @@ const WORKSPACES_VERSION = 1
 
 function readRaw() {
   try {
-    // secure-storage cache (hydrated at boot via `view.js`): the
-    // JSON payload, decrypted from its envelope when the vault is
-    // unlocked.
+    // secure-storage cache (hydrated at boot via `view.js`): JSON
+    // payload, decrypted from its envelope when the vault is unlocked.
     const raw = secureStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
