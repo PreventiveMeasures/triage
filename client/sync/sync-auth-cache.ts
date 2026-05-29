@@ -54,6 +54,6 @@ export function loadCachedSyncPasswordFromStorage(): void {
 export async function setCachedSyncPassword(password: string | null): Promise<void> {
   inMemory = password
   const host = syncHost()
-  if (password == null) host.removeSecureItem(KEY)
+  if (password == null) await host.removeSecureItem(KEY)
   else await host.setSecureItem(KEY, password)
 }
