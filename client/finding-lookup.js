@@ -40,6 +40,12 @@ export function buildFindingLookupForLoadedReports(conflicts) {
           line: f.line,
           description: firstDescriptionLine(f.description),
         })
+        // Early-out the moment every conflicting id has an entry. The
+        // docstring promises this ("most reports won't contribute, so a
+        // large workspace doesn't pay for unnecessary walks") but the
+        // loop previously only `continue`d — returning here unwinds all
+        // three nested loops at once.
+        if (lookup.size === wanted.size) return lookup
       }
     }
   }

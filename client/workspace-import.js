@@ -305,7 +305,13 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     if (importedTriage && localTriage && localTriage !== importedTriage) {
       conflicts.push({ id, property: 'triage', local: localTriage, imported: importedTriage })
     } else if (importedTriage && !localTriage) {
-      patchEntry(map, id, { triage: importedTriage })
+      // Clear any pre-existing local per-report ignore on this id —
+      // triage and ignoredReports are mutually exclusive (the mutex
+      // applyConflictDecisions enforces with the same `ignoredReports:
+      // undefined`). Without it, patchEntry's {...cur, ...patch} merge
+      // would leave an entry carrying BOTH a triage bucket and a stale
+      // ignoredReports set.
+      patchEntry(map, id, { triage: importedTriage, ignoredReports: undefined })
     }
     // Per-report ignore — additive merge. Each (reportName, id) is
     // an independent slot; we union the imported list into local.

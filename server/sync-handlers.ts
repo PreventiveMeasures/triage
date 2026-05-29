@@ -261,15 +261,19 @@ export function createSyncHandlers(deps: SyncHandlersDeps): SyncHandlers {
   }
 
   async function handleSubscribe(socket: WebSocket, msg: SubscribeMsg): Promise<void> {
-    if (typeof msg.workspaceTag !== 'string') return
-    // Same `string | null` contract as `base` in handleSave. The signed
-    // canonical uses `String(from)`, but the chain-lookup path
-    // (`typeof msg.from === 'string' ? msg.from : null`) treats every
-    // non-string as null — so a legit signer sending `from: { … }`
-    // would silently take the keyframe-fallback path even though the
-    // signature was over a different canonical shape. Reject at the
-    // wire gate.
-    if (msg.from != null && typeof msg.from !== 'string') return
+    // Mirror handleSave's wire gate: length-cap + base64url-alphabet on
+    // workspaceTag / signature / from BEFORE canonicalSubscribe UTF-8-
+    // encodes them and verifyEd25519 base64-decodes the signature.
+    // Without it a peer can submit up-to-maxPayload strings and force
+    // O(n) encode + decode per subscribe before the 32/64-byte length
+    // gates reject — a CPU-DoS surface handleSave is already hardened
+    // against. `from` keeps the `string | null` contract (null = full-
+    // chain catch-up); a legit signer's `from` is a base64url revision
+    // id, so any non-string / over-long / wrong-alphabet value can't be
+    // one the signature was computed over, and the chain-lookup path
+    // (`typeof msg.from === 'string' ? msg.from : null`) still treats a
+    // null / absent `from` as the keyframe-fallback.
+    if (!validTagSigBase(msg.workspaceTag, MAX_FIELD_LEN) || !validTagSigBase(msg.signature, MAX_FIELD_LEN) || (msg.from != null && !validTagSigBase(msg.from, MAX_FIELD_LEN))) return
     // The challenge nonce we issued on this socket is bound into the
     // signed canonical, blocking cross-connection replay of a captured
     // subscribe frame. A subscribe arriving before we sent the

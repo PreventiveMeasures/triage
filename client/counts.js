@@ -154,6 +154,12 @@ export function ensureCounts(names, onUpdate) {
         if (c[n] !== undefined) continue
         try {
           const content = await readFile(n)
+          // Re-check after the await: a concurrent setCount (e.g. an
+          // ingest landing mid-walk) may have populated c[n] while we
+          // were reading. Overwriting it with our freshly-parsed value
+          // would clobber the fresher ingest count and persist the
+          // stale one — the pre-await guard above, mirrored post-await.
+          if (c[n] !== undefined) continue
           const { count, source } = analyzeContent(content)
           c[n] = source ? { count, source } : { count }
           persist()

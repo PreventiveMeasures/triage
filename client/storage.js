@@ -699,7 +699,7 @@ export async function saveBundle(name, content) {
   if (!dir) throw new Error(`Cannot save bundle ${name}: OPFS unavailable`)
   const bytes = content instanceof Uint8Array
     ? content
-    : new TextEncoder().encode(content)
+    : encodeUtf8(content)
   const integrity = await computeSha512Integrity(bytes)
   const opfsKey = integrityToOpfsKey(integrity)
   let storeBytes = name.toLowerCase().endsWith('.map')
@@ -755,7 +755,15 @@ export async function deleteBundle(integrity) {
   // back to enabled, or sealed under a key the next read can't
   // reverse).
   return navigator.locks.request(VAULT_LOCK, { mode: 'shared' }, async () => {
-    try { await dir.removeEntry(integrityToOpfsKey(integrity)) } catch {}
+    // Only swallow the "already gone" case. A real OPFS failure
+    // (NoModificationAllowedError, InvalidModificationError) must
+    // propagate BEFORE the `_meta.json` RMW below drops the index
+    // entry — otherwise the bytes survive on disk with no meta entry to
+    // surface (listBundles blind) or re-target. Mirrors deleteFile.
+    try { await dir.removeEntry(integrityToOpfsKey(integrity)) }
+    catch (err) {
+      if (!(err instanceof DOMException) || err.name !== 'NotFoundError') throw err
+    }
     // Per-`_meta.json` RMW lock — independent of VAULT_LOCK, serialises
     // saveBundle vs deleteBundle within the same vault state. Audit
     // round-12 H7.
