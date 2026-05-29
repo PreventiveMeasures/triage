@@ -134,7 +134,18 @@ export function saveTriage() {
   // a locked vault would mean the pending edit is lost. The blob
   // is short-lived (cleared at the tail of saveTriage) and lives
   // only on the user's device.
-  if (json != null) {
+  if (isEmpty) {
+    // Empty save: clear any stale pending blob SYNCHRONOUSLY too. A
+    // prior non-empty save that failed at the compress step (the catch
+    // below) leaves the pending key populated; without this, an empty
+    // save killed during the VAULT_LOCK shared-mode wait — before the
+    // lock-body clear at the tail runs — would leave that stale pending
+    // on disk, and the next load (readTriageBlob prefers pending) would
+    // resurrect the user's just-cleared triage. Mirrors the lock-body
+    // removal; M3 round-5's synchronous-write guarantee, for the empty
+    // case.
+    try { localStorage.removeItem(TRIAGE_PENDING_KEY) } catch {}
+  } else {
     try { localStorage.setItem(TRIAGE_PENDING_KEY, json) } catch {}
   }
   // Hold a SHARED VAULT_LOCK for the duration of the compress + seal

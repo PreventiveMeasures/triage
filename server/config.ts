@@ -115,10 +115,21 @@ function readServerConfigFile(path: string): ServerConfigFile {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
     console.error(`Failed to read ${path}:`, (err as Error)?.message ?? err); process.exit(1)
   }
-  try { return JSON.parse(raw) as ServerConfigFile }
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) }
   catch (err) {
     console.error(`Failed to parse ${path} as JSON:`, (err as Error)?.message ?? err); process.exit(1)
   }
+  // Shape gate: `JSON.parse` happily returns null / an array / a scalar
+  // for a `config.json` that is `null`, `[...]`, `"x"`, `42`, etc. The
+  // bare cast would then let `loadConfig` crash on `serverConfig.password`
+  // with a raw TypeError — violating this module's fail-loud-with-a-clear-
+  // message contract. Reject anything that isn't a plain object up front.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    const kind = parsed === null ? 'null' : Array.isArray(parsed) ? 'an array' : `a ${typeof parsed}`
+    console.error(`Invalid ${path}: expected a JSON object, got ${kind}`); process.exit(1)
+  }
+  return parsed as ServerConfigFile
 }
 
 // Decode + length-check the REST-token HMAC secret upfront so a
@@ -153,6 +164,15 @@ function decodeTokenSecret(raw: string): Uint8Array<ArrayBuffer> {
 }
 
 export function loadConfig(): Config {
+  // Honor --help / -h BEFORE any env / config parsing. The `intEnv`
+  // calls, `readServerConfigFile`, the password type-check, and
+  // `decodeTokenSecret` below all `process.exit(1)` on a malformed
+  // value — so an operator running `--help` to diagnose exactly such a
+  // typo could never reach the help text. Check it first.
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(HELP)
+    process.exit(0)
+  }
   // 0 = OS-assigned ephemeral port (the test harness boots with PORT=0).
   const port = intEnv('PORT', 8765, 0, 65535)
   const host = env['HOST'] ?? '127.0.0.1'
@@ -177,11 +197,6 @@ export function loadConfig(): Config {
   // here (after the config.json / password parse) to preserve the
   // pre-split error-precedence order.
   const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
-
-  if (argv.includes('--help') || argv.includes('-h')) {
-    console.log(HELP)
-    process.exit(0)
-  }
 
   const neonUrl = env['DATABASE_URL'] ?? null
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] ?? null

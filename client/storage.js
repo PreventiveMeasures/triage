@@ -591,7 +591,18 @@ function integrityToOpfsKey(integrity) {
 //     bundles" and the user loses access to bundle bytes that
 //     are still on disk.
 //   - JSON.parse failed → log and return [].
-async function readBundleMeta(dir) {
+// `throwOnUnreadable`: read-modify-WRITE callers (saveBundle /
+// deleteBundle) pass `true` so a `_meta.json` that EXISTS but can't be
+// read — decrypt failure, parse failure, vault locked, or any non-
+// NotFound read error — THROWS instead of returning `[]`. Returning `[]`
+// there would make the RMW rebuild the index from a degenerate empty
+// start, and `writeBundleMeta` would then overwrite the real (merely
+// unreadable) index, orphaning every prior bundle's on-disk bytes — a
+// single transient decrypt failure = silent total loss of the bundle
+// index. Genuine absence (NotFoundError) still returns `[]` for all
+// callers. Read-only callers (listBundles) keep the default `false`,
+// degrading to an empty list for display rather than throwing in the UI.
+async function readBundleMeta(dir, { throwOnUnreadable = false } = {}) {
   let raw
   try {
     const fh = await dir.getFileHandle(BUNDLE_META_FILE)
@@ -599,6 +610,7 @@ async function readBundleMeta(dir) {
     raw = new Uint8Array(await file.arrayBuffer())
   } catch (err) {
     if (err instanceof DOMException && err.name === 'NotFoundError') return []
+    if (throwOnUnreadable) throw err
     console.warn('readBundleMeta: failed to read _meta.json:', err)
     return []
   }
@@ -606,24 +618,29 @@ async function readBundleMeta(dir) {
   if (hasEnvelopeMagic(raw)) {
     const sessionKey = getSessionKey()
     if (!sessionKey) {
+      if (throwOnUnreadable) throw new Error('readBundleMeta: vault locked — refusing to rebuild _meta.json')
       console.warn('readBundleMeta: vault locked, returning empty bundle list')
       return []
     }
     try {
       plain = await openForBundle(raw, BUNDLE_META_SLOT)
     } catch (err) {
+      if (throwOnUnreadable) throw new Error('readBundleMeta: _meta.json present but undecryptable — refusing to rebuild', { cause: err })
       console.warn('readBundleMeta: decrypt failed (tampering, key mismatch, or vault identity drift):', err)
       return []
     }
   }
+  let data
   try {
-    const data = JSON.parse(decodeUtf8(plain))
-    if (Array.isArray(data)) return data
-    return []
+    data = JSON.parse(decodeUtf8(plain))
   } catch (err) {
+    if (throwOnUnreadable) throw new Error('readBundleMeta: _meta.json present but unparseable — refusing to rebuild', { cause: err })
     console.warn('readBundleMeta: JSON.parse failed:', err)
     return []
   }
+  if (Array.isArray(data)) return data
+  if (throwOnUnreadable) throw new Error('readBundleMeta: _meta.json is not a JSON array — refusing to rebuild')
+  return []
 }
 
 async function writeBundleMeta(dir, meta) {
@@ -729,7 +746,7 @@ export async function saveBundle(name, content) {
     // / `Decrypt` would still walk them on the next vault transition.
     try {
       await lockBundleMeta(async () => {
-        const meta = await readBundleMeta(dir)
+        const meta = await readBundleMeta(dir, { throwOnUnreadable: true })
         const idx = meta.findIndex((e) => e.integrity === integrity)
         if (idx >= 0) meta[idx] = { integrity, name }
         else meta.push({ integrity, name })
@@ -768,7 +785,7 @@ export async function deleteBundle(integrity) {
     // saveBundle vs deleteBundle within the same vault state. Audit
     // round-12 H7.
     await lockBundleMeta(async () => {
-      const meta = await readBundleMeta(dir)
+      const meta = await readBundleMeta(dir, { throwOnUnreadable: true })
       const filtered = meta.filter((e) => e.integrity !== integrity)
       // No-op short-circuit: deleting a non-existent integrity (or
       // deleting from an already-empty meta) would otherwise CREATE

@@ -71,10 +71,20 @@ async function collectReachableIds(names) {
     // `flattenFindings`'s `for…of` throw, aborting collectReachableIds
     // and with it both analyzeTriageImpact (delete-report dialog) and
     // pruneOrphanTriage (GC) — one bad file on disk blocks deletion.
-    if (!Array.isArray(data?.findings)) continue
-    const findings = flattenFindings(data.findings)
-    await backfillFindingIds(findings)
-    for (const f of findings) if (f.id) ids.add(f.id)
+    // A native-JSON report carries its entries under `findings` OR
+    // `groups` (parseReport does no shape validation; which top-level
+    // field a producer emits varies — see report-findings.js). Walk
+    // whichever arrays are present so a groups-shaped report's ids
+    // aren't treated as orphans (which pruneOrphanTriage would then
+    // wipe). `Array.isArray` per field rather than a truthy check: a
+    // malformed truthy non-array would make flattenFindings's `for…of`
+    // throw, aborting collectReachableIds (delete-dialog + GC).
+    for (const list of [data?.findings, data?.groups]) {
+      if (!Array.isArray(list)) continue
+      const findings = flattenFindings(list)
+      await backfillFindingIds(findings)
+      for (const f of findings) if (f.id) ids.add(f.id)
+    }
   }
   return ids
 }

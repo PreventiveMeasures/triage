@@ -798,4 +798,16 @@ describe('triage-gc: malformed + legacy-shape robustness', () => {
     state.triage.set(FINDING_A, { triage: 'fixed' })
     await assert.doesNotReject(pruneOrphanTriage())
   })
+
+  it('treats a `groups`-shaped report as reachable (not orphaned)', async () => {
+    // A native-JSON report can carry its entries under `groups` instead
+    // of `findings`; collectReachableIds must walk it so pruneOrphanTriage
+    // doesn't wipe triage attached to those ids.
+    await storage.saveFile('grp.json', JSON.stringify({ groups: [[{ id: FINDING_A }]] }))
+    state.triage.set(FINDING_A, { triage: 'fixed' }) // reachable via groups
+    state.triage.set(FINDING_B, { triage: 'fixed' }) // true orphan (in no report)
+    await pruneOrphanTriage()
+    assert.ok(state.triage.has(FINDING_A), 'id reachable via `groups` is preserved')
+    assert.equal(state.triage.has(FINDING_B), false, 'true orphan is still pruned')
+  })
 })
