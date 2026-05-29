@@ -395,6 +395,86 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
+  it('report evicted from OPFS (still claimed + still in remote) is re-downloaded on reopen', async () => {
+    // Regression for the report/bundle re-download asymmetry. When a
+    // report's bytes vanish from local storage (OPFS eviction,
+    // corruption, a partial clear) WITHOUT being explicitly deleted,
+    // the workspace keeps listing it in `reports` and the relay still
+    // holds the peer copy — yet the old discovery skip
+    // (`remoteNameByTag.has(tag) && liveReports.has(name)`) treated
+    // "workspace claims it" as "we already have it" and never
+    // re-fetched the bytes. Bundles re-download in the same situation
+    // because their discovery skip is implicitly gated on local
+    // presence (the bundle name is sourced from `listBundles()`, which
+    // is empty for an evicted bundle). This pins the symmetric
+    // behaviour for reports: a remote report absent from OPFS must
+    // trigger a re-download.
+    const ws = await createWorkspaceWithReports('presence-evicted-report', [])
+    const fileName = 'evicted-report.json'
+    const reportText = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'keep me' }],
+    })
+    const reportBytes = await gzipBytes(encodeUtf8(reportText))
+    try {
+      // --- Online: a peer uploads the report. The background
+      // discovery worker auto-downloads it — saving the bytes to
+      // local storage AND attaching the fileName to the workspace. ---
+      openWorkspace(ws.id)
+      const peer = await openPeerSession(ws)
+      try {
+        const put = await peer.put({ fileName, content: reportBytes, prev: null })
+        assert.equal(put.ok, true)
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < 5_000) {
+          const onDisk = (await listFiles()).includes(fileName)
+          const claimed = listWorkspaces().find((w) => w.id === ws.id)?.reports?.includes(fileName)
+          if (onDisk && claimed) break
+          await new Promise((resolve) => { setTimeout(resolve, 50) })
+        }
+        assert.ok((await listFiles()).includes(fileName), 'auto-download persisted the report to local storage')
+        assert.ok(
+          listWorkspaces().find((w) => w.id === ws.id)?.reports?.includes(fileName),
+          'auto-download attached the report to the workspace',
+        )
+      } finally { peer.close() }
+
+      // --- Simulate eviction. `deleteFile` drops the bytes only; the
+      // workspace blob keeps listing the fileName and the relay row is
+      // untouched. Close the sessions first so the reopen below
+      // rebuilds presence from scratch (the realistic page-refresh /
+      // workspace-switch path). ---
+      closeWorkspace(ws.id)
+      triageSync.closeSession(ws.id)
+      await deleteFile(fileName)
+      assert.equal((await listFiles()).includes(fileName), false, 'report bytes evicted from local storage')
+      assert.ok(
+        listWorkspaces().find((w) => w.id === ws.id)?.reports?.includes(fileName),
+        'workspace still lists the report after eviction (membership untouched)',
+      )
+
+      // --- Reopen. The peer copy is still in remote and the workspace
+      // still claims the fileName, but the bytes are gone from disk.
+      // Discovery must notice the local absence and re-fetch. ---
+      triageSync.openSession(ws.id)
+      await awaitSyncOnline()
+      openWorkspace(ws.id)
+      const startedAt = Date.now()
+      let restored = false
+      while (Date.now() - startedAt < 5_000) {
+        if ((await listFiles()).includes(fileName)) { restored = true; break }
+        await new Promise((resolve) => { setTimeout(resolve, 50) })
+      }
+      assert.ok(restored, 'an evicted report still present in remote must be re-downloaded on reopen')
+      const recovered = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+      assert.equal(recovered, reportText, 're-downloaded bytes must match the original report')
+    } finally {
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
+    }
+  })
+
   it('peer Replace with non-recognized content is refused (forgery defence)', async () => {
     // analyzeContent gate on the replace-refetch path. A workspace
     // member could PUT arbitrary gzipped bytes under an existing
@@ -823,21 +903,34 @@ describe('client/sync/objstore-presence', () => {
   })
 
   it('own putFile echo: workspace.reports unchanged, onAutoDownloaded does NOT fire', async () => {
-    // Branch 1 of `maybeAutoDownload`: our own upload bounces back
-    // as an objstore-put broadcast. The "our workspace already
-    // claims this fileName" short-circuit at the top of the
-    // function must prevent both a duplicate `reports` entry and
-    // a spurious `onAutoDownloaded` fire (the bridge in ui/view.js
+    // Our own upload bounces back as an objstore-put broadcast. In
+    // production the bytes are already on disk (the UI saves the
+    // report, then uploads it), so the echo must be recognised as
+    // "already have it" — preventing both a duplicate `reports` entry
+    // and a spurious `onAutoDownloaded` fire (the bridge in ui/view.js
     // would otherwise re-run `switchToWorkspace` for no reason).
+    //
+    // The bytes MUST be a gzipped, analyzeContent-recognised report on
+    // disk: with the report claimed AND present, the discovery
+    // `ensureRemoteNames` skip short-circuits the echo before any
+    // fetch. (A non-gzipped throwaway payload would mask this by
+    // failing the gunzip gate instead, so the assertion would pass for
+    // the wrong reason.)
     const ws = await createWorkspaceWithReports('presence-echo', [])
     const fileName = 'self-uploaded.json'
+    const reportText = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'mine' }],
+    })
+    const reportBytes = await gzipBytes(encodeUtf8(reportText))
+    await saveFileBytes(fileName, reportBytes)
     await setReportWorkspace(fileName, ws.id)
     let autoDownloadFires = 0
     const unsub = onAutoDownloaded(() => { autoDownloadFires += 1 })
     try {
       openWorkspace(ws.id)
       await awaitPresence(() => isInRemote(ws.id, fileName) === false, 'initial false')
-      const result = await putFile(ws.id, fileName, Buffer.from('payload'))
+      const result = await putFile(ws.id, fileName, reportBytes)
       assert.equal(result.ok, true)
       await awaitPresence(() => isInRemote(ws.id, fileName), 'cloud after putFile')
       // Let any in-flight fetchByTag → maybeAutoDownload chain
@@ -847,13 +940,68 @@ describe('client/sync/objstore-presence', () => {
       assert.deepEqual(refreshed?.reports, [fileName],
         'echo broadcast must not duplicate the fileName in reports')
       assert.equal(autoDownloadFires, 0,
-        'echo broadcast must not fire onAutoDownloaded — branch 1 short-circuit')
+        'echo broadcast must not fire onAutoDownloaded — already claimed + present on disk')
+      // Local bytes are untouched by the echo.
+      const stored = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+      assert.equal(stored, reportText, 'echo must not overwrite the local copy')
     } finally {
       unsub()
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
     }
   })
+
+  it('peer PUT of a report we already have on disk AND claim: no re-download, no spurious fire', async () => {
+    // Covers maybeAutoDownload's `claimed && existsLocally → return`
+    // short-circuit. Two clients independently hold the same report on
+    // disk and both claim it. To reach maybeAutoDownload at all (rather
+    // than the earlier `ensureRemoteNames` skip), the fileName is
+    // attached AFTER openWorkspace, so its tag→name mapping isn't
+    // pre-seeded into `remoteNameByTag` at boot — discovery therefore
+    // can't skip on name+membership and runs the fetch. The download
+    // path must then notice the bytes are already present AND already
+    // claimed and bail without re-saving, re-attaching, or firing the
+    // bridge.
+    const ws = await createWorkspaceWithReports('presence-have-and-claim', [])
+    const fileName = 'already-have.json'
+    const reportText = JSON.stringify({
+      type: 'analysis',
+      findings: [{ id: 'a', severity: 'high', file: 'x.js', line: 1, description: 'shared' }],
+    })
+    const reportBytes = await gzipBytes(encodeUtf8(reportText))
+    await saveFileBytes(fileName, reportBytes)
+    let fires = 0
+    const unsub = onAutoDownloaded(() => { fires += 1 })
+    try {
+      openWorkspace(ws.id)
+      // Attach after open so `remoteNameByTag` has no boot-seeded entry
+      // for this tag — forces discovery into the fetch + maybeAutoDownload
+      // path instead of the name-aware ensureRemoteNames skip.
+      await setReportWorkspace(fileName, ws.id)
+      const peer = await openPeerSession(ws)
+      try {
+        await peer.put({ fileName, content: reportBytes, prev: null })
+        await awaitPresence(() => isInRemote(ws.id, fileName), 'cloud after peer put')
+        // Let the broadcast → ensureRemoteNames → fetchByTag →
+        // maybeAutoDownload chain run to completion.
+        await new Promise((resolve) => { setTimeout(resolve, 300) })
+        const refreshed = listWorkspaces().find((w) => w.id === ws.id)
+        assert.deepEqual(refreshed?.reports, [fileName],
+          'a report we already have + claim must not be duplicated in reports')
+        assert.equal(fires, 0,
+          'must not fire onAutoDownloaded for a report we already have on disk and claim')
+        const stored = decodeUtf8(await gunzipBytes(await readFileBytes(fileName)))
+        assert.equal(stored, reportText, 'local bytes must be left untouched')
+      } finally { peer.close() }
+    } finally {
+      unsub()
+      closeWorkspace(ws.id)
+      await deleteWorkspace(ws.id)
+      await deleteFile(fileName)
+    }
+  })
+
 
   it('onAutoDownloaded fires on detached-attach with the correct (workspaceId, fileName)', async () => {
     // Verifies the bridge contract the active-workspace listener

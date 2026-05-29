@@ -888,33 +888,57 @@ async function ensureRemoteNames(entry) {
   const liveWs = listWorkspaces().find((w) => w.id === entry.workspaceId)
   const liveReports = new Set(liveWs?.reports ?? [])
   const liveBundles = new Set(liveWs?.bundles ?? [])
+  // OPFS presence snapshot. The report skip below short-circuits the
+  // discovery `fetchByTag` only for files we ALREADY have on disk —
+  // otherwise a report whose bytes vanished from local storage (OPFS
+  // eviction, corruption, a partial clear) while still listed in
+  // `reports` would never be re-downloaded, even though the peer copy
+  // is right there in `remoteTags`. The bundle skip is implicitly
+  // gated the same way: its `remoteBundleNameByIntegrity.has` guard is
+  // sourced from `listBundles()`, which is empty for an evicted
+  // bundle, so a missing bundle already falls through to the fetch.
+  // Pulled once per pass like `liveReports`.
+  let localReportFiles = new Set()
+  try { localReportFiles = new Set(await listFiles()) }
+  catch (err) { console.warn(`objstore-presence: listFiles failed during discovery for "${entry.workspaceId}":`, err) }
+  if (entry.disposed || !entry.session) return
   const pending = []
   for (const tag of entry.remoteTags) {
     // Skip the discovery `fetchByTag` only when the cached
-    // name / integrity is ALSO claimed by the live workspace. A
-    // cached entry without a matching workspace claim means one of:
+    // name / integrity is ALSO claimed by the live workspace AND the
+    // bytes are present on disk. A cached entry that fails either
+    // clause means one of:
     //   - the user did a local-only delete (cache pin survived the
     //     OPFS removal; without the membership check the file would
     //     stay invisible forever even with the peer copy still in
-    //     remote), or
+    //     remote),
+    //   - the bytes vanished from local storage (OPFS eviction,
+    //     corruption, a partial clear) while the workspace still
+    //     lists the report — the local-presence clause is what
+    //     forces the re-download in that case, or
     //   - a sibling tab / prior session discovered the name via
     //     fetchByTag (populating `remoteNameByTag` / `remoteBundleByTag`
     //     + persisting the pin) but never reached
     //     `maybeAutoDownload(Bundle)`.
-    // In both cases we re-run the fetch + auto-attach chain so the
+    // In all cases we re-run the fetch + auto-attach chain so the
     // workspace converges on the remote inventory.
     //
     // For bundles the additional `remoteBundleNameByIntegrity.has`
     // guard stays — without a known user-friendly name the download
     // dialog renders an integrity prefix instead of a label, so we
     // still want the fetch even when the workspace claims the
-    // integrity. The drag-out path (`<detach-bundle-dialog>` in
-    // sidebar.js) now drops the source workspace's remote tag, so
-    // a dragged-out bundle's tag won't be in `remoteTags` on the
-    // next open — there's no scenario where a cached-but-unclaimed
-    // bundle re-attaches against the user's drag-out intent.
-    if (entry.remoteNameByTag.has(tag)
-        && liveReports.has(entry.remoteNameByTag.get(tag))) continue
+    // integrity. That guard also doubles as the local-presence check
+    // for bundles (the name is sourced from `listBundles()`), so an
+    // evicted bundle re-downloads without a separate clause. The
+    // drag-out path (`<detach-bundle-dialog>` in sidebar.js) now drops
+    // the source workspace's remote tag, so a dragged-out bundle's tag
+    // won't be in `remoteTags` on the next open — there's no scenario
+    // where a cached-but-unclaimed bundle re-attaches against the
+    // user's drag-out intent.
+    const cachedName = entry.remoteNameByTag.get(tag)
+    if (cachedName !== undefined
+        && liveReports.has(cachedName)
+        && localReportFiles.has(cachedName)) continue
     if (entry.remoteBundleByTag.has(tag)) {
       const integrity = entry.remoteBundleByTag.get(tag)
       if (entry.remoteBundleNameByIntegrity.has(integrity) && liveBundles.has(integrity)) continue
@@ -1032,10 +1056,15 @@ async function ensureRemoteNames(entry) {
 async function maybeAutoDownload(entry, tag, fileName, bytes) {
   if (entry.disposed || !entry.remoteTags.has(tag)) return
   const ws = listWorkspaces().find((w) => w.id === entry.workspaceId)
-  // Skip if our workspace already claims this fileName — either we
-  // uploaded it ourselves (and the broadcast is the echo) or a
-  // sibling tab already attached it.
-  if (ws && Array.isArray(ws.reports) && ws.reports.includes(fileName)) return
+  // Does our workspace already list this fileName? Used below to
+  // distinguish a self-upload / sibling-tab echo (claimed + on disk
+  // → nothing to do) from an eviction (claimed + NOT on disk → must
+  // re-download). The membership check is NO LONGER an early return:
+  // a report still in `reports` whose bytes vanished from local
+  // storage has to be re-fetched, mirroring the bundle path whose
+  // save is keyed purely on OPFS presence (`listBundles`) rather than
+  // workspace membership.
+  const claimed = !!(ws && Array.isArray(ws.reports) && ws.reports.includes(fileName))
   let existsLocally
   try {
     const existing = await listFiles()
@@ -1051,8 +1080,16 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     return
   }
   if (existsLocally) {
-    // Local copy exists. Additively attach to our workspace; any
-    // other workspace that already lists `fileName` keeps it
+    // Bytes are on disk. If the workspace ALSO claims the fileName
+    // this is the echo of our own upload (or a sibling tab that
+    // already attached it) — nothing to persist or attach, and we
+    // must NOT fire the bridge (it would re-run `switchToWorkspace`
+    // for no reason; see the `own putFile echo` test).
+    if (claimed) return
+    // Otherwise the bytes exist but no workspace claims them (a
+    // detached local report), or they're claimed only by ANOTHER
+    // workspace. Additively attach to our workspace; any other
+    // workspace that already lists `fileName` keeps it
     // (multi-workspace membership). Local bytes are kept as-is
     // (no `saveFileBytes`) so a user with mid-edit local content
     // doesn't see it clobbered by the peer's upload.
@@ -1074,6 +1111,21 @@ async function maybeAutoDownload(entry, tag, fileName, bytes) {
     }
     return
   }
+  // Bytes are NOT on disk. Download + validate + persist + attach.
+  // This runs EVEN WHEN the workspace already claims the fileName: a
+  // report that went missing from local storage (OPFS eviction,
+  // corruption, a partial clear) while still listed in `reports` is
+  // re-downloaded here. `addReportToWorkspace` is idempotent, so a
+  // re-download of an already-claimed report just restores the bytes
+  // without disturbing membership.
+  //
+  // Trust posture: letting a claimed-but-evicted fileName accept peer
+  // bytes is a member-trust operation, but it stays within the model
+  // already documented in this function's header — the write target
+  // is empty (we only reach here when the bytes are absent, so nothing
+  // local is clobbered) and the `analyzeContent` gate below refuses
+  // anything that isn't a recognized report. It's the same capability
+  // a member already has via the Replace / boot-divergence paths.
   // Validate the decompressed text against `analyzeContent`. A
   // peer with the workspace key could PUT arbitrary bytes; refuse
   // anything that isn't a recognized report shape.
