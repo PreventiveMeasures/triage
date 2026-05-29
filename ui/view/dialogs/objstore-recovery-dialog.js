@@ -136,7 +136,10 @@ class ObjstoreRecoveryDialog extends AppDialog {
     if (c.good) parts.push(`${c.good} available`)
     if (c.reuploaded) parts.push(`${c.reuploaded} re-uploaded`)
     if (c.missing) parts.push(`${c.missing} missing`)
-    return parts.length > 0 ? html`<p class="rec-summary">${parts.join(' · ')}</p>` : nothing
+    // role="status"/aria-live so a screen reader announces the outcome
+    // when the re-check finishes (the per-row updates above aren't a live
+    // region, so this is the assistive summary of the run).
+    return parts.length > 0 ? html`<p class="rec-summary" role="status" aria-live="polite">${parts.join(' · ')}</p>` : nothing
   }
 
   render() {

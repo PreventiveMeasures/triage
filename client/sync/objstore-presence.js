@@ -1736,9 +1736,7 @@ async function freshRemoteListing(entry, workspaceId) {
     console.warn(`objstore-recovery: fresh DB listing for ${workspaceId} failed; using cached inventory:`, err)
   }
   try {
-    return (await entry.session.list()).map((i) => ({
-      resourceTag: i.resourceTag, version: i.version, incarnation: i.incarnation, contentLength: i.contentLength,
-    }))
+    return (await entry.session.list()).map((i) => ({ resourceTag: i.resourceTag, contentLength: i.contentLength }))
   } catch { return [] }
 }
 
@@ -1752,10 +1750,11 @@ function parseRemoteResources(raw) {
   for (const r of raw) {
     if (!r || typeof r !== 'object') continue
     if (typeof r.resourceTag !== 'string') continue
+    // Only resourceTag (identity) + contentLength (the report match gate)
+    // are consumed downstream; version/incarnation aren't read here —
+    // re-upload re-reads the live precondition via putFile's retryOnConflict.
     out.push({
       resourceTag: r.resourceTag,
-      version: Number.isSafeInteger(r.version) ? r.version : null,
-      incarnation: typeof r.incarnation === 'string' ? r.incarnation : null,
       contentLength: Number.isSafeInteger(r.contentLength) ? r.contentLength : null,
     })
   }
@@ -1779,6 +1778,14 @@ async function classifyAndRecover(entry, workspaceId, row) {
   }
   // (3) Bytes missing for a row the fresh DB listing still lists ⇒ the
   // 503/bytes-gone case. Repair only from a MATCHING local copy.
+  //
+  // Guard the delete-vs-recheck race first: the fresh listing was
+  // snapshotted once up front, but a peer delete that lands mid-recheck
+  // drops the tag from the live broadcast view (onDeleted →
+  // remoteTags.delete). Don't resurrect a just-deleted object over its
+  // tombstone — a tag no longer in the live set is reported missing, not
+  // re-uploaded.
+  if (!entry.remoteTags.has(row.resourceTag)) return 'missing'
   if (row.reportName !== undefined) return await recoverReport(workspaceId, row)
   if (row.bundleIntegrity !== undefined) return await recoverBundle(workspaceId, row)
   // Listed remotely, bytes gone, and we hold no local copy — this
@@ -1797,7 +1804,15 @@ async function recoverReport(workspaceId, row) {
   let bytes
   try { bytes = await readFileBytes(row.reportName) }
   catch { return 'missing' }  // local bytes gone too
-  if (row.contentLength != null && objstorePayloadWireLength(row.reportName, bytes.length) !== row.contentLength) {
+  // "Matching the expected one": the re-encrypted wire length must equal
+  // the row's recorded contentLength. The remote bytes are gone, so this
+  // is the only same-content signal available — the random per-PUT nonce
+  // makes the contentHash unreproducible. Note this is "same name + same
+  // wire length", NOT a true content compare: a same-length-but-different
+  // local copy would pass (an accepted, unavoidable residual once the
+  // bytes are lost). Fail CLOSED when the length is unknown (a malformed /
+  // hostile listing row) — never re-upload on name-identity alone.
+  if (row.contentLength == null || objstorePayloadWireLength(row.reportName, bytes.length) !== row.contentLength) {
     return 'missing'
   }
   try {
@@ -1850,14 +1865,25 @@ function publicRecoveryRow(row) {
 // settled. Always clears its timer.
 function withTimeout(promise, ms) {
   let timer
+  const p = Promise.resolve(promise)
+  // If the timeout wins the race, `p` is left unconsumed; attach a no-op
+  // catch so a late rejection doesn't surface as an unhandled rejection.
+  // (The race result still reflects whichever settled first.)
+  p.catch(() => {})
   const timeout = new Promise((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(`objstore-recovery: timed out after ${ms}ms`)), ms)
   })
-  return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer))
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
 }
 
-async function safeListFiles() { try { return await listFiles() } catch { return [] } }
-async function safeListBundles() { try { return await listBundles() } catch { return [] } }
+async function safeListFiles() {
+  try { return await listFiles() }
+  catch (err) { console.warn('objstore-recovery: listFiles failed; treating as no local reports:', err); return [] }
+}
+async function safeListBundles() {
+  try { return await listBundles() }
+  catch (err) { console.warn('objstore-recovery: listBundles failed; treating as no local bundles:', err); return [] }
+}
 
 // `isInRemote` for bundles is exported above as `isBundleInRemote`.
 // The unfiled-bundle-bytes path (`putBundleToRemote` from the user
