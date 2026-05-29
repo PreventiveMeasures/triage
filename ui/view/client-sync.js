@@ -233,6 +233,7 @@ export function openWorkspace(...args) { return callIfWanted('openWorkspace', ar
 export function closeWorkspace(...args) { return callIfWanted('closeWorkspace', args) }
 export function discoverRemoteFileNames(...args) { return callIfWanted('discoverRemoteFileNames', args) }
 export function discoverRemoteBundleIntegrities(...args) { return callIfWanted('discoverRemoteBundleIntegrities', args) }
+export function recheckRemoteStorage(...args) { return callIfWanted('recheckRemoteStorage', args) }
 
 // `triageSync` proxy — mirrors the real object's shape. Methods that
 // represent "online intent" (`setEnabled(true)`) trigger the load;

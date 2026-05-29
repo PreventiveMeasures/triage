@@ -19,7 +19,7 @@
 import { state } from './state.ts'
 import { analyzeContent, setCount } from './counts.js'
 import { addBundleToWorkspace, addReportToWorkspace, listWorkspaces, onBundleMembershipChanged, onReportMembershipChanged, onWorkspaceDeleted, onWorkspacePrivateKeyChanged } from './workspaces.js'
-import { gunzipBytes, listBundles, listFiles, readBundle, saveBundle, saveFileBytes } from './storage.js'
+import { gunzipBytes, listBundles, listFiles, readBundle, readFileBytes, saveBundle, saveFileBytes } from './storage.js'
 import { saveTriage, setTriageChangeNotifier } from './triage.js'
 import { getItem as getSecureItem, onAfterHydrate as onSecureStorageHydrated, removeItem as removeSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
@@ -38,6 +38,7 @@ export const defaultSyncHost = {
   listBundles,
   listFiles,
   readBundle,
+  readFileBytes,
   saveBundle,
   saveFileBytes,
   saveTriage,

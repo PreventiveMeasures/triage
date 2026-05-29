@@ -5,7 +5,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS } from './file-display.js'
 import { listBundles, listWorkspaces, state } from '#client/index.js'
-import { discoverRemoteBundleIntegrities, discoverRemoteFileNames, isBundleInRemote, isInRemote, remoteBundleName, remoteCount, triageSync } from './client-sync.js'
+import { isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, configureDepsDir, fileLink, findingDisplayName, formatRunMeta, isModule, lineLink, prettyModel, stripExportMarker } from './format.js'
 import { activeTabFor, getMergedGroups, groupKey, groupState, primaryTab, tabKey } from './group.js'
@@ -31,7 +31,7 @@ import {
 } from './render-bundle.js'
 import { getFocusCode } from './focus-code.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
-import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
+import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -475,11 +475,8 @@ function syncBadgeTemplate() {
   //                    r3242197745).
   //
   // Clickability:
-  //   cloud chunk — clickable iff cloudCount > intersection, i.e.
-  //                 there's at least one remote-only entry to
-  //                 download. We compute intersection as
-  //                 (localCount − localOnly.length) which only
-  //                 needs the sync `isInRemote` map.
+  //   cloud chunk — clickable whenever cloudCount > 0; opens the
+  //                 recovery dialog to re-check remote storage.
   //   local chunk — clickable iff M > 0 (there's something to
   //                 upload).
   //
@@ -489,14 +486,14 @@ function syncBadgeTemplate() {
   //
   // Aggregate reports + bundles into a single badge: the user sees
   // one "N cloud / M local" pair in the header instead of two
-  // side-by-side badges. The click handlers fan out to a unified
-  // upload / download dialog that lists items of both kinds.
+  // side-by-side badges. The "local" chunk opens a unified upload
+  // dialog; the "cloud" chunk opens the recovery dialog (re-check +
+  // repair missing bytes + optional download of remote-only objects).
   //
   // `cloudCount` is just `remoteCount` (reports + bundles together —
   // the cardinality of remoteTags, which includes both kinds). The
-  // actual report-vs-bundle dispatch happens in
-  // `openDownloadFromBadge`, which fans out both discovery passes and
-  // assembles the unified dialog item list.
+  // recovery dialog the "cloud" chunk opens enumerates the live remote
+  // listing itself, so no report-vs-bundle dispatch happens here.
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
   const cloudCount = remoteCount(workspaceId)
@@ -506,36 +503,27 @@ function syncBadgeTemplate() {
     ...localOnlyReports.map((n) => ({ kind: 'report', identifier: n })),
     ...localOnlyBundles.map((i) => ({ kind: 'bundle', identifier: i })),
   ]
-  const reportIntersection = fileNames.length - localOnlyReports.length
-  const bundleIntersection = localBundles.length - localOnlyBundles.length
-  const intersection = reportIntersection + bundleIntersection
-  const remoteOnlyCount = Math.max(0, cloudCount - intersection)
-  // `remoteOnlyCount` is the authoritative count (derived from the
-  // full HMAC-tag inventory). The click handler awaits
-  // `discoverRemoteFileNames` to materialize the actual file
-  // names before opening the download dialog — so we can drive
-  // the badge straight off the HMAC count without waiting for
-  // background `fetchByTag` discovery.
   if (cloudCount === 0 && localOnly.length === 0) return nothing
-  const cloudClickable = remoteOnlyCount > 0
+  // The "cloud" chunk is clickable whenever there's remote state: it
+  // opens the recovery dialog to re-check the remote objstore (re-fetch
+  // each object, re-upload any whose bytes went missing, and offer to
+  // download healthy objects not stored locally). The "local" chunk is
+  // clickable whenever there's something to upload.
+  const cloudClickable = cloudCount > 0
   const localClickable = localOnly.length > 0
   const wrapperTitle = [
     cloudCount > 0 ? `${cloudCount} in cloud` : null,
     localOnly.length > 0 ? `${localOnly.length} local-only` : null,
-    remoteOnlyCount > 0 ? `click "cloud" to download ${remoteOnlyCount}` : null,
+    cloudCount > 0 ? `click "cloud" to re-check storage` : null,
     localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
   ].filter(Boolean).join(' — ')
   const cloudChunk = cloudCount === 0 ? nothing
-    : cloudClickable
-      ? html`<button
-          type="button"
-          class="sync-badge-chunk cloud"
-          aria-label=${`${remoteOnlyCount} remote items not yet downloaded — open download dialog`}
-          @click=${(e) => { e.stopPropagation(); openDownloadFromBadge({ workspaceId, localFileNames: fileNames, localBundles }) }}
-        >${cloudIconTpl()}<span>${cloudCount} cloud</span></button>`
-      : html`<span class="sync-badge-chunk cloud" aria-label=${`${cloudCount} items in remote`}>
-          ${cloudIconTpl()}<span>${cloudCount} cloud</span>
-        </span>`
+    : html`<button
+        type="button"
+        class="sync-badge-chunk cloud"
+        aria-label=${`re-check ${cloudCount} cloud object${cloudCount === 1 ? '' : 's'}`}
+        @click=${(e) => { e.stopPropagation(); openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles }) }}
+      >${cloudIconTpl()}<span>${cloudCount} cloud</span></button>`
   const localChunk = localOnly.length === 0 ? nothing
     : html`<button
         type="button"
@@ -609,40 +597,6 @@ async function openUploadFromBadge({ workspaceId, items }) {
     }
   }
   await openSyncUploadDialog({ workspaceId, items })
-}
-
-async function openDownloadFromBadge({ workspaceId, localFileNames, localBundles }) {
-  // Await the full background-discovery pass before opening the
-  // dialog. The badge's clickable cloud-chunk count reflects the
-  // full HMAC-tag inventory, while the synchronous remote-name /
-  // remote-integrity getters only return what `fetchByTag` has
-  // already resolved. If we passed the sync lists to the dialog, a
-  // partially-decoded inventory would open with fewer entries than
-  // the badge advertised — sometimes zero (review r3252019240).
-  // `discoverRemote*` awaits every in-flight + queues any not-yet-
-  // started discovery, returning the complete decoded set for each
-  // kind.
-  const [remoteReports, remoteBundles] = await Promise.all([
-    discoverRemoteFileNames(workspaceId),
-    discoverRemoteBundleIntegrities(workspaceId),
-  ])
-  const localReportsSet = new Set(localFileNames)
-  const localBundlesSet = new Set(localBundles)
-  const items = [
-    ...remoteReports
-      .filter((n) => !localReportsSet.has(n))
-      .map((n) => ({ kind: 'report', identifier: n })),
-    ...remoteBundles
-      .filter((i) => !localBundlesSet.has(i))
-      .map((i) => {
-        // The discovery worker stashed the user-friendly name when it
-        // classified this integrity; surface it as the dialog label
-        // so the user sees "my-app.js" instead of the sha512 prefix.
-        const label = remoteBundleName(workspaceId, i)
-        return label ? { kind: 'bundle', identifier: i, label } : { kind: 'bundle', identifier: i }
-      }),
-  ]
-  await openSyncDownloadDialog({ workspaceId, items })
 }
 
 // Resolve which workspace + which loaded report file-names the

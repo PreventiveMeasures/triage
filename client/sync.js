@@ -22,6 +22,7 @@ export {
   openWorkspaceIds,
   putBundleToRemote,
   putFile,
+  recheckRemoteStorage,
   remoteBundleName,
   remoteCount,
 } from './sync/objstore-presence.js'
